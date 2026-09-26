@@ -108,15 +108,41 @@ class NewsletterRenderingTest extends TestCase
     #[Test]
     public function a_picture_whose_address_is_not_absolute_is_left_out_not_sent_broken(): void
     {
-        $rows = (new NewsletterRenderer())->html([
+        $blocks = [
             ['type' => 'image', 'image' => 'a', 'alt' => 'Relative', 'src' => '/storage/1/a.png'],
             ['type' => 'image', 'image' => 'b', 'alt' => 'Missing', 'src' => null],
             ['type' => 'image', 'image' => 'c', 'alt' => 'Script', 'src' => 'javascript:alert(1)'],
+            // A stored row without a description: the request requires one, so
+            // the renderer leaves an unlabelled picture out rather than send it.
+            ['type' => 'image', 'image' => 'e', 'alt' => '   ', 'src' => 'https://cdn.example.test/e.png'],
+            ['type' => 'image', 'image' => 'f', 'src' => 'https://cdn.example.test/f.png'],
             ['type' => 'image', 'image' => 'd', 'alt' => 'Kept', 'src' => 'https://cdn.example.test/d.png'],
-        ]);
+        ];
+        $rows = (new NewsletterRenderer())->html($blocks);
 
         $this->assertSame(1, substr_count($rows, '<img'));
         $this->assertStringContainsString('alt="Kept"', $rows);
+        $this->assertStringNotContainsString('e.png', $rows);
+        $this->assertStringNotContainsString('f.png', $rows);
+        $this->assertSame('[Kept]', (new NewsletterRenderer())->text($blocks));
+    }
+
+    #[Test]
+    public function the_more_details_link_is_left_out_of_a_newsletter_unless_it_is_a_web_address(): void
+    {
+        // Laravel's url rule passes ms-settings:// and ~300 other schemes; the
+        // newsletter prints only what NewsletterBlocks::webUrl accepts.
+        $mail = new BroadcastMail(
+            orgName: 'Masjid An-Nur',
+            title: 'October newsletter',
+            body: 'Hello.',
+            link: 'ms-settings://privacy',
+            blocks: [['type' => 'heading', 'text' => 'Fall Festival']],
+        );
+
+        $this->assertStringNotContainsString('ms-settings', $mail->render());
+        $this->assertStringNotContainsString('More details', $mail->render());
+        $this->assertStringNotContainsString('More details', (string) $mail->textAlternative());
     }
 
     #[Test]

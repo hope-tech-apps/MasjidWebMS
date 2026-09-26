@@ -17,6 +17,9 @@
  *   withLocalImages                      the server's preview HTML with each reserved
  *                                        preview.invalid address swapped for the admin's
  *                                        own copy of that picture
+ *   previewSize / previewCopy            that copy, scaled down: the preview never carries
+ *                                        the full upload
+ *   isLinkAddress                        what the rich-text link dialog accepts
  */
 
 export type NewsletterBlockType = 'heading' | 'text' | 'image' | 'button' | 'divider' | 'image_row' | 'spacer'
@@ -44,7 +47,7 @@ export type NewsletterBlock =
 /** A block in the editor: the stored shape plus a stable id for Vue's :key. */
 export type EditorBlock = NewsletterBlock & { uid: string }
 
-/** Mirrors BroadcastsController::PREVIEW_ORIGIN. RFC 2606 reserved: it never resolves. */
+/** Mirrors NewsletterPreviewMail::ORIGIN. RFC 2606 reserved: it never resolves. */
 export const PREVIEW_ORIGIN = 'https://preview.invalid'
 
 /** Mirrors NewsletterBlocks::MAX_BLOCKS / MAX_IMAGES / MAX_IMAGE_KB. The server enforces them. */
@@ -167,3 +170,63 @@ export const keyMinter = (prefix = 'img'): (() => string) => {
     let n = 0
     return () => `${prefix}-${++n}`
 }
+
+/**
+ * The widest the admin's own preview copy of a picture is kept: twice the email's
+ * 552px column, like NewsletterPicture::MAX_WIDTH on the server.
+ */
+export const PREVIEW_MAX_WIDTH = 1104
+
+/**
+ * A picture that cannot be scaled in the browser is shown from its original bytes
+ * only up to this size; above it the preview shows it as missing rather than paste
+ * megabytes of base64 into the frame on every refresh.
+ */
+export const PREVIEW_FALLBACK_MAX_BYTES = 1024 * 1024
+
+/** The size the preview copy is drawn at: never wider than `max`, never enlarged. */
+export const previewSize = (width: number, height: number, max = PREVIEW_MAX_WIDTH): { width: number; height: number } =>
+    width <= max
+        ? { width, height }
+        : { width: max, height: Math.max(1, Math.round(height * max / width)) }
+
+/**
+ * The admin's own copy of a picture, for the thumbnail and the preview: drawn at
+ * previewSize onto a white canvas (the email card's colour, since JPEG has no
+ * transparency) and encoded as JPEG at 0.8. The preview frame's srcdoc carries this
+ * copy on every refresh, so it must not be the 8 MB upload: ten of those would be
+ * over 100 MB of base64, re-decoded after every keystroke. The upload itself still
+ * sends the original file; the server makes its own copy for the email.
+ */
+export const previewCopy = async (file: Blob): Promise<string | undefined> => {
+    try {
+        const bitmap = await createImageBitmap(file)
+        const { width, height } = previewSize(bitmap.width, bitmap.height)
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('no 2d context')
+        context.fillStyle = '#ffffff'
+        context.fillRect(0, 0, width, height)
+        context.drawImage(bitmap, 0, 0, width, height)
+        bitmap.close()
+        return canvas.toDataURL('image/jpeg', 0.8)
+    } catch {
+        return file.size <= PREVIEW_FALLBACK_MAX_BYTES ? readAsDataUrl(file) : undefined
+    }
+}
+
+const readAsDataUrl = (file: Blob): Promise<string | undefined> => new Promise(resolve => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : undefined)
+    reader.onerror = () => resolve(undefined)
+    reader.readAsDataURL(file)
+})
+
+/**
+ * What the rich-text box's link dialog accepts: a full web address or a mail
+ * address. The server's RichText::safeHref is the boundary; this keeps the admin
+ * from making a link the email would silently turn back into plain words.
+ */
+export const isLinkAddress = (value: string): boolean => /^(https?:\/\/\S+|mailto:\S+@\S+)$/i.test(value.trim())

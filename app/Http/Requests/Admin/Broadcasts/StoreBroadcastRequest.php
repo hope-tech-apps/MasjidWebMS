@@ -6,7 +6,10 @@ use App\Enums\BroadcastAudience;
 use App\Enums\BroadcastChannel;
 use App\Http\Requests\Admin\Announcements\StoreAnnouncementRequest;
 use App\Http\Requests\BaseFormRequest;
+use App\Models\Masjid;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
+use App\Services\Broadcast\Newsletter\NewsletterPicture;
+use App\Services\Broadcast\Newsletter\NewsletterPreviewMail;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 use Illuminate\Support\Facades\Validator;
@@ -49,9 +52,18 @@ use Illuminate\Validation\Rule;
  * Blocks without the email channel are REFUSED rather than stored and ignored —
  * an admin who built a newsletter and ticked only push would otherwise be told
  * "sent" about a layout nobody received.
+ *
+ * With a layout, three more things are checked before anything is stored: the
+ * "More details" link must be a web address (the newsletter prints nothing
+ * else), every picture must be decodable within NewsletterPicture::MAX_PIXELS,
+ * and the rendered email must fit under Gmail's clipping size, or the
+ * unsubscribe footer would be hidden (NewsletterBlocks::MAX_EMAIL_BYTES).
  */
 class StoreBroadcastRequest extends BaseFormRequest
 {
+    public const NEWSLETTER_LINK_ERROR = 'The link under your message must be a full web address, starting https://. '
+        . 'The newsletter email shows no other kind of link.';
+
     /**
      * Composer field <- announcement field, for reporting a borrowed rule's
      * failure against the input the admin actually typed.
@@ -206,11 +218,60 @@ class StoreBroadcastRequest extends BaseFormRequest
                     );
                 }
 
-                foreach (NewsletterBlocks::errors($blocks, array_map('strval', array_keys($this->blockImageFiles()))) as $field => $message) {
+                $blockErrors = NewsletterBlocks::errors($blocks, array_map('strval', array_keys($this->blockImageFiles())));
+                foreach ($blockErrors as $field => $message) {
                     $validator->errors()->add($field, $message);
+                }
+
+                $link = $this->input('link');
+                if (
+                    is_string($link) && $link !== ''
+                    && ! $validator->errors()->has('link')
+                    && NewsletterBlocks::webUrl($link) === null
+                ) {
+                    $validator->errors()->add('link', self::NEWSLETTER_LINK_ERROR);
+                }
+
+                // Pictures and size are checked on a layout that is otherwise
+                // sendable (newsletterImages() reads the normalised blocks), so
+                // the admin fixes the blocks first and these only once.
+                if ($blockErrors === []) {
+                    foreach ($this->newsletterImages() as $key => $file) {
+                        if (($problem = NewsletterPicture::problem($file)) !== null) {
+                            $validator->errors()->add("block_images.{$key}", $problem);
+                        }
+                    }
+
+                    if (! $validator->errors()->hasAny(['title', 'body', 'link'])) {
+                        $this->checkEmailSize($validator);
+                    }
                 }
             }
         });
+    }
+
+    /**
+     * Refuse a newsletter whose email would be clipped by Gmail, which hides the
+     * unsubscribe footer. Measured on the same draft email the preview shows
+     * (NewsletterPreviewMail), so the size the admin was warned about there is
+     * the size refused here.
+     */
+    private function checkEmailSize(ValidatorContract $validator): void
+    {
+        $masjid = Masjid::find($this->route('masjid_id'));
+
+        $bytes = NewsletterPreviewMail::bytes(NewsletterPreviewMail::build(
+            orgName: (string) $masjid?->name,
+            title: (string) $this->input('title'),
+            body: (string) $this->input('body'),
+            link: $this->input('link') ?: null,
+            withImage: $this->file('image') instanceof UploadedFile,
+            blocks: (array) $this->newsletterBlocks(),
+        ));
+
+        if (($tooBig = NewsletterBlocks::emailSizeError($bytes)) !== null) {
+            $validator->errors()->add('blocks', $tooBig);
+        }
     }
 
     /**

@@ -26,9 +26,12 @@ namespace App\Services\Broadcast\Newsletter;
  * ## One validator, two callers
  *
  * `errors()` is used by the send request and by the preview endpoint, so the
- * preview cannot accept a layout the send would refuse. The only difference is
- * whether the uploads must be present: a preview renders before anything is
- * uploaded.
+ * preview reports exactly what the send would refuse, worded the same way. The
+ * send refuses on any error. The preview does not: it renders the blocks that
+ * are `complete()` and lists the errors beside them, because every new block
+ * starts empty and a preview that stopped at the first unfinished block would
+ * be frozen for most of the time an admin spends building a newsletter. Uploads
+ * are only required by the send; a preview renders before anything is uploaded.
  */
 final class NewsletterBlocks
 {
@@ -61,6 +64,23 @@ final class NewsletterBlocks
 
     /** Spacer heights in pixels. Named sizes rather than numbers so nobody sends 4000px of nothing. */
     public const SPACER_SIZES = ['small' => 12, 'medium' => 24, 'large' => 48];
+
+    /**
+     * The rendered email's size, in bytes of HTML, above which the send is refused.
+     *
+     * Gmail clips a message whose HTML is over about 102 KB and hides the rest
+     * behind "[Message clipped] View entire message". The unsubscribe footer is
+     * the LAST row of the email, so a clipped newsletter is one whose readers
+     * cannot see how to unsubscribe. The 102 KB figure is Gmail's observed
+     * behaviour, not a published limit (Unknown, needs investigation if Gmail
+     * changes it); 100,000 leaves room for what the size check cannot see: the
+     * real picture addresses, the reader's name and the unsubscribe token are a
+     * little longer than the preview's placeholders.
+     */
+    public const MAX_EMAIL_BYTES = 100_000;
+
+    /** Above this the preview warns that the email is getting close to being clipped. */
+    public const WARN_EMAIL_BYTES = 80_000;
 
     /**
      * Every problem with a proposed layout, keyed like Laravel's errors
@@ -172,6 +192,41 @@ final class NewsletterBlocks
     }
 
     /**
+     * The blocks that could be sent as they stand: each one passes `errors()` on
+     * its own (uploads not required). What the preview renders while the rest are
+     * still being filled in; the layout-wide limits (block and picture counts)
+     * are reported by `errors()`, not applied here.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public static function complete(mixed $blocks): array
+    {
+        if (! is_array($blocks) || ! array_is_list($blocks)) {
+            return [];
+        }
+
+        return array_values(array_filter($blocks, fn (mixed $block): bool => self::errors([$block], null) === []));
+    }
+
+    /** The refusal for an email of this many bytes, or null when it fits. */
+    public static function emailSizeError(int $bytes): ?string
+    {
+        return $bytes > self::MAX_EMAIL_BYTES
+            ? 'This newsletter is about ' . self::kilobytes($bytes) . ' KB. Gmail cuts off emails over about 100 KB, '
+                . 'which would hide the unsubscribe link at the bottom. Shorten the text, or split it into two newsletters.'
+            : null;
+    }
+
+    /** The early warning for an email of this many bytes, or null. */
+    public static function emailSizeWarning(int $bytes): ?string
+    {
+        return $bytes > self::WARN_EMAIL_BYTES && $bytes <= self::MAX_EMAIL_BYTES
+            ? 'This newsletter is about ' . self::kilobytes($bytes) . ' KB. Gmail cuts off emails over about 100 KB; '
+                . 'keep any further text short.'
+            : null;
+    }
+
+    /**
      * The canonical stored shape of a layout that passed `errors()`: trimmed
      * strings, sanitised text, defaults filled, unknown keys gone.
      *
@@ -271,10 +326,13 @@ final class NewsletterBlocks
     }
 
     /**
-     * An absolute http(s) address, or null.
+     * An absolute http(s) address with a host, or null.
      *
-     * Laravel's `url` rule accepts dozens of schemes, `javascript:` among them,
-     * which is why the newsletter does not use it for anything a reader clicks.
+     * Laravel's `url` rule accepts about 300 schemes (Str::isUrl's list), among
+     * them `data:`, `file:`, `blob:`, `view-source:`, `chrome:` and
+     * `ms-settings:`. `javascript:` is NOT one of them, but none of the others
+     * belongs behind a link in a newsletter either, which is why nothing a
+     * reader clicks is checked with that rule.
      */
     public static function webUrl(mixed $url): ?string
     {
@@ -358,6 +416,11 @@ final class NewsletterBlocks
     private static function align(array $block): string
     {
         return in_array($block['align'] ?? null, self::ALIGNS, true) ? $block['align'] : 'left';
+    }
+
+    private static function kilobytes(int $bytes): int
+    {
+        return (int) round($bytes / 1000);
     }
 
     /** A string, or null for anything else — an array where text belongs is refused, not cast. */

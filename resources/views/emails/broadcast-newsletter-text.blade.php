@@ -9,9 +9,9 @@
 
 {!! $blocksText !!}
 @endif
-@if ($link)
+@if ($detailsUrl)
 
-More details: {!! $link !!}
+More details: {!! $detailsUrl !!}
 @endif
 
 --

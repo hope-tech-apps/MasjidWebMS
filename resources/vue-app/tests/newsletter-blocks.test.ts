@@ -8,16 +8,20 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+    PREVIEW_MAX_WIDTH,
     PREVIEW_ORIGIN,
     appendNewsletter,
     imageKeysInUse,
+    isLinkAddress,
     keyMinter,
     moveBlock,
     newBlock,
+    previewSize,
     removeBlock,
     toPayload,
     withLocalImages,
     type EditorBlock,
+    type NewsletterBlock,
 } from '../core/helpers/newsletterBlocks.ts';
 
 const recorder = () => {
@@ -38,6 +42,29 @@ const layout = (): EditorBlock[] => {
 test('every picture slot gets its own upload key the moment it exists', () => {
     const blocks = layout();
     assert.deepEqual(imageKeysInUse(toPayload(blocks)), ['img-1', 'img-2', 'img-3']);
+});
+
+test('a picture used twice is uploaded once', () => {
+    const payload: NewsletterBlock[] = [
+        { type: 'image', image: 'img-1', alt: 'a', link: '' },
+        { type: 'image_row', images: [{ image: 'img-1', alt: 'b', link: '' }, { image: 'img-2', alt: 'c', link: '' }] },
+    ];
+    assert.deepEqual(imageKeysInUse(payload), ['img-1', 'img-2']);
+});
+
+test('the preview copy of a picture is never wider than twice the email column, and never enlarged', () => {
+    assert.equal(PREVIEW_MAX_WIDTH, 1104);
+    assert.deepEqual(previewSize(4032, 3024), { width: 1104, height: 828 });
+    assert.deepEqual(previewSize(600, 400), { width: 600, height: 400 });
+    assert.deepEqual(previewSize(20000, 1), { width: 1104, height: 1 });
+});
+
+test('the link dialog takes a web or mail address and nothing that runs', () => {
+    assert.equal(isLinkAddress(' https://example.test/a '), true);
+    assert.equal(isLinkAddress('mailto:office@example.test'), true);
+    for (const bad of ['javascript:alert(1)', 'JavaScript://%0aalert(1)', 'data:text/html,hi', 'vbscript:x', '/relative', 'example.test']) {
+        assert.equal(isLinkAddress(bad), false, bad);
+    }
 });
 
 test('reordering moves one block and never mutates the list it was given', () => {
@@ -109,6 +136,8 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const composer = readFileSync(join(root, 'views/dashboard/broadcasts/BroadcastComposerView.vue'), 'utf8');
 const editor = readFileSync(join(root, 'components/broadcasts/NewsletterEditor.vue'), 'utf8');
 const preview = readFileSync(join(root, 'components/broadcasts/NewsletterPreview.vue'), 'utf8');
+const richText = readFileSync(join(root, 'components/broadcasts/RichTextInput.vue'), 'utf8');
+const list = readFileSync(join(root, 'views/dashboard/broadcasts/BroadcastsView.vue'), 'utf8');
 
 test('the composer sends the layout through appendNewsletter, and only with email ticked', () => {
     assert.match(composer, /if \(newsletterActive\.value\) appendNewsletter\(fd, blocks\.value, blockFiles\.value\)/);
@@ -127,4 +156,39 @@ test('a send the server refuses (422) keeps the composer open; any other outcome
     assert.match(composer, /refused = e\.response\?\.status === 422/);
     assert.match(composer, /if \(!refused\) router\.push\('\/masjid\/broadcasts'\)/);
     assert.doesNotMatch(composer, /^\s*router\.push\('\/masjid\/broadcasts'\)\s*$/m);
+});
+
+test('the rich-text box pastes plain text only and writes only links into the admin page', () => {
+    assert.match(richText, /getData\('text\/plain'\)/);
+    assert.match(richText, /execCommand\('insertText'/);
+    assert.doesNotMatch(richText, /insertHTML/);
+    assert.doesNotMatch(richText, /getData\('text\/html'\)/);
+    assert.match(richText, /ALLOWED_ATTR: \['href'\]/);
+    assert.doesNotMatch(richText, /ADD_TAGS|ADD_ATTR/);
+    assert.match(richText, /inputValidator: \(value: string\) => isLinkAddress\(value\)/);
+});
+
+test('every picture asks for its description, and says it is required', () => {
+    assert.match(editor, /for: `\$\{p\.uid\}-alt` \}, 'Description \(required\)'\)/);
+    assert.match(editor, /id: `\$\{p\.uid\}-alt`/);
+});
+
+test('the preview keeps rendering an unfinished layout and shows its errors beside it', () => {
+    // 200 with errors: the server's list replaces the old one on every render.
+    assert.match(preview, /errors\.value = Object\.values\(\(data\?\.errors \?\? \{\}\)/);
+    assert.match(preview, /warnings\.value = Array\.isArray\(data\?\.warnings\)/);
+    // A refused request leaves the last render up, marked out of date.
+    assert.match(preview, /stale\.value = html\.value !== ''/);
+    assert.match(preview, /v-if="stale"/);
+});
+
+test('the preview frame carries scaled copies of the pictures, never the uploads', () => {
+    assert.match(composer, /const copy = await previewCopy\(file\)/);
+    assert.match(composer, /const copy = await previewCopy\(data\.file\)/);
+    assert.doesNotMatch(composer, /readAsDataURL/);
+});
+
+test('the broadcast list counts one block as one block', () => {
+    assert.match(list, /\(\{\{ b\.blocks\.length \}\} block\{\{ b\.blocks\.length === 1 \? '' : 's' \}\}\)/);
+    assert.doesNotMatch(list, /\{\{ b\.blocks\.length \}\} blocks/);
 });

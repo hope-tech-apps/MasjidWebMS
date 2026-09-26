@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -26,6 +27,16 @@ use Illuminate\Support\Facades\Schema;
  * (collection `broadcast_blocks`), referenced from a block by a key, so the
  * bytes live on the same disk and follow the same lifecycle as the broadcast's
  * one existing image.
+ *
+ * ## Rolling back
+ *
+ * `down()` REFUSES while any broadcast carries a layout. Dropping the column
+ * would destroy the record of every newsletter sent, and worse, a newsletter
+ * SCHEDULED before the rollback is delivered later by SendBroadcastJob: with
+ * the column gone the old code sends it as the plain single-image email, its
+ * blocks silently missing. Rolling back the CODE does not need this migration
+ * reversed — the extra nullable column is invisible to the old code. The
+ * procedure is in deploy/README.md ("Rolling back the newsletter layout").
  */
 return new class extends Migration
 {
@@ -38,6 +49,16 @@ return new class extends Migration
 
     public function down(): void
     {
+        $withLayout = DB::table('broadcasts')->whereNotNull('blocks')->count();
+
+        if ($withLayout > 0) {
+            throw new RuntimeException(
+                "{$withLayout} broadcast(s) carry a newsletter layout; dropping broadcasts.blocks would lose them, "
+                . 'and any still scheduled would be sent without their blocks. Roll back the code without this '
+                . 'migration (see deploy/README.md, "Rolling back the newsletter layout").'
+            );
+        }
+
         Schema::table('broadcasts', function (Blueprint $table) {
             $table->dropColumn('blocks');
         });

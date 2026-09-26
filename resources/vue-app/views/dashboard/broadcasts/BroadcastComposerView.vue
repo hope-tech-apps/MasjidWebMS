@@ -158,7 +158,7 @@ import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue'
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue'
 import NewsletterEditor from '@/components/broadcasts/NewsletterEditor.vue'
 import NewsletterPreview from '@/components/broadcasts/NewsletterPreview.vue'
-import { appendNewsletter, keyMinter, type EditorBlock } from '@/core/helpers/newsletterBlocks'
+import { appendNewsletter, keyMinter, previewCopy, type EditorBlock } from '@/core/helpers/newsletterBlocks'
 import LoadingButton from '@/components/form/LoadingButton.vue'
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
 import ApiService from '@/core/services/ApiService'
@@ -290,21 +290,26 @@ onBeforeMount(async () => {
         .catch((e: Error) => console.log('Fetch services error: ', e))
 })
 
-function onImageInputChange(data: UploadedImageInfo) {
+/** The composer image reaches the preview frame too, so it gets the same scaled copy. */
+async function onImageInputChange(data: UploadedImageInfo) {
     imageFile.value = data.file
-    composerImageSrc.value = data.src
+    composerImageSrc.value = undefined
+    if (!data.file) return
+    const copy = await previewCopy(data.file)
+    if (imageFile.value === data.file) composerImageSrc.value = copy
 }
 
-/** Keep the file for the send and a data URL for the thumbnail and the preview. */
-function onPickBlockImage({ key, file }: { key: string; file: File }) {
+/**
+ * Keep the original file for the send, and a scaled-down copy (previewCopy) for the
+ * thumbnail and the preview frame, which carries it again on every refresh.
+ */
+async function onPickBlockImage({ key, file }: { key: string; file: File }) {
     blockFiles.value = { ...blockFiles.value, [key]: file }
-    const reader = new FileReader()
-    reader.onload = () => {
-        if (typeof reader.result === 'string') {
-            blockImages.value = { ...blockImages.value, [key]: reader.result }
-        }
-    }
-    reader.readAsDataURL(file)
+    const copy = await previewCopy(file)
+    // A newer pick for the same slot may have landed while this one was drawing.
+    if (blockFiles.value[key] !== file) return
+    const { [key]: _previous, ...rest } = blockImages.value
+    blockImages.value = copy ? { ...rest, [key]: copy } : rest
 }
 
 async function onSubmit() {

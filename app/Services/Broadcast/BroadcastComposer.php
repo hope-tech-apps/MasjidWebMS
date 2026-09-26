@@ -9,6 +9,7 @@ use App\Models\Broadcast;
 use App\Models\BroadcastDelivery;
 use App\Models\Masjid;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
+use App\Services\Broadcast\Newsletter\NewsletterPicture;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -67,6 +68,30 @@ class BroadcastComposer
             ? Carbon::parse($attributes['scheduled_at'])
             : null;
 
+        // The newsletter's pictures are re-encoded BEFORE anything is written
+        // (NewsletterPicture: metadata stripped, resized, renamed), so a picture
+        // that fails to decode leaves no broadcast behind. Only keys the stored
+        // layout references are kept, so a stray upload never becomes an
+        // orphaned public file.
+        $pictures = [];
+        if (! empty($attributes['blocks']) && $blockImages !== []) {
+            $wanted = array_flip(NewsletterBlocks::imageKeys($attributes['blocks']));
+
+            try {
+                foreach ($blockImages as $key => $file) {
+                    if (isset($wanted[$key])) {
+                        $pictures[$key] = NewsletterPicture::prepare($file);
+                    }
+                }
+            } catch (\Throwable $e) {
+                foreach ($pictures as $picture) {
+                    @unlink($picture['path']);
+                }
+
+                throw $e;
+            }
+        }
+
         $broadcast = DB::transaction(function () use ($masjid, $attributes, $channels, $audience, $scheduledAt, $authorId): Broadcast {
             $broadcast = Broadcast::create([
                 // Explicit for the unbound caller (a console command, a system
@@ -120,17 +145,14 @@ class BroadcastComposer
         }
 
         // The newsletter's pictures follow the same rule, each tagged with the
-        // key its blocks name. Only keys the stored layout references are kept,
-        // so a stray upload never becomes an orphaned public file.
-        if (! empty($attributes['blocks']) && $blockImages !== []) {
-            $wanted = array_flip(NewsletterBlocks::imageKeys($attributes['blocks']));
-
-            foreach ($blockImages as $key => $file) {
-                if (! isset($wanted[$key])) {
-                    continue;
-                }
-
-                $broadcast->addMedia($file)
+        // key its blocks name. Spatie moves the prepared temporary file into the
+        // media disk under its generated name.
+        if ($pictures !== []) {
+            foreach ($pictures as $key => $picture) {
+                // (string): PHP turns a digits-only key such as "7" into an int.
+                $broadcast->addMedia($picture['path'])
+                    ->usingName((string) $key)
+                    ->usingFileName($picture['name'])
                     ->withCustomProperties([Broadcast::BLOCK_KEY_PROPERTY => (string) $key])
                     ->toMediaCollection(Broadcast::BLOCK_MEDIA_COLLECTION);
             }

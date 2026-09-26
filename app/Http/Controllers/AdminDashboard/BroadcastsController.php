@@ -7,11 +7,11 @@ use App\Enums\BroadcastChannel;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Broadcasts\PreviewNewsletterRequest;
 use App\Http\Requests\Admin\Broadcasts\StoreBroadcastRequest;
-use App\Mail\BroadcastMail;
 use App\Models\Broadcast;
 use App\Models\Masjid;
 use App\Services\Broadcast\BroadcastComposer;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
+use App\Services\Broadcast\Newsletter\NewsletterPreviewMail;
 use App\Support\Errors;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Symfony\Component\HttpFoundation\Response;
@@ -51,7 +51,7 @@ use Symfony\Component\HttpFoundation\Response;
 class BroadcastsController extends Controller
 {
     /** Reserved by RFC 2606: never resolves, so a preview image can only be the SPA's own copy. */
-    public const PREVIEW_ORIGIN = 'https://preview.invalid';
+    public const PREVIEW_ORIGIN = NewsletterPreviewMail::ORIGIN;
 
     public function __construct(private readonly BroadcastComposer $composer)
     {
@@ -141,8 +141,12 @@ class BroadcastsController extends Controller
      * by a copy of its layout in the SPA, so the preview cannot drift from the
      * inbox. Nothing is stored and nothing is sent. Pictures are not uploaded
      * until the admin sends, so each one is addressed at a reserved `.invalid`
-     * host the SPA swaps for its local copy of that file; a `.invalid` name
-     * never resolves, so nothing leaves the admin's browser to fetch it.
+     * host the SPA swaps for its local copy of that file (NewsletterPreviewMail).
+     *
+     * Always a 200 for a draft: the blocks that are complete are rendered, and
+     * `errors` lists what the send would still refuse — the same messages, from
+     * the same NewsletterBlocks::errors() — so the admin sees the current layout
+     * AND what is left to fix. `warnings` carries the early size warning.
      *
      * With no blocks this returns the ORIGINAL single-image email, because that
      * is what a send without blocks produces: the preview shows the truth rather
@@ -156,29 +160,41 @@ class BroadcastsController extends Controller
         $masjid = Masjid::findOrFail($masjid_id);
 
         $blocks = $request->newsletterBlocks();
-        $placeholders = [];
-        foreach (NewsletterBlocks::imageKeys($blocks) as $key) {
-            $placeholders[$key] = self::PREVIEW_ORIGIN . '/newsletter-image/' . $key;
-        }
+        $link = NewsletterBlocks::webUrl($request->input('link'));
 
-        $mail = new BroadcastMail(
+        $mail = NewsletterPreviewMail::build(
             orgName: (string) $masjid->name,
-            title: (string) ($request->input('title') ?: 'Your title'),
-            body: (string) ($request->input('body') ?: 'Your message.'),
-            link: $request->input('link') ?: null,
-            imageUrl: $request->input('with_image') === '1' ? self::PREVIEW_ORIGIN . '/composer-image' : null,
-            recipientName: null,
-            orgEmail: null,
-            unsubscribeUrl: self::PREVIEW_ORIGIN . '/unsubscribe',
-            unsubscribeOneClickUrl: null,
-            blocks: NewsletterBlocks::withImageUrls($blocks, $placeholders),
+            title: (string) $request->input('title'),
+            body: (string) $request->input('body'),
+            // Only a web address: that is all the newsletter prints
+            // (BroadcastMail::newsletterData), and all the SPA sends.
+            link: $link,
+            withImage: $request->input('with_image') === '1',
+            blocks: $blocks,
         );
+
+        $html = $mail->render();
+        $size = strlen($html);
+        $errors = $request->newsletterErrors();
+        $warnings = [];
+
+        if ($blocks !== []) {
+            if (($tooBig = NewsletterBlocks::emailSizeError($size)) !== null) {
+                $errors['blocks.size'] = $tooBig;
+            }
+            if (($nearly = NewsletterBlocks::emailSizeWarning($size)) !== null) {
+                $warnings[] = $nearly;
+            }
+        }
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'html' => $mail->render(),
+                'html' => $html,
                 'text' => $mail->textAlternative(),
+                'size' => $size,
+                'errors' => (object) $errors,
+                'warnings' => $warnings,
             ],
         ], Response::HTTP_OK);
     }

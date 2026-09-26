@@ -39,6 +39,7 @@
 import DOMPurify from 'dompurify'
 import { onMounted, ref } from 'vue'
 import { MSwal } from '@/core/plugins/SweetAlerts2'
+import { isLinkAddress } from '@/core/helpers/newsletterBlocks'
 
 const props = defineProps<{ modelValue: string; label: string }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -104,7 +105,7 @@ async function addLink() {
         showCancelButton: true,
         cancelButtonText: 'Cancel',
         confirmButtonText: 'Add link',
-        inputValidator: (value: string) => /^(https?:\/\/\S+|mailto:\S+@\S+)$/i.test(value.trim())
+        inputValidator: (value: string) => isLinkAddress(value)
             ? null
             : 'Enter a full web address starting https://, or mailto: and an email address.',
     })

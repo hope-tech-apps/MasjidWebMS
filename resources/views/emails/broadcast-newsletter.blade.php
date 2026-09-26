@@ -81,13 +81,13 @@
 
 {!! $blocksHtml !!}
 
-                    @if ($link)
+                    @if ($detailsUrl)
                         <tr>
                             <td class="nl-card nl-pad" style="padding:4px 24px 24px; background-color:#ffffff;">
                                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
                                     <tr>
                                         <td bgcolor="#1f7a41" style="background-color:#1f7a41; border-radius:8px;">
-                                            <a href="{{ $link }}" target="_blank" style="display:inline-block; padding:12px 24px; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; font-size:16px; font-weight:600; line-height:1.2; color:#ffffff; text-decoration:none; border-radius:8px;">More details</a>
+                                            <a href="{{ $detailsUrl }}" target="_blank" style="display:inline-block; padding:12px 24px; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; font-size:16px; font-weight:600; line-height:1.2; color:#ffffff; text-decoration:none; border-radius:8px;">More details</a>
                                         </td>
                                     </tr>
                                 </table>

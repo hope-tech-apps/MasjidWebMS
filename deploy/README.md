@@ -112,6 +112,47 @@ writes it.)
 `/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem`. If the
 app is ever relocated, update both lines in the unit and `daemon-reload`.
 
+## Rolling back the newsletter layout
+
+The broadcast newsletter layout (branch `feat/newsletter-blocks`, DECISIONS.md
+2026-09-25) added one nullable column, `broadcasts.blocks`. The code before it
+never reads that column, so **a rollback is a code rollback only: never run
+`migrate:rollback` over `2026_09_25_140000_add_blocks_to_broadcasts_table`.**
+Its `down()` refuses while any broadcast carries a layout, because dropping the
+column would erase the record of every newsletter sent.
+
+What a rollback does NOT protect by itself is a newsletter already **scheduled**.
+It waits on the queue as a `SendBroadcastJob`; when it fires, the old code sends
+the plain single-image email, with every block silently missing (the queued
+`BroadcastMail` carries a `blocks` property the old class ignores). Before
+rolling back:
+
+```sql
+SELECT id, masjid_id, title, scheduled_at, status
+FROM broadcasts
+WHERE blocks IS NOT NULL AND status IN ('scheduled', 'pending');
+```
+
+For each row, tell the organisation and hold its email before the old code is
+live; do not let it go out as the plain email. The dispatcher only attempts
+deliveries that are `pending` or `failed`, so holding the email leg is:
+
+```sql
+UPDATE broadcast_deliveries SET status = 'skipped'
+WHERE channel = 'email' AND status = 'pending' AND broadcast_id IN (/* the ids above */);
+```
+
+(The other channels of that broadcast still go out on schedule; they never
+carried the layout.) Also let the queue drain first: an email sent "now" is
+already on the `jobs` table as one `BroadcastMail` per recipient, each carrying
+its blocks, and the old worker would send those as the plain email too.
+
+```sql
+SELECT COUNT(*) FROM jobs WHERE payload LIKE '%BroadcastMail%';
+```
+
+Both results empty (or held) means the rollback is safe for newsletters.
+
 ## Scheduler cron
 
 `routes/console.php` schedules `sanctum:prune-expired --hours=24` daily (keeps

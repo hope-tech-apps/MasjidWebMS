@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Services\Broadcast\Newsletter\NewsletterBlocks;
 use App\Services\Broadcast\Newsletter\NewsletterRenderer;
 use App\Support\MailGreeting;
 use Illuminate\Bus\Queueable;
@@ -192,7 +193,19 @@ class BroadcastMail extends Mailable implements ShouldQueue
         return is_array($this->blocks) && $this->blocks !== [];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The newsletter's "More details" link goes through the same web-address
+     * check as every other link a reader clicks in it (NewsletterBlocks::webUrl).
+     * The request's `url` rule is not enough: it accepts `file:`, `data:`,
+     * `ms-settings:` and ~300 other schemes. The legacy email keeps printing the
+     * link exactly as before; it is frozen (BroadcastLegacyEmailUnchangedTest).
+     *
+     * Named `detailsUrl`, not `link`: a Mailable hands its PUBLIC properties to
+     * its view after the `with` data, so a `link` key here would be overwritten
+     * by the unchecked `$this->link`.
+     *
+     * @return array<string, mixed>
+     */
     private function newsletterData(): array
     {
         $renderer = new NewsletterRenderer();
@@ -201,7 +214,7 @@ class BroadcastMail extends Mailable implements ShouldQueue
             'orgName' => $this->orgName,
             'title' => $this->title,
             'body' => $this->body,
-            'link' => $this->link,
+            'detailsUrl' => NewsletterBlocks::webUrl($this->link),
             'imageUrl' => $this->imageUrl,
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'greeting' => MailGreeting::for($this->recipientName),

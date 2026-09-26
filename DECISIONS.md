@@ -3021,12 +3021,16 @@ into `emails.broadcast-newsletter` plus a text/plain part. Calls made where the 
   which read `MEDIA_COLLECTION` first) tagged `block_key`; the email's address comes from the public
   disk's configured URL, pinned to `SiteUrl` if the disk yields a path. No admin-typed image URL
   exists, so no newsletter can hotlink a tracker. SVG is refused (it can carry script). Limits:
-  10 pictures × 8 MB per send (inside production's 100M), not resized.
+  10 pictures × 8 MB per upload (inside production's 100M). The stored and emailed copy is
+  RE-ENCODED (review fix, below), not the upload.
 - **Rich text is parsed and re-written, never cleaned up.** `RichText` keeps only p/lists and
   strong/em/u/a (http, https, mailto); everything else is unwrapped or dropped with its content
   (`<img>` included). It runs on store AND on render, so a hand-edited row is held to the same rules.
-  The editor pastes as plain text. Button and picture links are http(s) only: Laravel's `url` rule
-  accepts `javascript:`, so `NewsletterBlocks::webUrl()` is used instead.
+  The editor pastes as plain text. Button and picture links are http(s) only, through
+  `NewsletterBlocks::webUrl()`: Laravel's `url` rule accepts ~300 schemes (`data:`, `file:`, `blob:`,
+  `view-source:`, `chrome:`, `ms-settings:` among them). An earlier version of this entry said it
+  accepts `javascript:`; it does not — `javascript` is not in `Str::isUrl`'s list — but the others
+  are no better behind a newsletter link.
 - **The live preview is the server's own render.** `POST /broadcasts/preview` builds the real
   `BroadcastMail` (stores nothing, sends nothing); unuploaded pictures are addressed at the reserved
   `https://preview.invalid/...` and the SPA swaps in its local copy (image data URLs only). With no
@@ -3044,6 +3048,30 @@ into `emails.broadcast-newsletter` plus a text/plain part. Calls made where the 
   after a 500 part of the send may already have gone and a second press would send it twice.
 - Not built: RTL/Arabic newsletter direction (`lang="en"`, left-aligned), saved templates or
   "duplicate last newsletter", campaign landing pages (Wix `/so/...`), per-link click tracking.
+- **Review fixes (same day).**
+  - *The preview is lenient.* It renders the blocks that are complete and returns 200 with the send's
+    own `errors` and a size `warning`; a 422 froze it, because every new block starts empty. The send
+    still refuses on any error.
+  - *Pictures are re-encoded before storage* (`NewsletterPicture`): EXIF/GPS stripped (orientation
+    applied first), at most 1104px wide (2 × the 552px column) at quality 80, stored under a generated
+    UUID name so a personal file name never reaches a public URL. Not a Spatie conversion: that is
+    written beside the original under a derived name, leaving the untouched original one URL edit
+    away. Animated GIFs are kept as uploaded (GD keeps one frame; GIF has no EXIF). Pictures over
+    36 megapixels are refused at the request, because GD holds every pixel and production PHP-FPM
+    has 128M (the decode raises the limit for its own duration, sized from the header).
+  - *Gmail clipping.* The rendered email must be ≤ 100,000 bytes of HTML (refused at send, warned in
+    the preview above 80,000): Gmail clips at ~102 KB (observed behaviour, not a published limit) and
+    the unsubscribe footer is the last row.
+  - *"More details" link.* The newsletter prints it only through `webUrl()`, and a send with blocks
+    refuses a non-web link. The legacy email and its rule are unchanged.
+  - *The admin's preview copy of each picture is scaled in the browser* (≤ 1104px JPEG) so the preview
+    frame does not carry megabytes of base64 on every refresh; the upload is still the original.
+  - *Rollback.* `broadcasts.blocks` is additive and the old code ignores it, so a rollback is a code
+    rollback only. The migration's `down()` now REFUSES while any row has blocks: dropping it loses
+    every sent layout, and a newsletter scheduled under the new code would be delivered by the old code
+    as the plain email with its blocks missing. Before rolling back, find those with
+    `SELECT id FROM broadcasts WHERE blocks IS NOT NULL AND status IN ('scheduled','pending')` and hold
+    or cancel them (`deploy/README.md`, "Rolling back the newsletter layout").
 Rationale: MEC sends weekly multi-block Wix campaigns (reports/cms.md §4) and the owner chose to
 build the layout before the domain move; the constraints above keep every existing sender's email
 unchanged and keep admin input from becoming markup in 2,800 inboxes.

@@ -23,11 +23,19 @@
             </div>
         </div>
 
+        <div v-if="stale" class="alert alert-secondary small m-3 mb-0" role="status">
+            The preview below is from before your latest changes and will update once these are fixed.
+        </div>
+
         <div v-if="errors.length" class="alert alert-warning small m-3 mb-0" role="status">
             <div class="fw-semibold mb-1">Fix these before sending:</div>
             <ul class="mb-0 ps-3">
                 <li v-for="(message, i) in errors" :key="i">{{ message }}</li>
             </ul>
+        </div>
+
+        <div v-if="warnings.length" class="alert alert-info small m-3 mb-0" role="status">
+            <div v-for="(message, i) in warnings" :key="i">{{ message }}</div>
         </div>
 
         <div class="p-3 d-flex justify-content-center">
@@ -50,11 +58,17 @@
  * Every edit (debounced) posts the composer's current title, message, link and
  * layout to POST /broadcasts/preview, which renders them through BroadcastMail —
  * the class that sends the email — and returns both parts. There is no second copy
- * of the email's markup in the SPA to drift from the inbox, and the server's 422
- * is shown here as the list of things to fix, worded as the send would word them.
+ * of the email's markup in the SPA to drift from the inbox.
+ *
+ * The server always renders what is finished and lists, in `errors`, what the send
+ * would still refuse (worded as the send words it), so the preview keeps following
+ * the layout while new blocks are still empty. `warnings` carries the early size
+ * warning. Only a request that is not a draft at all is refused; then the last
+ * render stays up and is marked out of date rather than passed off as current.
  *
  * Pictures have not been uploaded yet, so the server addresses each at a reserved
- * preview.invalid URL and withLocalImages swaps in the admin's own copy.
+ * preview.invalid URL and withLocalImages swaps in the admin's own scaled-down copy
+ * (previewCopy), never the full upload.
  *
  * Responses can arrive out of order when the admin types quickly; each request
  * carries a sequence number and only the newest is ever shown.
@@ -80,6 +94,9 @@ const width = ref<'wide' | 'phone'>('wide')
 const html = ref('')
 const text = ref<string | null>(null)
 const errors = ref<string[]>([])
+const warnings = ref<string[]>([])
+/** The frame shows an earlier render than the composer's current state. */
+const stale = ref(false)
 const loading = ref(false)
 
 let sequence = 0
@@ -95,7 +112,7 @@ async function refresh() {
     const fd = new FormData()
     fd.append('title', props.title)
     fd.append('body', props.body)
-    // An unfinished address would 422 the whole preview; the send checks it.
+    // An address still being typed is left out; the send checks it.
     if (/^https?:\/\/\S+$/i.test(props.link)) fd.append('link', props.link)
     fd.append('blocks', JSON.stringify(toPayload(props.blocks)))
     fd.append('with_image', props.composerImage ? '1' : '0')
@@ -103,9 +120,12 @@ async function refresh() {
     await ApiService.post(`/api/admin/masjids/${props.masjidId}/broadcasts/preview` as BackendApiRoute, fd)
         .then(res => {
             if (mine !== sequence) return
-            html.value = res.data?.data?.html ?? ''
-            text.value = res.data?.data?.text ?? null
-            errors.value = []
+            const data = res.data?.data
+            html.value = data?.html ?? ''
+            text.value = data?.text ?? null
+            errors.value = Object.values((data?.errors ?? {}) as Record<string, string>)
+            warnings.value = Array.isArray(data?.warnings) ? data.warnings : []
+            stale.value = false
         })
         .catch(e => {
             if (mine !== sequence) return
@@ -113,6 +133,8 @@ async function refresh() {
             errors.value = e?.response?.status === 422 && data && typeof data === 'object'
                 ? Object.values(data as Record<string, string[]>).flat()
                 : ['The preview could not be loaded. Your newsletter is not affected; try again in a moment.']
+            warnings.value = []
+            stale.value = html.value !== ''
         })
         .finally(() => {
             if (mine === sequence) loading.value = false

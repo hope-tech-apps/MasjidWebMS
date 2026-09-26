@@ -4,18 +4,21 @@ namespace App\Http\Requests\Admin\Broadcasts;
 
 use App\Http\Requests\BaseFormRequest;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
-use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 
 /**
  * What the composer's live preview posts while the admin is still typing.
  *
- * Deliberately looser than StoreBroadcastRequest in exactly two ways, both
- * because the admin is mid-edit rather than sending: title and body may be
- * empty, and pictures are not uploaded yet (the preview names them by key and
- * the SPA shows its own local copy). Everything else — every block rule, every
- * address check — is the SAME NewsletterBlocks::errors() the send runs, so the
- * preview cannot show a layout the send would refuse, and its 422 doubles as
- * live feedback on what still needs fixing.
+ * LENIENT, because the admin is mid-edit rather than sending: title and body
+ * may be empty, pictures are not uploaded yet (the preview names them by key
+ * and the SPA shows its own local copy), and an unfinished layout or link is
+ * not a 422. Every block starts empty, so a preview that refused incomplete
+ * blocks would stop updating for most of the time a newsletter is being built.
+ * The controller instead renders the blocks that are complete and returns the
+ * SAME NewsletterBlocks::errors() the send runs, as a list beside the email, so
+ * the preview still says exactly what the send would refuse.
+ *
+ * Only a request that is not a draft at all (a title longer than the column,
+ * a field of the wrong type) is refused here.
  */
 class PreviewNewsletterRequest extends BaseFormRequest
 {
@@ -31,7 +34,9 @@ class PreviewNewsletterRequest extends BaseFormRequest
         return [
             'title' => 'nullable|string|max:255',
             'body' => 'nullable|string',
-            'link' => 'nullable|url|max:2048',
+            // Checked by the controller as a web address and reported with the
+            // block errors; a link still being typed must not freeze the preview.
+            'link' => 'nullable|string|max:2048',
             'blocks' => 'nullable',
             // Only whether the composer image is attached; the file itself
             // stays in the browser.
@@ -39,20 +44,36 @@ class PreviewNewsletterRequest extends BaseFormRequest
         ];
     }
 
-    public function withValidator(ValidatorContract $validator): void
+    /**
+     * Everything the send would refuse in this layout, keyed like Laravel's
+     * errors (`blocks.3.alt`) — shown beside the preview, never a 422.
+     *
+     * @return array<string, string>
+     */
+    public function newsletterErrors(): array
     {
-        $validator->after(function (ValidatorContract $validator): void {
-            foreach (NewsletterBlocks::errors($this->input('blocks'), null) as $field => $message) {
-                $validator->errors()->add($field, $message);
-            }
-        });
+        $errors = NewsletterBlocks::errors($this->input('blocks'), null);
+
+        $link = $this->input('link');
+        if (
+            $this->input('blocks') !== null
+            && is_string($link) && trim($link) !== ''
+            && NewsletterBlocks::webUrl($link) === null
+        ) {
+            $errors['link'] = StoreBroadcastRequest::NEWSLETTER_LINK_ERROR;
+        }
+
+        return $errors;
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * The blocks that are finished, in their stored shape: what the preview
+     * renders while the rest are still being filled in.
+     *
+     * @return list<array<string, mixed>>
+     */
     public function newsletterBlocks(): array
     {
-        $blocks = $this->input('blocks');
-
-        return is_array($blocks) && $blocks !== [] ? NewsletterBlocks::normalize($blocks) : [];
+        return NewsletterBlocks::normalize(NewsletterBlocks::complete($this->input('blocks')));
     }
 }
