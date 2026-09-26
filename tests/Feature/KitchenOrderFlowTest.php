@@ -289,6 +289,31 @@ class KitchenOrderFlowTest extends TestCase
     }
 
     #[Test]
+    public function a_card_order_saved_when_stripe_fails_comes_back_with_its_uuid_so_the_customer_is_not_asked_to_order_again(): void
+    {
+        config(['app.debug' => false]);
+        $this->app->bind(MealOrderCheckoutService::class, fn ($app) => new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
+        {
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
+            }
+        });
+
+        $response = $this->placeOrder(['payment_method' => PaymentMethods::CARD], ['Origin' => self::SITE])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Your order is saved, but its card payment page could not be opened. Please try paying again from your order.');
+
+        // The renderer sends the customer to this order's page on a 422 that
+        // carries one (classifyKitchenPlace → savedUnpaid), never back to the form.
+        $order = MealOrder::withoutMasjidScope()->sole();
+        $response->assertJsonPath('data.order.uuid', $order->uuid);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        $this->assertNull($order->stripe_checkout_session_id);
+        Mail::assertNothingQueued();
+    }
+
+    #[Test]
     public function a_replacement_payment_page_from_the_board_also_returns_to_the_kitchen_order_page(): void
     {
         $order = $this->cardOrder();

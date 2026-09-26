@@ -69,6 +69,9 @@ class KitchenOrdersController extends Controller
 
     private const CARD_NEEDS_SITE = 'Card payment is available only on the organisation\'s own website.';
 
+    /** A saved card order whose Stripe page failed to open for a reason the customer cannot act on. */
+    private const PAGE_NOT_OPENED = 'Your order is saved, but its card payment page could not be opened. Please try paying again from your order.';
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private KitchenOrderNotifier $notifier
@@ -210,6 +213,15 @@ class KitchenOrdersController extends Controller
                     // reason, so the page sends the customer to that order, where
                     // "Pay now" tries again, instead of letting them place a second.
                     return response()->api(422, $e->getMessage(), [
+                        'order' => $this->serializeOrder($order, $menu, $masjid),
+                    ]);
+                } catch (\Throwable $e) {
+                    // Stripe itself failing (its ApiErrorException is not a
+                    // RuntimeException) leaves the same saved, unpaid order. Left
+                    // to the outer catch it came back as a bare 500 with no order,
+                    // the page kept the customer on the form, and trying again
+                    // placed a second order. Recorded, and answered like the above.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
                         'order' => $this->serializeOrder($order, $menu, $masjid),
                     ]);
                 }

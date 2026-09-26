@@ -3114,9 +3114,14 @@ such an order whoever calls it. The board shows "Card not paid yet" and no Confi
 (`kitchenBoard.ts cardNotPaid`). Known edge, accepted: a never-confirmed unpaid card order that
 the office CANCELLED cannot be restored (restore is "confirmed", which this refuses, and Mark paid
 and Payment link refuse a cancelled order); the office takes a new order instead. When Stripe page
-creation fails at placement the order already came back with the 422; the renderer now sends the
-customer to that order (`classifyKitchenPlace` → `savedUnpaid`, `?cancelled=1`) instead of letting
-them place a second.
+creation fails at placement the order comes back with the 422, and the renderer sends the customer
+to that order (`classifyKitchenPlace` → `savedUnpaid`, `?cancelled=1`) instead of letting them
+place a second. That held only for a refusal (a `RuntimeException`) until the gate pass: Stripe's
+own `ApiErrorException` extends `\Exception`, so a Stripe outage fell to the outer catch and came
+back as a bare 500 with no order. `store()` now answers any failure to open the page the same way,
+with a fixed public sentence (`PAGE_NOT_OPENED`) and the error recorded (`Errors::publicMessage`).
+The Friday door (`JummahLunchOrdersController::store`) has the same shape and is left for its own
+change.
 
 **Who hears about an order.** `officeRecipients` always includes the organisation's own address,
 first and as a visible To, beside at most five typed addresses (was: the typed list INSTEAD of
@@ -3132,7 +3137,8 @@ row for it (a method it stopped accepting keeps the word it was placed under).
 
 **Offline gifts record bank transfer.** `Donation::OFFLINE_PAYMENT_METHODS` is the one allow-list
 for both offline-gift requests (appended `bank_transfer`; the receipt says "Bank transfer"), and
-the pinning test now covers donations beside meals and forms.
+the pinning test now covers donations beside meals and forms; `DonationEditLegacyMethodTest` records and corrects a bank-transfer gift through the endpoints,
+so the requests themselves are pinned, not only the constant.
 
 **Registrations, a deviation from the plan's 6.2 verification, flagged to the owner.** The plan
 says "Mark as Paid on a form, a registration and a lunch order all record the method". The
