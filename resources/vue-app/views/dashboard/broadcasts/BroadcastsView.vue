@@ -16,7 +16,10 @@
                     <div class="d-flex align-items-start justify-content-between gap-3">
                         <div class="flex-grow-1">
                             <h5 class="card-title mb-1">{{ b.title }}</h5>
-                            <div class="text-muted small">{{ audienceLabel(b) }} · {{ sentWhen(b) }}</div>
+                            <div class="text-muted small">
+                                {{ audienceLabel(b) }} · {{ sentWhen(b) }}
+                                <template v-if="b.blocks?.length"> · Newsletter email ({{ b.blocks.length }} block{{ b.blocks.length === 1 ? '' : 's' }})</template>
+                            </div>
                         </div>
                         <span :class="['badge', statusBadge(b.status).klass]">{{ statusBadge(b.status).label }}</span>
                     </div>

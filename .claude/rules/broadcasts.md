@@ -178,6 +178,52 @@ audiences carry guardian-consent rules (`.claude/rules/groups.md`) that an
 interest toggle does not, and that deserve their own task rather than a quiet
 inheritance.
 
+## The newsletter layout is EMAIL's, and the legacy email is frozen
+
+A broadcast may carry `blocks` (heading, text, image, button, divider,
+image_row, spacer) that only the EMAIL renders — `App\Services\Broadcast\Newsletter\`
+(`NewsletterBlocks` = schema + validation, `RichText` = the allowlist parser,
+`NewsletterRenderer` = table rows + text part) into `emails.broadcast-newsletter`.
+
+- **No blocks ⇒ `emails.broadcast`, byte for byte, no text part.** Pinned against
+  `tests/fixtures/broadcast-e4c7fc48/`. Never edit that fixture to make a test pass;
+  a change to the legacy email is a decision, recorded in DECISIONS.md first.
+- **Blocks require the email channel** (422 otherwise). Title and body stay required.
+- **Pictures are uploads, never URLs**: `block_images[key]` → media collection
+  `Broadcast::BLOCK_MEDIA_COLLECTION` with the `block_key` property, resolved by
+  `Broadcast::newsletterBlocks()`. Do not add an image-URL field: it would let a
+  newsletter hotlink a tracking pixel into every inbox. A `src` found in a stored
+  block is ignored; only the broadcast's own media can address a picture.
+- **The stored picture is a re-encoded copy, never the upload** (`NewsletterPicture`):
+  EXIF/GPS gone, at most 1104px wide (2 × the 552px column), under a generated file
+  name. Not a Spatie conversion: a conversion sits next to the original under a name
+  derived from it, which would leave the original, metadata included, one URL edit
+  away. Pictures over 36 megapixels are refused at the request, before GD would try
+  to hold them in memory.
+- **Rich text is re-parsed on store AND render.** Adding an allowed tag or scheme is
+  a change to `RichText` plus a case in `NewsletterSanitisationTest`, never a regex.
+- **Reader-clickable addresses use `NewsletterBlocks::webUrl()`**, not Laravel's
+  `url` rule. That rule accepts ~300 schemes (`Str::isUrl`), including `data:`,
+  `file:`, `blob:`, `view-source:`, `chrome:` and `ms-settings:`; it does NOT accept
+  `javascript:`, but nothing on that list belongs behind a newsletter link either.
+  This covers the "More details" link too: the newsletter prints it only when it is
+  a web address, and a send with blocks refuses any other.
+- **The rendered email must stay under Gmail's clip** (~102 KB, observed, not
+  published): the unsubscribe footer is the last row, so a clipped newsletter hides
+  it. The send refuses over `NewsletterBlocks::MAX_EMAIL_BYTES` (100,000); the
+  preview warns over 80,000. Both measure `NewsletterPreviewMail`, so they agree.
+- **The preview is `BroadcastMail` itself** (`POST .../broadcasts/preview`); the SPA
+  holds no copy of the email's markup. Changing the markup means regenerating
+  `tests/fixtures/newsletter/` with `UPDATE_SNAPSHOTS=1` and reading its diff.
+- **The preview is lenient; the send is not.** The preview renders the blocks that
+  are `NewsletterBlocks::complete()` and returns 200 with `errors` (the send's own
+  messages) and `warnings`. A 422 from the preview would freeze it, because every
+  new block starts empty.
+- **Rollback:** `broadcasts.blocks` is additive; roll back the code, never the
+  migration while a layout is stored (its `down()` refuses). A newsletter
+  SCHEDULED under the new code would be sent by the old code as the plain email
+  without its blocks, so hold or cancel those first (`deploy/README.md`).
+
 ## Adding a channel
 
 1. A case on `App\Enums\BroadcastChannel` (+ `isAddressable()` / `readsContacts()`).

@@ -5,6 +5,8 @@ namespace App\Models;
 use App\Enums\BroadcastAudience;
 use App\Enums\BroadcastChannel;
 use App\Models\Concerns\BelongsToMasjid;
+use App\Services\Broadcast\Newsletter\NewsletterBlocks;
+use App\Support\SiteUrl;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -54,6 +56,20 @@ class Broadcast extends Model implements HasMedia
     /** Media collection holding the single optional composer image. */
     public const MEDIA_COLLECTION = 'broadcasts';
 
+    /**
+     * Media collection holding the newsletter layout's pictures, each tagged
+     * with the `block_key` custom property its image blocks name.
+     *
+     * A SEPARATE collection from the composer image on purpose: the announcement
+     * and push channels take "the broadcast's image" with getFirstMedia on
+     * MEDIA_COLLECTION, and a newsletter picture must never become the feed's
+     * picture or a push's big_picture by landing first in a shared collection.
+     */
+    public const BLOCK_MEDIA_COLLECTION = 'broadcast_blocks';
+
+    /** Custom property on a block picture's media row naming its upload key. */
+    public const BLOCK_KEY_PROPERTY = 'block_key';
+
     /** Composed, nothing attempted yet. */
     public const STATUS_PENDING = 'pending';
 
@@ -74,6 +90,7 @@ class Broadcast extends Model implements HasMedia
         'created_by_user_id',
         'title',
         'body',
+        'blocks',
         'link',
         'starts_on',
         'ends_on',
@@ -94,6 +111,7 @@ class Broadcast extends Model implements HasMedia
             'scheduled_at' => 'datetime',
             'dispatched_at' => 'datetime',
             'audience_contact_ids' => 'array',
+            'blocks' => 'array',
         ];
     }
 
@@ -117,6 +135,55 @@ class Broadcast extends Model implements HasMedia
     public function imageUrl(): ?string
     {
         return $this->getFirstMediaUrl(self::MEDIA_COLLECTION) ?: null;
+    }
+
+    /**
+     * The newsletter layout ready to render, or null for a broadcast without one.
+     *
+     * Each image key is swapped for the absolute address of the picture this
+     * broadcast stored under it. Null — not an empty list — for a broadcast
+     * with no blocks, because null is what sends the original single-image
+     * email unchanged (BroadcastMail).
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    public function newsletterBlocks(): ?array
+    {
+        $blocks = $this->blocks;
+
+        if (! is_array($blocks) || $blocks === []) {
+            return null;
+        }
+
+        return NewsletterBlocks::withImageUrls(array_values($blocks), $this->blockImageUrls());
+    }
+
+    /**
+     * key => absolute URL of every newsletter picture on this broadcast.
+     *
+     * The address comes from the public disk's configured URL (never from the
+     * request that happens to be running — .claude/rules/generated-urls.md: an
+     * emailed link outlives its request forever). A disk configured without a
+     * host yields a path, which is pinned to APP_URL here rather than sent as a
+     * relative address that no mail client can resolve.
+     *
+     * @return array<string, string>
+     */
+    public function blockImageUrls(): array
+    {
+        $urls = [];
+
+        foreach ($this->getMedia(self::BLOCK_MEDIA_COLLECTION) as $media) {
+            $key = $media->getCustomProperty(self::BLOCK_KEY_PROPERTY);
+            if (! is_string($key) || $key === '') {
+                continue;
+            }
+
+            $url = $media->getUrl();
+            $urls[$key] = preg_match('#^https?://#i', $url) === 1 ? $url : SiteUrl::to($url);
+        }
+
+        return $urls;
     }
 
     /** Absolute filesystem path of the composer image, for channels that copy it. */

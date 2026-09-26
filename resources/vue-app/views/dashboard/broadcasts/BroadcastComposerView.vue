@@ -43,6 +43,31 @@
                 <div v-if="form.channels.length === 0" class="error-message">Choose at least one channel.</div>
             </div>
 
+            <!-- Newsletter layout: email only -->
+            <div v-if="form.channels.includes('email')" class="border rounded p-3 d-flex flex-column gap-3">
+                <div class="form-check form-switch mb-0">
+                    <input id="use-newsletter" v-model="useNewsletter" class="form-check-input" type="checkbox" role="switch">
+                    <label class="form-check-label ms-2" for="use-newsletter">
+                        <span class="fw-semibold">Newsletter layout for the email</span>
+                        <span class="text-muted small d-block">
+                            Add headings, text, pictures, buttons and dividers under your message. Only the email
+                            uses them; the other channels send the title and message above.
+                        </span>
+                    </label>
+                </div>
+
+                <div v-if="useNewsletter" class="row g-3">
+                    <div class="col-12 col-xl-6">
+                        <NewsletterEditor v-model="blocks" :images="blockImages" :next-key="nextKey" @pick="onPickBlockImage" />
+                    </div>
+                    <div class="col-12 col-xl-6">
+                        <NewsletterPreview :masjid-id="masjidStore.masjid?.id" :title="form.title" :body="form.body"
+                            :link="form.link" :blocks="blocks" :images="blockImages"
+                            :composer-image="imageFile ? composerImageSrc : undefined" />
+                    </div>
+                </div>
+            </div>
+
             <!-- Announcement leg needs a picture and a run of dates -->
             <div v-if="hasAnnouncement" class="border rounded p-3 d-flex flex-column gap-3">
                 <div class="fw-semibold">Announcement details</div>
@@ -156,6 +181,9 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods'
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue'
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue'
+import NewsletterEditor from '@/components/broadcasts/NewsletterEditor.vue'
+import NewsletterPreview from '@/components/broadcasts/NewsletterPreview.vue'
+import { appendNewsletter, keyMinter, previewCopy, type EditorBlock } from '@/core/helpers/newsletterBlocks'
 import LoadingButton from '@/components/form/LoadingButton.vue'
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
 import ApiService from '@/core/services/ApiService'
@@ -198,8 +226,22 @@ const availableChannels = computed(() => CHANNELS.filter(c => !c.module || !modu
 
 const isLoading = ref(false)
 const imageFile = ref<File | undefined>(undefined)
+const composerImageSrc = ref<string | undefined>(undefined)
 const services = ref<Service[]>([])
 const tags = ref<ContactTag[]>([])
+
+/**
+ * The newsletter layout. Blocks are only sent when the email channel is ticked and
+ * the switch is on — the server refuses a layout without email rather than store
+ * one nobody receives — and a send without blocks is exactly the request it always
+ * was, which the server answers with the original single-image email.
+ */
+const useNewsletter = ref(false)
+const blocks = ref<EditorBlock[]>([])
+const blockFiles = ref<Record<string, File>>({})
+const blockImages = ref<Record<string, string>>({})
+const nextKey = keyMinter()
+const newsletterActive = computed(() => form.value.channels.includes('email') && useNewsletter.value && blocks.value.length > 0)
 
 const form = ref({
     title: '',
@@ -287,8 +329,26 @@ onBeforeMount(async () => {
     }
 })
 
-function onImageInputChange(data: UploadedImageInfo) {
+/** The composer image reaches the preview frame too, so it gets the same scaled copy. */
+async function onImageInputChange(data: UploadedImageInfo) {
     imageFile.value = data.file
+    composerImageSrc.value = undefined
+    if (!data.file) return
+    const copy = await previewCopy(data.file)
+    if (imageFile.value === data.file) composerImageSrc.value = copy
+}
+
+/**
+ * Keep the original file for the send, and a scaled-down copy (previewCopy) for the
+ * thumbnail and the preview frame, which carries it again on every refresh.
+ */
+async function onPickBlockImage({ key, file }: { key: string; file: File }) {
+    blockFiles.value = { ...blockFiles.value, [key]: file }
+    const copy = await previewCopy(file)
+    // A newer pick for the same slot may have landed while this one was drawing.
+    if (blockFiles.value[key] !== file) return
+    const { [key]: _previous, ...rest } = blockImages.value
+    blockImages.value = copy ? { ...rest, [key]: copy } : rest
 }
 
 async function onSubmit() {
@@ -309,8 +369,9 @@ async function onSubmit() {
             ? `everyone tagged "${tags.value.find(t => String(t.id) === String(form.value.tag_id))?.name ?? 'that tag'}"`
             : 'everyone'
     const when = form.value.scheduled_at ? 'This will be scheduled.' : 'This sends immediately and cannot be recalled.'
+    const layout = newsletterActive.value ? ` The email uses the newsletter layout (${blocks.value.length} block${blocks.value.length === 1 ? '' : 's'}).` : ''
 
-    const confirmed = await QSwal.fire('Confirm', `Send "${form.value.title}" to ${who} via ${names}? ${when}`, 'question')
+    const confirmed = await QSwal.fire('Confirm', `Send "${form.value.title}" to ${who} via ${names}?${layout} ${when}`, 'question')
     if (!confirmed.isConfirmed) {
         isLoading.value = false
         return
@@ -319,6 +380,7 @@ async function onSubmit() {
     const fd = new FormData()
     broadcastFields(form.value, hasAnnouncement.value).forEach(([name, value]) => fd.append(name, value))
     if (imageFile.value) fd.append('image', imageFile.value)
+    if (newsletterActive.value) appendNewsletter(fd, blocks.value, blockFiles.value)
 
     let endpoint: BackendApiRoute | '' = ''
     if (masjidStore.masjid?.id) {
@@ -326,6 +388,12 @@ async function onSubmit() {
     }
 
     const swal: SweetAlertOptions = { title: 'Info', text: '', icon: 'info' }
+    // A 422 means the server refused the request before storing anything, so the
+    // admin stays on the form to fix it. Leaving would throw away a newsletter that
+    // may have taken an hour to lay out. Any other failure still leaves, as it always
+    // has: after a 500 part of the send may have gone, and a second press would
+    // send it twice.
+    let refused = false
     await ApiService.post(endpoint as BackendApiRoute, fd)
         .then(res => {
             if (res.data?.status === 'success') {
@@ -344,7 +412,8 @@ async function onSubmit() {
             }
         })
         .catch((e: AxiosError<BackendResponseData>) => {
-            swal.title = e.message
+            refused = e.response?.status === 422
+            swal.title = refused ? 'Not sent yet' : e.message
             swal.text = getMessageFromObj(e)
             swal.icon = 'error'
         })
@@ -352,7 +421,7 @@ async function onSubmit() {
             await store.fetchBroadcastsPaginated(1)
             await MSwal.fire(swal)
             isLoading.value = false
-            router.push('/masjid/broadcasts')
+            if (!refused) router.push('/masjid/broadcasts')
         })
 }
 </script>

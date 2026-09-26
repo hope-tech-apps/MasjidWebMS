@@ -8,6 +8,8 @@ use App\Jobs\SendBroadcastJob;
 use App\Models\Broadcast;
 use App\Models\BroadcastDelivery;
 use App\Models\Masjid;
+use App\Services\Broadcast\Newsletter\NewsletterBlocks;
+use App\Services\Broadcast\Newsletter\NewsletterPicture;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -47,8 +49,10 @@ class BroadcastComposer
     /**
      * Compose a broadcast and its pending per-channel deliveries.
      *
-     * @param  array<string, mixed>  $attributes  Validated payload.
+     * @param  array<string, mixed>  $attributes  Validated payload; `blocks` is the
+     *                                            normalised newsletter layout, if any.
      * @param  array<int, BroadcastChannel>  $channels  Channels opted in for this send.
+     * @param  array<string, UploadedFile>  $blockImages  The layout's pictures, by upload key.
      */
     public function compose(
         Masjid $masjid,
@@ -56,12 +60,37 @@ class BroadcastComposer
         array $channels,
         ?UploadedFile $image = null,
         ?int $authorId = null,
+        array $blockImages = [],
     ): Broadcast {
         $audience = BroadcastAudience::tryFrom((string) ($attributes['audience'] ?? '')) ?? BroadcastAudience::EVERYONE;
 
         $scheduledAt = ! empty($attributes['scheduled_at'])
             ? Carbon::parse($attributes['scheduled_at'])
             : null;
+
+        // The newsletter's pictures are re-encoded BEFORE anything is written
+        // (NewsletterPicture: metadata stripped, resized, renamed), so a picture
+        // that fails to decode leaves no broadcast behind. Only keys the stored
+        // layout references are kept, so a stray upload never becomes an
+        // orphaned public file.
+        $pictures = [];
+        if (! empty($attributes['blocks']) && $blockImages !== []) {
+            $wanted = array_flip(NewsletterBlocks::imageKeys($attributes['blocks']));
+
+            try {
+                foreach ($blockImages as $key => $file) {
+                    if (isset($wanted[$key])) {
+                        $pictures[$key] = NewsletterPicture::prepare($file);
+                    }
+                }
+            } catch (\Throwable $e) {
+                foreach ($pictures as $picture) {
+                    @unlink($picture['path']);
+                }
+
+                throw $e;
+            }
+        }
 
         $broadcast = DB::transaction(function () use ($masjid, $attributes, $channels, $audience, $scheduledAt, $authorId): Broadcast {
             $broadcast = Broadcast::create([
@@ -73,6 +102,9 @@ class BroadcastComposer
                 'title' => $attributes['title'],
                 'body' => $attributes['body'],
                 'link' => $attributes['link'] ?? null,
+                // Written only when there is a layout, so a broadcast without
+                // one is created with exactly the attributes it always had.
+                ...(! empty($attributes['blocks']) ? ['blocks' => $attributes['blocks']] : []),
                 'starts_on' => $attributes['starts_on'] ?? null,
                 'ends_on' => $attributes['ends_on'] ?? null,
                 'audience' => $audience->value,
@@ -118,6 +150,22 @@ class BroadcastComposer
             $broadcast->refresh();
         }
 
+        // The newsletter's pictures follow the same rule, each tagged with the
+        // key its blocks name. Spatie moves the prepared temporary file into the
+        // media disk under its generated name.
+        if ($pictures !== []) {
+            foreach ($pictures as $key => $picture) {
+                // (string): PHP turns a digits-only key such as "7" into an int.
+                $broadcast->addMedia($picture['path'])
+                    ->usingName((string) $key)
+                    ->usingFileName($picture['name'])
+                    ->withCustomProperties([Broadcast::BLOCK_KEY_PROPERTY => (string) $key])
+                    ->toMediaCollection(Broadcast::BLOCK_MEDIA_COLLECTION);
+            }
+
+            $broadcast->refresh();
+        }
+
         return $broadcast;
     }
 
@@ -126,6 +174,7 @@ class BroadcastComposer
      *
      * @param  array<string, mixed>  $attributes
      * @param  array<int, BroadcastChannel>  $channels
+     * @param  array<string, UploadedFile>  $blockImages
      */
     public function send(
         Masjid $masjid,
@@ -133,8 +182,9 @@ class BroadcastComposer
         array $channels,
         ?UploadedFile $image = null,
         ?int $authorId = null,
+        array $blockImages = [],
     ): Broadcast {
-        $broadcast = $this->compose($masjid, $attributes, $channels, $image, $authorId);
+        $broadcast = $this->compose($masjid, $attributes, $channels, $image, $authorId, $blockImages);
 
         if ($this->isFuture($broadcast->scheduled_at)) {
             SendBroadcastJob::dispatch($broadcast->id)->delay($broadcast->scheduled_at);

@@ -3452,3 +3452,81 @@ pull adds the two columns: donations unchanged (339, $27,464.00); registrations 
 cancelled) $12,856.68, one fewer historical offering (MEC Community Connect); order-only 41 lines
 $3,341.56 ($3,340.00 of lines and $1.56 of Wix fees on the five paid food purchases); total still
 $43,662.24.
+
+## 2026-09-25 — Broadcast newsletter layout (MEC migration, "Build rich layout first")
+Decision: a broadcast's EMAIL can carry an ordered list of blocks — heading, rich text, picture
+(alt text required, optional link), button, divider, two pictures side by side, space — stored as
+ONE nullable JSON column `broadcasts.blocks`, rendered by `App\Services\Broadcast\Newsletter\*`
+into `emails.broadcast-newsletter` plus a text/plain part. Calls made where the brief was silent:
+- **One JSON column, not a child table.** A broadcast is never edited after composing, so blocks
+  are only ever read and written whole and in order; a table would add ordering columns, a second
+  write in the compose transaction and a guessable id per block for no query anyone runs.
+- **The legacy email is a separate, untouched template.** A broadcast without blocks renders
+  `emails.broadcast` exactly as before and gains NO text part — pinned byte for byte against the
+  blade frozen at e4c7fc48 (`BroadcastLegacyEmailUnchangedTest`, committed before any change).
+  Adding the text part to legacy mail too would be a deliverability win but changes what every
+  existing sender sends; it is a one-line change in `BroadcastMail::content()` if the owner wants it.
+- **Title and body stay required.** They are what the feed, push, the board and SMS carry; in the
+  newsletter email the body is the opening paragraph under the greeting, then the blocks, then the
+  existing "More details" link, then the unchanged unsubscribe footer. The composer image, when one
+  is attached, stays the email's top picture (alt = the title).
+- **Blocks without the email channel are refused (422)**, not stored and ignored.
+- **Pictures are uploaded with the send, never addressed by URL.** `block_images[<key>]` files become
+  media rows in a NEW collection `broadcast_blocks` (so one never becomes the feed or push picture,
+  which read `MEDIA_COLLECTION` first) tagged `block_key`; the email's address comes from the public
+  disk's configured URL, pinned to `SiteUrl` if the disk yields a path. No admin-typed image URL
+  exists, so no newsletter can hotlink a tracker. SVG is refused (it can carry script). Limits:
+  10 pictures × 8 MB per upload (inside production's 100M). The stored and emailed copy is
+  RE-ENCODED (review fix, below), not the upload.
+- **Rich text is parsed and re-written, never cleaned up.** `RichText` keeps only p/lists and
+  strong/em/u/a (http, https, mailto); everything else is unwrapped or dropped with its content
+  (`<img>` included). It runs on store AND on render, so a hand-edited row is held to the same rules.
+  The editor pastes as plain text. Button and picture links are http(s) only, through
+  `NewsletterBlocks::webUrl()`: Laravel's `url` rule accepts ~300 schemes (`data:`, `file:`, `blob:`,
+  `view-source:`, `chrome:`, `ms-settings:` among them). An earlier version of this entry said it
+  accepts `javascript:`; it does not — `javascript` is not in `Str::isUrl`'s list — but the others
+  are no better behind a newsletter link.
+- **The live preview is the server's own render.** `POST /broadcasts/preview` builds the real
+  `BroadcastMail` (stores nothing, sends nothing); unuploaded pictures are addressed at the reserved
+  `https://preview.invalid/...` and the SPA swaps in its local copy (image data URLs only). With no
+  blocks it returns the legacy email, because that is what the send would produce. Shown in an iframe
+  with an empty `sandbox`.
+- **Email-client safety:** tables only, inline styles on every element, a declared background on
+  every cell (inverting dark modes), `color-scheme` meta + a `prefers-color-scheme`/Outlook.com
+  `[data-ogsc]` palette as an enhancement, MSO ghost table for Outlook's width, two-picture rows stack
+  under 620px. The accent is #1f7a41, darker than the legacy #2f9e57, because white text on #2f9e57 is
+  ~3.3:1 and fails WCAG AA; the legacy email keeps its colour.
+- **Reorder is up/down buttons**, reachable by keyboard and screen reader, not drag alone.
+- **A refused send (422) keeps the composer open.** Before, the composer left for the list after
+  ANY outcome, which with a newsletter would throw away the whole layout over one missing alt text.
+  A 422 stored nothing, so staying is safe; every other failure still leaves as before, because
+  after a 500 part of the send may already have gone and a second press would send it twice.
+- Not built: RTL/Arabic newsletter direction (`lang="en"`, left-aligned), saved templates or
+  "duplicate last newsletter", campaign landing pages (Wix `/so/...`), per-link click tracking.
+- **Review fixes (same day).**
+  - *The preview is lenient.* It renders the blocks that are complete and returns 200 with the send's
+    own `errors` and a size `warning`; a 422 froze it, because every new block starts empty. The send
+    still refuses on any error.
+  - *Pictures are re-encoded before storage* (`NewsletterPicture`): EXIF/GPS stripped (orientation
+    applied first), at most 1104px wide (2 × the 552px column) at quality 80, stored under a generated
+    UUID name so a personal file name never reaches a public URL. Not a Spatie conversion: that is
+    written beside the original under a derived name, leaving the untouched original one URL edit
+    away. Animated GIFs are kept as uploaded (GD keeps one frame; GIF has no EXIF). Pictures over
+    36 megapixels are refused at the request, because GD holds every pixel and production PHP-FPM
+    has 128M (the decode raises the limit for its own duration, sized from the header).
+  - *Gmail clipping.* The rendered email must be ≤ 100,000 bytes of HTML (refused at send, warned in
+    the preview above 80,000): Gmail clips at ~102 KB (observed behaviour, not a published limit) and
+    the unsubscribe footer is the last row.
+  - *"More details" link.* The newsletter prints it only through `webUrl()`, and a send with blocks
+    refuses a non-web link. The legacy email and its rule are unchanged.
+  - *The admin's preview copy of each picture is scaled in the browser* (≤ 1104px JPEG) so the preview
+    frame does not carry megabytes of base64 on every refresh; the upload is still the original.
+  - *Rollback.* `broadcasts.blocks` is additive and the old code ignores it, so a rollback is a code
+    rollback only. The migration's `down()` now REFUSES while any row has blocks: dropping it loses
+    every sent layout, and a newsletter scheduled under the new code would be delivered by the old code
+    as the plain email with its blocks missing. Before rolling back, find those with
+    `SELECT id FROM broadcasts WHERE blocks IS NOT NULL AND status IN ('scheduled','pending')` and hold
+    or cancel them (`deploy/README.md`, "Rolling back the newsletter layout").
+Rationale: MEC sends weekly multi-block Wix campaigns (reports/cms.md §4) and the owner chose to
+build the layout before the domain move; the constraints above keep every existing sender's email
+unchanged and keep admin input from becoming markup in 2,800 inboxes.

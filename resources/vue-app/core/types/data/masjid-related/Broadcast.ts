@@ -1,4 +1,5 @@
 import { Media } from "@/core/types/data/Media"
+import type { NewsletterBlock } from "@/core/helpers/newsletterBlocks"
 
 /** The five things one compose action can reach. */
 export type BroadcastChannel = 'announcement' | 'push' | 'signage' | 'email' | 'sms'
@@ -44,6 +45,8 @@ export type Broadcast = {
     masjid_id: number;
     title: string;
     body: string;
+    /** The email's newsletter layout; null for a broadcast sent as the original single-image email. */
+    blocks?: NewsletterBlock[] | null;
     link: string | null;
     audience: BroadcastAudience;
     audience_contact_ids: number[] | null;
