@@ -3694,3 +3694,150 @@ R05; P1, P2), each shown to fail with its mutant applied. The renderer's wall-cl
 `TZ=America/New_York` itself, so it pins `timeZone: 'UTC'` on a UTC CI runner too; the kitchen
 page's default method and the order page's polling moved into `kitchenDefaultMethod` and
 `kitchenPollDelay` so they can be pinned.
+
+## 2026-09-25 — Ramadan giving through forms: a price per quantity, prices by answer, and reserved dates
+Owner's call for MEC ("Form with payment"): Zakat-ul-Fitr per person x N and iftar sponsorship
+levels, some of which reserve one evening, as Manara forms paid through the organisation's own
+Stripe Connect account. The calls the brief left open:
+
+- **A quantity is a number question the fee names** (`settings.fee.perQuantityOf`), not a new
+  field type. The unit is the flat amount (or the date step in force), the quantity is the whole
+  number answered, and the server multiplies them (`Form::priceFor()`); the client never sends a
+  total, and one sent is ignored. The question must be required (unless a level asks it), flat
+  (not in a repeatable section), and bounded 1..`Form::MAX_QUANTITY` (1000, the same ceiling count
+  prices already put on a family size); `FormSchema` adds `integer|min:1|max:` so 2.5 people is
+  refused. Beside `perEntryOfSection` or count prices the rule is unreadable and prices nothing
+  (refused, never under-charged). Alternative: a `quantity` field type; rejected because the
+  renderer and the builder already know number questions, and a new type is a renderer change.
+- **Levels are priced by the answer to one choice question** (`settings.fee.byChoice`: the
+  question and one price per option value, each optionally `perQuantity` and `reservesDate`).
+  It replaces the flat amount, date steps, count prices and per-entry charging on that form
+  (the save refuses them together), and every option must be priced. Only `form:import` sets it
+  up; the builder shows it read-only and saves it back untouched. A level's unused answers (a
+  Quarter Iftar's people count, an Individual Iftar's date) are dropped before the row is stored.
+- **The breakdown is a snapshot**: `unit_price_minor`, `price_quantity`, `price_label` on
+  `form_responses`, written from the same quote as `amount_due_minor`, never recomputed.
+  `FormResponse::priceBreakdown()` hides one that no longer multiplies to the amount. The
+  receipt and the coordinator email show "$17.00 x 4" and drop the "people registered" count on
+  these forms (it would read 1 for four people).
+- **One date, one sponsor, enforced by the database.** `form_date_reservations` keeps
+  `reserved_on` for ever and `holding_on` (the same date, NULL once released) under
+  unique(form_id, holding_on). The submit claims the date under the form's row lock, so two
+  payers queue and the second gets a 422 on the date question; anything around the lock meets
+  the index (`FormDateTaken`, also a 422). A Quarter Iftar takes the whole evening off the list:
+  MEC's Wix note asked sponsors to email for availability of "your day", so one day per sponsor
+  is the reading; `mecToFill` asks MEC to confirm before import.
+- **When an abandoned payment releases its date**: an unpaid card registration holds it for the
+  page's life (30 min) + 1 min slack + 15 min grace, renewed by each "Return to payment". After
+  that it has lapsed: the date is offered again, and the next payer who asks releases it
+  (lazily, no scheduler). A late payment on a lapsed hold nobody took still gets its date; one
+  on a date already taken is recorded (money is never refused), logged as a warning by ids and
+  shown on the admin board as a conflict to refund or rebook; "Return to payment" on such a row
+  is refused. Office and cash registrations never lapse; a cancelled one stops protecting its
+  date at once. Alternative: a scheduled sweep; rejected because it can free a date seconds
+  before a late webhook arrives, and lazy release gives the same availability.
+- **The date list is a second options source** (`reservable_dates`: the form's
+  `settings.reservation.dates` from today on the organisation's clock, less held dates). It
+  needs no school calendar, and the builder's source picker does not offer it (it has no editor
+  for the list).
+- **Admin visibility**: GET `.../responses/reservations` (the board: each date's state and
+  holder, plus conflicts), the reservation on the response detail, and the breakdown on list and
+  detail rows. Scoped through the route's masjid; another organisation's form is a 404.
+- **The public payload publishes no single total for these forms** (`unitMinor` null, the unit
+  as `unitMinorEach`, levels as `choicePrices`), so the current renderer shows the questions and
+  no live total rather than a wrong one. A live "$17 x 4 = $68" on the public page is a renderer
+  change, not made here.
+- **MEC's two form files** (`database/forms/mec-zakat-ul-fitr.json`,
+  `database/forms/mec-iftar-sponsorship.json`) carry only MEC's Wix names and prices (Zakat-ul-Fitr
+  (Per Person) $17; Individual $18, Quarter $450, Half $950, Full $1900; source: the migration's
+  `reports/stores.md`, as the brief's `commerce.md` does not exist). Both import switched off;
+  the evenings list is empty and every 2027 figure is a `mecToFill` item, never invented.
+
+## 2026-09-25 — Ramadan giving review fixes (contract, safety and mutation lenses)
+Review of 0f932352 + a9148813. What changed from the entry above, and the calls made:
+
+- **Prices on the public page, from the server** (`App\Support\FormPriceLabels`). The renderer
+  draws a price only from `unitMinor` or `fee.amount`, which these forms do not publish, so no
+  price appeared anywhere. The published copy of the schema now carries them: each priced
+  option of the level question reads "Quarter Iftar ($450.00)" / "Individual Iftar ($18.00
+  each)", and the quantity question's help starts "$17.00 each.". Written from the same fee
+  rule the server charges by, so the page cannot quote one price and charge another; the
+  stored schema, the answers and the receipt's level name are untouched. Alternative: prices
+  typed into MEC's form files; rejected because they drift from `byChoice` the first time MEC
+  changes a price. Still no live "$17 × 4 = $68": that is the renderer reading
+  `choicePrices` / `unitMinorEach`, a burlington-masjid-site change not made here. When the
+  renderer does, it should stop drawing these labels' prices twice.
+- **Staff codes are refused on quantity and choice forms** (`StoreFormRequest::staffCodeProblems()`,
+  and `Form::takesStaffCodes()` false for such a form stored another way, so `staffEntry` is
+  never published). The renderer's staff button reads "Record $0.00" without `unitMinor`.
+  Lifted when the renderer can price them.
+- **`entry_count` is the quantity priced** on these forms (`FormSchema::entryCount()` =
+  `priceFor()['entries']`): Zakat for four people is 4 on the list, the roster, the collect
+  button and Impact's people count. Capacity counts responses, not entries, so nothing else
+  moves. The emails still hide "People registered" there (a Quarter Iftar is not one person).
+  The list shows the unit × quantity under the amount only on these forms (`meta.price_breakdown`).
+- **The "$15.00 × 3" email line is only on quantity and choice forms.** Every other paying
+  form's receipt and coordinator email are exactly as before (pinned by
+  `an_existing_per_entry_form_sends_the_emails_it_always_did`); the snapshot columns are still
+  written on every paying row, for the admin detail.
+- **A level's unused answers are dropped before validation**, not after, so an Individual
+  Iftar naming a taken evening, or a Quarter Iftar with "0" people, is never refused over a
+  question its level does not ask.
+- **An unpaid hold ends 120 minutes after submission** (`FormReservations::HOLD_LIMIT_MINUTES`),
+  however often "Return to payment" is used. A new page whose 46-minute hold would run past
+  that is refused whole (`EXPIRED`), rather than opened with a shorter hold, so nobody is sent
+  to a page that can still take money after their date was offered to others; the status
+  read stops offering the button. 120 is the review's own example and unvalidated with MEC.
+  Alternative: a renewal count; rejected because the deadline also bounds a page left open.
+- **A payment that lands after its date went elsewhere is told to the people involved**, not
+  only the platform log: the payer's receipt says the date could not be kept and the
+  organisation will be in touch (`lostDate`), and the coordinators' email carries a "Date
+  conflict" row. The responses list counts conflicts (`meta.reservation_conflicts`) and the
+  folded board header shows the count. No new column: the conflict is derived from the
+  reservation and the row, so it cannot drift from them.
+- **Restoring a cancelled registration asks for its date again** under the form lock
+  (form, then row: the submit's order), and is refused with a 422 naming the date when
+  someone else holds it. A conflict is now any live registration without its date that
+  someone must act on: paid after losing it, or cancelled-then-restored some way round the
+  screen (`FormReservations::isConflict()`); an abandoned card page is not one.
+- **Builder fee assembly is a pure function** (`buildFee()` / `preservedFeeOf()` beside
+  `feePricingOf()` in `formFeePricing.ts`), so the load-then-save round trips are tested
+  without mounting FormBuilder.vue.
+
+## 2026-09-25 — Ramadan giving: the renderer half, and staff codes stay refused
+- **The public page now prices these forms live** (burlington-masjid-site branch
+  `feat/form-quantity-display`): it reads `quantityField`, `unitMinorEach`, `choiceField` and
+  `choicePrices`, shows "$17.00 × 4 = $68.00" in a live region, asks the quantity and the date
+  only of the level that uses them, and draws a level whose dates are all taken as closed. It
+  draws `FormPriceLabels`' labels as published and adds no price, so each level's price appears
+  once. The submit still sends answers only; `Form::priceFor()` stays the only price charged.
+  The date question is found by `optionsSource: reservable_dates`; nothing new is published.
+- **Staff codes stay refused on quantity and choice forms.** The entry above lifted them "when
+  the renderer can price them"; it now can for display, but a staff cash entry is money a
+  holder owes, recorded in the same request, and nothing about the staff path was reviewed for
+  answer-priced forms (the collect figure, the replay fingerprint, a date hold that never
+  lapses). Lifting it is its own change with the owner's say. Until then the page's "Staff
+  entry" link says staff cash entry is not available on such a form, rather than vanishing.
+- **FormPaymentCheckoutTest is byte-identical to e4c7fc48 again.** The breakdown assertion on a
+  staff cash entry moved to
+  `FormQuantityPaymentTest::a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too`.
+
+
+## 2026-09-25 — Review of the renderer half: a level's own questions are required by the level only
+- **A schema `required` on a choice form's quantity or date question is set aside**
+  (`FormSchema::levelQuestions()`). The renderer never draws either question for a level that
+  does not ask it and posts it empty; `withoutUnusedPriceAnswers()` drops it; but the validator
+  still applied the schema's own `required`, and the save accepts `required: true` there
+  (`StoreFormRequest::quantityProblems()` requires it only off choice forms, and
+  `reservationProblems()` returns before looking on them). So such a form would refuse every
+  Quarter Iftar. Now `applyPriceRequirements()` alone requires them, per level, in its words.
+  MEC's import has `required: false` on both, so nothing live changes. Alternative: refuse
+  `required: true` at save; rejected because a form stored some other way (an import, an
+  older save) would still refuse, where this holds however the schema got in. Pinned by
+  `FormDateReservationTest::a_level_is_not_refused_over_a_question_the_schema_marks_required_but_the_level_does_not_ask`.
+- **The page total on a quantity form is exact only within a date tier.** `unitMinorEach` is the
+  unit in force when the page was rendered, and a tier boundary passing purges no cached page, so
+  for about one cache life (300 s) after a tier's `until` the page can show the old unit; the charge
+  is always `Form::priceFor($data, now)` and Stripe's page shows it before payment. Accepted:
+  MEC's Zakat-ul-Fitr has no tiers, and per-entry `unitMinor` has behaved the same since
+  2026-09-11. Recorded in burlington-masjid-site DECISIONS.md with the alternatives.

@@ -10,6 +10,7 @@ use App\Services\Stripe\FormCheckoutRefused;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\Errors;
 use App\Support\FormPaymentReturn;
+use App\Support\FormReservations;
 use App\Support\PublicTenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -198,6 +199,13 @@ class FormResponsePaymentsController extends Controller
             || $row->isPaid()
             || $row->isCancelled()
             || ! $form->takesOnlinePayment()) {
+            return false;
+        }
+
+        // Its date went to another payer, or its time to pay for the date has run out
+        // (App\Support\FormReservations): "Return to payment" is refused, so the page must
+        // not offer it.
+        if (! FormReservations::canStillPay($row)) {
             return false;
         }
 

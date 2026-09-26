@@ -140,7 +140,15 @@
                     </small>
                 </fieldset>
 
-                <template v-if="field.optionsSource">
+                <!-- The form's own reservable dates (settings.reservation; Ramadan giving, 2026-09-25).
+                     Only form:import sets the list up, so there is nothing to choose here. -->
+                <div v-if="field.optionsSource === RESERVABLE_DATES" class="alert alert-light border py-2 small mb-0">
+                    <i class="bi bi-calendar-check me-1"></i>
+                    People will see this form's reservable dates that nobody has reserved yet, from today on.
+                    A reserved date drops off the list by itself. The dates were set when the form was imported.
+                </div>
+
+                <template v-else-if="field.optionsSource">
                     <div v-if="inRepeatable" class="alert alert-warning py-2 small mb-2">
                         Choices from the school calendar can't be used in a section that repeats. Switch to a list
                         you type, or move this question to a section that is asked once.
@@ -438,6 +446,7 @@ import {
     FormFieldType,
     FormFieldTypeInfo,
     FormOptionsSourceInfo,
+    RESERVABLE_DATES,
     SCHOOL_MEETING_DAYS,
     deriveFormIdentifier,
     selectionCountPreview,

@@ -257,6 +257,12 @@ class ValidFormSchema implements ValidationRule
             return "{$label}: \"{$name}\" takes its choices from the school calendar, so it must be a dropdown, choose-one or choose-any question.";
         }
 
+        // One registration reserves one date (FormReservations), so the form's own date
+        // list fills a single-answer question only.
+        if ($source === FormOptionSources::RESERVABLE_DATES && ! in_array($type, FormOptionSources::RESERVABLE_TYPES, true)) {
+            return "{$label}: \"{$name}\" takes its choices from this form's reservable dates, so it must be a dropdown or choose-one question.";
+        }
+
         if ($repeatable) {
             return "{$label}: \"{$name}\" takes its choices from the school calendar, which cannot go inside a repeatable section.";
         }

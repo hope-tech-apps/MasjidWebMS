@@ -54,6 +54,11 @@ use LogicException;
  * it into `cash` or `external` like any other hand settlement, with `paid_via`
  * saying how the money came (PAID_VIA).
  *
+ * The breakdown beside the money leg (unit_price_minor x price_quantity, and
+ * price_label: the tier or level) is a snapshot the submit writes wherever it writes
+ * amount_due_minor, never recomputed (priceBreakdown()). A row that reserved a date
+ * from its form's list has a FormDateReservation (App\Support\FormReservations).
+ *
  * Pinned by tests/Feature/FormResponseSettlementTest.php and
  * tests/Feature/FormPaymentSchemaTest.php.
  */
@@ -98,6 +103,8 @@ class FormResponse extends Model
         'charge_flagged_at' => 'datetime',
         'charge_refunded_minor' => 'integer',
         'external_synced_at' => 'datetime',
+        'unit_price_minor' => 'integer',
+        'price_quantity' => 'integer',
     ];
 
     /**
@@ -378,6 +385,33 @@ class FormResponse extends Model
     public function isExternal(): bool
     {
         return $this->external_ref !== null;
+    }
+
+    /**
+     * The price breakdown this row was written at (Ramadan giving, 2026-09-25): one
+     * unit's price, how many, and the tier or level, from the snapshot the submit wrote
+     * beside amount_due_minor. Null on a row without one (every row before it, and every
+     * row with no money leg), or when the snapshot no longer multiplies to what is owed,
+     * which nothing writes: a breakdown that disagrees with the amount is never shown.
+     *
+     * @return array{unit_minor:int, quantity:int, label:?string, currency:?string}|null
+     */
+    public function priceBreakdown(): ?array
+    {
+        if ($this->unit_price_minor === null || $this->price_quantity === null || $this->amount_due_minor === null) {
+            return null;
+        }
+
+        if ((int) $this->unit_price_minor * (int) $this->price_quantity !== (int) $this->amount_due_minor) {
+            return null;
+        }
+
+        return [
+            'unit_minor' => (int) $this->unit_price_minor,
+            'quantity' => (int) $this->price_quantity,
+            'label' => $this->price_label,
+            'currency' => $this->currency,
+        ];
     }
 
     public function isPaid(): bool

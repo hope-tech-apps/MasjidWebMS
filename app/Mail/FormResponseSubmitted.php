@@ -28,6 +28,26 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
     use Queueable, SerializesModels;
 
     /**
+     * "$17.00 × 4": the unit price and how many, when more than one unit was charged
+     * (FormResponse::priceBreakdown(); Ramadan giving, 2026-09-25), or null.
+     *
+     * Declared with a default, NOT promoted: a mail queued before this existed is
+     * unserialized without running the constructor, and a promoted property would be
+     * left uninitialised.
+     */
+    public ?string $breakdownLine = null;
+
+    /** "Wednesday, February 10, 2027": the date this registration holds, or null. As above. */
+    public ?string $reservedDate = null;
+
+    /**
+     * The date this registration asked for when it went to another payer before this
+     * payment arrived (App\Support\FormReservations), or null. The email then says the
+     * date could not be kept, instead of silently leaving it out. As above.
+     */
+    public ?string $lostDate = null;
+
+    /**
      * @param  array<int,array{name:string,detail:string}>  $people
      */
     public function __construct(
@@ -51,7 +71,13 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
          * drawn in the paid green. Defaulted, so a mail queued before it existed still builds.
          */
         public bool $paymentOwed = false,
+        ?string $breakdownLine = null,
+        ?string $reservedDate = null,
+        ?string $lostDate = null,
     ) {
+        $this->breakdownLine = $breakdownLine;
+        $this->reservedDate = $reservedDate;
+        $this->lostDate = $lostDate;
     }
 
     public function envelope(): Envelope
@@ -78,6 +104,9 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
                 'entryCount' => $this->entryCount,
                 'amountLine' => $this->amountLine,
                 'tierLabel' => $this->tierLabel,
+                'breakdownLine' => $this->breakdownLine,
+                'reservedDate' => $this->reservedDate,
+                'lostDate' => $this->lostDate,
                 'people' => $this->people,
                 'adminUrl' => $this->adminUrl,
                 'amountLabel' => match (true) {

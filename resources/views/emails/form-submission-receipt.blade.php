@@ -40,7 +40,14 @@
                                         <td style="padding:12px 16px; color:#7b8794;">{{ $amountLabel }}</td>
                                         <td style="padding:12px 16px; text-align:right; font-weight:700; font-size:18px;">
                                             {{ $amountLine }}@if ($tierLabel)<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $tierLabel }} rate</span>@endif
+                                            @if (! empty($breakdownLine))<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $breakdownLine }}</span>@endif
                                         </td>
+                                    </tr>
+                                @endif
+                                @if (! empty($reservedDate))
+                                    <tr>
+                                        <td style="padding:12px 16px; color:#7b8794;">Date reserved</td>
+                                        <td style="padding:12px 16px; text-align:right; font-weight:600;">{{ $reservedDate }}</td>
                                     </tr>
                                 @endif
                                 @if ($paymentLine)
@@ -50,6 +57,14 @@
                                     </tr>
                                 @endif
                             </table>
+
+                            @if (! empty($lostDate))
+                                {{-- Paid after the date went to another sponsor (FormReservations): the money is kept, so the payer must hear that the date was not, and who acts next. --}}
+                                <div style="border-left:3px solid #c0392b; padding:4px 0 4px 16px; margin:24px 0 0; font-size:14px; line-height:1.55; color:#52606d;">
+                                    The date you chose, {{ $lostDate }}, was reserved by someone else before your payment arrived, so it could not be kept.
+                                    {{ $masjidName }} will contact you to arrange another date or a refund.
+                                </div>
+                            @endif
 
                             @if ($groupLink)
                                 {{-- $groupLink, never $whatsappUrl: only the former is checked (FormSubmissionReceipt::groupLink()). Escaped into the attribute; noreferrer, so the click carries nothing from this email. --}}

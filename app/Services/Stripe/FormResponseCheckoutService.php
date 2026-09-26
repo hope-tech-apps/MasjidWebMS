@@ -7,6 +7,7 @@ use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Support\FormPayment;
 use App\Support\FormPaymentReturn;
+use App\Support\FormReservations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -696,6 +697,11 @@ class FormResponseCheckoutService
         // Asked again of the exact lines about to be sent: the hosted page must never
         // show one total while the row records another.
         FormPayment::assertLinesMatchTotal($lines, (int) $row->total_minor);
+
+        // A registration that reserved a date keeps it for this page's life, or is refused
+        // when its lapsed hold has gone to another payer: nobody is sent to pay for a date
+        // that is no longer theirs (App\Support\FormReservations). Nothing for any other row.
+        FormReservations::renewForPage($row);
 
         $chargeRef = null;
 

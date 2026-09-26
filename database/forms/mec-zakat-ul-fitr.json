@@ -1,0 +1,78 @@
+{
+  "$comment": {
+    "about": "MEC (Manara organisation 13) Zakat-ul-Fitr for Ramadan 2027, replacing the hidden Wix product \"Zakat-ul-Fitr (Per Person)\". Import with: php artisan form:import 13 database/forms/mec-zakat-ul-fitr.json (add --dry-run first). It imports switched OFF (is_active false). The giver says how many people; the server charges the price per person times that number (settings.fee.perQuantityOf), and card payments go through MEC's own Stripe Connect account, so card stays unavailable until MEC finishes Stripe onboarding. Before switching it on, go through mecToFill.",
+    "mecWording": [
+      "Form name \"Zakat-ul-Fitr\" and \"per person\": MEC's own product name on Wix, \"Zakat-ul-Fitr (Per Person)\".",
+      "Price 17 USD per person: the Wix product's price as it stood on 2026-09-08 (MEC charged 13, 15 and 17 in earlier years)."
+    ],
+    "scaffolding": [
+      "The question labels (Name, Email, Phone, Number of people) and their help lines are form scaffolding, not MEC's text; MEC may reword them."
+    ],
+    "mecToFill": [
+      "CONFIRM THE 2027 AMOUNT per person (settings.fee.amount, now MEC's 2026 price of 17). Nothing else sets it.",
+      "Optional: a maximum number of people per registration (the max of the \"people\" question). None is set; the platform never accepts more than 1000.",
+      "opens_at / closes_at: when giving opens and closes for Ramadan 2027. Both are null (always open once switched on).",
+      "Optional: settings.notifyEmails (who at MEC hears about each gift; unset means MEC's own address on file), successTitle, successBody, and a description. MEC has written none for this form, so none is invented here."
+    ]
+  },
+  "slug": "mec-zakat-ul-fitr",
+  "name": "Zakat-ul-Fitr",
+  "description": null,
+  "is_active": false,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+  "settings": {
+    "fee": {
+      "currency": "USD",
+      "amount": 17,
+      "perQuantityOf": "people"
+    },
+    "payment": {
+      "online": true
+    },
+    "identity": {
+      "name": "fullName",
+      "email": "email",
+      "phone": "phone"
+    }
+  },
+  "schema": {
+    "sections": [
+      {
+        "id": "giver",
+        "title": "Zakat-ul-Fitr (per person)",
+        "fields": [
+          {
+            "name": "fullName",
+            "label": "Name",
+            "type": "text",
+            "required": true,
+            "autocomplete": "name"
+          },
+          {
+            "name": "email",
+            "label": "Email",
+            "type": "email",
+            "required": true,
+            "autocomplete": "email"
+          },
+          {
+            "name": "phone",
+            "label": "Phone",
+            "type": "tel",
+            "required": false,
+            "autocomplete": "tel"
+          },
+          {
+            "name": "people",
+            "label": "Number of people",
+            "type": "number",
+            "required": true,
+            "min": 1
+          }
+        ]
+      }
+    ]
+  }
+}

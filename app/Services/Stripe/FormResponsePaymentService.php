@@ -6,6 +6,7 @@ use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Support\FormNotifier;
+use App\Support\FormReservations;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -265,6 +266,12 @@ class FormResponsePaymentService
                 $this->context($row)
             );
         }
+
+        // Paid after its lapsed date hold went to another payer (Ramadan giving,
+        // 2026-09-25): recorded as paid like any payment and logged here; the receipt and
+        // the coordinators' email notify() sends say the date could not be kept
+        // (FormNotifier's lost date).
+        FormReservations::notePaidAfterLosingDate($row);
 
         $this->notify($row, $masjid);
     }

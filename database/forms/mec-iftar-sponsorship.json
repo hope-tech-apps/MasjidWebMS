@@ -1,0 +1,141 @@
+{
+  "$comment": {
+    "about": "MEC (Manara organisation 13) iftar sponsorship for Ramadan 2027, replacing the hidden Wix products Individual, Quarter, Half and Full Iftar. Import with: php artisan form:import 13 database/forms/mec-iftar-sponsorship.json (add --dry-run first). It imports switched OFF (is_active false). The sponsor picks a level; the server charges that level's price (settings.fee.byChoice), times the number of iftars for Individual Iftar only. Quarter, Half and Full Iftar each reserve one day from settings.reservation.dates: once a day is held it is no longer offered (App\\Support\\FormReservations). Card payments go through MEC's own Stripe Connect account. Before switching it on, go through mecToFill: with no days listed, Quarter, Half and Full Iftar cannot be chosen (the day question offers nothing), while Individual Iftar still works.",
+    "mecWording": [
+      "The four level names and prices are MEC's own Wix products as they stood on 2026-09-08: Individual Iftar 18 USD, Quarter Iftar 450 USD, Half Iftar 950 USD, Full Iftar 1900 USD.",
+      "Individual Iftar sold by quantity on Wix; Quarter, Half and Full Iftar carried MEC's note \"To reserve your day email office@meccharlotte.org for availability\", which this form replaces by letting the sponsor pick an open day.",
+      "\"Iftar Sponsorship\": MEC's own product naming on Wix in 2024 (\"Iftar Sponsorship for 50 people\" / \"for 100 people\")."
+    ],
+    "scaffolding": [
+      "The question labels (Name, Email, Phone, Sponsorship, Number of Individual Iftars, Day to reserve) and their help lines are form scaffolding, not MEC's text; MEC may reword them."
+    ],
+    "mecToFill": [
+      "THE DAYS THAT CAN BE RESERVED (settings.reservation.dates), as YYYY-MM-DD, one per iftar evening MEC offers in Ramadan 2027. The list is empty: MEC has not said which evenings it offers.",
+      "CONFIRM THE 2027 PRICES of the four levels (settings.fee.byChoice.prices[].amount, now MEC's 2026 Wix prices).",
+      "CONFIRM that one reserved day belongs to one sponsor whatever the level (as built: a Quarter Iftar takes the whole day off the list). If MEC lets up to four Quarter sponsors, or two Half sponsors, share one evening, that needs a change before import.",
+      "Optional: a maximum number of Individual Iftars per registration (the max of the \"people\" question). None is set; the platform never accepts more than 1000.",
+      "opens_at / closes_at for Ramadan 2027 (both null), and optionally notifyEmails, successTitle, successBody and a description. MEC has written none for this form, so none is invented here."
+    ]
+  },
+  "slug": "mec-iftar-sponsorship",
+  "name": "Iftar Sponsorship",
+  "description": null,
+  "is_active": false,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+  "settings": {
+    "fee": {
+      "currency": "USD",
+      "perQuantityOf": "people",
+      "byChoice": {
+        "field": "sponsorship",
+        "prices": [
+          {
+            "value": "individual",
+            "amount": 18,
+            "perQuantity": true
+          },
+          {
+            "value": "quarter",
+            "amount": 450,
+            "reservesDate": true
+          },
+          {
+            "value": "half",
+            "amount": 950,
+            "reservesDate": true
+          },
+          {
+            "value": "full",
+            "amount": 1900,
+            "reservesDate": true
+          }
+        ]
+      }
+    },
+    "reservation": {
+      "field": "iftar_day",
+      "dates": []
+    },
+    "payment": {
+      "online": true
+    },
+    "identity": {
+      "name": "fullName",
+      "email": "email",
+      "phone": "phone"
+    }
+  },
+  "schema": {
+    "sections": [
+      {
+        "id": "sponsor",
+        "title": "Iftar Sponsorship",
+        "fields": [
+          {
+            "name": "fullName",
+            "label": "Name",
+            "type": "text",
+            "required": true,
+            "autocomplete": "name"
+          },
+          {
+            "name": "email",
+            "label": "Email",
+            "type": "email",
+            "required": true,
+            "autocomplete": "email"
+          },
+          {
+            "name": "phone",
+            "label": "Phone",
+            "type": "tel",
+            "required": false,
+            "autocomplete": "tel"
+          },
+          {
+            "name": "sponsorship",
+            "label": "Sponsorship",
+            "type": "radio",
+            "required": true,
+            "options": [
+              {
+                "value": "individual",
+                "label": "Individual Iftar"
+              },
+              {
+                "value": "quarter",
+                "label": "Quarter Iftar"
+              },
+              {
+                "value": "half",
+                "label": "Half Iftar"
+              },
+              {
+                "value": "full",
+                "label": "Full Iftar"
+              }
+            ]
+          },
+          {
+            "name": "people",
+            "label": "Number of Individual Iftars",
+            "type": "number",
+            "required": false,
+            "min": 1,
+            "help": "Individual Iftar only."
+          },
+          {
+            "name": "iftar_day",
+            "label": "Day to reserve",
+            "type": "select",
+            "required": false,
+            "optionsSource": "reservable_dates",
+            "help": "Quarter, Half and Full Iftar only."
+          }
+        ]
+      }
+    ]
+  }
+}

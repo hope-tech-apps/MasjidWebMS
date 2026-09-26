@@ -87,6 +87,7 @@ class FormSchema
         $rules = [];
         $attributes = [];
         $messages = [];
+        $askedByLevel = $this->levelQuestions();
 
         foreach ($this->form->sections() as $section) {
             $sectionId = $section['id'] ?? null;
@@ -128,8 +129,20 @@ class FormSchema
                 if (! isset($field['name'])) {
                     continue;
                 }
-                $rules[$field['name']] = $this->rulesForField($field);
+                // A question only some levels ask is required by the level, not the schema:
+                // the page does not draw it for the others and posts it empty, and a
+                // Quarter Iftar must not be refused over a people box it never showed.
+                $rules[$field['name']] = $this->rulesForField(
+                    in_array($field['name'], $askedByLevel, true) ? ['required' => false] + $field : $field
+                );
                 $attributes[$field['name']] = $field['label'] ?? $field['name'];
+
+                // The quantity question a price is multiplied by (settings.fee.perQuantityOf):
+                // a whole number from 1 to the smaller of its own max and Form::MAX_QUANTITY.
+                // A number question otherwise takes 2.5, and 2.5 people is no price.
+                if ($field['name'] === $this->form->quantityField()) {
+                    $rules[$field['name']] = array_merge($rules[$field['name']], ['integer', 'min:1', 'max:'.self::quantityMax($field)]);
+                }
 
                 // A required calendar question nobody CAN answer says why, rather
                 // than "is required" to a family looking at no choices.
@@ -150,8 +163,106 @@ class FormSchema
         $validator = Validator::make($data, $rules, $messages, $attributes);
 
         $this->applyConditionalRequirements($validator, $data);
+        $this->applyPriceRequirements($validator, $data);
 
         return $validator;
+    }
+
+    /**
+     * The most a quantity question may be answered with: its own `max` when it has a
+     * whole one below Form::MAX_QUANTITY, otherwise that ceiling.
+     *
+     * @param  array<string,mixed>  $field
+     */
+    public static function quantityMax(array $field): int
+    {
+        $max = $field['max'] ?? null;
+        $max = is_numeric($max) ? (int) floor((float) $max) : null;
+
+        return $max !== null && $max >= 1 ? min($max, Form::MAX_QUANTITY) : Form::MAX_QUANTITY;
+    }
+
+    /**
+     * What a level on a form priced by choice needs besides the choice itself
+     * (settings.fee.byChoice; Ramadan giving, 2026-09-25): the quantity for a level
+     * charged per unit ("Individual Iftar" x people), and a date for a level that
+     * reserves one ("Quarter Iftar"). The schema cannot require the two questions,
+     * because the other levels do not ask them (a `required` it carries is set aside by
+     * levelQuestions()), so they are required here, by the level the submission chose,
+     * and reported under their own names.
+     *
+     * A form not priced by choice gets nothing added: its quantity and date questions
+     * are required in the schema (StoreFormRequest::crossCheck()).
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private function applyPriceRequirements(ValidatorInstance $validator, array $data): void
+    {
+        $chosen = $this->form->chosenPriceIn($data);
+
+        if ($chosen === null) {
+            return;
+        }
+
+        $fee = $this->form->feeRule();
+        $level = $this->form->optionLabel($fee['choiceField'], $chosen['value']) ?? $chosen['value'];
+        $needs = [];
+
+        if ($chosen['perQuantity'] && is_string($fee['perQuantityOf'] ?? null)) {
+            $needs[] = [$fee['perQuantityOf'], 'Enter how many for %s.'];
+        }
+
+        $reservation = $this->form->reservation();
+
+        if ($chosen['reservesDate'] && $reservation !== null) {
+            $needs[] = [$reservation['field'], 'Choose a date for %s.'];
+        }
+
+        if ($needs === []) {
+            return;
+        }
+
+        $validator->after(function (ValidatorInstance $v) use ($needs, $data, $level): void {
+            foreach ($needs as [$name, $message]) {
+                $value = $data[$name] ?? null;
+
+                if (($value === null || $value === '') && ! $v->errors()->has($name)) {
+                    $v->errors()->add($name, sprintf($message, $level));
+                }
+            }
+        });
+    }
+
+    /**
+     * The questions a form priced by choice asks of some levels only: the quantity
+     * question and the date question. Their `required` is decided per submission by the
+     * level it chose (applyPriceRequirements()), whatever the schema says, because
+     * withoutUnusedPriceAnswers() has already dropped the answer of a level that does
+     * not ask them and the renderer never draws them for it (questionAsked()). Without
+     * this, a schema saved with `required: true` on the people question would refuse
+     * every Quarter Iftar. Empty on every other form, whose schema stays the authority.
+     *
+     * @return array<int,string>
+     */
+    private function levelQuestions(): array
+    {
+        $fee = $this->form->feeRule();
+
+        if (($fee['pricing'] ?? null) !== Form::PRICING_CHOICE) {
+            return [];
+        }
+
+        $names = [];
+
+        if (is_string($fee['perQuantityOf'] ?? null)) {
+            $names[] = $fee['perQuantityOf'];
+        }
+
+        if (($reservation = $this->form->reservation()) !== null) {
+            $names[] = $reservation['field'];
+        }
+
+        return $names;
     }
 
     /**
@@ -221,7 +332,7 @@ class FormSchema
                 if (FormOptionSources::isSourced($field)) {
                     // Checked against the LIVE set even when it is EMPTY: an empty
                     // set must refuse every answer, never switch the check off.
-                    $rules[] = FormOptionSources::rule($values);
+                    $rules[] = FormOptionSources::rule($values, $field['optionsSource']);
                 } elseif ($values !== []) {
                     // Rule::in, never an 'in:' string: Laravel splits that string on
                     // commas, so an option like "Yes, reach out to me" became two
@@ -275,7 +386,7 @@ class FormSchema
 
             // `distinct`: the same choice twice is not two choices, and would
             // otherwise satisfy "pick exactly 2" with one Sunday.
-            $rules[$key] = ['string', 'distinct', $sourced ? FormOptionSources::rule($values) : Rule::in($values)];
+            $rules[$key] = ['string', 'distinct', $sourced ? FormOptionSources::rule($values, $field['optionsSource'] ?? null) : Rule::in($values)];
         }
 
         return $rules;
@@ -532,7 +643,7 @@ class FormSchema
         [$min] = self::selectionBounds($field);
 
         return match (true) {
-            $offered === 0 => FormOptionSources::NONE_OPEN,
+            $offered === 0 => FormOptionSources::noneOpen($field['optionsSource']),
             $min !== null && $offered < $min => FormOptionSources::NOT_ENOUGH_OPEN,
             default => null,
         };
@@ -568,10 +679,22 @@ class FormSchema
      * How many entries this submission represents — the repeatable section's row count,
      * or 1 for a form without one. Drives capacity accounting and the fee total.
      *
+     * On a form priced by a quantity question or by answer (Ramadan giving, 2026-09-25)
+     * it is the quantity priced (Form::priceFor()['entries']): a Zakat-ul-Fitr for four
+     * people is 4, as the admin list, the roster, the collect button ("For 4 people") and
+     * the people counted in Impact read it, not 1. At least 1, as everywhere else.
+     * Capacity counts responses, not this.
+     *
      * @param  array<string,mixed>  $data
      */
     public function entryCount(array $data): int
     {
+        if ($this->form->pricesByQuantityOrChoice()) {
+            $price = $this->form->priceFor($data);
+
+            return max(1, (int) ($price['entries'] ?? 1));
+        }
+
         $section = $this->form->repeatableSection();
 
         if (! $section || ! isset($section['id'])) {
@@ -605,8 +728,11 @@ class FormSchema
             return null;
         }
 
-        // A flat fee: byte-for-byte what this always returned.
-        if ($price['fee']['perEntryOfSection'] === null) {
+        // A flat fee: byte-for-byte what this always returned. A quantity or a choice
+        // price is never flat: its `amount` is the unit, or the lowest level's price.
+        if ($price['fee']['perEntryOfSection'] === null
+            && ! isset($price['fee']['perQuantityOf'])
+            && ($price['fee']['pricing'] ?? null) !== Form::PRICING_CHOICE) {
             return $price['fee']['amount'];
         }
 

@@ -180,6 +180,64 @@ export type FormResponseRow = {
     collected_by?: FormResponsePerson | null;
     status_changed_at?: string | null;
     status_changed_by?: FormResponsePerson | null;
+    /**
+     * What the money leg was priced at (FormResponse::priceBreakdown(); Ramadan giving,
+     * 2026-09-25): one unit in cents, how many, and the tier or level. Null on a row
+     * without a snapshot; absent from an API older than it.
+     */
+    price_breakdown?: FormPriceBreakdown | null;
+};
+
+export type FormPriceBreakdown = {
+    unit_minor: number;
+    quantity: number;
+    label: string | null;
+    currency: string | null;
+};
+
+/**
+ * What a reservation is doing now (FormReservations::stateOf()): `reserved` paid (or
+ * nothing to pay), `held` unpaid and still protected, `lapsed` / `cancelled` offered to
+ * others again, `released` given up to another payer. `open` is a board date nobody holds.
+ */
+export type FormReservationState = 'open' | 'reserved' | 'held' | 'lapsed' | 'cancelled' | 'released';
+
+/** The date one registration reserved, on the single-response payload. */
+export type FormResponseReservation = {
+    date: string;
+    label: string;
+    state: FormReservationState;
+    held_until: string | null;
+    released_at: string | null;
+    release_reason: 'lapsed' | 'cancelled' | null;
+};
+
+/** Who holds a date, on the reservations board. */
+export type FormReservationHolder = {
+    id: number;
+    response_id: number;
+    respondent_name: string | null;
+    price_label: string | null;
+    payment_method: FormPaymentMethod | null;
+    payment_status: FormPaymentStatus | null;
+    held_until: string | null;
+    released_at: string | null;
+    release_reason: 'lapsed' | 'cancelled' | null;
+};
+
+/** GET …/responses/reservations (FormResponsesController::reservations()). */
+export type FormReservationsBoard = {
+    enabled: boolean;
+    dates: {
+        date: string;
+        label: string;
+        listed: boolean;
+        past: boolean;
+        state: FormReservationState;
+        reservation: FormReservationHolder | null;
+    }[];
+    /** Paid after the date went to someone else: refund or offer another date. */
+    conflicts: (FormReservationHolder & { date: string; label: string })[];
 };
 
 /**
@@ -203,6 +261,8 @@ export type FormResponseAttachment = {
 /** The single-response payload: the row plus the full submitted answers. */
 export type FormResponseDetail = FormResponseRow & {
     data: Record<string, any> | null;
+    /** The date this registration reserved from the form's list, or null. Absent from an older API. */
+    reservation?: FormResponseReservation | null;
     /** Absent on a form with no file questions, which is most of them. */
     attachments?: FormResponseAttachment[];
 };
@@ -222,6 +282,12 @@ export type FormResponsesMeta = {
     payment_filters?: FormPaymentFilter[];
     collected_filters?: FormCollectedFilter[];
     payment?: FormResponsesPaymentMeta;
+    /** The form reserves dates from a list: offer the reservations board. Absent from an older API. */
+    reservations?: boolean;
+    /** How many conflicts the board lists (FormReservations::conflictCount()), shown while it is folded. */
+    reservation_conflicts?: number;
+    /** Priced by a quantity question or by answer: show each row's unit x quantity under its amount. */
+    price_breakdown?: boolean;
 };
 
 /** meta.payment: whether this form shows a money leg at all, and its codes for the filter. */
@@ -611,10 +677,15 @@ export type FormFieldConditional = {
  * server fills them in when it serves the form (app/Support/FormOptionSources.php).
  * `school_meeting_days`: the upcoming school days that are not closed, as ISO
  * dates. Only on select/radio/checkboxGroup, and never inside a repeatable section.
+ * `reservable_dates`: the form's own date list (settings.reservation) less the dates
+ * already held (App\Support\FormReservations). Set up only by form:import, so the
+ * builder is never offered it; select/radio only.
  */
-export type FormOptionsSource = 'school_meeting_days';
+export type FormOptionsSource = 'school_meeting_days' | 'reservable_dates';
 
 export const SCHOOL_MEETING_DAYS: FormOptionsSource = 'school_meeting_days';
+
+export const RESERVABLE_DATES: FormOptionsSource = 'reservable_dates';
 
 /** One entry of `options_sources` on GET /forms/field-types. */
 export type FormOptionsSourceInfo = {
@@ -783,6 +854,13 @@ export type FormFeeRule = {
     countTiers?: FormFeeCountTier[] | null;
     /** Form::feeRule()'s computed marker ('count'). Never sent by the builder. */
     pricing?: string | null;
+    /** The number question the price is multiplied by (Zakat-ul-Fitr per person). */
+    perQuantityOf?: string | null;
+    /** Priced by the answer to one choice question (iftar levels). Set only by form:import. */
+    byChoice?: {
+        field: string;
+        prices: { value: string; amount: number; perQuantity?: boolean; reservesDate?: boolean }[];
+    } | null;
     /** Stored only when StoreFormRequest::settingsRules() names it (see FormSettings). */
     [key: string]: unknown;
 };

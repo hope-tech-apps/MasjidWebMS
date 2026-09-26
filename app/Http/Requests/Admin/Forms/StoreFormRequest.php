@@ -6,6 +6,7 @@ use App\Http\Requests\BaseFormRequest;
 use App\Models\Form;
 use App\Rules\TierCutoff;
 use App\Rules\ValidFormSchema;
+use App\Support\FormOptionSources;
 use App\Support\FormPayment;
 use App\Support\FormSchema;
 use Illuminate\Validation\Rule;
@@ -246,6 +247,30 @@ class StoreFormRequest extends BaseFormRequest
             'settings.fee.countTiers.*.min' => 'required|integer|min:1|max:1000',
             'settings.fee.countTiers.*.amount' => 'required|numeric|min:0|max:1000000',
             'settings.fee.countTiers.*.label' => 'nullable|string|max:60',
+            // Unit price x the whole-number answer to a number question (Zakat-ul-Fitr per
+            // person; Ramadan giving, 2026-09-25). The question's shape (flat, a number,
+            // required, bounded) is quantityProblems() in crossCheck().
+            'settings.fee.perQuantityOf' => 'nullable|string|max:255',
+            // Priced by the answer to one choice question (iftar sponsorship levels): each
+            // option's price, whether it is charged per unit of the quantity question, and
+            // whether it reserves a date from settings.reservation. Every key has a rule, or
+            // validated() would drop it and the level would lose its price or its date.
+            'settings.fee.byChoice' => 'nullable|array',
+            'settings.fee.byChoice.field' => 'required_with:settings.fee.byChoice|string|max:255',
+            'settings.fee.byChoice.prices' => 'required_with:settings.fee.byChoice|array|min:1|max:20',
+            'settings.fee.byChoice.prices.*.value' => 'required|string|max:255',
+            'settings.fee.byChoice.prices.*.amount' => 'required|numeric|min:0|max:1000000',
+            'settings.fee.byChoice.prices.*.perQuantity' => 'nullable|boolean',
+            'settings.fee.byChoice.prices.*.reservesDate' => 'nullable|boolean',
+
+            // The dates a registration may reserve, one per registration, never twice
+            // (App\Support\FormReservations). An empty list is allowed: the question then
+            // offers nothing and refuses every date, which is how a form is imported before
+            // its organisation has named the days.
+            'settings.reservation' => 'nullable|array',
+            'settings.reservation.field' => 'required_with:settings.reservation|string|max:255',
+            'settings.reservation.dates' => 'nullable|array|max:100',
+            'settings.reservation.dates.*' => 'date_format:Y-m-d|distinct',
 
             // Payment (DECISIONS.md 2026-09-11). Absent means off, which is every
             // form written before the festival. Each switch is a real boolean by
@@ -374,7 +399,7 @@ class StoreFormRequest extends BaseFormRequest
         // A key already refused above keeps its first, more specific message. The count
         // schedule is checked on EVERY form, paying or not, because amount_due is
         // stored from it either way.
-        foreach ([self::countTierProblems($schema, $settings), self::paymentProblems($schema, $settings)] as $found) {
+        foreach ([self::countTierProblems($schema, $settings), self::quantityProblems($schema, $settings), self::choiceProblems($schema, $settings), self::reservationProblems($schema, $settings), self::staffCodeProblems($settings), self::paymentProblems($schema, $settings)] as $found) {
             foreach ($found as $field => $message) {
                 $problems[$field] ??= $message;
             }
@@ -525,9 +550,16 @@ class StoreFormRequest extends BaseFormRequest
 
         $perEntry = $fee['perEntryOfSection'] ?? null;
 
-        if ($perEntry === null || (is_string($perEntry) && trim($perEntry) === '')) {
+        // A quantity question or a price by answer is the other way a paying form says what
+        // it charges for (Ramadan giving, 2026-09-25); their own checks make both required,
+        // so neither can owe nothing. Only a plain flat fee still needs the per-entry rule.
+        $countsOtherwise = self::given($fee['perQuantityOf'] ?? null) || self::given($fee['byChoice'] ?? null);
+
+        if ($countsOtherwise) {
+            // Checked by quantityProblems() and choiceProblems().
+        } elseif ($perEntry === null || (is_string($perEntry) && trim($perEntry) === '')) {
             $problems['settings.fee.perEntryOfSection'] =
-                'A form that takes payment must charge its fee per entry of a repeatable section (for example, per attendee).';
+                'A form that takes payment must charge its fee per entry of a repeatable section (for example, per attendee), per a quantity question, or by the answer to a choice question.';
         } elseif (is_string($perEntry) && ($section = self::repeatableSection($schema, $perEntry)) !== null) {
             $min = $section['minEntries'] ?? 0;
 
@@ -551,6 +583,13 @@ class StoreFormRequest extends BaseFormRequest
         // A form priced only by count is a paying form with prices, never "needs a price".
         foreach (is_array($fee['countTiers'] ?? null) ? array_values($fee['countTiers']) : [] as $i => $tier) {
             $prices["settings.fee.countTiers.{$i}.amount"] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
+        // So is one priced only by answer: every level's price, not only the lowest.
+        $byChoice = is_array($fee['byChoice'] ?? null) ? $fee['byChoice'] : [];
+
+        foreach (is_array($byChoice['prices'] ?? null) ? array_values($byChoice['prices']) : [] as $i => $price) {
+            $prices["settings.fee.byChoice.prices.{$i}.amount"] = is_array($price) ? ($price['amount'] ?? null) : null;
         }
 
         if ($prices === []) {
@@ -585,6 +624,278 @@ class StoreFormRequest extends BaseFormRequest
         }
 
         return $problems;
+    }
+
+    /**
+     * A price multiplied by a quantity question (settings.fee.perQuantityOf; Ramadan
+     * giving, 2026-09-25) that could charge the wrong amount. Refused when:
+     *
+     *  - it names no NUMBER question in a section that does not repeat: nothing would be
+     *    counted, and the charge would silently be for 0;
+     *  - it sits beside perEntryOfSection or count prices: one of the two counts would be
+     *    ignored without a word (Form::feeRule() reads the pair as unreadable);
+     *  - the question lets the answer go below 1, or above Form::MAX_QUANTITY, or has a
+     *    maximum below its minimum. A bound that is not a whole number is refused too:
+     *    the answer must be a whole number (FormSchema);
+     *  - on a form NOT priced by answer, the question is not required: a blank answer
+     *    would owe nothing. Priced by answer, only the levels charged per unit ask it,
+     *    and FormSchema requires it for those.
+     *
+     * @param  array<string,mixed>  $schema
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function quantityProblems(array $schema, array $settings): array
+    {
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $name = $fee['perQuantityOf'] ?? null;
+
+        if (! self::given($name)) {
+            return [];
+        }
+
+        $key = 'settings.fee.perQuantityOf';
+        $label = is_string($name) ? $name : json_encode($name);
+        $field = is_string($name) ? self::flatField($schema, $name) : null;
+
+        if ($field === null || ($field['type'] ?? null) !== 'number') {
+            return [$key => "\"{$label}\" is not a number question in a section that does not repeat, so the price cannot be multiplied by it."];
+        }
+
+        if (self::given($fee['perEntryOfSection'] ?? null) || self::given($fee['countTiers'] ?? null)) {
+            return [$key => 'A price per quantity replaces charging per entry and prices by number of entries. Remove one of them.'];
+        }
+
+        $min = $field['min'] ?? null;
+        $max = $field['max'] ?? null;
+        $whole = fn (mixed $v): bool => is_numeric($v) && (float) $v == floor((float) $v);
+
+        if ($min !== null && (! $whole($min) || (int) $min < 1)) {
+            return [$key => "\"{$label}\" must not accept fewer than 1: set its minimum to a whole number of at least 1, or leave it empty."];
+        }
+
+        if ($max !== null && (! $whole($max) || (int) $max < max(1, (int) ($min ?? 1)) || (int) $max > Form::MAX_QUANTITY)) {
+            return [$key => "\"{$label}\" needs a whole-number maximum between its minimum and " . Form::MAX_QUANTITY . ', or no maximum.'];
+        }
+
+        if (! self::given($fee['byChoice'] ?? null) && empty($field['required'])) {
+            return [$key => "\"{$label}\" must be required, or a registration that leaves it blank would owe nothing."];
+        }
+
+        return [];
+    }
+
+    /**
+     * A price by answer (settings.fee.byChoice; iftar sponsorship levels, 2026-09-25)
+     * that could charge the wrong amount or reserve nothing. Refused when:
+     *
+     *  - it sits beside the flat amount, date steps, count prices or perEntryOfSection:
+     *    two prices for one registration, one silently ignored;
+     *  - it names no required dropdown or choose-one question with its own typed options
+     *    in a section that does not repeat: nothing, or a blank, would be priced;
+     *  - an option has no price, a price names no option, or a value is priced twice;
+     *  - a level is charged per unit with no quantity question, or reserves a date on a
+     *    form with no date list.
+     *
+     * The 50-cent minimum and whole cents reach each level's price through
+     * paymentProblems().
+     *
+     * @param  array<string,mixed>  $schema
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function choiceProblems(array $schema, array $settings): array
+    {
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $block = $fee['byChoice'] ?? null;
+
+        if (! self::given($block)) {
+            return [];
+        }
+
+        if (! is_array($block)) {
+            return ['settings.fee.byChoice' => 'Prices by answer must name a question and list a price for each of its choices.'];
+        }
+
+        if (($fee['amount'] ?? null) !== null || self::given($fee['tiers'] ?? null) || self::given($fee['countTiers'] ?? null) || self::given($fee['perEntryOfSection'] ?? null)) {
+            return ['settings.fee.byChoice' => 'Prices by answer replace the flat price, the date steps, prices by number of entries and charging per entry. Remove the others.'];
+        }
+
+        $name = $block['field'] ?? null;
+        $label = is_string($name) ? $name : json_encode($name);
+        $field = is_string($name) ? self::flatField($schema, $name) : null;
+
+        if ($field === null || ! in_array($field['type'] ?? null, ['select', 'radio'], true) || isset($field['optionsSource'])) {
+            return ['settings.fee.byChoice.field' => "\"{$label}\" is not a dropdown or choose-one question with its own choices in a section that does not repeat, so it cannot set the price."];
+        }
+
+        if (empty($field['required'])) {
+            return ['settings.fee.byChoice.field' => "\"{$label}\" must be required, or a registration that leaves it blank would have no price."];
+        }
+
+        $options = [];
+
+        foreach (is_array($field['options'] ?? null) ? $field['options'] : [] as $option) {
+            if (is_array($option) && is_string($option['value'] ?? null)) {
+                $options[$option['value']] = true;
+            }
+        }
+
+        $problems = [];
+        $priced = [];
+        $prices = is_array($block['prices'] ?? null) ? array_values($block['prices']) : [];
+
+        foreach ($prices as $i => $price) {
+            $value = is_array($price) ? ($price['value'] ?? null) : null;
+
+            if (! is_string($value)) {
+                continue; // the field rule reports it
+            }
+
+            if (! isset($options[$value])) {
+                $problems["settings.fee.byChoice.prices.{$i}.value"] = "\"{$value}\" is not one of the choices of \"{$label}\".";
+            } elseif (isset($priced[$value])) {
+                $problems["settings.fee.byChoice.prices.{$i}.value"] = "\"{$value}\" has two prices. Give each choice one price.";
+            }
+
+            $priced[$value] = true;
+
+            if (self::switchedOn($price['perQuantity'] ?? null) && ! self::given($fee['perQuantityOf'] ?? null)) {
+                $problems["settings.fee.byChoice.prices.{$i}.perQuantity"] = 'A price charged per unit needs the quantity question it is multiplied by (the price per quantity).';
+            }
+
+            if (self::switchedOn($price['reservesDate'] ?? null) && ! is_array($settings['reservation'] ?? null)) {
+                $problems["settings.fee.byChoice.prices.{$i}.reservesDate"] = 'A price that reserves a date needs the form\'s list of dates.';
+            }
+        }
+
+        $unpriced = array_diff(array_keys($options), array_keys($priced));
+
+        if ($unpriced !== [] && ! isset($problems['settings.fee.byChoice.prices'])) {
+            $problems['settings.fee.byChoice.prices'] = 'Every choice of "' . $label . '" needs a price. Missing: ' . implode(', ', $unpriced) . '.';
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A date list (settings.reservation) that would reserve nothing, or reserve without
+     * asking. Refused when:
+     *
+     *  - it names no dropdown or choose-one question taking its choices from this form's
+     *    reservable dates, in a section that does not repeat;
+     *  - on a form priced by answer, no level reserves a date: the list would be ignored;
+     *  - on any other form, the question is not required: every registration reserves
+     *    the date it names, so one that names none reserves nothing it paid for.
+     *
+     * And a question drawing on reservable dates with no list naming it offers nothing
+     * and refuses every answer, so that is refused too.
+     *
+     * @param  array<string,mixed>  $schema
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function reservationProblems(array $schema, array $settings): array
+    {
+        $block = $settings['reservation'] ?? null;
+        $named = is_array($block) && is_string($block['field'] ?? null) ? $block['field'] : null;
+
+        foreach (is_array($schema['sections'] ?? null) ? $schema['sections'] : [] as $section) {
+            foreach (is_array($section) && is_array($section['fields'] ?? null) ? $section['fields'] : [] as $field) {
+                if (is_array($field) && ($field['optionsSource'] ?? null) === FormOptionSources::RESERVABLE_DATES
+                    && ($field['name'] ?? null) !== $named) {
+                    $question = is_string($field['name'] ?? null) ? $field['name'] : '?';
+
+                    return ['settings.reservation' => "\"{$question}\" takes its choices from this form's reservable dates, so the form needs a date list naming it."];
+                }
+            }
+        }
+
+        if (! is_array($block)) {
+            return [];
+        }
+
+        $label = $named ?? json_encode($block['field'] ?? null);
+        $field = $named !== null ? self::flatField($schema, $named) : null;
+
+        if ($field === null || ! in_array($field['type'] ?? null, FormOptionSources::RESERVABLE_TYPES, true)
+            || ($field['optionsSource'] ?? null) !== FormOptionSources::RESERVABLE_DATES) {
+            return ['settings.reservation.field' => "\"{$label}\" is not a dropdown or choose-one question taking its choices from this form's reservable dates, in a section that does not repeat."];
+        }
+
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $byChoice = $fee['byChoice'] ?? null;
+
+        if (self::given($byChoice)) {
+            $reserving = array_filter(
+                is_array($byChoice) && is_array($byChoice['prices'] ?? null) ? $byChoice['prices'] : [],
+                fn ($price) => is_array($price) && self::switchedOn($price['reservesDate'] ?? null)
+            );
+
+            if ($reserving === []) {
+                return ['settings.reservation' => 'No price reserves a date, so the list of dates would never be used. Mark the prices that reserve a date, or remove the list.'];
+            }
+
+            return [];
+        }
+
+        if (empty($field['required'])) {
+            return ['settings.reservation.field' => "\"{$label}\" must be required: every registration on this form reserves the date it names."];
+        }
+
+        return [];
+    }
+
+    /**
+     * Staff codes on a form priced by a quantity question or by answer (Ramadan giving,
+     * 2026-09-25). The renderer's staff button states what to collect from the unit x
+     * rows price, which such a form does not publish, so it would read "Record $0.00"
+     * while the server records the real amount. Refused until the renderer can price
+     * them; Form::takesStaffCodes() is the read half for a form stored another way.
+     *
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function staffCodeProblems(array $settings): array
+    {
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
+
+        if (! self::switchedOn($payment['staffCodes'] ?? null)
+            || (! self::given($fee['perQuantityOf'] ?? null) && ! self::given($fee['byChoice'] ?? null))) {
+            return [];
+        }
+
+        return ['settings.payment.staffCodes' => 'Staff codes cannot be used on a form priced per quantity or by the answer to a question yet: the staff screen cannot show how much to collect. Turn staff codes off.'];
+    }
+
+    /** Anything but absent, null, a blank string or an empty list. */
+    private static function given(mixed $value): bool
+    {
+        return $value !== null && $value !== [] && ! (is_string($value) && trim($value) === '');
+    }
+
+    /**
+     * The field with this name in a section that does not repeat, or null.
+     *
+     * @param  array<string,mixed>  $schema
+     * @return array<string,mixed>|null
+     */
+    private static function flatField(array $schema, string $name): ?array
+    {
+        foreach (is_array($schema['sections'] ?? null) ? $schema['sections'] : [] as $section) {
+            if (! is_array($section) || ! empty($section['repeatable'])) {
+                continue;
+            }
+
+            foreach (is_array($section['fields'] ?? null) ? $section['fields'] : [] as $field) {
+                if (is_array($field) && ($field['name'] ?? null) === $name) {
+                    return $field;
+                }
+            }
+        }
+
+        return null;
     }
 
     /** A payment switch, read exactly as Form::paymentFlag() reads the stored value. */

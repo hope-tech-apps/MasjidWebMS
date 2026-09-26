@@ -136,7 +136,7 @@ class FormsController extends Controller
             if ($this->mayUseOptionSources($masjid)) {
                 $hasCalendar = SchoolCalendar::for((int) $masjid->id)->hasCalendar();
 
-                $payload['options_sources'] = collect(FormOptionSources::SOURCES)->map(fn ($label, $key) => [
+                $payload['options_sources'] = collect(FormOptionSources::SOURCES)->only(FormOptionSources::BUILDER_SOURCES)->map(fn ($label, $key) => [
                     'key' => $key,
                     'label' => $label,
                     'available' => $key === FormOptionSources::SCHOOL_MEETING_DAYS && $hasCalendar,
@@ -181,7 +181,10 @@ class FormsController extends Controller
 
         $sourced = fn (mixed $s): array => collect(is_array($s) && is_array($s['sections'] ?? null) ? $s['sections'] : [])
             ->flatMap(fn ($section) => is_array($section) && is_array($section['fields'] ?? null) ? $section['fields'] : [])
-            ->filter(fn ($field) => FormOptionSources::isSourced($field) && is_string($field['name'] ?? null))
+            // The school calendar's sources only: a form's own reservable dates need no
+            // calendar, so they are never refused for the lack of one.
+            ->filter(fn ($field) => FormOptionSources::isSourced($field) && is_string($field['name'] ?? null)
+                && $field['optionsSource'] !== FormOptionSources::RESERVABLE_DATES)
             ->map(fn (array $field) => $field['name'].'|'.json_encode($field['optionsSource']))
             ->values()->all();
 
