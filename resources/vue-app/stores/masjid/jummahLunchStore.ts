@@ -18,7 +18,16 @@ export const PAID_VIA_OPTIONS: { value: string; label: string }[] = [
     { value: "zelle", label: "Zelle" },
     { value: "terminal", label: "Masjid Terminal" },
     { value: "stripe", label: "Stripe" },
+    // The offline methods an organisation can advertise in its accepted payment
+    // methods that this list did not have (MealOrder::PAID_VIA, 2026-09-25).
+    { value: "check", label: "Check" },
+    { value: "bank_transfer", label: "Bank transfer" },
+    { value: "other", label: "Other" },
 ];
+
+/** The two kinds of menu (MealMenu::KINDS): a Friday lunch, or a standing kitchen catalogue. */
+export const MENU_KIND_DATED = "dated";
+export const MENU_KIND_CATALOGUE = "catalogue";
 
 /**
  * Admin Jummah-lunch store — CRUD over
@@ -35,6 +44,9 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     const currentMenu = ref<any | null>(null);
     const orders = ref<any[]>([]);
     const orderSummary = ref<any | null>(null);
+    // A kitchen menu's ways for staff to take an order (the board payload's
+    // `payment_methods`, AcceptedPaymentMethods::staffList); empty for a Friday menu.
+    const orderPaymentMethods = ref<any[]>([]);
     // The masjid's services, for the "notify subscribers of" picker. Read from
     // the existing services endpoint rather than widening the lunch API.
     const services = ref<any[]>([]);
@@ -168,12 +180,14 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (ordersMenuId !== String(menuId)) {
             orders.value = [];
             orderSummary.value = null;
+            orderPaymentMethods.value = [];
             ordersMenuId = null;
         }
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${menuId}/orders`);
         if (res.data?.status === "success" && res.data?.data) {
             orders.value = res.data.data.orders ?? [];
             orderSummary.value = res.data.data.summary ?? null;
+            orderPaymentMethods.value = Array.isArray(res.data.data.payment_methods) ? res.data.data.payment_methods : [];
             ordersMenuId = String(menuId);
         }
     }
@@ -182,7 +196,9 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * An order taken by staff on the board (table, phone, no link). Admins and
      * lunch volunteers share it through base(). Prices are NOT sent — the server
      * reads them from the menu — and there is no "paid" flag: the order is
-     * charged through Stripe, and the reply carries checkout_url. Form-encoded.
+     * charged through Stripe, and the reply carries checkout_url. A kitchen order
+     * says how it WILL be paid (`payment_method`); one paid to the office comes
+     * back unpaid with no checkout_url, for Mark paid later. Form-encoded.
      * The optional extra goes as whole cents; the card fee only as a yes/no —
      * the server computes its amount.
      */
@@ -190,10 +206,16 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         customer_name: string; customer_phone?: string; customer_email?: string; customer_notes?: string;
         items: { item_id: number; quantity: number }[];
         donation_minor?: number; cover_fees?: boolean;
+        pickup_at?: string;
+        payment_method?: string;
     }): Promise<any> {
         ensureMasjid();
         const body = new FormData();
         body.append("customer_name", payload.customer_name.trim());
+        if (payload.payment_method) body.append("payment_method", payload.payment_method);
+        // A kitchen order's pickup, the organisation's wall clock as the
+        // datetime-local input gives it; the server requires it on a catalogue.
+        if (payload.pickup_at) body.append("pickup_at", payload.pickup_at);
         if (payload.customer_phone?.trim()) body.append("customer_phone", payload.customer_phone.trim());
         if (payload.customer_email?.trim()) body.append("customer_email", payload.customer_email.trim());
         if (payload.customer_notes?.trim()) body.append("customer_notes", payload.customer_notes.trim());
@@ -326,7 +348,16 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         const b = new FormData();
         b.append("title", p.title ?? "Jummah Lunch");
         if (p.title_ar != null) b.append("title_ar", p.title_ar);
-        b.append("service_date", p.service_date ?? "");
+        // The kind is sent on CREATE only: the server fixes it there and ignores it
+        // on edit. A catalogue has no service date and carries its lead time and
+        // office addresses instead.
+        b.append("kind", p.kind === MENU_KIND_CATALOGUE ? MENU_KIND_CATALOGUE : MENU_KIND_DATED);
+        if (p.kind === MENU_KIND_CATALOGUE) {
+            if (p.pickup_lead_hours != null && p.pickup_lead_hours !== "") b.append("pickup_lead_hours", String(p.pickup_lead_hours));
+            if (p.notify_emails != null) b.append("notify_emails", p.notify_emails);
+        } else {
+            b.append("service_date", p.service_date ?? "");
+        }
         if (p.status) b.append("status", p.status);
         if (p.ordering_closes_at) b.append("ordering_closes_at", p.ordering_closes_at);
         if (p.pickup_instructions != null) b.append("pickup_instructions", p.pickup_instructions);
@@ -370,6 +401,12 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (p.allow_sms_optin != null) b.append("allow_sms_optin", p.allow_sms_optin ? "1" : "0");
         // Nullable: "" clears it, which is how an admin turns the text off.
         if (p.notify_service_id !== undefined) b.append("notify_service_id", p.notify_service_id == null ? "" : String(p.notify_service_id));
+        // A catalogue's own two fields. "" clears either: the lead time goes back
+        // to the default, the office list to the organisation's own address.
+        if (p.kind === MENU_KIND_CATALOGUE) {
+            if (p.pickup_lead_hours !== undefined) b.append("pickup_lead_hours", p.pickup_lead_hours == null ? "" : String(p.pickup_lead_hours));
+            if (p.notify_emails !== undefined) b.append("notify_emails", p.notify_emails ?? "");
+        }
         return b;
     }
 
@@ -461,7 +498,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     return {
-        menus, currentMenu, orders, orderSummary, services, fetchServices, isLunchStaff,
+        menus, currentMenu, orders, orderSummary, orderPaymentMethods, services, fetchServices, isLunchStaff,
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,

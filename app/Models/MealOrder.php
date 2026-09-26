@@ -74,17 +74,29 @@ class MealOrder extends Model
      * label staff record like the others. A payment on the order's own
      * Checkout page is recorded by the webhook alone and leaves `paid_via`
      * null (DECISIONS.md 2026-09-11).
+     *
+     * Check, bank transfer and other (2026-09-25) are the offline methods an
+     * organisation can advertise in its accepted payment methods
+     * (App\Support\PaymentMethods::OFFLINE) that this list did not have: a
+     * kitchen customer told to pay by check has to be recordable as having paid
+     * by check. Appended, so every value already stored keeps its meaning.
      */
     public const PAID_VIA_CASH = 'cash';
     public const PAID_VIA_ZELLE = 'zelle';
     public const PAID_VIA_TERMINAL = 'terminal';
     public const PAID_VIA_STRIPE = 'stripe';
+    public const PAID_VIA_CHECK = 'check';
+    public const PAID_VIA_BANK_TRANSFER = 'bank_transfer';
+    public const PAID_VIA_OTHER = 'other';
 
     public const PAID_VIA = [
         self::PAID_VIA_CASH,
         self::PAID_VIA_ZELLE,
         self::PAID_VIA_TERMINAL,
         self::PAID_VIA_STRIPE,
+        self::PAID_VIA_CHECK,
+        self::PAID_VIA_BANK_TRANSFER,
+        self::PAID_VIA_OTHER,
     ];
 
     /** The words the board shows for each, in the order it offers them. */
@@ -93,6 +105,9 @@ class MealOrder extends Model
         self::PAID_VIA_ZELLE => 'Zelle',
         self::PAID_VIA_TERMINAL => 'Masjid Terminal',
         self::PAID_VIA_STRIPE => 'Stripe',
+        self::PAID_VIA_CHECK => 'Check',
+        self::PAID_VIA_BANK_TRANSFER => 'Bank transfer',
+        self::PAID_VIA_OTHER => 'Other',
     ];
 
     /**
@@ -153,6 +168,11 @@ class MealOrder extends Model
             'marked_paid_by_user_id' => 'integer',
             'paid_via' => 'string',
             'confirmation_sent_at' => 'datetime',
+            'pickup_at' => 'datetime',
+            'confirmed_at' => 'datetime',
+            'confirmed_by_user_id' => 'integer',
+            'office_notified_at' => 'datetime',
+            'customer_confirmed_sent_at' => 'datetime',
         ];
     }
 
@@ -198,6 +218,12 @@ class MealOrder extends Model
     public function enteredBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'entered_by_user_id')->withTrashed();
+    }
+
+    /** The staff login that confirmed a kitchen order (null until the office does). */
+    public function confirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by_user_id')->withTrashed();
     }
 
     /** The staff login that marked the order paid by hand (null for an order Stripe marked paid). */
@@ -326,12 +352,48 @@ class MealOrder extends Model
         if ($this->payment_status !== self::PAYMENT_PAID) {
             $this->payment_status = self::PAYMENT_PAID;
             $this->paid_at = Carbon::now();
-            if ($this->status === self::STATUS_PENDING) {
+            // A Friday-lunch order is confirmed by being paid. A kitchen order is
+            // confirmed by the OFFICE (owner: "office confirms"), paid or not:
+            // payment says the money came, not that the kitchen can make it.
+            if ($this->status === self::STATUS_PENDING && ! $this->isKitchenOrder()) {
                 $this->status = self::STATUS_CONFIRMED;
             }
         }
 
         $this->save();
+    }
+
+    /**
+     * Is this an order on a standing CATALOGUE menu (the kitchen) rather than a
+     * dated lunch? Asked of the menu row itself — trashed included, so an order
+     * whose menu was removed keeps the rules it was placed under — and never of
+     * a column on the order, so no door that creates an order can forget to say.
+     */
+    public function isKitchenOrder(): bool
+    {
+        return MealMenu::withoutMasjidScope()
+            ->withTrashed()
+            ->whereKey($this->meal_menu_id)
+            ->value('kind') === MealMenu::KIND_CATALOGUE;
+    }
+
+    /**
+     * The office confirms a kitchen order (a status change to `confirmed`), and
+     * who did it and when is recorded the FIRST time only: restoring a cancelled
+     * order, or setting the status again, never rewrites the confirmation.
+     * True when this call recorded it.
+     */
+    public function recordOfficeConfirmation(?int $userId): bool
+    {
+        if ($this->confirmed_at !== null) {
+            return false;
+        }
+
+        $this->confirmed_at = Carbon::now();
+        $this->confirmed_by_user_id = $userId;
+        $this->save();
+
+        return true;
     }
 
     /**

@@ -255,8 +255,11 @@ class MealOrderMarkPaidTest extends TestCase
 
         // None of them had a card page, so Stripe was never asked.
         $this->assertSame(0, self::$lookups);
-        $this->assertSame(['cash', 'zelle', 'terminal', 'stripe'], MealOrder::PAID_VIA);
-        $this->assertSame(['Cash', 'Zelle', 'Masjid Terminal', 'Stripe'], array_values(MealOrder::PAID_VIA_LABELS));
+        // Check, bank transfer and other were appended on 2026-09-25 so every
+        // offline method an organisation can advertise (PaymentMethods::OFFLINE)
+        // can be recorded; the four before them keep their order and meaning.
+        $this->assertSame(['cash', 'zelle', 'terminal', 'stripe', 'check', 'bank_transfer', 'other'], MealOrder::PAID_VIA);
+        $this->assertSame(['Cash', 'Zelle', 'Masjid Terminal', 'Stripe', 'Check', 'Bank transfer', 'Other'], array_values(MealOrder::PAID_VIA_LABELS));
     }
 
     #[Test]
@@ -277,7 +280,7 @@ class MealOrderMarkPaidTest extends TestCase
         }
 
         $this->assertNothingRecorded($order, null);
-        $this->assertSame('Choose how they paid: Cash, Zelle, Masjid Terminal or Stripe. If the board does not ask, reload the page.', MarkMealOrderPaidRequest::refusal());
+        $this->assertSame('Choose how they paid: Cash, Zelle, Masjid Terminal, Stripe, Check, Bank transfer or Other. If the board does not ask, reload the page.', MarkMealOrderPaidRequest::refusal());
     }
 
     #[Test]

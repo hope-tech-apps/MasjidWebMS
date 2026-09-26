@@ -22,6 +22,10 @@ test('an imported Wix gift names its processor and never reads as a card gift', 
     assert.equal(isHistoricalGift({ source: 'historical' }), true);
 });
 
+test('an offline gift paid by bank transfer reads as two words, the way the ledger picker says it', () => {
+    assert.equal(donationMethodLabel({ source: 'offline', payment_method: 'bank_transfer' }), 'bank transfer');
+});
+
 test('Manara-recorded gifts keep the labels they always had', () => {
     assert.equal(donationMethodLabel({ source: 'stripe' }), 'card');
     assert.equal(donationMethodLabel({ source: 'offline', payment_method: 'check' }), 'check');

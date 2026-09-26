@@ -312,6 +312,18 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/JummahLunchView.vue")
             },
             {
+                // Accepted payment methods and how to pay with each (PaymentMethodsController).
+                // No capability: every organisation that takes money has payment methods.
+                path: 'payment-methods',
+                name: 'masjid.paymentMethods',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Payment Methods'
+                },
+                component: () => import("@/views/dashboard/PaymentMethodsView.vue")
+            },
+            {
                 // Layer 2 of the access model: who in this organisation can do what.
                 path: 'team',
                 name: 'masjid.team',

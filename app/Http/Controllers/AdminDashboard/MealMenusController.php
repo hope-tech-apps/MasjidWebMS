@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Models\MealOrder;
+use App\Models\User;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOpeningNotifier;
 use App\Support\MasjidTime;
@@ -47,7 +48,10 @@ class MealMenusController extends Controller
     {
         try {
             // masjid_id + uuid are set by the model (creating hook / booted).
-            $menu = MealMenu::create($request->validated());
+            $menu = MealMenu::create(self::withoutAdminOnly(
+                self::shapedForKind($request->validated(), $request->validated('kind') ?? MealMenu::KIND_DATED, true),
+                $request->user()
+            ));
 
             // A menu can be created already open. Once-only is enforced inside
             // the notifier, not by the caller.
@@ -83,7 +87,7 @@ class MealMenusController extends Controller
         $menu = MealMenu::findOrFail($menu_id);
 
         try {
-            $menu->update($request->validated());
+            $menu->update(self::withoutAdminOnly(self::shapedForKind($request->validated(), $menu->kind, false), $request->user()));
 
             app(LunchOpeningNotifier::class)->notifyOpened($menu, $request->user()?->id);
 
@@ -103,6 +107,58 @@ class MealMenusController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Keep each kind's fields to its own kind, whatever the body carried.
+     *
+     * A catalogue has no service date and always has a lead time (the owner's 48
+     * hours unless the admin set another); a dated menu has no lead time. Written
+     * here rather than trusted to the form, so no client can make a catalogue that
+     * the dated-only readers would mistake for a Friday, or a Friday menu that
+     * starts enforcing a lead time. On an edit, a lead time the body does not
+     * mention is left as it is; one it clears goes back to the default.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private static function shapedForKind(array $data, string $kind, bool $creating): array
+    {
+        if ($kind === MealMenu::KIND_CATALOGUE) {
+            unset($data['service_date']);
+
+            if (array_key_exists('pickup_lead_hours', $data) && $data['pickup_lead_hours'] === null) {
+                $data['pickup_lead_hours'] = MealMenu::DEFAULT_PICKUP_LEAD_HOURS;
+            }
+
+            return $creating ? $data + ['pickup_lead_hours' => MealMenu::DEFAULT_PICKUP_LEAD_HOURS] : $data;
+        }
+
+        unset($data['pickup_lead_hours']);
+
+        return $data;
+    }
+
+    /**
+     * The fields only an administrator may set, dropped for a lunch volunteer.
+     *
+     * A LunchStaff login reaches store() and update() through its own realm
+     * (routes/lunch.php) to run the Friday board. `notify_emails` is not board
+     * work: every kitchen order's name, phone, email and notes go to those
+     * addresses (KitchenOrderNotifier), and the setting would outlive the
+     * volunteer's access. Dropped rather than refused, so the shared menu form a
+     * volunteer saves still saves everything else they changed.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private static function withoutAdminOnly(array $data, ?User $user): array
+    {
+        if ($user?->type === User::TYPE_LUNCH_STAFF) {
+            unset($data['notify_emails']);
+        }
+
+        return $data;
     }
 
     private function closeTopUpsOutliving(MealMenu $menu): void

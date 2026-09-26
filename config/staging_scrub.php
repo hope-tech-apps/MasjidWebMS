@@ -214,6 +214,14 @@ return [
             'google_maps_key',      // a billable third-party credential
         ],
 
+        'meal_menus' => [
+            // The office addresses a kitchen catalogue emails about new orders.
+            // Real staff inboxes: left standing, a test order on staging would
+            // reach the real office. NULL falls back to the organisation's own
+            // address, which this scrub already anonymises.
+            'notify_emails',
+        ],
+
         'contacts' => [
             'notes',            // free-text staff notes about a congregant
             'password',         // bcrypt of a parent's portal password; NULL = no password set

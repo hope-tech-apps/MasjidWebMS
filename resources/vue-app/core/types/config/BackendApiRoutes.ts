@@ -138,6 +138,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/impact/report?${string}` |
     `/api/admin/masjids/${string}/funds` |
     `/api/admin/masjids/${string}/funds/${string}` |
+    // Accepted payment methods: GET the set, PUT the whole set (PaymentMethodsController).
+    `/api/admin/masjids/${string}/payment-methods` |
     `/api/admin/masjids/${string}/jummah-lunch/menus` |
     `/api/admin/masjids/${string}/jummah-lunch/flyer` |
     `/api/admin/masjids/${string}/jummah-lunch/menus/${string}` |

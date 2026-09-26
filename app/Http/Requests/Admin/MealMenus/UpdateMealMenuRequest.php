@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Admin\MealMenus;
 
+use App\Http\Requests\Admin\MealMenus\Concerns\CatalogueMenuRules;
 use App\Http\Requests\Admin\MealMenus\Concerns\NormalizesOrderingWindow;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\MealMenu;
@@ -9,11 +10,16 @@ use Illuminate\Validation\Rule;
 
 class UpdateMealMenuRequest extends BaseFormRequest
 {
-    use NormalizesOrderingWindow;
+    use CatalogueMenuRules, NormalizesOrderingWindow;
 
+    /**
+     * `kind` is deliberately absent: it is fixed when the menu is created
+     * (StoreMealMenuRequest), and a key not in the rules never reaches
+     * validated(), so a body that carries one changes nothing.
+     */
     public function rules(): array
     {
-        return [
+        return $this->catalogueRules() + [
             'title' => 'sometimes|string|max:120',
             'title_ar' => 'nullable|string|max:120',
             'service_date' => 'sometimes|date',

@@ -91,6 +91,14 @@ class JummahLunchOrdersController extends Controller
     private const EDIT_ITEM_GONE = 'Part of this order is no longer on the menu. Please contact the masjid to change it.';
 
     /**
+     * An order on a standing catalogue (the kitchen). Its pickup was booked a lead
+     * time ahead and the office confirms it, so changing it is a conversation
+     * with the office, never a PATCH on the lunch link: repricing here would skip
+     * the lead-time rule and the confirmation the owner asked for.
+     */
+    private const EDIT_KITCHEN = 'Please contact the office to change a kitchen order.';
+
+    /**
      * The same answers as a stable name, sent beside the sentence as
      * `edit_notice_code`.
      *
@@ -107,6 +115,7 @@ class JummahLunchOrdersController extends Controller
         self::EDIT_REFUNDED => 'refunded',
         self::EDIT_CANCELLED => 'cancelled',
         self::EDIT_ITEM_GONE => 'item_gone',
+        self::EDIT_KITCHEN => 'kitchen',
         MealOrderCheckoutService::TOP_UP_BALANCE_OPEN => 'paid_balance_open',
         MealOrderCheckoutService::TOP_UP_PRICES_MOVED => 'paid_prices_moved',
     ];
@@ -160,8 +169,11 @@ class JummahLunchOrdersController extends Controller
             return response()->api(404, 'Ordering is not available.', null);
         }
 
+        // Dated menus only: a standing kitchen catalogue is open indefinitely and
+        // would otherwise be served here as this Friday's lunch.
         $menu = MealMenu::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
+            ->dated()
             ->currentlyOpen()
             ->with(['items' => fn ($q) => $q->where('is_available', true)->orderBy('sort_order')->orderBy('id')])
             ->orderBy('service_date')
@@ -198,7 +210,11 @@ class JummahLunchOrdersController extends Controller
 
             $menu = MealMenu::findByUuidForMasjid((string) $request->input('menu_uuid'), $masjidId);
 
-            if (! $menu || ! $menu->isOpenForOrders()) {
+            // A catalogue's orders go through the kitchen door (KitchenOrdersController),
+            // which enforces the pickup lead time and the office's confirmation;
+            // this door has neither, so it answers as it does for any menu it
+            // cannot take an order on.
+            if (! $menu || $menu->isCatalogue() || ! $menu->isOpenForOrders()) {
                 return response()->api(422, 'This lunch is no longer open for ordering.', null);
             }
 
@@ -807,6 +823,10 @@ class JummahLunchOrdersController extends Controller
      */
     private static function customerMayEdit(MealOrder $order, MealMenu $menu): ?string
     {
+        if ($menu->isCatalogue()) {
+            return self::EDIT_KITCHEN;
+        }
+
         if ($order->status === MealOrder::STATUS_CANCELLED) {
             return self::EDIT_CANCELLED;
         }

@@ -42,6 +42,10 @@ export function donationMethodLabel(gift: GiftLike): string {
     }
 
     if (gift.source === 'offline') {
+        // Two words, not "bank/transfer": bank transfer is a method an
+        // organisation advertises (App\Support\PaymentMethods::OFFLINE) and the
+        // ledger's own method picker says it the same way.
+        if (gift.payment_method === 'bank_transfer') return 'bank transfer';
         return (gift.payment_method && gift.payment_method !== 'unknown')
             ? gift.payment_method.replace(/_/g, '/')
             : 'offline';

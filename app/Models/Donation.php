@@ -48,6 +48,17 @@ class Donation extends Model
 
     public const SOURCES = [self::SOURCE_STRIPE, self::SOURCE_OFFLINE, self::SOURCE_HISTORICAL];
 
+    /**
+     * How an OFFLINE gift arrived (`payment_method`), the one allow-list both
+     * offline-gift requests validate against. Bank transfer (2026-09-25) is one of
+     * the ways an organisation can advertise being paid (App\Support\
+     * PaymentMethods::OFFLINE), so a gift that came that way has to be recordable
+     * as such rather than as "other". Appended: every stored value keeps its meaning.
+     */
+    public const OFFLINE_PAYMENT_METHODS = [
+        'cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other', 'bank_transfer',
+    ];
+
     protected $fillable = [
         'uuid',
         'masjid_id',

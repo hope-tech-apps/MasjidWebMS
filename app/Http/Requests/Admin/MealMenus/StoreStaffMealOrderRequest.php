@@ -3,14 +3,18 @@
 namespace App\Http\Requests\Admin\MealMenus;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\PaymentMethods;
+use Illuminate\Validation\Rule;
 
 /**
  * An order taken by staff on the lunch board (POST .../menus/{menu_id}/orders).
  *
  * Prices are never accepted: the server reads them from the menu. Nor is any
- * payment field: the order is charged through Stripe like a public order, and
- * only Stripe marks it paid. There is deliberately no "paid" flag — a
- * volunteer once marked their own order paid with no money changing hands.
+ * "paid" field: an order is charged through Stripe like a public order, or (a
+ * kitchen order) left unpaid for Mark paid, and only those mark it paid. There
+ * is deliberately no "paid" flag — a volunteer once marked their own order paid
+ * with no money changing hands. `payment_method` says how a kitchen order WILL
+ * be paid, never that it was.
  *
  * The two optional amounts match the public form exactly: an extra on top of
  * the food, in bounded integer minor units, and a yes/no to cover the card
@@ -48,6 +52,17 @@ class StoreStaffMealOrderRequest extends BaseFormRequest
             'donation_minor' => 'nullable|integer|min:0|max:' . \App\Models\MealOrder::MAX_DONATION_MINOR,
             // Yes/no only; the surcharge is computed on the server.
             'cover_fees' => 'sometimes|boolean',
+            // A kitchen (catalogue) order's pickup, on the organisation's wall
+            // clock as a datetime-local input sends it. Required there and ignored
+            // on a Friday menu (MealOrdersController::store). The office taking an
+            // order by phone is not held to the public lead time: it is the office
+            // deciding it can make it.
+            'pickup_at' => 'nullable|string|max:40',
+            // How a kitchen order will be paid, from the organisation's accepted
+            // methods (checked against its list by the controller). Card opens a
+            // Stripe page; any other is settled later with Mark paid. Ignored on a
+            // Friday menu, where an order taken here is always a card order.
+            'payment_method' => ['nullable', 'string', Rule::in(PaymentMethods::KEYS)],
         ];
     }
 

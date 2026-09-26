@@ -3,9 +3,12 @@
 namespace App\Http\Requests\Admin\Donations;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Models\Donation;
+use Illuminate\Validation\Rule;
 
 /**
- * Record a manual/offline donation (cash, check, Zelle, Venmo, PayPal, Square).
+ * Record a manual/offline donation (cash, check, Zelle, Venmo, PayPal, Square,
+ * bank transfer…; Donation::OFFLINE_PAYMENT_METHODS).
  * `amount` is DOLLARS from the form; converted to integer cents in the controller.
  * A contact is optional (a general/anonymous gift books with no donor) — but an
  * UNMATCHED TYPED NAME IS NOT THE SAME THING as no donor, and used to be treated
@@ -25,7 +28,7 @@ class StoreOfflineDonationRequest extends BaseFormRequest
             // when both are sent — an id is a decision, a name is a lookup.
             'donor_name' => ['nullable', 'string', 'max:200'],
             'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
-            'payment_method' => ['required', 'in:cash,check,zelle,venmo,paypal,square,credit,giftcard,other'],
+            'payment_method' => ['required', Rule::in(Donation::OFFLINE_PAYMENT_METHODS)],
             'check_number' => ['nullable', 'string', 'max:50'],
             'donated_at' => ['required', 'date'],
             'note' => ['nullable', 'string', 'max:1000'],

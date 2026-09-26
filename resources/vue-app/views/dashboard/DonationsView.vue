@@ -358,7 +358,7 @@
                                     <label class="form-label small text-muted">Method <span v-if="!editingId">*</span></label>
                                     <select class="form-select text-capitalize" v-model="offlineForm.payment_method">
                                         <option value="">Select…</option>
-                                        <option v-for="m in methods" :key="m" :value="m" class="text-capitalize">{{ m }}</option>
+                                        <option v-for="m in methods" :key="m" :value="m" class="text-capitalize">{{ methodWords(m) }}</option>
                                     </select>
                                     <!--
                                         On the EDIT path a blank method means "never recorded" and
@@ -513,7 +513,10 @@ const loadData = async (page: number = 1) => {
 // --- Offline gift entry ---
 const masjidStore = useMasjidStore();
 const authStore = useAuthStore();
-const methods = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other'];
+// Donation::OFFLINE_PAYMENT_METHODS, in the same order.
+const methods = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other', 'bank_transfer'];
+// A token's words where the token alone does not read as one ("bank_transfer").
+const methodWords = (m: string): string => (m === 'bank_transfer' ? 'bank transfer' : m);
 const showOffline = ref(false);
 const savingOffline = ref(false);
 const offlineForm = ref<any>({ amount: '', payment_method: '', check_number: '', fund_id: '', donated_at: '', note: '', is_zakat: false });

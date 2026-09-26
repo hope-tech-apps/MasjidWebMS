@@ -94,7 +94,10 @@ class LunchOpeningNotifier
      */
     private function claim(MealMenu $menu): bool
     {
+        // A standing kitchen catalogue is never announced: the text says a lunch
+        // is open for a date, and a catalogue has none.
         if ($menu->status !== MealMenu::STATUS_OPEN
+            || $menu->isCatalogue()
             || $menu->notify_service_id === null
             || $menu->opening_notified_at !== null) {
             return false;

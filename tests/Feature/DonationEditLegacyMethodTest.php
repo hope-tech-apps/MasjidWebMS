@@ -160,6 +160,28 @@ class DonationEditLegacyMethodTest extends TestCase
         $this->assertSame(0, Donation::withoutGlobalScopes()->count());
     }
 
+    #[Test]
+    public function a_gift_that_came_by_bank_transfer_is_recorded_and_corrected_as_bank_transfer(): void
+    {
+        // An organisation can advertise bank transfer as a way to pay it, so a gift
+        // that arrived that way must be bookable as one — not refused on entry, and
+        // not "healed" to 'other' when the gift is edited.
+        $this->postJson("/api/admin/masjids/{$this->masjid->id}/donations", [
+            'fund_id' => $this->general->id,
+            'amount' => 150.00,
+            'payment_method' => 'bank_transfer',
+            'donated_at' => '2026-03-01',
+        ])->assertStatus(201);
+
+        $gift = Donation::withoutGlobalScopes()->latest('id')->firstOrFail();
+        $this->assertSame('bank_transfer', $gift->payment_method);
+
+        // Booked as cash by mistake, then corrected.
+        $gift->forceFill(['payment_method' => 'cash'])->saveQuietly();
+        $this->putJson($this->url($gift), ['payment_method' => 'bank_transfer'])->assertOk();
+        $this->assertSame('bank_transfer', $gift->fresh()->payment_method);
+    }
+
     // ------------------------------------------------------------- helpers
 
     private function url(Donation $d): string
