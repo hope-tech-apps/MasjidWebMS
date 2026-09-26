@@ -779,6 +779,16 @@ class EmailUnsubscribeTest extends TestCase
             // at send time. It never asks whether to send — that answer arrives
             // already applied, in the audience the resolver hands it.
             'app/Services/Broadcast/Channels/EmailChannel.php',
+            // The staged Wix contact import WRITES suppressions in advance, for
+            // every imported address that was not subscribed on Wix, so an
+            // import can never opt anybody in. It reads the list only to count
+            // what it will write and to leave a suppression already in force
+            // untouched; it decides nothing about any send.
+            'app/Services/Imports/WixContactImport.php',
+            // Staff recording consent given in Manara, which lifts an import's
+            // `not_opted_in` precaution and refuses every other reason. It
+            // writes the list; it decides nothing about any send.
+            'app/Http/Controllers/AdminDashboard/ContactEmailConsentController.php',
         ];
 
         // Deliberately NOT the bare verbs `isSuppressed(` / `suppressedAmong(`:

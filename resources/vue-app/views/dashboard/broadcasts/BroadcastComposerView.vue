@@ -88,8 +88,20 @@
                     </label>
                 </div>
 
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" id="aud-tag" value="tag"
+                        v-model="form.audience" :disabled="!crmEnabled">
+                    <label class="form-check-label ms-2" for="aud-tag">
+                        <span class="fw-semibold">People with a tag</span>
+                        <span class="text-muted small d-block">
+                            Everyone in your contacts carrying one tag, by email or text. People who unsubscribed
+                            or never agreed to texts are still left out.
+                        </span>
+                    </label>
+                </div>
+
                 <div v-if="!crmEnabled" class="text-muted small ms-4">
-                    Interest-based sending needs the CRM enabled for this organization.
+                    Interest- and tag-based sending need the CRM enabled for this organization.
                 </div>
 
                 <div v-if="form.audience === 'service'" class="ms-4 mt-2">
@@ -102,6 +114,19 @@
                     <div class="text-muted small mt-1">
                         Nobody is added or removed by sending — the list is worked out when the message goes,
                         so anyone who turned this service off beforehand won't receive it.
+                    </div>
+                </div>
+
+                <div v-if="form.audience === 'tag'" class="ms-4 mt-2">
+                    <ColumnInputContainer label="Tag" name="tag_id" :show_error="true" class="w-100 w-md-50">
+                        <Field name="tag_id" as="select" v-model="form.tag_id" class="dashboard-input">
+                            <option value="">Choose a tag…</option>
+                            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }} ({{ t.contacts_count ?? 0 }})</option>
+                        </Field>
+                    </ColumnInputContainer>
+                    <div class="text-muted small mt-1">
+                        The list is worked out when the message goes, so a scheduled message reaches whoever carries
+                        the tag at that moment.
                     </div>
                 </div>
             </div>
@@ -137,9 +162,11 @@ import ApiService from '@/core/services/ApiService'
 import { BackendResponseData } from '@/core/types/config/AxiosCustom'
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes'
 import { Service } from '@/core/types/data/masjid-related/Service'
+import { ContactTag } from '@/core/types/data/masjid-related/ContactTag'
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput'
 import { useMasjidStore } from '@/stores/masjidStore'
 import { useBroadcastsStore } from '@/stores/masjid/broadcastsStore'
+import { broadcastFields, pushAudienceWarning } from './broadcastPayload'
 import { moduleIsOff } from '@/core/access/orgAccess'
 import { ModuleKey } from '@/core/types/data/Capability'
 import { AxiosError, AxiosResponse } from 'axios'
@@ -172,14 +199,16 @@ const availableChannels = computed(() => CHANNELS.filter(c => !c.module || !modu
 const isLoading = ref(false)
 const imageFile = ref<File | undefined>(undefined)
 const services = ref<Service[]>([])
+const tags = ref<ContactTag[]>([])
 
 const form = ref({
     title: '',
     body: '',
     link: '',
     channels: [] as string[],
-    audience: 'everyone' as 'everyone' | 'service',
+    audience: 'everyone' as 'everyone' | 'service' | 'tag',
     service_id: '' as string | number,
+    tag_id: '' as string | number,
     starts_on: '',
     ends_on: '',
     scheduled_at: '',
@@ -201,14 +230,9 @@ const hasAnnouncement = computed(() => form.value.channels.includes('announcemen
  * people chosen. That audience is not offered here, so this only ever fires as
  * a guard if the options change — but the sentence is the one the admin needs.
  */
-const pushWarning = computed(() => {
-    // A service audience now narrows every channel (email and SMS included), so
-    // the only refused combination left is push to a hand-picked list.
-    if (form.value.audience === 'contacts' && form.value.channels.includes('push')) {
-        return 'Push cannot be narrowed to chosen contacts: most devices are not signed in, so it would reach only a few of them. Send push to everyone, address a service instead, or drop push.'
-    }
-    return ''
-})
+// A service audience narrows every channel (email and SMS included); push to
+// a hand-picked list or to a tag is the refused combination (broadcastPayload.ts).
+const pushWarning = computed(() => pushAudienceWarning(form.value.audience, form.value.channels))
 
 const formValidationSchema = object().shape({
     title: string().required('A title is required').max(255),
@@ -233,6 +257,11 @@ const formValidationSchema = object().shape({
         then: (s) => s.required('Choose the service this is for'),
         otherwise: (s) => s.nullable(),
     }),
+    tag_id: number().transform(v => (isNaN(v) ? undefined : v)).when([], {
+        is: () => form.value.audience === 'tag',
+        then: (s) => s.required('Choose the tag this is for'),
+        otherwise: (s) => s.nullable(),
+    }),
 })
 
 onBeforeMount(async () => {
@@ -246,6 +275,16 @@ onBeforeMount(async () => {
             }
         })
         .catch((e: Error) => console.log('Fetch services error: ', e))
+
+    // Tags need `view contacts`; without it this 403s and the picker is empty,
+    // which matches the server refusing the audience for that admin anyway.
+    if (crmEnabled.value) {
+        await ApiService.get(`/api/admin/masjids/${masjidStore.masjid.id}/contact-tags`)
+            .then((res: AxiosResponse) => {
+                if (res.data?.status === 'success') tags.value = res.data.data ?? []
+            })
+            .catch(() => { tags.value = [] })
+    }
 })
 
 function onImageInputChange(data: UploadedImageInfo) {
@@ -266,7 +305,9 @@ async function onSubmit() {
     const names = CHANNELS.filter(c => form.value.channels.includes(c.value)).map(c => c.label).join(', ')
     const who = form.value.audience === 'service'
         ? `people interested in ${services.value.find(s => String(s.id) === String(form.value.service_id))?.title ?? 'that service'}`
-        : 'everyone'
+        : form.value.audience === 'tag'
+            ? `everyone tagged "${tags.value.find(t => String(t.id) === String(form.value.tag_id))?.name ?? 'that tag'}"`
+            : 'everyone'
     const when = form.value.scheduled_at ? 'This will be scheduled.' : 'This sends immediately and cannot be recalled.'
 
     const confirmed = await QSwal.fire('Confirm', `Send "${form.value.title}" to ${who} via ${names}? ${when}`, 'question')
@@ -276,17 +317,7 @@ async function onSubmit() {
     }
 
     const fd = new FormData()
-    fd.append('title', form.value.title)
-    fd.append('body', form.value.body)
-    if (form.value.link) fd.append('link', form.value.link)
-    form.value.channels.forEach(c => fd.append('channels[]', c))
-    fd.append('audience', form.value.audience)
-    if (form.value.audience === 'service') fd.append('service_id', String(form.value.service_id))
-    if (hasAnnouncement.value) {
-        fd.append('starts_on', form.value.starts_on)
-        fd.append('ends_on', form.value.ends_on)
-    }
-    if (form.value.scheduled_at) fd.append('scheduled_at', new Date(form.value.scheduled_at).toISOString())
+    broadcastFields(form.value, hasAnnouncement.value).forEach(([name, value]) => fd.append(name, value))
     if (imageFile.value) fd.append('image', imageFile.value)
 
     let endpoint: BackendApiRoute | '' = ''

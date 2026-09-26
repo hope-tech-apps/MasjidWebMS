@@ -74,6 +74,39 @@
                     </div>
                 </div>
 
+                <!--
+                    TAGS: filter the list by one, manage them, and tag or untag
+                    the ticked members in bulk. Hidden until the tag list has
+                    loaded, which it only does for a caller who may view
+                    contacts.
+                -->
+                <div class="row mb-3 g-2 align-items-center">
+                    <div class="col-md-5 col-lg-4">
+                        <select v-model="tagFilter" class="form-select form-select-sm" aria-label="Filter by tag">
+                            <option :value="null">All {{ membersTerm.toLowerCase() }}</option>
+                            <option v-for="tag in contactsStore.tags" :key="tag.id" :value="tag.id">
+                                Tagged "{{ tag.name }}" ({{ tag.contacts_count ?? 0 }})
+                            </option>
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" @click="showTagsManager = true">
+                            <i class="bi bi-tags me-1"></i>Manage tags
+                        </button>
+                    </div>
+                </div>
+
+                <div v-if="selectedIds.length" class="alert alert-light border d-flex flex-wrap align-items-center gap-2 py-2 mb-3">
+                    <strong class="me-1">{{ selectedIds.length }} selected</strong>
+                    <select v-model="bulkTagId" class="form-select form-select-sm w-auto" aria-label="Tag to add or remove">
+                        <option :value="null">Choose a tag…</option>
+                        <option v-for="tag in contactsStore.tags" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
+                    </select>
+                    <button type="button" class="btn btn-sm btn-success" :disabled="!bulkTagId || tagBusy" @click="applyBulkTag('add')">Add tag</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" :disabled="!bulkTagId || tagBusy" @click="applyBulkTag('remove')">Remove tag</button>
+                    <button type="button" class="btn btn-sm btn-link ms-auto" @click="selectedIds = []">Clear selection</button>
+                </div>
+
                 <!-- Loading State -->
                 <div v-if="loading" class="text-center py-5">
                     <div class="spinner-border text-primary" role="status">
@@ -84,7 +117,8 @@
                 <!-- Empty State -->
                 <div v-else-if="contacts.length === 0" class="text-center py-5 text-muted">
                     <i class="bi bi-person-x fs-1 d-block mb-3"></i>
-                    <p>No {{ membersTerm.toLowerCase() }} yet</p>
+                    <p v-if="tagFilter !== null">Nobody carries this tag</p>
+                    <p v-else>No {{ membersTerm.toLowerCase() }} yet</p>
                 </div>
 
                 <!-- Members Table -->
@@ -92,6 +126,16 @@
                     <table class="table table-hover align-middle">
                         <thead>
                             <tr>
+                                <th style="width: 2rem;">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        aria-label="Select every member on this page"
+                                        :checked="pageAllSelected"
+                                        :disabled="pageSelectableIds.length === 0"
+                                        @change="selectedIds = togglePage(selectedIds, pageSelectableIds)"
+                                    >
+                                </th>
                                 <th>Name</th>
                                 <th>Email</th>
                                 <th>Phone</th>
@@ -101,10 +145,23 @@
                         <tbody>
                             <tr v-for="contact in contacts" :key="contact.id" :class="{ 'opacity-75': contact.deleted_at }">
                                 <td>
+                                    <input
+                                        v-if="!contact.deleted_at"
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        :aria-label="`Select ${contact.first_name} ${contact.last_name}`"
+                                        :checked="selectedIds.includes(contact.id)"
+                                        @change="selectedIds = toggleId(selectedIds, contact.id)"
+                                    >
+                                </td>
+                                <td>
                                     <strong>{{ contact.first_name }} {{ contact.last_name }}</strong>
                                     <span v-if="contact.deleted_at" class="badge bg-secondary-subtle text-secondary ms-2">
                                         Deleted
                                     </span>
+                                    <div v-if="contact.tags?.length" class="mt-1 d-flex flex-wrap gap-1">
+                                        <span v-for="tag in contact.tags" :key="tag.id" class="badge rounded-pill bg-primary-subtle text-primary-emphasis fw-normal">{{ tag.name }}</span>
+                                    </div>
                                 </td>
                                 <td>
                                     <a v-if="contact.email" :href="`mailto:${contact.email}`" class="text-decoration-none">
@@ -295,11 +352,23 @@
                                         whatever reader replaces it and this markup
                                         stands. Nothing else in the SPA reads the field.
                                     -->
-                                    <p v-if="emailOptedOutAt" class="mb-0 mt-1">
+                                    <p v-if="emailOptedOutAt && emailBadge" class="mb-0 mt-1">
                                         <span class="badge bg-secondary-subtle text-secondary">
                                             <i class="bi bi-envelope-slash me-1" aria-hidden="true"></i>
-                                            Emails: unsubscribed {{ formatDate(emailOptedOutAt) }}
+                                            {{ emailBadge.label }} {{ formatDate(emailOptedOutAt) }}
                                         </span>
+                                        <!--
+                                            Only for an import's "not opted in": the person
+                                            never received a broadcast, so their own link
+                                            can never reach them. Every opt-out stays theirs
+                                            to undo; the server refuses it (422) regardless.
+                                        -->
+                                        <button
+                                            v-if="emailBadge.canRecordConsent"
+                                            type="button"
+                                            class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                                            @click="recordEmailConsent"
+                                        >Record consent to email</button>
                                     </p>
                                 </div>
                             </div>
@@ -329,6 +398,29 @@
                                 <div class="col-12">
                                     <h6 class="text-muted mb-2">Notes</h6>
                                     <p class="mb-0 small" style="white-space: pre-wrap;">{{ selectedContact.notes || '—' }}</p>
+                                </div>
+                            </div>
+
+                            <!--
+                                Tags on this member. Adding or removing one here
+                                is the single-member form of the bulk action on
+                                the list — the same two endpoints with one id.
+                            -->
+                            <div v-if="!selectedContact.deleted_at" class="row mb-3">
+                                <div class="col-12">
+                                    <h6 class="text-muted mb-2">Tags</h6>
+                                    <div class="d-flex flex-wrap align-items-center gap-2">
+                                        <span v-for="tag in (selectedContact.tags || [])" :key="tag.id" class="badge rounded-pill bg-primary-subtle text-primary-emphasis fw-normal d-inline-flex align-items-center">
+                                            {{ tag.name }}
+                                            <button type="button" class="btn-close btn-close-sm ms-2" style="font-size: .5rem;" :aria-label="`Remove ${tag.name}`" :disabled="tagBusy" @click="removeRecordTag(tag.id)"></button>
+                                        </span>
+                                        <span v-if="!(selectedContact.tags || []).length" class="text-muted small">No tags</span>
+                                        <select v-if="recordTagOptions.length" v-model="recordTagId" class="form-select form-select-sm w-auto" aria-label="Add a tag">
+                                            <option :value="null">Add a tag…</option>
+                                            <option v-for="tag in recordTagOptions" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
+                                        </select>
+                                        <button v-if="recordTagId" type="button" class="btn btn-sm btn-success" :disabled="tagBusy" @click="addRecordTag">Add</button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1120,6 +1212,12 @@
                 </div>
             </div>
         </Teleport>
+        <ContactTagsManager
+            :show="showTagsManager"
+            :members-term="membersTerm"
+            @close="showTagsManager = false"
+            @changed="onTagsChanged"
+        />
     </div>
 </template>
 
@@ -1127,6 +1225,9 @@
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
+import ContactTagsManager from '@/views/dashboard/contacts/ContactTagsManager.vue';
+import { selectableIds, tagsNotOn, toggleId, togglePage } from '@/views/dashboard/contacts/contactTags';
+import { emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     ADMIN_SELECTABLE_SMS_CONSENT_SOURCES,
@@ -1159,6 +1260,14 @@ const editingId = ref<number | null>(null);
 const selectedContact = ref<Contact | null>(null);
 /** Include soft-deleted members in the listing. Off by default. */
 const showDeleted = ref(false);
+/** The tag the list is narrowed to, or null for everyone. */
+const tagFilter = ref<number | null>(null);
+/** Members ticked for a bulk tag action — kept across pages, cleared by a new filter or search. */
+const selectedIds = ref<number[]>([]);
+const bulkTagId = ref<number | null>(null);
+const recordTagId = ref<number | null>(null);
+const tagBusy = ref(false);
+const showTagsManager = ref(false);
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const emptyForm = (): ContactPayload => ({ first_name: '', last_name: '', email: '', phone: '', notes: '' });
@@ -1169,6 +1278,12 @@ const form = ref<ContactPayload>(emptyForm());
 const membersTerm = computed<string>(() => masjidStore.term('members'));
 
 const contacts = computed<Contact[]>(() => (contactsStore.contactsPaginated?.data as Contact[]) || []);
+
+const pageSelectableIds = computed<number[]>(() => selectableIds(contacts.value));
+const pageAllSelected = computed<boolean>(() =>
+    pageSelectableIds.value.length > 0 && pageSelectableIds.value.every(id => selectedIds.value.includes(id)));
+/** Tags the open member does not carry yet. */
+const recordTagOptions = computed(() => tagsNotOn(contactsStore.tags, selectedContact.value?.tags));
 
 /**
  * When the open member unsubscribed from this organisation's broadcast emails,
@@ -1194,6 +1309,47 @@ const contacts = computed<Contact[]>(() => (contactsStore.contactsPaginated?.dat
 const emailOptedOutAt = computed<string | null>(
     () => selectedContact.value?.email_opted_out_at ?? null);
 
+/** Which kind of suppression the badge names, from the server's reason (emailOptOut.ts). */
+const emailBadge = computed(() =>
+    emailOptOutBadge(emailOptedOutAt.value, selectedContact.value?.email_opt_out_reason));
+
+/**
+ * Staff record that the person consented to email in Manara, with their own
+ * words for how. Lifts an import's "not opted in" precaution only; the server's
+ * refusal sentence is shown as it comes.
+ */
+const recordEmailConsent = async () => {
+    if (!selectedContact.value) return;
+
+    const result = await Swal.fire({
+        title: 'Record consent to email',
+        text: 'The old website never had this person\'s consent, so the import held their email back. '
+            + 'Record how they have now agreed to receive this organization\'s emails.',
+        input: 'text',
+        inputPlaceholder: 'Signed the newsletter sheet at Jumu\'ah on 3 Oct',
+        inputAttributes: { maxlength: '500' },
+        inputValidator: (value: string) => (value.trim() === '' ? 'Say how they gave consent. An address on file is not consent.' : null),
+        showCancelButton: true,
+        confirmButtonText: 'Record consent',
+    });
+
+    if (!result.isConfirmed || !selectedContact.value) return;
+
+    try {
+        applySavedContact(await contactsStore.recordEmailConsent(selectedContact.value.id, String(result.value)));
+        Swal.fire({ icon: 'success', title: 'Consent recorded', text: 'Broadcast emails can now reach this address.', timer: 2500, showConfirmButton: false });
+    } catch (error: any) {
+        const data = error?.response?.data;
+        Swal.fire({
+            icon: 'error',
+            title: 'Not recorded',
+            text: data?.message
+                || (data?.data && typeof data.data === 'object' ? Object.values(data.data).flat().join(' ') : '')
+                || 'Could not record consent. Please try again.',
+        });
+    }
+};
+
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
     if (!contactsStore.contactsPaginated) return undefined;
     return {
@@ -1206,12 +1362,15 @@ const paginationOptions = computed<PaginationOptions | undefined>(() => {
 // Lifecycle
 onBeforeMount(async () => {
     await loadData();
+    // Best effort: without `view contacts` this 403s, and the list simply offers no tags.
+    contactsStore.fetchTags().catch(() => { contactsStore.tags = []; });
 });
 
 // Debounced search
 watch(searchQuery, () => {
     if (searchTimeout) clearTimeout(searchTimeout);
     searchTimeout = setTimeout(async () => {
+        selectedIds.value = [];
         await loadData(1, searchQuery.value);
     }, 500);
 });
@@ -1222,11 +1381,18 @@ watch(showDeleted, async () => {
     await loadData(1, searchQuery.value);
 });
 
+// A new filter is a new list: a selection made on the old one would act on
+// people no longer on screen.
+watch(tagFilter, async () => {
+    selectedIds.value = [];
+    await loadData(1, searchQuery.value);
+});
+
 // Methods
 const loadData = async (page: number = 1, search: string = '') => {
     loading.value = true;
     try {
-        await contactsStore.fetchContacts(page, search, showDeleted.value ? 'with' : '');
+        await contactsStore.fetchContacts(page, search, showDeleted.value ? 'with' : '', tagFilter.value);
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load members.' });
     } finally {
@@ -1236,6 +1402,80 @@ const loadData = async (page: number = 1, search: string = '') => {
 
 const pageChange = async (data: PageChangeData) => {
     await loadData(data.toPage, searchQuery.value);
+};
+
+/** The server's refusal sentence, or a generic one. */
+const tagRefusal = (e: any): string => e?.response?.data?.message || 'The tags could not be changed. Nothing was saved.';
+
+/** Tag or untag every ticked member. */
+const applyBulkTag = async (verb: 'add' | 'remove') => {
+    const tag = contactsStore.tags.find(t => t.id === bulkTagId.value);
+    if (!tag || selectedIds.value.length === 0) return;
+
+    tagBusy.value = true;
+    try {
+        const changed = verb === 'add'
+            ? await contactsStore.tagContacts(tag.id, selectedIds.value)
+            : await contactsStore.untagContacts(tag.id, selectedIds.value);
+        Swal.fire({
+            icon: 'success',
+            title: verb === 'add' ? `Tagged "${tag.name}"` : `Removed "${tag.name}"`,
+            text: `${changed} ${changed === 1 ? 'member' : 'members'} changed.`,
+            timer: 1800,
+            showConfirmButton: false,
+        });
+        selectedIds.value = [];
+        await loadData(paginationOptions.value?.currentPage || 1, searchQuery.value);
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Not changed', text: tagRefusal(e) });
+    } finally {
+        tagBusy.value = false;
+    }
+};
+
+/** Re-read the open member and the list after a tag changed on them. */
+const refreshAfterRecordTag = async () => {
+    if (selectedContact.value) {
+        const full = await contactsStore.fetchContact(selectedContact.value.id);
+        if (full) selectedContact.value = full;
+    }
+    await loadData(paginationOptions.value?.currentPage || 1, searchQuery.value);
+};
+
+const addRecordTag = async () => {
+    if (!selectedContact.value || !recordTagId.value) return;
+    tagBusy.value = true;
+    try {
+        await contactsStore.tagContacts(recordTagId.value, [selectedContact.value.id]);
+        recordTagId.value = null;
+        await refreshAfterRecordTag();
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Not changed', text: tagRefusal(e) });
+    } finally {
+        tagBusy.value = false;
+    }
+};
+
+const removeRecordTag = async (tagId: number) => {
+    if (!selectedContact.value) return;
+    tagBusy.value = true;
+    try {
+        await contactsStore.untagContacts(tagId, [selectedContact.value.id]);
+        await refreshAfterRecordTag();
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Not changed', text: tagRefusal(e) });
+    } finally {
+        tagBusy.value = false;
+    }
+};
+
+/** A tag was created, renamed or deleted: the chips on screen may be stale, and a deleted filter tag must go. */
+const onTagsChanged = async () => {
+    if (tagFilter.value !== null && !contactsStore.tags.some(t => t.id === tagFilter.value)) {
+        tagFilter.value = null;   // the watcher reloads
+        return;
+    }
+    await loadData(paginationOptions.value?.currentPage || 1, searchQuery.value);
 };
 
 /**
@@ -1286,6 +1526,7 @@ const viewContact = async (contact: Contact) => {
     // withdrawal did not reach the durable list.
     smsConsentError.value = '';
     smsOptOutNotDurable.value = '';
+    recordTagId.value = null;
     try {
         const full = await contactsStore.fetchContact(contact.id);   // hydrate cards + giving history
         if (full) selectedContact.value = full;

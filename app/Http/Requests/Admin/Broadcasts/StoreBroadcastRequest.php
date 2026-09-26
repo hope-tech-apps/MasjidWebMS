@@ -98,6 +98,18 @@ class StoreBroadcastRequest extends BaseFormRequest
                 ),
             ],
 
+            // The tag a `tag` audience addresses. Constrained to THIS
+            // organisation in the rule: the resolver would find nobody for a
+            // foreign tag (ContactTag is tenant-scoped), but a broadcast that
+            // silently addresses nobody is a worse answer than a 422 now.
+            'tag_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contact_tags', 'id')->where(
+                    fn ($q) => $q->where('masjid_id', $this->route('masjid_id'))
+                ),
+            ],
+
             // Nullable = send now. A past value is treated as "now" rather than
             // rejected: an admin who spent ninety seconds on the form should not
             // lose it to a clock.
@@ -128,6 +140,27 @@ class StoreBroadcastRequest extends BaseFormRequest
             // addresses people who opted in THROUGH the app, so having an
             // account on a device is intrinsic to the audience rather than an
             // accident that silently shrinks it.
+            if (
+                in_array(BroadcastChannel::PUSH->value, $channels, true)
+                && $this->input('audience') === BroadcastAudience::TAG->value
+            ) {
+                // Same failure as a chosen list: a tag names people, and most
+                // of them are signed in on no device.
+                $validator->errors()->add(
+                    'channels',
+                    'Push cannot be sent to a tag: most registered devices are not signed in, '
+                    . 'so the send would silently reach only a fraction of the people tagged. '
+                    . 'Send push to everyone, or drop the push channel.'
+                );
+            }
+
+            if (
+                $this->input('audience') === BroadcastAudience::TAG->value
+                && empty($this->input('tag_id'))
+            ) {
+                $validator->errors()->add('tag_id', 'Choose the tag this broadcast is for.');
+            }
+
             if (
                 in_array(BroadcastChannel::PUSH->value, $channels, true)
                 && $this->input('audience') === BroadcastAudience::CONTACTS->value

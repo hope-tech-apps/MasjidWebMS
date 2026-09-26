@@ -26,6 +26,10 @@ use Illuminate\Database\Eloquent\Model;
  * needs when a complaint arrives, and would let a later re-STOP write a second
  * contradictory row instead of updating this one.
  *
+ * The one deletion is an import's undo of a row that very run inserted, and
+ * only when the operator says the run went into the wrong organisation
+ * (SmsConsentService::forgetWrittenByImport; the email list has the same rule).
+ *
  * ## Tenant scoping
  *
  * BelongsToMasjid, per .claude/rules/tenant-scoping.md, and a new model so it

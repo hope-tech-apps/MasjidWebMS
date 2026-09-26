@@ -60,6 +60,22 @@ enum BroadcastAudience: string
     case SERVICE = 'service';
 
     /**
+     * Everyone carrying one CONTACT TAG (App\Models\ContactTag).
+     *
+     * Stored like SERVICE: the broadcast records the tag, and the resolver
+     * answers who carries it when the message goes, so a scheduled send
+     * reaches the people tagged at that moment. A tag is the office's label,
+     * not an opt-in, so it narrows the audience and grants nothing — the email
+     * opt-out list and the SMS consent record still apply to every tagged
+     * person exactly as they apply to "everyone".
+     *
+     * Push is refused for this audience at the request boundary, for the
+     * reason CONTACTS is: a tag names people, most of whom have signed in on
+     * no device, so a push would silently reach a fraction of them.
+     */
+    case TAG = 'tag';
+
+    /**
      * Does resolving this audience read the contact directory?
      *
      * A predicate rather than a comparison, matching
@@ -73,7 +89,7 @@ enum BroadcastAudience: string
      */
     public function readsContacts(): bool
     {
-        return $this === self::CONTACTS || $this === self::SERVICE;
+        return $this === self::CONTACTS || $this === self::SERVICE || $this === self::TAG;
     }
 
     /** @return array<int, string> Values, for validation rules. */

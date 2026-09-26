@@ -48,6 +48,12 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/contacts` |
     `/api/admin/masjids/${string}/contacts?page=${number}` |
     `/api/admin/masjids/${string}/contacts/${string}` |
+    // Contact tags (2026-09-25): list/create, one tag (rename, delete), and the
+    // bulk tag / untag of its members — both POSTs carrying `contact_ids[]`.
+    `/api/admin/masjids/${string}/contact-tags` |
+    `/api/admin/masjids/${string}/contact-tags/${string}` |
+    `/api/admin/masjids/${string}/contact-tags/${string}/contacts` |
+    `/api/admin/masjids/${string}/contact-tags/${string}/contacts/remove` |
     // Family sign-in for one contact — the parent-portal ON-SWITCH (T-015d).
     // One shape, three verbs: GET reads the state and the audit trail, POST
     // enables/re-addresses, DELETE revokes. See ContactFamilyLoginController.

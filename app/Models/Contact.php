@@ -809,6 +809,22 @@ class Contact extends Model implements AuthenticatableContract
 
 
     /**
+     * The organisation's own labels on this person (App\Models\ContactTag).
+     *
+     * Office classification, nothing more: no send path reads a tag to decide
+     * whether this person may be emailed or texted — the opt-out list and the
+     * SMS consent record still decide that for a tag audience. Classified as
+     * office data in App\Services\Member\MemberAccountDeletion, so a tagged
+     * member who deletes their app account keeps the record the office made.
+     */
+    public function tags(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(ContactTag::class, 'contact_tag_links')
+            ->withPivot('import_batch')
+            ->withTimestamps();
+    }
+
+    /**
      * The services this member asked to hear about.
      *
      * Deliberately NOT `$fillable` anywhere near this: interests are written

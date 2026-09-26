@@ -108,7 +108,7 @@ class BroadcastsController extends Controller
                 masjid: $masjid,
                 attributes: $request->safe()->only([
                     'title', 'body', 'link', 'starts_on', 'ends_on',
-                    'audience', 'contact_ids', 'service_id', 'scheduled_at',
+                    'audience', 'contact_ids', 'service_id', 'tag_id', 'scheduled_at',
                 ]),
                 channels: $channels,
                 image: $request->file('image'),

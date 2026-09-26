@@ -780,6 +780,22 @@ Route::prefix('admin')->group(function () {
                     Route::post('/{contact_id}/restore', 'restore')->middleware('permission:manage contacts');
                 });
 
+                // Contact tags: an organisation's own labels on its contacts,
+                // with bulk tag / untag. The SAME two permissions as the
+                // directory (reading is `view contacts`, every write is
+                // `manage contacts`); no permission is minted. The untag is a
+                // POST, like the tag, because it carries the list of contact
+                // ids and a body on POST is the shape every other bulk write
+                // in this file already uses.
+                Route::prefix('{masjid_id}/contact-tags')->controller(\App\Http\Controllers\AdminDashboard\ContactTagsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::put('/{tag_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{tag_id}', 'destroy')->middleware('permission:manage contacts');
+                    Route::post('/{tag_id}/contacts', 'attach')->middleware('permission:manage contacts');
+                    Route::post('/{tag_id}/contacts/remove', 'detach')->middleware('permission:manage contacts');
+                });
+
                 // SMS consent for one contact (T-009). Two verbs rather than one
                 // boolean toggle, and deliberately so: granting refuses for a
                 // number that has opted out (only the subscriber can undo that,
@@ -793,6 +809,14 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
                     });
+
+                // Email consent recorded by staff: lifts an import's
+                // `not_opted_in` precaution and nothing else (every opt-out is
+                // the subscriber's to release). One verb, `manage contacts`
+                // like the SMS twin above; no permission is minted.
+                Route::post('{masjid_id}/contacts/{contact_id}/email-consent',
+                    [\App\Http\Controllers\AdminDashboard\ContactEmailConsentController::class, 'store'])
+                    ->middleware('permission:manage contacts');
 
                 // Family sign-in for one contact (T-015d, admin half) — THE
                 // ON-SWITCH for the parent portal.

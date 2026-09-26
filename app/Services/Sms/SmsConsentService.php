@@ -318,6 +318,29 @@ class SmsConsentService
         return $suppression;
     }
 
+    /**
+     * Delete a suppression an import run INSERTED, as that run's undo when the
+     * operator says the run wrote into the wrong organisation
+     * (`wix:import-contacts --undo=… --remove-opt-outs`). The caller has proved
+     * from `import_links` that the row did not exist before the run.
+     *
+     * The opt-out DATE mirrored onto contacts with the number is cleared with
+     * the row. Their `sms_opt_in` is NOT restored: consent is only ever written
+     * by grant() or a START reply, with evidence, and an undo that switched it
+     * back on would be consent nobody gave. Staff record it again if it stood.
+     */
+    public function forgetWrittenByImport(SmsSuppression $suppression): void
+    {
+        $masjidId = (int) $suppression->masjid_id;
+        $e164 = (string) $suppression->phone_e164;
+
+        $suppression->delete();
+
+        $this->contactsWithNumber($masjidId, $e164)->each(function (Contact $contact) {
+            $contact->forceFill(['sms_opted_out_at' => null])->save();
+        });
+    }
+
     /** Is this number suppressed for this tenant right now? */
     public function isSuppressed(int $masjidId, string $e164): bool
     {

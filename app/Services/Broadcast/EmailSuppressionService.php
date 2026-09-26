@@ -38,7 +38,10 @@ use Illuminate\Support\Facades\Crypt;
  *     the mailbox in question. There is no admin endpoint, and there must never
  *     be one — a staff button that re-enables mail to somebody who unsubscribed
  *     is the button that turns an obligation into a complaint. Pinned by
- *     `an_admin_cannot_re_subscribe_somebody_who_unsubscribed`.
+ *     `an_admin_cannot_re_subscribe_somebody_who_unsubscribed`. The single
+ *     exception is not an opt-out at all: an import's `not_opted_in`
+ *     precaution, which staff may lift on recorded evidence of consent given
+ *     in Manara (`liftPrecaution()`, the argument is on it).
  *
  *  4. **The suppression belongs to an ADDRESS, not to a person.** That is what
  *     makes the merge rule below the only defensible one, and it is why the
@@ -400,6 +403,94 @@ class EmailSuppressionService
         $this->mirrorOntoContacts($masjidId, $address, null);
 
         return $suppression;
+    }
+
+    /**
+     * Lift an import's `not_opted_in` precaution because the person has now
+     * consented in Manara, as staff witnessed it. Returns the released row, or
+     * null when there is nothing this path may lift.
+     *
+     * Why a staff path exists for this reason and no other: `not_opted_in`
+     * records no request from the person, only that the platform the list came
+     * from never had their consent (EmailSuppression::REASON_NOT_OPTED_IN). The
+     * subscriber's own release needs a link that only a broadcast carries, and
+     * a suppressed address never receives one, so without this the precaution
+     * would outlive any consent the person later gives. Every OTHER reason —
+     * an unsubscribe, a complaint, an imported opt-out, a bounce — is refused
+     * here and stays the subscriber's to release (rule 3 on this class).
+     *
+     * The evidence, the staff account and the source are written onto the row
+     * beside `released_at`, so the record says who lifted it and why. The row
+     * is kept, as every release keeps it, and a later import run reads a
+     * released row as the person's decision and never re-suppresses it.
+     */
+    public function liftPrecaution(int $masjidId, ?string $email, string $evidence, ?int $userId): ?EmailSuppression
+    {
+        $address = self::normalize($email);
+
+        if ($address === null) {
+            return null;
+        }
+
+        $suppression = EmailSuppression::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('email_normalized', $address)
+            ->whereNull('released_at')
+            ->where('reason', EmailSuppression::REASON_NOT_OPTED_IN)
+            ->first();
+
+        if ($suppression === null) {
+            return null;
+        }
+
+        $suppression->forceFill([
+            'released_at' => Carbon::now(),
+            'release_source' => EmailSuppression::RELEASE_STAFF_RECORDED_CONSENT,
+            'release_evidence' => $evidence,
+            'released_by_user_id' => $userId,
+        ])->save();
+
+        $this->mirrorOntoContacts($masjidId, $address, null);
+
+        return $suppression;
+    }
+
+    /**
+     * The reason on the suppression in force for this address, or null when it
+     * is mailable. For the directory's badge only: "not opted in (imported)"
+     * and "unsubscribed" are different facts and staff act on them differently.
+     */
+    public function activeReason(int $masjidId, ?string $email): ?string
+    {
+        $address = self::normalize($email);
+
+        if ($address === null) {
+            return null;
+        }
+
+        return EmailSuppression::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('email_normalized', $address)
+            ->whereNull('released_at')
+            ->value('reason');
+    }
+
+    /**
+     * Delete a row an import run INSERTED, as that run's undo. The only
+     * deletion of a suppression anywhere (EmailSuppression, "The one
+     * deletion"): the caller has proved from `import_links` that the row did
+     * not exist before the run, so removing it returns the address to exactly
+     * where it stood. The mirror is cleared with it, so no contact goes on
+     * showing a verdict the list no longer holds.
+     */
+    public function forgetWrittenByImport(EmailSuppression $suppression): void
+    {
+        $masjidId = (int) $suppression->masjid_id;
+        $address = (string) $suppression->email_normalized;
+
+        $suppression->delete();
+
+        $this->mirrorOntoContacts($masjidId, $address, null);
     }
 
     /** Is this address suppressed for this tenant right now? */

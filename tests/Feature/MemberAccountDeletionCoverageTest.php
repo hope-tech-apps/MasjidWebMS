@@ -92,6 +92,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'contact_cards' => ['contact_id'],
             'contact_credentials' => ['contact_id'],
             'contact_login_events' => ['contact_id'],
+            'contact_tag_links' => ['contact_id'],
             'donations' => ['contact_id'],
             'donation_subscriptions' => ['contact_id'],
             'group_memberships' => ['contact_id', 'guardian_of_contact_id'],

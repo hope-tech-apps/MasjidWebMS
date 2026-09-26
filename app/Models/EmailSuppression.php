@@ -49,11 +49,29 @@ use Illuminate\Database\Eloquent\Model;
  * operator needs when a complaint arrives — and would let a later
  * re-unsubscribe write a second contradictory row instead of updating this one.
  *
- * **An admin may not release one.** There is no admin endpoint and no service
- * caller outside the public unsubscribe controller, for the same reason
- * `SmsConsentService::grant()` refuses a suppressed number: a staff button that
- * re-enables mail to somebody who opted out is the button that turns a
- * compliance obligation into a complaint.
+ * **An admin may not release an OPT-OUT.** There is no admin endpoint and no
+ * service caller outside the public unsubscribe controller that releases one,
+ * for the same reason `SmsConsentService::grant()` refuses a suppressed number:
+ * a staff button that re-enables mail to somebody who opted out is the button
+ * that turns a compliance obligation into a complaint.
+ *
+ * The one row staff MAY lift is an import's `not_opted_in` precaution, which
+ * records no request from anybody — only that the old platform never had
+ * consent. The person it silences never receives a broadcast, so the
+ * subscriber's own link can never reach them; without a staff path "never
+ * opted in on Wix" would mean "can never opt in". Lifting it requires the
+ * staff member's evidence of consent given in Manara and is written onto the
+ * row (`release_source`, `release_evidence`, `released_by_user_id`;
+ * EmailSuppressionService::liftPrecaution). Every other reason, `bounce`
+ * included, is still released only by the subscriber.
+ *
+ * **The one deletion.** An import's undo deletes the rows that very run
+ * INSERTED as precautions (`not_opted_in`, `bounce`), recorded row by row in
+ * `import_links`, because undoing the run means the import never happened and a
+ * released row would instead read as a decision somebody made. Opt-outs an
+ * import wrote survive its undo unless the operator explicitly says the run
+ * went into the wrong organisation (`--remove-opt-outs`). Nothing else deletes
+ * a row (EmailSuppressionService::forgetWrittenByImport).
  *
  * ## Tenant scoping
  *
@@ -79,8 +97,41 @@ class EmailSuppression extends Model
     /** An operator recorded a request made some other way (by phone, in person). */
     public const REASON_MANUAL = 'manual';
 
-    /** The relay reported the address as permanently undeliverable. */
+    /**
+     * The relay reported the address as permanently undeliverable — or, for a
+     * contact imported from another platform, that platform had.
+     */
     public const REASON_BOUNCE = 'bounce';
+
+    /**
+     * The person unsubscribed on the platform this organisation's list was
+     * imported from (App\Services\Imports\WixContactImport). A real opt-out,
+     * made before Manara held the list; it is honoured exactly like one made
+     * here and outlives the import (its undo keeps it).
+     */
+    public const REASON_IMPORTED_OPT_OUT = 'imported_opt_out';
+
+    /** The person marked the organisation's email as spam on the platform it was imported from. */
+    public const REASON_COMPLAINT = 'complaint';
+
+    /**
+     * Written IN ADVANCE by an import, for an address that never opted in on
+     * the platform it came from (never subscribed, pending, or no longer
+     * receiving mail there). Not a request from the person: it keeps the
+     * import from opting anybody in. The owner's rule for the MEC migration
+     * (DECISIONS.md 2026-09-25, "Everyone, most blocked").
+     */
+    public const REASON_NOT_OPTED_IN = 'not_opted_in';
+
+    /**
+     * The reasons an import writes as its OWN precaution rather than on the
+     * person's request. Shown differently in the directory, and removed by the
+     * undo of the run that inserted them.
+     */
+    public const PRECAUTION_REASONS = [self::REASON_NOT_OPTED_IN, self::REASON_BOUNCE];
+
+    /** `release_source` when staff recorded consent given in Manara (see liftPrecaution). */
+    public const RELEASE_STAFF_RECORDED_CONSENT = 'staff_recorded_consent';
 
     protected $fillable = [
         'masjid_id',
@@ -89,6 +140,9 @@ class EmailSuppression extends Model
         'broadcast_id',
         'suppressed_at',
         'released_at',
+        'release_source',
+        'release_evidence',
+        'released_by_user_id',
     ];
 
     protected function casts(): array

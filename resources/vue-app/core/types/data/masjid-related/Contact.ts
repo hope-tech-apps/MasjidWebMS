@@ -1,3 +1,5 @@
+import { ContactTagRef } from "./ContactTag";
+
 export type Contact = {
     id: number;
     masjid_id: number;
@@ -15,6 +17,13 @@ export type Contact = {
      * `deleted_at: null` are the same fact, and the UI tests truthiness.
      */
     deleted_at?: string | null;
+
+    /**
+     * The organisation's tags on this member (id and name), sorted by name.
+     * Carried by the directory listing and the show endpoint; optional because
+     * a Contact embedded in another payload does not load them.
+     */
+    tags?: ContactTagRef[];
 
     /**
      * TEXT-MESSAGE CONSENT (T-009). Five columns, not one boolean, and the
@@ -75,6 +84,13 @@ export type Contact = {
      * carries the new value or is deleted with it.
      */
     email_opted_out_at?: string | null;
+    /**
+     * WHY the address is suppressed (`email_suppressions.reason`), on the single
+     * record only (ContactsController::show). `not_opted_in` is an import's
+     * precaution staff may lift; every other reason is the person's to undo.
+     * Display only, like the date above.
+     */
+    email_opt_out_reason?: string | null;
 };
 
 /**

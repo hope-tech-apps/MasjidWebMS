@@ -43,15 +43,25 @@ class ContactsController extends Controller
      * `with` includes deleted members alongside live ones, `only` lists just
      * them; anything else (and the absent default) keeps the previous
      * behaviour exactly, so no existing caller sees a deleted member appear.
+     *
+     * ## `?tag_id=` — the directory filtered to one tag
+     *
+     * Resolved through `whereHas('tags')`, whose subquery carries ContactTag's
+     * tenant scope, so another organisation's tag id lists nobody rather than
+     * leaking whether that tag has members. Each row carries its `tags`
+     * (id and name) so the list can show them without a second request.
      */
     public function index(Request $request, $masjid_id)
     {
         $search = $request->query('search');
         $trashed = (string) $request->query('trashed', '');
+        $tagId = (int) $request->query('tag_id', 0);
 
         $contacts = Contact::query()
+            ->with(['tags' => fn ($query) => $query->select('contact_tags.id', 'contact_tags.name')->orderBy('contact_tags.name')])
             ->when($trashed === 'with', fn ($query) => $query->withTrashed())
             ->when($trashed === 'only', fn ($query) => $query->onlyTrashed())
+            ->when($tagId > 0, fn ($query) => $query->whereHas('tags', fn ($tags) => $tags->whereKey($tagId)))
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('first_name', 'like', "%{$search}%")
@@ -104,12 +114,18 @@ class ContactsController extends Controller
         // Card last-4 + giving history, newest gift first (by real gift date).
         $contact = Contact::with([
             'cards',
+            'tags' => fn ($query) => $query->select('contact_tags.id', 'contact_tags.name')->orderBy('contact_tags.name'),
             'donations' => fn ($q) => $q->with('fund')->orderByRaw('COALESCE(donated_at, created_at) DESC'),
         ])->findOrFail($contact_id);
 
         $data = $contact->toArray();
         $data['giving_total'] = (int) $contact->donations
             ->where('status', 'succeeded')->sum('charged_amount');
+        // WHY the address is suppressed, for the badge only: an import's
+        // "not opted in" is not an unsubscribe, and staff may lift it
+        // (ContactEmailConsentController) where they may not lift an opt-out.
+        $data['email_opt_out_reason'] = app(\App\Services\Broadcast\EmailSuppressionService::class)
+            ->activeReason((int) $contact->masjid_id, $contact->email);
 
         return response()->json([
             'status' => 'success',
@@ -267,6 +283,12 @@ class ContactsController extends Controller
                 );
             }
             $source->cards()->delete();
+
+            // The absorbed row's tags move to the survivor: they are the
+            // office's labels on the same person, and the force-delete below
+            // would otherwise cascade them away in silence.
+            $target->tags()->syncWithoutDetaching($source->tags()->pluck('contact_tags.id')->all());
+
             $source->forceDelete();   // the placeholder is fully absorbed
         });
 

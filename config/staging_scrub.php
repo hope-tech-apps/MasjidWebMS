@@ -151,6 +151,7 @@ return [
         'stripe_webhook_events' => 'An idempotency ledger only (stripe_event_id UNIQUE, type, processed_at) — it has no payload column. Dropping is desirable: staging wants its test webhooks processed, not swallowed as duplicates.',
         'provisioning_jobs' => 'callback_token is a live shared secret; github_repo and artifact_url point at real build infrastructure.',
         'studio_drafts' => 'Manara Studio drafts: a prospective client\'s admin name, email and phone, and a logo path on the private disk, which is never copied to staging. Nothing references the table.',
+        'import_links' => 'Which row each record of a staged import (the Wix contacts and form-message importers) became. external_id holds Wix ids and, for form senders and submissions, keyed hashes of an address, a phone or a name; staging needs none of it and runs no import undo. Nothing references the table (local_id is deliberately not a foreign key).',
 
         // Framework runtime state. All of it is regenerated on demand and all of
         // it can hold a snapshot of the very data being scrubbed.
@@ -577,6 +578,8 @@ return [
         'funds.name' => 'A donation fund name ("Zakat", "Masjid Expansion"). It appears on every receipt and in every ledger filter.',
         'forms.name' => 'The public title of a form. `schema` beside it is field DEFINITIONS, also kept; the ANSWERS in form_responses.data are what gets scrubbed.',
         'contact_reasons.name' => 'An admin-managed picklist label behind the contact-us dropdown.',
+        'contact_tags.name' => 'An organisation\'s own label for a group of contacts ("Volunteer", "Fall Festival 2024"), shown in the directory filter and the broadcast audience picker. A category, not a person; which contacts carry it is contact_tag_links, which holds ids only.',
+        'contact_tags.name_key' => 'The same label lower-cased with its whitespace collapsed, for the per-organisation unique index. Derived from contact_tags.name on every save.',
         'donation_links.message' => 'The blurb on a public donate page, written for publication.',
         'splash_announcements.body' => 'Admin-authored announcement copy shown to every app user. Public by construction; `onesignal_iam_id` beside it IS nulled.',
         'app_version_settings.update_message' => 'The "please update" banner copy shown to every app user.',

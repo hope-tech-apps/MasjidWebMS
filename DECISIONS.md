@@ -3203,3 +3203,123 @@ Also pinned (tests only, mutation review P1-P9): the 25 MB ceiling is accepted a
 MEC's 18 MB clip; a `video_url` file on a non-video section is refused; the library update takes a
 replacement MP4; `layout` / `max_width` are checked by all four writers, with `narrow` accepted and
 non-strings (`true`, `0`) refused; unidentifiable bytes and a real text file named `.mp4` are refused.
+
+## 2026-09-25 — Contact tags, and the staged Wix contact and form-message importers (MEC migration B1)
+Owner decisions this builds on (mec-wix-migration/DECISIONS.md): "Build tags in Manara", "Everyone, most
+blocked", "Stage, apply before move", "Import, marked answered", members deferred. Calls made where they were silent:
+
+**Tags (Manara-wide).**
+- **A tag is a label, never consent.** Nothing reads a tag to decide whether to email or text anyone; a
+  `tag` broadcast audience only narrows, and the opt-out list and SMS consent record apply to every tagged
+  person as to "everyone". Alternative (a tag as a mailing list with its own opt-in) rejected: it would be a
+  second consent system beside `email_suppressions`.
+- **Tag audience resolved at send time** (`audience_tag_id`, like `audience_service_id`), not snapshotted like
+  a chosen contact list: a scheduled send reaches whoever carries the tag when it goes, which is what "send to
+  Volunteers" means in every mailing tool. **Push + tag is refused** (the chosen-list reason), and a tag
+  audience whose tag is gone addresses nobody; deleting a tag a scheduled broadcast addresses is refused (422).
+- **"Same name" = `name_key`** (lower-cased, whitespace collapsed) with a unique index per organisation,
+  because production collates utf8mb4_bin. Not `Str::slug`: it empties an Arabic name.
+- **Links carry no masjid_id**, only `import_batch`: every write resolves the tag and the contacts through the
+  tenant scope first. Bulk tag/untag is all-or-nothing: one foreign or deleted contact id 404s the request.
+  Untag is a POST (`/contacts/remove`), like every other bulk write with a body. Cap 1000 ids.
+- **Office data**: `contact_tag_links` is in `MemberAccountDeletion::OFFICE_RECORDS` (a tagged app member who
+  deletes their account keeps the office's record); a merge moves the absorbed contact's tags to the survivor.
+- Same two permissions as the directory (`view contacts` / `manage contacts`), inside `crm`; no permission minted.
+
+**`wix:import-contacts` (App\Services\Imports\WixContactImport).**
+- **Mailable = SUBSCRIBED and deliverability VALID, on every Wix record carrying the address** (the stricter
+  record wins). Deliverability NOT_SET is not VALID, so it is suppressed. Everything else gets a suppression
+  in advance with a new reason: `complaint`, `imported_opt_out` (UNSUBSCRIBED), `bounce`, `not_opted_in`
+  (NOT_SET, PENDING, INACTIVE...). The two opt-outs are written whatever happens to the contact (matched,
+  skipped, created); the two precautions only for a contact the import created — a person already on the
+  Manara list got there through Manara, and a Wix "never subscribed" is no reason to silence them here.
+  (SUPERSEDED by the review fixes below: the owner's text names every contact, so precautions apply to all.)
+- **Existing contacts are never edited**, not even to fill a blank (departs from the migration plan's "blanks
+  filled only"): the import adds only tags and suppressions to them, which keeps the undo exact and never
+  writes somebody else's address onto a household record.
+- **Matching**: by normalised email (oldest live non-placeholder contact); by phone ONLY for a Wix contact with
+  no email and only when exactly one live contact has the number (households share phones, not emails); a
+  contact the office deleted (soft-deleted, or since an earlier run) is not recreated, but its opt-outs apply.
+- **Re-runs** look up `import_links` first. A contact the import created is updated from the fresh pull unless
+  its values no longer match the SHA-256 fingerprint the import last wrote (then an admin edited it, and the
+  edit is kept). A precaution is never released: an address Wix now calls SUBSCRIBED is COUNTED ("suppressed
+  earlier, subscribed now") for the owner, because only the subscriber may release a suppression.
+- **Undo (`--undo=<batch>`)** hard-deletes the contacts the run created (a soft delete would leave every
+  imported person's details behind and collide with a corrected re-run), removes its tag assignments
+  (including on matched contacts) and the tags it created that nothing else carries, and its links. It KEEPS
+  every email and SMS suppression — rows are released only by the subscriber and never deleted — which is the
+  one respect in which it does not remove "exactly what it created". (SUPERSEDED below: undo removes the
+  precautions the run inserted.) It refuses in full, naming contact ids,
+  once a created contact is the office's record by MemberAccountDeletion's lists (plus a login or a broadcast).
+- Phone-only contacts have no address to suppress; no SMS consent is ever written; a Wix SMS UNSUBSCRIBED
+  becomes an `sms_suppressions` row (reason `manual`). Site members come across as contacts only, with a notes
+  line saying they had a login; no invitation. Other emails, other phones and postal addresses go into notes.
+- Label names come from `--labels` (Wix label definitions); without it a tag is named from its key. An
+  existing tag with the same key is reused; two labels differing only in case become one tag.
+- Output is counts only; refusals name ids and tables. The importer is allow-listed in
+  `EmailUnsubscribeTest`'s readers-of-the-suppression-list guard, with its reason.
+- Estimated dry run against an EMPTY organisation, computed locally from the 2026-09-25 export (a Python
+  re-statement of the rule, not the command): 3,951 records -> 3,905 people (46 merged), 1,562 mailable,
+  1,287 not_opted_in, 606 bounce, 384 imported_opt_out, 17 complaint, 49 without email. Org 13's real numbers
+  depend on its existing contacts and come from the command's dry run on the fresh pull.
+
+**`wix:import-form-messages` (App\Services\Imports\WixFormMessageImport).**
+- Designed for the CSV Wix's Forms & Submissions screen exports (header row, one column per field label, a
+  submission date); the columns are unknown until MEC exports, so headers are matched by alias then keyword,
+  `--map="Header=field"` overrides, unmatched columns are kept in the message text, and the dry run prints
+  the mapping (header names only). Dates are read in the organisation's timezone (`--timezone`,
+  `--date-format` for an ambiguous column); an unreadable row refuses the whole write.
+- Each sender gets the same rows the website form creates (a `mobile_app_users` row with an `import-wix-…`
+  device id and no push subscription, and a `contact_us_accounts` row), one per address. `created_at` is the
+  submission date; `answered_at` is the import time with no staff name (it was handled on Wix). Reason is
+  "{form} (old website)", `show_to_users` false. No notifier, no reply, no contact created.
+- Idempotent on the export's submission id, else a SHA-256 of form, address, date, sender and text. Undo
+  removes the run's messages and the senders left with none; refused once staff replied to one.
+
+## 2026-09-25 — Wix importer review fixes (MEC migration B1, 24 confirmed findings)
+- **Precautions apply to every contact, matched ones included.** The owner's binding rule ("Everyone, most
+  blocked": every contact not SUBSCRIBED or not deliverable, bounced named) was not silent, so the earlier
+  carve-out for matched contacts is gone. Safe because of the next two bullets: the badge says "not opted in
+  (imported)" rather than "unsubscribed", and staff can lift that one reason. The dry run shows the impact on
+  its own row ("of which precautions on contacts already in Manara"), so the owner sees it before apply.
+- **Staff may lift `not_opted_in`, and only that reason** (`POST /contacts/{id}/email-consent`, `manage
+  contacts`, evidence REQUIRED, written onto the row as `release_source = staff_recorded_consent`,
+  `release_evidence`, `released_by_user_id`; additive migration). Reason: the person an import silenced never
+  receives a broadcast, so the subscriber's own link can never reach them. `bounce` stays subscriber-only: a
+  relay bounce and a Wix bounce share the reason and cannot be told apart. The form-123 sign-up path (plan
+  item 3.1) is not built yet; when it is, a consenting submission is the second caller of
+  `EmailSuppressionService::liftPrecaution` with its own `release_source`. Alternative (let staff lift any
+  import-written row) rejected: an imported UNSUBSCRIBED is the person's request.
+- **Undo removes the precautions the run INSERTED.** Each suppression row a run inserts is linked in
+  `import_links` (kinds `email_suppression`, `sms_suppression`; external_id is the row id, so no address is
+  copied). Undo deletes (not releases: a released row would read as somebody's decision) the linked rows still
+  in force with reason `not_opted_in`/`bounce`. Opt-outs copied from Wix are kept, the ONE documented
+  exception, with their links kept too, so `--undo=<batch> --remove-opt-outs` (now or later) removes them for
+  a run written into the wrong organisation. Rows that existed before the run, or were released since, are
+  never touched. SMS opt-outs removed that way clear the mirrored date but never restore `sms_opt_in`.
+- **A released row is the person's newer decision.** plan/apply skip any address or number with a row in any
+  state; released ones are counted ("Released in Manara ... Wix status not applied"). Before, suppress()
+  re-suppressed a released row, overriding a re-subscribe with stale Wix data.
+- **"Stay mailable" excludes addresses Manara already suppresses**; those are counted on their own row, which
+  replaces the old "suppressed earlier, subscribed now" row for every action, not only re-runs.
+- **Undo refuses once the office has written to an imported contact**: the fingerprint now covers notes as well
+  as name/email/phone, and every `MemberAccountDeletion::OFFICE_COLUMNS` value the import does not write
+  (SMS consent, family login, avatars...) holds the contact, except the SMS opt-out date the run's own SMS
+  suppression mirrored. A tag assignment made by ANY import run is not office data (was: only this run's).
+- **Undo across re-runs.** Undoing a run also deletes every link any later run holds to the contacts it
+  erases (a later duplicate would otherwise be skipped forever as "deleted in Manara"). A run that UPDATED a
+  contact an earlier run created records it (kind `contact_update`, previous fingerprint only) and its undo
+  refuses, because the replaced values were not kept; undoing the creating run first removes the contact and
+  unblocks it. Alternative (store the previous values to restore them) rejected: it copies personal values
+  into `import_links` for a case the staged, apply-once plan makes rare.
+- **Batch names are single-use per organisation**, across `import_links`, `contacts.import_batch` (Wix and
+  roster importers) and `contact_tag_links.import_batch`; both Wix commands refuse a reused `--batch` before
+  writing.
+- **Form-import keys are HMACs under APP_KEY**, and imported device ids are random: a plain SHA-256 of an
+  address is reversible from any address list, and a device id derived from it let anybody who knew the rule
+  reach the imported sender through the public contact-us and device endpoints. Rotating APP_KEY between two
+  runs makes the second see new senders (apply-once, recorded not engineered around). `import_links` rows are
+  dropped on staging.
+- **SPA**: the tag/untag/list URLs and the composer's payload and push guard moved into pure modules
+  (`contactTags.ts`, `broadcastPayload.ts`, `emailOptOut.ts`) so `npm run test:spa` pins them.
+

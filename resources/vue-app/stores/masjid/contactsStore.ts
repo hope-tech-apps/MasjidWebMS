@@ -5,6 +5,9 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import { Contact, ContactPayload, FamilyLoginStatus } from "@/core/types/data/masjid-related/Contact";
+import { ContactTag } from "@/core/types/data/masjid-related/ContactTag";
+import { contactIdsBody, contactsListUrl, tagContactsUrl, untagContactsUrl } from "@/views/dashboard/contacts/contactTags";
+import { emailConsentBody } from "@/views/dashboard/contacts/emailOptOut";
 
 /**
  * Member directory store — CRUD over /api/admin/masjids/{masjid_id}/contacts.
@@ -17,6 +20,8 @@ export const useContactsStore = defineStore('contactsStore', () => {
 
     // State
     const contactsPaginated = ref<PaginatedData<Contact>>();
+    /** Every tag of the organisation, with counts. The filter, the pickers and the manage panel all read this one list. */
+    const tags = ref<ContactTag[]>([]);
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -31,24 +36,21 @@ export const useContactsStore = defineStore('contactsStore', () => {
      * `revoked` audit row that deleting a member writes permanently beyond every
      * screen, including the one built to answer "who took my access away".
      * Absent by default, so the ordinary directory is unchanged.
+     *
+     * `tagId` narrows the list to the members carrying one tag.
      */
     async function fetchContacts(
         page: number = 1,
         search: string = '',
-        trashed: '' | 'with' | 'only' = ''
+        trashed: '' | 'with' | 'only' = '',
+        tagId: number | null = null
     ): Promise<void> {
         if (masjidStore.masjid?.id) {
             if (contactsPaginated.value) {
                 contactsPaginated.value.data = [];
             }
 
-            let url = `/api/admin/masjids/${masjidStore.masjid.id}/contacts?page=${page}`;
-            if (search) {
-                url += `&search=${encodeURIComponent(search)}`;
-            }
-            if (trashed) {
-                url += `&trashed=${trashed}`;
-            }
+            const url = contactsListUrl(masjidStore.masjid.id, page, search, trashed, tagId);
 
             await ApiService.get(url)
                 .then((res: AxiosResponse) => {
@@ -271,8 +273,82 @@ export const useContactsStore = defineStore('contactsStore', () => {
         throw new Error('Failed to send the portal invite.');
     }
 
+    // ------------------------------------------------------------ tags
+
+    function masjidId(): string {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+        return String(masjidStore.masjid.id);
+    }
+
+    /** Load every tag. A caller without `view contacts` gets a 403 and an empty list. */
+    async function fetchTags(): Promise<ContactTag[]> {
+        const res: AxiosResponse = await ApiService.get(`/api/admin/masjids/${masjidId()}/contact-tags`);
+        tags.value = res.data?.status === 'success' ? (res.data.data ?? []) : [];
+        return tags.value;
+    }
+
+    /** Create a tag. A 422 carries "A tag with this name already exists." for the caller to show. */
+    async function createTag(name: string): Promise<ContactTag> {
+        const body = new URLSearchParams();
+        body.append('name', name);
+        const res: AxiosResponse = await ApiService.post(`/api/admin/masjids/${masjidId()}/contact-tags`, body);
+        await fetchTags();
+        return res.data.data;
+    }
+
+    async function renameTag(id: number, name: string): Promise<ContactTag> {
+        const body = new URLSearchParams();
+        body.append('name', name);
+        const res: AxiosResponse = await ApiService.put(`/api/admin/masjids/${masjidId()}/contact-tags/${id}`, body);
+        await fetchTags();
+        return res.data.data;
+    }
+
+    /** Delete a tag; its members stay. Refused (422) while a scheduled broadcast is addressed to it. */
+    async function deleteTag(id: number): Promise<void> {
+        await ApiService.delete(`/api/admin/masjids/${masjidId()}/contact-tags/${id}`);
+        await fetchTags();
+    }
+
+    /** Tag one or many members. Returns how many did not carry the tag before. */
+    async function tagContacts(tagId: number, contactIds: number[]): Promise<number> {
+        const res: AxiosResponse = await ApiService.post(tagContactsUrl(masjidId(), tagId), contactIdsBody(contactIds));
+        await fetchTags();
+        return res.data?.data?.added ?? 0;
+    }
+
+    /** Untag one or many members. Returns how many carried it. */
+    async function untagContacts(tagId: number, contactIds: number[]): Promise<number> {
+        const res: AxiosResponse = await ApiService.post(untagContactsUrl(masjidId(), tagId), contactIdsBody(contactIds));
+        await fetchTags();
+        return res.data?.data?.removed ?? 0;
+    }
+
+    /**
+     * Staff record that the person consented to email in Manara. Lifts an
+     * import's "not opted in" precaution only; the server refuses (422) any
+     * other reason with a sentence for the admin.
+     */
+    async function recordEmailConsent(contactId: number, evidence: string): Promise<Contact> {
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidId()}/contacts/${contactId}/email-consent`,
+            emailConsentBody(evidence),
+        );
+        return res.data.data;
+    }
+
     return {
+        recordEmailConsent,
         contactsPaginated,
+        tags,
+        fetchTags,
+        createTag,
+        renameTag,
+        deleteTag,
+        tagContacts,
+        untagContacts,
         fetchContacts,
         fetchContact,
         createContact,
