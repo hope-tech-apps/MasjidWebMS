@@ -87,6 +87,7 @@ class FormSchema
         $rules = [];
         $attributes = [];
         $messages = [];
+        $askedByLevel = $this->levelQuestions();
 
         foreach ($this->form->sections() as $section) {
             $sectionId = $section['id'] ?? null;
@@ -128,7 +129,12 @@ class FormSchema
                 if (! isset($field['name'])) {
                     continue;
                 }
-                $rules[$field['name']] = $this->rulesForField($field);
+                // A question only some levels ask is required by the level, not the schema:
+                // the page does not draw it for the others and posts it empty, and a
+                // Quarter Iftar must not be refused over a people box it never showed.
+                $rules[$field['name']] = $this->rulesForField(
+                    in_array($field['name'], $askedByLevel, true) ? ['required' => false] + $field : $field
+                );
                 $attributes[$field['name']] = $field['label'] ?? $field['name'];
 
                 // The quantity question a price is multiplied by (settings.fee.perQuantityOf):
@@ -180,9 +186,10 @@ class FormSchema
      * What a level on a form priced by choice needs besides the choice itself
      * (settings.fee.byChoice; Ramadan giving, 2026-09-25): the quantity for a level
      * charged per unit ("Individual Iftar" x people), and a date for a level that
-     * reserves one ("Quarter Iftar"). The two questions cannot be `required` in the
-     * schema, because the other levels do not ask them, so they are required here, by
-     * the level the submission chose, and reported under their own names.
+     * reserves one ("Quarter Iftar"). The schema cannot require the two questions,
+     * because the other levels do not ask them (a `required` it carries is set aside by
+     * levelQuestions()), so they are required here, by the level the submission chose,
+     * and reported under their own names.
      *
      * A form not priced by choice gets nothing added: its quantity and date questions
      * are required in the schema (StoreFormRequest::crossCheck()).
@@ -224,6 +231,38 @@ class FormSchema
                 }
             }
         });
+    }
+
+    /**
+     * The questions a form priced by choice asks of some levels only: the quantity
+     * question and the date question. Their `required` is decided per submission by the
+     * level it chose (applyPriceRequirements()), whatever the schema says, because
+     * withoutUnusedPriceAnswers() has already dropped the answer of a level that does
+     * not ask them and the renderer never draws them for it (questionAsked()). Without
+     * this, a schema saved with `required: true` on the people question would refuse
+     * every Quarter Iftar. Empty on every other form, whose schema stays the authority.
+     *
+     * @return array<int,string>
+     */
+    private function levelQuestions(): array
+    {
+        $fee = $this->form->feeRule();
+
+        if (($fee['pricing'] ?? null) !== Form::PRICING_CHOICE) {
+            return [];
+        }
+
+        $names = [];
+
+        if (is_string($fee['perQuantityOf'] ?? null)) {
+            $names[] = $fee['perQuantityOf'];
+        }
+
+        if (($reservation = $this->form->reservation()) !== null) {
+            $names[] = $reservation['field'];
+        }
+
+        return $names;
     }
 
     /**

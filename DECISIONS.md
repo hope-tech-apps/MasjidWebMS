@@ -3125,3 +3125,22 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   staff cash entry moved to
   `FormQuantityPaymentTest::a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too`.
 
+
+## 2026-09-25 — Review of the renderer half: a level's own questions are required by the level only
+- **A schema `required` on a choice form's quantity or date question is set aside**
+  (`FormSchema::levelQuestions()`). The renderer never draws either question for a level that
+  does not ask it and posts it empty; `withoutUnusedPriceAnswers()` drops it; but the validator
+  still applied the schema's own `required`, and the save accepts `required: true` there
+  (`StoreFormRequest::quantityProblems()` requires it only off choice forms, and
+  `reservationProblems()` returns before looking on them). So such a form would refuse every
+  Quarter Iftar. Now `applyPriceRequirements()` alone requires them, per level, in its words.
+  MEC's import has `required: false` on both, so nothing live changes. Alternative: refuse
+  `required: true` at save; rejected because a form stored some other way (an import, an
+  older save) would still refuse, where this holds however the schema got in. Pinned by
+  `FormDateReservationTest::a_level_is_not_refused_over_a_question_the_schema_marks_required_but_the_level_does_not_ask`.
+- **The page total on a quantity form is exact only within a date tier.** `unitMinorEach` is the
+  unit in force when the page was rendered, and a tier boundary passing purges no cached page, so
+  for about one cache life (300 s) after a tier's `until` the page can show the old unit; the charge
+  is always `Form::priceFor($data, now)` and Stripe's page shows it before payment. Accepted:
+  MEC's Zakat-ul-Fitr has no tiers, and per-entry `unitMinor` has behaved the same since
+  2026-09-11. Recorded in burlington-masjid-site DECISIONS.md with the alternatives.

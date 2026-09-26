@@ -474,6 +474,39 @@ class FormDateReservationTest extends TestCase
     }
 
     #[Test]
+    public function a_level_is_not_refused_over_a_question_the_schema_marks_required_but_the_level_does_not_ask(): void
+    {
+        // The save accepts `required: true` on both level questions; the page never draws
+        // them for a level that does not ask them and posts them empty (questionAsked()).
+        $schema = $this->form->schema;
+        foreach ($schema['sections'][0]['fields'] as $i => $field) {
+            if (in_array($field['name'], ['people', 'iftar_date'], true)) {
+                $schema['sections'][0]['fields'][$i]['required'] = true;
+            }
+        }
+        $this->form->update(['schema' => $schema]);
+
+        $this->submitTo($this->form, ['sponsorship' => 'quarter', 'people' => null, 'iftar_date' => self::D1])->assertOk()
+            ->assertJsonPath('data.total_minor', 45000);
+
+        $this->submitTo($this->form, ['sponsorship' => 'individual', 'people' => '3', 'iftar_date' => null])->assertOk()
+            ->assertJsonPath('data.total_minor', 5400);
+
+        // A level that asks them still requires them, in the level's own words.
+        $this->submitTo($this->form, ['sponsorship' => 'half', 'people' => null, 'iftar_date' => null])
+            ->assertStatus(422)
+            ->assertJsonPath('data.iftar_date.0', 'Choose a date for Half Iftar.')
+            ->assertJsonMissingPath('data.people');
+
+        $this->submitTo($this->form, ['sponsorship' => 'individual', 'people' => null, 'iftar_date' => null])
+            ->assertStatus(422)
+            ->assertJsonPath('data.people.0', 'Enter how many for Individual Iftar.')
+            ->assertJsonMissingPath('data.iftar_date');
+
+        $this->assertSame(2, FormResponse::count());
+    }
+
+    #[Test]
     public function a_form_not_priced_by_choice_reserves_the_date_every_submission_names(): void
     {
         $form = Form::create([
