@@ -6,6 +6,7 @@ use App\Mail\FormResponseSubmitted;
 use App\Mail\FormSubmissionReceipt;
 use App\Models\Form;
 use App\Models\FormResponse;
+use App\Models\FormStaffCode;
 use App\Support\FormNotifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
@@ -26,7 +27,7 @@ use Tests\TestCase;
  *  - the Stripe line is the unit x the quantity, and the row snapshots the breakdown;
  *  - the admin detail and the receipt restate the breakdown the payer was quoted, the
  *    row counts the quantity as its entries, and an existing per-entry form's emails are
- *    unchanged;
+ *    unchanged, while its cash entries snapshot their breakdown like any other;
  *  - the public page publishes no `amount` or unitMinor an older renderer would draw as
  *    the whole total, shows the price for each in the question, and offers no staff entry;
  *  - the save accepts a paying form priced per quantity and refuses one that could
@@ -252,6 +253,59 @@ class FormQuantityPaymentTest extends TestCase
         // The admin list keeps its columns as they were.
         Sanctum::actingAs($this->makeAdminFor($org));
         $this->getJson("/api/admin/masjids/{$org->id}/forms/{$form->id}/responses")->assertOk()->assertJsonPath('meta.price_breakdown', false);
+    }
+
+    #[Test]
+    public function a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too(): void
+    {
+        // The breakdown is written wherever amount_due_minor is, and a cash entry at the
+        // gate writes one without opening any page: $15 x 2 attendees, no tier. Kept here,
+        // beside the other snapshot tests, so the festival's checkout test stays as it was.
+        $org = $this->makeOrg();
+        $form = Form::create([
+            'masjid_id' => $org->id,
+            'slug' => 'festival-' . uniqid(),
+            'name' => 'Fall Festival',
+            'schema' => ['sections' => [
+                ['id' => 'you', 'title' => 'You', 'fields' => [
+                    ['name' => 'fullName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                    ['name' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true],
+                ]],
+                ['id' => 'attendees', 'title' => 'Attendees', 'repeatable' => true, 'minEntries' => 1, 'maxEntries' => 10, 'fields' => [
+                    ['name' => 'attendeeName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                ]],
+            ]],
+            'settings' => [
+                'identity' => ['name' => 'fullName', 'email' => 'email'],
+                'fee' => ['amount' => 15, 'currency' => 'USD', 'perEntryOfSection' => 'attendees'],
+                'payment' => ['online' => true, 'staffCodes' => true],
+            ],
+            'is_active' => true,
+        ]);
+
+        FormStaffCode::factory()->withCode('R4MD-9QXZ')->create([
+            'form_id' => $form->id,
+            'masjid_id' => $org->id,
+            'holder_name' => 'Gate Volunteer',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $token = $this->postJson("/api/v1/forms/{$form->id}/staff-session", [
+            'staff_code' => 'R4MD-9QXZ',
+            'device_id' => 'phone-gate-0001',
+        ], ['masjid-id' => (string) $org->id])->assertOk()->json('data.staff_token');
+
+        $this->submitTo($form, ['attendees' => [['attendeeName' => 'Guest 1'], ['attendeeName' => 'Guest 2']]], [
+            'staff_token' => $token,
+            'device_id' => 'phone-gate-0001',
+        ])->assertOk()
+            ->assertJsonPath('data.payment_method', 'cash')
+            ->assertJsonPath('data.total_minor', 3000);
+
+        $this->assertSame([], FakeStripePages::$created, 'cash opens no page');
+
+        $row = FormResponse::where('form_id', $form->id)->sole();
+        $this->assertSame([1500, 2, null], [$row->unit_price_minor, $row->price_quantity, $row->price_label]);
     }
 
     #[Test]

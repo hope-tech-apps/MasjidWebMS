@@ -3106,3 +3106,22 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
 - **Builder fee assembly is a pure function** (`buildFee()` / `preservedFeeOf()` beside
   `feePricingOf()` in `formFeePricing.ts`), so the load-then-save round trips are tested
   without mounting FormBuilder.vue.
+
+## 2026-09-25 — Ramadan giving: the renderer half, and staff codes stay refused
+- **The public page now prices these forms live** (burlington-masjid-site branch
+  `feat/form-quantity-display`): it reads `quantityField`, `unitMinorEach`, `choiceField` and
+  `choicePrices`, shows "$17.00 × 4 = $68.00" in a live region, asks the quantity and the date
+  only of the level that uses them, and draws a level whose dates are all taken as closed. It
+  draws `FormPriceLabels`' labels as published and adds no price, so each level's price appears
+  once. The submit still sends answers only; `Form::priceFor()` stays the only price charged.
+  The date question is found by `optionsSource: reservable_dates`; nothing new is published.
+- **Staff codes stay refused on quantity and choice forms.** The entry above lifted them "when
+  the renderer can price them"; it now can for display, but a staff cash entry is money a
+  holder owes, recorded in the same request, and nothing about the staff path was reviewed for
+  answer-priced forms (the collect figure, the replay fingerprint, a date hold that never
+  lapses). Lifting it is its own change with the owner's say. Until then the page's "Staff
+  entry" link says staff cash entry is not available on such a form, rather than vanishing.
+- **FormPaymentCheckoutTest is byte-identical to e4c7fc48 again.** The breakdown assertion on a
+  staff cash entry moved to
+  `FormQuantityPaymentTest::a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too`.
+

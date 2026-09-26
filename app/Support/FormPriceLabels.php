@@ -23,8 +23,10 @@ use App\Models\Form;
  * Only the published copy of the schema is changed. The stored schema, the answers and
  * the labels on receipts (Form::optionLabel()) are the organisation's own words.
  *
- * Still no live "$17 x 4 = $68": that needs the renderer to read choicePrices and
- * unitMinorEach (a renderer change, not made here).
+ * The live "$17.00 x 4 = $68.00" is the renderer's (burlington-masjid-site branch
+ * feat/form-quantity-display), from choicePrices and unitMinorEach. It draws these labels
+ * as they are and adds no price of its own, so each price appears once: change the
+ * wording here and the page follows.
  *
  * Pinned by tests/Feature/FormQuantityPaymentTest.php and FormDateReservationTest.php.
  */
