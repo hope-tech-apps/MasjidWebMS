@@ -201,6 +201,16 @@ class RegistrationException extends RuntimeException
     }
 
     /**
+     * An imported Wix ticket (`source = historical`) is a record of a sale the
+     * old site made, paid through Square or PayPal. Cancelling it here would
+     * rewrite that record without refunding anything (DECISIONS.md 2026-09-25).
+     */
+    public static function historicalRecord(): self
+    {
+        return new self('This registration is part of the order history imported from the old Wix site, so it cannot be changed here.');
+    }
+
+    /**
      * Deleting an offering that still has live registrations would strand
      * people who hold seats (and, for paid ones, money already collected).
      */

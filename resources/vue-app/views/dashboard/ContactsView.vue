@@ -385,6 +385,14 @@
                                 <div class="col-md-6">
                                     <h6 class="text-muted mb-1">Total giving</h6>
                                     <p class="mb-0 fw-semibold">{{ formatCents((selectedContact as any).giving_total || 0) }}</p>
+                                    <!--
+                                        Gifts imported from the old Wix site are summed apart: they
+                                        were paid through Square or PayPal before Manara, and folded
+                                        into the total above they would read as Manara's
+                                        (ContactsController::show, DECISIONS.md 2026-09-25). The
+                                        sentence, and whether there is one, is historicalGivingNote().
+                                    -->
+                                    <p v-if="historicalGivingLine" class="mb-0 small text-muted">{{ historicalGivingLine }}</p>
                                 </div>
                                 <div class="col-md-6">
                                     <h6 class="text-muted mb-1">Card last-4 on file</h6>
@@ -781,13 +789,40 @@
                                         <tr v-for="d in ((selectedContact as any).donations || [])" :key="d.id">
                                             <td>{{ formatDate(d.donated_at || d.created_at) }}</td>
                                             <td>{{ d.fund?.name || '—' }}</td>
-                                            <td class="text-capitalize">{{ d.source === 'offline' ? (d.payment_method || 'offline') : 'card' }}</td>
+                                            <td class="text-capitalize">{{ donationMethodLabel(d) }}</td>
                                             <td class="text-end">{{ formatCents(d.charged_amount) }}</td>
                                         </tr>
                                         <tr v-if="!((selectedContact as any).donations || []).length"><td colspan="4" class="text-center text-muted py-3">No giving recorded</td></tr>
                                     </tbody>
                                 </table>
                             </div>
+
+                            <!--
+                                Orders on the old Wix site, as Wix recorded them
+                                (ContactsController::show `historical_orders`). The one place
+                                an order's Wix number and processor show, and the only place a
+                                line kept on the order alone (food tickets, prayer rugs) can be
+                                seen. Drawn only for a contact who has any.
+                            -->
+                            <template v-if="contactWixOrders.length">
+                                <h6 class="text-muted mb-2 mt-4">Orders on the old Wix site</h6>
+                                <div class="table-responsive" style="max-height:40vh; overflow-y:auto;">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead><tr><th>Date</th><th>Order</th><th>What was bought</th><th>Paid through</th><th class="text-end">Total</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="o in contactWixOrders" :key="o.id">
+                                                <td>{{ formatDate(o.ordered_at) }}</td>
+                                                <td>{{ wixOrderLabel(o) }}</td>
+                                                <td>
+                                                    <div v-for="(line, i) in wixOrderLineSummaries(o)" :key="i" class="small">{{ line }}</div>
+                                                </td>
+                                                <td>{{ wixOrderPaymentLabel(o) }}</td>
+                                                <td class="text-end">{{ formatCents(o.total_minor) }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" @click="showViewModal = false">Close</button>
@@ -1243,6 +1278,14 @@ import {
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
+import {
+    donationMethodLabel,
+    historicalGivingNote,
+    wixOrderLabel,
+    wixOrderLineSummaries,
+    wixOrderPaymentLabel,
+    type WixOrder,
+} from '@/core/helpers/donationMethod';
 import Swal from 'sweetalert2';
 
 // Store
@@ -2241,6 +2284,14 @@ const formatDate = (iso: string): string => {
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 };
+
+// Imported Wix history on the open contact (ContactsController::show). Both
+// come from the payload as-is; the wording lives in core/helpers/donationMethod.ts.
+type ContactWixOrder = WixOrder & { id: number; ordered_at: string; total_minor: number };
+const historicalGivingLine = computed<string | null>(() =>
+    historicalGivingNote((selectedContact.value as any)?.historical_giving_total, formatCents));
+const contactWixOrders = computed<ContactWixOrder[]>(() =>
+    (selectedContact.value as any)?.historical_orders ?? []);
 /** Audit entries carry a TIME as well as a date — "who, and when exactly". */
 const formatDateTime = (iso: string): string => {
     if (!iso) return '—';

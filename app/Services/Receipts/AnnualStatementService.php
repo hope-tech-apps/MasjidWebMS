@@ -16,6 +16,13 @@ use Illuminate\Support\Carbon;
  * non-receiptable fund never issued one and so is correctly excluded from the
  * tax-eligible total.
  *
+ * Imported order history (`source = 'historical'`, MEC's Wix orders) is left
+ * out of both queries. That money moved through Square or PayPal on the old Wix
+ * site; a statement Manara emails is a tax document, and listing those gifts on
+ * it would state that Manara recorded payments it never saw (DECISIONS.md
+ * 2026-09-25, "Wix order history"). The history stays visible on the donor's
+ * record; only the statement leaves it out.
+ *
  * Runs from admin (tenant-bound) and could run unbound in a future scheduled job,
  * so it filters masjid_id explicitly rather than leaning on the global scope.
  *
@@ -58,6 +65,9 @@ class AnnualStatementService
             ->where('masjid_id', $masjidId)
             ->where('contact_id', $contactId)
             ->where('status', 'succeeded')
+            // Imported Wix history (paid through Square/PayPal before Manara) is
+            // never on a Manara tax statement — see the class docblock.
+            ->withoutHistorical()
             ->whereRaw('COALESCE(donated_at, created_at) BETWEEN ? AND ?', [$start, $end])
             ->whereHas('fund', fn ($q) => $q->withoutGlobalScopes()->where('receiptable', true))
             ->with(['fund' => fn ($q) => $q->withoutGlobalScopes(), 'receipt'])
@@ -113,6 +123,7 @@ class AnnualStatementService
         $rows = Donation::withoutGlobalScopes()
             ->where('donations.masjid_id', $masjidId)
             ->where('donations.status', 'succeeded')
+            ->withoutHistorical()
             ->whereNotNull('donations.contact_id')
             ->whereRaw('COALESCE(donations.donated_at, donations.created_at) BETWEEN ? AND ?', [$start, $end])
             ->join('funds', 'funds.id', '=', 'donations.fund_id')

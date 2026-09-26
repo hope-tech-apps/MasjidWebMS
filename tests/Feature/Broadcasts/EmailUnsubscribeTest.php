@@ -789,6 +789,14 @@ class EmailUnsubscribeTest extends TestCase
             // `not_opted_in` precaution and refuses every other reason. It
             // writes the list; it decides nothing about any send.
             'app/Http/Controllers/AdminDashboard/ContactEmailConsentController.php',
+            // The Wix order-history import (DECISIONS.md 2026-09-25) WRITES a
+            // hold for a buyer it had to create, reads whether the address
+            // already has a row (so a released one, the person's own request to
+            // be mailed, is never overturned), and on undo deletes only the hold
+            // it wrote. It runs from the console, sends nothing, and gates no
+            // send: whether a broadcast reaches the address is still decided
+            // only by the resolver above.
+            'app/Services/Crm/WixOrderHistoryImporter.php',
         ];
 
         // Deliberately NOT the bare verbs `isSuppressed(` / `suppressedAmong(`:

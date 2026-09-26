@@ -468,6 +468,19 @@ before the call, positive-only application fee, integer minor units, webhook-onl
   unserializes. Masjid output is byte-identical to c0f6a72
   (`ReceiptWordingByOrgTypeTest` against `tests/fixtures/receipts-c0f6a72`).
 
+## Imported order history is never Stripe's (DECISIONS.md 2026-09-25)
+
+`crm:import-wix-orders` books MEC's Wix store orders (paid through Square or PayPal, 2017-2026)
+as donations with `source = historical` and `historical_order_id` set. They carry no Stripe id,
+and every money path treats them as someone else's record:
+
+- **No receipt, ever.** `ReceiptService::issueFor()` returns null for them before a serial is
+  allocated; `issueReceipt` and `update` answer a 422 naming the Wix history.
+- **Out of every total unless asked for by name.** `Donation::withoutHistorical()` is the one
+  spelling: DonationMetrics and the ledger/CSV apply it when no `source` is chosen, annual
+  statements and ModuleFacts always. A new report of money received must start from it.
+- The webhook never sees them (no Stripe ids, `hist_…` idempotency keys).
+
 ## Tenancy note
 
 `Fund`, `Donation`, `DonationReceipt` use `App\Models\Concerns\BelongsToMasjid`

@@ -291,16 +291,13 @@
                                     Issue receipt
                                 </button>
                             </template>
-                            <p v-else-if="selectedDonation.source !== 'offline'" class="text-muted mb-0">
-                                Receipts for card gifts are issued automatically when Stripe confirms the payment.
-                            </p>
-                            <p v-else-if="selectedDonation.status !== 'succeeded'" class="text-muted mb-0">
-                                This gift is not marked succeeded, so it cannot be receipted yet.
-                            </p>
-                            <p v-else class="text-muted mb-0">
-                                The {{ selectedDonation.fund?.name ?? 'chosen' }} fund is set not to issue tax receipts,
-                                so no receipt can be issued for this gift.
-                            </p>
+                            <!--
+                                Every other reason there is no receipt — imported Wix history, a
+                                card gift, a gift not yet succeeded, a fund that issues none — is
+                                one sentence chosen by receiptNote() (core/helpers/donationMethod.ts),
+                                where the choice and its wording are tested.
+                            -->
+                            <p v-else class="text-muted mb-0">{{ receiptNote(selectedDonation) }}</p>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" @click="showViewModal = false">Close</button>
@@ -440,6 +437,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
+import { donationMethodLabel, receiptNote } from '@/core/helpers/donationMethod';
 
 // Stores
 const donationsStore = useDonationsStore();
@@ -912,16 +910,9 @@ const donorName = (donation: any): string => {
     return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Donor';
 };
 
-// Online = Stripe (card via checkout); offline = the recorded payment method
-// (cash/check/zelle/…). Falls back to a dash when neither is set.
-const methodLabel = (donation: any): string => {
-    if (donation.source === 'offline') {
-        return (donation.payment_method && donation.payment_method !== 'unknown')
-            ? donation.payment_method.replace(/_/g, '/')
-            : 'offline';
-    }
-    return 'card';
-};
+// One label for every giving screen: card, the recorded offline method, or the
+// processor of an imported Wix order (core/helpers/donationMethod.ts).
+const methodLabel = (donation: any): string => donationMethodLabel(donation);
 
 const statusClass = (status: DonationStatus): string => {
     switch (status) {

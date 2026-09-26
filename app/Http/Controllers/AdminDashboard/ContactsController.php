@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Contacts\StoreContactRequest;
 use App\Http\Requests\Admin\Contacts\UpdateContactRequest;
 use App\Models\Contact;
+use App\Models\Donation;
+use App\Models\HistoricalOrder;
 use App\Support\Errors;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -119,13 +121,50 @@ class ContactsController extends Controller
         ])->findOrFail($contact_id);
 
         $data = $contact->toArray();
-        $data['giving_total'] = (int) $contact->donations
-            ->where('status', 'succeeded')->sum('charged_amount');
         // WHY the address is suppressed, for the badge only: an import's
         // "not opted in" is not an unsubscribe, and staff may lift it
         // (ContactEmailConsentController) where they may not lift an opt-out.
         $data['email_opt_out_reason'] = app(\App\Services\Broadcast\EmailSuppressionService::class)
             ->activeReason((int) $contact->masjid_id, $contact->email);
+
+        // Two totals, because they answer two questions. `giving_total` is what
+        // this person gave that Manara recorded (Stripe and offline gifts).
+        // Gifts imported from the old Wix site stay in the history list, marked,
+        // and are summed on their own: folded into the first figure they would
+        // read as money that came through Manara (DECISIONS.md 2026-09-25).
+        $succeeded = $contact->donations->where('status', 'succeeded');
+        $data['giving_total'] = (int) $succeeded
+            ->where('source', '!=', Donation::SOURCE_HISTORICAL)->sum('charged_amount');
+        $data['historical_giving_total'] = (int) $succeeded
+            ->where('source', Donation::SOURCE_HISTORICAL)->sum('charged_amount');
+
+        // The person's orders on the old Wix site, as Wix recorded them. This is
+        // the only place a line kept on the order alone (festival food tickets,
+        // prayer rugs) can be seen, and the only place an order's Wix number,
+        // processor and fee show beside each other. Products and money only:
+        // `lines` never held anything about the buyer (DECISIONS.md 2026-09-25).
+        $data['historical_orders'] = HistoricalOrder::query()
+            ->where('contact_id', $contact->id)
+            ->orderByDesc('ordered_at')->orderByDesc('id')
+            ->get()
+            ->map(fn (HistoricalOrder $order) => [
+                'id' => $order->id,
+                'source' => $order->source,
+                'order_number' => $order->order_number,
+                'ordered_at' => $order->ordered_at?->toIso8601String(),
+                'provider' => $order->provider,
+                'status' => $order->status,
+                'total_minor' => $order->total_minor,
+                'discount_minor' => $order->discount_minor,
+                'fee_minor' => $order->fee_minor,
+                'lines' => array_map(fn (array $line) => [
+                    'name' => (string) ($line['name'] ?? ''),
+                    'quantity' => (int) ($line['quantity'] ?? 0),
+                    'unit_minor' => (int) ($line['unit_minor'] ?? 0),
+                    'discount_minor' => (int) ($line['discount_minor'] ?? 0),
+                    'recorded_as' => $line['recorded_as'] ?? null,
+                ], $order->lines ?? []),
+            ])->values();
 
         return response()->json([
             'status' => 'success',
@@ -274,6 +313,22 @@ class ContactsController extends Controller
             $roster = app(\App\Services\Groups\RosterMergeService::class)->carry($source, $target);
 
             \App\Models\Donation::where('contact_id', $source->id)
+                ->update(['contact_id' => $target->id]);
+
+            // An imported Wix order follows its gifts to the survivor. Left
+            // behind, the force-delete below would null its contact while the
+            // donations it produced moved on, and the order would read as
+            // nobody's (DECISIONS.md 2026-09-25, "Wix order history").
+            \App\Models\HistoricalOrder::where('contact_id', $source->id)
+                ->update(['contact_id' => $target->id]);
+
+            // …and so do the ticket registrations those orders produced:
+            // `registrations.contact_id` nulls on the force-delete, which would
+            // leave an imported seat with no buyer while its order moved on.
+            // Only imported history moves here; what a merge does to a live
+            // registration's payer is unchanged (DECISIONS.md 2026-09-25).
+            \App\Models\Registration::where('contact_id', $source->id)
+                ->where('source', \App\Models\Registration::SOURCE_HISTORICAL)
                 ->update(['contact_id' => $target->id]);
 
             foreach ($source->cards as $card) {

@@ -229,6 +229,13 @@
                                 <option value="">All sources</option>
                                 <option value="stripe">Online</option>
                                 <option value="offline">Offline</option>
+                                <!--
+                                    Imported Wix orders are left out of "All sources" and of
+                                    every figure above unless chosen here: they were paid
+                                    through Square or PayPal before Manara, and folded in they
+                                    would read as money Manara took (DonationMetrics).
+                                -->
+                                <option value="historical">Wix history (before Manara)</option>
                             </select>
                         </div>
                         <div class="col-md-4 col-lg-2">
@@ -383,6 +390,7 @@ import { useDonationsStore } from '@/stores/masjid/donationsStore';
 import { useDonationStatsStore } from '@/stores/masjid/donationStatsStore';
 import { useFundsStore } from '@/stores/masjid/fundsStore';
 import Swal from 'sweetalert2';
+import { donationMethodLabel } from '@/core/helpers/donationMethod';
 
 // Stores
 const donationsStore = useDonationsStore();
@@ -743,15 +751,9 @@ const donorName = (donation: any): string => {
     return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Donor';
 };
 
-// Online = Stripe (card via checkout); offline = the recorded payment method.
-const methodLabel = (donation: any): string => {
-    if (donation.source === 'offline') {
-        return (donation.payment_method && donation.payment_method !== 'unknown')
-            ? donation.payment_method.replace(/_/g, '/')
-            : 'offline';
-    }
-    return 'card';
-};
+// One label for every giving screen: card, the recorded offline method, or the
+// processor of an imported Wix order (core/helpers/donationMethod.ts).
+const methodLabel = (donation: any): string => donationMethodLabel(donation);
 
 const statusClass = (status: DonationStatus): string => {
     switch (status) {

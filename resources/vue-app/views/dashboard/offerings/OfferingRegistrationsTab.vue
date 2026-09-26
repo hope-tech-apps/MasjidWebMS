@@ -155,6 +155,16 @@
                                     <i class="bi bi-pencil-square me-1"></i>Entered by the office
                                 </span>
                             </div>
+                            <!--
+                                A ticket imported from the old Wix site: paid through Square
+                                or PayPal there, recorded here as history. The note names the
+                                Wix order and what was bought.
+                            -->
+                            <div v-else-if="registration.source === 'historical'" class="mt-1">
+                                <span class="badge bg-info-subtle text-info-emphasis" :title="registration.staff_note || ''">
+                                    <i class="bi bi-clock-history me-1"></i>Wix history
+                                </span>
+                            </div>
                         </td>
                         <td class="text-center">{{ registration.registrants_count ?? '—' }}</td>
                         <td>

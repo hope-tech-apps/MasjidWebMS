@@ -125,6 +125,13 @@ class DonationExportController extends Controller
             return $this->dollars($donation->net_amount);
         }
 
+        // Imported Wix history: Square or PayPal took a fee Manara never saw, so
+        // the net is not known — and the gross printed here would overstate what
+        // reached the bank, exactly the Stripe case below.
+        if ($donation->isHistorical()) {
+            return 'not recorded';
+        }
+
         if ($donation->source !== 'stripe') {
             return $this->dollars($donation->charged_amount);
         }

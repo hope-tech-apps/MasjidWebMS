@@ -724,3 +724,18 @@ and it has to be argued as one.
 - **`chargesFee()` reads `countTiers[].amount`.** `isSettled()`,
   `takesOnlinePayment()` and the unpaid filters depend on it: a count-only form that
   "charged nothing" would be free.
+
+## IMPORTED WIX TICKETS ARE HISTORY (DECISIONS.md 2026-09-25)
+
+- `crm:import-wix-orders` writes registrations with `source = historical` through
+  `Registration::recordedFromHistory()` (the only writer of that value), against unpublished
+  offerings (`is_active` false) with one inactive fee plan and a shared inactive intake form.
+- They never touch `offerings.registration_count` (not a fourth writer: the offerings are closed
+  history, capacity null) and are never `pending`, so the reaper and checkout never reach them.
+- Paid rows carry ONE settled `registration_payments` row (no Stripe ids, `hist_…` key) so
+  `RegistrationOutstanding` reads nothing owed; a Wix coupon is a `code` adjustment.
+- `RegistrationService::cancel()` refuses them (`RegistrationException::historicalRecord()`),
+  and ImpactMetrics leaves them out of confirmed registrations, participants and program fees collected.
+- A contact merge moves them to the survivor with their `historical_orders` (their payer would
+  otherwise null on the force-delete). A live registration's payer is not moved by a merge (open).
+

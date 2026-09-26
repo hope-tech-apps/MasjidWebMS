@@ -8,9 +8,14 @@ import { FundType } from "@/core/types/data/masjid-related/Fund";
 // IMPORTANT: every *_cents field is an integer in MINOR UNITS. Format it at the
 // view layer (formatCents) — never add, average or compare these as dollars.
 
-export type DonationSource = 'stripe' | 'offline';
+/**
+ * Mirrors App\Models\Donation::SOURCES. `historical` is an order imported from
+ * the old Wix site; with no source filter the server leaves it out of the
+ * ledger and every figure, so it is only ever shown when chosen by name.
+ */
+export type DonationSource = 'stripe' | 'offline' | 'historical';
 
-export const DONATION_SOURCES: DonationSource[] = ['stripe', 'offline'];
+export const DONATION_SOURCES: DonationSource[] = ['stripe', 'offline', 'historical'];
 
 /** The three header buckets, in the order the dashboard reads them. */
 export type DonationBucketKey = 'this_month' | 'year_to_date' | 'all_time';

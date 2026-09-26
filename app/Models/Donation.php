@@ -3,8 +3,10 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 /**
@@ -23,6 +25,28 @@ use Illuminate\Support\Str;
 class Donation extends Model
 {
     use HasFactory, BelongsToMasjid;
+
+    /** Created and advanced by a Stripe webhook. */
+    public const SOURCE_STRIPE = 'stripe';
+
+    /** Recorded by an administrator (cash, cheque, Zelle…) or a ledger import. */
+    public const SOURCE_OFFLINE = 'offline';
+
+    /**
+     * A gift another system took before the organisation came to Manara — today,
+     * MEC's Wix store orders paid through Square or PayPal (DECISIONS.md
+     * 2026-09-25, "Wix order history"). Written only by `crm:import-wix-orders`,
+     * always with `historical_order_id` naming the order.
+     *
+     * It is donor HISTORY, not money Manara handled: it issues no receipt, is not
+     * editable here, sits on no annual statement, and is left out of every total
+     * that reports what came in (the giving dashboard, the ledger and its CSV
+     * unless asked for by name, impact figures, module facts). `withoutHistorical()`
+     * is the one spelling of that exclusion.
+     */
+    public const SOURCE_HISTORICAL = 'historical';
+
+    public const SOURCES = [self::SOURCE_STRIPE, self::SOURCE_OFFLINE, self::SOURCE_HISTORICAL];
 
     protected $fillable = [
         'uuid',
@@ -82,6 +106,26 @@ class Donation extends Model
                 $donation->uuid = (string) Str::uuid();
             }
         });
+    }
+
+    /**
+     * Rows Manara itself recorded — Stripe and offline — leaving out imported
+     * history. Every report of money received starts here.
+     */
+    public function scopeWithoutHistorical(Builder $query): Builder
+    {
+        return $query->where($query->qualifyColumn('source'), '!=', self::SOURCE_HISTORICAL);
+    }
+
+    public function isHistorical(): bool
+    {
+        return $this->source === self::SOURCE_HISTORICAL;
+    }
+
+    /** The imported order this gift came from; null for everything Manara recorded. */
+    public function historicalOrder(): BelongsTo
+    {
+        return $this->belongsTo(HistoricalOrder::class);
     }
 
     public function fund()
