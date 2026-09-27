@@ -151,7 +151,7 @@ class WebsiteLocaleTest extends TestCase
     public function a_live_organisations_locale_is_set_and_cleared_from_studio_and_purges_the_renderer(): void
     {
         config(['services.renderer' => [
-            'secret' => 'test-renderer-secret',
+            'secret' => 'test-renderer-secret-0123456789abcdef', // RendererConfig needs 32+ characters
             'preview_origin' => 'https://renderer.example.test',
             'purge_origins' => 'https://renderer.example.test',
             'admin_origins' => 'https://masjid.hopetechapps.com',
