@@ -4105,3 +4105,34 @@ Tests, each run against a mutant that removes what it pins (logs on the droplet 
   silently turn this refusal into the fixed sentence and every other lunch-door test stayed green.
 - `KitchenOrderFlowTest::a_card_order_whose_page_fails_inside_checkout_gets_the_fixed_sentence_not_the_failures_own_words`,
   the database and garbled-Stripe cases for the kitchen door.
+
+## 2026-09-27 — The canary attributes gallery rows through the `model` morph pair, not a new tenant key
+Decision: `config/canary.php` gains `tenant_morphs => ['model']`. For
+row-ownership attribution only, a relation keyed on `model_id` (Masjid::gallery)
+attributes a row to organisation `model_id` only when `model_type` is Masjid's
+morph class. TenancyCanary::ownerKeyFor() is the one rule, used by the lookup
+and by the `tables_available` inventory, and the lookup adds the type clause
+itself (TenancyCanary::ownerMap): a plain hasMany may carry no type clause, and
+Relation::noConstraints drops a morph relation's own.
+Alternatives: (a) add `model_id` to `canary.tenant_keys`. Rejected: tenant keys
+are also read out of response bodies, and the mobile services, features, about
+and donation-link endpoints serialize raw media rows (MobileMedia::envelope),
+so a Service icon's `model_id` (the service's id) would read as a cross-tenant
+read on a correct answer. (b) Only put `where('model_type', …)` on
+Masjid::gallery() the way logo() has it. That is right for the app, and it
+ships beside this as its own change (next entry), but on its own it changes
+nothing for the canary, which still could not tell that `model_id` names an
+organisation. (c) Declare `items` a global
+bucket, or silence exit 3. Rejected: that stops watching the rows, the
+opposite of the fix.
+Rationale: since the MEC import at 2026-09-22 00:26 UTC (26 photos, Masjid 13,
+`galleries`, media ids 1000718-1000743), every hourly run exited 3 `partial`
+with `row_ownership_unplaced` on `api/v1/gallery`. The floor was right: rows
+were served and nothing could place them. The fix makes them placeable, so the
+floor (`unplaced === []`) stays exactly as strict. A gallery swapped between
+organisations now exits 1 (test pinned), and a Service's photo whose id equals
+a masjid's id is never attributed to that masjid (pinned on ownerMap() with a
+relation that carries no type clause, so it holds whatever Masjid::gallery()
+carries). With `tenant_morphs` emptied, the production symptom comes back
+(control test). Mutation runs: old code fails all four gallery tests; removing
+only the type clause fails exactly the Service-photo test.
