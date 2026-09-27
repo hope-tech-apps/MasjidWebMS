@@ -119,10 +119,8 @@ class SetCapabilityDelegatesTest extends TestCase
         $step('a missing value', $super, 'events', []);
         $step('the strings true and false are refused', $super, 'events', ['enabled' => 'false']);
         $step('a masjid admin', $admin, 'events', ['enabled' => '0']);
-        $step('an organisation that does not exist', $super, 'events', ['enabled' => '0']);
 
-        // The gift made the Giving refusal; the org id above is fixed, so the
-        // last step's 404 is about the organisation and nothing else.
+        // The gift is what made the Giving refusal, and it is untouched.
         $this->assertSame(1, DonationSubscription::withoutGlobalScopes()->whereKey($gift->id)->count());
 
         $actual = json_encode($steps, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
@@ -135,5 +133,28 @@ class SetCapabilityDelegatesTest extends TestCase
 
         $this->assertFileExists($path, 'No recording of the single switch.');
         $this->assertSame(file_get_contents($path), $actual, 'The single switch no longer answers or writes what was recorded.');
+    }
+
+    /**
+     * Outside the recording: the harness that made it sent this step to the
+     * existing organisation, so that entry was dropped from the fixture rather
+     * than kept as a record of something it did not test. The organisation is
+     * looked up after the key check and before anything is written, as before.
+     */
+    #[Test]
+    public function an_organisation_that_does_not_exist_is_a_404_that_writes_nothing(): void
+    {
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550009103'])->fresh());
+
+        $this->patch('/api/admin/masjids/999999/capabilities/events', ['enabled' => '0'], ['Accept' => 'application/json'])
+            ->assertNotFound()
+            ->assertJsonPath('status', 'error');
+
+        // The key is checked first: an unknown key on a missing organisation is the key's 422.
+        $this->patch('/api/admin/masjids/999999/capabilities/nope', ['enabled' => '0'], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertExactJson(['status' => 'failed', 'data' => ['capability' => ['There is no such capability.']]]);
+
+        $this->assertSame(0, MasjidCapabilityChange::count());
     }
 }

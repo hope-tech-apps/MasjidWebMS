@@ -4232,10 +4232,12 @@ several. `applyAtCreation` stays Studio's creation-time writer.
   override is stored and ledgered all the same).
 - **The single switch answers byte for byte as before**, pinned by
   `SetCapabilityDelegatesTest` against a recording made on the pre-change
-  controller (`tests/fixtures/set-capability-responses.json`): twelve flips
+  controller (`tests/fixtures/set-capability-responses.json`): eleven flips
   covering a change, a no-op, a grant, Giving refused and allowed, an unknown and
-  a column-backed key, a missing and a `"false"` value, a MasjidAdmin and a
-  missing organisation. The order of its checks is kept: 403, then the key (before
-  the organisation is looked up), then 404, then Giving.
+  a column-backed key, a missing and a `"false"` value, and a MasjidAdmin. (The
+  harness sent a twelfth step, "an organisation that does not exist", to the
+  existing organisation by mistake; that entry was cut from the fixture and the
+  404 is asserted on its own.) The order of its checks is kept: 403, then the key
+  (before the organisation is looked up), then 404, then Giving.
 - The live panel is unchanged and keeps sending one key per request. Studio's
   live-organisation Features card (S9) is the bulk caller.
