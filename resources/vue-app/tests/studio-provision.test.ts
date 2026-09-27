@@ -15,7 +15,6 @@ import {
     clearSecrets,
     clearsSecrets,
     emptySecrets,
-    featureSummary,
     generateBlockers,
     inviteeOf,
     inviteOutcome,
@@ -356,15 +355,3 @@ test('the answer takes focus: the Created or Already provisioned heading, otherw
     assert.equal(outcomeFocusId(null), null);
 });
 
-test('the review counts the switches on and the departures from the catalogue defaults', () => {
-    const catalogue = {
-        org_type: 'school' as const,
-        groups: [{ key: 'g', label: 'G', entries: [
-            { key: 'events', default_at_creation: true },
-            { key: 'donations', default_at_creation: true },
-        ] }],
-    } as unknown as Parameters<typeof featureSummary>[1];
-
-    assert.deepEqual(featureSummary({ events: true, donations: false }, catalogue), { on: 1, total: 2, departures: 1 });
-    assert.deepEqual(featureSummary({ events: true }, null), { on: 1, total: 1, departures: null });
-});

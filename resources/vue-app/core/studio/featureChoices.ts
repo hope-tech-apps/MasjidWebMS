@@ -13,7 +13,7 @@
  *
  * Only `import type`, so tests/studio-feature-choices.test.ts runs it under node.
  */
-import type { StudioCatalogue, StudioCatalogueEntry } from "@/core/types/data/Studio";
+import type { StudioCapabilitiesApplied, StudioCatalogue, StudioCatalogueEntry } from "@/core/types/data/Studio";
 
 /** `CapabilityCatalogue::NOT_OFFERED`: served, but shown collapsed. */
 export const NOT_OFFERED = 'not_offered';
@@ -127,6 +127,158 @@ export function sameChoices(a: Record<string, unknown> | null | undefined, b: Re
     const right = b ?? {};
     const keys = Object.keys(right);
     return Object.keys(left).length === keys.length && keys.every((key) => left[key] === right[key]);
+}
+
+/** The platforms, in the order given, that preselect a switch left where they put it. */
+function addSuggesters(into: string[], entry: StudioCatalogueEntry, platforms: readonly string[]): void {
+    for (const platform of preselectMatches(entry, platforms)) {
+        if (!into.includes(platform)) into.push(platform);
+    }
+}
+
+/** Every served entry by key. */
+function entriesByKey(catalogue: StudioCatalogue): Map<string, StudioCatalogueEntry> {
+    return new Map(servedEntries(catalogue).map((entry) => [entry.key, entry]));
+}
+
+/**
+ * Step 1's map counted for Step 3's review.
+ *
+ *  - `changed`: switches the operator moved away from where Studio put them,
+ *    which is startingValue() for this type AND these platforms. Only these
+ *    are edits.
+ *  - `suggested`: switches still where a chosen platform's `preselect_with`
+ *    put them, which a new organisation of this type would not have: Web
+ *    ticks website pages. Nobody moved them, so they are not called changed.
+ *    `suggestedWith` names those platforms, in the draft's order.
+ *
+ * Both are null while the catalogue is not loaded. The server's own report
+ * (`capabilities_applied.changed`) is a different count, against
+ * `default_at_creation` alone; splitApplied() reads that one.
+ */
+export type FeatureCounts = {
+    on: number;
+    total: number;
+    suggested: number | null;
+    suggestedWith: string[];
+    changed: number | null;
+};
+
+export function featureCounts(
+    map: Record<string, boolean> | null | undefined,
+    catalogue: StudioCatalogue | null,
+    platforms: readonly string[],
+): FeatureCounts {
+    const choices = Object.entries(map ?? {});
+    const counts: FeatureCounts = {
+        on: choices.filter(([, on]) => on).length,
+        total: choices.length,
+        suggested: null,
+        suggestedWith: [],
+        changed: null,
+    };
+    if (!catalogue) return counts;
+
+    const entries = entriesByKey(catalogue);
+    let suggested = 0;
+    let changed = 0;
+    for (const [key, on] of choices) {
+        const entry = entries.get(key);
+        if (!entry) continue;
+        const start = startingValue(entry, platforms);
+        if (on !== start) {
+            changed++;
+        } else if (start !== entry.default_at_creation) {
+            suggested++;
+            addSuggesters(counts.suggestedWith, entry, platforms);
+        }
+    }
+
+    return { ...counts, suggested, changed };
+}
+
+/**
+ * The review's Features line: "11 of 33 on, 1 suggested with Web, 0 changed
+ * by you". The suggested part is left out when there are none; without the
+ * catalogue only the first part can be said. `nameOf` names a platform
+ * (platforms.ts platformLabel); it is passed in so this module stays runnable
+ * under node.
+ */
+export function featureCountsText(counts: FeatureCounts, nameOf: (platform: string) => string = (platform) => platform): string {
+    if (!counts.total) return '';
+    const parts = [`${counts.on} of ${counts.total} on`];
+    if (counts.suggested !== null && counts.changed !== null) {
+        if (counts.suggested > 0) parts.push(`${counts.suggested} suggested with ${counts.suggestedWith.map(nameOf).join(', ')}`);
+        parts.push(`${counts.changed} changed by you`);
+    }
+    return parts.join(', ');
+}
+
+/** The server's `capabilities_applied.changed`, told apart: preselections left alone, and the operator's own changes. */
+export type AppliedSplit = {
+    /** Each with the platforms that preselect it (`with`), in the order given. */
+    suggested: (StudioCapabilitiesApplied['changed'][number] & { with: string[] })[];
+    suggestedWith: string[];
+    byYou: StudioCapabilitiesApplied['changed'];
+};
+
+/**
+ * Splits what the server reports as differing from a new organisation's
+ * defaults (CapabilityWriter::applyAtCreation, against `default_at_creation`
+ * alone) into the switches still where a platform's preselection put them and
+ * the ones the operator changed. `platforms` must be the ones the organisation
+ * was CREATED with, from the server's answer (`app_publishing.
+ * enabled_platforms`), never the draft's answers as they stand now.
+ *
+ * Null when it cannot be told: no catalogue, no platforms reported, or a key
+ * the catalogue does not describe. The caller then says only that they differ
+ * from the defaults, which is what the server said.
+ */
+export function splitApplied(
+    changed: StudioCapabilitiesApplied['changed'],
+    catalogue: StudioCatalogue | null,
+    platforms: readonly string[] | null | undefined,
+): AppliedSplit | null {
+    if (!catalogue || !Array.isArray(platforms)) return null;
+
+    const entries = entriesByKey(catalogue);
+    const split: AppliedSplit = { suggested: [], suggestedWith: [], byYou: [] };
+    for (const change of changed) {
+        const entry = entries.get(change.key);
+        if (!entry) return null;
+        if (change.enabled === startingValue(entry, platforms) && change.enabled !== entry.default_at_creation) {
+            split.suggested.push({ ...change, with: preselectMatches(entry, platforms) });
+            addSuggesters(split.suggestedWith, entry, platforms);
+        } else {
+            split.byYou.push(change);
+        }
+    }
+
+    return split;
+}
+
+/**
+ * The results' Features line, from the server's report. With a split: "1
+ * suggested with Web, 0 changed by you, 32 at a new organisation's
+ * defaults". Without one, only what the server's list means: "1 differs from
+ * a new organisation's defaults, 32 match them".
+ */
+export function appliedText(
+    applied: StudioCapabilitiesApplied,
+    split: AppliedSplit | null,
+    nameOf: (platform: string) => string = (platform) => platform,
+): string {
+    const unchanged = applied.unchanged.length;
+    if (!split) {
+        const differ = applied.changed.length;
+        return `Features: ${differ} ${differ === 1 ? 'differs' : 'differ'} from a new organisation's defaults, ${unchanged} ${unchanged === 1 ? 'matches' : 'match'} them`;
+    }
+
+    const parts: string[] = [];
+    if (split.suggested.length) parts.push(`${split.suggested.length} suggested with ${split.suggestedWith.map(nameOf).join(', ')}`);
+    parts.push(`${split.byYou.length} changed by you`);
+    parts.push(`${unchanged} at a new organisation's defaults`);
+    return `Features: ${parts.join(', ')}`;
 }
 
 export type FeatureGroupView = {

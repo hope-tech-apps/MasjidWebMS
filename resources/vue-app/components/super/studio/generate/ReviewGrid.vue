@@ -39,8 +39,9 @@
  * provisioning will). An answer not given shows as a dash.
  */
 import { asksPrayer, BRAND_COLOUR_KEYS, webSelected } from '@/core/studio/foundationGate';
-import { accountModeLabel, PLATFORM_OPTIONS } from '@/core/studio/platforms';
-import { featureSummary, IqamaStatus, iqamaStatus } from '@/core/studio/provision';
+import { featureCounts, featureCountsText } from '@/core/studio/featureChoices';
+import { accountModeLabel, PLATFORM_OPTIONS, platformLabel } from '@/core/studio/platforms';
+import { IqamaStatus, iqamaStatus } from '@/core/studio/provision';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, ref, watch } from 'vue';
 
@@ -63,14 +64,14 @@ function optionLabel(options: { value: string; label: string }[] | undefined, va
     return options?.find((option) => option.value === value)?.label ?? value;
 }
 
-// The city list is per country and not part of the options, so it is fetched
-// for the one country the draft names.
+// Cities are per country and not part of the options, so the one the draft
+// names is looked up by id (`?id=`), never by fetching the country's whole list.
 watch(() => [identity.value.country_id, identity.value.city_id] as const, async ([countryId, cityId]) => {
     cityName.value = '';
     if (!countryId || !cityId) return;
-    const cities = await store.fetchCities(countryId);
+    const outcome = await store.fetchCity(countryId, cityId);
     if (identity.value.country_id === countryId && identity.value.city_id === cityId) {
-        cityName.value = cities.find((city) => city.id === cityId)?.name ?? '';
+        cityName.value = outcome.ok ? outcome.data?.name ?? '' : '';
     }
 }, { immediate: true });
 
@@ -106,13 +107,11 @@ const items = computed(() => {
         );
     }
 
-    const features = featureSummary(answers.features.capabilities, store.catalogue);
-    rows.push({
-        label: 'Features',
-        value: features.total
-            ? `${features.on} of ${features.total} on` + (features.departures === null ? '' : `, ${features.departures} changed from the defaults`)
-            : '',
-    });
+    // A switch a chosen platform ticked (Web ticks website pages) is a
+    // suggestion, not a change: only what the operator moved is "changed by you".
+    const catalogue = store.catalogue?.org_type === identity.value.org_type ? store.catalogue : null;
+    const features = featureCounts(answers.features.capabilities, catalogue, answers.platforms.platforms ?? []);
+    rows.push({ label: 'Features', value: featureCountsText(features, platformLabel) });
 
     if (webSelected(answers)) {
         const preset = store.presets?.find((p) => p.key === answers.layout.preset);

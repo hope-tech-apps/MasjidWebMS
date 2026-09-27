@@ -32,7 +32,6 @@
  */
 import type {
     StudioAnswers,
-    StudioCatalogue,
     StudioProvisionAfterCommit,
     StudioProvisionResult,
     StudioSaveState,
@@ -463,26 +462,5 @@ export function inviteOutcome(afterCommit: StudioProvisionAfterCommit | null | u
         text: invitee.existingUserId
             ? 'No invitation was sent: an existing account was made the administrator.'
             : 'No invitation was sent: the draft gives no administrator email.',
-    };
-}
-
-/**
- * Step 1's map counted for the review: how many switches are on, and how many
- * differ from the catalogue's `default_at_creation` (what the writer ledgers).
- * `departures` is null while the catalogue is not loaded.
- */
-export function featureSummary(map: Record<string, boolean> | null | undefined, catalogue: StudioCatalogue | null): { on: number; total: number; departures: number | null } {
-    const entries = Object.entries(map ?? {});
-    const defaults = new Map<string, boolean>();
-    for (const group of catalogue?.groups ?? []) {
-        for (const entry of group.entries) defaults.set(entry.key, entry.default_at_creation);
-    }
-
-    return {
-        on: entries.filter(([, on]) => on).length,
-        total: entries.length,
-        departures: catalogue
-            ? entries.filter(([key, on]) => defaults.has(key) && defaults.get(key) !== on).length
-            : null,
     };
 }

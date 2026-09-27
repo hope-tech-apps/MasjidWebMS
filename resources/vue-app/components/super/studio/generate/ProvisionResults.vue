@@ -21,13 +21,11 @@
             <li v-if="applied" class="result-row">
                 <i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i>
                 <div class="d-flex flex-column gap-1 min-w-0">
-                    <span class="fw-semibold">
-                        Features: {{ applied.changed.length }} changed from the defaults,
-                        {{ applied.unchanged.length }} left as they start
-                    </span>
+                    <span class="fw-semibold">{{ appliedText(applied, split, platformLabel) }}</span>
                     <ul v-if="applied.changed.length" class="small mb-0 ps-3">
                         <li v-for="change in applied.changed" :key="change.key">
-                            {{ featureLabel(change.key) }}: {{ change.enabled ? 'on' : 'off' }}
+                            {{ featureLabel(change.key) }}: {{ change.enabled ? 'on' : 'off' }}<template
+                                v-if="suggestedWith.has(change.key)">, suggested with {{ suggestedWith.get(change.key) }}</template>
                         </li>
                     </ul>
                 </div>
@@ -89,6 +87,10 @@
  *    failed (core/studio/provision.ts inviteOutcome); otherwise the reason. It
  *    names the administrator the draft held when Provision was pressed
  *    (`invitee`), never the answers as they stand now;
+ *  - the features line counts the server's `capabilities_applied`, but does
+ *    not call a platform's preselection a change: those are "suggested with"
+ *    their platform, and only the rest are "changed by you"
+ *    (core/studio/featureChoices.ts splitApplied);
  *  - website sections are "switched on", not live: the site is not served
  *    until the domain panel says so;
  *  - an after-commit step that failed is listed in the server's own words;
@@ -101,6 +103,8 @@
  * with none loaded is shown as it came.
  */
 import StudioDomainAttachPanel from '@/components/super/studio/StudioDomainAttachPanel.vue';
+import { appliedText, splitApplied } from '@/core/studio/featureChoices';
+import { platformLabel } from '@/core/studio/platforms';
 import { Invitee, inviteOutcome } from '@/core/studio/provision';
 import { StudioProvisionResult } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
@@ -111,10 +115,29 @@ const props = defineProps<{ result: StudioProvisionResult; invitee: Invitee }>()
 const store = useStudioDraftStore();
 
 const applied = computed(() => props.result.capabilities_applied ?? null);
+
+/**
+ * The server lists every switch that differs from a new organisation's
+ * defaults, and a platform's preselection is one of those though nobody moved
+ * it (Web ticks website pages). Told apart with the platforms the server says
+ * it created the organisation with, never the draft's answers; when that
+ * cannot be done, the line says only what the server's list means.
+ */
+const split = computed(() => (applied.value
+    ? splitApplied(applied.value.changed, catalogueFor(props.result.masjid.org_type), props.result.app_publishing?.enabled_platforms)
+    : null));
+/** Each suggested key, with the platforms that suggested it, by name. */
+const suggestedWith = computed(() => new Map((split.value?.suggested ?? [])
+    .map((change) => [change.key, change.with.map(platformLabel).join(', ')] as const)));
 const site = computed(() => props.result.starter_site ?? null);
 const invite = computed(() => inviteOutcome(props.result.after_commit, props.invitee));
 const warnings = computed(() => props.result.after_commit?.warnings ?? []);
 const hasWebAddress = computed(() => !!props.result.web || (props.result.domains ?? []).length > 0);
+
+/** The loaded catalogue, only when it is the new organisation's type's. */
+function catalogueFor(orgType: unknown) {
+    return store.catalogue && store.catalogue.org_type === orgType ? store.catalogue : null;
+}
 
 function featureLabel(key: string): string {
     for (const group of store.catalogue?.groups ?? []) {

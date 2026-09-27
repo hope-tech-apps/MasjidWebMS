@@ -41,6 +41,7 @@ import {
     StudioSectionKey,
     StudioStepKey,
 } from "@/core/types/data/Studio";
+import { City } from "@/core/types/data/Country";
 import { OrgType } from "@/core/types/data/Vertical";
 
 /** Quiet time before an edit is saved: long enough that typing a name is one save, not twelve. */
@@ -685,12 +686,30 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         }
     }
 
-    async function fetchCities(countryId: number): Promise<{ id: number; name: string }[]> {
+    /**
+     * A country's cities whose names start with or contain `query` (`?q=`):
+     * those that start with it first, each name once, at most
+     * CITY_SEARCH_LIMIT. Never the whole list, which for the US is 21,008 rows.
+     * A failure is reported, never answered with an empty list, so the picker
+     * cannot say "no city matches" when nothing was searched.
+     */
+    async function searchCities(countryId: number, query: string): Promise<Outcome<City[]>> {
         try {
-            const res = await ApiService.get(`/api/admin/countries/${countryId}/cities`);
-            return res.data?.data ?? [];
-        } catch {
-            return [];
+            const res = await ApiService.get(`/api/admin/countries/${countryId}/cities?q=${encodeURIComponent(query)}`);
+            return { ok: true, data: (res.data?.data ?? []) as City[] };
+        } catch (error) {
+            return { ok: false, message: messageOf(error, 'The cities could not be searched.') };
+        }
+    }
+
+    /** One of a country's cities by id (`?id=`), to show a stored `city_id` by name; null when that country has none. */
+    async function fetchCity(countryId: number, cityId: number): Promise<Outcome<City | null>> {
+        try {
+            const res = await ApiService.get(`/api/admin/countries/${countryId}/cities?id=${cityId}`);
+            const rows = (res.data?.data ?? []) as City[];
+            return { ok: true, data: rows.find((city) => city.id === cityId) ?? null };
+        } catch (error) {
+            return { ok: false, message: messageOf(error, 'The city could not be loaded.') };
         }
     }
 
@@ -752,7 +771,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         // step 3
         provisioning, provisionOutcome, provision,
         // reference
-        optionsError, fetchOptions, fetchCities,
+        optionsError, fetchOptions, searchCities, fetchCity,
         catalogueLoading, catalogueError, fetchCatalogue,
         presetsLoading, presetsError, fetchPresets,
         previewLoading, previewError,

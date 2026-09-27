@@ -300,3 +300,9 @@ export type BackendApiRoute =
     | `/api/admin/studio/organisations/${number}`
     | `/api/admin/studio/organisations/${number}/preview`
     | `/api/admin/masjids/${string}/brand-assets/regenerate`
+
+    // Studio's city picker (CountriesCitiesController::countryCities): a
+    // type-to-find search, and one stored city shown by name. The bare shape
+    // above stays the full list the wizard and the super masjid form read.
+    | `/api/admin/countries/${number}/cities?q=${string}`
+    | `/api/admin/countries/${number}/cities?id=${number}`

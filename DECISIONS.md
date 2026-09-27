@@ -4478,3 +4478,83 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-27 — Studio Step 0: a searchable city picker, and feature counts that separate suggestions from edits (NAFIS walkthrough)
+
+Two findings from the NAFIS walkthrough of Studio: the city was a plain `<select>` of every city of the
+country (21,008 for the US, three "Raleigh" among them, filled seconds after the country changed), and
+Step 3 said "1 changed from the defaults" when the operator had changed nothing.
+
+**Decision 1: the city is typed, not chosen from a list.**
+
+- `GET /api/admin/countries/{country_id}/cities` takes two optional parameters, validated by
+  `CountryCitiesRequest` (BaseFormRequest's 422 envelope). With neither, the controller runs the same
+  line it always ran and the answer is byte-identical: the onboarding wizard and the super masjid form
+  still fill a select from it (`CitySearchTest` compares the bytes).
+  - `q` (trimmed, 1–100 characters; blank is absent, so a cleared box is not a 422): up to
+    `CountriesCitiesController::SEARCH_LIMIT` (50) names, those that start with `q` first, then those
+    that contain it, case-insensitive (`LOWER()` on both sides), ordered by that rank, then name, then
+    id. Each name once, as its lowest id, grouped on `LOWER(name)` so MySQL's `_ci` collation and
+    SQLite's binary one agree.
+  - `id` (a positive integer): that city of that country, or `[]`.
+  - Both at once is a 422 (`prohibits`), not one silently ignored.
+  - Rows keep the full list's keys (`id, name, country_id, created_at, updated_at`).
+  - The input's `%`, `_` and the escape character are escaped, with `!` as the escape character
+    (`ESCAPE '!'`), not `\`: `ESCAPE '\'` has to be spelled differently in MySQL, which reads a
+    backslash in a literal as an escape, and in SQLite, which does not. A driver switch would test a
+    query production never runs. With `!` named, `\` is an ordinary character in both.
+  - No schema change: the country's rows come through the `country_id` foreign-key index, and the
+    lowest id of each name is a grouped derived table joined back on the primary key.
+- `IdentityPanel.vue` replaces the select with an ARIA combobox (`role="combobox"`, `aria-expanded`,
+  `aria-controls`, `aria-activedescendant`; arrow keys, Enter, Escape). The pure rules are in
+  `core/studio/citySearch.ts`. It searches `?q=` 250 ms after the last keystroke once there are two
+  letters, drops an answer to older text or another country, and says "No city starts with or contains
+  “…”." when nothing matches (and "Showing the first 50…" on a full page). A pick sets
+  `identity.city_id`; the draft still stores the id. A stored id is shown by name through `?id=`, once per
+  country and city. Changing the country clears the city, as before. Typing is a search, not an
+  answer: text left without a pick goes back to the chosen city's name, an emptied box clears the city,
+  and focusing the box alone never changes the answer.
+- A failed search says so. The old `fetchCities()` answered `[]` on any failure, which the new picker
+  would have shown as "no city matches". The store now has `searchCities()` and `fetchCity()`, both
+  returning an `Outcome`. `fetchCities()` is gone: its other caller, Step 3's `ReviewGrid`, fetched the
+  whole list to read one name, and now uses `?id=` too.
+- The legacy wizard and the super masjid form are unchanged; `studio-city-picker.test.ts` pins that they
+  still read the full list.
+
+**Assumption (ASSUMPTIONS 25): same-name cities are interchangeable.** The data has a name and a country
+and nothing else (`CountriesCitiesSeeder`), and a city is only ever shown by its name (the app directory,
+the admin screens load `city` for its name). So offering three "Raleigh" rows would offer a choice nobody
+can make, and the lowest id stands for the name. Showing a state would need a new data source, which was
+not done.
+
+**Decision 2: a platform's suggestion is not counted as a change.** Web preselects `web_pages`
+(`studio_preselect_with`), so it departs from the organisation type's `default_at_creation` without anyone
+moving it. Both the review's count (`featureSummary`) and the server's `capabilities_applied.changed`
+(`CapabilityWriter::applyAtCreation`) measure against that default alone. No server payload changed; the
+SPA words it honestly.
+
+- Review (`ReviewGrid`): `featureCounts()` in `core/studio/featureChoices.ts`, beside `startingValue()`,
+  counts as "changed by you" only a switch whose value differs from what Studio itself would have chosen
+  for this organisation type and these platforms. A switch still where a platform put it is "suggested".
+  The line reads "11 of 33 on, 1 suggested with Web, 0 changed by you", with the suggested part left out
+  when there are none. "Suggested with Web" is the feature row's own chip, so Step 1 and Step 3 use the
+  same words (the brief's example said "for the website"). A suggestion the operator turned off is
+  changed by them.
+- Results (`ProvisionResults`): `splitApplied()` splits the server's list using the platforms the server
+  says it created the organisation with (`app_publishing.enabled_platforms`), never the draft's answers,
+  which `StudioGenerateStepSourceTest` forbids there. It reads "Features: 1 suggested with Web, 0 changed by
+  you, 32 at a new organisation's defaults", and each suggested switch in the list says "suggested with
+  Web". When the split cannot be made (no catalogue of that type, no platforms reported, or a key the
+  catalogue does not describe) it says only what the server's list means: "1 differs from a new
+  organisation's defaults, 32 match them".
+- `featureSummary()` left `provision.ts`; its node test moved to `studio-feature-choices.test.ts` as the
+  new counts' tests.
+
+Alternatives: list every same-name row with its id (meaningless to an operator); a state column (no source
+for it); dedupe with a plain `GROUP BY name` (MySQL and SQLite would disagree on case); change the server's
+`changed` list (the brief kept payloads as they are).
+
+Verified: `npm run test:spa`, `npm run build`, `vue-tsc` (101 errors, the baseline, none in a touched file),
+`php -l` on the PHP files. Not verified here: the PHP suite, including `CitySearchTest` and the Studio
+source tests (no PHP on the dev Mac), MySQL behaviour of the search (ASSUMPTIONS 26), and the combobox in a
+real browser.

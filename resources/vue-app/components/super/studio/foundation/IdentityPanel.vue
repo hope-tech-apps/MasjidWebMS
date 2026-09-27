@@ -76,10 +76,32 @@
             </div>
             <div class="studio-field w-100">
                 <label for="studio-city">City</label>
-                <select id="studio-city" v-model.number="identity.city_id" class="dashboard-input" :disabled="!identity.country_id">
-                    <option :value="null">Select city</option>
-                    <option v-for="city in cities" :key="city.id" :value="city.id">{{ city.name }}</option>
-                </select>
+                <!-- A combobox, not a select: a country can have 21,008 cities (core/studio/citySearch.ts). -->
+                <div class="position-relative">
+                    <input id="studio-city" :value="cityText" type="text" :maxlength="CITY_QUERY_MAX" autocomplete="off"
+                        spellcheck="false" class="dashboard-input w-100" :disabled="!identity.country_id"
+                        :placeholder="identity.country_id ? 'Type two or more letters' : 'Choose a country first'"
+                        role="combobox" aria-autocomplete="list" aria-controls="studio-city-list"
+                        :aria-expanded="cityListOpen"
+                        :aria-activedescendant="cityListOpen && cityActive >= 0 ? `studio-city-option-${cityActive}` : undefined"
+                        aria-describedby="studio-city-status"
+                        @input="onCityInput" @keydown="onCityKey" @blur="onCityBlur" />
+                    <!-- Always in the DOM, so aria-controls names an element that exists. -->
+                    <ul v-show="cityListOpen" id="studio-city-list" role="listbox" aria-label="Cities"
+                        class="city-list list-group position-absolute w-100 shadow" @mousedown.prevent>
+                        <!-- mousedown, not click: a click lands after the box's blur has closed the list. -->
+                        <li v-for="(city, i) in cityMatches" :id="`studio-city-option-${i}`" :key="city.id"
+                            role="option" :aria-selected="i === cityActive"
+                            class="list-group-item list-group-item-action py-1 px-2"
+                            :class="{ 'city-option-active': i === cityActive }"
+                            @mousedown.prevent="pickCity(city)" @mouseenter="cityActive = i">
+                            {{ city.name }}
+                        </li>
+                    </ul>
+                </div>
+                <p id="studio-city-status" role="status" class="mb-0" :class="cityFailed ? 'studio-error' : 'studio-hint'">
+                    {{ cityStatus }}
+                </p>
             </div>
         </div>
 
@@ -172,18 +194,35 @@
  * The address is checked live, as it is typed, through /studio/domains/check
  * (S3): the check normalises and validates the label exactly as provisioning
  * will, so the answer here is the answer Step 3 will get.
+ *
+ * The city is typed, not chosen from a select (core/studio/citySearch.ts): a
+ * country's list can be 21,008 rows. The box searches ?q= as the operator
+ * types, a pick stores the city's id as before, and a stored id is shown by
+ * name through ?id=. The data has no state, so same-name cities are offered
+ * once (DECISIONS.md 2026-09-27).
  */
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import StudioPanel from '@/components/super/studio/foundation/StudioPanel.vue';
 import ApiService from '@/core/services/ApiService';
+import {
+    CITY_QUERY_MAX,
+    CITY_SEARCH_DEBOUNCE_MS,
+    CITY_SEARCH_LIMIT,
+    cityOnLeave,
+    citySearchText,
+    MORE_CITIES_TEXT,
+    moveActive,
+    noCityText,
+} from '@/core/studio/citySearch';
 import { asksPrayer } from '@/core/studio/foundationGate';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { MasjidAdmin } from '@/core/types/data/Admin';
+import { City } from '@/core/types/data/Country';
 import { StudioDomainCheck, StudioSlugCheck as SlugCheckState } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { AxiosError } from 'axios';
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 const emit = defineEmits<{ (event: 'slug-check', check: SlugCheckState): void }>();
 
@@ -206,7 +245,6 @@ const terminologyRows = computed(() =>
 );
 
 // ---- Place ----
-const cities = ref<{ id: number; name: string }[]>([]);
 const admins = ref<MasjidAdmin[]>([]);
 
 /** IANA names, as PHP's `timezone` rule accepts; a stored one the browser lacks is still offered. */
@@ -222,15 +260,181 @@ const timezones = computed(() => {
     return current && !zones.includes(current) ? [current, ...zones] : zones;
 });
 
-async function loadCities(countryId: number | null | undefined) {
-    cities.value = countryId ? await store.fetchCities(countryId) : [];
-}
-
 /** Only an operator's change clears the city; loading a draft never does. */
 function onCountryChange() {
     identity.value.city_id = null;
-    void loadCities(identity.value.country_id);
 }
+
+// ---- City: type to find (core/studio/citySearch.ts) ----
+/** What is in the box: a search while typing, the chosen city's name otherwise. */
+const cityText = ref('');
+/** The name of the city `identity.city_id` holds; '' when none, or not known yet. */
+const cityName = ref('');
+/** "country:city" the box was last set for, so a pick is not fetched back and a reloaded draft is. */
+let cityShownFor: string | null = null;
+/** The operator has typed since the box was last set. */
+let cityEdited = false;
+const cityMatches = ref<City[]>([]);
+const cityOpen = ref(false);
+/** The highlighted suggestion; -1 is none, so Enter picks nothing until an arrow key chooses. */
+const cityActive = ref(-1);
+/** The text whose search came back empty, so "no city" never shows for a stale one. */
+const cityEmptyFor = ref<string | null>(null);
+/** A failed search or lookup, or a stored city this country does not have. */
+const cityMessage = ref('');
+const cityFailed = ref(false);
+let cityTimer: ReturnType<typeof setTimeout> | null = null;
+let citySeq = 0;
+
+const cityListOpen = computed(() => cityOpen.value && cityMatches.value.length > 0);
+
+const cityStatus = computed(() => {
+    if (cityMessage.value) return cityMessage.value;
+    const query = citySearchText(cityText.value);
+    if (cityOpen.value && query !== null && cityEmptyFor.value === query) return noCityText(query);
+    if (cityListOpen.value && cityMatches.value.length >= CITY_SEARCH_LIMIT) return MORE_CITIES_TEXT;
+    return '';
+});
+
+function cityKey(): string {
+    return `${identity.value.country_id ?? ''}:${identity.value.city_id ?? ''}`;
+}
+
+function closeCityList() {
+    if (cityTimer) clearTimeout(cityTimer);
+    citySeq++;
+    cityOpen.value = false;
+    cityActive.value = -1;
+    cityMatches.value = [];
+    cityEmptyFor.value = null;
+}
+
+function onCityInput(event: Event) {
+    cityText.value = (event.target as HTMLInputElement).value;
+    cityEdited = true;
+    if (cityTimer) clearTimeout(cityTimer);
+    // Whatever is in flight answers older text now.
+    citySeq++;
+    cityActive.value = -1;
+    cityEmptyFor.value = null;
+    cityMessage.value = '';
+    cityFailed.value = false;
+
+    const query = citySearchText(cityText.value);
+    const countryId = identity.value.country_id;
+    if (query === null || !countryId) {
+        cityOpen.value = false;
+        cityMatches.value = [];
+        return;
+    }
+
+    cityOpen.value = true;
+    cityTimer = setTimeout(() => { void searchCities(countryId, query); }, CITY_SEARCH_DEBOUNCE_MS);
+}
+
+async function searchCities(countryId: number, query: string) {
+    const seq = ++citySeq;
+    const outcome = await store.searchCities(countryId, query);
+    // A slower answer to older text, or to another country, must not replace a newer one.
+    if (seq !== citySeq || identity.value.country_id !== countryId) return;
+
+    cityActive.value = -1;
+    if (outcome.ok) {
+        cityMatches.value = outcome.data;
+        cityEmptyFor.value = outcome.data.length ? null : query;
+    } else {
+        cityMatches.value = [];
+        cityMessage.value = outcome.message;
+        cityFailed.value = true;
+    }
+}
+
+function pickCity(city: City) {
+    if (!store.editable) return;
+    closeCityList();
+    identity.value.city_id = city.id;
+    cityName.value = city.name;
+    cityText.value = city.name;
+    cityShownFor = cityKey();
+    cityEdited = false;
+    cityMessage.value = '';
+    cityFailed.value = false;
+}
+
+function showActiveCity() {
+    void nextTick(() => document.getElementById(`studio-city-option-${cityActive.value}`)?.scrollIntoView({ block: 'nearest' }));
+}
+
+function onCityKey(event: KeyboardEvent) {
+    // Keys pressed while a keyboard is composing belong to the composition.
+    if (event.isComposing) return;
+
+    if (event.key === 'Escape') {
+        if (!cityOpen.value && !cityEdited) return;
+        event.preventDefault();
+        closeCityList();
+        cityText.value = cityName.value;
+        cityEdited = false;
+        return;
+    }
+
+    const count = cityMatches.value.length;
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && count) {
+        event.preventDefault();
+        cityOpen.value = true;
+        cityActive.value = moveActive(cityActive.value, count, event.key);
+        showActiveCity();
+    } else if (event.key === 'Enter' && cityListOpen.value && cityActive.value >= 0 && cityActive.value < count) {
+        event.preventDefault();
+        pickCity(cityMatches.value[cityActive.value]);
+    }
+}
+
+function onCityBlur() {
+    closeCityList();
+    const leave = cityOnLeave(cityText.value, cityName.value, cityEdited);
+    cityEdited = false;
+    cityText.value = leave.text;
+    if (leave.clear && store.editable && identity.value.city_id !== null) {
+        identity.value.city_id = null;
+        cityName.value = '';
+        cityShownFor = cityKey();
+        cityMessage.value = '';
+        cityFailed.value = false;
+    }
+}
+
+// A stored city is shown by name, looked up once (`?id=`): when the panel
+// opens on a draft that has one, and when a reload or another draft brings a
+// different one. A pick here is already named, and a country change clears it.
+watch(cityKey, async (key) => {
+    if (key === cityShownFor) return;
+    cityShownFor = key;
+    closeCityList();
+    cityName.value = '';
+    cityText.value = '';
+    cityEdited = false;
+    cityMessage.value = '';
+    cityFailed.value = false;
+
+    const countryId = identity.value.country_id;
+    const cityId = identity.value.city_id;
+    if (!countryId || !cityId) return;
+
+    const outcome = await store.fetchCity(countryId, cityId);
+    if (cityKey() !== key) return;
+
+    if (!outcome.ok) {
+        cityMessage.value = outcome.message;
+        cityFailed.value = true;
+    } else if (!outcome.data) {
+        cityMessage.value = `The saved city (#${cityId}) is not one of this country's cities. Choose the city again.`;
+        cityFailed.value = true;
+    } else {
+        cityName.value = outcome.data.name;
+        if (!cityEdited) cityText.value = outcome.data.name;
+    }
+}, { immediate: true });
 
 function onExistingAdmin() {
     if (identity.value.user_id) identity.value.admin = null;
@@ -317,15 +521,14 @@ watch(() => identity.value.slug, (slug) => {
 }, { immediate: true });
 
 onMounted(async () => {
-    await Promise.all([
-        loadCities(identity.value.country_id),
-        usersStore.fetchMasjidAdmins(admins),
-    ]);
+    await usersStore.fetchMasjidAdmins(admins);
 });
 
 onBeforeUnmount(() => {
     if (slugTimer) clearTimeout(slugTimer);
     slugSeq++;
+    if (cityTimer) clearTimeout(cityTimer);
+    citySeq++;
 });
 </script>
 
@@ -372,6 +575,22 @@ onBeforeUnmount(() => {
 .terminology-row dd {
     margin: 0;
     font-weight: 600;
+}
+
+.city-list {
+    z-index: 10;
+    max-height: 16rem;
+    overflow-y: auto;
+    margin-top: .15rem;
+}
+
+.city-list .list-group-item {
+    cursor: pointer;
+    font-size: .9rem;
+}
+
+.city-option-active {
+    background-color: var(--bs-success-bg-subtle, #d1e7dd);
 }
 
 .studio-subsection {
