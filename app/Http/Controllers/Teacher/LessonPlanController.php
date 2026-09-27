@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Models\LessonPlan;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,10 +29,11 @@ use Symfony\Component\HttpFoundation\Response;
  *   - BY ID (POST to create, PUT/DELETE `/{plan_id}`) is what the day view uses.
  *     Creating REFUSES a subject that day already has, with a sentence naming
  *     it, rather than overwriting the plan a teacher could not see.
- *   - BY DAY AND SUBJECT (PUT `/lesson-plans`, an upsert) is what "copy to the
- *     rest of this week" uses — make this subject's plan on Thursday match — and
- *     it is the address every route had before per-subject plans, so a teacher
- *     with the old screen still open saves where they expect to.
+ *   - BY DAY (PUT `/lesson-plans`, an upsert on day and subject) is the address
+ *     every route had before per-subject plans, kept so a teacher with the old
+ *     screen still open saves where they expect to (see save()). The day view
+ *     does not use it: "copy to the rest of this week" writes each day's plan
+ *     by id, or creates one.
  *
  * `teacher.leads` has already answered "may this teacher touch this class"
  * before any method here runs. A plan id is always resolved THROUGH that class
@@ -111,12 +113,23 @@ class LessonPlanController extends TeacherController
     }
 
     /**
-     * Write the plan for (day, subject), creating it or replacing it.
+     * Write "the day's plan", creating it or replacing it — the address from
+     * before per-subject plans, which an older screen still open in a tab sends.
      *
-     * An upsert on the natural key — the per-subject unique index — so saving
-     * twice corrects the same plan rather than minting a second. "Copy to the
-     * rest of this week" is this call once per day; an older screen that knew
-     * only one plan a day lands here too, on the plan for the subject it sent.
+     * Which plan that is:
+     *   1. the day's plan for the subject sent, when there is one — an upsert on
+     *      the per-subject unique key, so saving twice corrects the same plan;
+     *   2. otherwise, when the day holds exactly ONE plan, that plan. The old
+     *      screen showed one plan a day and sends the whole form, subject
+     *      included, so a teacher who changed the subject there meant to rename
+     *      THAT plan. Upserting on the new subject instead would leave the old
+     *      plan behind and add a second one she never asked for;
+     *   3. otherwise a new plan: the day is empty, or it already holds several
+     *      subjects' plans and none for this one, so "the day's plan" names none
+     *      of them and replacing one would lose work she did not point at.
+     *
+     * write()'s clash check governs every one of these, so a rename onto a
+     * subject the day already has is refused as it is everywhere else.
      */
     public function save(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
     {
@@ -133,6 +146,7 @@ class LessonPlanController extends TeacherController
         // whereDate() compares the DATE PART on both MySQL and SQLite, so this
         // is right whichever the column ends up holding.
         $plan = $this->planOn($group, $date, LessonPlan::subjectKeyFor($request->validated('subject')))
+            ?? $this->onlyPlanOn($group, $date)
             ?? new LessonPlan(['group_id' => $group->id]);
 
         return $this->write($request, $masjid_id, $group, $plan);
@@ -182,9 +196,9 @@ class LessonPlanController extends TeacherController
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $onDay = LessonPlan::query()
-            ->where('group_id', $group->id)
-            ->whereDate('session_date', $date);
+        // The string as given, not a parsed Carbon: '2026-02-30' would roll over
+        // to March 2nd and remove that day's plan; as a string it matches nothing.
+        $onDay = $this->plansOnDay($group, $date);
 
         if ((clone $onDay)->count() > 1) {
             return response()->json([
@@ -254,14 +268,31 @@ class LessonPlanController extends TeacherController
         ], Response::HTTP_OK);
     }
 
-    /** The plan a class already has for (day, subject key), if any. */
-    private function planOn(Group $group, Carbon $date, string $subjectKey): ?LessonPlan
+    /**
+     * This class's plans on one day. The one place the (class, day) scope is
+     * written, so the clash check, the by-day upsert and the by-day delete cannot
+     * disagree about which rows "this class's day" means — another class's plan
+     * for the same subject that day is never one of them.
+     */
+    private function plansOnDay(Group $group, string $day): Builder
     {
         return LessonPlan::query()
             ->where('group_id', $group->id)
-            ->whereDate('session_date', $date->toDateString())
-            ->where('subject_key', $subjectKey)
-            ->first();
+            ->whereDate('session_date', $day);
+    }
+
+    /** The plan a class already has for (day, subject key), if any. */
+    private function planOn(Group $group, Carbon $date, string $subjectKey): ?LessonPlan
+    {
+        return $this->plansOnDay($group, $date->toDateString())->where('subject_key', $subjectKey)->first();
+    }
+
+    /** The day's plan when the day holds exactly one; null when it holds none or several. */
+    private function onlyPlanOn(Group $group, Carbon $date): ?LessonPlan
+    {
+        $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
+
+        return $plans->count() === 1 ? $plans->first() : null;
     }
 
     /**

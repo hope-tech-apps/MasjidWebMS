@@ -3937,9 +3937,14 @@ where `subject_key` is a NOT NULL column the model derives on every save
 plan, so a school with no pacing guide works as before. The day view addresses a
 plan by id (POST creates and refuses a subject the day already has with a 422
 naming it; PUT/DELETE `/lesson-plans/{plan_id}`, resolved through the teacher's
-own class). The id-less PUT stays as the (day, subject) upsert that "copy to the
-rest of this week" uses and an older open tab still sends; the id-less DELETE
-removes a day's plan only while it has exactly one (409 otherwise). The office
+own class). The id-less PUT stays for an older open tab, meaning what it meant
+there: the day's plan for the subject sent; else, when the day holds exactly one
+plan, THAT plan (the old screen sends its subject edits as a rename, so upserting
+on the new subject would leave a duplicate); else a new plan. "Copy to the rest
+of this week" therefore never uses it: it rewrites each day's plan for the
+subject by id, or POSTs one. The id-less DELETE removes a day's plan only while
+it has exactly one (409 otherwise). The subject key is lower-cased with the
+SIMPLE case mapping, so it is never longer than the 64-character subject. The office
 tab and the records export list every plan of a day with its subject.
 `down()` refuses, naming the plan ids, while any class-day holds two plans.
 Alternatives: a STORED generated column COALESCE(subject, '') (the rules'

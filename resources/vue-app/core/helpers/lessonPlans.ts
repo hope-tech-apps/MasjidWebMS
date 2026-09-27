@@ -23,9 +23,17 @@ export interface DayPlan {
  * `LessonPlan::subjectKeyFor` on the server: trimmed, whitespace collapsed,
  * lower-cased; '' is "no subject". The server is the authority and refuses a
  * clash either way — this only lets the form say so before the teacher saves.
+ *
+ * Lower-cased one code point at a time, as the server's SIMPLE case mapping
+ * does (it keeps the key within its column). A whole-string toLowerCase() uses
+ * the full mapping instead: 'İ' becomes two code points and a word-final 'Σ'
+ * becomes 'ς', so the two sides would disagree on those subjects. U+0130 is the
+ * one code point whose full lower case differs from its simple one on its own.
  */
 export function subjectKey(subject: string | null | undefined): string {
-    return String(subject ?? '').replace(/\s+/gu, ' ').trim().toLowerCase();
+    const clean = String(subject ?? '').replace(/\s+/gu, ' ').trim();
+
+    return Array.from(clean, (c) => (c === '\u0130' ? 'i' : c.toLowerCase())).join('');
 }
 
 /**
@@ -94,4 +102,73 @@ export function planLabel(plan: DayPlan | null | undefined): string {
     const subject = String(plan?.subject ?? '').trim();
 
     return subject || 'General';
+}
+
+/** The day view's write for the plan on its form: the open plan by its id, or a new plan. */
+export function planSaveRequest(base: string, planId: number | null): { method: 'post' | 'put'; url: string } {
+    return planId === null
+        ? { method: 'post', url: `${base}/lesson-plans` }
+        : { method: 'put', url: `${base}/lesson-plans/${planId}` };
+}
+
+/**
+ * Removing the open plan: by its id, so the day's other subjects stay. The
+ * by-date address removes a day only while it holds one plan.
+ */
+export function planDeleteUrl(base: string, planId: number): string {
+    return `${base}/lesson-plans/${planId}`;
+}
+
+/**
+ * Save is offered for a plan with activities whose subject the day does not
+ * already have, and not while a save is in flight.
+ */
+export function canSavePlan(saving: boolean, body: string | null | undefined, clash: DayPlan | null): boolean {
+    return !saving && String(body ?? '').trim() !== '' && clash === null;
+}
+
+export interface CopyablePlan extends DayPlan {
+    body?: string | null;
+}
+
+/**
+ * "Copy to the rest of this week", for one other day: the write that makes
+ * that day's plan for THIS subject match `source`.
+ *
+ *   - The day has this subject's plan: rewrite it by its id. It keeps its OWN
+ *     activities if it has any — the shared part of a week is its standard and
+ *     objective, not what the class actually did on Thursday.
+ *   - It has none: create one, beside whatever other subjects that day holds.
+ *
+ * Never the by-day PUT: that is the old one-plan-a-day address, and on a day
+ * holding exactly one plan it rewrites THAT plan whatever its subject — copying
+ * Math onto a Thursday that has only Science would turn the Science plan into
+ * a second Math plan.
+ */
+export function copyRequest<T extends CopyablePlan>(
+    base: string, plans: T[], source: T, iso: string,
+): { method: 'post' | 'put'; url: string; payload: T } {
+    const same = subjectClash(plans, iso, source.subject, null);
+    const payload = { ...source, session_date: iso, body: same?.body || source.body };
+
+    return same
+        ? { method: 'put', url: `${base}/lesson-plans/${same.id}`, payload }
+        : { method: 'post', url: `${base}/lesson-plans`, payload };
+}
+
+/**
+ * Which form the day view has on screen. `replace()` runs every time the form
+ * is replaced (another plan, another day, a reload); a request started for one
+ * form keeps `current()` and asks `isCurrent()` after its await. An answer for
+ * a form that has since been replaced — a guide fill, a saved plan's id — is
+ * dropped rather than written into the plan the teacher opened meanwhile.
+ */
+export function formTicket(): { replace: () => void; current: () => number; isCurrent: (ticket: number) => boolean } {
+    let seq = 0;
+
+    return {
+        replace: () => { seq += 1; },
+        current: () => seq,
+        isCurrent: (ticket: number) => ticket === seq,
+    };
 }

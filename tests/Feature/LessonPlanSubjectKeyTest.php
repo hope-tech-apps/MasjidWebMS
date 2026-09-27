@@ -87,6 +87,25 @@ class LessonPlanSubjectKeyTest extends TestCase
         $this->assertArrayNotHasKey('subject_key', $plan->toArray(), 'the key is index plumbing, not payload');
     }
 
+    /**
+     * The request allows a 64-character subject and the key column is 64 wide.
+     * Full Unicode lower-casing can LENGTHEN a string ('İ' is 'i' plus a
+     * combining dot), which MySQL refuses as too long — a 500 for a valid
+     * subject — and SQLite stores without a word, so only this length check
+     * can see it here.
+     */
+    #[Test]
+    public function the_key_is_never_longer_than_the_subject_so_it_fits_its_column(): void
+    {
+        $longest = str_repeat('İ', 64);
+
+        $this->assertSame(64, mb_strlen(LessonPlan::subjectKeyFor($longest)));
+        $this->assertSame('islamic', LessonPlan::subjectKeyFor('İslamic'));
+        // The same one-character-at-a-time rule the SPA's subjectKey() mirrors:
+        // no word-final sigma.
+        $this->assertSame('οδοσ', LessonPlan::subjectKeyFor('ΟΔΟΣ'));
+    }
+
     #[Test]
     public function the_index_itself_refuses_a_second_plan_for_a_subject_whatever_its_case(): void
     {

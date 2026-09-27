@@ -1401,7 +1401,7 @@
                     </div>
 
                     <div class="d-flex align-items-center gap-2 mt-3">
-                        <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim() || !!planClash"
+                        <button class="btn btn-sm btn-success" :disabled="!canSavePlan(planSaving, planForm.body, planClash)"
                                 @click="savePlan">
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
@@ -2094,7 +2094,10 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
-import { pickPlan, planLabel, plansOn, subjectClash, subjectKey, takenSubjectKeys } from '@/core/helpers/lessonPlans';
+import {
+    canSavePlan, copyRequest, formTicket, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
+    subjectClash, subjectKey, takenSubjectKeys,
+} from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -2339,6 +2342,12 @@ const plans = ref<any[]>([]);
  * curriculum lists) is reset whenever the plan changes, not only the day.
  */
 const planId = ref<number | null>(null);
+/**
+ * Which form is on screen, replaced by every syncPlanForm(). A guide fill or a
+ * save still in flight when the teacher opens another plan must not land in
+ * that plan: each takes a ticket before its await and checks it after.
+ */
+const planForms = formTicket();
 const planSaving = ref(false);
 const planSaved = ref(false);
 const planError = ref('');
@@ -2715,6 +2724,9 @@ function cancelPrefill() {
  */
 const prefillFromGuide = async (auto = false) => {
     const seq = ++prefillSeq;
+    // Which plan this fill is for: the teacher may open another subject's plan
+    // on the same day before the guide answers.
+    const ticket = planForms.current();
     const asked = {
         day: planDate.value,
         grade: planForm.value.grade_label,
@@ -2734,8 +2746,12 @@ const prefillFromGuide = async (auto = false) => {
             `/api/teacher/masjids/${masjidId.value}/curriculum?${q}`
         );
         const f = planForm.value;
-        if (seq !== prefillSeq || planDate.value !== asked.day || f.grade_label !== asked.grade
-            || f.subject !== asked.subject || f.curriculum_week_no !== asked.week) return;
+        // Dropped when a newer fill started, when the teacher opened another
+        // plan while the guide answered (this cell is for the plan she left), or
+        // when the day, grade, subject or week on screen changed underneath it.
+        if (seq !== prefillSeq || !planForms.isCurrent(ticket) || planDate.value !== asked.day
+            || f.grade_label !== asked.grade || f.subject !== asked.subject
+            || f.curriculum_week_no !== asked.week) return;
 
         const cell = res.data?.data?.cell;
         if (!cell) {
@@ -2766,7 +2782,7 @@ const prefillFromGuide = async (auto = false) => {
             prefillKept.value = true;
         }
     } catch {
-        if (seq === prefillSeq) planError.value = 'Could not read the pacing guide.';
+        if (seq === prefillSeq && planForms.isCurrent(ticket)) planError.value = 'Could not read the pacing guide.';
     } finally {
         if (seq === prefillSeq) prefilling.value = false;
     }
@@ -2938,18 +2954,13 @@ const copyAcrossWeek = async () => {
     try {
         for (const d of weekdaysOnly.value) {
             if (d.iso === planDate.value) continue;
-            // THIS subject's plan on each other day, by the (day, subject)
-            // address: Thursday's Math plan is written, its Science plan is not
-            // touched, and a day with no Math plan gets one.
-            const sameSubject = subjectClash(plans.value, d.iso, source.subject, null);
-            await TeacherApiService.put(`${base.value}/lesson-plans`, {
-                ...source,
-                session_date: d.iso,
-                // The other days keep their OWN activities if they have any:
-                // the shared part of a week is its standard and objective, not
-                // what the class actually did on Thursday.
-                body: sameSubject?.body || source.body,
-            });
+            // THIS subject's plan on each other day (lessonPlans.copyRequest):
+            // Thursday's Math plan is rewritten by its id, its Science plan is
+            // not touched, and a day with no Math plan gets one.
+            const req = copyRequest(base.value, plans.value, source, d.iso);
+            await (req.method === 'put'
+                ? TeacherApiService.put(req.url, req.payload)
+                : TeacherApiService.post(req.url, req.payload));
         }
         await loadLessonPlans();
     } catch {
@@ -3001,6 +3012,7 @@ const syncPlanForm = () => {
     autoFilled.value = {};
     stdLeft.value = {};
     cancelPrefill();
+    planForms.replace();
     closeStandards();
     // The subject box follows THIS plan: a hand-typed subject on another day
     // must not turn this day's guide subject into a text box. Re-checked when
@@ -3052,13 +3064,19 @@ const savePlan = async () => {
         };
         // An open plan is rewritten by its id; a new one is created, and the
         // server refuses it if the day already has that subject.
-        const res = planId.value === null
-            ? await TeacherApiService.post(`${base.value}/lesson-plans`, payload)
-            : await TeacherApiService.put(`${base.value}/lesson-plans/${planId.value}`, payload);
-        planId.value = res.data?.data?.id ?? planId.value;
+        const ticket = planForms.current();
+        const req = planSaveRequest(base.value, planId.value);
+        const res = req.method === 'post'
+            ? await TeacherApiService.post(req.url, payload)
+            : await TeacherApiService.put(req.url, payload);
+        // Stay on the saved plan only if it is still the one on screen: a chip
+        // clicked while the save was in flight has opened another, and the
+        // teacher stays there.
+        const stillOpen = planForms.isCurrent(ticket);
+        if (stillOpen) planId.value = res.data?.data?.id ?? planId.value;
         await loadLessonPlans();
         // After the reload, which re-syncs the form and clears the flag.
-        planSaved.value = true;
+        planSaved.value = stillOpen;
     } catch (e: any) {
         planError.value = e?.response?.data?.data?.subject?.[0]
             ?? e?.response?.data?.data?.session_date?.[0]
@@ -3073,7 +3091,7 @@ const savePlan = async () => {
 const deletePlan = async () => {
     if (planId.value === null) return;
     try {
-        await TeacherApiService.delete(`${base.value}/lesson-plans/${planId.value}`);
+        await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
         planId.value = null;
         await loadLessonPlans();
     } catch {

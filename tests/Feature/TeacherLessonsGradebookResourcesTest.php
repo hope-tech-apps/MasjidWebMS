@@ -237,14 +237,88 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
             'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
         ])->assertOk();
 
-        // Different case and stray spaces are still the same subject.
+        // Another case is still the same subject. Upper case, not stray outer
+        // spaces: TrimStrings removes those before the controller sees them, so
+        // only a case difference reaches the key's own normalisation.
         $refused = $this->postJson($this->url() . '/lesson-plans', [
-            'session_date' => $day, 'subject' => '  math ', 'body' => 'Would replace the first.',
+            'session_date' => $day, 'subject' => 'MATH', 'body' => 'Would replace the first.',
         ])->assertUnprocessable();
 
         $this->assertStringContainsString('already has a Math plan', $refused->json('data.subject.0'));
         $this->assertDatabaseCount('lesson_plans', 1);
         $this->assertSame('Count to twenty.', LessonPlan::first()->body);
+
+        // Inner spacing too: a double space inside a subject is the same subject.
+        $this->newPlan($day, 'Math Facts', 'Doubles.');
+        $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'math  FACTS', 'body' => 'Would replace it.',
+        ])->assertUnprocessable()->assertJsonPath('data.subject.0',
+            'This day already has a Math Facts plan. Open it to change it, or choose another subject.');
+    }
+
+    #[Test]
+    public function a_day_lists_its_general_plan_first_then_its_subjects_alphabetically(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+
+        // Written out of order, so the order read back is the listing's own.
+        $this->newPlan($day, 'Science', 'Sink or float.');
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $day, 'body' => 'Circle time.'])->assertOk();
+        $this->newPlan($day, 'Math', 'Count to twenty.');
+
+        $plans = $this->getJson($this->url() . "/lesson-plans?from={$day}&to={$day}")->assertOk()->json('data.plans');
+
+        $this->assertSame([null, 'Math', 'Science'], array_column($plans, 'subject'));
+    }
+
+    #[Test]
+    public function the_same_subject_on_another_day_is_that_days_own_plan(): void
+    {
+        $monday = now()->next(\Illuminate\Support\Carbon::MONDAY);
+        [$mon, $tue, $wed] = [$monday->toDateString(), $monday->copy()->addDay()->toDateString(), $monday->copy()->addDays(2)->toDateString()];
+
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $mon, 'subject' => 'Math', 'body' => 'Monday.'])->assertOk();
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $tue, 'subject' => 'Math', 'body' => 'Tuesday.'])->assertOk();
+        $this->putJson($this->url() . '/lesson-plans', ['session_date' => $wed, 'subject' => 'Math', 'body' => 'Wednesday.'])->assertOk();
+
+        $math = LessonPlan::where('subject', 'Math')->orderBy('session_date')->get();
+        $this->assertSame([$mon, $tue, $wed], $math->map(fn ($p) => $p->session_date->toDateString())->all());
+        $this->assertSame(['Monday.', 'Tuesday.', 'Wednesday.'], $math->pluck('body')->all());
+    }
+
+    /**
+     * The backstop: two saves racing past the pre-check. The clashing row is
+     * written between the controller's check and its INSERT (from a `saving`
+     * listener, which runs in exactly that gap), so only the unique index can
+     * refuse it — and the teacher still gets the sentence, not a 500.
+     */
+    #[Test]
+    public function a_save_that_loses_a_race_for_its_subject_is_refused_by_name(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $raced = false;
+
+        LessonPlan::saving(function (LessonPlan $plan) use (&$raced): void {
+            if ($raced) {
+                return;
+            }
+            $raced = true;
+            \Illuminate\Support\Facades\DB::table('lesson_plans')->insert([
+                'masjid_id' => $this->school->id, 'group_id' => $this->mine->id,
+                // As the model stores it, so the index compares like with like.
+                'session_date' => $plan->getAttributes()['session_date'],
+                'subject' => 'Math', 'subject_key' => 'math', 'body' => 'Saved a moment earlier.',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        });
+
+        $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Lost the race.',
+        ])->assertUnprocessable()->assertJsonPath('data.subject.0',
+            'This day already has a Math plan. Open it to change it, or choose another subject.');
+
+        $this->assertTrue($raced, 'the race was staged');
+        $this->assertSame(['Saved a moment earlier.'], LessonPlan::pluck('body')->all());
     }
 
     #[Test]
@@ -315,11 +389,11 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
     }
 
     #[Test]
-    public function the_day_and_subject_address_writes_that_subjects_plan_only(): void
+    public function the_day_address_adds_a_subject_to_a_day_that_already_has_several(): void
     {
-        // The upsert "copy to the rest of this week" makes once per day.
         $day = now()->addDays(2)->toDateString();
         $science = $this->newPlan($day, 'Science', 'Sink or float.');
+        $art = $this->newPlan($day, 'Art', 'Leaf rubbings.');
 
         $this->putJson($this->url() . '/lesson-plans', [
             'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
@@ -328,9 +402,67 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
             'session_date' => $day, 'subject' => 'Math', 'body' => 'Corrected.',
         ])->assertOk();
 
-        $this->assertDatabaseCount('lesson_plans', 2);
+        $this->assertDatabaseCount('lesson_plans', 3);
         $this->assertSame('Corrected.', LessonPlan::where('subject', 'Math')->value('body'));
         $this->assertSame('Sink or float.', LessonPlan::find($science)->body);
+        $this->assertSame('Leaf rubbings.', LessonPlan::find($art)->body);
+    }
+
+    /**
+     * The screen from before per-subject plans shows one plan a day and saves
+     * the whole form to the by-day address, subject included. A teacher who
+     * changes the subject there is renaming THE day's plan, as she always did;
+     * a second plan beside the first would be one she never asked for.
+     */
+    #[Test]
+    public function an_old_screen_that_changes_the_subject_renames_the_days_only_plan(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $plan = $this->newPlan($day, 'Science', 'Sink or float.');
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
+        ])->assertOk()->assertJsonPath('data.id', $plan);
+
+        $this->assertDatabaseCount('lesson_plans', 1);
+        $this->assertSame('Math', LessonPlan::find($plan)->subject);
+        $this->assertSame('Count to twenty.', LessonPlan::find($plan)->body);
+    }
+
+    #[Test]
+    public function another_class_planning_the_same_subject_that_day_is_neither_a_clash_nor_a_target(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $theirs = LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->notMine->id,
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Not yours.',
+        ]);
+
+        $mine = $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
+        ])->assertOk()->json('data.id');
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Corrected.',
+        ])->assertOk()->assertJsonPath('data.id', $mine);
+
+        $this->assertSame('Not yours.', $theirs->fresh()->body);
+        $this->assertSame(['Corrected.'], LessonPlan::where('group_id', $this->mine->id)->pluck('body')->all());
+
+        // The by-day address on a day where only the OTHER class has a plan:
+        // "my day's only plan" is none, so mine gets its own, theirs is untouched.
+        $next = now()->addDays(3)->toDateString();
+        $theirScience = LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->notMine->id,
+            'session_date' => $next, 'subject' => 'Science', 'body' => 'Not yours either.',
+        ]);
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $next, 'subject' => 'Math', 'body' => 'Mine.',
+        ])->assertOk();
+
+        $this->assertSame(['Science', 'Not yours either.'], [$theirScience->fresh()->subject, $theirScience->fresh()->body]);
+        $this->assertSame(2, LessonPlan::where('group_id', $this->mine->id)->count());
     }
 
     #[Test]

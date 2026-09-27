@@ -126,10 +126,16 @@ class LessonPlan extends Model
      * same subject's plan, and the unique index refuses the second. '' is "no
      * subject" — NOT NULL, because a NULL never collides in a MySQL unique index
      * and two general plans for one day would both be admitted.
+     *
+     * SIMPLE lower-casing, one code point for one code point, not mb_strtolower's
+     * full mapping: the full mapping can LENGTHEN a string ('İ' becomes 'i' plus
+     * a combining dot), so a 64-character subject — the most the request allows —
+     * could produce a 65-character key for a 64-character column, which MySQL
+     * refuses with a 500 and SQLite (the suite) silently stores.
      */
     public static function subjectKeyFor(?string $subject): string
     {
-        return mb_strtolower((string) self::cleanSubject($subject));
+        return mb_convert_case((string) self::cleanSubject($subject), MB_CASE_LOWER_SIMPLE, 'UTF-8');
     }
 
     protected function casts(): array
