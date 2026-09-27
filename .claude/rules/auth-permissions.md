@@ -598,8 +598,12 @@ Pages routes carry both gates, and the menu item carries both flags; for a Super
 decides. Burlington's site is run by the owner with `web_pages` off, BISS has no site: one key
 could not tell them apart.
 
-**The writer and the ledger.** The only writer is `PATCH .../capabilities/{key}` (in-controller 403
-for non-super, outside every gate, refuses column-backed and unknown keys with 422).
+**The writer and the ledger.** The only writer is `CapabilityWriter::apply()` (Studio W2 S7), behind
+`PATCH .../capabilities/{key}` (the live panel, one key) and `PATCH .../capabilities` with
+`capabilities[<key>]=1|0` (Studio, several keys): in-controller 403 for non-super, outside every gate,
+refuses column-backed, unknown and dotted keys with 422 (top-level `config('capabilities')` keys only).
+It writes exactly the keys sent, never `resolve()`s the rest, locks the `masjids` row, and any refusal
+(Giving's included) writes nothing for any key. `applyAtCreation` is Studio's creation-time writer.
 `GET .../capabilities` (SuperAdmin only) serves the switch panel. Every flip — `setCapability`,
 `setCrmAccess`, `setAssistantAccess`, `setDirectoryListing` (`directory_listing`), no-ops included
 — writes an append-only `masjid_capability_changes` row inside the save's transaction

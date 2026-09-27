@@ -5,6 +5,7 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Enums\SectionType;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Masjids\SetAssistantAccessRequest;
+use App\Http\Requests\Admin\Masjids\SetCapabilitiesRequest;
 use App\Http\Requests\Admin\Masjids\SetCapabilityRequest;
 use App\Http\Requests\Admin\Masjids\SetCrmAccessRequest;
 use App\Http\Requests\Admin\Masjids\SetDirectoryListingRequest;
@@ -19,7 +20,7 @@ use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
 use App\Models\User;
 use App\Support\CapabilityLedger;
-use App\Support\GivingSwitch;
+use App\Support\CapabilityWriter;
 use App\Support\MobileCache;
 use App\Support\ModuleFacts;
 use Illuminate\Http\Request;
@@ -277,7 +278,10 @@ class MasjidsController extends Controller
      * SuperAdmin already decided about.
      *
      * Grants and modules go through here alike. Every flip, a no-op included,
-     * writes a masjid_capability_changes row in the same transaction.
+     * writes a masjid_capability_changes row in the same transaction. The write
+     * itself, Giving's refusal included, is CapabilityWriter::apply() for one
+     * key (Studio W2 S7), and this answers exactly as it did before it
+     * delegated (SetCapabilityDelegatesTest).
      */
     public function setCapability(SetCapabilityRequest $request, string $masjid_id, string $capability)
     {
@@ -285,89 +289,45 @@ class MasjidsController extends Controller
             abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change what an organisation has.');
         }
 
-        $definition = config("capabilities.{$capability}");
-
-        if (! is_array($definition) || ! empty($definition['column'])) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => ['capability' => [
-                    is_array($definition)
-                        ? 'This capability has its own switch on this screen.'
-                        : 'There is no such capability.',
-                ]],
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
+        // Before the organisation is looked up, as it always was: a key no
+        // writer may store is a 422 whatever the id.
+        CapabilityWriter::assertWritable($capability);
 
         $masjid = Masjid::findOrFail($masjid_id);
 
-        // Giving is refused OFF while a monthly gift Stripe can bill exists
-        // (owner, 2026-09-14: block, not warn). A switch never cancels, pauses
-        // or changes a donor's gift, so the SuperAdmin cancels them first. No
-        // ledger row either way: nothing changed. Switching it ON has no
-        // precondition.
-        //
-        // Checkout pages still open block too, with their own sentence.
-        // Cancelling one on Recurring Donations leaves the page payable
-        // (GivingSwitch), so it says wait, never cancel. There is no override:
-        // a page completed after the flip would start a monthly gift the
-        // organisation's admins cannot see.
-        if ($capability === 'giving' && ! $request->boolean('enabled')) {
-            $live = GivingSwitch::liveSubscriptionCount($masjid);
-
-            if ($live > 0) {
-                $billedAfterCancel = GivingSwitch::billedAfterCancelCount($masjid);
-
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => ['capability' => [
-                        ($live === 1 ? '1 monthly gift can' : "{$live} monthly gifts can")
-                            . ' still charge donors. Cancel them on Recurring Donations or in Stripe first.'
-                            . ($billedAfterCancel > 0
-                                ? ($billedAfterCancel === 1
-                                    ? ' 1 of them already shows as cancelled here but Stripe is still billing it, so cancel that one in Stripe.'
-                                    : " {$billedAfterCancel} of them already show as cancelled here but Stripe is still billing them, so cancel those in Stripe.")
-                                : ''),
-                    ]],
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
-            $open = GivingSwitch::openCheckoutCount($masjid);
-
-            if ($open > 0) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => ['capability' => [
-                        $open === 1
-                            ? '1 monthly-gift checkout page opened in the last 24 hours can still start a monthly gift. Try again once it expires, 24 hours after it opened.'
-                            : "{$open} monthly-gift checkout pages opened in the last 24 hours can still start a monthly gift. Try again once they expire, 24 hours after each one opened.",
-                    ]],
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-        }
-
-        $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
-        $before = $masjid->hasCapability($capability);
-        $overrideBefore = array_key_exists($capability, $overrides) ? (bool) $overrides[$capability] : null;
-
-        DB::transaction(function () use ($masjid, $request, $capability, $overrides, $before, $overrideBefore) {
-            $overrides[$capability] = $request->boolean('enabled');
-
-            $masjid->capability_overrides = $overrides;
-            $masjid->updated_by = Auth::id();
-            $masjid->save();
-
-            CapabilityLedger::record($masjid, $capability, $before, $masjid->hasCapability($capability), $overrideBefore, Auth::id());
-        });
-
-        // A switch is what the app menu is DERIVED from, so this flush is the
-        // difference between a SuperAdmin seeing the change on a phone now and
-        // seeing it in ten minutes. The family form because a child's switches
-        // build a profile inside its PARENT's /menu.
-        MobileCache::flushFamily($masjid->fresh());
+        CapabilityWriter::apply($masjid, [$capability => $request->boolean('enabled')], (int) Auth::id());
 
         return response()->json([
             'status' => 'success',
             'data' => $masjid->fresh()->append(Masjid::ADMIN_APPENDS),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only: several catalogue capabilities in one request, for Studio
+     * opening a live organisation (Studio W2 S7, S9). The live panel keeps
+     * sending one key at a time to setCapability.
+     *
+     * Exactly the keys sent are written, each as an explicit override with its
+     * own ledger row, no-ops included; an unsent key is never touched. Any
+     * refusal, an unknown or column-backed key or Giving off while a gift can
+     * bill, writes nothing for any key, in the single switch's 422 envelope.
+     * `meta` says which keys moved and which already had the value sent.
+     */
+    public function setCapabilities(SetCapabilitiesRequest $request, string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change what an organisation has.');
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+
+        $outcome = CapabilityWriter::apply($masjid, $request->validated('capabilities'), (int) Auth::id());
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid->fresh()->append(Masjid::ADMIN_APPENDS),
+            'meta' => $outcome,
         ], Response::HTTP_OK);
     }
 

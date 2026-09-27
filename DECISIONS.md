@@ -4199,3 +4199,43 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   undoing A then deletes the row, because `bounce` is in `PRECAUTION_REASONS`. The end state is
   the same as before the order-hold fix (where B never wrote the bounce and undo A deleted the
   `not_opted_in` row), so it is not a regression. Accepted as is.
+## 2026-09-27 — Studio W2 S7: one guarded capability writer for live organisations
+
+`CapabilityWriter::apply(Masjid, array<string,bool>, int $actor)` is the writer
+for an organisation that already exists. The single switch
+(`PATCH .../capabilities/{key}`) now calls it for one key, and the new bulk
+`PATCH /api/admin/masjids/{id}/capabilities` (`capabilities[<key>]=1|0`) for
+several. `applyAtCreation` stays Studio's creation-time writer.
+
+- **Only the keys sent (plan R6).** Each stores an explicit override, even at
+  its default, and writes one ledger row, no-ops included. Nothing goes through
+  `CapabilityCatalogue::resolve()`, so an unsent key (Burlington's `web_pages`
+  off) is never reset. Keys are written in catalogue order.
+- **All or nothing.** Every key is checked and Giving's refusal (which can call
+  Stripe) runs before the transaction; any refusal writes nothing for any key.
+  Refusals are a `ValidationException`, which the JSON renderer draws in the
+  single switch's `{status:'failed', data:{capability:[sentence]}}` envelope, so
+  the sentences have one home: `CapabilityWriter::assertWritable` (unknown /
+  column-backed) and `GivingSwitch::refusalToSwitchOff`.
+- **Top-level keys only (R7).** `array_key_exists` on `config('capabilities')`,
+  as Studio's request does. This closes the dotted-key hole: `giving.defaults`
+  used to store a junk override through the single switch and is now a 422 with
+  "There is no such capability." No known caller sent one.
+- **Locked.** The `masjids` row is `lockForUpdate()`ed and its overrides re-read
+  inside the transaction, so two writers holding the same stale model both land.
+  The single switch had no lock.
+- **The family cache is flushed after commit** (`DB::afterCommit`), and the
+  pivot is never touched (S2b owns it).
+- **Bulk response:** `data` is exactly the single switch's payload
+  (`ADMIN_APPENDS`), plus `meta: {changed, unchanged}`, where `changed` means the
+  effective value moved and `unchanged` means it already had the value sent (the
+  override is stored and ledgered all the same).
+- **The single switch answers byte for byte as before**, pinned by
+  `SetCapabilityDelegatesTest` against a recording made on the pre-change
+  controller (`tests/fixtures/set-capability-responses.json`): twelve flips
+  covering a change, a no-op, a grant, Giving refused and allowed, an unknown and
+  a column-backed key, a missing and a `"false"` value, a MasjidAdmin and a
+  missing organisation. The order of its checks is kept: 403, then the key (before
+  the organisation is looked up), then 404, then Giving.
+- The live panel is unchanged and keeps sending one key per request. Studio's
+  live-organisation Features card (S9) is the bulk caller.
