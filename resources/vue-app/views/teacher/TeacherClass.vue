@@ -1177,7 +1177,8 @@
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Week</label>
                                     <select v-if="curriculum.weeks.length" class="form-select form-select-sm"
-                                            style="max-width:16rem" v-model.number="planForm.curriculum_week_no">
+                                            style="max-width:16rem" v-model.number="planForm.curriculum_week_no"
+                                            @change="onWeekPick">
                                         <option :value="null">—</option>
                                         <option v-for="w in curriculum.weeks" :key="w.week_no" :value="w.week_no">
                                             {{ w.week_no }} · {{ w.focus }}
@@ -1275,6 +1276,51 @@
                                            v-model="planForm.teaching_methods_other" type="text" maxlength="255"
                                            class="form-control form-control-sm mb-2" placeholder="Other — which?">
                                 </template>
+
+                                <!-- Standard code: typing searches the school's pacing
+                                     guide by code or topic, and a pick fills the code,
+                                     the objective and the week. The Description box
+                                     below is NOT filled: the guide carries codes and a
+                                     weekly focus, not the state's wording (see
+                                     CurriculumWeek::toPrefillArray). Only with a guide —
+                                     a school without one keeps the plain box. -->
+                                <div v-else-if="f.key === 'standard_code' && curriculum.grades.length"
+                                     class="position-relative mb-2">
+                                    <input :id="`std-${f.key}`"
+                                           v-model="planForm[f.key]" type="text" maxlength="32" autocomplete="off"
+                                           class="form-control form-control-sm"
+                                           placeholder="Type a code or topic, e.g. NF.1 or fractions"
+                                           role="combobox" aria-autocomplete="list"
+                                           :aria-expanded="stdOpen === f.key && stdMatches.length > 0"
+                                           :aria-controls="`std-${f.key}-list`"
+                                           :aria-activedescendant="stdOpen === f.key && stdActive >= 0 ? `std-${f.key}-opt-${stdActive}` : undefined"
+                                           @input="onStandardInput(f.key)" @keydown="onStandardKey"
+                                           @blur="closeStandards">
+
+                                    <ul v-if="stdOpen === f.key && stdMatches.length" :id="`std-${f.key}-list`"
+                                        role="listbox" class="list-group position-absolute w-100 shadow tc-std-list">
+                                        <!-- mousedown, not click: a click lands after the
+                                             field's blur has already closed the list. -->
+                                        <li v-for="(m, i) in stdMatches" :id="`std-${f.key}-opt-${i}`"
+                                            :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`"
+                                            role="option" :aria-selected="i === stdActive"
+                                            class="list-group-item list-group-item-action py-1 px-2 small"
+                                            :class="{ 'bg-success-subtle': i === stdActive }"
+                                            @mousedown.prevent="pickStandard(m)" @mouseenter="stdActive = i">
+                                            <div class="d-flex gap-2 align-items-baseline">
+                                                <span class="fw-semibold text-nowrap">{{ m.standard_code || 'No code' }}</span>
+                                                <span>{{ m.focus }}</span>
+                                            </div>
+                                            <div class="text-muted tc-std-meta">
+                                                {{ m.grade_label }} · {{ m.subject }} · {{ weeksLabel(m.weeks) }}
+                                            </div>
+                                        </li>
+                                    </ul>
+                                    <div v-else-if="stdOpen === f.key && stdEmptyFor === planForm[f.key]"
+                                         class="form-text">
+                                        Nothing in the pacing guide matches. What you type is kept as written.
+                                    </div>
+                                </div>
 
                                 <textarea v-else v-model="planForm[f.key]" :rows="f.rows || 2"
                                           class="form-control form-control-sm mb-2"
@@ -2421,6 +2467,45 @@ watch(
 );
 
 /**
+ * What the guide last wrote into each field. A field still holding exactly that
+ * is the tool's to replace when the teacher picks another week or standard; a
+ * field the teacher wrote or edited is theirs and is never touched. Cleared
+ * whenever the form is reloaded, so a SAVED plan is always the teacher's.
+ */
+const autoFilled = ref<Record<string, string>>({});
+
+/**
+ * Write one field from the guide under that rule. `typedIn` is the field the
+ * teacher was typing a search into: it is replaced even though they wrote it,
+ * because what they wrote there was the question, not the answer.
+ */
+const autoFill = (k: string, v: unknown, typedIn = '') => {
+    if (planHidden.value.has(k)) return;
+    const value = v == null ? '' : String(v);
+    const current = String(planForm.value[k] ?? '').trim();
+    if (k !== typedIn && current !== '' && current !== (autoFilled.value[k] ?? '').trim()) return;
+    planForm.value[k] = value;
+    autoFilled.value[k] = value;
+};
+
+/** Open every section the guide just wrote into, so a fill is never hidden. */
+const openFilledSections = () => {
+    for (const sec of visiblePlanSections.value) {
+        if (sectionFilled(sec)) planOpen.value[sec.key] = true;
+    }
+};
+
+/**
+ * Picking a week fills the plan — teachers read a week picker as the fill, and
+ * a separate button they did not press left them typing out the guide. Only
+ * empty fields and the guide's own earlier writes change; the button stays for
+ * refilling after a teacher clears something.
+ */
+const onWeekPick = () => {
+    if (canPrefill.value) prefillFromGuide();
+};
+
+/**
  * Copy the week's cell into the form. Every field lands EDITABLE and nothing is
  * saved until the teacher presses Save — prefill is a draft, not a write.
  * Fields the teacher has already written are left alone.
@@ -2440,30 +2525,130 @@ const prefillFromGuide = async () => {
         const cell = res.data?.data?.cell;
         if (!cell) { planError.value = 'The guide has nothing for that week.'; return; }
 
-        const fill = (k: string, v: any) => {
-            if (planHidden.value.has(k)) return;
-            if (v && !String(planForm.value[k] ?? '').trim()) planForm.value[k] = v;
-        };
-
-        fill('standard_code', cell.standard_code);
-        fill('objective', cell.objective);
-        fill('assessment_formative', cell.assessment_formative);
+        autoFill('standard_code', cell.standard_code);
+        autoFill('objective', cell.objective);
+        autoFill('assessment_formative', cell.assessment_formative);
 
         // Cross-subject integration, written from the same week's sibling cells
         // so a teacher is not asked to remember what Science is doing.
         const siblings = (cell.siblings ?? []) as { subject: string; focus: string }[];
         const islamic = siblings.find((s) => /Qur|Islamic/i.test(s.subject));
-        if (islamic) fill('cross_integration_islamic', islamic.focus);
+        autoFill('cross_integration_islamic', islamic?.focus);
         const others = siblings.filter((s) => s !== islamic)
             .map((s) => `${s.subject}: ${s.focus}`).join('\n');
-        if (others) fill('cross_integration_subject', others);
+        autoFill('cross_integration_subject', others);
 
         planForm.value.prefill_source = cell.prefill_source ?? 'pacing guide';
+        openFilledSections();
     } catch {
         planError.value = 'Could not read the pacing guide.';
     } finally {
         prefilling.value = false;
     }
+};
+
+// ---------- type-to-find a standard ----------
+// Al-Razi's teachers retyped standards the guide already held. Typing into the
+// Standard code box searches the guide by code or topic; a pick fills the plan.
+const stdMatches = ref<any[]>([]);
+/** The field whose list is showing, or '' when none is. */
+const stdOpen = ref('');
+/** The highlighted suggestion; -1 is none, so Enter does nothing until an arrow key chooses. */
+const stdActive = ref(-1);
+/** The query that came back empty, so "nothing matches" never shows for a stale one. */
+const stdEmptyFor = ref<string | null>(null);
+let stdTimer: ReturnType<typeof setTimeout> | undefined;
+let stdSeq = 0;
+
+const closeStandards = () => {
+    clearTimeout(stdTimer);
+    stdSeq++;
+    stdOpen.value = '';
+    stdActive.value = -1;
+    stdMatches.value = [];
+};
+
+const onStandardInput = (field: string) => {
+    clearTimeout(stdTimer);
+    stdOpen.value = field;
+    stdActive.value = -1;
+    const q = String(planForm.value[field] ?? '').trim();
+    if (q.replace(/[^\p{L}\p{N}]/gu, '').length < 2) {
+        stdSeq++;
+        stdMatches.value = [];
+        stdEmptyFor.value = null;
+        return;
+    }
+    stdTimer = setTimeout(() => searchStandards(field, q), 200);
+};
+
+const searchStandards = async (field: string, q: string) => {
+    const seq = ++stdSeq;
+    try {
+        const params = new URLSearchParams({ q });
+        if (planForm.value.grade_label) params.set('grade', planForm.value.grade_label);
+        if (planForm.value.subject) params.set('subject', planForm.value.subject);
+        if (planForm.value.curriculum_week_no) params.set('week', String(planForm.value.curriculum_week_no));
+        const res = await TeacherApiService.get(
+            `/api/teacher/masjids/${masjidId.value}/curriculum/standards?${params}`
+        );
+        // A slower answer to an older query must not replace a newer one.
+        if (seq !== stdSeq || stdOpen.value !== field) return;
+        stdMatches.value = res.data?.data?.matches ?? [];
+        stdEmptyFor.value = stdMatches.value.length ? null : planForm.value[field];
+    } catch {
+        if (seq === stdSeq) stdMatches.value = [];
+    }
+};
+
+const onStandardKey = (e: KeyboardEvent) => {
+    const n = stdMatches.value.length;
+    if (e.key === 'Escape') { closeStandards(); return; }
+    if (!n) return;
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        stdActive.value = (stdActive.value + 1) % n;
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        stdActive.value = stdActive.value <= 0 ? n - 1 : stdActive.value - 1;
+    } else if (e.key === 'Enter' && stdActive.value >= 0) {
+        e.preventDefault();
+        pickStandard(stdMatches.value[stdActive.value]);
+    }
+};
+
+const weeksLabel = (weeks: number[]) => {
+    if (weeks.length === 1) return `Week ${weeks[0]}`;
+    const shown = weeks.slice(0, 4).join(', ');
+    return weeks.length > 4 ? `Weeks ${shown} +${weeks.length - 4}` : `Weeks ${shown}`;
+};
+
+/**
+ * Fill the plan from one suggestion. The grade, subject and week follow the
+ * pick only where the form has none yet — a teacher who chose Grade 3 and cites
+ * a Grade 4 standard keeps their Grade 3.
+ */
+const pickStandard = async (m: any) => {
+    const typedIn = stdOpen.value;
+    closeStandards();
+
+    // An uncoded row (the Islamic Studies column) clears the search text out
+    // of the code box rather than leaving "wudu" standing as a standard.
+    autoFill('standard_code', m.standard_code, typedIn);
+    autoFill('objective', m.focus);
+    autoFill('assessment_formative', m.assessment_formative);
+
+    const f = planForm.value;
+    let reload = false;
+    if (!f.grade_label) { f.grade_label = m.grade_label; reload = true; }
+    if (f.grade_label === m.grade_label) {
+        if (!f.subject) { f.subject = m.subject; subjectOther.value = false; reload = true; }
+        if (f.subject === m.subject && !f.curriculum_week_no) f.curriculum_week_no = m.week_no;
+    }
+    f.prefill_source = m.prefill_source || 'pacing guide';
+    openFilledSections();
+
+    if (reload) await loadCurriculum(f.grade_label, f.subject);
 };
 
 /**
@@ -2534,6 +2719,8 @@ const syncPlanForm = () => {
     for (const sec of planSections) opened[sec.key] = sectionFilled(sec);
     if (planDate.value <= todayIso) opened.reflection = true;
     planOpen.value = opened;
+    autoFilled.value = {};
+    closeStandards();
 
     planSaved.value = false;
 };
@@ -4452,6 +4639,11 @@ watch(activeTab, (tab) => {
 .drill__glyph { font-size: 26px; width: 52px; text-align: center; }
 .drill--mastered { background: rgba(25, 135, 84, .10); }
 .drill--learning { background: rgba(255, 193, 7, .10); }
+
+/* Above the accordion cards below it, and scrolls rather than running off a phone. */
+.tc-std-list { top: 100%; left: 0; z-index: 30; max-height: 18rem; overflow-y: auto; margin-top: 2px; }
+.tc-std-list .list-group-item { cursor: pointer; }
+.tc-std-meta { font-size: .75rem; }
 </style>
 
 <!-- The phone layout, in its own file so it can change without touching the

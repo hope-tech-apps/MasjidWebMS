@@ -99,6 +99,8 @@ Route::prefix('teacher')
                 // standards instead of asking a teacher to retype them. Also a
                 // GET, so the counted write list is untouched.
                 Route::get('/curriculum', [CurriculumController::class, 'index']);
+                // Type-to-find over the same guide, for the plan's Standard field.
+                Route::get('/curriculum/standards', [CurriculumController::class, 'standards']);
                 // The school calendar: which days the school meets, which are
                 // closed and why. A GET, and not capability-gated — a gate decides
                 // what is offered, never what is readable; a school with no
