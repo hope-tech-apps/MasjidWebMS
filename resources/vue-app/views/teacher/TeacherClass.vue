@@ -1406,7 +1406,7 @@
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
                         <button v-if="selectedPlan" class="btn btn-sm btn-link text-danger"
-                                @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan)} plan` : '' }}</button>
+                                :disabled="planDeleting" @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan)} plan` : '' }}</button>
                         <span v-if="planSaved" class="text-success small">
                             <i class="bi bi-check-circle me-1"></i>Saved
                         </span>
@@ -2349,6 +2349,11 @@ const planId = ref<number | null>(null);
  */
 const planForms = formTicket();
 const planSaving = ref(false);
+const planDeleting = ref(false);
+/** The Lessons tab has loaded once, so coming back to it keeps the open plan's draft. */
+let lessonsLoaded = false;
+/** Every week load bumps it; an older week's answer landing after a newer one is dropped. */
+let plansSeq = 0;
 const planSaved = ref(false);
 const planError = ref('');
 
@@ -2927,23 +2932,32 @@ const copyAcrossWeek = async () => {
     const source = selectedPlan.value;
     if (!source) return;
 
+    // Read once: the teacher may change day, plan or week while the copy runs,
+    // and none of that may change which days it writes or which plans it finds.
+    const sourceDay = planDate.value;
+    const list = plans.value;
+    const days = weekdaysOnly.value.map((d) => d.iso);
+    const written = new Set<number>();
+
     copying.value = true;
     planError.value = '';
     try {
-        for (const d of weekdaysOnly.value) {
-            if (d.iso === planDate.value) continue;
+        for (const iso of days) {
+            if (iso === sourceDay) continue;
             // THIS subject's plan on each other day (lessonPlans.copyRequest):
             // Thursday's Math plan is rewritten by its id, its Science plan is
             // not touched, and a day with no Math plan gets one.
-            const req = copyRequest(base.value, plans.value, source, d.iso);
-            await (req.method === 'put'
+            const req = copyRequest(base.value, list, source, iso);
+            const res = await (req.method === 'put'
                 ? TeacherApiService.put(req.url, req.payload)
                 : TeacherApiService.post(req.url, req.payload));
+            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null)?.id;
+            if (id) written.add(id);
         }
-        // A copy writes the OTHER days, never the plan on screen, so the form
-        // is kept as the teacher left it — this plan, or one she opened while
-        // the copy ran — rather than reloaded from its saved copy.
-        await loadLessonPlans(false);
+        // The form reloads only if it shows a plan this copy wrote (one the
+        // teacher opened on another day while it ran); the plan she copied from,
+        // or any other, keeps what she is writing in it.
+        await loadLessonPlans(() => planId.value !== null && written.has(planId.value));
     } catch {
         planError.value = 'Could not copy across the week.';
     } finally {
@@ -2952,28 +2966,38 @@ const copyAcrossWeek = async () => {
 };
 
 /**
- * Reload the week. `resync` false keeps the form as the teacher left it: a save
- * or copy that answers after she opened another plan must not reload that
- * plan's saved copy over what she is writing. The plan she is on is kept only
- * while it still exists; one that has gone falls back as a resync would.
+ * Reload the week, and say whether the form was re-synced from it.
+ *
+ * `resync` false keeps the form as the teacher left it: a save, copy or removal
+ * answering after she opened another plan must not reload that plan's saved
+ * copy over what she is writing. It may be a question, asked when the week's
+ * answer LANDS — she can switch plans during this request too. The plan she is
+ * on is kept only while it still exists; one that has gone falls back as a
+ * resync would.
  */
-const loadLessonPlans = async (resync = true) => {
+const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promise<boolean> => {
+    const seq = ++plansSeq;
     planError.value = '';
     try {
         const days = weekDays.value;
         const res = await TeacherApiService.get(
             `${base.value}/lesson-plans?from=${days[0].iso}&to=${days[6].iso}`
         );
+        if (seq !== plansSeq) return false;
+        lessonsLoaded = true;
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
-        if (!resync && (planId.value === null || plans.value.some((p) => p.id === planId.value))) return;
+        const again = typeof resync === 'function' ? resync() : resync;
+        if (!again && (planId.value === null || plans.value.some((p) => p.id === planId.value))) return false;
         // Stay on the plan that was open if it is still there (a save, a copy),
         // else the day's first plan, else a new one.
         planId.value = pickPlan(plans.value, planDate.value, planId.value);
         syncPlanForm();
+        return true;
     } catch {
-        planError.value = 'Could not load this week.';
+        if (seq === plansSeq) planError.value = 'Could not load this week.';
+        return false;
     }
 };
 
@@ -3058,13 +3082,15 @@ const savePlan = async () => {
         // Stay on the saved plan only if it is still the one on screen: a chip
         // clicked while the save was in flight has opened another, and the
         // teacher stays there.
-        const stillOpen = planForms.isCurrent(ticket);
-        if (stillOpen) planId.value = res.data?.data?.id ?? planId.value;
-        // Re-sync only the plan that was saved; another one opened meanwhile
-        // keeps what the teacher is writing in it.
-        await loadLessonPlans(stillOpen);
-        // After the reload, which re-syncs the form and clears the flag.
-        planSaved.value = stillOpen;
+        const savedId = res.data?.data?.id ?? planId.value;
+        if (planForms.isCurrent(ticket)) planId.value = savedId;
+        // Re-sync only a form showing the plan that was saved — asked when the
+        // week's answer lands, since the teacher can switch plans during that
+        // request too. Another plan opened meanwhile keeps what she is writing.
+        const resynced = await loadLessonPlans(
+            () => planForms.isCurrent(ticket) || planId.value === savedId);
+        // "Saved" belongs beside the plan that was saved, and nowhere else.
+        planSaved.value = resynced && planId.value === savedId;
     } catch (e: any) {
         planError.value = e?.response?.data?.data?.subject?.[0]
             ?? e?.response?.data?.data?.session_date?.[0]
@@ -3077,13 +3103,23 @@ const savePlan = async () => {
 
 /** Remove the open plan; the day's other subjects' plans stay. */
 const deletePlan = async () => {
-    if (planId.value === null) return;
+    if (planId.value === null || planDeleting.value) return;
+    const ticket = planForms.current();
+    planDeleting.value = true;
     try {
         await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
-        planId.value = null;
-        await loadLessonPlans();
+        // Still on the removed plan: the day's next one opens. Moved on to
+        // another while the removal ran: she stays there, with her draft.
+        if (planForms.isCurrent(ticket)) {
+            planId.value = null;
+            await loadLessonPlans();
+        } else {
+            await loadLessonPlans(false);
+        }
     } catch {
         planError.value = 'That plan could not be removed.';
+    } finally {
+        planDeleting.value = false;
     }
 };
 
@@ -4923,7 +4959,9 @@ watch(activeTab, (tab) => {
     // Every time, not once: the counts move whenever a child is marked, and this
     // is the screen the teacher comes back to between children.
     if (tab === 'letters') loadLettersOverview();
-    if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }
+    // Back to the tab: refresh the list but keep the plan being written — the
+    // form's own "Message their family" link leaves the tab mid-draft.
+    if (tab === 'lessons') { loadLessonPlans(!lessonsLoaded); if (!curriculum.value.grades.length) loadCurriculum(); }
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
     if (tab === 'reports' && !reportRows.value.length && !reportsLoading.value) loadReportCards();

@@ -160,7 +160,7 @@ const fn = (name: string): string => {
 test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('savePlan'), /planSaveRequest\(base\.value, planId\.value\)/);
     assert.match(fn('deletePlan'), /TeacherApiService\.delete\(planDeleteUrl\(base\.value, planId\.value\)\)/);
-    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, plans\.value, source, d\.iso\)/);
+    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
     assert.match(view, /:disabled="!canSavePlan\(planSaving, planForm\.body, planClash\)"/);
 });
@@ -181,7 +181,7 @@ test('a guide fill or a save that answers after the teacher opened another plan 
 
     const save = fn('savePlan');
     assert.ok(save.indexOf('const ticket = planForms.current();') < save.indexOf('await TeacherApiService.'));
-    assert.match(save, /const stillOpen = planForms\.isCurrent\(ticket\);\s+if \(stillOpen\) planId\.value = /);
+    assert.match(save, /if \(planForms\.isCurrent\(ticket\)\) planId\.value = savedId;/);
 });
 
 test('a jump back into the open day stays on the plan being written', () => {
@@ -198,11 +198,30 @@ test('a jump back into the open day stays on the plan being written', () => {
     assert.match(view, /@click="p\.id !== planId && selectPlan\(p\.id\)"/, 'the open plan\'s chip does nothing');
 });
 
-test('a save or copy that answers late does not reload over the plan the teacher moved to', () => {
-    assert.match(fn('loadLessonPlans'), /if \(!resync && \(planId\.value === null \|\| plans\.value\.some\(\(p\) => p\.id === planId\.value\)\)\) return;/);
-    assert.match(fn('savePlan'), /await loadLessonPlans\(stillOpen\);/);
-    assert.match(fn('copyAcrossWeek'), /await loadLessonPlans\(false\);/);
+test('a save, copy or removal that answers late does not reload over the plan the teacher moved to', () => {
+    const load = fn('loadLessonPlans');
+    // The keep-or-resync question is asked AFTER the week's answer lands, and an
+    // older week's answer landing after a newer one's is dropped.
+    const landed = load.indexOf('await TeacherApiService.get(');
+    assert.ok(landed < load.indexOf('if (seq !== plansSeq) return false;'));
+    assert.ok(load.indexOf('if (seq !== plansSeq) return false;') < load.indexOf("const again = typeof resync === 'function' ? resync() : resync;"));
+    assert.match(load, /if \(!again && \(planId\.value === null \|\| plans\.value\.some\(\(p\) => p\.id === planId\.value\)\)\) return false;/);
+
+    const save = fn('savePlan');
+    assert.match(save, /await loadLessonPlans\(\s*\(\) => planForms\.isCurrent\(ticket\) \|\| planId\.value === savedId\)/);
+    assert.match(save, /planSaved\.value = resynced && planId\.value === savedId;/, '"Saved" only beside the saved plan');
+
+    const copy = fn('copyAcrossWeek');
+    assert.match(copy, /const sourceDay = planDate\.value;/);
+    assert.match(copy, /copyRequest\(base\.value, list, source, iso\)/, 'the list as it was when the copy began');
+    assert.match(copy, /await loadLessonPlans\(\(\) => planId\.value !== null && written\.has\(planId\.value\)\);/);
+
+    const remove = fn('deletePlan');
+    assert.ok(remove.indexOf('const ticket = planForms.current();') < remove.indexOf('await TeacherApiService.delete('));
+    assert.match(remove, /else \{\s+await loadLessonPlans\(false\);/);
+
     assert.match(view, /watch\(weekStart, \(\) => loadLessonPlans\(\)\);/, 'a watcher passes its value, never a resync flag');
+    assert.match(view, /if \(tab === 'lessons'\) \{ loadLessonPlans\(!lessonsLoaded\);/, 'coming back to the tab keeps the draft');
 });
 
 test('the open day moves with the week, so the day view reads the week that is loaded', () => {
