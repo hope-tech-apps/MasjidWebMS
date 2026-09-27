@@ -212,7 +212,7 @@ class CapabilityWriterApplyTest extends TestCase
     public function the_pivot_is_never_touched(): void
     {
         $org = $this->org('masjid');
-        $feature = MobileAppFeature::create(['name' => 'Pivot probe', 'key' => 'pivot_probe_' . uniqid(), 'is_available' => true]);
+        $feature = MobileAppFeature::create(['name' => 'Pivot probe ' . uniqid(), 'key' => 'pivot_probe_' . uniqid()]);
         MasjidMobileAppFeature::create(['masjid_id' => $org->id, 'feature_id' => $feature->id, 'is_available' => false]);
         $pivot = fn () => DB::table('masjid_mobile_app_features')->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
         $before = $pivot();
