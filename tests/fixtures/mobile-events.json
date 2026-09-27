@@ -1,0 +1,29 @@
+{
+    "status": "success",
+    "data": [
+        {
+            "id": 1,
+            "masjid_id": 1,
+            "title": "Family Night",
+            "details": "Dinner, then a short talk for parents and children.",
+            "place": "Main hall",
+            "start": "2026-09-29 19:00:00",
+            "end": "2026-09-29 21:00:00",
+            "link": "https://example.org/family-night",
+            "created_at": "2026-09-27T12:00:00.000000Z",
+            "updated_at": "2026-09-27T12:00:00.000000Z"
+        },
+        {
+            "id": 2,
+            "masjid_id": 1,
+            "title": "Tafsir circle",
+            "details": "Weekly.",
+            "place": null,
+            "start": "2026-10-01 20:00:00",
+            "end": null,
+            "link": null,
+            "created_at": "2026-09-27T12:00:00.000000Z",
+            "updated_at": "2026-09-27T12:00:00.000000Z"
+        }
+    ]
+}

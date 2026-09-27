@@ -280,7 +280,7 @@ class PrayersController extends Controller
                     'prayerCalculationSettings'
                 )->findOrFail($masjid_id);
 
-                return [
+                $payload = [
                     'iqama' => $masjid->iqamaTimeSettings,
                     'jumaa' => $masjid->jumaaSettings,
                     // What the server WILL ACTUALLY GENERATE WITH, not the raw row.
@@ -314,6 +314,16 @@ class PrayersController extends Controller
                         'longitude' => (float) $masjid->longitude,
                     ],
                 ];
+
+                // The Jumu'ah time is the provisioning placeholder nobody gave:
+                // the TV board and the phone apps hide Jumu'ah (W2 S18). Sent
+                // ONLY when true, so every organisation without the flag (all
+                // the live ones: their rows predate it) keeps its exact bytes.
+                if ($masjid->jumaaSettings?->isPlaceholder()) {
+                    $payload['jumaa_is_default'] = true;
+                }
+
+                return $payload;
             }
         );
 

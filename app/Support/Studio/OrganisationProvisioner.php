@@ -162,9 +162,13 @@ final class OrganisationProvisioner
         ]);
 
         // ---- Jumaa settings (fixed iqama time; sensible default) ----
+        // The 13:30 placeholder is still stored (W1 S8), but flagged, so the TV
+        // board and the phone apps hide a Jumu'ah time nobody gave (W2 S18).
+        $jumaaIqama = $request->input('jumaa_iqama');
         $masjid->jumaaSettings()->create([
-            'iqama' => $request->input('jumaa_iqama') ?: '13:30',
+            'iqama' => $jumaaIqama ?: '13:30',
             'athans' => [],
+            'is_default' => ! $jumaaIqama,
         ]);
 
         // ---- Donation link (only when a URL was supplied) ----
