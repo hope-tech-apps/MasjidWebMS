@@ -240,6 +240,13 @@ class AppServiceProvider extends ServiceProvider
                 'message' => 'Too many lookups just now. Try again in a minute.',
             ], 429, array_merge($headers, ['Cache-Control' => 'no-store']))));
 
+        // The lesson plan's standards search, called per keystroke (200 ms
+        // apart in the SPA). Named, so its bucket is keyed by the limiter AND
+        // the teacher: an inline throttle:N,M keys on the bare auth id, which a
+        // family Contact with the same number would share.
+        RateLimiter::for('curriculum-standards', fn (Request $request) => Limit::perMinute(240)
+            ->by('curriculum-standards:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
+
         RateLimiter::for('login', function (Request $request) {
             $key = strtolower((string) $request->input('email')) . '|' . $request->ip();
             return Limit::perMinute(5)->by($key)->response(function () {

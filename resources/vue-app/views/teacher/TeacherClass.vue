@@ -1299,23 +1299,29 @@
                                            :aria-activedescendant="stdOpen === f.key && stdActive >= 0 ? `std-${f.key}-opt-${stdActive}` : undefined"
                                            @input="onStandardInput(f.key, $event)"
                                            @focus="onStandardInput(f.key, $event, false)"
+                                           @compositionstart="stdComposing = true"
+                                           @compositionend="stdComposing = false"
                                            @keydown="onStandardKey" @blur="closeStandards">
 
                                     <ul v-if="stdOpen === f.key && stdMatches.length" :id="`std-${f.key}-list`"
                                         role="listbox" class="list-group position-absolute w-100 shadow tc-std-list">
-                                        <!-- mousedown, not click: a click lands after the
-                                             field's blur has already closed the list. -->
-                                        <li v-for="(m, i) in stdMatches" :id="`std-${f.key}-opt-${i}`"
-                                            :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`"
-                                            role="option" :aria-selected="i === stdActive"
-                                            class="list-group-item list-group-item-action py-1 px-2 small"
-                                            :class="{ 'bg-success-subtle': i === stdActive }"
-                                            @mousedown.prevent="pickStandard(m)" @mouseenter="stdActive = i">
-                                            <!-- Where the form's own grade and subject end. -->
-                                            <div v-if="!m.in_scope && (i === 0 || stdMatches[i - 1].in_scope)"
-                                                 class="text-uppercase text-muted fw-semibold tc-std-divider">
+                                        <template v-for="(m, i) in stdMatches"
+                                                  :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`">
+                                            <!-- Where the form's own grade and subject end: a
+                                                 heading, not an option, so it cannot be picked. -->
+                                            <li v-if="!m.in_scope && (i === 0 || stdMatches[i - 1].in_scope)"
+                                                role="presentation"
+                                                class="list-group-item py-1 px-2 text-uppercase text-muted fw-semibold tc-std-divider"
+                                                @mousedown.prevent>
                                                 Other grades and subjects
-                                            </div>
+                                            </li>
+                                            <!-- mousedown, not click: a click lands after the
+                                                 field's blur has already closed the list. -->
+                                            <li :id="`std-${f.key}-opt-${i}`"
+                                                role="option" :aria-selected="i === stdActive"
+                                                class="list-group-item list-group-item-action py-1 px-2 small"
+                                                :class="{ 'bg-success-subtle': i === stdActive }"
+                                                @mousedown.prevent="pickStandard(m)" @mouseenter="stdActive = i">
                                             <div class="d-flex gap-2 align-items-baseline">
                                                 <span class="fw-semibold text-nowrap">{{ m.standard_code || 'No code' }}</span>
                                                 <span>{{ m.focus }}</span>
@@ -1323,7 +1329,8 @@
                                             <div class="text-muted tc-std-meta">
                                                 {{ m.grade_label }} · {{ m.subject }} · {{ weeksLabel(m.weeks) }}
                                             </div>
-                                        </li>
+                                            </li>
+                                        </template>
                                     </ul>
                                     <div v-else-if="stdOpen === f.key && stdEmptyFor !== null && stdEmptyFor === stdTyped"
                                          class="form-text">
@@ -2489,9 +2496,13 @@ const onSubjectPick = async () => {
         planForm.value.subject = '';
         planForm.value.curriculum_week_no = null;
         subjectOther.value = true;
-        // The previous subject's weeks are not this subject's.
+        // The previous subject's weeks are not this subject's. Recorded as
+        // asked-for and loaded both, and any load in flight is dropped, or a
+        // day with the same grade and subject would skip its reload.
+        curriculumSeq++;
         curriculum.value = { ...curriculum.value, weeks: [] };
         curriculumFor.value = { grade: planForm.value.grade_label || '', subject: '' };
+        curriculumWant = { ...curriculumFor.value };
         return;
     }
     await onSubjectChange();
@@ -2667,6 +2678,8 @@ const stdTyped = ref('');
  */
 const stdLeft = ref<Record<string, string>>({});
 const looksLikeCode = (s: string) => /\d/.test(s) && !/\s/.test(s);
+/** An on-screen keyboard is composing a word in the box (compositionstart → end). */
+const stdComposing = ref(false);
 let stdTimer: ReturnType<typeof setTimeout> | undefined;
 let stdSeq = 0;
 
@@ -2687,10 +2700,10 @@ const closeStandards = () => {
 const onStandardInput = (field: string, e: Event, typed = true) => {
     const q = String((e.target as HTMLInputElement | null)?.value ?? '').trim();
     stdTyped.value = q;
-    if (typed) {
-        if (q && !looksLikeCode(q)) stdLeft.value[field] = q;
-        else delete stdLeft.value[field];
-    }
+    // New text is the teacher's until a finished search shows it is a topic
+    // the guide knows (searchStandards) — so leaving the box before the answer
+    // lands keeps it, as the note under the box says.
+    if (typed) delete stdLeft.value[field];
     clearTimeout(stdTimer);
     stdOpen.value = field;
     stdActive.value = -1;
@@ -2719,9 +2732,13 @@ const searchStandards = async (field: string, q: string) => {
         // A new list, so no row of the old one is highlighted in it.
         stdActive.value = -1;
         stdEmptyFor.value = stdMatches.value.length ? null : q;
-        // Text the guide knows nothing of is the teacher's own label, and the
-        // note under the box promises it is kept — so a fill must not take it.
-        if (!stdMatches.value.length && stdLeft.value[field] === q) delete stdLeft.value[field];
+        // Topic words the guide answered ("fractions"), left in the box without
+        // a pick, are a question a later fill may answer. A hand-typed code, or
+        // text the guide knows nothing of, stays the teacher's.
+        if (stdMatches.value.length && !looksLikeCode(q)
+            && String(planForm.value[field] ?? '').trim() === q) {
+            stdLeft.value[field] = q;
+        }
     } catch {
         if (seq === stdSeq) stdMatches.value = [];
     }
@@ -2763,8 +2780,10 @@ const pickStandard = async (m: any) => {
     // Android keyboard may still be composing the word. Blurring commits it
     // NOW; otherwise the composed text lands later, through v-model, over
     // the pick. The commit's own input event runs before the writes below.
+    // Only then: a keyboard pick keeps focus in the box, as a combobox should.
     const box = document.getElementById(`std-${typedIn}`);
-    if (box && document.activeElement === box) (box as HTMLElement).blur();
+    if (stdComposing.value && box && document.activeElement === box) (box as HTMLElement).blur();
+    stdComposing.value = false;
     closeStandards();
     // The pick is the answer now; a week prefill still in flight is not.
     cancelPrefill();
@@ -4793,7 +4812,7 @@ watch(activeTab, (tab) => {
 .tc-std-list { top: 100%; left: 0; z-index: 30; max-height: 18rem; overflow-y: auto; margin-top: 2px; }
 .tc-std-list .list-group-item { cursor: pointer; }
 .tc-std-meta { font-size: .75rem; }
-.tc-std-divider { font-size: .65rem; letter-spacing: .04em; margin-bottom: 2px; }
+.tc-std-divider { font-size: .65rem; letter-spacing: .04em; background: var(--bs-tertiary-bg); cursor: default; }
 </style>
 
 <!-- The phone layout, in its own file so it can change without touching the

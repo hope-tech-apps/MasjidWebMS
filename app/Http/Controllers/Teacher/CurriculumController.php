@@ -236,33 +236,41 @@ class CurriculumController extends TeacherController
     ];
 
     /**
-     * Endings that make another form of the same word, longest first, each with
-     * what replaces it and the fewest letters that must remain. Two words meet
-     * only when their roots are EQUAL, never when one is a prefix of the other:
-     * "plants" must not meet "plan", nor "counterclaims" meet "count".
+     * Endings that make another form of the same word: the ending, what may
+     * replace it, and the fewest letters the result must keep. Every ending a
+     * word carries is tried, and two words meet when the forms they could be
+     * an ending away from OVERLAP — "investigation" and "investigate" share
+     * "investigate", "planning" and "plans" share "plan". A plain prefix is
+     * never enough: "plants" must not meet "plan", nor "partition" "parts".
      *
-     * @var list<array{string, string, int}>
+     * @var list<array{string, list<string>, int}>
      */
     private const ENDINGS = [
-        ['ication', 'y', 3],   // multiplication → multiply
-        ['ition', '', 3],      // addition → add, composition → compose
-        ['ision', 'ide', 3],   // division → divide
-        ['ations', '', 3], ['ation', '', 3],
-        ['ingly', '', 3], ['ings', '', 3], ['ing', '', 3],
-        ['ments', '', 3], ['ment', '', 3],
-        ['ions', '', 3], ['ion', '', 3],   // subtraction → subtract
-        ['ency', 'ent', 3],    // fluency → fluent
-        ['ancy', 'ant', 3],
-        ['ies', 'y', 3],
-        ['edly', '', 3], ['ed', '', 3],
-        ['ers', '', 3], ['er', '', 3],
-        ['ly', '', 4],         // fluently → fluent; "early" is not "ear"
-        ['es', '', 3],         // shapes → shape
-        ['s', '', 4],          // sounds → sound; "this" is not "thi"
+        ['ications', ['y'], 3], ['ication', ['y'], 3],       // multiplication → multiply
+        ['dition', ['d'], 3],                                 // addition → add
+        ['itions', ['e'], 4], ['ition', ['e'], 4],            // composition → compose
+        ['isions', ['ide', 'ise'], 3], ['ision', ['ide', 'ise'], 3], // division → divide
+        ['ations', ['', 'ate'], 4], ['ation', ['', 'ate'], 4],  // investigation → investigate
+        ['atives', ['ate'], 4], ['ative', ['ate'], 4],        // cooperative → cooperate
+        ['ingly', [''], 3], ['ings', [''], 3], ['ing', [''], 3],
+        ['ments', [''], 4], ['ment', [''], 4],
+        ['ions', [''], 4], ['ion', [''], 4],                  // subtraction → subtract
+        ['ency', ['ent'], 4], ['ence', ['ent'], 4],           // fluency → fluent
+        ['ancy', ['ant'], 4], ['ance', ['ant'], 4],
+        ['ies', ['y'], 3], ['ied', ['y'], 3],
+        ['edly', [''], 3], ['ed', [''], 3],
+        ['ers', [''], 3], ['er', [''], 3],
+        ['ally', ['al', ''], 4], ['ly', [''], 4],             // fluently → fluent; "early" is not "ear"
+        ['al', [''], 5],                                      // emotional → emotion; "total" stays
+        ['es', [''], 3],                                      // boxes → box (after s, x, z, ch, sh only)
+        ['s', [''], 3],                                       // maps → map, tens → ten
     ];
 
-    /** @var array<string, string> */
-    private static array $roots = [];
+    /** Endings that begin with a vowel: the stem may have lost an "e" or doubled a letter. */
+    private const VOWEL_ENDINGS = ['ing', 'ings', 'ingly', 'ed', 'edly', 'er', 'ers', 'ation', 'ations', 'ion', 'ions', 'al', 'ally'];
+
+    /** @var array<string, array<string, true>> */
+    private static array $bases = [];
 
     private function matches(array $matches): JsonResponse
     {
@@ -282,6 +290,8 @@ class CurriculumController extends TeacherController
     private static function fold(string $s): string
     {
         $s = str_replace(["\u{2019}", "'", "\u{02BC}", "\u{2018}", "\u{02BE}", "\u{02BF}"], '', $s);
+        // "1,000" is "1000": Grade 2 writes one, Grade 3 the other.
+        $s = (string) preg_replace('/(?<=\p{N}),(?=\p{N}{3})/u', '', $s);
 
         if (class_exists(\Normalizer::class)) {
             $s = (string) preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($s, \Normalizer::FORM_D));
@@ -380,12 +390,14 @@ class CurriculumController extends TeacherController
         $focus = self::tokens((string) $row->focus);
         $labels = self::tokens($row->subject . ' ' . $row->grade_label);
 
+        $inFocus = false;
+
         foreach ($words as $w) {
             $hit = false;
 
             foreach ($focus as $t) {
                 if (self::meets($w, $t)) {
-                    $hit = true;
+                    $hit = $inFocus = true;
                     break;
                 }
             }
@@ -404,7 +416,9 @@ class CurriculumController extends TeacherController
             }
         }
 
-        return 40;
+        // A row matched only by its subject or grade name ("quran" on a Qur'an
+        // form is every week of it) ranks below one whose own words match.
+        return $inFocus ? 40 : 30;
     }
 
     private static function meets(string $word, string $token): bool
@@ -413,16 +427,14 @@ class CurriculumController extends TeacherController
             return true;
         }
 
-        if (self::root($word) === self::root($token) && mb_strlen(self::root($word)) >= 3) {
+        // One Arabic term, two transliterations across grades: "tajweed" and
+        // "Tajwīd", "noon" and "Nūn", "baa" and "Bā". Doubled vowels fold and
+        // the WHOLE words must then be equal, so "seed" does not become "side".
+        if (mb_strlen($word) >= 3 && self::longVowels($word) === self::longVowels($token)) {
             return true;
         }
 
-        // The guide spells one Arabic term two ways across grades: "tajweed"
-        // and "Tajwīd", "noon" and "Nūn", "meem" and "Mīm". Doubled vowels are
-        // folded for an EQUAL comparison only, so English words cannot drift.
-        $w = self::root(self::longVowels($word));
-
-        return mb_strlen($w) >= 3 && $w === self::root(self::longVowels($token));
+        return array_intersect_key(self::bases($word), self::bases($token)) !== [];
     }
 
     private static function longVowels(string $s): string
@@ -430,32 +442,61 @@ class CurriculumController extends TeacherController
         return str_replace(['ee', 'oo', 'aa'], ['i', 'u', 'a'], $s);
     }
 
-    /** The word without an inflecting ending, and without a final silent "e". */
-    private static function root(string $word): string
+    /**
+     * The word and every form it could be an ending away from, as keys.
+     *
+     * @return array<string, true>
+     */
+    private static function bases(string $word): array
     {
-        if (isset(self::$roots[$word])) {
-            return self::$roots[$word];
+        if (isset(self::$bases[$word])) {
+            return self::$bases[$word];
         }
 
-        // Two passes, on both sides alike, so a replaced ending is reduced the
-        // same way as the plain word: "multiplication" → "multiply" → "multip",
-        // "multiply" → "multip".
-        $root = $word;
+        $out = [$word => true];
+        $add = function (string $base, int $min) use (&$out): void {
+            if (mb_strlen($base) >= $min) {
+                $out[$base] = true;
+            }
+        };
 
-        for ($pass = 0; $pass < 2; $pass++) {
-            foreach (self::ENDINGS as [$ending, $with, $keep]) {
-                if (str_ends_with($root, $ending) && mb_strlen($root) - mb_strlen($ending) >= $keep) {
-                    $root = mb_substr($root, 0, -mb_strlen($ending)) . $with;
-                    break;
+        foreach (self::ENDINGS as [$ending, $withs, $min]) {
+            if (! str_ends_with($word, $ending) || $word === $ending) {
+                continue;
+            }
+
+            $stem = mb_substr($word, 0, -mb_strlen($ending));
+
+            // A plural "es" follows s, x, z, ch or sh ("boxes"); otherwise the
+            // "e" is the word's own ("planes" is "plane", never "plan").
+            if ($ending === 'es' && ! preg_match('/(s|x|z|ch|sh)$/', $stem)) {
+                continue;
+            }
+            // "class", "focus" and "basis" are not plurals.
+            if ($ending === 's' && preg_match('/(ss|us|is)$/', $word)) {
+                continue;
+            }
+
+            foreach ($withs as $with) {
+                $add($stem . $with, $min);
+            }
+
+            if (in_array($ending, self::VOWEL_ENDINGS, true) && in_array('', $withs, true)) {
+                // "rhyming" → "rhyme", "composing" → "compose".
+                $add($stem . 'e', $min);
+                // "planning" → "plan", but "adding" stays "add".
+                if (preg_match('/([b-df-hj-np-tv-z])\1$/', $stem) && ! preg_match('/(ll|ss|zz|ff|dd)$/', $stem)) {
+                    $add(mb_substr($stem, 0, -1), 3);
                 }
             }
         }
 
-        // "rhyme" and "rhyming", "compare" and "comparing", "shape" and "shapes".
-        if (mb_strlen($root) >= 4 && str_ends_with($root, 'e')) {
-            $root = mb_substr($root, 0, -1);
+        // The guide ends some Arabic words with and without an "h":
+        // "Fatihah" and "Fatiha", "taharah" and "tahara".
+        if (str_ends_with($word, 'ah') && mb_strlen($word) >= 4) {
+            $out[mb_substr($word, 0, -1)] = true;
         }
 
-        return self::$roots[$word] = $root;
+        return self::$bases[$word] = $out;
     }
 }

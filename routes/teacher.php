@@ -103,7 +103,7 @@ Route::prefix('teacher')
                 // Throttled because it is called per keystroke; the SPA waits
                 // 200 ms between keys, so a teacher typing never reaches it.
                 Route::get('/curriculum/standards', [CurriculumController::class, 'standards'])
-                    ->middleware('throttle:240,1');
+                    ->middleware('throttle:curriculum-standards');
                 // The school calendar: which days the school meets, which are
                 // closed and why. A GET, and not capability-gated — a gate decides
                 // what is offered, never what is readable; a school with no
