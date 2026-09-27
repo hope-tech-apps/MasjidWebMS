@@ -275,6 +275,52 @@ test('iqama is shown only with all five times; some is a blocker in the server\'
     assert.deepEqual(iqamaBlockers(masjid({ iqama: { fajr: 25 } }), false), [], 'a school is never asked');
 });
 
+test('a fixed time counts as given, so the blocker names the same missing prayers as the server', () => {
+    const masjid = (prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid', timezone: 'America/Toronto' }, prayer });
+    const nafis = { iqama: { maghrib: 5, isha: 10 }, iqama_fixed: { fajr: '06:15', dhuhr: '13:45', asr: '17:30' }, iqama_fixed_until: '2026-11-01' };
+    const now = new Date('2026-09-27T16:00:00Z');
+
+    assert.deepEqual(iqamaStatus(masjid(nafis), true), { state: 'given' });
+    assert.deepEqual(iqamaBlockers(masjid(nafis), true, now), []);
+
+    // Fixed Fajr and Dhuhr, minutes for Isha: Asr and Maghrib are missing, in the server's sentence.
+    const some = { iqama: { isha: 10 }, iqama_fixed: { fajr: '06:15', dhuhr: '13:45' }, iqama_fixed_until: '2026-11-01' };
+    assert.deepEqual(iqamaStatus(masjid(some), true), { state: 'partial', missing: ['Asr', 'Maghrib'] });
+    assert.deepEqual(iqamaBlockers(masjid(some), true, now),
+        ['The iqama times are incomplete: Asr, Maghrib are missing. Enter all five in Foundation, or tick "Client has not given iqama times".']);
+
+    // A cleared fixed time is no time.
+    assert.deepEqual(iqamaStatus(masjid({ ...nafis, iqama_fixed: { fajr: '', dhuhr: '13:45', asr: '17:30' } }), true),
+        { state: 'partial', missing: ['Fajr'] });
+});
+
+test('fixed times need an until-date between today (where the organisation is) and 400 days on', () => {
+    const masjid = (prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid', timezone: 'America/Toronto' }, prayer });
+    const five = { iqama: { maghrib: 5, isha: 10 }, iqama_fixed: { fajr: '06:15', dhuhr: '13:45', asr: '17:30' } };
+    // 01:00 UTC on the 28th is still the 27th in Toronto.
+    const now = new Date('2026-09-28T01:00:00Z');
+    const window = 'The date the fixed iqama times hold until must be between today and 400 days from today.';
+
+    assert.deepEqual(iqamaBlockers(masjid(five), true, now), ['Enter the date the fixed iqama times hold until, in Foundation.']);
+    assert.deepEqual(iqamaBlockers(masjid({ ...five, iqama_fixed_until: '2026-09-27' }), true, now), [], 'today is allowed');
+    assert.deepEqual(iqamaBlockers(masjid({ ...five, iqama_fixed_until: '2026-09-26' }), true, now), [window]);
+    assert.deepEqual(iqamaBlockers(masjid({ ...five, iqama_fixed_until: '2027-11-01' }), true, now), [], '2027-11-01 is 400 days on: allowed');
+    assert.deepEqual(iqamaBlockers(masjid({ ...five, iqama_fixed_until: '2027-11-02' }), true, now), [window]);
+
+    // Ticked, no fixed time is sent, so there is nothing to date; minutes only need no date.
+    assert.deepEqual(iqamaBlockers(masjid({ ...five, iqama_given: false }), true, now), []);
+    assert.deepEqual(iqamaBlockers(masjid({ iqama: { fajr: 1, dhuhr: 1, asr: 1, maghrib: 1, isha: 1 } }), true, now), []);
+    assert.deepEqual(iqamaBlockers(masjid(five), false, now), [], 'a school is never asked');
+});
+
+test('the Jumu\'ah times must all be different', () => {
+    const masjid = (prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid' }, prayer });
+
+    assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '13:30'] }), true), []);
+    assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '12:30'] }), true), ['The Jumu\'ah times must all be different.']);
+    assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '12:30'] }), false), []);
+});
+
 test('the credentials are cleared once an organisation exists, and kept for a retry otherwise', () => {
     const exists: ProvisionOutcome[] = [
         { kind: 'created', result: created().data as never, invitee: INVITEE },

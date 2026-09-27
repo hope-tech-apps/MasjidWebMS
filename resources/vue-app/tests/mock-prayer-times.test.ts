@@ -51,3 +51,34 @@ test('Hanafi puts Asr later than Shafi', () => {
     const hanafi = mockPrayerTimes({ ...burlington, method: 'NorthAmerica', madhab: 'Hanafi' }, day)!;
     assert.ok(hanafi[2].adhan > shafi[2].adhan);
 });
+
+test('a fixed iqama wins over the offset while it holds, and is adhan + minutes (blank 0) after its until-date', () => {
+    const input = {
+        ...burlington,
+        method: 'NorthAmerica',
+        iqama: { dhuhr: 10, maghrib: 5 },
+        iqama_fixed: { dhuhr: '13:45', asr: '17:30' },
+    };
+    const plus = (clock: string, minutes: number) => {
+        const [hour, minute] = clock.split(':').map(Number);
+        const at = new Date(Date.UTC(2000, 0, 1, hour, minute + minutes));
+        return `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
+    };
+
+    // The until-date is the day itself: both ends inclusive, as IqamaResolver.
+    const holding = mockPrayerTimes({ ...input, iqama_fixed_until: '2026-09-24' }, day)!;
+    assert.equal(holding[1].iqama, '13:45');
+    assert.equal(holding[2].iqama, '17:30');
+    assert.equal(holding[3].iqama, plus(holding[3].adhan, 5), 'a prayer on minutes mixes with the fixed ones');
+    assert.equal(holding[0].iqama, null, 'nothing given for Fajr');
+
+    const after = mockPrayerTimes({ ...input, iqama_fixed_until: '2026-09-23' }, day)!;
+    assert.equal(after[1].iqama, plus(after[1].adhan, 10), 'the minutes given for after the date');
+    assert.equal(after[2].iqama, after[2].adhan, 'no minutes given: stored as 0');
+
+    const noDate = mockPrayerTimes(input, day)!;
+    assert.equal(noDate[1].iqama, '13:45', 'the panel asks for the date; until then the time shows as typed');
+
+    const hidden = mockPrayerTimes({ ...input, iqama_fixed_until: '2026-09-24', iqama_given: false }, day)!;
+    assert.ok(hidden.every((row) => row.iqama === null));
+});

@@ -59,7 +59,9 @@ class StudioDraft extends Model
      * `extracted` and `ink_overrides` are Studio's own (the inks reach the new
      * org through StudioProvisioning, not the request). `iqama_given`,
      * `features`, `layout` and `domain` are renamed on the way out; see
-     * toProvisionPayload().
+     * toProvisionPayload(). `iqama_fixed`, `iqama_fixed_until` and
+     * `jumaa_times` go only while the Prayer panel shows them
+     * (withoutUnaskedPrayerKeys()).
      */
     private const PROVISION_KEYS = [
         'identity' => [
@@ -68,7 +70,10 @@ class StudioDraft extends Model
             'donation_link', 'donation_title', 'donation_message',
             'facebook_url', 'youtube_url', 'instagram_url', 'whatsapp_url', 'whatsapp_number',
         ],
-        'prayer' => ['method', 'madhab', 'high_latitude_rule', 'iqama_type', 'iqama', 'jumaa_iqama'],
+        'prayer' => [
+            'method', 'madhab', 'high_latitude_rule', 'iqama_type', 'iqama', 'jumaa_iqama',
+            'iqama_fixed', 'iqama_fixed_until', 'jumaa_times',
+        ],
         'content' => ['about', 'mission', 'vision'],
         'platforms' => ['platforms'],
     ];
@@ -276,6 +281,8 @@ class StudioDraft extends Model
             }
         }
 
+        $payload = $this->withoutUnaskedPrayerKeys($payload);
+
         $brand = array_intersect_key($this->section('brand'), array_flip(self::BRAND_COLOURS));
         if ($brand !== []) {
             $payload['brand'] = $brand;
@@ -348,29 +355,71 @@ class StudioDraft extends Model
      * Whether the organisation shows iqama times (DECISIONS, S8 "Iqama"): only
      * a masjid whose client gave times, and never with the "client has not
      * given iqama times" tick. An untouched panel gave none, so iqama is
-     * hidden. A panel with SOME offsets answers true on purpose: the request
+     * hidden. A panel with SOME times answers true on purpose: the request
      * then refuses the missing ones by name, rather than hiding times the
-     * client did give or showing ones they did not.
+     * client did give or showing ones they did not. A time is minutes after
+     * adhan or a fixed clock time (ProvisionMasjidRequest::iqamaGiven).
      */
     private function showsIqama(): bool
     {
         $prayer = $this->section('prayer');
-        $orgType = $this->section('identity')['org_type'] ?? null;
 
-        // The request reads an absent type as a masjid (ProvisionMasjidRequest::prepareForValidation).
-        if ((is_string($orgType) && $orgType !== '' ? $orgType : Masjid::ORG_TYPE_MASJID) !== Masjid::ORG_TYPE_MASJID
-            || ($prayer['iqama_given'] ?? null) === false) {
+        if (! $this->asksPrayer() || ($prayer['iqama_given'] ?? null) === false) {
             return false;
         }
 
         $offsets = is_array($prayer['iqama'] ?? null) ? $prayer['iqama'] : [];
+        $fixed = is_array($prayer['iqama_fixed'] ?? null) ? $prayer['iqama_fixed'] : [];
 
         foreach (array_keys(ProvisionMasjidRequest::IQAMA_PRAYERS) as $salah) {
-            if (filled($offsets[$salah] ?? null)) {
+            if (ProvisionMasjidRequest::iqamaGiven($offsets, $fixed, $salah)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /** Whether the Prayer panel is shown: a masjid only. The request reads an absent type as a masjid (ProvisionMasjidRequest::prepareForValidation). */
+    private function asksPrayer(): bool
+    {
+        $orgType = $this->section('identity')['org_type'] ?? null;
+
+        return (is_string($orgType) && $orgType !== '' ? $orgType : Masjid::ORG_TYPE_MASJID) === Masjid::ORG_TYPE_MASJID;
+    }
+
+    /**
+     * The fixed iqama times and the Jumu'ah list leave the draft only when the
+     * Prayer panel that holds them is in view, so the request can never refuse
+     * the draft over a field the operator cannot see or change:
+     *
+     *  - not a masjid (the type changed after they were entered): none of the
+     *    three is sent;
+     *  - "Client has not given iqama times" ticked (the panel's times are then
+     *    disabled): no fixed times, as the tick means none were given;
+     *  - no fixed time left: no until-date either. The panel hides it then, and
+     *    a stale one would still be held to today's window.
+     *
+     * Offsets and `jumaa_iqama` are sent as they always were.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function withoutUnaskedPrayerKeys(array $payload): array
+    {
+        if (! $this->asksPrayer()) {
+            unset($payload['iqama_fixed'], $payload['iqama_fixed_until'], $payload['jumaa_times']);
+
+            return $payload;
+        }
+
+        $fixed = is_array($payload['iqama_fixed'] ?? null) ? $payload['iqama_fixed'] : [];
+        $anyFixed = array_filter(array_keys(ProvisionMasjidRequest::IQAMA_PRAYERS), fn (string $salah) => filled($fixed[$salah] ?? null)) !== [];
+
+        if (($this->section('prayer')['iqama_given'] ?? null) === false || ! $anyFixed) {
+            unset($payload['iqama_fixed'], $payload['iqama_fixed_until']);
+        }
+
+        return $payload;
     }
 }

@@ -405,7 +405,7 @@ There is no `secrets` column (R7).
 | Section | Shape |
 |---|---|
 | `identity` | `{org_type, name, email, phone, address, country_id, city_id, latitude, longitude, timezone, user_id, admin:{name,email,phone}, slug, description, vibe, donation_link, donation_title, donation_message, facebook_url, youtube_url, instagram_url, whatsapp_url, whatsapp_number}` |
-| `prayer` | `{method, madhab, high_latitude_rule, iqama_type, iqama:{fajr,dhuhr,asr,maghrib,isha}, jumaa_iqama, iqama_given:bool}` |
+| `prayer` | `{method, madhab, high_latitude_rule, iqama_type, iqama:{fajr,dhuhr,asr,maghrib,isha}, iqama_fixed:{fajr,dhuhr,asr,maghrib,isha} (HH:MM), iqama_fixed_until (YYYY-MM-DD), jumaa_iqama, jumaa_times:[HH:MM, 1-4], iqama_given:bool}` (the fixed times and Jumu'ah list: DECISIONS 2026-09-27, Studio Step 0) |
 | `brand` | `{primary_color, secondary_color, accent_color, background_color ('#RRGGBB'), extracted:['#RRGGBB'], ink_overrides:{onPrimary?,onSecondary?,onAccent?}}` |
 | `content` | `{about, mission, vision}` |
 | `features` | `{capabilities:{<served catalogue key>: bool}}` (R9) |

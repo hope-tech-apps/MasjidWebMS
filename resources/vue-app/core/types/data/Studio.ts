@@ -56,10 +56,19 @@ export type StudioPrayer = {
     madhab?: string | null;
     high_latitude_rule?: string | null;
     iqama_type?: string | null;
-    /** Minutes after adhan, 0-180. */
+    /**
+     * Minutes after adhan, 0-180. For a prayer with a fixed time, the minutes
+     * used after `iqama_fixed_until` (blank is 0).
+     */
     iqama?: Partial<Record<StudioSalah, number | null>> | null;
-    /** HH:MM */
+    /** A fixed clock iqama, HH:MM (24-hour), per prayer the client gave one for. */
+    iqama_fixed?: Partial<Record<StudioSalah, string | null>> | null;
+    /** YYYY-MM-DD, the last day the fixed times hold, as the client said it. Required with any fixed time. */
+    iqama_fixed_until?: string | null;
+    /** HH:MM. Older drafts; `jumaa_times` takes its place once the list is edited. */
     jumaa_iqama?: string | null;
+    /** HH:MM each, 1 to 4, distinct, earliest first; the first is the Jumu'ah iqama. */
+    jumaa_times?: string[] | null;
     /** false is "the client has not given iqama times". */
     iqama_given?: boolean | null;
 };

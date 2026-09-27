@@ -4478,3 +4478,80 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-27 — Studio Step 0: fixed iqama times and several Jumu'ah times (NAFIS walkthrough)
+
+Context: walking NAFIS through Studio, the client gave FIXED clock times for Fajr, Dhuhr and Asr, minutes
+after adhan for Maghrib and Isha, and two Jumu'ah times. Step 0 took iqama only as minutes (all five
+required) and one Jumu'ah time, so the only honest path was "Client has not given iqama times".
+
+Decision: the draft's `prayer` section gains three optional keys, and with none of them every existing
+draft and every existing provision is unchanged (ProvisionResponseSnapshotTest and ProvisionIqamaTruthTest
+pass unedited).
+- **`iqama_fixed`** `{fajr?, dhuhr?, asr?, maghrib?, isha?}`, each `HH:MM` (24-hour): a fixed clock iqama.
+  In the Prayer panel each prayer is "Minutes" or "Fixed time"; a fixed prayer keeps its minutes field,
+  labelled as the minutes used once the fixed time ends (blank is 0).
+- **`iqama_fixed_until`** `YYYY-MM-DD`: the last day the fixed times hold, required with any fixed time,
+  between today and 400 days on (`ProvisionMasjidRequest::FIXED_IQAMA_MAX_DAYS`).
+- **`jumaa_times`**: one to four `HH:MM`, distinct, earliest first. `jumaa_iqama` stays accepted for older drafts.
+
+"Given" counts either kind: a prayer is given when it has minutes or a fixed time. The rule is written once per
+side, `ProvisionMasjidRequest::iqamaGiven` (asked by the request's completeness check and by
+`StudioDraft::showsIqama`) and `core/studio/provision.ts` `iqamaGiven` (asked by Step 3's blocker), so the
+refusal and the blocker name the same missing prayers in the same sentence.
+
+Provisioning (`OrganisationProvisioner`), additive:
+- No fixed time sent: exactly today's rows.
+- Any fixed time: `iqama_type = specific_time_ranges`, whatever `iqama_type` was sent; the offsets given, 0
+  where blank (on the wizard's path too: its invented 20/10/10/5/10 never lands under a fixed time); one
+  `IqamaTimeRange` per fixed prayer from today in the organisation's zone (`masjids.timezone`, a UTC name or
+  an unknown zone reading as unset, so `config('app.timezone')`, as IqamaResolver reads it) to the until-date,
+  inside the provision's transaction. `show_iqama_times` as before (Studio: true only with all five given).
+- `jumaa_times`: the jumaa `iqama` is the first time; with two or more, `shifts` is every time in the admin
+  screen's canonical shape (`time` plus null khateeb name, khateeb title and khutbah title), the first
+  included. One time writes exactly the row a lone `jumaa_iqama` does (no `shifts`).
+
+**Assumption: Studio asks for the until-date and never invents one.** The client says it ("until the
+clocks change"). The date input is required whenever a fixed time is set. After that date the resolver,
+the website, the apps and the push all fall back to adhan + that prayer's offset (0 when none was
+given, i.e. iqama at the adhan) with no further action; the panel says so: "After this date these prayers
+use minutes after adhan. Update them in Prayer settings before then." **Open:** nothing reminds the
+organisation before the date arrives; `ModuleFacts` already states "Fixed iqama times are set until ...".
+Whether a reminder (email to the org admin, or a Super Admin list of ranges ending within 14 days) is
+wanted is the owner's call.
+
+Chosen where the design was silent:
+- **Only what the operator can see is sent** (`StudioDraft::withoutUnaskedPrayerKeys`): for a draft that is
+  no longer a masjid none of the three keys is sent; with "Client has not given iqama times" ticked no fixed
+  time or until-date is sent (the tick means none were given, and the panel's fields are disabled then);
+  with no fixed time left, no until-date is sent (the panel hides it, and a stale one would still be held to
+  today's window). Without this a draft could be refused over a field nobody can reach. Offsets and
+  `jumaa_iqama` are sent exactly as before.
+- **"Today" is the organisation's today** for both the range's start and the until-date window
+  (`ProvisionMasjidRequest::organisationToday`), not the server's UTC date: at 9 PM in Toronto the UTC date
+  is already tomorrow, and "until today" would otherwise be refused.
+- **`iqama_fixed_until` is `date_format:Y-m-d`**, not `date`: it is written straight into `end_date` and the
+  resolver compares Y-m-d strings.
+- **A key in `iqama_fixed` that is not one of the five prayers is refused**, not ignored (the draft already
+  refuses it as an unknown answer path).
+- **The draft holds a duplicate Jumu'ah time** (a time half-way through being changed must not fail an
+  autosave) and refuses a blank entry or a fifth; provisioning refuses a duplicate, a fifth, or a malformed
+  time, and the Prayer panel and Step 3 say so first.
+- **Order:** the panel writes the list earliest first (the inputs are never reordered under the cursor);
+  the server keeps the order it is sent, first is the iqama.
+- **The server's refusal sentences equal Step 3's blockers** (`ProvisionMasjidRequest::messages()`), pinned by
+  `StudioFixedIqamaSourceTest`.
+- **Step 3's review** names the fixed prayers and their until-date beside the iqama status, and lists the
+  Jumu'ah times (a dash when none: the provisioner's 13:30 default is unchanged and still not shown there).
+- The Studio mockups (`mockPrayerTimes`, the Prayer panel's table and the TV board) show a fixed time while
+  it holds, and adhan + minutes (blank 0) after, as IqamaResolver does.
+
+Tests: `StudioFixedIqamaTest` (three ranges with exact dates and times and the given offsets; the resolver
+gives the fixed time on the day and adhan + offset for the others and the day after the until-date; the
+organisation's today at 9 PM Toronto; a missing, past or over-400-day until-date is a 422 with the sentence;
+a prayer with neither kind still refused by name; a non-prayer key refused; no fixed time gives the
+minutes-only row and zero ranges; the tick drops fixed times; the wizard endpoint posted form-encoded; the
+draft round trip). `StudioJumuahShiftsTest` (two and four times, one, none, the legacy single time, five or
+a duplicate or a malformed time refused, a school's leftover list not sent, the draft's limits).
+`StudioFixedIqamaSourceTest` (the SPA's "given" counts a fixed time; the sentences and limits match the
+server's). SPA: `tests/studio-provision.test.ts` and `tests/mock-prayer-times.test.ts` (npm run test:spa).

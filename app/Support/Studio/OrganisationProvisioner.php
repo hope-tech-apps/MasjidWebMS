@@ -2,6 +2,7 @@
 
 namespace App\Support\Studio;
 
+use App\Enums\IqamaType;
 use App\Http\Requests\Admin\Onboarding\ProvisionMasjidRequest;
 use App\Models\DonationLink;
 use App\Models\IqamaTimeSetting;
@@ -141,35 +142,73 @@ final class OrganisationProvisioner
             'high_latitude_rule' => $request->input('high_latitude_rule'),
         ]);
 
-        // ---- Iqama time settings (minutes-after-adhan offsets) ----
+        // ---- Iqama time settings (offsets, and Studio's fixed times) ----
         // Studio sends show_iqama_times (iqama is shown only when the client
         // gave all five times, which the request enforces); the wizard never
         // did, and keeps its `true` and its invented 20/10/10/5/10 for any
         // offset left blank. On Studio's path nothing is invented: an offset
         // the client did not give is the column's own 0, and is never shown,
         // because iqama is then hidden.
+        //
+        // FIXED TIMES (Studio): a prayer the client gives as a clock time
+        // puts the masjid on Specific Time Ranges with one range per fixed
+        // prayer, from today where the organisation is to the until-date the
+        // client gave. The other prayers, and every prayer after that date,
+        // are adhan + offset (IqamaResolver), so an offset nobody gave is 0
+        // here on either path, never the wizard's invented schedule. With no
+        // fixed time sent, this is exactly the minutes-only row it always was.
         $iqama = $request->input('iqama', []);
         $studioIqama = $request->has('show_iqama_times');
-        IqamaTimeSetting::create([
+        $fixed = self::fixedIqama($request);
+        $fallback = fn (int $wizard) => ($studioIqama || $fixed !== []) ? 0 : $wizard;
+        $iqamaSetting = IqamaTimeSetting::create([
             'masjid_id' => $masjid->id,
-            'iqama_type' => $request->input('iqama_type', 'minutes_after_adhan'),
+            'iqama_type' => $fixed !== [] ? IqamaType::SPECIFIC_TIME_RANGES->value : $request->input('iqama_type', 'minutes_after_adhan'),
             'show_iqama_times' => $studioIqama ? $request->boolean('show_iqama_times') : true,
-            'fajr' => $iqama['fajr'] ?? ($studioIqama ? 0 : 20),
-            'dhuhr' => $iqama['dhuhr'] ?? ($studioIqama ? 0 : 10),
-            'asr' => $iqama['asr'] ?? ($studioIqama ? 0 : 10),
-            'maghrib' => $iqama['maghrib'] ?? ($studioIqama ? 0 : 5),
-            'isha' => $iqama['isha'] ?? ($studioIqama ? 0 : 10),
+            'fajr' => $iqama['fajr'] ?? $fallback(20),
+            'dhuhr' => $iqama['dhuhr'] ?? $fallback(10),
+            'asr' => $iqama['asr'] ?? $fallback(10),
+            'maghrib' => $iqama['maghrib'] ?? $fallback(5),
+            'isha' => $iqama['isha'] ?? $fallback(10),
         ]);
 
+        if ($fixed !== []) {
+            $from = ProvisionMasjidRequest::organisationToday($masjid->timezone);
+
+            foreach ($fixed as $salah => $time) {
+                $iqamaSetting->timeRanges()->create([
+                    'salah' => $salah,
+                    'start_date' => $from,
+                    'end_date' => (string) $request->input('iqama_fixed_until'),
+                    'specific_time' => $time,
+                ]);
+            }
+        }
+
         // ---- Jumaa settings (fixed iqama time; sensible default) ----
-        // The 13:30 placeholder is still stored (W1 S8), but flagged, so the TV
+        // Studio's `jumaa_times`, when sent, takes the place of `jumaa_iqama`:
+        // the first time is the iqama, and two or more are also written as the
+        // admin screen's shifts (JumaaSettingsController::save's canonical
+        // shape, khateeb and khutbah left for the organisation to fill). One
+        // time writes exactly the row a lone `jumaa_iqama` does. With neither,
+        // the 13:30 placeholder is still stored (W1 S8), but flagged, so the TV
         // board and the phone apps hide a Jumu'ah time nobody gave (W2 S18).
-        $jumaaIqama = $request->input('jumaa_iqama');
-        $masjid->jumaaSettings()->create([
-            'iqama' => $jumaaIqama ?: '13:30',
+        $jumaaTimes = array_values(array_filter((array) $request->input('jumaa_times', []), 'filled'));
+        $jumaaIqama = $jumaaTimes[0] ?? ($request->input('jumaa_iqama') ?: null);
+        $jumaa = [
+            'iqama' => $jumaaIqama ?? '13:30',
             'athans' => [],
-            'is_default' => ! $jumaaIqama,
-        ]);
+            'is_default' => $jumaaIqama === null,
+        ];
+        if (count($jumaaTimes) > 1) {
+            $jumaa['shifts'] = array_map(fn (string $time) => [
+                'time' => $time,
+                'khateeb_name' => null,
+                'khateeb_title' => null,
+                'khutbah_title' => null,
+            ], $jumaaTimes);
+        }
+        $masjid->jumaaSettings()->create($jumaa);
 
         // ---- Donation link (only when a URL was supplied) ----
         if ($request->filled('donation_link')) {
@@ -353,6 +392,26 @@ final class OrganisationProvisioner
         MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
 
         return $masjid;
+    }
+
+    /**
+     * The fixed iqama times sent, as salah => 'HH:MM' in prayer order; [] when
+     * none (the request refuses any key that is not one of the five).
+     *
+     * @return array<string, string>
+     */
+    private static function fixedIqama(ProvisionMasjidRequest $request): array
+    {
+        $sent = $request->input('iqama_fixed');
+        $fixed = [];
+
+        foreach (array_keys(ProvisionMasjidRequest::IQAMA_PRAYERS) as $salah) {
+            if (is_array($sent) && filled($sent[$salah] ?? null)) {
+                $fixed[$salah] = (string) $sent[$salah];
+            }
+        }
+
+        return $fixed;
     }
 
     /**

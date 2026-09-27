@@ -70,6 +70,8 @@ const times = computed(() => mockPrayerTimes({
     madhab: props.answers.prayer.madhab,
     high_latitude_rule: props.answers.prayer.high_latitude_rule,
     iqama: props.answers.prayer.iqama,
+    iqama_fixed: props.answers.prayer.iqama_fixed,
+    iqama_fixed_until: props.answers.prayer.iqama_fixed_until,
     iqama_given: props.answers.prayer.iqama_given,
 }));
 </script>

@@ -40,7 +40,7 @@
  */
 import { asksPrayer, BRAND_COLOUR_KEYS, webSelected } from '@/core/studio/foundationGate';
 import { accountModeLabel, PLATFORM_OPTIONS } from '@/core/studio/platforms';
-import { featureSummary, IqamaStatus, iqamaStatus } from '@/core/studio/provision';
+import { featureSummary, fixedIqamaPrayers, IqamaStatus, iqamaStatus } from '@/core/studio/provision';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, ref, watch } from 'vue';
 
@@ -55,6 +55,28 @@ const IQAMA_REVIEW: Record<IqamaStatus['state'], string> = {
 
 const store = useStudioDraftStore();
 const identity = computed(() => store.answers.identity);
+
+/**
+ * The status, and which prayers are fixed until when. The fixed times are
+ * provisioned only while the times are given or incomplete (StudioDraft::
+ * toProvisionPayload drops them when "Client has not given iqama times" is
+ * ticked), so only then are they named.
+ */
+function iqamaReview(): string {
+    const status = iqamaStatus(store.answers, true);
+    const fixed = fixedIqamaPrayers(store.answers);
+    if (!fixed.length || (status.state !== 'given' && status.state !== 'partial')) return IQAMA_REVIEW[status.state];
+
+    const until = store.answers.prayer.iqama_fixed_until;
+    return `${IQAMA_REVIEW[status.state]}; ${fixed.join(', ')} fixed${until ? ` until ${until}` : ', no until-date yet'}`;
+}
+
+/** The Jumu'ah times as the draft holds them, earliest first; an older draft's single time. */
+function jumuahReview(): string {
+    const prayer = store.answers.prayer;
+    const times = prayer.jumaa_times?.length ? prayer.jumaa_times : (prayer.jumaa_iqama ? [prayer.jumaa_iqama] : []);
+    return times.join(', ');
+}
 
 const cityName = ref('');
 
@@ -102,7 +124,8 @@ const items = computed(() => {
         rows.push(
             { label: 'Prayer method', value: optionLabel(options?.prayer.methods, answers.prayer.method) },
             { label: 'Madhab', value: optionLabel(options?.prayer.madhabs, answers.prayer.madhab) },
-            { label: 'Iqama times', value: IQAMA_REVIEW[iqamaStatus(answers, true).state] },
+            { label: 'Iqama times', value: iqamaReview() },
+            { label: 'Jumu\'ah', value: jumuahReview() },
         );
     }
 

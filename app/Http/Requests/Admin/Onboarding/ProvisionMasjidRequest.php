@@ -14,8 +14,10 @@ use App\Models\MobileAppFeature;
 use App\Models\User;
 use App\Support\CapabilityCatalogue;
 use App\Support\HostName;
+use App\Support\IqamaResolver;
 use App\Support\Studio\CanonicalPair;
 use App\Support\Studio\LayoutPresets;
+use Carbon\Carbon;
 use Closure;
 use Illuminate\Validation\Rule;
 
@@ -33,8 +35,9 @@ use Illuminate\Validation\Rule;
  * StoreMasjidRequest; prayer/theme rules mirror their dedicated save requests.
  *
  * MANARA STUDIO'S KEYS (docs/manara-studio-w1.md S8, R10). `slug`,
- * `description`, `capabilities`, `layout_preset`, `show_iqama_times` and
- * `web_domain` are optional, and with all of them absent the request and what
+ * `description`, `capabilities`, `layout_preset`, `show_iqama_times`,
+ * `web_domain`, `iqama_fixed`, `iqama_fixed_until` and `jumaa_times` are
+ * optional, and with all of them absent the request and what
  * OrganisationProvisioner does with it are exactly the wizard's
  * (ProvisionResponseSnapshotTest). Studio's provision-from-draft builds THIS
  * request from the draft and validates it with these very rules, so a draft
@@ -44,6 +47,9 @@ class ProvisionMasjidRequest extends BaseFormRequest
 {
     /** The iqama offsets, keyed as the request and `iqama_time_settings` name them, with the names an operator reads. */
     public const IQAMA_PRAYERS = ['fajr' => 'Fajr', 'dhuhr' => 'Dhuhr', 'asr' => 'Asr', 'maghrib' => 'Maghrib', 'isha' => 'Isha'];
+
+    /** The furthest ahead `iqama_fixed_until` may be, in days from the organisation's today. */
+    public const FIXED_IQAMA_MAX_DAYS = 400;
 
     /**
      * An omitted vertical means `masjid`.
@@ -201,7 +207,8 @@ class ProvisionMasjidRequest extends BaseFormRequest
             // ---- Iqama (offsets in minutes after adhan) ----
             // The wizard configures the "minutes after adhan" model; the richer
             // fixed-time-range model is set post-onboarding in the dedicated Iqama
-            // screen. iqama_type is still recorded so the app knows which model.
+            // screen, except for Studio's fixed times below (one range per prayer).
+            // iqama_type is still recorded so the app knows which model.
             'iqama_type' => ['nullable', 'string', Rule::in(['minutes_after_adhan', 'specific_time_ranges'])],
             'iqama' => 'nullable|array',
             'iqama.fajr' => 'nullable|integer|min:0|max:180',
@@ -210,8 +217,27 @@ class ProvisionMasjidRequest extends BaseFormRequest
             'iqama.maghrib' => 'nullable|integer|min:0|max:180',
             'iqama.isha' => 'nullable|integer|min:0|max:180',
 
+            // ---- Fixed iqama times (Studio, optional) ----
+            // A prayer the client gives as a clock time ("Dhuhr at 1:45") rather
+            // than minutes after adhan. Each becomes one Specific Time Range from
+            // today to `iqama_fixed_until`, the last day the client says the time
+            // holds; after it the prayer is adhan + its offset (IqamaResolver).
+            // Absent, the provision is exactly the minutes-only one.
+            'iqama_fixed' => 'nullable|array',
+            'iqama_fixed.*' => 'nullable|date_format:H:i',
+            'iqama_fixed_until' => array_merge(
+                ['nullable', 'required_with:' . implode(',', array_map(fn ($salah) => "iqama_fixed.{$salah}", array_keys(self::IQAMA_PRAYERS))), 'date_format:Y-m-d'],
+                $this->fixedUntilWindow(),
+            ),
+
             // ---- Jumaa (optional fixed iqama time HH:MM) ----
             'jumaa_iqama' => 'nullable|date_format:H:i',
+
+            // Several Jumu'ah times (Studio, optional): the first is the jumaa
+            // iqama, and two or more are written as the admin screen's shifts.
+            // Takes the place of `jumaa_iqama` when sent.
+            'jumaa_times' => 'nullable|array|max:4',
+            'jumaa_times.*' => 'required|date_format:H:i|distinct',
 
             // ---- Brand / theme (partial theme allowed) ----
             'brand' => 'nullable|array',
@@ -388,16 +414,30 @@ class ProvisionMasjidRequest extends BaseFormRequest
 
             // Studio says to show iqama only when the client gave times, and
             // the provisioner fills a missing offset with nothing it could
-            // show; so shown means all five were given.
+            // show; so shown means all five were given, each as minutes after
+            // adhan or as a fixed time.
             if ($this->input('show_iqama_times') === true) {
+                $offsets = $this->input('iqama');
+                $fixed = $this->input('iqama_fixed');
+
                 $missing = array_values(array_filter(
                     self::IQAMA_PRAYERS,
-                    fn (string $salah) => blank($this->input("iqama.{$salah}")),
+                    fn (string $salah) => ! self::iqamaGiven(is_array($offsets) ? $offsets : [], is_array($fixed) ? $fixed : [], $salah),
                     ARRAY_FILTER_USE_KEY,
                 ));
 
                 if ($missing !== []) {
                     $validator->errors()->add('iqama', self::iqamaIncomplete($missing));
+                }
+            }
+
+            // A fixed time is for one of the five prayers; any other key would
+            // be validated as a time and then written nowhere.
+            if (is_array($this->input('iqama_fixed'))) {
+                foreach (array_keys($this->input('iqama_fixed')) as $key) {
+                    if (! array_key_exists($key, self::IQAMA_PRAYERS)) {
+                        $validator->errors()->add("iqama_fixed.{$key}", "\"{$key}\" is not one of the five prayers.");
+                    }
                 }
             }
 
@@ -443,6 +483,70 @@ class ProvisionMasjidRequest extends BaseFormRequest
         return 'The iqama times are incomplete: ' . implode(', ', $missing) . ' '
             . (count($missing) === 1 ? 'is' : 'are')
             . ' missing. Enter all five in Foundation, or tick "Client has not given iqama times".';
+    }
+
+    /**
+     * Whether the client gave $salah's iqama: minutes after adhan (0 is a
+     * time) or a fixed clock time. The server's one copy of the rule:
+     * withValidator and StudioDraft::showsIqama both ask it. Its SPA twin is
+     * core/studio/provision.ts iqamaGiven, which Step 3's blocker asks.
+     *
+     * @param  array<string, mixed>  $offsets  the `iqama` answers
+     * @param  array<string, mixed>  $fixed  the `iqama_fixed` answers
+     */
+    public static function iqamaGiven(array $offsets, array $fixed, string $salah): bool
+    {
+        return filled($offsets[$salah] ?? null) || filled($fixed[$salah] ?? null);
+    }
+
+    /**
+     * Today's date where the organisation is, Y-m-d: the day its fixed iqama
+     * times start and the earliest their until-date may be. The zone is read
+     * as IqamaResolver reads a masjid's: a blank, unknown or UTC-named one
+     * (the column's default for every masjid that predates it) is unset, and
+     * the app's is used.
+     */
+    public static function organisationToday(?string $timezone): string
+    {
+        $resolver = IqamaResolver::for(null, $timezone);
+        $zone = $resolver->placesFixedTimes() ? $resolver->timezone() : (string) config('app.timezone', 'UTC');
+
+        return Carbon::now($zone)->format('Y-m-d');
+    }
+
+    /**
+     * `iqama_fixed_until` lies between the organisation's today and
+     * FIXED_IQAMA_MAX_DAYS after it. A past date would write ranges that never
+     * cover a day; the ceiling keeps a typo'd year from fixing the times for
+     * a decade. Read before anything is validated, so a malformed timezone
+     * (an array) falls back as a blank one does, rather than a TypeError.
+     *
+     * @return list<string>
+     */
+    private function fixedUntilWindow(): array
+    {
+        $timezone = $this->input('timezone');
+        $today = self::organisationToday(is_string($timezone) ? $timezone : null);
+
+        return [
+            "after_or_equal:{$today}",
+            'before_or_equal:' . Carbon::parse($today)->addDays(self::FIXED_IQAMA_MAX_DAYS)->format('Y-m-d'),
+        ];
+    }
+
+    /** Worded as core/studio/provision.ts iqamaBlockers words them before the button is pressed. */
+    public function messages(): array
+    {
+        $window = 'The date the fixed iqama times hold until must be between today and '
+            . self::FIXED_IQAMA_MAX_DAYS . ' days from today.';
+
+        return [
+            'iqama_fixed_until.required_with' => 'Enter the date the fixed iqama times hold until, in Foundation.',
+            'iqama_fixed_until.after_or_equal' => $window,
+            'iqama_fixed_until.before_or_equal' => $window,
+            'jumaa_times.max' => 'Enter at most four Jumu\'ah times.',
+            'jumaa_times.*.distinct' => 'The Jumu\'ah times must all be different.',
+        ];
     }
 
     public function attributes(): array

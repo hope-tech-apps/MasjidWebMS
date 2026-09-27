@@ -11,7 +11,9 @@
  * says so rather than showing another city's day.
  *
  * Iqama times are the adhan time plus the offset the client gave, and only
- * when they gave one; Jumu'ah is the fixed time they gave.
+ * when they gave one; Jumu'ah is the fixed time they gave. A prayer with a
+ * fixed iqama shows that clock time instead, as IqamaResolver places it:
+ * on any day up to and including `iqama_fixed_until`, and adhan + offset after.
  */
 import { CalculationMethod, Coordinates, HighLatitudeRule, Madhab, PrayerTimes } from 'adhan';
 
@@ -48,6 +50,10 @@ export type MockPrayerInput = {
     high_latitude_rule?: string | null;
     /** Minutes after adhan, per salah; absent when not given. */
     iqama?: Partial<Record<SalahKey, number | null>> | null;
+    /** A fixed clock iqama, HH:MM, per salah; it wins over the offset while it holds. */
+    iqama_fixed?: Partial<Record<SalahKey, string | null>> | null;
+    /** YYYY-MM-DD, the last day the fixed times hold; absent, they hold (the Prayer panel asks for it). */
+    iqama_fixed_until?: string | null;
     /** false: the client has not given iqama times, so none are shown. */
     iqama_given?: boolean | null;
 };
@@ -104,6 +110,18 @@ function calendarDateIn(instant: Date, timeZone: string): Date {
     return new Date(read('year'), read('month') - 1, read('day'));
 }
 
+/** The calendar date `instant` falls on in `timeZone`, as YYYY-MM-DD. */
+export function isoDateIn(instant: Date, timeZone: string): string {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+    const read = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+    return `${read('year')}-${read('month')}-${read('day')}`;
+}
+
+/** An HH:MM (24-hour) clock time, as the server's date_format:H:i takes it. */
+export function isClockTime(value: unknown): value is string {
+    return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 /** True when there is enough to compute a day: coordinates, a timezone and a method. */
 export function canMockPrayerTimes(input: MockPrayerInput): boolean {
     const { latitude, longitude } = input;
@@ -133,13 +151,23 @@ export function mockPrayerTimes(input: MockPrayerInput, on: Date = new Date()): 
 
     const times = new PrayerTimes(new Coordinates(input.latitude as number, input.longitude as number), calendarDateIn(on, timeZone), params);
     const showIqama = input.iqama_given !== false;
+    // Both ends inclusive, compared as dates, as IqamaResolver::coveringTime does.
+    const until = input.iqama_fixed_until;
+    const fixedHolds = !until || isoDateIn(on, timeZone) <= until;
 
     return SALAH_KEYS.map((key) => {
         const adhan: Date = times[key];
-        const offset = input.iqama?.[key];
-        const iqama = showIqama && typeof offset === 'number' && Number.isFinite(offset)
-            ? clockIn(new Date(adhan.getTime() + offset * 60_000), timeZone)
-            : null;
+        const fixed = input.iqama_fixed?.[key];
+        const given = input.iqama?.[key];
+        // After its until-date a fixed prayer is adhan + its minutes, and
+        // blank minutes are stored as 0 (OrganisationProvisioner).
+        const offset = isClockTime(fixed) && (given === null || given === undefined) ? 0 : given;
+        let iqama: string | null = null;
+        if (showIqama && fixedHolds && isClockTime(fixed)) {
+            iqama = fixed;
+        } else if (showIqama && typeof offset === 'number' && Number.isFinite(offset)) {
+            iqama = clockIn(new Date(adhan.getTime() + offset * 60_000), timeZone);
+        }
 
         return { key, adhan: clockIn(adhan, timeZone), iqama };
     });

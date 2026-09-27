@@ -63,6 +63,7 @@ class UpdateStudioDraftRequest extends BaseFormRequest
         $text = fn (int $max) => ['nullable', 'string', "max:{$max}"];
         $colour = ['nullable', 'string', self::HEX6];
         $iqamaOffset = ['nullable', 'integer', 'min:0', 'max:180'];
+        $clock = ['nullable', 'date_format:H:i'];
         $accountMode = ['nullable', 'string', Rule::in(['managed', 'byo'])];
 
         return [
@@ -107,7 +108,24 @@ class UpdateStudioDraftRequest extends BaseFormRequest
                 'iqama.asr' => $iqamaOffset,
                 'iqama.maghrib' => $iqamaOffset,
                 'iqama.isha' => $iqamaOffset,
-                'jumaa_iqama' => ['nullable', 'date_format:H:i'],
+                // A prayer the client gives as a clock time, and the last day
+                // those times hold (the client's date, never Studio's). The
+                // pair is checked against each other and today at provision
+                // (ProvisionMasjidRequest), not here: a draft may be half done.
+                'iqama_fixed' => ['nullable', 'array'],
+                'iqama_fixed.fajr' => $clock,
+                'iqama_fixed.dhuhr' => $clock,
+                'iqama_fixed.asr' => $clock,
+                'iqama_fixed.maghrib' => $clock,
+                'iqama_fixed.isha' => $clock,
+                'iqama_fixed_until' => ['nullable', 'date_format:Y-m-d'],
+                'jumaa_iqama' => $clock,
+                // Several Jumu'ah times, the first being the main one. Older
+                // drafts hold `jumaa_iqama` alone. Duplicates are refused at
+                // provision only, so a time half-way through being changed
+                // never blocks an autosave; an empty entry is no time at all.
+                'jumaa_times' => ['nullable', 'array', 'max:4'],
+                'jumaa_times.*' => ['filled', 'date_format:H:i'],
                 // False is "the client has not given iqama times" — S8 then
                 // provisions with them hidden instead of showing invented ones.
                 'iqama_given' => ['nullable', 'boolean'],

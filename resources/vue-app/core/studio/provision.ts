@@ -179,6 +179,25 @@ export type IqamaStatus =
     /** All five: shown. */
     | { state: 'given' };
 
+/** As the server's `filled()`: null and blank are not given; 0 is. */
+function filled(value: unknown): boolean {
+    return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+/**
+ * Whether the client gave `salah`'s iqama: minutes after adhan or a fixed
+ * clock time. ProvisionMasjidRequest::iqamaGiven is the server's copy, and
+ * StudioDraft::showsIqama and the request both ask it.
+ */
+export function iqamaGiven(answers: StudioAnswers, salah: typeof IQAMA_PRAYERS[number][0]): boolean {
+    return filled(answers.prayer.iqama?.[salah]) || filled(answers.prayer.iqama_fixed?.[salah]);
+}
+
+/** The prayers given a fixed time, in prayer order, with their display names. */
+export function fixedIqamaPrayers(answers: StudioAnswers): string[] {
+    return IQAMA_PRAYERS.filter(([key]) => filled(answers.prayer.iqama_fixed?.[key])).map(([, name]) => name);
+}
+
 /**
  * What the draft's iqama answers amount to, as StudioDraft::toProvisionPayload
  * and the request read them (DECISIONS, S8 "Iqama"). `asked` is whether the
@@ -188,24 +207,73 @@ export function iqamaStatus(answers: StudioAnswers, asked: boolean): IqamaStatus
     if (!asked) return { state: 'not_asked' };
     if (answers.prayer.iqama_given === false) return { state: 'not_given' };
 
-    const offsets = answers.prayer.iqama ?? {};
-    // As the server's `filled()`: null and blank are not given; 0 is.
     const missing = IQAMA_PRAYERS
-        .filter(([key]) => offsets[key] === null || offsets[key] === undefined || String(offsets[key]).trim() === '')
+        .filter(([key]) => !iqamaGiven(answers, key))
         .map(([, name]) => name);
 
     if (missing.length === IQAMA_PRAYERS.length) return { state: 'none' };
     return missing.length ? { state: 'partial', missing } : { state: 'given' };
 }
 
-/** Some iqama offsets without the rest, in ProvisionMasjidRequest::iqamaIncomplete's words. */
-export function iqamaBlockers(answers: StudioAnswers, asked: boolean): string[] {
-    const status = iqamaStatus(answers, asked);
-    if (status.state !== 'partial') return [];
+/** ProvisionMasjidRequest::FIXED_IQAMA_MAX_DAYS: how far ahead the until-date may be. */
+export const FIXED_IQAMA_MAX_DAYS = 400;
 
-    const verb = status.missing.length === 1 ? 'is' : 'are';
-    return [`The iqama times are incomplete: ${status.missing.join(', ')} ${verb} missing. `
-        + 'Enter all five in Foundation, or tick "Client has not given iqama times".'];
+/**
+ * Today where the organisation is, YYYY-MM-DD, as ProvisionMasjidRequest::
+ * organisationToday reads it: the draft's timezone, or UTC (the app's) when
+ * it has none the browser knows.
+ */
+export function organisationToday(timezone: string | null | undefined, now: Date = new Date()): string {
+    let parts: Intl.DateTimeFormatPart[];
+    try {
+        parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    } catch {
+        parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    }
+    const read = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+    return `${read('year')}-${read('month')}-${read('day')}`;
+}
+
+/** YYYY-MM-DD, `days` after the YYYY-MM-DD `date`. */
+export function addDays(date: string, days: number): string {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * Everything in the Prayer panel that keeps Provision disabled, in the
+ * request's words (ProvisionMasjidRequest::iqamaIncomplete and messages()):
+ * some iqama times without the rest, fixed times without a valid until-date,
+ * and a Jumu'ah time entered twice. Nothing for an organisation not asked, and
+ * no fixed-time reason once "Client has not given iqama times" is ticked,
+ * because StudioDraft::toProvisionPayload then sends no fixed times.
+ */
+export function iqamaBlockers(answers: StudioAnswers, asked: boolean, now: Date = new Date()): string[] {
+    const status = iqamaStatus(answers, asked);
+    const reasons: string[] = [];
+
+    if (status.state === 'partial') {
+        const verb = status.missing.length === 1 ? 'is' : 'are';
+        reasons.push(`The iqama times are incomplete: ${status.missing.join(', ')} ${verb} missing. `
+            + 'Enter all five in Foundation, or tick "Client has not given iqama times".');
+    }
+
+    if (status.state !== 'not_asked' && status.state !== 'not_given' && fixedIqamaPrayers(answers).length) {
+        const until = answers.prayer.iqama_fixed_until;
+        const today = organisationToday(answers.identity.timezone, now);
+        if (!filled(until)) {
+            reasons.push('Enter the date the fixed iqama times hold until, in Foundation.');
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(until)) || String(until) < today || String(until) > addDays(today, FIXED_IQAMA_MAX_DAYS)) {
+            reasons.push(`The date the fixed iqama times hold until must be between today and ${FIXED_IQAMA_MAX_DAYS} days from today.`);
+        }
+    }
+
+    if (asked) {
+        const times = (answers.prayer.jumaa_times ?? []).filter(filled);
+        if (new Set(times).size !== times.length) reasons.push("The Jumu'ah times must all be different.");
+    }
+
+    return reasons;
 }
 
 /**
