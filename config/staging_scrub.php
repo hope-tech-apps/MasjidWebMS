@@ -100,6 +100,16 @@ return [
         'broadcast_deliveries' => 'Provider message ids and error text quoting recipients; cascades from broadcasts, deleted first anyway.',
         'broadcasts' => 'Send history plus explicit audience_contact_ids targeting lists. Staging must start with no sends to replay.',
 
+        // Baskets. `cart_items.payload` carries the answers a line will submit —
+        // on MEC's festival ticket form that is the name of every attendee — and
+        // `carts.token_hash` is the handle that lets whoever holds it read and
+        // edit a basket. Dropping beats nulling on both counts: a basket is
+        // transient by design (nothing in it is reserved, and it expires), so
+        // staging loses nothing real, and no live shopper's token survives into an
+        // environment with weaker access.
+        'cart_items' => 'Answers being submitted, including attendee names; cascades from carts, deleted first anyway.',
+        'carts' => 'Guest basket tokens (hashed handles that grant read/write to the basket) and the contact they belong to.',
+
         // Mobile Contact-Us inbox.
         'contact_us_messages' => 'Free-text inbound messages from app users.',
         'contact_us_replies' => 'What the office wrote BACK to a member of the public, plus the name of the staff member who wrote it. Dropped with the messages it answers — a reply with no message is a fragment of a conversation about a real person, and cascading from contact_us_messages would leave replies to messages this scrub already removed.',

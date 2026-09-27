@@ -141,6 +141,13 @@ class MemberAccountDeletion
      * service clears itself. They never keep a contact.
      */
     public const LOGIN_RECORDS = [
+        // 2026-09-27: an UNPAID basket. Not a sale — nothing in it is reserved,
+        // and once paid, the real office records (donations, form responses,
+        // meal orders) are created by their own services and listed above. What
+        // is left here is the shopper's own half-finished choice, whose items can
+        // hold attendee names, so it goes with the deletion. The FK cascades
+        // (carts.contact_id cascadeOnDelete) and cart_items cascade from carts.
+        'carts' => ['contact_id'],
         'contact_login_codes' => ['contact_id'],
         // The office's 7-day portal links (2026-09-24). Login plumbing, not an
         // office record: the row holds a keyed digest, an address and three

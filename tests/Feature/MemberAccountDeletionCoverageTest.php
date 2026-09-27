@@ -119,6 +119,10 @@ class MemberAccountDeletionCoverageTest extends TestCase
         ], MemberAccountDeletion::OFFICE_RECORDS);
 
         $this->assertSame([
+            // 2026-09-27: an unpaid basket. Not a sale (a paid one becomes the
+            // office records above), and its items can carry attendee names, so
+            // it is cleared with the account rather than keeping the contact.
+            'carts' => ['contact_id'],
             'contact_login_codes' => ['contact_id'],
             // 2026-09-24: the office's 7-day portal invite links. Login
             // plumbing — a keyed digest, an address and three timestamps, and

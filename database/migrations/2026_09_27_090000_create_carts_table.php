@@ -61,7 +61,15 @@ return new class extends Migration
 
             // The shopper: a contact once signed in, a hashed token before that.
             // Both may be set — a guest who signs in keeps the basket they filled.
-            $table->foreignId('contact_id')->nullable()->constrained()->nullOnDelete();
+            //
+            // CASCADE, not nullOnDelete. A member's account deletion ends in
+            // `$contact->forceDelete()` and relies on the cascade to clear login
+            // plumbing (MemberAccountDeletion::LOGIN_RECORDS). nullOnDelete would
+            // have kept the basket alive as an orphan — attendee names in its
+            // items' payload, a still-working token, no owner — surviving the very
+            // erasure it should have gone with. An unpaid basket is not a sale and
+            // reserves nothing, so losing it costs nothing but the retyping.
+            $table->foreignId('contact_id')->nullable()->constrained()->cascadeOnDelete();
             $table->char('token_hash', 64)->nullable();
 
             $table->string('status', 16)->default('open');
