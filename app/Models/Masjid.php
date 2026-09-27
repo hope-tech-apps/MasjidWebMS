@@ -631,8 +631,19 @@ class Masjid extends Model implements HasMedia
             ->latest();
     }
 
+    /**
+     * The website header and footer logos (/api/v1/settings, the admin
+     * details screen, the app's header image).
+     *
+     * `model_type` is part of the key for the reason logo() gives. Without it a
+     * `header_logos` row of any other model whose id equalled this masjid's
+     * became this masjid's header on its website and in its app. Latent until
+     * 2026-09-27, when both collections held no rows on production, so no
+     * organisation's logo changed because this predicate shipped.
+     */
     public function header_logo() {
         return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
             ->where('collection_name', 'header_logos')
             ->orderBy('created_at', 'desc')
             ->latest();
@@ -640,6 +651,7 @@ class Masjid extends Model implements HasMedia
 
     public function footer_logo() {
         return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
             ->where('collection_name', 'footer_logos')
             ->orderBy('created_at', 'desc')
             ->latest();
@@ -690,8 +702,21 @@ class Masjid extends Model implements HasMedia
         return $this->hasMany(Announcement::class);
     }
 
+    /**
+     * The photo gallery: /api/v1/gallery, /api/mobile/masjids/{id}/gallery
+     * and the admin gallery editor, which also DELETES through it
+     * (MasjidGalleryController::delete, and its orphan cleanup on index).
+     *
+     * `model_type` is part of the key for the reason logo() gives. Without it
+     * a `galleries` photo of a Service (or any other model) whose id equalled
+     * this masjid's was served in this masjid's public gallery, and could be
+     * deleted from this masjid's admin screen. Latent until 2026-09-27, when
+     * all 26 `galleries` rows on production were Masjid 13's, so no gallery
+     * changed because this predicate shipped.
+     */
     public function gallery() {
         return $this->hasMany(Media::class, 'model_id')
+            ->where('model_type', self::class)
             ->where('collection_name', 'galleries');
     }
 
