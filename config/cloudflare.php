@@ -51,10 +51,23 @@ return [
     // label would turn every editor's preview pane into its site.
     'reserved_labels' => ['www', 'api', 'admin', 'app', 'staging', 'portal', 'mail', 'manara', 'mec', 'alrazi', 'preview'],
 
-    // Custom domains one Pages project may carry, as the plan records it
-    // (docs/manara-studio-w1.md, S3). Studio reports how close the project is
-    // and refuses to attach past it.
-    'pages_domain_ceiling' => 100,
+    // Custom domains one Pages project may carry: 100 on Free, 250 on Pro, 500
+    // on Business (developers.cloudflare.com/pages/platform/limits, "Last
+    // updated Sep 5, 2026"). Studio reports how close the project is and
+    // refuses to attach past it. A plan upgrade is an env change, not a code
+    // one (W2 S1). Anything that is not a whole number above zero (a blank
+    // line, which the staging deny-list leaves for every CLOUDFLARE_* key, or
+    // a typo) reads as the Free plan's 100: a ceiling of 0 would refuse every
+    // attach, and a guess above the real one would let a POST discover it.
+    'pages_domain_ceiling' => filter_var(
+        env('CLOUDFLARE_PAGES_DOMAIN_CEILING'),
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 1]],
+    ) ?: 100,
+
+    // Percentages of the ceiling at which `domains:capacity` emails the owner,
+    // once each (owner, 2026-09-24: "keep me up to date"; W2 §8 OQ7).
+    'pages_domain_notice_at' => [50, 70, 85, 95],
 
     'api_base' => 'https://api.cloudflare.com/client/v4',
 
