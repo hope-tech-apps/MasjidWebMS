@@ -40,6 +40,7 @@ class StudioJumuahShiftsTest extends TestCase
         $jumaa = $this->jumaaAfterProvisioning(['jumaa_times' => ['12:30', '13:30'], 'jumaa_iqama' => '13:15']);
 
         $this->assertSame('12:30', substr((string) $jumaa->iqama, 0, 5));
+        $this->assertFalse($jumaa->isPlaceholder(), 'supplied times are never the W2 S18 placeholder');
         $this->assertSame([
             ['time' => '12:30', 'khateeb_name' => null, 'khateeb_title' => null, 'khutbah_title' => null],
             ['time' => '13:30', 'khateeb_name' => null, 'khateeb_title' => null, 'khutbah_title' => null],
@@ -70,6 +71,7 @@ class StudioJumuahShiftsTest extends TestCase
         $jumaa = $this->jumaaAfterProvisioning(['jumaa_times' => ['13:10']]);
 
         $this->assertSame('13:10', substr((string) $jumaa->iqama, 0, 5));
+        $this->assertFalse($jumaa->isPlaceholder());
         $this->assertNull($jumaa->getAttributes()['shifts'] ?? null);
         $this->assertNull($jumaa->shifts);
         $this->assertSame([], $jumaa->athans);
@@ -80,10 +82,12 @@ class StudioJumuahShiftsTest extends TestCase
     {
         $default = $this->jumaaAfterProvisioning([]);
         $this->assertSame('13:30', substr((string) $default->iqama, 0, 5), 'the provisioner\'s default, as before');
+        $this->assertTrue($default->isPlaceholder(), 'nobody supplied it, so it stays flagged (W2 S18)');
         $this->assertNull($default->getAttributes()['shifts'] ?? null);
 
         $legacy = $this->jumaaAfterProvisioning(['jumaa_iqama' => '13:15']);
         $this->assertSame('13:15', substr((string) $legacy->iqama, 0, 5), 'an older draft\'s single time');
+        $this->assertFalse($legacy->isPlaceholder());
         $this->assertNull($legacy->getAttributes()['shifts'] ?? null);
     }
 
