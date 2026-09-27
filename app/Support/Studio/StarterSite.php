@@ -189,23 +189,14 @@ final class StarterSite
         $plan = self::plan($org, $presetKey, $f);
 
         return DB::transaction(function () use ($org, $plan) {
-            $taken = Page::withTrashed()->where('masjid_id', $org->id)->pluck('id', 'slug')->all();
-            $result = [
-                'preset' => $plan->preset,
-                'created' => [],
-                'skipped' => [],
-                'sections_active' => 0,
-                'sections_inactive' => [],
-                'placeholders_open' => 0,
-            ];
+            $held = self::heldPages($org);
+            $taken = array_map(fn (array $page) => $page['id'], $held);
 
             $written = [];
             $pageIds = $taken;
 
             foreach ($plan->pages as $page) {
                 if (array_key_exists($page['slug'], $taken)) {
-                    $result['skipped'][] = $page['slug'];
-
                     continue;
                 }
 
@@ -223,7 +214,6 @@ final class StarterSite
 
                 $pageIds[$page['slug']] = $row->id;
                 $written[] = [$row, $page];
-                $result['created'][] = $page['slug'];
             }
 
             foreach ($written as [$row, $page]) {
@@ -246,33 +236,92 @@ final class StarterSite
                     ]);
 
                     $row->sections()->attach($stored->id, ['order' => $index + 1, 'platforms' => null]);
-
-                    $open = array_values(array_filter($section['placeholders'], fn (array $p) => $p['open']));
-                    $result['placeholders_open'] += count($open);
-
-                    if ($section['is_active']) {
-                        $result['sections_active']++;
-
-                        continue;
-                    }
-
-                    $result['sections_inactive'][] = [
-                        'page' => $page['slug'],
-                        'slot' => $section['slot'],
-                        'section_type' => $section['section_type'],
-                        'title' => $section['title'],
-                        // Why it waits, in the operator's words: the open
-                        // essential placeholders, or the review a person owes.
-                        'hints' => array_values(array_unique(array_map(
-                            fn (array $p) => $p['hint_text'],
-                            array_filter($open, fn (array $p) => $p['essential']),
-                        ))),
-                    ];
                 }
             }
 
-            return $result;
+            return self::outcome($plan, $held);
         });
+    }
+
+    /**
+     * The pages an organisation already holds, trashed or not, by slug: the
+     * slugs applyTo() skips. Also studio:apply-layout's dry run, so the dry
+     * run and the write cannot disagree about what is skipped.
+     *
+     * @return array<string, array{id: int, trashed: bool}>
+     */
+    public static function heldPages(Masjid $org): array
+    {
+        $held = [];
+
+        foreach (Page::withTrashed()->where('masjid_id', $org->id)->get(['id', 'slug', 'deleted_at']) as $page) {
+            $held[$page->slug] = ['id' => (int) $page->id, 'trashed' => $page->deleted_at !== null];
+        }
+
+        return $held;
+    }
+
+    /**
+     * What applyTo() writes, or would write, for `$plan` on an organisation
+     * that holds `$held`: the pages created and skipped, the sections active
+     * and inactive, the placeholders opened. applyTo() returns exactly this
+     * after its writes, and studio:apply-layout prints it without them.
+     *
+     * @param  array<string, mixed>  $held  keyed by slug (heldPages())
+     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int}
+     */
+    public static function outcome(StarterPlan $plan, array $held): array
+    {
+        $result = [
+            'preset' => $plan->preset,
+            'created' => [],
+            'skipped' => [],
+            'sections_active' => 0,
+            'sections_inactive' => [],
+            'placeholders_open' => 0,
+        ];
+
+        foreach ($plan->pages as $page) {
+            if (array_key_exists($page['slug'], $held)) {
+                $result['skipped'][] = $page['slug'];
+
+                continue;
+            }
+
+            $result['created'][] = $page['slug'];
+        }
+
+        foreach ($plan->pages as $page) {
+            if (array_key_exists($page['slug'], $held)) {
+                continue;
+            }
+
+            foreach ($page['sections'] as $section) {
+                $open = array_values(array_filter($section['placeholders'], fn (array $p) => $p['open']));
+                $result['placeholders_open'] += count($open);
+
+                if ($section['is_active']) {
+                    $result['sections_active']++;
+
+                    continue;
+                }
+
+                $result['sections_inactive'][] = [
+                    'page' => $page['slug'],
+                    'slot' => $section['slot'],
+                    'section_type' => $section['section_type'],
+                    'title' => $section['title'],
+                    // Why it waits, in the operator's words: the open
+                    // essential placeholders, or the review a person owes.
+                    'hints' => array_values(array_unique(array_map(
+                        fn (array $p) => $p['hint_text'],
+                        array_filter($open, fn (array $p) => $p['essential']),
+                    ))),
+                ];
+            }
+        }
+
+        return $result;
     }
 
     /** A seeded form's id by its template slug, or null when this org has none. */

@@ -4478,3 +4478,30 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-27 — Studio W2 S11: `studio:apply-layout` for an existing organisation
+
+`php artisan studio:apply-layout {masjid_id} {preset} {--with-theme-layout} {--execute}`
+gives an organisation that already exists a Studio starter site.
+
+- **Dry run by default.** Without `--execute` it prints what would be written
+  and writes nothing. The printout is `StarterSite::outcome(plan, heldPages)`,
+  which is also what `applyTo()` now returns after its writes, so the dry run
+  and the write cannot disagree (`the_dry_run_reports_exactly_what_execute_writes`).
+  `applyTo()`'s result-building moved into `outcome()` unchanged, and the slugs it
+  skips are `StarterSite::heldPages()` (trashed or not, as before).
+- **Refusals, each with its own sentence, exit 1, nothing written:** no such
+  organisation; an archived (trashed) one; a preset not in
+  `LayoutPresets::keysFor($org->orgType())`; the Website module off; and
+  `--with-theme-layout` on an organisation with no `theme_settings` row.
+- **Never overwrites.** `applyTo()` skips every slug the organisation holds and
+  never updates or restores; the printout names each skipped slug and whether
+  the page there is live or trashed.
+- **`tokens.layout` only with `--with-theme-layout`** (plan R13): it moves a
+  live site's header and footer. Only that token changes; the pages and it
+  commit together.
+- **After commit:** the renderer purge, and one `Log::warning` with the
+  operator's OS user (posix, plus `SUDO_USER` when set) and the counts.
+- **English labels** until S12 gives organisations a stored website locale.
+- Running it against a live organisation adds pages and sections under slugs it
+  does not hold, so it needs the owner's go per organisation.
