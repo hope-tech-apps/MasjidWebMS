@@ -82,9 +82,12 @@ use LogicException;
  * a hold is written only for a buyer that import did not bring over. That
  * order is ENFORCED, not advised: the contact import never releases a
  * suppression, so a buyer held here first would stay unmailed though Wix says
- * SUBSCRIBED. A plan that would create contacts before the contact import has
- * linked any contact in the organisation blocks, unless the caller passes
- * `$allowHeldContacts` (`--without-contact-import`) to accept exactly that.
+ * SUBSCRIBED, until staff record the person's consent on the member record
+ * (the hold is one of EmailSuppression::STAFF_LIFTABLE_REASONS; DECISIONS.md
+ * 2026-09-27 says why the contact import does not lift it). A plan that
+ * would create contacts before the contact import has linked any contact in
+ * the organisation blocks, unless the caller passes `$allowHeldContacts`
+ * (`--without-contact-import`) to accept exactly that.
  *
  * ---------------------------------------------------------------------------
  * SAFE BY CONSTRUCTION (the crm:import-ledger / schools:import-roster shape)

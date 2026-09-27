@@ -55,11 +55,15 @@ use Illuminate\Database\Eloquent\Model;
  * a staff button that re-enables mail to somebody who opted out is the button
  * that turns a compliance obligation into a complaint.
  *
- * The one row staff MAY lift is an import's `not_opted_in` precaution, which
- * records no request from anybody — only that the old platform never had
- * consent. The person it silences never receives a broadcast, so the
+ * The rows staff MAY lift are the two an import writes because it has no
+ * consent on record (STAFF_LIFTABLE_REASONS): the contact import's
+ * `not_opted_in` precaution and the order-history import's hold. Neither
+ * records a request from anybody — only that no consent to email was on
+ * record in Manara (the order import never read the old platform's consent at
+ * all). A real opt-out landing on either replaces its reason, so it stops
+ * being liftable (EmailSuppressionService::suppress()). The person they silence never receives a broadcast, so the
  * subscriber's own link can never reach them; without a staff path "never
- * opted in on Wix" would mean "can never opt in". Lifting it requires the
+ * opted in on Wix" would mean "can never opt in". Lifting one requires the
  * staff member's evidence of consent given in Manara and is written onto the
  * row (`release_source`, `release_evidence`, `released_by_user_id`;
  * EmailSuppressionService::liftPrecaution). Every other reason, `bounce`
@@ -124,11 +128,39 @@ class EmailSuppression extends Model
     public const REASON_NOT_OPTED_IN = 'not_opted_in';
 
     /**
-     * The reasons an import writes as its OWN precaution rather than on the
-     * person's request. Shown differently in the directory, and removed by the
-     * undo of the run that inserted them.
+     * The reasons the Wix CONTACT import writes as its own precaution rather
+     * than on the person's request, and which that import's undo deletes from
+     * the rows its run inserted (WixContactImport::undo).
+     *
+     * REASON_ORDER_HISTORY_HOLD is deliberately NOT here, although it is also
+     * an import's precaution (DECISIONS.md 2026-09-27). Each import's undo
+     * deletes a row only when two keys agree: the run's own record of the row
+     * (`import_links` for the contact import, `historical_import_records` for
+     * the order import) AND a reason from that import's own vocabulary. Kept
+     * disjoint, a provenance record that ever pointed at the other import's
+     * row still could not delete it. The shared meaning — "no consent on
+     * record, staff may lift it" — is STAFF_LIFTABLE_REASONS below.
      */
     public const PRECAUTION_REASONS = [self::REASON_NOT_OPTED_IN, self::REASON_BOUNCE];
+
+    /**
+     * The reasons staff may lift by recording consent given in Manara
+     * (EmailSuppressionService::liftPrecaution): each was written by an import
+     * because no consent to email was on record in Manara, never on anybody's
+     * request. The contact import writes `not_opted_in` after reading that Wix
+     * had none; the order-history import holds every buyer it creates without
+     * reading Wix's email status at all, so a hold can sit on an address Wix
+     * lists as subscribed. Every reason not listed — an unsubscribe, a manual
+     * opt-out, a complaint, an imported opt-out, a bounce, and any reason added
+     * later — stays the subscriber's to release.
+     *
+     * Because the reason alone decides what staff may lift, a real opt-out that
+     * lands on one of these rows REPLACES the reason rather than being dropped
+     * as "already suppressed" (EmailSuppressionService::suppress(), and the
+     * contact import's own write): otherwise an unsubscribe would sit under a
+     * reason staff can lift. The replaced reason is kept in `held_reason`.
+     */
+    public const STAFF_LIFTABLE_REASONS = [self::REASON_NOT_OPTED_IN, self::REASON_ORDER_HISTORY_HOLD];
 
     /** `release_source` when staff recorded consent given in Manara (see liftPrecaution). */
     public const RELEASE_STAFF_RECORDED_CONSENT = 'staff_recorded_consent';
@@ -147,9 +179,11 @@ class EmailSuppression extends Model
      * already a contact carrying their Wix consent, the order import links to
      * them, and this hold is written only for a buyer that import did not bring
      * over. Run the other way round, a buyer who is subscribed on Wix stays held
-     * until someone decides otherwise, which errs towards not mailing. A later
-     * consent decision may lift a hold of THIS reason; every other reason keeps
-     * the release-only rule above.
+     * until someone decides otherwise, which errs towards not mailing: the
+     * contact import counts such an address and does not release it
+     * (DECISIONS.md 2026-09-27). Staff may lift a hold of THIS reason by
+     * recording the person's consent (STAFF_LIFTABLE_REASONS); every other
+     * reason keeps the release-only rule above.
      */
     public const REASON_ORDER_HISTORY_HOLD = 'order_history_import';
 
@@ -163,6 +197,8 @@ class EmailSuppression extends Model
         'release_source',
         'release_evidence',
         'released_by_user_id',
+        'held_reason',
+        'held_since',
     ];
 
     protected function casts(): array
@@ -170,6 +206,7 @@ class EmailSuppression extends Model
         return [
             'suppressed_at' => 'datetime',
             'released_at' => 'datetime',
+            'held_since' => 'datetime',
         ];
     }
 

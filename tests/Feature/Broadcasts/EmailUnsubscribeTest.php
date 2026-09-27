@@ -786,8 +786,8 @@ class EmailUnsubscribeTest extends TestCase
             // untouched; it decides nothing about any send.
             'app/Services/Imports/WixContactImport.php',
             // Staff recording consent given in Manara, which lifts an import's
-            // `not_opted_in` precaution and refuses every other reason. It
-            // writes the list; it decides nothing about any send.
+            // `not_opted_in` precaution or order-history hold and refuses every
+            // other reason. It writes the list; it decides nothing about any send.
             'app/Http/Controllers/AdminDashboard/ContactEmailConsentController.php',
             // The Wix order-history import (DECISIONS.md 2026-09-25) WRITES a
             // hold for a buyer it had to create, reads whether the address
