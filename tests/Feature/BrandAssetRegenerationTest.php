@@ -237,7 +237,7 @@ class BrandAssetRegenerationTest extends TestCase
     public function the_renderer_purge_is_scheduled_after_commit(): void
     {
         config(['services.renderer' => [
-            'secret' => 'test-renderer-secret',
+            'secret' => 'test-renderer-secret-0123456789abcdef', // RendererConfig needs 32+ characters
             'preview_origin' => 'https://renderer.example.test',
             'purge_origins' => 'https://renderer.example.test',
             'admin_origins' => 'https://masjid.hopetechapps.com',
