@@ -45,7 +45,7 @@ class StudioApplyLayoutCommandTest extends TestCase
         $org = Masjid::create([
             'name' => 'Layout Org ' . uniqid(),
             'email' => 'layout' . uniqid() . '@test.local',
-            'phone' => '+15550001111',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
             'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
             'latitude' => 0.0, 'longitude' => 0.0, 'org_type' => $orgType,
         ]);
@@ -225,7 +225,7 @@ class StudioApplyLayoutCommandTest extends TestCase
     public function execute_schedules_a_renderer_purge(): void
     {
         config(['services.renderer' => [
-            'secret' => 'test-renderer-secret',
+            'secret' => 'test-renderer-secret-0123456789abcdef', // RendererConfig needs 32+ characters
             'preview_origin' => 'https://renderer.example.test',
             'purge_origins' => 'https://renderer.example.test',
             'admin_origins' => 'https://masjid.hopetechapps.com',
