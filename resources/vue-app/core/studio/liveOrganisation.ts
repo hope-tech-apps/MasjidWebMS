@@ -114,6 +114,7 @@ function identityRows(identity: StudioOrganisationIdentity, options: StudioOptio
         { term: 'Type', detail: orgTypeName(options, identity.org_type) || NOT_SET },
         { term: 'Website address', detail: text(identity.slug) },
         { term: 'Description', detail: excerpt(identity.description) },
+        { term: 'Website language', detail: identity.website_locale === 'ar' ? 'Arabic (right to left)' : identity.website_locale === 'en' ? 'English' : 'Not chosen (English)' },
         { term: 'Email', detail: text(identity.email) },
         { term: 'Phone', detail: text(identity.phone) },
         { term: 'Address', detail: text(identity.address) },

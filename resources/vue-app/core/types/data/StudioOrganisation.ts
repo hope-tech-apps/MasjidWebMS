@@ -9,7 +9,7 @@
  * {id}/preview answers the draft preview's shape), and a feature entry is the
  * catalogue's own `StudioCatalogueEntry` with the organisation's effective value.
  */
-import type { StudioAccountMode, StudioCatalogueEntry, StudioColourKey } from "@/core/types/data/Studio";
+import type { StudioAccountMode, StudioCatalogueEntry, StudioColourKey, StudioWebsiteLocale } from "@/core/types/data/Studio";
 import type { OrgType } from "@/core/types/data/Vertical";
 
 /** `OrganisationSnapshot::SECTIONS`: Studio's section order, plus `apps`. */
@@ -22,6 +22,8 @@ export type StudioOrganisationIdentity = {
     org_type: OrgType;
     slug: string | null;
     description: string | null;
+    /** W2 S12: null is "not chosen", which renders English. */
+    website_locale: StudioWebsiteLocale | null;
     email: string | null;
     phone: string | null;
     address: string | null;

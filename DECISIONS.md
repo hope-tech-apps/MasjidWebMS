@@ -4478,3 +4478,34 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-27 — Studio W2 S12: an organisation's website language, shipped dark for Arabic
+
+`masjids.website_locale` (string(8), nullable; `Masjid::WEBSITE_LOCALES = ['en','ar']`;
+denylisted from the public directory) is the language an organisation's WEBSITE renders
+in (plan R11: per organisation, so the starter labels and the site's chrome agree).
+
+- **Provisioning.** A draft's `identity.website_locale` flows through
+  `toProvisionPayload` into `ProvisionMasjidRequest` (optional; absent is exactly
+  today's provision) and is stored by the provisioner only when sent.
+  `StarterFacts::fromMasjid` now reads the organisation's own `website_locale` when the
+  caller names no locale, so provisioning and `studio:apply-layout` word starter pages in
+  it; a locale with no label table reads as `en`, as before.
+- **Arabic ships dark.** `LayoutPresets::websiteLocales()` is `WEBSITE_LOCALES` filtered
+  to those with a `studio_layouts.labels.*` table. It feeds both the Step 0 select (via
+  `/onboarding/options` → `website_locales`) and Step 3's rule, which refuses `ar` with
+  "An Arabic website cannot be provisioned yet: its starter labels have not been
+  reviewed." `labels.ar` is absent. The proposed table is
+  `docs/manara-studio-w2-arabic-labels.md`, for a fluent reader the owner names; when it
+  ships, the config comment records the reviewer and date.
+- **Lookup.** `OrganizationByHostController` adds `locale` last, and only when set (the
+  W1 R11 pattern), so every live organisation's answer is byte-identical;
+  `OrganizationByHostTest`'s key-set test was extended on purpose (six keys unset, seven
+  set). The renderer keeps it from S13.
+- **Live organisations.** `PATCH /api/admin/studio/organisations/{id}/website-locale`
+  (`locale` = en|ar|empty to clear), Studio's one own writer on a live organisation
+  because no other screen holds the datum. It is NOT gated on the label table (that
+  table words starter pages; this changes the renderer's chrome, whose Arabic catalogue
+  exists). After the write it schedules the renderer purge and logs a warning with the
+  actor. Studio's live view shows it beside Identity with a confirm dialog that says the
+  site turns right-to-left and needs the owner's go.

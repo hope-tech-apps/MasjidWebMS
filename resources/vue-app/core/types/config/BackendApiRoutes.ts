@@ -299,4 +299,6 @@ export type BackendApiRoute =
     // icon and share image, below. All SuperAdmin-only.
     | `/api/admin/studio/organisations/${number}`
     | `/api/admin/studio/organisations/${number}/preview`
+    // W2 S12: a live organisation's website language.
+    | `/api/admin/studio/organisations/${number}/website-locale`
     | `/api/admin/masjids/${string}/brand-assets/regenerate`

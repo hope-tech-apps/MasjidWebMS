@@ -37,6 +37,8 @@ export type StudioIdentity = {
     slug?: string | null;
     /** Public copy, published verbatim (R12). */
     description?: string | null;
+    /** The website's language (W2 S12): 'en' | 'ar', or unset (renders English). */
+    website_locale?: StudioWebsiteLocale | null;
     /** Internal only; never leaves the draft (R12). */
     vibe?: string | null;
     donation_link?: string | null;
@@ -200,7 +202,16 @@ export type StudioVerticalOption = {
     terminology: Terminology;
 };
 
+/** Masjid::WEBSITE_LOCALES (W2 S12). */
+export type StudioWebsiteLocale = 'en' | 'ar';
+
 export type StudioOptions = {
+    /**
+     * The website languages Studio can provision now (LayoutPresets::websiteLocales):
+     * Arabic appears only once its reviewed starter labels ship. Optional so an
+     * older payload reads as English only.
+     */
+    website_locales?: StudioWebsiteLocale[];
     verticals: StudioVerticalOption[];
     default_org_type: OrgType;
     prayer: {
