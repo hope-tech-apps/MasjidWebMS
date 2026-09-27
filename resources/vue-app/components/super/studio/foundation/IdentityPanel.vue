@@ -153,6 +153,17 @@
             <p class="studio-hint">{{ (identity.description ?? '').length }} / 300</p>
         </div>
 
+        <!-- Studio W2 S12: offered languages come from the server, so Arabic
+             appears only once its reviewed starter labels have shipped. -->
+        <div class="studio-field">
+            <label for="studio-website-locale">Website language</label>
+            <select id="studio-website-locale" v-model="websiteLocale" class="dashboard-input">
+                <option v-for="option in websiteLocaleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <p v-if="!arabicOffered" class="studio-hint">Arabic is offered once its starter page wording has been reviewed.</p>
+            <p v-else-if="websiteLocale === 'ar'" class="studio-hint">The website reads right to left, and its starter pages are worded in Arabic.</p>
+        </div>
+
         <div class="studio-field">
             <label for="studio-vibe">Vibe <span class="text-muted fw-normal">(internal, never published)</span></label>
             <textarea id="studio-vibe" v-model="identity.vibe" rows="3" maxlength="2000" class="dashboard-input"></textarea>
@@ -179,7 +190,7 @@ import ApiService from '@/core/services/ApiService';
 import { asksPrayer } from '@/core/studio/foundationGate';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { MasjidAdmin } from '@/core/types/data/Admin';
-import { StudioDomainCheck, StudioSlugCheck as SlugCheckState } from '@/core/types/data/Studio';
+import { StudioDomainCheck, StudioSlugCheck as SlugCheckState, StudioWebsiteLocale } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { AxiosError } from 'axios';
@@ -194,6 +205,25 @@ const store = useStudioDraftStore();
 const usersStore = useUsersStore();
 
 const identity = computed(() => store.answers.identity);
+
+// ---- Website language (W2 S12) ----
+const LOCALE_LABELS: Record<StudioWebsiteLocale, string> = { en: 'English', ar: 'Arabic (right to left)' };
+const offeredLocales = computed<StudioWebsiteLocale[]>(() => store.options?.website_locales ?? ['en']);
+const arabicOffered = computed(() => offeredLocales.value.includes('ar'));
+/** A draft that already holds a language the server no longer offers still shows it, so nothing is silently changed. */
+const websiteLocaleOptions = computed(() => {
+    const values = new Set<StudioWebsiteLocale>(offeredLocales.value);
+    if (identity.value.website_locale) values.add(identity.value.website_locale);
+    return Array.from(values).map((value) => ({ value, label: LOCALE_LABELS[value] ?? value }));
+});
+/** Unset reads as English, which is what an unset organisation renders. */
+const websiteLocale = computed<StudioWebsiteLocale>({
+    get: () => identity.value.website_locale ?? 'en',
+    set: (value) => {
+        if (!store.editable) return;
+        identity.value.website_locale = value;
+    },
+});
 const verticals = computed(() => store.options?.verticals ?? []);
 const selectedVertical = computed(() => verticals.value.find((v) => v.org_type === identity.value.org_type) ?? null);
 

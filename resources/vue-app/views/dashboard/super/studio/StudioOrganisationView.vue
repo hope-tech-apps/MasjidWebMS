@@ -44,6 +44,8 @@
                             <LiveSectionCard v-else-if="isReadOnly(key)" :title="SECTION_TITLES[key]" :rows="rowsOf(key)"
                                 :edit-in="editInOf(key)" :screen="EDIT_SCREENS[key]" :org-id="orgId"
                                 :empty-text="EMPTY_SECTION_TEXT[key]" />
+                            <!-- W2 S12: the website language has no other screen, so Studio edits it beside Identity. -->
+                            <LiveWebsiteLocaleCard v-if="key === 'identity'" />
                         </template>
                     </div>
 
@@ -85,6 +87,7 @@ import LiveBrandCard from '@/components/super/studio/live/LiveBrandCard.vue';
 import LiveFeaturesCard from '@/components/super/studio/live/LiveFeaturesCard.vue';
 import LivePreviewColumn from '@/components/super/studio/live/LivePreviewColumn.vue';
 import LiveSectionCard from '@/components/super/studio/live/LiveSectionCard.vue';
+import LiveWebsiteLocaleCard from '@/components/super/studio/live/LiveWebsiteLocaleCard.vue';
 import { QSwal } from '@/core/plugins/SweetAlerts2';
 import { EDIT_IN_STUDIO, EDIT_SCREENS, EMPTY_SECTION_TEXT, SECTION_TITLES, orgTypeName, sectionRows, SectionRow } from '@/core/studio/liveOrganisation';
 import { StudioOrganisationSectionKey } from '@/core/types/data/StudioOrganisation';

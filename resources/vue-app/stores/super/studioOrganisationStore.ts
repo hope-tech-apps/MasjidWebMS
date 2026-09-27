@@ -5,7 +5,7 @@ import ApiService from "@/core/services/ApiService";
 import { serverMessage } from "@/core/helpers/serverMessage";
 import { isThemeHex } from "@/core/studio/foundationGate";
 import { PREVIEW_DEBOUNCE_MS } from "@/stores/super/studioDraftStore";
-import { StudioColourKey, StudioPreview } from "@/core/types/data/Studio";
+import { StudioColourKey, StudioPreview, StudioWebsiteLocale } from "@/core/types/data/Studio";
 import {
     StudioBrandAssets,
     StudioCapabilitiesOutcome,
@@ -81,6 +81,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     const savingFeatures = ref(false);
     const savingColours = ref(false);
     const regenerating = ref(false);
+    const savingLocale = ref(false);
 
     let generation = 0;
     let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -396,7 +397,33 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         }
     }
 
+    /**
+     * The organisation's website language (W2 S12), Studio's one writer of its
+     * own on a live organisation. '' clears the choice. Purges the renderer.
+     */
+    async function saveWebsiteLocale(locale: StudioWebsiteLocale | ''): Promise<Outcome<null>> {
+        const current = snapshot.value;
+        if (!current) return { ok: false, message: 'No organisation is open.' };
+
+        const body = new URLSearchParams();
+        body.append('locale', locale);
+
+        const gen = generation;
+        savingLocale.value = true;
+
+        try {
+            await ApiService.patch(`/api/admin/studio/organisations/${current.org.id}/website-locale`, body);
+            if (gen === generation) await fetchSnapshot(current.org.id);
+            return { ok: true, data: null };
+        } catch (failure) {
+            return { ok: false, message: serverMessage(failure, 'The website language could not be saved.') };
+        } finally {
+            if (gen === generation) savingLocale.value = false;
+        }
+    }
+
     return {
+        savingLocale, saveWebsiteLocale,
         snapshot, loading, error, fetchSnapshot, reset,
         featureEntries, pendingCapabilities, capabilityChanges, setCapability, discardCapabilities,
         savedColours, pendingColours, colours, changedColours, coloursComplete, setColour, discardColours,
