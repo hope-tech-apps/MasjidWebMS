@@ -156,7 +156,10 @@ class CollapseAliasCommandTest extends TestCase
 
         $this->assertSame('refused', $this->collapse($imported, true, 1)['outcome']);
 
-        $imported->forceFill(['source' => MasjidDomain::SOURCE_STUDIO])->save();
+        // A Studio row in the same place (written past the model: since W2 S6
+        // only `domains:imported` may turn an imported row into another kind).
+        MasjidDomain::query()->whereKey($imported->id)->update(['source' => MasjidDomain::SOURCE_STUDIO]);
+        $imported->refresh();
         config(['cloudflare.redirect_zones' => []]);
         $out = $this->collapse($imported, true, 1);
         $this->assertStringContainsString('cloudflare.redirect_zones', $out['reason']);

@@ -4466,3 +4466,15 @@ Review fixes (2026-09-28):
   stays; detach accepts either that CNAME or the placeholder A for a redirect row.
 - **A verified redirect row is not re-checked.** S4's daily probe is for serving hosts; a redirect
   host has no admission to lose. It is excluded from S4's selection and from W1's reads.
+
+## 2026-09-27 — Studio W2 S6 (the tool for imported rows): the calls made while building
+- **Two model invariants, both lifted only inside `reclassifyImported()`.** A `reserved` row's
+  status (W1's rule) and, new, an imported row's `source` and any row's `adopted_from_import_at`
+  cannot change on a save anywhere else. W1's writers never touch either column, so nothing live
+  changes; three of this track's own S3–S5 tests that set those columns on a saved row now write
+  past the model, as the tool's result would look.
+- **`list` probes but writes nothing.** "Whether a probe matches now" is a GET of each host's own
+  `/api/tenant` through `DomainProbe::probe()`, which stamps nothing; `release` probes the same
+  way before refusing a host that serves its own organisation.
+- **The ledger keeps a released row's id without a foreign key**, so the record of a release
+  outlives the row it released.

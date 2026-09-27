@@ -214,7 +214,10 @@ class DomainDetacherTest extends TestCase
         $this->assertSame(DetachResult::REFUSED, $result->outcome);
         $this->assertStringContainsString('imported from the live host map', implode(' ', $result->manualSteps));
 
-        $imported->forceFill(['source' => MasjidDomain::SOURCE_STUDIO, 'adopted_from_import_at' => now()])->save();
+        // As `domains:imported adopt` leaves a row (W2 S6), written past the
+        // model, which refuses that change anywhere but in the tool.
+        MasjidDomain::query()->whereKey($imported->id)->update(['source' => MasjidDomain::SOURCE_STUDIO, 'adopted_from_import_at' => now()]);
+        $imported->refresh();
         $this->assertSame(DetachResult::REFUSED, $this->detacher()->detach($imported)->outcome);
 
         $this->assertSame(MasjidDomain::STATUS_ACTIVE, $imported->fresh()->status);

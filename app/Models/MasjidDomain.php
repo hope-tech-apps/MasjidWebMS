@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use LogicException;
 
@@ -123,6 +125,13 @@ class MasjidDomain extends Model
 
     public const CORS_ORIGINS_TTL = 300;
 
+    /**
+     * Set only inside reclassifyImported() (W2 S6): the one moment a
+     * `reserved` row may change status, or an imported row stop being
+     * imported. Everything else that saves such a row is refused.
+     */
+    private static bool $reclassifying = false;
+
     /** The column defaults, so an unsaved row already reads as the database will store it. */
     protected $attributes = [
         'status' => self::STATUS_PENDING,
@@ -207,9 +216,22 @@ class MasjidDomain extends Model
             // one (manualSteps() says so).
             if ($domain->exists
                 && $domain->getOriginal('status') === self::STATUS_RESERVED
-                && $domain->isDirty('status')) {
+                && $domain->isDirty('status')
+                && ! self::$reclassifying) {
                 throw new LogicException(
                     "masjid_domains row for {$domain->host} is reserved and cannot become {$domain->status}."
+                );
+            }
+
+            // An imported row stays imported, and no saved row gains or loses
+            // the mark of having been adopted from the import, except through
+            // the reviewed tool (W2 S6, reclassifyImported()).
+            if ($domain->exists
+                && ! self::$reclassifying
+                && (($domain->getOriginal('source') === self::SOURCE_IMPORTED && $domain->isDirty('source'))
+                    || $domain->isDirty('adopted_from_import_at'))) {
+                throw new LogicException(
+                    "masjid_domains row for {$domain->host} came from the live host map; only `domains:imported` may change that."
                 );
             }
 
@@ -571,7 +593,9 @@ class MasjidDomain extends Model
      */
     public function deletableThroughStudio(): bool
     {
-        return $this->source !== self::SOURCE_IMPORTED
+        // ownedByStudio(), not just "not imported": a row adopted from the
+        // import keeps an imported row's protections for its life (W2 S6).
+        return $this->ownedByStudio()
             && ! $this->cf_zone_created
             && $this->cf_zone_id === null
             && $this->cf_dns_record_id === null
@@ -702,6 +726,106 @@ class MasjidDomain extends Model
     public function zoneRemovalStep(): string
     {
         return "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
+    }
+
+    /**
+     * Adopt an imported, reserved row for Studio (W2 S6; `domains:imported
+     * adopt`): it becomes a `studio` row, `pending`, stamped
+     * `adopted_from_import_at`, so the attacher may attach it. That stamp keeps
+     * an imported row's protections for its life: never detached, never
+     * demoted automatically. The ONLY code path that may change an imported or
+     * reserved row this way; it writes one ledger row in the same transaction
+     * and a warning, which production logs.
+     *
+     * A `manual` or `active` row is refused: it is serving, and `pending` is
+     * outside the scope CORS and card-payment returns admit, so adopting it
+     * would withdraw both at once.
+     */
+    public function reclassifyImported(string $to, string $operator, string $reason): void
+    {
+        if ($to !== MasjidDomainChange::ACTION_ADOPT) {
+            throw new InvalidArgumentException("An imported row can only be adopted, not made [{$to}].");
+        }
+
+        if ($this->source !== self::SOURCE_IMPORTED || $this->status !== self::STATUS_RESERVED) {
+            throw new LogicException("Only an imported, reserved row can be adopted; {$this->host} is {$this->source} and {$this->status}.");
+        }
+
+        $this->ledgered(MasjidDomainChange::ACTION_ADOPT, $operator, $reason, function () {
+            self::$reclassifying = true;
+
+            try {
+                $this->forceFill([
+                    'source' => self::SOURCE_STUDIO,
+                    'status' => self::STATUS_PENDING,
+                    'adopted_from_import_at' => now(),
+                    'waiting_on' => null,
+                    'last_error' => null,
+                    'stage_started_at' => null,
+                    'next_check_at' => null,
+                ])->save();
+            } finally {
+                self::$reclassifying = false;
+            }
+        });
+    }
+
+    /**
+     * Release an imported, reserved row (W2 S6; `domains:imported release`):
+     * the row goes, so its host is free to be attached again. The caller has
+     * already probed the host and refused if it serves its organisation.
+     */
+    public function releaseImported(string $operator, string $reason): void
+    {
+        if ($this->source !== self::SOURCE_IMPORTED || $this->status !== self::STATUS_RESERVED) {
+            throw new LogicException("Only an imported, reserved row can be released; {$this->host} is {$this->source} and {$this->status}.");
+        }
+
+        $this->ledgered(MasjidDomainChange::ACTION_RELEASE, $operator, $reason, fn () => $this->delete());
+    }
+
+    /** Run one change with its ledger row, in one transaction, then say so at warning. */
+    private function ledgered(string $action, string $operator, string $reason, callable $change): void
+    {
+        if (blank($operator) || blank($reason)) {
+            throw new InvalidArgumentException('A change to an imported web address needs an operator and a reason.');
+        }
+
+        $before = $this->ledgerShape();
+
+        DB::transaction(function () use ($action, $operator, $reason, $change, $before) {
+            $change();
+
+            MasjidDomainChange::create([
+                'masjid_domain_id' => $this->id,
+                'host' => $this->host,
+                'action' => $action,
+                'before' => $before,
+                'after' => $this->exists ? $this->ledgerShape() : null,
+                'operator' => $operator,
+                'reason' => $reason,
+            ]);
+        });
+
+        Log::warning("An imported web address was changed: {$action}.", [
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'masjid_id' => (int) $this->masjid_id,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+    }
+
+    /** @return array<string, mixed> what the ledger records of a row */
+    private function ledgerShape(): array
+    {
+        return [
+            'masjid_id' => (int) $this->masjid_id,
+            'host' => $this->host,
+            'status' => $this->status,
+            'source' => $this->source,
+            'adopted_from_import_at' => $this->adopted_from_import_at?->toIso8601String(),
+        ];
     }
 
     /**

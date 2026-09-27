@@ -252,7 +252,13 @@ class DomainReconfirmationTest extends TestCase
         $this->assertCount(2, $monitors->lines);
 
         // Adopted from the import (S6) is the same.
-        $row->forceFill(['source' => MasjidDomain::SOURCE_STUDIO, 'adopted_from_import_at' => now(), 'serving_miss_count' => 5, 'serving_missed_since' => now()->subWeek()])->save();
+        // As `domains:imported adopt` leaves a row (W2 S6), written past the
+        // model, which refuses that change anywhere but in the tool.
+        MasjidDomain::query()->whereKey($row->id)->update([
+            'source' => MasjidDomain::SOURCE_STUDIO, 'adopted_from_import_at' => now(),
+            'serving_miss_count' => 5, 'serving_missed_since' => now()->subWeek(),
+        ]);
+        $row->refresh();
         $this->nextDay($row);
         $this->assertNotNull($row->serving_confirmed_at);
     }
