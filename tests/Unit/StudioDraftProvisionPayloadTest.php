@@ -161,6 +161,21 @@ class StudioDraftProvisionPayloadTest extends TestCase
         $this->assertFalse($shows(['org_type' => 'school'], ['iqama' => $five]), 'a school is never asked for iqama');
     }
 
+    /**
+     * W2 S18: the tick greys out the Jumu'ah field too, so a Jumu'ah time typed
+     * before it is not sent, and the provisioner stores its flagged placeholder.
+     * Without the tick the typed time is sent as given.
+     */
+    #[Test]
+    public function the_tick_also_wins_over_a_jumuah_time_typed_before_it(): void
+    {
+        $payload = fn (array $prayer) => $this->draft(['identity' => ['org_type' => 'masjid'], 'prayer' => $prayer])->toProvisionPayload();
+
+        $this->assertArrayNotHasKey('jumaa_iqama', $payload(['iqama_given' => false, 'jumaa_iqama' => '13:15']));
+        $this->assertSame('13:15', $payload(['jumaa_iqama' => '13:15'])['jumaa_iqama']);
+        $this->assertSame('13:15', $payload(['iqama_given' => null, 'jumaa_iqama' => '13:15'])['jumaa_iqama'], 'only the tick itself drops it');
+    }
+
     #[Test]
     public function an_empty_draft_flattens_to_hidden_iqama_and_nothing_else_even_with_secrets_typed(): void
     {

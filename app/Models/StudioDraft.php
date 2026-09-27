@@ -307,6 +307,16 @@ class StudioDraft extends Model
         // invented 20/10/10/5/10.
         $payload['show_iqama_times'] = $this->showsIqama();
 
+        // The "client has not given iqama times" tick greys out the Jumu'ah
+        // field too, and the preview drops its row (PrayerPanel.vue), so a time
+        // typed before the tick was not given: the tick wins, as it already does
+        // over offsets typed before it. Without `jumaa_iqama` the provisioner
+        // stores its flagged placeholder and no screen draws Jumu'ah (W2 S18).
+        // The draft keeps the typed value for the day the tick is removed.
+        if (($this->section('prayer')['iqama_given'] ?? null) === false) {
+            unset($payload['jumaa_iqama']);
+        }
+
         $capabilities = $this->section('features')['capabilities'] ?? null;
         if (is_array($capabilities)) {
             $payload['capabilities'] = $capabilities;

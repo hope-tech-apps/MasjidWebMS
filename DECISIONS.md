@@ -4241,3 +4241,70 @@ several. `applyAtCreation` stays Studio's creation-time writer.
   (before the organisation is looked up), then 404, then Giving.
 - The live panel is unchanged and keeps sending one key per request. Studio's
   live-organisation Features card (S9) is the bulk caller.
+
+## 2026-09-27 — Studio W2 S18: the D11 board, and Jumu'ah shown only when supplied
+
+Built by track T4 across three repos: this one (2afd6dc2, live), Android (`efb82f3`, merged)
+and iOS (`e9d74dc` on main: MasjidKit, MasjidTV and the iPhone Friday card; the TV board reaches
+Burlington only with its next TV release). The
+calls below are where the build departs from, or answers, `docs/manara-studio-w2.md` §S18.
+
+- **The flag.** `jumaa_settings.is_default` is nullable with no backfill: true = the 13:30
+  placeholder provisioning writes when no `jumaa_iqama` is given (same truthiness as the old
+  `?: '13:30'`), false = a person gave the time (provisioning with one, or any admin Jumu'ah
+  save), NULL = every row that predates the column, which is every live organisation. The column
+  is `$hidden`, because the row is serialized raw into `/prayers/settings`, the admin screen and
+  every Friday's `prayers.jumaa_data`; it reaches clients only as `jumaa_is_default: true`, sent
+  only when true. Every reader (MasjidKit `suppliedJumaa`, iPhone `showsJumaa`, Android
+  `suppliedJumaa`) treats only `true` as "do not draw", and still receives the row. The
+  provision snapshots were re-recorded for the one new column; the response body did not change.
+- **What an admin save supplies (review fix, `fix/studio-s18-review`).** The admin Jumu'ah screen
+  has had no iqama field since 1c92bbb5; it posts athans and shifts. The first build cleared the
+  flag on every save, which promoted the invented 13:30 iqama to a time someone gave, and the
+  board would have drawn "Iqama 1:30 PM" and counted down to it. Now an iqama in the request is
+  supplied; athans or shifts on the placeholder supply Jumu'ah and DROP the placeholder iqama
+  (the column is nullable); a save with no time leaves the placeholder flagged; a row that
+  predates the flag (every live organisation) keeps its iqama untouched.
+- **The Studio tick wins over a typed Jumu'ah time (review fix).** "Client has not given iqama
+  times" greys out the Jumu'ah field and drops its preview row, so `toProvisionPayload` no
+  longer sends a `jumaa_iqama` typed before the tick, and the organisation provisions with the
+  flagged placeholder, as the tick already wins over typed offsets. The draft keeps the value.
+- **Rolling back needs the migration too.** Pre-S18 `JumaaSetting` has no `$hidden`, so old code
+  with the column present adds `"is_default": null` to every organisation's Jumu'ah payload. A
+  rollback runs `migrate:rollback` for `2026_09_27_130000_add_is_default_to_jumaa_settings_table`
+  and flushes the prayer-settings cache.
+- **Iqama visibility (the plan's Unknown): answered.** `/prayers/settings` already carries
+  `iqama.show_iqama_times` (the W1 S8 "client gave no iqama times" signal). The board draws no
+  Iqama column and no iqama countdown when it is false; absent means shown. All five live
+  organisations send true.
+- **The countdown** runs to the earliest moment still ahead: the adhan, then the iqama once the
+  adhan has passed (an iqama at or before its own adhan is ignored), then the next adhan. On a
+  Friday whose Jumu'ah is drawn, each Jumu'ah time ("Khutbah in") and the Jumu'ah iqama take
+  Dhuhr's place; a placeholder Friday counts to Dhuhr. Sunrise is never a target.
+- **Events are text slides.** `/events` has no image field, so "an image or a text slide" is
+  text only. The 14-day, six-event window is kept on the board, but the feed itself answers
+  yesterday to six days ahead (`EventsController`); widening it would change the phone apps'
+  payload, so it was not done.
+- **Tests that moved.** No organisation, live or staging, had an event to record, so
+  `tests/fixtures/mobile-events.json` is pinned to the endpoint's own serialization by
+  `MobileEventsPayloadContractTest`, and MasjidKit decodes a byte-identical copy.
+  `SignageStoreTests.events_keep_the_last_good_value_on_failure` became MasjidKit
+  `EventsRefreshTests`, driving `KeepLastGood` through `MasjidAPIClient` and a stubbed session,
+  because MasjidTV has no test target.
+- **Digits and language.** Board labels follow the Apple TV's language (a String Catalog, English
+  and Arabic, marked needs-review for the owner). Every number the board prints goes through one
+  locale, `BoardFormat.numberLocale`: en_US_POSIX in English, as before, and Arabic words with
+  Latin digits in Arabic, never the device region's digits. **Owner, 2026-09-28: Latin digits
+  on the Arabic board**, which is what that function does; it is the one place to change if that
+  ever changes. Still open with the owner: whether the language should follow the
+  organisation's `website_locale` once S12 lands, and the labels themselves (needs-review).
+- **Light theme.** tv-config `theme: "light"` drew white text on a light background; a palette
+  gives it dark ink. Every dark value is the literal the views used before.
+
+Observed, not changed (a decision for the owner, before the first Studio app ships): a Jumu'ah
+time supplied at provisioning is stored only as the Jumu'ah `iqama`, with no `athans`, and both
+phone apps draw Jumu'ah from `athans`/`shifts`, so a Studio client that gave a time sees an empty
+(iPhone) or no (Android) Friday card until an admin saves the Jumu'ah screen with times; the TV
+board does draw it. That predates S18. Teaching the phones to fall back to `iqama` would start
+drawing Al-Razi's and BISS's stored 13:30 too (their rows predate the flag), so it is not a
+silent fix.

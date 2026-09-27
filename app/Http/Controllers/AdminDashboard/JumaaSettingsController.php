@@ -42,10 +42,21 @@ class JumaaSettingsController extends Controller
                 ->all();
             $payload['shifts'] = count($shifts) ? $shifts : null;
 
-            // A person saved this screen, so the time is theirs now, not the
-            // provisioning placeholder (W2 S18): /prayers/settings stops sending
-            // `jumaa_is_default` and the board and the apps draw Jumu'ah again.
-            $payload['is_default'] = false;
+            // Whether this save SUPPLIES the Jumu'ah time (W2 S18). The screen has
+            // had no iqama field since 1c92bbb5: it sends athans and shifts. So an
+            // iqama in the request is a time someone gave. Athans or shifts on the
+            // provisioning placeholder supply Jumu'ah, but not its invented 13:30
+            // iqama, which is dropped rather than promoted to a time nobody gave
+            // (the board would draw it and count down to it). A save that sends
+            // none of them leaves the placeholder flagged. Rows that predate the
+            // flag (every live organisation) keep their iqama untouched.
+            $suppliesTimes = count($payload['athans'] ?? []) > 0 || count($shifts) > 0;
+            if ($request->filled('iqama')) {
+                $payload['is_default'] = false;
+            } elseif ($jumaaSettings?->isPlaceholder() && $suppliesTimes) {
+                $payload['iqama'] = null;
+                $payload['is_default'] = false;
+            }
 
             if ($jumaaSettings) {
                 // Reset athans before update so a missing value clears the field.
