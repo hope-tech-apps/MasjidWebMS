@@ -96,32 +96,40 @@ class CurriculumController extends TeacherController
     /**
      * The guide's standards, matched against what a teacher is typing into the
      * lesson plan's Standard field — a code in any spelling ("NC.3.NF.1",
-     * "3.nf.1", "nf1") or the words the guide uses for it ("fractions").
+     * "3.nf.1", "nf1") or the words the guide uses for it ("fractions",
+     * "counting", "hifz" for the guide's "ḥifẓ").
      *
-     * The whole guide is searched and the grade and subject the form already
-     * names rank FIRST rather than filter: a Grade 3 Maths plan that cites an
-     * ELA code is unusual, not wrong, and a filter would answer it with nothing.
+     * The whole guide is searched and the form's grade and subject rank FIRST
+     * rather than filter: a Grade 3 Maths plan that cites an ELA code is
+     * unusual, not wrong, and a filter would answer it with nothing.
      *
      * Ranked in PHP, not SQL: a school's guide is a few thousand rows at most,
-     * and "3nf1" matching "NC.3.NF.1" needs punctuation stripped on both sides,
-     * which no portable LIKE can do.
+     * and "3nf1" meeting "NC.3.NF.1", or "tahara" meeting "ṭahāra", needs both
+     * sides folded the same way, which no portable LIKE or collation does.
      */
     public function standards(Request $request, $masjid_id): JsonResponse
     {
-        $q = trim((string) $request->query('q', ''));
-        $grade = (string) $request->query('grade', '');
-        $subject = (string) $request->query('subject', '');
-        $week = (int) $request->query('week', 0);
+        // Called per keystroke, so the query is bounded before any work: a long
+        // or array-valued parameter is a 422, never a 500 or a slow scan.
+        $valid = $request->validate([
+            'q' => ['nullable', 'string', 'max:64'],
+            'grade' => ['nullable', 'string', 'max:32'],
+            'subject' => ['nullable', 'string', 'max:64'],
+            'week' => ['nullable', 'integer', 'min:0', 'max:60'],
+        ]);
+
+        $q = trim((string) ($valid['q'] ?? ''));
+        $grade = (string) ($valid['grade'] ?? '');
+        $subject = (string) ($valid['subject'] ?? '');
+        $week = (int) ($valid['week'] ?? 0);
 
         $needle = self::squash($q);
-        $words = array_values(array_filter(
-            preg_split('/[^\p{L}\p{N}]+/u', self::fold($q)) ?: [],
-            fn (string $w): bool => mb_strlen($w) >= 2
-        ));
 
         if (mb_strlen($needle) < 2) {
             return $this->matches([]);
         }
+
+        $words = self::words($q);
 
         $rows = CurriculumWeek::query()
             ->orderBy('grade_label')->orderBy('subject')->orderBy('week_no')
@@ -133,6 +141,7 @@ class CurriculumController extends TeacherController
         // practice standard can carry nineteen), and each wording is a
         // different thing to put in a plan.
         $found = [];
+        $codeMatched = false;
 
         foreach ($rows as $row) {
             $score = self::score($row, $needle, $words);
@@ -141,11 +150,13 @@ class CurriculumController extends TeacherController
                 continue;
             }
 
+            $codeMatched = $codeMatched || $score >= self::CODE_MATCH;
             $key = implode("\0", [$row->grade_label, $row->subject, (string) $row->standard_code, $row->focus]);
 
             if (! isset($found[$key])) {
                 $found[$key] = [
                     'score' => $score,
+                    'scope' => self::scope($row, $grade, $subject),
                     'in_scope' => ($grade === '' || $row->grade_label === $grade)
                         && ($subject === '' || $row->subject === $subject),
                     'row' => $row,
@@ -156,9 +167,19 @@ class CurriculumController extends TeacherController
             $found[$key]['weeks'][] = (int) $row->week_no;
         }
 
+        // A query that names a code is a code search. The words its letters
+        // happen to start ("ri" from "RI.5.1", "nc" from "NC.4.G.1") are noise
+        // beside the standard the teacher actually typed.
+        if ($codeMatched) {
+            $found = array_filter($found, fn (array $f): bool => $f['score'] >= self::CODE_MATCH);
+        }
+
         $ranked = collect($found)
             ->sortBy([
-                fn (array $a, array $b): int => $b['in_scope'] <=> $a['in_scope'],
+                // The exact code typed, wherever it lives.
+                fn (array $a, array $b): int => ($b['score'] === self::EXACT) <=> ($a['score'] === self::EXACT),
+                // Then the form's own grade and subject, then its grade alone.
+                fn (array $a, array $b): int => $b['scope'] <=> $a['scope'],
                 fn (array $a, array $b): int => $b['score'] <=> $a['score'],
                 // The week the form is on, when the guide teaches it then.
                 fn (array $a, array $b): int => in_array($week, $b['weeks'], true) <=> in_array($week, $a['weeks'], true),
@@ -181,6 +202,9 @@ class CurriculumController extends TeacherController
                     'week_no' => in_array($week, $f['weeks'], true) ? $week : $f['weeks'][0],
                     'assessment_formative' => $row->assessment_note,
                     'prefill_source' => $row->source_label,
+                    // False when the form names a grade or subject this row is
+                    // not, so the list can say where its own suggestions end.
+                    'in_scope' => $f['in_scope'],
                 ];
             })
             ->values()
@@ -192,6 +216,23 @@ class CurriculumController extends TeacherController
     /** Enough to choose from; a longer list means the teacher should type more. */
     private const MAX_MATCHES = 12;
 
+    /** Words past this add nothing a teacher meant and cost a scan each. */
+    private const MAX_WORDS = 6;
+
+    private const EXACT = 100;
+
+    /** The lowest score that means "the query is inside a code". */
+    private const CODE_MATCH = 60;
+
+    /** Words that describe nothing, so a row need not contain them. */
+    private const STOP_WORDS = [
+        'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'into',
+        'is', 'it', 'of', 'on', 'or', 'the', 'to', 'with',
+    ];
+
+    /** Endings dropped so "fluency" meets "fluently" and "rhyming" meets "rhyme". */
+    private const SUFFIXES = ['ations', 'ation', 'ings', 'ing', 'ions', 'ion', 'ies', 'es', 'ly', 'cy', 'ed', 's'];
+
     private function matches(array $matches): JsonResponse
     {
         return response()->json([
@@ -201,18 +242,49 @@ class CurriculumController extends TeacherController
     }
 
     /**
-     * Lower case, with apostrophes dropped rather than treated as a break:
-     * the guide's "Qur’an" (U+2019) must answer a teacher typing "quran".
+     * Lower case, without diacritics or apostrophes, so a teacher typing plain
+     * letters on a phone meets the guide's transliterations: "hifz" is
+     * "ḥifẓ", "tahara" is "ṭahāra", and "quran" is "Qur’an" (U+2019). The
+     * ʿayn and hamza half-rings are letters to Unicode, not marks, so they are
+     * dropped by name with the apostrophes.
      */
     private static function fold(string $s): string
     {
-        return mb_strtolower(str_replace(["\u{2019}", "'", "\u{02BC}", "\u{2018}"], '', $s));
+        $s = str_replace(["\u{2019}", "'", "\u{02BC}", "\u{2018}", "\u{02BE}", "\u{02BF}"], '', $s);
+
+        if (class_exists(\Normalizer::class)) {
+            $s = (string) preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($s, \Normalizer::FORM_D));
+        }
+
+        return mb_strtolower($s);
     }
 
     /** Lower-case letters and digits only, so "NC.3.NF.1" and "3 nf 1" meet. */
     private static function squash(?string $s): string
     {
-        return (string) preg_replace('/[^\p{L}\p{N}]+/u', '', mb_strtolower((string) $s));
+        return (string) preg_replace('/[^\p{L}\p{N}]+/u', '', self::fold((string) $s));
+    }
+
+    /** @return list<string> the words of a string that can describe something */
+    private static function words(string $s): array
+    {
+        $words = array_filter(
+            preg_split('/[^\p{L}\p{N}]+/u', self::fold($s)) ?: [],
+            fn (string $w): bool => mb_strlen($w) >= 2 && ! in_array($w, self::STOP_WORDS, true)
+        );
+
+        return array_slice(array_values(array_unique($words)), 0, self::MAX_WORDS);
+    }
+
+    /**
+     * How near a row is to the form: 3 its grade and subject, 2 its grade, 1 its
+     * subject, 0 neither. A same-grade row in another subject is the same
+     * children, so it outranks the form's subject in another grade.
+     */
+    private static function scope(CurriculumWeek $row, string $grade, string $subject): int
+    {
+        return ($grade !== '' && $row->grade_label === $grade ? 2 : 0)
+            + ($subject !== '' && $row->subject === $subject ? 1 : 0);
     }
 
     /**
@@ -226,7 +298,7 @@ class CurriculumController extends TeacherController
 
         if ($code !== '') {
             if ($code === $needle) {
-                return 100;
+                return self::EXACT;
             }
             // Typed without the state prefix: "3nf1" for "NC.3.NF.1".
             if (str_ends_with($code, $needle)) {
@@ -236,7 +308,7 @@ class CurriculumController extends TeacherController
                 return 80;
             }
             if (str_contains($code, $needle)) {
-                return 60;
+                return self::CODE_MATCH;
             }
         }
 
@@ -244,19 +316,21 @@ class CurriculumController extends TeacherController
             return 0;
         }
 
-        // Every typed word must START a word of the row — "fract" finds
-        // "Fractions", but "oa" (from "OA.5") must not find "goal". The grade
-        // and subject count, so "math fractions" narrows rather than misses.
-        $tokens = preg_split(
-            '/[^\p{L}\p{N}]+/u',
-            self::fold($row->focus . ' ' . $row->subject . ' ' . $row->grade_label)
-        ) ?: [];
+        // Every typed word must meet a word of the row — its start ("fract"
+        // finds "Fractions"), or a longer form of it ("counting" finds "Count"),
+        // or the same stem ("fluency" finds "fluently"). A fragment inside a
+        // word is not a meeting: "oa" from "OA.5" must not find "goal". The
+        // grade and subject count, so "math fractions" narrows rather than misses.
+        $tokens = array_values(array_unique(array_filter(
+            preg_split('/[^\p{L}\p{N}]+/u', self::fold($row->focus . ' ' . $row->subject . ' ' . $row->grade_label)) ?: [],
+            fn (string $t): bool => $t !== '' && ! in_array($t, self::STOP_WORDS, true)
+        )));
 
         foreach ($words as $w) {
             $hit = false;
 
             foreach ($tokens as $t) {
-                if ($t !== '' && str_starts_with($t, $w)) {
+                if (self::meets($w, $t)) {
                     $hit = true;
                     break;
                 }
@@ -268,5 +342,35 @@ class CurriculumController extends TeacherController
         }
 
         return 40;
+    }
+
+    private static function meets(string $word, string $token): bool
+    {
+        if (str_starts_with($token, $word)) {
+            return true;
+        }
+
+        // A longer form of a short word in the guide: "counting" → "Count".
+        // Three letters at least, or "a" would meet everything.
+        if (mb_strlen($token) >= 3 && str_starts_with($word, $token)) {
+            return true;
+        }
+
+        $w = self::stem($word);
+        $t = self::stem($token);
+
+        return mb_strlen($w) >= 3 && mb_strlen($t) >= 3
+            && (str_starts_with($t, $w) || str_starts_with($w, $t));
+    }
+
+    private static function stem(string $word): string
+    {
+        foreach (self::SUFFIXES as $suffix) {
+            if (mb_strlen($word) - mb_strlen($suffix) >= 3 && str_ends_with($word, $suffix)) {
+                return mb_substr($word, 0, -mb_strlen($suffix));
+            }
+        }
+
+        return $word;
     }
 }

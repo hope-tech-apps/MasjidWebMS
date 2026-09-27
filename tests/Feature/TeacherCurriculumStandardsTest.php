@@ -70,6 +70,14 @@ class TeacherCurriculumStandardsTest extends TestCase
             ['Grade 3', 'English Language Arts', 30, 'RF.3.4', 'Read fluently with expression'],
             ['Grade 3', 'English Language Arts', 8, 'SL.3.1', 'Set goals for a collaborative discussion'],
             ['Grade 3', 'Qur’an & Islamic Studies', 4, null, 'Wudu: the steps in order'],
+            ['Grade 3', 'Mathematics', 12, 'NC.3.G.1', 'Right angles and rhombuses'],
+            ['Grade 3', 'English Language Arts', 5, 'RI.3.1', 'Ask and answer questions about a text'],
+            ['Kindergarten', 'Mathematics', 3, 'NC.K.CC.1', 'Count to 100 by ones and tens'],
+            ['Kindergarten', 'Mathematics', 30, 'NC.K.OA.5', 'Add & subtract within 10'],
+            // The guide's own transliterations, as Al-Razi's is spelled.
+            ['Grade 5', 'Qur’an & Islamic Studies', 1, null, 'Tajwīd review; begin Surah Al-Mulk ḥifẓ'],
+            ['Pre-Kindergarten', 'Healthful Living', 2, 'HPD-2', 'ṭahāra: washing hands before eating'],
+            ['Pre-Kindergarten', 'Qur’an & Islamic Studies', 9, null, 'Letter sound ʿayn'],
         ]);
 
         // Another school's guide, with a code the query below would match.
@@ -105,6 +113,7 @@ class TeacherCurriculumStandardsTest extends TestCase
             'week_no' => 20,
             'assessment_formative' => 'Exit ticket',
             'prefill_source' => 'Test pacing guide',
+            'in_scope' => true,
         ], $matches[0]);
     }
 
@@ -133,9 +142,9 @@ class TeacherCurriculumStandardsTest extends TestCase
         $this->assertSame(['NC.3.NF.3'], $this->codes(['q' => 'compare fract']));
         $this->assertSame(['RF.3.4'], $this->codes(['q' => 'fluently']));
 
-        // "oa" is inside "goals" but starts no word of the guide except the
-        // review row's own "OA," — never the discussion standard.
-        $this->assertNotContains('SL.3.1', $this->codes(['q' => 'oa']));
+        // "oal" is inside "goals" and starts no word of the guide, so the
+        // discussion standard is not offered for it.
+        $this->assertSame([], $this->codes(['q' => 'oal']));
     }
 
     #[Test]
@@ -149,6 +158,56 @@ class TeacherCurriculumStandardsTest extends TestCase
             ['NC.4.NF.1', 'NC.3.NF.1'],
             $this->codes(['q' => 'nf1', 'grade' => 'Grade 4', 'subject' => 'Mathematics'])
         );
+    }
+
+    #[Test]
+    public function a_code_the_teacher_typed_outranks_words_its_letters_happen_to_start(): void
+    {
+        // A Grade 3 Maths form citing an ELA code: "ri" starts "Right" in the
+        // form's own subject, and must not push the typed code down or appear.
+        $codes = $this->codes(['q' => 'RI.3.1', 'grade' => 'Grade 3', 'subject' => 'Mathematics']);
+
+        $this->assertSame(['RI.3.1'], $codes);
+    }
+
+    #[Test]
+    public function the_forms_grade_ranks_its_other_subjects_above_other_grades(): void
+    {
+        // "Arabic" is typed by hand (not in the guide), so only the grade can
+        // place anything — it must still place Grade 3 first.
+        $matches = $this->search(['q' => 'nf1', 'grade' => 'Grade 3', 'subject' => 'Arabic']);
+
+        $this->assertSame(['NC.3.NF.1', 'NC.4.NF.1'], array_column($matches, 'standard_code'));
+        $this->assertSame([false, false], array_column($matches, 'in_scope'));
+    }
+
+    #[Test]
+    public function plain_typing_finds_the_guides_transliterations(): void
+    {
+        $this->assertSame(['Tajwīd review; begin Surah Al-Mulk ḥifẓ'], array_column($this->search(['q' => 'hifz']), 'focus'));
+        $this->assertSame(['Tajwīd review; begin Surah Al-Mulk ḥifẓ'], array_column($this->search(['q' => 'tajwid']), 'focus'));
+        $this->assertSame(['HPD-2'], $this->codes(['q' => 'tahara']));
+        $this->assertSame(['Letter sound ʿayn'], array_column($this->search(['q' => 'ayn']), 'focus'));
+    }
+
+    #[Test]
+    public function other_forms_of_a_word_and_filler_words_still_find_it(): void
+    {
+        $this->assertSame(['NC.K.CC.1'], $this->codes(['q' => 'counting']));
+        $this->assertSame(['NC.K.OA.5'], $this->codes(['q' => 'subtraction']));
+        $this->assertSame(['RF.3.4'], $this->codes(['q' => 'fluency']));
+        $this->assertSame(['RF.3.4'], $this->codes(['q' => 'the fluency with expression']));
+    }
+
+    #[Test]
+    public function a_long_or_malformed_query_is_refused_rather_than_scanned(): void
+    {
+        $url = "/api/teacher/masjids/{$this->school->id}/curriculum/standards?";
+
+        $this->getJson($url . http_build_query(['q' => str_repeat('fraction ', 8)]))->assertStatus(422);
+        $this->getJson($url . 'q[]=NF')->assertStatus(422);
+        $this->getJson($url . 'q=NF&grade[]=x')->assertStatus(422);
+        $this->getJson($url . 'q=NF&week=soon')->assertStatus(422);
     }
 
     #[Test]

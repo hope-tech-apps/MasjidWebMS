@@ -100,7 +100,10 @@ Route::prefix('teacher')
                 // GET, so the counted write list is untouched.
                 Route::get('/curriculum', [CurriculumController::class, 'index']);
                 // Type-to-find over the same guide, for the plan's Standard field.
-                Route::get('/curriculum/standards', [CurriculumController::class, 'standards']);
+                // Throttled because it is called per keystroke; the SPA waits
+                // 200 ms between keys, so a teacher typing never reaches it.
+                Route::get('/curriculum/standards', [CurriculumController::class, 'standards'])
+                    ->middleware('throttle:240,1');
                 // The school calendar: which days the school meets, which are
                 // closed and why. A GET, and not capability-gated — a gate decides
                 // what is offered, never what is readable; a school with no
