@@ -4184,3 +4184,18 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   came in with an imported order, and no consent to email is on record in Manara, so it is held";
   only `not_opted_in` says the old website had no consent (`emailConsentPrompt` in `emailOptOut.ts`,
   pinned in `email-opt-out.test.ts`). The `STAFF_LIFTABLE_REASONS` docblock says the same.
+
+## 2026-09-27 — Two couplings to keep in step (recorded at the order-hold ship)
+
+- **The meal doors' per-order cap modes are mirrored by the cart.** The Halal Kitchen door passes
+  `LunchOrderLines::CAP_REFUSE` (`KitchenOrdersController`) and the Friday lunch door passes
+  `CAP_CLAMP` (`JummahLunchOrdersController`). The universal cart's `MealLineSource`
+  (feat/universal-cart, not yet on main) deliberately copies each door's mode rather than
+  choosing one, and always tells the shopper when it clamps. Changing either door's cap mode
+  means changing the basket with it, or the two will disagree about the same order. The
+  lunch-door Stripe fix (01df855a) maps errors only and moves neither mode.
+- **A contact-import undo can delete a row a later batch made stricter.** Batch A inserts a
+  `not_opted_in` row (linked to A); batch B rewrites it to `bounce` because Wix says BOUNCED;
+  undoing A then deletes the row, because `bounce` is in `PRECAUTION_REASONS`. The end state is
+  the same as before the order-hold fix (where B never wrote the bounce and undo A deleted the
+  `not_opted_in` row), so it is not a regression. Accepted as is.
