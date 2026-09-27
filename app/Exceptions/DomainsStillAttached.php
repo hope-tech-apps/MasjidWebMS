@@ -34,9 +34,17 @@ class DomainsStillAttached extends RuntimeException
     private static function describe(int $masjidId, Collection $domains): string
     {
         $lines = ["Organisation #{$masjidId} cannot be permanently deleted: Cloudflare still holds what Studio recorded for "
-            . $domains->count() . ' of its web address(es). Remove those first:'];
+            . $domains->count() . ' of its web address(es). Remove those first.'];
 
-        foreach ($domains as $domain) {
+        $studio = $domains->filter(fn (MasjidDomain $domain) => $domain->ownedByStudio());
+        $other = $domains->reject(fn (MasjidDomain $domain) => $domain->ownedByStudio());
+
+        if ($studio->isNotEmpty()) {
+            $lines[] = "Studio attached {$studio->pluck('host')->implode(', ')}: run `php artisan domains:release {$masjidId}` to see what it would remove"
+                . ' (a dry run), then again with --execute. It removes only what Studio created and lists the rest.';
+        }
+
+        foreach ($other as $domain) {
             $lines[] = "#{$domain->id} {$domain->host}:";
 
             foreach ($domain->removalSteps() as $step) {

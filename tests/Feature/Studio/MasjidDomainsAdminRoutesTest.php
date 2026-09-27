@@ -77,7 +77,8 @@ class MasjidDomainsAdminRoutesTest extends TestCase
                 }
             }
         }
-        $this->assertCount(4, $routes, 'the four domain routes');
+        // Five since W2 S3 added detach; the walk below covers it like the rest.
+        $this->assertCount(5, $routes, 'the five domain routes');
 
         foreach ([
             'a guest' => null,

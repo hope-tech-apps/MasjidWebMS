@@ -183,9 +183,9 @@ class TrashedOrgDomainsTest extends TestCase
                 $this->assertSame($org->id, $refused->masjidId, $case);
                 $this->assertSame([$row->id], $refused->domains->pluck('id')->all(), "{$case}: names only the rows Cloudflare holds records for");
                 $this->assertStringContainsString($row->host, $refused->getMessage());
-                foreach ($row->removalSteps() as $step) {
-                    $this->assertStringContainsString($step, $refused->getMessage(), "{$case}: carries the removal steps");
-                }
+                // W2 S3: a Studio row is released with the command that removes
+                // only what Studio created.
+                $this->assertStringContainsString("php artisan domains:release {$org->id}", $refused->getMessage(), "{$case}: names the release command");
             }
 
             $this->assertNotNull(Masjid::withTrashed()->find($org->id), "{$case}: the organisation is still there");

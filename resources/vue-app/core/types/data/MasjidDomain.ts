@@ -1,6 +1,7 @@
 // One organisation web address, as the SuperAdmin domain routes return it
 // (Manara Studio W1, S7): GET/POST /api/admin/masjids/{masjid_id}/domains,
-// POST .../{domain_id}/refresh and DELETE .../{domain_id}.
+// POST .../{domain_id}/refresh, DELETE .../{domain_id} and (W2 S3)
+// POST .../{domain_id}/detach.
 //
 // Mirrors App\Models\MasjidDomain::toAdminArray(). Everything a screen needs to
 // decide is computed on the server and read here as it arrives: `live_url`
@@ -15,7 +16,8 @@ export type MasjidDomainStatus =
     | 'active'
     | 'manual'
     | 'failed'
-    | 'reserved';
+    | 'reserved'
+    | 'detaching';
 
 /** MasjidDomain::WAITING_ON */
 export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity';
@@ -43,6 +45,21 @@ export interface MasjidDomain {
     manual_steps: string[];
     /** Whether DELETE would answer 204 rather than 409 (R28). */
     deletable: boolean;
+    /** Whether the screen offers Detach (W2 S3): a Studio row Cloudflare holds something for. */
+    detachable: boolean;
+    /** What Detach would do, from MasjidDomain::detachPlan(); null when not detachable. */
+    detach_plan: { would_remove: string[]; manual_steps: string[] } | null;
+}
+
+/** POST .../domains/{domain_id}/detach, `data.result` (App\Services\Domains\DetachResult). */
+export interface MasjidDomainDetachResult {
+    outcome: 'detached' | 'pending';
+    host: string;
+    /** What Studio removed from Cloudflare, in words. */
+    removed: string[];
+    /** What Studio did not create and so left, for a person to remove. */
+    manual_steps: string[];
+    error: string | null;
 }
 
 /** What the list says about the platform's Cloudflare connection. */

@@ -44,6 +44,14 @@ class MasjidDomain extends Model
     public const STATUS_FAILED = 'failed';
     public const STATUS_RESERVED = 'reserved';
 
+    /**
+     * Studio is removing what it created for the host in Cloudflare (W2 S3).
+     * Not served and not trusted from the moment it is set; the row itself
+     * goes once every object Studio made is gone, and `domains:reconcile`
+     * retries a removal that stopped part-way.
+     */
+    public const STATUS_DETACHING = 'detaching';
+
     public const STATUSES = [
         self::STATUS_PENDING,
         self::STATUS_AWAITING_NAMESERVERS,
@@ -52,9 +60,10 @@ class MasjidDomain extends Model
         self::STATUS_MANUAL,
         self::STATUS_FAILED,
         self::STATUS_RESERVED,
+        self::STATUS_DETACHING,
     ];
 
-    /** What the by-host lookup answers for. Not `failed`, never `reserved`. */
+    /** What the by-host lookup answers for. Not `failed` or `detaching`, never `reserved`. */
     public const SERVED = [
         self::STATUS_PENDING,
         self::STATUS_AWAITING_NAMESERVERS,
@@ -105,6 +114,8 @@ class MasjidDomain extends Model
         'status' => self::STATUS_PENDING,
         'source' => self::SOURCE_STUDIO,
         'cf_zone_created' => false,
+        'cf_dns_record_created' => false,
+        'cf_pages_domain_created' => false,
     ];
 
     protected $fillable = [
@@ -119,6 +130,9 @@ class MasjidDomain extends Model
         'cf_dns_record_id',
         'cf_pages_domain_id',
         'cf_zone_created',
+        'cf_dns_record_created',
+        'cf_pages_domain_created',
+        'adopted_from_import_at',
         'nameservers',
         'last_error',
         'last_checked_at',
@@ -134,6 +148,9 @@ class MasjidDomain extends Model
     {
         return [
             'cf_zone_created' => 'boolean',
+            'cf_dns_record_created' => 'boolean',
+            'cf_pages_domain_created' => 'boolean',
+            'adopted_from_import_at' => 'datetime',
             'nameservers' => 'array',
             'last_checked_at' => 'datetime',
             'next_check_at' => 'datetime',
@@ -310,6 +327,14 @@ class MasjidDomain extends Model
             ];
         }
 
+        if ($this->status === self::STATUS_DETACHING) {
+            return [
+                "Studio is removing {$this->host} from Cloudflare, and the site no longer answers for this organisation on it.",
+                ($this->last_error ? "The last attempt stopped: {$this->last_error} " : '')
+                    . 'Studio tries again every five minutes; press Detach to try now.',
+            ];
+        }
+
         // Check now is the way forward for every failed row (it starts the
         // row again from pending). Removing it is offered only when Studio
         // would allow it: a row Cloudflare holds records for is refused a
@@ -318,9 +343,11 @@ class MasjidDomain extends Model
         if ($this->status === self::STATUS_FAILED) {
             return [
                 "Setting up {$this->host} failed" . ($this->last_error ? ": {$this->last_error}" : '.'),
-                $this->deletableThroughStudio()
-                    ? "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted."
-                    : "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
+                match (true) {
+                    $this->deletableThroughStudio() => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted.",
+                    $this->ownedByStudio() => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. If it is not wanted, press Detach: Cloudflare holds records Studio made or found for it, and Detach takes off the ones Studio made before it lets the address go.",
+                    default => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
+                },
             ];
         }
 
@@ -419,41 +446,121 @@ class MasjidDomain extends Model
     }
 
     /**
+     * Whether this row is Studio's to detach (W2 S3): it was added through
+     * Studio and never came from the live host map, directly or through S6's
+     * `adopt`. An imported or adopted row is how a live organisation was
+     * reached before Studio (R28), and keeps that protection for its life.
+     */
+    public function ownedByStudio(): bool
+    {
+        return $this->source === self::SOURCE_STUDIO && $this->adopted_from_import_at === null;
+    }
+
+    /**
+     * Whether the screens offer Detach: a row Studio owns that DELETE would
+     * refuse because Cloudflare holds something for it, or one whose detach
+     * stopped part-way. A row with nothing in Cloudflare is simply removed.
+     */
+    public function detachableThroughStudio(): bool
+    {
+        return $this->ownedByStudio()
+            && ($this->status === self::STATUS_DETACHING || ! $this->deletableThroughStudio());
+    }
+
+    /**
      * What an operator does by hand before this row can go, for the 409 that
-     * refuses its deletion. Studio never removes anything from Cloudflare
-     * (CloudflareService has no delete), so this is the only way it happens.
+     * refuses its deletion. For a row Studio owns, that is only what Studio did
+     * not create itself, then Detach, which removes the rest (W2 S3). An
+     * imported row is not Studio's to remove at all.
      *
      * @return list<string>
      */
     public function removalSteps(): array
     {
-        if ($this->source === self::SOURCE_IMPORTED) {
+        if (! $this->ownedByStudio()) {
             return [
                 "{$this->host} was imported from the live host map: it is how this organisation is reached today, so Studio does not remove it.",
-                'If it really must go, the platform owner removes it with the renderer map and the CORS list in mind; it is not a Studio action in W1.',
+                'If it really must go, the platform owner removes it with the renderer map and the CORS list in mind; it is not a Studio action.',
             ];
         }
 
-        $project = (string) config('cloudflare.pages_project');
         $steps = [];
 
-        if ($this->cf_pages_domain_id !== null) {
-            $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and remove {$this->host}.";
+        if ($this->cf_pages_domain_id !== null && ! $this->cf_pages_domain_created) {
+            $steps[] = $this->pagesDomainRemovalStep();
         }
 
-        if ($this->cf_dns_record_id !== null) {
-            $steps[] = "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the CNAME record for {$this->host}.";
+        if ($this->cf_dns_record_id !== null && ! $this->cf_dns_record_created) {
+            $steps[] = $this->dnsRecordRemovalStep();
         }
 
         if ($this->cf_zone_created) {
-            $steps[] = "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
+            $steps[] = $this->zoneRemovalStep();
         } elseif ($this->cf_zone_id !== null) {
             $steps[] = "Studio found the {$this->zone_apex} zone on Cloudflare and did not create it; leave the zone itself alone.";
         }
 
-        $steps[] = 'Then ask the platform owner to remove this row. Detaching a host is not a Studio action in W1.';
+        $made = array_values(array_filter([
+            $this->cf_pages_domain_id !== null && $this->cf_pages_domain_created ? 'the Pages custom domain' : null,
+            $this->cf_dns_record_id !== null && $this->cf_dns_record_created ? 'the DNS record' : null,
+        ]));
+
+        $steps[] = $made === []
+            ? 'Then press Detach: Studio stops serving the address and forgets it. Nothing it created is left in Cloudflare.'
+            : 'Then press Detach: Studio removes what it created in Cloudflare (' . implode(' and ', $made) . ') and forgets the address.';
 
         return $steps;
+    }
+
+    /**
+     * What detaching this row would do, from its flags alone and with no
+     * request (W2 S3): the objects Studio created, which it removes if a fresh
+     * read shows them unchanged, and the steps left for a person. The Detach
+     * dialog and `domains:release`'s dry run both show this.
+     *
+     * @return array{would_remove: list<string>, manual_steps: list<string>}
+     */
+    public function detachPlan(): array
+    {
+        $remove = [];
+        $manual = [];
+
+        if ($this->cf_pages_domain_id !== null && $this->cf_pages_domain_created) {
+            $remove[] = "the {$this->host} custom domain on the " . config('cloudflare.pages_project') . ' Pages project, if unchanged';
+        } elseif ($this->cf_pages_domain_id !== null) {
+            $manual[] = $this->pagesDomainRemovalStep();
+        }
+
+        if ($this->cf_dns_record_id !== null && $this->cf_dns_record_created) {
+            $remove[] = "the {$this->host} DNS record in the {$this->zone_apex} zone, if unchanged";
+        } elseif ($this->cf_dns_record_id !== null) {
+            $manual[] = $this->dnsRecordRemovalStep();
+        }
+
+        if ($this->cf_zone_created) {
+            $manual[] = $this->zoneRemovalStep();
+        }
+
+        return ['would_remove' => $remove, 'manual_steps' => $manual];
+    }
+
+    /** The dashboard step for a Pages custom domain Studio may not delete. */
+    public function pagesDomainRemovalStep(): string
+    {
+        return 'In Cloudflare, open Workers & Pages, then the ' . config('cloudflare.pages_project')
+            . " project, then Custom domains, and remove {$this->host}.";
+    }
+
+    /** The dashboard step for a DNS record Studio may not delete. */
+    public function dnsRecordRemovalStep(): string
+    {
+        return "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the CNAME record for {$this->host}.";
+    }
+
+    /** A zone is never deleted by Studio, even one it created (W2 S3). */
+    public function zoneRemovalStep(): string
+    {
+        return "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
     }
 
     /**
@@ -484,6 +591,8 @@ class MasjidDomain extends Model
             'live_url' => $this->liveUrl(),
             'manual_steps' => $this->manualSteps(),
             'deletable' => $this->deletableThroughStudio(),
+            'detachable' => $this->detachableThroughStudio(),
+            'detach_plan' => $this->detachableThroughStudio() ? $this->detachPlan() : null,
         ];
     }
 }

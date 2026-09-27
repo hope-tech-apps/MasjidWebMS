@@ -24,7 +24,8 @@ use Illuminate\Support\Facades\Log;
  *  - `cloudflare`: with CLOUDFLARE_STUDIO_TOKEN, one GET of the project's
  *    domain list (CloudflareService::countPagesDomains). The real figure.
  *  - `rows_estimate`: without the token, or when that GET fails, the
- *    `masjid_domains` rows that hold or are acquiring a slot (SLOT_STATUSES).
+ *    `masjid_domains` rows that hold or are acquiring a slot (SLOT_STATUSES,
+ *    and a `detaching` row until its Pages domain is removed).
  *    `reserved` rows are never counted: they hold a host for an organisation
  *    and are not custom domains on the project. Rows of a trashed
  *    organisation ARE counted, because trashing leaves Cloudflare untouched.
@@ -86,7 +87,11 @@ class DomainsCapacity extends Command
         }
 
         $source = $used !== null ? 'cloudflare' : 'rows_estimate';
-        $used ??= MasjidDomain::query()->whereIn('status', self::SLOT_STATUSES)->count();
+        // A `detaching` row still holds its slot until its Pages domain is gone (W2 S3).
+        $used ??= MasjidDomain::query()
+            ->where(fn ($q) => $q->whereIn('status', self::SLOT_STATUSES)
+                ->orWhere(fn ($q) => $q->where('status', MasjidDomain::STATUS_DETACHING)->whereNotNull('cf_pages_domain_id')))
+            ->count();
 
         $percent = $ceiling > 0 ? round($used * 100 / $ceiling, 1) : 100.0;
         $waiting = MasjidDomain::query()->where('waiting_on', 'capacity')->count();

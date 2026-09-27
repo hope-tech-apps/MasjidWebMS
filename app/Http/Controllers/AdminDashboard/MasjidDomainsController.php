@@ -9,7 +9,9 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Services\Cloudflare\CloudflareResult;
 use App\Services\Cloudflare\CloudflareService;
+use App\Services\Domains\DetachResult;
 use App\Services\Domains\DomainAttacher;
+use App\Services\Domains\DomainDetacher;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +19,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * An organisation's web addresses, for SuperAdmins (Manara Studio W1, S7):
- * list them, add one, "Check now", and remove one that Studio never took past
- * this table.
+ * list them, add one, "Check now", remove one that Studio never took past this
+ * table, and (W2 S3) detach one Studio attached, taking what Studio created
+ * for it off Cloudflare.
  *
  * `super` only, and the organisation always comes from the route. Adding a host
  * to a live organisation is a deliberate SuperAdmin act that no W1 flow takes
@@ -140,8 +143,9 @@ class MasjidDomainsController extends Controller
     /**
      * Remove a row only when nothing about it exists outside this table (R28):
      * no Cloudflare id, no zone Studio created, not imported. Otherwise 409
-     * with what to remove by hand, because Studio never deletes anything in
-     * Cloudflare.
+     * with what to remove by hand; for a row Studio owns, Detach (below) is
+     * the way to take what Studio made off Cloudflare. DELETE itself never
+     * sends anything to Cloudflare.
      *
      * Judged under the attacher's own lock, on the row re-read inside it: a
      * step in flight holds what it made in Cloudflare only in memory until its
@@ -168,7 +172,7 @@ class MasjidDomainsController extends Controller
             if (! $domain->deletableThroughStudio()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => $domain->source === MasjidDomain::SOURCE_IMPORTED
+                    'message' => ! $domain->ownedByStudio()
                         ? "{$domain->host} was imported from the live host map and cannot be removed through Studio."
                         : "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
                     'manual_steps' => $domain->removalSteps(),
@@ -181,6 +185,39 @@ class MasjidDomainsController extends Controller
         }
 
         return response()->noContent();
+    }
+
+    /**
+     * Detach a host Studio attached (W2 S3): stop serving it at once, remove
+     * from Cloudflare the objects Studio's own POSTs created, and forget the
+     * row. What Studio did not create is left and listed in `manual_steps`.
+     *
+     * 202 with the result, whether it finished (`detached`) or stopped
+     * part-way (`pending`: the row stays `detaching`, unserved, and
+     * `domains:reconcile` finishes it). 409 for a row that came from the live
+     * host map (imported or adopted: R28 holds, and S6 is their tool) and for
+     * a row another writer holds.
+     */
+    public function detach($masjid_id, $domain_id, DomainDetacher $detacher)
+    {
+        $domain = $this->domain($masjid_id, $domain_id);
+        $result = $detacher->detach($domain, Auth::id());
+
+        if ($result->outcome === DetachResult::REFUSED || $result->outcome === DetachResult::BUSY) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $result->error,
+                'manual_steps' => $result->manualSteps,
+            ], Response::HTTP_CONFLICT);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'result' => $result->toArray(),
+                'domain' => MasjidDomain::find($domain->id)?->toAdminArray(),
+            ],
+        ], Response::HTTP_ACCEPTED);
     }
 
     private function domain($masjidId, $domainId): MasjidDomain

@@ -18,8 +18,9 @@ use LogicException;
  * The token (config `cloudflare.studio_token`) holds Zone Edit on every zone in
  * the account, which includes deleting the zones the live tenants are served
  * from. So this class has no delete method, and request() refuses any verb but
- * GET, POST, PUT and PATCH: the power to remove something from Cloudflare is
- * not in the code at all, and a test pins that. Every write is
+ * GET, POST, PUT and PATCH, and a test pins that. Removing something is
+ * CloudflareRemover's alone (W2 S3): a separate class, small enough to review
+ * line by line, that deletes only objects Studio's own POST created. Every write is
  * create-if-absent, and a DNS record Studio did not create is never changed:
  * ensureCname() adopts a CNAME that already points at the renderer and calls
  * anything else a `conflict`. That is what keeps `burlingtonmasjid.com`,

@@ -5,6 +5,7 @@ import { AxiosResponse } from "axios"
 import {
     MasjidDomain,
     MasjidDomainCheck,
+    MasjidDomainDetachResult,
     MasjidDomainRequest,
     MasjidDomainsPanel,
 } from "@/core/types/data/MasjidDomain"
@@ -16,7 +17,8 @@ import {
  * ## It decides nothing
  *
  * Whether a host is live (`live_url`), what an operator must do by hand
- * (`manual_steps`) and whether a row may be removed (`deletable`) all come off
+ * (`manual_steps`) and whether a row may be removed (`deletable`) or detached
+ * (`detachable`) all come off
  * the wire and are stored as they arrive. Only the server's probe can say a
  * host is serving; a second opinion computed here would be a screen that says
  * "live" over a host that is not.
@@ -128,6 +130,35 @@ export const useMasjidDomainsStore = defineStore("masjidDomainsStore", () => {
         }
     }
 
+    /**
+     * Detach (W2 S3): the server stops serving the host, removes from
+     * Cloudflare what Studio created for it, and forgets the row. The answer
+     * says what was removed and what is left for a person; while a removal is
+     * still going (`pending`) the row comes back `detaching` and stays listed.
+     */
+    async function detach(masjidId: number | string, domainId: number): Promise<MasjidDomainDetachResult> {
+        busy.value = domainId
+        try {
+            const res: AxiosResponse = await ApiService.post(
+                `/api/admin/masjids/${masjidId}/domains/${domainId}/detach`,
+                toForm({})
+            )
+            const result = res.data?.data?.result as MasjidDomainDetachResult | undefined
+            if (res.data?.status !== "success" || !result) {
+                throw new Error("The web address could not be detached.")
+            }
+            const domain = res.data?.data?.domain as MasjidDomain | null | undefined
+            if (domain) {
+                replaceRow(masjidId, domain)
+            } else if (panel.value && panelMasjidId.value === String(masjidId)) {
+                panel.value.domains = panel.value.domains.filter(row => row.id !== domainId)
+            }
+            return result
+        } finally {
+            busy.value = null
+        }
+    }
+
     async function check(body: MasjidDomainRequest): Promise<MasjidDomainCheck> {
         const res: AxiosResponse = await ApiService.post("/api/admin/studio/domains/check", toForm(body))
         if (res.data?.status !== "success" || !res.data?.data) {
@@ -136,5 +167,5 @@ export const useMasjidDomainsStore = defineStore("masjidDomainsStore", () => {
         return res.data.data as MasjidDomainCheck
     }
 
-    return { panel, isLoading, busy, list, create, refresh, remove, check }
+    return { panel, isLoading, busy, list, create, refresh, remove, detach, check }
 })

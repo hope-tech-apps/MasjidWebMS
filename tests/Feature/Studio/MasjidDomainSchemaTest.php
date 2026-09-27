@@ -69,6 +69,43 @@ class MasjidDomainSchemaTest extends TestCase
     }
 
     #[Test]
+    public function the_created_flags_default_to_false_so_no_existing_row_is_ever_deletable_by_detach(): void
+    {
+        // W2 S3. A row that predates the flags must read as "Studio did not
+        // create it": DomainDetacher deletes only what a flag says Studio made.
+        foreach (['cf_dns_record_created', 'cf_pages_domain_created'] as $column) {
+            $this->assertContains(Schema::getColumnType('masjid_domains', $column), ['tinyint', 'boolean', 'integer'], $column);
+        }
+        $this->assertContains(Schema::getColumnType('masjid_domains', 'adopted_from_import_at'), ['timestamp', 'datetime'], 'adopted_from_import_at');
+
+        $id = DB::table('masjid_domains')->insertGetId([
+            'masjid_id' => $this->makeOrg()->id,
+            'host' => 'raw.example.org',
+            'kind' => MasjidDomain::KIND_CUSTOM,
+            'zone_apex' => 'example.org',
+            'cf_dns_record_id' => 'rec-1',
+            'cf_pages_domain_id' => 'pd-1',
+        ]);
+        $row = MasjidDomain::findOrFail($id);
+
+        $this->assertFalse($row->cf_dns_record_created);
+        $this->assertFalse($row->cf_pages_domain_created);
+        $this->assertNull($row->adopted_from_import_at);
+    }
+
+    #[Test]
+    public function detaching_is_a_status_the_row_may_hold_and_is_never_served(): void
+    {
+        $this->assertContains(MasjidDomain::STATUS_DETACHING, MasjidDomain::STATUSES);
+        $this->assertNotContains(MasjidDomain::STATUS_DETACHING, MasjidDomain::SERVED);
+        $this->assertNotContains(MasjidDomain::STATUS_DETACHING, MasjidDomain::TRUSTED);
+
+        $row = $this->makeDomain($this->makeOrg(), 'gone.example.org', MasjidDomain::STATUS_DETACHING);
+        $this->assertSame(MasjidDomain::STATUS_DETACHING, $row->fresh()->status);
+        $this->assertSame([], MasjidDomain::query()->served()->pluck('id')->all());
+    }
+
+    #[Test]
     public function every_index_name_fits_mysqls_64_character_limit(): void
     {
         $names = array_column(Schema::getIndexes('masjid_domains'), 'name');

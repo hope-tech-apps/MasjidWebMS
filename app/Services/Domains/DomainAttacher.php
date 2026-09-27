@@ -53,9 +53,11 @@ use Illuminate\Support\Facades\Cache;
  *    READS only: if Cloudflare's Pages project already lists the host as
  *    active, the row becomes `active`. Nothing is created, changed or retried
  *    for them, whatever Cloudflare says, and they are never failed.
+ *  - `detaching` rows belong to DomainDetacher (W2 S3) and are never advanced.
  *  - `failed` rows are left alone; "Check now" resets one to pending first
  *    (restart()), which is also the only way forward for a failed row that
- *    Cloudflare holds records for, since Studio cannot delete that row (R28).
+ *    Cloudflare holds records for, since DELETE refuses that row (R28); Detach
+ *    (W2 S3, DomainDetacher) takes a Studio row off Cloudflare instead.
  *
  * ## One writer at a time
  *
@@ -280,7 +282,9 @@ class DomainAttacher
 
     private function step(MasjidDomain $domain): void
     {
-        if (in_array($domain->status, [MasjidDomain::STATUS_RESERVED, MasjidDomain::STATUS_FAILED], true)) {
+        // `detaching` belongs to DomainDetacher (W2 S3): attaching it again
+        // mid-removal would re-create what is being taken away.
+        if (in_array($domain->status, [MasjidDomain::STATUS_RESERVED, MasjidDomain::STATUS_FAILED, MasjidDomain::STATUS_DETACHING], true)) {
             return;
         }
 
@@ -356,7 +360,7 @@ class DomainAttacher
             $domain->waiting_on = 'token_scope';
             $domain->last_error = 'Cloudflare refused the token when reading the Pages project: ' . $pages->error;
         } elseif ($pages->is(CloudflareResult::OK) && ($pages->data['status'] ?? null) === 'active') {
-            $domain->cf_pages_domain_id = $pages->data['id'] ?: $domain->cf_pages_domain_id;
+            $this->recordPagesDomainId($domain, (string) $pages->data['id']);
             $domain->cf_zone_id = $pages->data['zone_tag'] ?: $domain->cf_zone_id;
             $domain->status = MasjidDomain::STATUS_ACTIVE;
             $domain->verified_by = MasjidDomain::VERIFIED_BY_CLOUDFLARE;
@@ -501,7 +505,7 @@ class DomainAttacher
         $status = (string) ($pages->data['status'] ?? '');
 
         if ($status === 'active') {
-            $domain->cf_pages_domain_id = $pages->data['id'] ?: $domain->cf_pages_domain_id;
+            $this->recordPagesDomainId($domain, (string) $pages->data['id']);
             $domain->status = MasjidDomain::STATUS_ACTIVE;
             $domain->verified_by = MasjidDomain::VERIFIED_BY_CLOUDFLARE;
             $domain->verified_at = now();
@@ -572,8 +576,14 @@ class DomainAttacher
             return;
         }
 
+        // A flag says Studio's own POST made the object (W2 S3), which is the
+        // only thing DomainDetacher may delete. An adopted record keeps it only
+        // if it is the very record Studio made on an earlier step.
+        $recordId = $cname->data['id'] ?: $domain->cf_dns_record_id;
+        $domain->cf_dns_record_created = $cname->is(CloudflareResult::CREATED)
+            || ($domain->cf_dns_record_created && $recordId === $domain->cf_dns_record_id);
         $domain->cf_zone_id = $zoneId;
-        $domain->cf_dns_record_id = $cname->data['id'] ?: $domain->cf_dns_record_id;
+        $domain->cf_dns_record_id = $recordId;
 
         $pages = $this->cloudflare->ensurePagesDomain($domain->host);
 
@@ -590,12 +600,34 @@ class DomainAttacher
             return;
         }
 
-        $domain->cf_pages_domain_id = $pages->data['id'] ?: $domain->cf_pages_domain_id;
+        $pagesId = $pages->data['id'] ?: $domain->cf_pages_domain_id;
+        $domain->cf_pages_domain_created = $pages->is(CloudflareResult::CREATED)
+            || ($domain->cf_pages_domain_created && $pagesId === $domain->cf_pages_domain_id);
+        $domain->cf_pages_domain_id = $pagesId;
         $domain->status = MasjidDomain::STATUS_PROVISIONING;
         $domain->waiting_on = 'certificate';
         $domain->stage_started_at = now();
         $domain->last_error = null;
         $domain->next_check_at = now()->addMinutes(5);
+    }
+
+    /**
+     * Record the Pages custom domain a read found. A different id than the
+     * one stored is not the domain Studio created, whatever Studio did earlier
+     * (someone removed and re-added the host), so it loses the created flag
+     * that would let detach delete it (W2 S3).
+     */
+    private function recordPagesDomainId(MasjidDomain $domain, string $id): void
+    {
+        if ($id === '') {
+            return;
+        }
+
+        if ($id !== $domain->cf_pages_domain_id) {
+            $domain->cf_pages_domain_created = false;
+        }
+
+        $domain->cf_pages_domain_id = $id;
     }
 
     /**
