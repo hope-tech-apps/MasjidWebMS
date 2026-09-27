@@ -200,6 +200,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/theme/preview-session` |
     `/api/admin/masjids/${string}/theme/preview` |
     `/api/admin/masjids/${string}/pages/preview-session` |
+    // Studio's starter-site checklist (W2 S10), behind the page builder's gates.
+    `/api/admin/masjids/${string}/pages/placeholders` |
     `/api/admin/masjids/${string}/splash-announcements/preview-session` |
     // The organisation's nisab price (T-043c). ONE shape, two verbs: GET returns
     // the stored row plus the nisab reference resolved by the same server code

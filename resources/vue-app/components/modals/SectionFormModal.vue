@@ -290,6 +290,23 @@
                             </small>
                         </div>
 
+                        <!-- Studio's starter placeholders (W2 S10): the open ones, each with
+                             its hint. Nothing for a section without Studio's marker, and no
+                             save path reads this. -->
+                        <div v-if="starterPlaceholders.length > 0" class="alert alert-warning mt-4 mb-0 starter-placeholders">
+                            <div class="fw-semibold mb-2">
+                                <i class="bi bi-pencil-square me-1"></i>Still to fill in this section
+                            </div>
+                            <ul class="mb-0 ps-3">
+                                <li v-for="p in starterPlaceholders" :key="`${p.kind}:${p.field}`" class="mb-1">
+                                    <span class="badge bg-light text-dark border me-1">Starter placeholder</span>
+                                    <code class="me-1">{{ p.field }}</code>
+                                    <span>{{ p.hint_text }}</span>
+                                    <span v-if="p.essential" class="text-muted small ms-1">(needed before this section goes live)</span>
+                                </li>
+                            </ul>
+                        </div>
+
                         <!-- Dynamic Content Editor -->
                         <div v-if="formData.section_type" class="mt-4">
                             <h6 class="mb-3">Section Content</h6>
@@ -430,6 +447,9 @@ const formData = ref<any>({
 
 // Computed
 const isEdit = computed(() => !!props.section);
+
+/** Studio's open starter placeholders for the section being edited (W2 S10); [] without the marker. */
+const starterPlaceholders = computed(() => props.section ? pagesStore.openPlaceholders(props.section.id) : []);
 const sectionTypes = computed(() => pagesStore.sectionTypes);
 
 /**

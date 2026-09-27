@@ -6,6 +6,14 @@
         @pageChange="pageChange"
     >
         <template #headerButtons>
+            <!-- Studio's starter-site checklist (W2 S10). Nothing without Studio's marker. -->
+            <span
+                v-if="checklistOpen > 0"
+                class="badge bg-warning text-dark align-self-center me-2 starter-to-fill-total"
+                :title="checklistTitle"
+            >
+                <i class="bi bi-pencil-square me-1"></i>{{ checklistOpen }} to fill
+            </span>
             <button class="btn btn-outline-primary me-2" @click="router.push('/masjid/sections-library')">
                 <i class="bi bi-collection me-2"></i>
                 Sections Library
@@ -49,6 +57,13 @@
                                 </td>
                                 <td>
                                     <strong>{{ page.title }}</strong>
+                                    <span
+                                        v-if="pagesStore.openCountForPage(page.id) > 0"
+                                        class="badge bg-warning text-dark ms-2 starter-to-fill"
+                                        title="Starter placeholders on this page still to fill"
+                                    >
+                                        {{ pagesStore.openCountForPage(page.id) }} to fill
+                                    </span>
                                 </td>
                                 <td>
                                     <code>/{{ page.slug }}</code>
@@ -138,6 +153,9 @@ import Draggable from 'vuedraggable';
 
 // Lifecycle hooks
 onBeforeMount(async () => {
+    // Not awaited: the checklist is a hint, and the pages must not wait for it.
+    void pagesStore.fetchPlaceholderChecklist();
+
     await pagesStore.fetchMasjidPagesPaginated(1).then(() => {
         paginationOptions.value.itemsTotal = pagesStore.pagesPaginated?.total ?? 0;
         paginationOptions.value.currentPage = pagesStore.pagesPaginated?.current_page ?? 0;
@@ -158,6 +176,15 @@ const selectedPage = ref<Page | undefined>(undefined);
 // Computed
 const pages = computed(() => {
     return pagesStore.pagesPaginated?.data ?? [];
+});
+
+// Studio's starter-site checklist (W2 S10): 0, and so nothing drawn, without the marker.
+const checklistOpen = computed(() => pagesStore.placeholderChecklist?.open ?? 0);
+const checklistTitle = computed(() => {
+    const essential = pagesStore.placeholderChecklist?.essential_open ?? 0;
+    return essential > 0
+        ? `Starter placeholders still to fill on this site. ${essential} of them hold a section back until filled.`
+        : 'Starter placeholders still to fill on this site.';
 });
 
 // Sortable pages (writable computed for v-model)

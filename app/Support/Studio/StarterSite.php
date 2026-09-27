@@ -342,7 +342,10 @@ final class StarterSite
 
         foreach (['essential' => true, 'optional' => false] as $group => $essential) {
             foreach ((array) ($block[$group] ?? []) as $placeholder) {
-                $placeholders[] = self::placeholder($placeholder, $essential, self::isOpen($placeholder, $content, $f, $review));
+                // At plan time nothing is published yet, so a review placeholder
+                // always awaits its review. The page builder's checklist asks the
+                // same method with the section's live state (S10).
+                $placeholders[] = self::placeholder($placeholder, $essential, StarterPlaceholders::isOpen($placeholder, $content, $f, true));
             }
         }
 
@@ -494,25 +497,6 @@ final class StarterSite
     }
 
     /**
-     * Open is computed, never stored: text, image and list placeholders are
-     * open while the content at their field is empty; bound ones while the row
-     * the binder reads has nothing to show; review ones while the section is
-     * unpublished, which at plan time it always is.
-     *
-     * @param  array<string, mixed>  $placeholder
-     * @param  array<string, mixed>  $content
-     */
-    private static function isOpen(array $placeholder, array $content, StarterFacts $f, bool $review): bool
-    {
-        return match ((string) $placeholder['kind']) {
-            'bound' => ! $f->hasBound((string) $placeholder['source']),
-            'review' => true,
-            'text', 'image', 'list' => self::isEmpty(data_get($content, (string) $placeholder['field'])),
-            default => throw new \LogicException("\"{$placeholder['kind']}\" is not a placeholder kind."),
-        };
-    }
-
-    /**
      * Rules 3 and 4 and the page links, applied until nothing moves: omitting
      * a section can empty a page, and deactivating a page can hold back a
      * section on another page that links to it.
@@ -597,6 +581,6 @@ final class StarterSite
 
     private static function isEmpty(mixed $value): bool
     {
-        return $value === null || $value === '' || $value === [];
+        return StarterPlaceholders::isEmpty($value);
     }
 }

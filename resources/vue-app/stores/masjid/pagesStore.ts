@@ -6,6 +6,7 @@ import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
+import { ChecklistPlaceholder, ChecklistSection, PlaceholderChecklist } from "@/core/types/data/masjid-related/PlaceholderChecklist";
 
 export const usePagesStore = defineStore('pagesStore', () => {
 
@@ -14,6 +15,8 @@ export const usePagesStore = defineStore('pagesStore', () => {
     const currentPage = ref<Page>();
     const sectionTypes = ref<SectionTypeInfo[]>([]);
     const sectionsLibrary = ref<PageSection[]>([]);
+    /** Studio's starter-site checklist (W2 S10); null until read, or when it could not be. */
+    const placeholderChecklist = ref<PlaceholderChecklist | null>(null);
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -387,12 +390,62 @@ export const usePagesStore = defineStore('pagesStore', () => {
         return false;
     }
 
+    /**
+     * Studio's starter-site checklist (W2 S10). A failure leaves it null, and
+     * every badge reads null as "nothing to show": the checklist is a hint, and
+     * the page builder must work exactly as before without it.
+     */
+    async function fetchPlaceholderChecklist() {
+        if (!masjidStore.masjid?.id) {
+            return;
+        }
+
+        try {
+            const res: AxiosResponse = await ApiService.get(
+                `/api/admin/masjids/${masjidStore.masjid.id}/pages/placeholders`
+            );
+            placeholderChecklist.value = res.data?.status === 'success' && res.data?.data ? res.data.data : null;
+        } catch (e) {
+            placeholderChecklist.value = null;
+            console.error('Fetch placeholder checklist error: ', e);
+        }
+    }
+
+    /** One section's checklist entry, or undefined for a section with no marker. */
+    function checklistSection(sectionId: number): ChecklistSection | undefined {
+        for (const page of placeholderChecklist.value?.pages ?? []) {
+            const found = page.sections.find((s) => s.section_id === sectionId);
+            if (found) {
+                return found;
+            }
+        }
+        return undefined;
+    }
+
+    /** The open placeholders of one section: [] when it has none, or no marker. */
+    function openPlaceholders(sectionId: number): ChecklistPlaceholder[] {
+        return (checklistSection(sectionId)?.placeholders ?? []).filter((p) => p.open);
+    }
+
+    /** How many placeholders are open on one page, each section counted once. */
+    function openCountForPage(pageId: number): number {
+        const page = placeholderChecklist.value?.pages.find((p) => p.page_id === pageId);
+        return (page?.sections ?? []).reduce((n, s) => n + s.placeholders.filter((p) => p.open).length, 0);
+    }
+
     return {
         // State
         pagesPaginated,
         currentPage,
         sectionTypes,
         sectionsLibrary,
+        placeholderChecklist,
+
+        // Starter-site checklist (Studio W2 S10)
+        fetchPlaceholderChecklist,
+        checklistSection,
+        openPlaceholders,
+        openCountForPage,
 
         // Pages methods
         fetchMasjidPagesPaginated,

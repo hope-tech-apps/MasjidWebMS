@@ -79,4 +79,40 @@ final class StarterPlaceholders
             'placeholders' => $placeholders,
         ]];
     }
+
+    /** The kinds a placeholder can be, each with its own condition in isOpen(). */
+    public const KINDS = ['bound', 'review', 'text', 'image', 'list'];
+
+    /**
+     * Whether a placeholder is open: the ONE implementation, used at plan time
+     * (StarterSite, where it was private until Studio W2 S10) and at read time
+     * (the page builder's checklist), so the two cannot disagree. Open is
+     * computed, never stored (DECISIONS.md 2026-09-24):
+     *
+     *  - text, image and list: while the content at their field is empty;
+     *  - bound: while the row the binder reads has nothing to show;
+     *  - review: while the section awaits its review. At plan time nothing is
+     *    published, so it always does; at read time, while the section is
+     *    inactive.
+     *
+     * @param  array<string, mixed>  $placeholder
+     * @param  array<string, mixed>  $content
+     *
+     * @throws \LogicException for a kind outside KINDS
+     */
+    public static function isOpen(array $placeholder, array $content, StarterFacts $f, bool $awaitingReview): bool
+    {
+        return match ((string) $placeholder['kind']) {
+            'bound' => ! $f->hasBound((string) $placeholder['source']),
+            'review' => $awaitingReview,
+            'text', 'image', 'list' => self::isEmpty(data_get($content, (string) $placeholder['field'])),
+            default => throw new \LogicException("\"{$placeholder['kind']}\" is not a placeholder kind."),
+        };
+    }
+
+    /** '', null and [] are empty; anything else, 0 and false included, is not. */
+    public static function isEmpty(mixed $value): bool
+    {
+        return $value === null || $value === '' || $value === [];
+    }
 }

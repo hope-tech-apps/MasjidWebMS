@@ -505,6 +505,10 @@ Route::prefix('admin')->group(function () {
                 // Live preview of the page builder (docs/live-preview.md): inside this
                 // group, so exactly the people who may save pages may preview them.
                 Route::post('{masjid_id}/pages/preview-session', [LivePreviewController::class, 'pages']);
+                // Studio's starter-site checklist (W2 S10): what is still to fill.
+                // Registered BEFORE the pages group, whose GET /{page_id} would
+                // otherwise take "placeholders" for a page id. A read; no purge.
+                Route::get('{masjid_id}/pages/placeholders', [\App\Http\Controllers\AdminDashboard\PagePlaceholdersController::class, 'index']);
 
                 // `renderer.purge` on the three write groups below: a saved page,
                 // menu order, section or library section is live at once

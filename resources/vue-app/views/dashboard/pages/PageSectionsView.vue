@@ -90,6 +90,21 @@
                                             >
                                                 {{ section.is_active ? 'Active' : 'Inactive' }}
                                             </span>
+                                            <!-- Studio's starter-site checklist (W2 S10). Nothing without Studio's marker. -->
+                                            <span
+                                                v-if="openCount(section.id) > 0"
+                                                class="badge bg-warning text-dark ms-2 starter-to-fill"
+                                                title="Starter placeholders in this section still to fill"
+                                            >
+                                                {{ openCount(section.id) }} to fill
+                                            </span>
+                                            <span
+                                                v-if="!section.is_active && heldUntilFilled(section.id)"
+                                                class="badge bg-light text-dark border ms-2 starter-held"
+                                                title="A starter section stays inactive until its essential placeholders are filled"
+                                            >
+                                                inactive until filled
+                                            </span>
                                         </div>
                                         <h5 class="mb-1">{{ section.title || 'Untitled Section' }}</h5>
                                         <small class="text-muted">
@@ -170,6 +185,10 @@ const selectedSection = ref<PageSection | undefined>(undefined);
 // Computed
 const currentPage = computed(() => pagesStore.currentPage);
 
+// Studio's starter-site checklist (W2 S10): both read [] for a section with no marker.
+const openCount = (sectionId: number) => pagesStore.openPlaceholders(sectionId).length;
+const heldUntilFilled = (sectionId: number) => pagesStore.openPlaceholders(sectionId).some((p) => p.essential);
+
 // Live page preview: bumped after every successful load, so the frame shows what a
 // save (or reorder, or removal) just published.
 const previewAvailable = usePreviewAvailability('pages');
@@ -192,6 +211,10 @@ onBeforeMount(async () => {
 
 // Methods
 const loadData = async () => {
+    // Re-read after every save, so a filled field leaves the count at once.
+    // Not awaited: the checklist is a hint, and the sections must not wait for it.
+    void pagesStore.fetchPlaceholderChecklist();
+
     loading.value = true;
     try {
         await pagesStore.fetchPage(pageId.value);

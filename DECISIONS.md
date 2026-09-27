@@ -4478,3 +4478,45 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-27 — Studio W2 S10: the MasjidAdmin's starter-site checklist
+
+A Studio organisation's admin sees, in their own page builder, which starter
+placeholders are still to fill. `GET /api/admin/masjids/{id}/pages/placeholders`
+(`PlaceholderChecklist::forMasjid`) sits inside the page builder's gates
+(`web_pages` and `website`), registered before the pages group so
+`GET /pages/{page_id}` cannot take "placeholders" for a page id.
+
+- **One implementation of "open".** `StarterSite::isOpen` moved, unchanged in
+  behaviour, to the public `StarterPlaceholders::isOpen($placeholder, $content,
+  $facts, $awaitingReview)`. StarterSite calls it with `true` (at plan time
+  nothing is published, so a review always awaits); the checklist calls it with
+  the section's live state (`! is_active`), its raw stored content and
+  `StarterFacts::fromMasjid`. At provision the two counts are equal, for every
+  preset of every vertical with W1's minimal and maximal facts
+  (`read_time_count_equals_plan_time_count_at_provision`).
+- **Response:** `{open, essential_open, pages:[{page_id, slug, title,
+  sections:[{section_id, title, section_type, active, placeholders:[{field,
+  kind, hint, hint_text, essential, open}]}]}]}`. Two additions to the plan's
+  shape: `hint_text` (the SPA has no copy of `config('studio_layouts.hints')`,
+  and a second copy would be one more list to drift) and `section_type`. Totals
+  count each section once. Pages with no marked section are omitted, so every
+  live organisation gets `pages: []` and both counts 0.
+- **Defensive read.** A marker of another version, or a placeholder of an
+  unknown kind or shape, is left out rather than failing the page builder. Page
+  and Section are hand-scoped, so both queries filter by `masjid_id`, including
+  the sections side of the pivot.
+- **SPA.** `pagesStore.fetchPlaceholderChecklist` (a failure is `null`, drawn as
+  nothing; never awaited by the views). PagesView: a "{n} to fill" chip per page
+  and a total in the header. PageSectionsView: a chip per section and "inactive
+  until filled" for an inactive section with an open essential placeholder; it
+  re-reads after every save, so a filled field lowers the count at once.
+  SectionFormModal: a "Still to fill in this section" list above the editor,
+  each item labelled "Starter placeholder" with its field and hint. The plan
+  said "under each open field"; the editors are ~26 per-type components with
+  no shared field wrapper, so a per-field hint would have touched each of them,
+  and the list keeps every save path untouched. No save path reads the
+  checklist.
+- **The marker survives the page builder's writes** (existing-org recon U3):
+  the modal round-trips `settings`, and the reorder PUTs `order` alone, which
+  the update does not treat as a settings write (`SectionMarkerSurvivesEditsTest`).
