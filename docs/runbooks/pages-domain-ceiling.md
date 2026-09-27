@@ -28,9 +28,11 @@ php artisan domains:capacity --json
 
 `source` says where `used` came from: `cloudflare` (one GET of the project's
 domain list, with `CLOUDFLARE_STUDIO_TOKEN`) or `rows_estimate` (the
-`masjid_domains` rows that hold or are acquiring a slot, without the token or
-when the GET failed; `cloudflare_error` then says why). `clients_left_estimate`
-is an **estimate**: it assumes two hosts per client, an apex and its `www`.
+`masjid_domains` serving rows that hold or are acquiring a slot, without the
+token or when the GET failed; `cloudflare_error` then says why).
+`clients_left_estimate` is an **estimate**: it assumes one slot per new client,
+because since W2 S5 a client's second host is a redirect rule, not a custom
+domain. Clients attached before S5 may still hold two until step 1 below.
 
 ### What counts toward the ceiling
 
@@ -52,7 +54,10 @@ is an **estimate**: it assumes two hosts per client, an apex and its `www`.
    other becomes a Cloudflare redirect rule and uses no slot. This frees one
    slot per two-host client and changes nothing a visitor sees. Tool:
    `php artisan domains:collapse-alias {domain_id}` (W2 S5; dry run unless
-   `--execute`). Until S5 ships, this step is not available.
+   `--execute`). It needs the token's redirect scope (Zone › Single Redirect:
+   Edit) and writes only in a zone Studio created or one listed in
+   `cloudflare.redirect_zones`; live clients attached before Studio (imported
+   rows) are refused.
 2. **Detach the hosts of trashed or departed organisations**, each with the
    owner's go. Tool: `php artisan domains:release {masjid_id}` (W2 S3; dry run
    unless `--execute`). It removes only the Cloudflare objects Studio itself

@@ -67,8 +67,13 @@ class DomainsCapacity extends Command
 
     public const RUNBOOK = 'docs/runbooks/pages-domain-ceiling.md';
 
-    /** Hosts per client behind `clients_left_estimate`: an apex and its `www` (spec §4, D17). */
-    public const HOSTS_PER_CLIENT = 2;
+    /**
+     * Pages slots per client behind `clients_left_estimate`. The spec assumed
+     * two, an apex and its `www` (D17); since W2 S5 the other host is a
+     * redirect rule, so a new client uses one. Live clients attached before
+     * S5 may still hold two until `domains:collapse-alias` runs for them.
+     */
+    public const HOSTS_PER_CLIENT = 1;
 
     public function handle(CloudflareService $cloudflare): int
     {
@@ -88,7 +93,10 @@ class DomainsCapacity extends Command
 
         $source = $used !== null ? 'cloudflare' : 'rows_estimate';
         // A `detaching` row still holds its slot until its Pages domain is gone (W2 S3).
+        // A redirect host uses no slot (W2 S5): only its canonical host is a
+        // custom domain on the project.
         $used ??= MasjidDomain::query()
+            ->where('role', MasjidDomain::ROLE_SERVING)
             ->where(fn ($q) => $q->whereIn('status', self::SLOT_STATUSES)
                 ->orWhere(fn ($q) => $q->where('status', MasjidDomain::STATUS_DETACHING)->whereNotNull('cf_pages_domain_id')))
             ->count();
@@ -110,7 +118,7 @@ class DomainsCapacity extends Command
             'percent' => $percent,
             'waiting_on_capacity' => $waiting,
             'clients_left_estimate' => max(0, intdiv($ceiling - $used, self::HOSTS_PER_CLIENT)),
-            'clients_left_basis' => 'estimate: ' . self::HOSTS_PER_CLIENT . ' hosts per client (an apex and its www)',
+            'clients_left_basis' => 'estimate: one Pages slot per client (its other host, if any, redirects)',
             'notice_at' => $this->thresholds(),
             'notice' => $notice,
             'runbook' => self::RUNBOOK,

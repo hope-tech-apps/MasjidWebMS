@@ -15,6 +15,7 @@ use ReflectionClass;
 use ReflectionMethod;
 use Tests\Feature\Studio\Concerns\FakesCloudflare;
 use Tests\Feature\Studio\Concerns\MakesDetachableDomains;
+use Tests\Feature\Studio\Concerns\MakesRedirectDomains;
 use Tests\Feature\Studio\Concerns\MakesStudioDomains;
 use Tests\TestCase;
 
@@ -27,6 +28,7 @@ class CloudflareRemoverTest extends TestCase
 {
     use FakesCloudflare;
     use MakesDetachableDomains;
+    use MakesRedirectDomains;
     use MakesStudioDomains;
     use RefreshDatabase;
 
@@ -231,6 +233,40 @@ class CloudflareRemoverTest extends TestCase
     }
 
     #[Test]
+    public function a_redirect_rule_is_deleted_by_id_only_while_it_carries_studios_ref(): void
+    {
+        // W2 S5. One rule goes; the client's own rule and the ruleset stay.
+        $org = $this->makeOrg();
+        $apex = $this->redirectRow($org, $this->canonicalRow($org), MasjidDomain::STATUS_MANUAL, [
+            'cf_zone_id' => self::PAIR_ZONE, 'cf_redirect_rule_id' => 'rule-studio',
+            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(),
+        ]);
+
+        $this->fakeCloudflare([
+            'GET ' . self::ENTRYPOINT => $this->cfOk($this->ruleset([$this->clientRule(), $this->studioRule($apex)])),
+            'DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-studio' => $this->cfOk($this->ruleset([$this->clientRule()])),
+        ]);
+        $this->assertSame(CloudflareResult::OK, $this->remover()->removeRedirectRule($apex)->outcome);
+        $this->assertSame(['DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-studio'], $this->deletes());
+
+        // The id now names a rule someone else wrote: left alone.
+        $foreign = ['ref' => 'someone-else'] + $this->studioRule($apex);
+        $this->fakeCloudflare(['GET ' . self::ENTRYPOINT => $this->cfOk($this->ruleset([$this->clientRule(), $foreign]))]);
+        Log::spy();
+        $changed = $this->remover()->removeRedirectRule($apex);
+        $this->assertSame(CloudflareResult::CONFLICT, $changed->outcome);
+        $this->assertSame('changed', $changed->data['reason']);
+
+        // Gone already, or no entry point at all: absent, nothing deleted.
+        $this->fakeCloudflare(['GET ' . self::ENTRYPOINT => $this->cfOk($this->ruleset([$this->clientRule()]))]);
+        $this->assertSame(CloudflareResult::ABSENT, $this->remover()->removeRedirectRule($apex)->outcome);
+        $this->fakeCloudflare(['GET ' . self::ENTRYPOINT => $this->cfError(404, 10003, 'Not found')]);
+        $this->assertSame(CloudflareResult::ABSENT, $this->remover()->removeRedirectRule($apex)->outcome);
+
+        $this->assertCount(1, $this->deletes());
+    }
+
+    #[Test]
     public function no_method_can_delete_a_zone(): void
     {
         $public = array_map(
@@ -238,18 +274,21 @@ class CloudflareRemoverTest extends TestCase
             (new ReflectionClass(CloudflareRemover::class))->getMethods(ReflectionMethod::IS_PUBLIC),
         );
 
-        $this->assertSame(['__construct', 'removepagesdomain', 'removednsrecord'], $public);
+        $this->assertSame(['__construct', 'removepagesdomain', 'removednsrecord', 'removeredirectrule'], $public);
         foreach ($public as $name) {
             $this->assertStringNotContainsString('zone', $name);
         }
 
         // And no path the class can build ends at a zone: every `/zones/`
-        // it writes goes on to a DNS record.
+        // it writes goes on to a DNS record or (W2 S5) one rule of a ruleset.
         $source = (string) file_get_contents((new ReflectionClass(CloudflareRemover::class))->getFileName());
-        preg_match_all("#'/zones/'[^;\\n]*#", $source, $paths);
-        $this->assertNotEmpty($paths[0]);
+        preg_match_all("#'/zones/'[^;]*;#", $source, $paths);
+        $this->assertCount(2, $paths[0]);
         foreach ($paths[0] as $path) {
-            $this->assertStringContainsString("'/dns_records/'", $path);
+            $this->assertTrue(
+                str_contains($path, "'/dns_records/'") || (str_contains($path, "'/rulesets/'") && str_contains($path, "'/rules/'")),
+                "a zone path that is neither a record nor a rule: {$path}",
+            );
         }
     }
 

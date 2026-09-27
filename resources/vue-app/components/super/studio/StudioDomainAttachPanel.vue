@@ -69,7 +69,10 @@
                         <i class="bi bi-clipboard me-1" aria-hidden="true"></i>{{ copied === domain.id ? 'Copied' : 'Copy' }}
                     </button>
 
-                    <span v-if="isConfirmedServing(domain) && domain.status === 'active'" class="badge text-bg-success">
+                    <span v-if="domain.role === 'redirect' && domain.status === 'manual' && domain.verified_at" class="badge text-bg-success">
+                        <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i>Redirecting (301, confirmed by visiting it)
+                    </span>
+                    <span v-else-if="isConfirmedServing(domain) && domain.status === 'active'" class="badge text-bg-success">
                         <i class="bi bi-check-circle me-1" aria-hidden="true"></i>Serving (verified by Cloudflare and confirmed by visiting it)
                     </span>
                     <span v-else-if="isConfirmedServing(domain)" class="badge text-bg-success">
@@ -88,6 +91,9 @@
                     <span v-else class="badge text-bg-warning">{{ waitingLabel(domain) }}</span>
 
                     <span v-if="domain.source === 'imported'" class="badge text-bg-light border">Imported from the live map</span>
+                    <span v-if="domain.role === 'redirect'" class="badge text-bg-light border">
+                        Redirects to {{ redirectTarget(domain) }}
+                    </span>
                 </div>
 
                 <p v-if="domain.last_error && domain.status !== 'failed'" class="small text-muted mb-0">
@@ -195,9 +201,14 @@ const waitingLabel = (domain: MasjidDomain): string => {
         case 'nameservers': return 'Waiting for the registrar to switch nameservers';
         case 'certificate': return 'Waiting for Cloudflare to issue the certificate';
         case 'capacity': return 'The Pages project is at its custom-domain limit';
+        case 'canonical': return 'Waiting for the address it redirects to';
         default: return domain.status === 'active' ? 'Attached; not yet seen serving' : 'Being attached';
     }
 };
+
+/** The host a redirect row points at, from the same list, or a plain description. */
+const redirectTarget = (domain: MasjidDomain): string =>
+    panel.value?.domains.find(row => row.id === domain.redirect_to_id)?.host ?? 'its canonical address';
 
 /** Clipboard write; says so when the browser refuses (insecure context, denied). */
 const copyHost = async (domain: MasjidDomain): Promise<void> => {

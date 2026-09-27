@@ -29,7 +29,8 @@ use LogicException;
  *
  * `reserved` is neither: it holds a host for an organisation (an imported live
  * host the probe could not confirm, R4) so Studio can never give it to another
- * one, and nothing ever advances it.
+ * one, and nothing ever advances it. Nor is a `redirect` row (W2 S5), which
+ * Cloudflare answers with a 301 before the renderer or this API ever sees it.
  *
  * Not tenant-scoped (TenantScopingCoverageTest::DECLINED): the unauthenticated
  * lookup reads it with no tenant, and only SuperAdmin Studio routes write it.
@@ -89,6 +90,19 @@ class MasjidDomain extends Model
     public const KIND_CUSTOM = 'custom';
     public const KINDS = [self::KIND_MANAGED_SUBDOMAIN, self::KIND_CUSTOM];
 
+    /**
+     * What a host does (W2 S5). A `serving` host is a Pages custom domain the
+     * renderer answers on. A `redirect` host answers only with Cloudflare's 301
+     * to the serving host it names (`redirect_to_id`), uses no Pages slot, and
+     * is in neither served() nor corsAdmitted().
+     */
+    public const ROLE_SERVING = 'serving';
+    public const ROLE_REDIRECT = 'redirect';
+    public const ROLES = [self::ROLE_SERVING, self::ROLE_REDIRECT];
+
+    /** The `ref` of the redirect rule Studio adds for a row, completed with the row id. */
+    public const REDIRECT_RULE_REF = 'manara-studio-redirect-';
+
     public const SOURCE_STUDIO = 'studio';
     public const SOURCE_IMPORTED = 'imported';
 
@@ -96,7 +110,7 @@ class MasjidDomain extends Model
     public const VERIFIED_BY_PROBE = 'probe';
 
     /** What a row is waiting on (`waiting_on`), set by App\Services\Domains\DomainAttacher. */
-    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity'];
+    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity', 'canonical'];
 
     /**
      * ONE fixed key for the CORS origin list. Production's cache store is the
@@ -112,6 +126,7 @@ class MasjidDomain extends Model
     /** The column defaults, so an unsaved row already reads as the database will store it. */
     protected $attributes = [
         'status' => self::STATUS_PENDING,
+        'role' => self::ROLE_SERVING,
         'source' => self::SOURCE_STUDIO,
         'cf_zone_created' => false,
         'cf_dns_record_created' => false,
@@ -123,6 +138,8 @@ class MasjidDomain extends Model
         'masjid_id',
         'host',
         'kind',
+        'role',
+        'redirect_to_id',
         'zone_apex',
         'status',
         'waiting_on',
@@ -130,6 +147,7 @@ class MasjidDomain extends Model
         'cf_zone_id',
         'cf_dns_record_id',
         'cf_pages_domain_id',
+        'cf_redirect_rule_id',
         'cf_zone_created',
         'cf_dns_record_created',
         'cf_pages_domain_created',
@@ -176,6 +194,10 @@ class MasjidDomain extends Model
 
             if (! in_array($domain->kind, self::KINDS, true)) {
                 throw new LogicException("Unknown masjid_domains kind [{$domain->kind}].");
+            }
+
+            if (! in_array($domain->role, self::ROLES, true)) {
+                throw new LogicException("Unknown masjid_domains role [{$domain->role}].");
             }
 
             // `reserved` holds a live host for an organisation without trusting
@@ -238,6 +260,37 @@ class MasjidDomain extends Model
         return $this->belongsTo(Masjid::class);
     }
 
+    /** The serving host a redirect row sends visitors to (W2 S5). */
+    public function redirectTo(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'redirect_to_id');
+    }
+
+    public function isRedirect(): bool
+    {
+        return $this->role === self::ROLE_REDIRECT;
+    }
+
+    public function redirectRuleRef(): string
+    {
+        return self::REDIRECT_RULE_REF . $this->id;
+    }
+
+    /**
+     * Whether Studio may write a redirect rule or placeholder record in this
+     * row's zone (W2 S5): a zone Studio itself created, recorded on any row of
+     * it, or one the owner listed in `cloudflare.redirect_zones`. Everything
+     * else, including every zone in the account before S5, is refused.
+     */
+    public function redirectZoneAllowed(): bool
+    {
+        if (in_array($this->zone_apex, array_map('strtolower', (array) config('cloudflare.redirect_zones', [])), true)) {
+            return true;
+        }
+
+        return self::query()->where('zone_apex', $this->zone_apex)->where('cf_zone_created', true)->exists();
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
@@ -250,7 +303,9 @@ class MasjidDomain extends Model
      */
     public function scopeServed(Builder $query): Builder
     {
-        return $query->whereIn('status', self::SERVED)->whereHas('masjid');
+        return $query->whereIn('status', self::SERVED)
+            ->where('role', self::ROLE_SERVING)
+            ->whereHas('masjid');
     }
 
     /**
@@ -296,7 +351,8 @@ class MasjidDomain extends Model
      */
     public function underReconfirmation(): bool
     {
-        return in_array($this->status, self::TRUSTED, true)
+        return $this->role === self::ROLE_SERVING
+            && in_array($this->status, self::TRUSTED, true)
             && ($this->serving_confirmed_at !== null || $this->serving_missed_since !== null);
     }
 
@@ -343,6 +399,10 @@ class MasjidDomain extends Model
                 "{$this->host} is held for this organisation, which is already reached at it through the live host map, so no other organisation can take it. Studio does not check or change it and cannot release it.",
                 'Nothing needs doing here. If it should go live through Studio or be let go, that is a platform-level change for the platform owner, not a Studio action in W1.',
             ];
+        }
+
+        if ($this->isRedirect() && $this->status !== self::STATUS_DETACHING) {
+            return $this->redirectSteps();
         }
 
         if ($this->status === self::STATUS_DETACHING) {
@@ -456,6 +516,52 @@ class MasjidDomain extends Model
     }
 
     /**
+     * manualSteps() for a redirect row (W2 S5): one Cloudflare Single Redirect
+     * and the proxied record it needs, by hand, for whatever Studio cannot do
+     * itself (no token, the token's missing redirect scope, or a zone Studio
+     * may not write in).
+     *
+     * @return list<string>
+     */
+    private function redirectSteps(): array
+    {
+        $target = $this->redirectTo?->host;
+        $to = $target ?? 'its canonical host';
+
+        if ($this->status === self::STATUS_MANUAL && $this->verified_at !== null) {
+            return [];
+        }
+
+        if ($this->waiting_on === 'canonical') {
+            return ["Waiting for {$to} to be attached first. Studio adds the redirect once it is."];
+        }
+
+        $byHand = [
+            "In Cloudflare, open the {$this->zone_apex} zone, then Rules, then Redirect Rules, and create a Single Redirect: when the hostname equals {$this->host}, redirect dynamically to concat(\"https://{$to}\", http.request.uri.path) with status 301, preserving the query string.",
+            "{$this->host} needs a proxied DNS record for the rule to answer: if it has none, add an A record for {$this->host} pointing to " . config('cloudflare.redirect_placeholder_address') . ', proxied.',
+            "Then press Check now. Studio confirms it once https://{$this->host}/ answers 301 to {$to}.",
+        ];
+
+        if ($this->status === self::STATUS_FAILED) {
+            return array_merge(['Adding the redirect failed' . ($this->last_error ? ": {$this->last_error}" : '.')], $byHand);
+        }
+
+        if (blank(config('cloudflare.studio_token'))) {
+            return array_merge(['Without CLOUDFLARE_STUDIO_TOKEN Studio adds nothing in Cloudflare. By hand:'], $byHand);
+        }
+
+        if ($this->waiting_on === 'token_scope') {
+            return array_merge([
+                'Cloudflare refused CLOUDFLARE_STUDIO_TOKEN for redirect rules. Give the token Zone › Single Redirect: Edit (called Dynamic URL Redirects Write in the API) on this account, and Studio adds the redirect itself within half an hour. Or by hand:',
+            ], $byHand);
+        }
+
+        return [
+            "Nothing to do by hand: Studio is adding the redirect from {$this->host} to {$to} through Cloudflare and checks it every five minutes.",
+        ];
+    }
+
+    /**
      * Whether Studio may delete this row (DELETE .../domains/{id}): only when
      * nothing about it lives anywhere but this table. A row that carries a
      * Cloudflare id, whose zone Studio created, or that was imported from the
@@ -469,7 +575,8 @@ class MasjidDomain extends Model
             && ! $this->cf_zone_created
             && $this->cf_zone_id === null
             && $this->cf_dns_record_id === null
-            && $this->cf_pages_domain_id === null;
+            && $this->cf_pages_domain_id === null
+            && $this->cf_redirect_rule_id === null;
     }
 
     /**
@@ -528,6 +635,7 @@ class MasjidDomain extends Model
         }
 
         $made = array_values(array_filter([
+            $this->cf_redirect_rule_id !== null ? 'the redirect rule' : null,
             $this->cf_pages_domain_id !== null && $this->cf_pages_domain_created ? 'the Pages custom domain' : null,
             $this->cf_dns_record_id !== null && $this->cf_dns_record_created ? 'the DNS record' : null,
         ]));
@@ -551,6 +659,10 @@ class MasjidDomain extends Model
     {
         $remove = [];
         $manual = [];
+
+        if ($this->cf_redirect_rule_id !== null) {
+            $remove[] = "the redirect rule for {$this->host} in the {$this->zone_apex} zone, if it is still Studio's";
+        }
 
         if ($this->cf_pages_domain_id !== null && $this->cf_pages_domain_created) {
             $remove[] = "the {$this->host} custom domain on the " . config('cloudflare.pages_project') . ' Pages project, if unchanged';
@@ -581,7 +693,9 @@ class MasjidDomain extends Model
     /** The dashboard step for a DNS record Studio may not delete. */
     public function dnsRecordRemovalStep(): string
     {
-        return "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the CNAME record for {$this->host}.";
+        $record = $this->isRedirect() ? 'DNS record' : 'CNAME record';
+
+        return "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the {$record} for {$this->host}.";
     }
 
     /** A zone is never deleted by Studio, even one it created (W2 S3). */
@@ -604,6 +718,8 @@ class MasjidDomain extends Model
             'masjid_id' => (int) $this->masjid_id,
             'host' => $this->host,
             'kind' => $this->kind,
+            'role' => $this->role,
+            'redirect_to_id' => $this->redirect_to_id !== null ? (int) $this->redirect_to_id : null,
             'zone_apex' => $this->zone_apex,
             'status' => $this->status,
             'waiting_on' => $this->waiting_on,

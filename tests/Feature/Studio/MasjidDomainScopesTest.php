@@ -109,4 +109,24 @@ class MasjidDomainScopesTest extends TestCase
         MasjidDomain::query()->where('host', 'new.example.org')->first()->delete();
         $this->assertSame($expected, MasjidDomain::corsOrigins());
     }
+
+    #[Test]
+    public function a_redirect_row_is_in_neither_scope(): void
+    {
+        // W2 S5: Cloudflare answers a redirect host with a 301 before the
+        // renderer or this API sees it, so it is never looked up or trusted.
+        $org = $this->makeOrg();
+        $www = $this->makeDomain($org, 'www.pair-masjid.org', MasjidDomain::STATUS_ACTIVE, [
+            'verified_by' => MasjidDomain::VERIFIED_BY_CLOUDFLARE, 'verified_at' => now(), 'serving_confirmed_at' => now(),
+        ]);
+        $apex = $this->makeDomain($org, 'pair-masjid.org', MasjidDomain::STATUS_MANUAL, [
+            'role' => MasjidDomain::ROLE_REDIRECT, 'redirect_to_id' => $www->id,
+            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(), 'serving_confirmed_at' => now(),
+        ]);
+
+        $this->assertNotContains($apex->id, MasjidDomain::query()->served()->pluck('id')->all());
+        $this->assertNotContains($apex->id, MasjidDomain::query()->corsAdmitted()->pluck('id')->all());
+        $this->assertSame(['https://www.pair-masjid.org'], MasjidDomain::corsOrigins());
+        $this->assertFalse($apex->underReconfirmation(), 'its check is the 301, not the tenant probe');
+    }
 }

@@ -57,11 +57,30 @@ use LogicException;
  *    pending, active or moved, with `name_servers` and `created_on`.
  *  The fixtures in tests/Feature/Studio/CloudflareServiceTest.php are shaped on
  *  these pages.
+ *
+ * ## Redirect rules (W2 S5), read 2026-09-27
+ *
+ *  - The zone's entry point for phase http_request_dynamic_redirect:
+ *    GET /zones/{zone}/rulesets/phases/http_request_dynamic_redirect/entrypoint
+ *    https://developers.cloudflare.com/api/resources/rulesets/subresources/phases/methods/get/
+ *  - Created, when absent, with POST /zones/{zone}/rulesets {name, kind: zone,
+ *    phase, rules}; a rule APPENDED to an existing one with
+ *    POST /zones/{zone}/rulesets/{ruleset_id}/rules, which "adds [it] to the end
+ *    of the existing list of rules":
+ *    https://developers.cloudflare.com/api/resources/rulesets/subresources/rules/methods/create/
+ *    https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-api/ (updated 2026-08-25)
+ *  - "Update a zone ruleset" (PUT) REPLACES every rule, so this class never
+ *    sends it for a ruleset: a client's own redirect rules survive Studio.
+ *  - Permission: Zone › Single Redirect › Edit ("Dynamic URL Redirects Write"),
+ *    which is not among the three scopes the Studio token was first given.
  */
 class CloudflareService
 {
     /** The only verbs this class may send. DELETE is deliberately absent. */
     public const VERBS = ['GET', 'POST', 'PUT', 'PATCH'];
+
+    /** The ruleset phase Single Redirects live in. */
+    public const REDIRECT_PHASE = 'http_request_dynamic_redirect';
 
     /** Pages custom-domain statuses, per the API reference cited above. */
     public const PAGES_STATUSES = ['initializing', 'pending', 'active', 'deactivated', 'blocked', 'error'];
@@ -255,6 +274,211 @@ class CloudflareService
     }
 
     /**
+     * Give a redirect host (W2 S5) the proxied record Cloudflare needs before a
+     * Single Redirect can answer on it: an A record at the placeholder address
+     * (config `cloudflare.redirect_placeholder_address`), never touching a
+     * record Studio did not create:
+     *
+     *  - no A, AAAA or CNAME record at that name: create one (`created`);
+     *  - exactly one, an A record already at the placeholder: `adopted`;
+     *  - anything else: `conflict`, with the record's {type, content}.
+     */
+    public function ensureProxiedPlaceholder(string $zoneId, string $host, string $comment = 'Manara Studio'): CloudflareResult
+    {
+        if (! $this->isConfigured()) {
+            return CloudflareResult::notConfigured();
+        }
+
+        $host = strtolower($host);
+        $address = (string) config('cloudflare.redirect_placeholder_address');
+        $existing = $this->addressRecords($zoneId, $host);
+
+        if (! $existing->is(CloudflareResult::OK)) {
+            return $existing;
+        }
+
+        $records = $existing->data['records'];
+
+        if ($records !== []) {
+            $first = $records[0];
+
+            if (count($records) === 1 && $first['type'] === 'A' && $first['content'] === $address) {
+                return CloudflareResult::of(CloudflareResult::ADOPTED, $first, null, $existing->http_status);
+            }
+
+            return CloudflareResult::of(CloudflareResult::CONFLICT, $first,
+                "{$host} already has a DNS record ({$first['type']} {$first['content']}).", $existing->http_status);
+        }
+
+        $created = $this->request('POST', '/zones/' . rawurlencode($zoneId) . '/dns_records', [
+            'type' => 'A',
+            'name' => $host,
+            'content' => $address,
+            'proxied' => true,
+            'ttl' => 1,
+            'comment' => mb_strimwidth($comment, 0, 100),
+        ]);
+
+        if (! $created->is(CloudflareResult::OK)) {
+            return $created;
+        }
+
+        return CloudflareResult::of(CloudflareResult::CREATED, [
+            'id' => (string) ($created->data['result']['id'] ?? ''),
+            'type' => 'A',
+            'content' => $address,
+        ], null, $created->http_status);
+    }
+
+    /**
+     * The zone's redirect entry point ruleset: data {id, rules: list<{id, ref,
+     * expression, action_parameters}>}, or `absent` when the zone has none.
+     */
+    public function getRedirectEntrypoint(string $zoneId): CloudflareResult
+    {
+        if (! $this->isConfigured()) {
+            return CloudflareResult::notConfigured();
+        }
+
+        $response = $this->request('GET', '/zones/' . rawurlencode($zoneId) . '/rulesets/phases/' . self::REDIRECT_PHASE . '/entrypoint');
+
+        if ($response->is(CloudflareResult::REJECTED) && $response->http_status === 404) {
+            return CloudflareResult::of(CloudflareResult::ABSENT, [], null, 404);
+        }
+
+        if (! $response->is(CloudflareResult::OK)) {
+            return $response;
+        }
+
+        return CloudflareResult::of(CloudflareResult::OK, self::ruleset((array) ($response->data['result'] ?? [])), null, $response->http_status);
+    }
+
+    /**
+     * Make `alias` answer 301 to `https://<canonical>` with its path and query
+     * kept, by one Single Redirect rule identified by `ref`:
+     *
+     *  - a rule with that ref already there, redirecting exactly so: `adopted`;
+     *  - one with that ref doing anything else: `conflict`, left alone;
+     *  - no entry point: create it holding this one rule (`created`);
+     *  - otherwise: APPEND the rule (`created`). The ruleset is never replaced,
+     *    so every rule the zone already has survives.
+     *
+     * data {id: the rule's id, ruleset_id}.
+     */
+    public function ensureRedirectRule(string $zoneId, string $ref, string $alias, string $canonical): CloudflareResult
+    {
+        if (! $this->isConfigured()) {
+            return CloudflareResult::notConfigured();
+        }
+
+        $rule = self::redirectRule($ref, strtolower($alias), strtolower($canonical));
+        $entry = $this->getRedirectEntrypoint($zoneId);
+
+        if ($entry->is(CloudflareResult::OK)) {
+            foreach ($entry->data['rules'] as $existing) {
+                if ($existing['ref'] !== $ref) {
+                    continue;
+                }
+
+                if ($existing['expression'] === $rule['expression']
+                    && ($existing['target'] ?? null) === $rule['action_parameters']['from_value']['target_url']['expression']) {
+                    return CloudflareResult::of(CloudflareResult::ADOPTED, ['id' => $existing['id'], 'ruleset_id' => $entry->data['id']], null, $entry->http_status);
+                }
+
+                return CloudflareResult::of(CloudflareResult::CONFLICT, ['id' => $existing['id'], 'ruleset_id' => $entry->data['id']],
+                    "The {$zoneId} zone already has a rule named {$ref} that redirects somewhere else.", $entry->http_status);
+            }
+
+            $appended = $this->request('POST', '/zones/' . rawurlencode($zoneId) . '/rulesets/' . rawurlencode($entry->data['id']) . '/rules', $rule);
+
+            return $this->ruleCreated($appended, $ref, $entry->data['id']);
+        }
+
+        if (! $entry->is(CloudflareResult::ABSENT)) {
+            return $entry;
+        }
+
+        $created = $this->request('POST', '/zones/' . rawurlencode($zoneId) . '/rulesets', [
+            'name' => 'Manara Studio redirects',
+            'description' => 'Canonical-host redirects added by Manara Studio.',
+            'kind' => 'zone',
+            'phase' => self::REDIRECT_PHASE,
+            'rules' => [$rule],
+        ]);
+
+        return $this->ruleCreated($created, $ref, null);
+    }
+
+    /** Find the new rule's id, by its ref, in the ruleset Cloudflare answered with. */
+    private function ruleCreated(CloudflareResult $response, string $ref, ?string $rulesetId): CloudflareResult
+    {
+        if (! $response->is(CloudflareResult::OK)) {
+            return $response;
+        }
+
+        $ruleset = self::ruleset((array) ($response->data['result'] ?? []));
+
+        foreach ($ruleset['rules'] as $rule) {
+            if ($rule['ref'] === $ref) {
+                return CloudflareResult::of(CloudflareResult::CREATED, ['id' => $rule['id'], 'ruleset_id' => $ruleset['id'] ?: $rulesetId], null, $response->http_status);
+            }
+        }
+
+        return CloudflareResult::of(CloudflareResult::TRANSIENT, [],
+            "Cloudflare accepted the redirect rule {$ref} but did not list it in its answer; Studio will look again.", $response->http_status);
+    }
+
+    /**
+     * The one Single Redirect rule Studio writes. Hosts are normalised before
+     * they get here (HostName); they are matched again so nothing but a host
+     * name can reach a rule expression.
+     *
+     * @return array<string, mixed>
+     */
+    private static function redirectRule(string $ref, string $alias, string $canonical): array
+    {
+        foreach ([$alias, $canonical] as $host) {
+            if (preg_match('/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/', $host) !== 1) {
+                throw new LogicException("Not a host name for a redirect rule: {$host}");
+            }
+        }
+
+        return [
+            'ref' => $ref,
+            'description' => "Manara Studio: {$alias} to {$canonical}",
+            'expression' => "http.host eq \"{$alias}\"",
+            'action' => 'redirect',
+            'action_parameters' => [
+                'from_value' => [
+                    'status_code' => 301,
+                    'target_url' => ['expression' => "concat(\"https://{$canonical}\", http.request.uri.path)"],
+                    'preserve_query_string' => true,
+                ],
+            ],
+            'enabled' => true,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $ruleset
+     * @return array{id: string, rules: list<array{id: string, ref: string, expression: string, target: ?string}>}
+     */
+    private static function ruleset(array $ruleset): array
+    {
+        return [
+            'id' => (string) ($ruleset['id'] ?? ''),
+            'rules' => array_values(array_map(fn ($rule) => [
+                'id' => (string) ($rule['id'] ?? ''),
+                'ref' => (string) ($rule['ref'] ?? ''),
+                'expression' => (string) ($rule['expression'] ?? ''),
+                'target' => isset($rule['action_parameters']['from_value']['target_url']['expression'])
+                    ? (string) $rule['action_parameters']['from_value']['target_url']['expression']
+                    : null,
+            ], array_filter((array) ($ruleset['rules'] ?? []), 'is_array'))),
+        ];
+    }
+
+    /**
      * The renderer project's custom domain for `host`: data {id, name, status,
      * validation_data, verification_data, zone_tag, created_on}, or `absent`.
      */
@@ -365,36 +589,20 @@ class CloudflareService
      */
     private function cnameState(string $zoneId, string $host): CloudflareResult
     {
-        $response = $this->request('GET', '/zones/' . rawurlencode($zoneId) . '/dns_records', [
-            'name.exact' => $host,
-            'per_page' => 100,
-        ]);
+        $response = $this->addressRecords($zoneId, $host);
 
         if (! $response->is(CloudflareResult::OK)) {
             return $response;
         }
 
-        // Filtered again here by name as well as type: the name match must be
-        // exact even if the API ever ignored the filter, because a record for
-        // another host judged as this one's would be adopted or refused wrongly.
-        $records = array_values(array_filter(
-            (array) ($response->data['result'] ?? []),
-            fn ($record) => is_array($record)
-                && strtolower(rtrim((string) ($record['name'] ?? ''), '.')) === $host
-                && in_array(strtoupper((string) ($record['type'] ?? '')), self::ADDRESS_TYPES, true),
-        ));
+        $records = $response->data['records'];
 
         if ($records === []) {
             return CloudflareResult::of(CloudflareResult::ABSENT, [], null, $response->http_status);
         }
 
         $target = strtolower((string) config('cloudflare.pages_target'));
-        $first = $records[0];
-        $shape = [
-            'id' => (string) ($first['id'] ?? ''),
-            'type' => strtoupper((string) ($first['type'] ?? '')),
-            'content' => (string) ($first['content'] ?? ''),
-        ];
+        $shape = $records[0];
 
         if (count($records) === 1
             && $shape['type'] === 'CNAME'
@@ -408,6 +616,38 @@ class CloudflareService
             "{$host} already has a DNS record ({$shape['type']} {$shape['content']}).",
             $response->http_status,
         );
+    }
+
+    /**
+     * The A, AAAA and CNAME records at exactly `host`: data {records:
+     * list<{id, type, content}>}. Filtered again here by name as well as
+     * type: the name match must be exact even if the API ever ignored the
+     * filter, because a record for another host judged as this one's would be
+     * adopted or refused wrongly.
+     */
+    private function addressRecords(string $zoneId, string $host): CloudflareResult
+    {
+        $response = $this->request('GET', '/zones/' . rawurlencode($zoneId) . '/dns_records', [
+            'name.exact' => $host,
+            'per_page' => 100,
+        ]);
+
+        if (! $response->is(CloudflareResult::OK)) {
+            return $response;
+        }
+
+        $records = array_values(array_map(fn (array $record) => [
+            'id' => (string) ($record['id'] ?? ''),
+            'type' => strtoupper((string) ($record['type'] ?? '')),
+            'content' => (string) ($record['content'] ?? ''),
+        ], array_filter(
+            (array) ($response->data['result'] ?? []),
+            fn ($record) => is_array($record)
+                && strtolower(rtrim((string) ($record['name'] ?? ''), '.')) === $host
+                && in_array(strtoupper((string) ($record['type'] ?? '')), self::ADDRESS_TYPES, true),
+        )));
+
+        return CloudflareResult::of(CloudflareResult::OK, ['records' => $records], null, $response->http_status);
     }
 
     /**

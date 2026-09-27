@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\FakesCloudflare;
 use Tests\Feature\Studio\Concerns\MakesDetachableDomains;
+use Tests\Feature\Studio\Concerns\MakesRedirectDomains;
 use Tests\Feature\Studio\Concerns\MakesStudioDomains;
 use Tests\TestCase;
 
@@ -24,6 +25,7 @@ class DomainDetacherTest extends TestCase
 {
     use FakesCloudflare;
     use MakesDetachableDomains;
+    use MakesRedirectDomains;
     use MakesStudioDomains;
     use RefreshDatabase;
 
@@ -217,5 +219,35 @@ class DomainDetacherTest extends TestCase
 
         $this->assertSame(MasjidDomain::STATUS_ACTIVE, $imported->fresh()->status);
         $this->assertSame([], $this->sent());
+    }
+
+    #[Test]
+    public function a_redirect_row_takes_its_rule_then_its_placeholder_record(): void
+    {
+        // W2 S5: the rule first, so the host stops answering 301; then the
+        // proxied A record by its own shape. The canonical host is untouched.
+        $org = $this->makeOrg();
+        $www = $this->canonicalRow($org);
+        $apex = $this->redirectRow($org, $www, MasjidDomain::STATUS_MANUAL, [
+            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(),
+            'cf_zone_id' => self::PAIR_ZONE, 'cf_redirect_rule_id' => 'rule-studio',
+            'cf_dns_record_id' => 'rec-apex', 'cf_dns_record_created' => true,
+        ]);
+        $this->fakeCloudflare([
+            'GET ' . self::ENTRYPOINT => $this->cfOk($this->ruleset([$this->clientRule(), $this->studioRule($apex)])),
+            'DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-studio' => $this->cfOk($this->ruleset([$this->clientRule()])),
+            'GET /zones/zone-pair/dns_records/rec-apex' => $this->cfOk($this->dnsRecord(self::APEX, 'A', '192.0.2.1', 'rec-apex')),
+            'DELETE /zones/zone-pair/dns_records/rec-apex' => $this->cfOk(['id' => 'rec-apex']),
+        ]);
+
+        $result = $this->detacher()->detach($apex);
+
+        $this->assertSame(DetachResult::DETACHED, $result->outcome);
+        $this->assertSame([
+            'DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-studio',
+            'DELETE /zones/zone-pair/dns_records/rec-apex',
+        ], $this->deletes());
+        $this->assertNull(MasjidDomain::find($apex->id));
+        $this->assertNotNull($www->fresh());
     }
 }

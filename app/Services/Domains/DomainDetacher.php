@@ -101,6 +101,23 @@ class DomainDetacher
         $removed = [];
         $manual = [];
 
+        // The redirect rule first (W2 S5): while it stands the host still
+        // answers 301, and its ref is Studio's proof that Studio wrote it.
+        if ($row->cf_redirect_rule_id !== null) {
+            $result = $this->remover->removeRedirectRule($row);
+
+            if ($result->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
+                $row->forceFill(['cf_redirect_rule_id' => null])->save();
+                $removed[] = $result->is(CloudflareResult::OK)
+                    ? "the redirect rule for {$row->host} in the {$row->zone_apex} zone"
+                    : "the redirect rule for {$row->host} (already gone)";
+            } elseif ($result->is(CloudflareResult::CONFLICT)) {
+                $manual[] = $result->error . " Check the {$row->zone_apex} zone's Redirect Rules, and delete it there if nobody needs it.";
+            } else {
+                return $this->stopped($row, $result, $removed, $manual);
+            }
+        }
+
         if ($row->cf_pages_domain_id !== null) {
             if (! $row->cf_pages_domain_created) {
                 $manual[] = "Studio did not create the Pages custom domain for {$row->host}, so it left it. " . $row->pagesDomainRemovalStep();
@@ -124,7 +141,7 @@ class DomainDetacher
             if (! $row->cf_dns_record_created) {
                 $manual[] = "Studio did not create the DNS record for {$row->host}, so it left it. " . $row->dnsRecordRemovalStep();
             } else {
-                $result = $this->remover->removeDnsRecord($row, 'CNAME', (string) config('cloudflare.pages_target'));
+                $result = $this->removeRecord($row);
 
                 if ($result->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
                     $row->forceFill(['cf_dns_record_id' => null, 'cf_dns_record_created' => false])->save();
@@ -158,6 +175,31 @@ class DomainDetacher
     }
 
     /**
+     * The row's DNS record, held to the shape Studio gave it: a CNAME to the
+     * Pages target for a serving host; for a redirect host the proxied
+     * placeholder A record (W2 S5), or, for one `domains:collapse-alias` turned
+     * from serving into redirect, the CNAME it already had.
+     */
+    private function removeRecord(MasjidDomain $row): CloudflareResult
+    {
+        $cname = ['CNAME', (string) config('cloudflare.pages_target')];
+
+        if (! $row->isRedirect()) {
+            return $this->remover->removeDnsRecord($row, ...$cname);
+        }
+
+        $result = $this->remover->removeDnsRecord($row, 'A', (string) config('cloudflare.redirect_placeholder_address'));
+
+        if ($result->is(CloudflareResult::CONFLICT)
+            && ($result->data['reason'] ?? null) === 'changed'
+            && ($result->data['seen']['type'] ?? null) === 'CNAME') {
+            return $this->remover->removeDnsRecord($row, ...$cname);
+        }
+
+        return $result;
+    }
+
+    /**
      * Keep the row `detaching`, say why, and leave the retry to reconcile.
      *
      * @param  list<string>  $removed
@@ -183,7 +225,8 @@ class DomainDetacher
     /** Whether Cloudflare holds anything for the row that Studio itself made. */
     private function hasStudioObjects(MasjidDomain $row): bool
     {
-        return ($row->cf_pages_domain_id !== null && $row->cf_pages_domain_created)
+        return $row->cf_redirect_rule_id !== null
+            || ($row->cf_pages_domain_id !== null && $row->cf_pages_domain_created)
             || ($row->cf_dns_record_id !== null && $row->cf_dns_record_created);
     }
 

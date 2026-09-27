@@ -105,7 +105,8 @@ class DomainsCapacityCommandTest extends TestCase
         $this->assertSame('rows_estimate', $out['source']);
         $this->assertSame(100, $out['ceiling']);
         $this->assertEquals(5.0, $out['percent']);
-        $this->assertSame(47, $out['clients_left_estimate']);
+        // W2 S5: a new client uses one slot; its other host redirects.
+        $this->assertSame(95, $out['clients_left_estimate']);
         $this->assertStringStartsWith('estimate:', $out['clients_left_basis']);
         $this->assertArrayNotHasKey('cloudflare_error', $out);
         $this->assertSame(['info'], $monitors->levels());
@@ -242,7 +243,24 @@ class DomainsCapacityCommandTest extends TestCase
         $out = $this->capacity();
 
         $this->assertSame(0, $out['used']);
-        $this->assertSame(50, $out['clients_left_estimate']);
+        $this->assertSame(100, $out['clients_left_estimate']);
+    }
+
+    #[Test]
+    public function a_redirect_row_uses_no_slot(): void
+    {
+        // W2 S5: only the canonical host is a custom domain on the project.
+        $org = $this->makeOrg();
+        $www = $this->makeDomain($org, 'www.pair-masjid.org', MasjidDomain::STATUS_ACTIVE, [
+            'verified_by' => MasjidDomain::VERIFIED_BY_CLOUDFLARE, 'verified_at' => now(),
+        ]);
+        $this->makeDomain($org, 'pair-masjid.org', MasjidDomain::STATUS_MANUAL, [
+            'role' => MasjidDomain::ROLE_REDIRECT, 'redirect_to_id' => $www->id,
+            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(),
+        ]);
+        $this->recordMonitorLines();
+
+        $this->assertSame(1, $this->capacity()['used']);
     }
 
     #[Test]
@@ -292,7 +310,7 @@ class DomainsCapacityCommandTest extends TestCase
         $this->recordMonitorLines();
         $out = $this->capacity();
         $this->assertSame(250, $out['ceiling']);
-        $this->assertSame(124, $out['clients_left_estimate']);
+        $this->assertSame(249, $out['clients_left_estimate']);
     }
 
     #[Test]

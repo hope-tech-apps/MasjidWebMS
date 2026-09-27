@@ -161,12 +161,15 @@ class ReconcileDomains extends Command
                 // Hosts seen serving, and demoted ones waiting to be seen again,
                 // for their daily re-probe (W2 S4; MasjidDomain::underReconfirmation()).
                 ->orWhere(fn (Builder $confirmed) => $due(
-                    $confirmed->whereIn('status', MasjidDomain::TRUSTED)
+                    $confirmed->where('role', MasjidDomain::ROLE_SERVING)
+                        ->whereIn('status', MasjidDomain::TRUSTED)
                         ->where(fn (Builder $seen) => $seen->whereNotNull('serving_confirmed_at')->orWhereNotNull('serving_missed_since'))
                 ));
 
+            // Reads promote a serving host to `active`; a redirect host has no
+            // Pages domain to read (W2 S5), and its own check is the 301.
             if ($tokenConfigured) {
-                $q->orWhere(fn (Builder $readable) => $due($readable->where(
+                $q->orWhere(fn (Builder $readable) => $due($readable->where('role', MasjidDomain::ROLE_SERVING)->where(
                     fn (Builder $which) => $which->where('status', MasjidDomain::STATUS_MANUAL)
                         ->orWhere('source', MasjidDomain::SOURCE_IMPORTED)
                 )->where('status', '!=', MasjidDomain::STATUS_ACTIVE)));

@@ -4448,3 +4448,21 @@ Review fixes (2026-09-28):
 - **A `detaching` row of a trashed organisation is still finished by reconcile.** S2 keeps the
   attacher off a trashed organisation's rows; taking hosts off Cloudflare is exactly what a
   departed organisation needs, so the detach retry ignores the trash.
+
+## 2026-09-27 — Studio W2 S5 (apex↔www redirects): the calls made while building
+- **A pair is written only when `canonical` is sent.** `POST .../domains` and provisioning's
+  `web_domain` accept `canonical` (`www` or `apex`) on a host that is its zone's apex or `www`, and
+  then record both hosts. Without it the request is W1's one host, so every W1 test and the live
+  SPA are unchanged and S5 ships inert. `www` is the owner's default for a screen that offers the
+  choice; no screen sends it yet.
+- **The token's redirect scope is checked by a read before anything is written.** A redirect row
+  reads the zone's redirect entry point first; a refused token waits on `token_scope` before a
+  placeholder A record exists for a rule that cannot follow. A redirect row waits
+  (`waiting_on = canonical`) until its serving sibling has its zone.
+- **`domains:collapse-alias` switches the row to `redirect` only after the 301 is seen.** Rule,
+  then the probe (up to six tries, five seconds apart), then the role, then the Pages domain. If
+  the 301 never shows, the rule it added is removed again and nothing else changes, so a host is
+  never left unserved by the lookup while still reaching the renderer. The host's proxied CNAME
+  stays; detach accepts either that CNAME or the placeholder A for a redirect row.
+- **A verified redirect row is not re-checked.** S4's daily probe is for serving hosts; a redirect
+  host has no admission to lose. It is excluded from S4's selection and from W1's reads.

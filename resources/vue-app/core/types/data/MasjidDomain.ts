@@ -20,7 +20,7 @@ export type MasjidDomainStatus =
     | 'detaching';
 
 /** MasjidDomain::WAITING_ON */
-export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity';
+export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity' | 'canonical';
 
 export type MasjidDomainKind = 'managed_subdomain' | 'custom';
 
@@ -29,6 +29,9 @@ export interface MasjidDomain {
     masjid_id: number;
     host: string;
     kind: MasjidDomainKind;
+    /** W2 S5: a `redirect` host answers 301 to the serving host `redirect_to_id` names. */
+    role: 'serving' | 'redirect';
+    redirect_to_id: number | null;
     zone_apex: string;
     status: MasjidDomainStatus;
     waiting_on: MasjidDomainWaitingOn | null;
@@ -83,7 +86,7 @@ export interface MasjidDomainsPanel {
 /** The body of POST .../domains and of POST /api/admin/studio/domains/check. */
 export type MasjidDomainRequest =
     | { kind: 'managed_subdomain'; label: string }
-    | { kind: 'custom'; host: string; zone_apex: string };
+    | { kind: 'custom'; host: string; zone_apex: string; canonical?: 'www' | 'apex' };
 
 /** POST /api/admin/studio/domains/check. `zone_status` is present only with a token. */
 export interface MasjidDomainCheck {

@@ -72,28 +72,41 @@ class MasjidDomainsController extends Controller
     /**
      * Record the host and queue its first step. The job is dispatched inside
      * the transaction and marked afterCommit, so no Cloudflare call is ever
-     * made for a row that was not stored.
+     * made for a row that was not stored. With `canonical` (W2 S5) both hosts
+     * of a pair are recorded: the canonical one serving, the other redirecting.
      */
     public function store(StoreMasjidDomainRequest $request, $masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $kind = $request->validated('kind');
 
+        $pair = $request->canonicalPair();
+
         try {
-            $domain = DB::transaction(function () use ($request, $masjid, $kind) {
-                $domain = MasjidDomain::create([
+            $rows = DB::transaction(function () use ($request, $masjid, $kind, $pair) {
+                $make = fn (string $host, array $extra = []) => MasjidDomain::create([
                     'masjid_id' => $masjid->id,
-                    'host' => $request->domainHost(),
+                    'host' => $host,
                     'kind' => $kind,
                     'zone_apex' => $request->zoneApex(),
                     'status' => MasjidDomain::STATUS_PENDING,
                     'source' => MasjidDomain::SOURCE_STUDIO,
                     'created_by_user_id' => Auth::id(),
-                ]);
+                ] + $extra);
 
-                AttachMasjidDomain::dispatch($domain->id);
+                // W2 S5: the canonical host serves; the other redirects to it.
+                $rows = $pair === null
+                    ? [$make($request->domainHost())]
+                    : [$serving = $make($pair['serving']), $make($pair['redirect'], [
+                        'role' => MasjidDomain::ROLE_REDIRECT,
+                        'redirect_to_id' => $serving->id,
+                    ])];
 
-                return $domain;
+                foreach ($rows as $row) {
+                    AttachMasjidDomain::dispatch($row->id);
+                }
+
+                return $rows;
             });
         } catch (UniqueConstraintViolationException) {
             // Two SuperAdmins adding the same host at once: the unique index
@@ -106,9 +119,14 @@ class MasjidDomainsController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $typed = collect($rows)->firstWhere('host', $request->domainHost()) ?? $rows[0];
+
         return response()->json([
             'status' => 'success',
-            'data' => ['domain' => ($domain->fresh() ?? $domain)->toAdminArray()],
+            'data' => [
+                'domain' => ($typed->fresh() ?? $typed)->toAdminArray(),
+                'domains' => array_map(fn (MasjidDomain $row) => ($row->fresh() ?? $row)->toAdminArray(), $rows),
+            ],
         ], Response::HTTP_CREATED);
     }
 

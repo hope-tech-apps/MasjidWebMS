@@ -69,6 +69,21 @@ return [
     // once each (owner, 2026-09-24: "keep me up to date"; W2 §8 OQ7).
     'pages_domain_notice_at' => [50, 70, 85, 95],
 
+    // Apex↔www canonical redirects (W2 S5). Studio writes a redirect rule, or
+    // the placeholder record a redirect host needs, ONLY in a zone it created
+    // itself (`cf_zone_created` on a row of that zone) or in a zone listed
+    // here. An allowlist, not a denylist, and it ships EMPTY: every zone that
+    // was in the account before S5 (burlingtonmasjid.com, alrazischool.org,
+    // the owner's product zones) is refused unless the owner adds it. Apexes,
+    // lower case, e.g. ['test-zone.example'].
+    'redirect_zones' => [],
+
+    // What a redirect host's DNS record points at: the IPv4 documentation
+    // address (RFC 5737) that Cloudflare's own redirect examples use. The
+    // record exists only so the host is proxied; the rule answers before any
+    // request could reach the address.
+    'redirect_placeholder_address' => '192.0.2.1',
+
     // Re-confirming hosts already seen serving (W2 S4). Each confirmed host is
     // probed at most once every `every_hours`: one GET of its own
     // /api/tenant, a no-store renderer route, so a day's cost is one request

@@ -333,6 +333,13 @@ class DomainAttacher
             return;
         }
 
+        if ($domain->isRedirect()) {
+            $this->stepRedirect($domain);
+            $domain->save();
+
+            return;
+        }
+
         if (! $this->cloudflare->isConfigured()) {
             $this->withoutToken($domain);
         } elseif ($domain->status === MasjidDomain::STATUS_ACTIVE) {
@@ -831,6 +838,165 @@ class DomainAttacher
                 ],
             );
         }
+    }
+
+    /**
+     * A redirect row (W2 S5): the host answers 301 to its serving sibling by a
+     * Cloudflare Single Redirect rule, and uses no Pages slot.
+     *
+     *   pending      -> wait for the sibling to have its zone (`canonical`);
+     *                   refuse a zone Studio neither created nor was allowed
+     *                   (config `cloudflare.redirect_zones`) BEFORE any
+     *                   request; read the zone's redirect entry point (a
+     *                   refused token waits on `token_scope`); the proxied
+     *                   placeholder record; the rule, appended; provisioning
+     *   provisioning -> the probe sees the 301 to the sibling: `manual`,
+     *                   verified by the probe; 72 hours without it: failed
+     *
+     * Without a token nothing is sent to Cloudflare; the probe alone can see a
+     * redirect the owner made by hand.
+     */
+    private function stepRedirect(MasjidDomain $domain): void
+    {
+        $canonical = $domain->redirectTo;
+
+        if ($canonical === null) {
+            $this->fail($domain, "The address {$domain->host} redirects to is no longer recorded, so there is nothing to redirect it to.");
+
+            return;
+        }
+
+        if ($domain->status === MasjidDomain::STATUS_MANUAL && $domain->verified_at !== null) {
+            $domain->next_check_at = null;
+
+            return;
+        }
+
+        if (! $this->cloudflare->isConfigured()) {
+            if (in_array($domain->status, MasjidDomain::NON_TERMINAL, true)) {
+                $domain->waiting_on = 'token';
+            }
+
+            $this->verifyRedirect($domain, $canonical);
+
+            if ($domain->status !== MasjidDomain::STATUS_MANUAL) {
+                $domain->next_check_at = $this->backoffFrom($domain->created_at);
+            }
+
+            return;
+        }
+
+        if ($domain->waiting_on === 'token') {
+            $domain->waiting_on = null;
+        }
+
+        if ($domain->status === MasjidDomain::STATUS_PROVISIONING) {
+            $this->verifyRedirect($domain, $canonical);
+
+            return;
+        }
+
+        // The sibling must be past its DNS step: a zone id is recorded while a
+        // new zone still waits for its nameservers, which can take 28 days,
+        // longer than this row's 72-hour verify clock.
+        $ready = [MasjidDomain::STATUS_PROVISIONING, MasjidDomain::STATUS_ACTIVE, MasjidDomain::STATUS_MANUAL];
+
+        if ($canonical->cf_zone_id === null
+            || $canonical->zone_apex !== $domain->zone_apex
+            || ! in_array($canonical->status, $ready, true)) {
+            $domain->waiting_on = 'canonical';
+            $domain->next_check_at = now()->addMinutes(30);
+
+            return;
+        }
+
+        if (! $domain->redirectZoneAllowed()) {
+            $this->fail($domain, "Studio adds redirect rules only in a zone it created itself or one the platform owner has listed in cloudflare.redirect_zones, and {$domain->zone_apex} is neither. Add the redirect by hand, or ask the owner to list the zone.");
+
+            return;
+        }
+
+        $zoneId = (string) $canonical->cf_zone_id;
+        // Read first: a token without the redirect scope is refused here,
+        // before a placeholder record is made for a rule that cannot follow.
+        if ($this->stopped($domain, $this->cloudflare->getRedirectEntrypoint($zoneId))) {
+            return;
+        }
+
+        if ($domain->cf_dns_record_id === null) {
+            $record = $this->cloudflare->ensureProxiedPlaceholder($zoneId, $domain->host, 'Manara Studio: redirect for organisation ' . $domain->masjid_id);
+
+            if ($record->is(CloudflareResult::CONFLICT)) {
+                $this->fail($domain, "{$domain->host} already has a DNS record ({$record->data['type']} {$record->data['content']}). "
+                    . 'Studio will not overwrite a DNS record it did not create: change or remove it in Cloudflare.');
+
+                return;
+            }
+
+            if ($this->stopped($domain, $record)) {
+                return;
+            }
+
+            $domain->cf_zone_id = $zoneId;
+            $domain->cf_dns_record_id = $record->data['id'] ?: null;
+            $domain->cf_dns_record_created = $record->is(CloudflareResult::CREATED);
+        }
+
+        $rule = $this->cloudflare->ensureRedirectRule($zoneId, $domain->redirectRuleRef(), $domain->host, $canonical->host);
+
+        if ($rule->is(CloudflareResult::CONFLICT)) {
+            $this->fail($domain, (string) $rule->error);
+
+            return;
+        }
+
+        if ($this->stopped($domain, $rule)) {
+            return;
+        }
+
+        $domain->cf_zone_id = $zoneId;
+        $domain->cf_redirect_rule_id = (string) $rule->data['id'];
+        $domain->status = MasjidDomain::STATUS_PROVISIONING;
+        $domain->waiting_on = null;
+        $domain->stage_started_at = now();
+        $domain->last_error = null;
+        $domain->next_check_at = now()->addMinutes(5);
+    }
+
+    /** The redirect probe: a 301 to the sibling makes the row `manual`, verified by the probe. */
+    private function verifyRedirect(MasjidDomain $domain, MasjidDomain $canonical): void
+    {
+        $result = $this->probe->redirects($domain, $canonical->host);
+        $domain->last_checked_at = now();
+
+        if ($result['matched']) {
+            $domain->status = MasjidDomain::STATUS_MANUAL;
+            $domain->verified_by = MasjidDomain::VERIFIED_BY_PROBE;
+            $domain->verified_at = now();
+            $domain->waiting_on = null;
+            $domain->stage_started_at = null;
+            $domain->last_error = null;
+            $domain->next_check_at = null;
+
+            return;
+        }
+
+        $domain->last_error = "Not redirecting to {$canonical->host} yet: {$result['seen']}";
+
+        if ($domain->status !== MasjidDomain::STATUS_PROVISIONING) {
+            return;
+        }
+
+        $since = $domain->stage_started_at ?? ($domain->stage_started_at = now());
+
+        if ($since->lte(now()->subHours(self::CERTIFICATE_LIMIT_HOURS))) {
+            $this->fail($domain, "{$domain->host} still did not answer 301 to {$canonical->host} "
+                . self::CERTIFICATE_LIMIT_HOURS . " hours after its redirect rule was added (last: {$result['seen']}).");
+
+            return;
+        }
+
+        $domain->next_check_at = $this->backoffFrom($since);
     }
 
     /**

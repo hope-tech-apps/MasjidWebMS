@@ -56,6 +56,10 @@ use Illuminate\Support\Facades\Log;
  *    ("Delete Pages Project Custom Domain", permission Pages Write):
  *    https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/domains/methods/delete/
  *    The v4 envelope with an untyped `result`.
+ *  - DELETE /zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id} (W2 S5),
+ *    which deletes one rule and answers with the ruleset that remains:
+ *    https://developers.cloudflare.com/api/resources/rulesets/subresources/rules/methods/delete/
+ *    It needs the redirect scope S5 needs anyway.
  *  - DELETE /zones/{zone_id}/dns_records/{dns_record_id} (permission DNS
  *    Write), answering `result: {id}`; GET on the same path reads one record:
  *    https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/delete/
@@ -150,6 +154,46 @@ class CloudflareRemover
         }
 
         return $this->delete($path);
+    }
+
+    /**
+     * Remove the row's redirect rule (W2 S5) from the zone's redirect entry
+     * point, by id, only when the rule there still carries Studio's own ref
+     * for this row (`manara-studio-redirect-<id>`), which only Studio writes.
+     * The rest of the ruleset is untouched: one rule is deleted, never the
+     * ruleset.
+     */
+    public function removeRedirectRule(MasjidDomain $row): CloudflareResult
+    {
+        if (($refused = $this->refuse($row, true, $row->cf_redirect_rule_id)) !== null) {
+            return $refused;
+        }
+
+        if (blank($row->cf_zone_id)) {
+            return CloudflareResult::of(CloudflareResult::CONFLICT, ['reason' => 'not_created_by_studio'],
+                "Studio has no zone recorded for {$row->host}'s redirect rule, so it cannot tell where the rule is.");
+        }
+
+        $entry = $this->cloudflare->getRedirectEntrypoint((string) $row->cf_zone_id);
+
+        if (! $entry->is(CloudflareResult::OK)) {
+            return $entry;
+        }
+
+        foreach ($entry->data['rules'] as $rule) {
+            if ($rule['id'] !== $row->cf_redirect_rule_id) {
+                continue;
+            }
+
+            if ($rule['ref'] !== $row->redirectRuleRef()) {
+                return $this->changed($row, 'redirect rule', ['id' => $rule['id'], 'ref' => $rule['ref']]);
+            }
+
+            return $this->delete('/zones/' . rawurlencode((string) $row->cf_zone_id) . '/rulesets/'
+                . rawurlencode($entry->data['id']) . '/rules/' . rawurlencode($rule['id']));
+        }
+
+        return CloudflareResult::of(CloudflareResult::ABSENT, [], null, $entry->http_status);
     }
 
     /**

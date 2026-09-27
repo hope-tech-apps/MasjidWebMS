@@ -49,38 +49,13 @@ class DomainProbe
      */
     public function probe(MasjidDomain $domain): array
     {
-        $host = (string) $domain->host;
-        $addresses = $this->resolver->addresses($host);
+        $fetched = $this->fetch((string) $domain->host, '/api/tenant');
 
-        if ($addresses === []) {
-            return ['matched' => false, 'seen' => "not fetched: {$host} does not resolve"];
+        if ($fetched['response'] === null) {
+            return ['matched' => false, 'seen' => $fetched['seen']];
         }
 
-        foreach ($addresses as $address) {
-            if (! self::isPublicAddress($address)) {
-                return ['matched' => false, 'seen' => "refused: {$host} resolves to {$address}, which is not a public address"];
-            }
-        }
-
-        $pinned = $addresses[0];
-        $resolve = $host . ':443:' . (str_contains($pinned, ':') ? "[{$pinned}]" : $pinned);
-
-        try {
-            $response = Http::withOptions(['curl' => [CURLOPT_RESOLVE => [$resolve]]])
-                ->withoutRedirecting()
-                ->timeout(self::TIMEOUT_SECONDS)
-                ->connectTimeout(self::TIMEOUT_SECONDS)
-                ->accept('application/json')
-                ->get("https://{$host}/api/tenant");
-        } catch (Throwable $e) {
-            // An unreachable host is an ordinary answer here, not an incident:
-            // the caller records `seen`. Logged at warning because production
-            // logs nothing below it (.claude/rules/shipping.md).
-            Log::warning('Domain probe could not reach the host.', ['host' => $host, 'error' => $e->getMessage()]);
-
-            return ['matched' => false, 'seen' => 'no answer: ' . mb_strimwidth($e->getMessage(), 0, 200, '...')];
-        }
-
+        $response = $fetched['response'];
         $status = $response->status();
         $tenant = $response->header(self::HEADER);
 
@@ -94,6 +69,76 @@ class DomainProbe
             'matched' => $matched,
             'seen' => "{$status}, " . self::HEADER . ': ' . ($tenant === '' ? '(absent)' : mb_strimwidth($tenant, 0, 40, '...')),
         ];
+    }
+
+    /**
+     * Whether a redirect host (W2 S5) answers `https://<host>/` with a 301 to
+     * `https://<canonical>`: the Single Redirect rule working at Cloudflare's
+     * edge. The redirect is read, never followed, under the same SSRF guard
+     * as probe().
+     *
+     * @return array{matched: bool, seen: string}
+     */
+    public function redirects(MasjidDomain $domain, string $canonical): array
+    {
+        $fetched = $this->fetch((string) $domain->host, '/');
+
+        if ($fetched['response'] === null) {
+            return ['matched' => false, 'seen' => $fetched['seen']];
+        }
+
+        $status = $fetched['response']->status();
+        $location = (string) $fetched['response']->header('Location');
+        $target = parse_url($location);
+        $matched = $status === 301
+            && strtolower((string) ($target['scheme'] ?? '')) === 'https'
+            && strtolower((string) ($target['host'] ?? '')) === strtolower($canonical);
+
+        return [
+            'matched' => $matched,
+            'seen' => $status . ($location !== '' ? ' to ' . mb_strimwidth($location, 0, 200, '...') : ''),
+        ];
+    }
+
+    /**
+     * GET `https://<host><path>` with no redirect followed, only to a public
+     * address and pinned to the one that was checked. An unreachable host is
+     * an ordinary answer (`response` null, with what was seen), logged at
+     * warning because production logs nothing below it.
+     *
+     * @return array{response: ?\Illuminate\Http\Client\Response, seen: string}
+     */
+    private function fetch(string $host, string $path): array
+    {
+        $addresses = $this->resolver->addresses($host);
+
+        if ($addresses === []) {
+            return ['response' => null, 'seen' => "not fetched: {$host} does not resolve"];
+        }
+
+        foreach ($addresses as $address) {
+            if (! self::isPublicAddress($address)) {
+                return ['response' => null, 'seen' => "refused: {$host} resolves to {$address}, which is not a public address"];
+            }
+        }
+
+        $pinned = $addresses[0];
+        $resolve = $host . ':443:' . (str_contains($pinned, ':') ? "[{$pinned}]" : $pinned);
+
+        try {
+            $response = Http::withOptions(['curl' => [CURLOPT_RESOLVE => [$resolve]]])
+                ->withoutRedirecting()
+                ->timeout(self::TIMEOUT_SECONDS)
+                ->connectTimeout(self::TIMEOUT_SECONDS)
+                ->accept('application/json')
+                ->get("https://{$host}{$path}");
+        } catch (Throwable $e) {
+            Log::warning('Domain probe could not reach the host.', ['host' => $host, 'error' => $e->getMessage()]);
+
+            return ['response' => null, 'seen' => 'no answer: ' . mb_strimwidth($e->getMessage(), 0, 200, '...')];
+        }
+
+        return ['response' => $response, 'seen' => ''];
     }
 
     /**
