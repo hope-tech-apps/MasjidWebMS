@@ -121,6 +121,31 @@ class BulkCapabilitiesEndpointTest extends TestCase
     }
 
     #[Test]
+    public function a_null_or_empty_value_is_refused_never_read_as_off(): void
+    {
+        $masjid = $this->org();
+        Sanctum::actingAs($this->superAdmin());
+
+        // JSON null.
+        $this->patchJson("/api/admin/masjids/{$masjid->id}/capabilities", ['capabilities' => ['events' => null]])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonStructure(['data' => ['capabilities.events']]);
+
+        // A form `capabilities[events]=`, which ConvertEmptyStringsToNull makes null.
+        $this->bulk($masjid, ['events' => ''])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonStructure(['data' => ['capabilities.events']]);
+
+        // An array is not a boolean either.
+        $this->bulk($masjid, ['events' => ['0']])->assertStatus(422);
+
+        $this->assertSame([], $this->stored($masjid), 'no override was stored');
+        $this->assertSame(0, MasjidCapabilityChange::count(), 'no ledger row was written');
+    }
+
+    #[Test]
     public function an_empty_request_or_a_refused_key_writes_nothing(): void
     {
         $masjid = $this->org();
