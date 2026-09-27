@@ -44,6 +44,9 @@ use Illuminate\Support\Facades\Cache;
  *
  * ## Rows this never writes to Cloudflare for
  *
+ *  - rows of a trashed organisation are not touched at all (W2 S2): no
+ *    request, no write, whichever entry point asked. A restore resumes them.
+ *
  *  - `reserved` rows are never advanced at all: no probe, no read, no write
  *    (R4). They hold a live tenant's host without trusting it.
  *  - `imported` rows and `manual` rows, when there is a token, are promoted by
@@ -172,6 +175,10 @@ class DomainAttacher
                 return;
             }
 
+            if (! $this->organisationLive($domain)) {
+                return;
+            }
+
             $this->restartIfFailed($domain);
         } finally {
             $lock->release();
@@ -196,8 +203,11 @@ class DomainAttacher
 
         try {
             $domain->refresh();
-            $this->restartIfFailed($domain);
-            $this->step($domain);
+
+            if ($this->organisationLive($domain)) {
+                $this->restartIfFailed($domain);
+                $this->step($domain);
+            }
         } finally {
             $lock->release();
         }
@@ -224,6 +234,19 @@ class DomainAttacher
         Cache::forget(self::ACTIVATION_CHECK_KEY . $domain->id);
     }
 
+    /**
+     * Whether the row's organisation is live (W2 S2). A trashed organisation's
+     * rows are left exactly as they are, by every entry point: the job, the
+     * schedule and "Check now" alike. Nothing is sent or written, so nothing
+     * is attached in Cloudflare for an organisation that is not live, and a
+     * restore resumes each row where it stopped. The relation applies Masjid's
+     * SoftDeletes scope, as MasjidDomain::served() relies on.
+     */
+    private function organisationLive(MasjidDomain $domain): bool
+    {
+        return $domain->masjid()->exists();
+    }
+
     public function advance(MasjidDomain $domain): MasjidDomain
     {
         if (! $domain->exists) {
@@ -240,6 +263,10 @@ class DomainAttacher
             try {
                 $domain->refresh();
             } catch (ModelNotFoundException) {
+                return $domain;
+            }
+
+            if (! $this->organisationLive($domain)) {
                 return $domain;
             }
 

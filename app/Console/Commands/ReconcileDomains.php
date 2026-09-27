@@ -24,10 +24,16 @@ use Throwable;
  *  - `manual` and `imported` rows, ONLY when the token is configured, so the
  *    attacher can promote them to `active` by reading Cloudflare.
  *
- * Never `reserved` and never `failed`. So on production today, where the only
- * rows will be the imported ones (manual and reserved) and the token decides
- * the third bullet, a run without the token selects nothing and sends nothing,
- * and a run with it only ever reads.
+ * Never `reserved`, never `failed`, and never a row whose organisation is
+ * trashed (W2 S2): trashing is reversible and leaves the row as it was, and a
+ * restore resumes it exactly there, but nothing is attached in Cloudflare for
+ * an organisation that is not live. The same `whereHas('masjid')` the lookup's
+ * served() scope relies on excludes it.
+ *
+ * So on production today, where the only rows will be the imported ones
+ * (manual and reserved) and the token decides the third bullet, a run without
+ * the token selects nothing and sends nothing, and a run with it only ever
+ * reads.
  *
  * Without the token, rows that are waiting still get their probe (the only
  * request, to their own host), and the run logs one warning an hour saying
@@ -44,7 +50,7 @@ use Throwable;
 class ReconcileDomains extends Command
 {
     protected $signature = 'domains:reconcile
-        {--id=* : Advance only these masjid_domains ids (still never a reserved or failed row), due or not}
+        {--id=* : Advance only these masjid_domains ids (still never a reserved or failed row, nor one of a trashed organisation), due or not}
         {--json : Print the run as JSON}';
 
     protected $description = 'Advance the Manara Studio web addresses that are waiting on Cloudflare, or on being seen serving.';
@@ -119,6 +125,7 @@ class ReconcileDomains extends Command
 
         return MasjidDomain::query()
             ->when($ids !== null, fn (Builder $q) => $q->whereIn('id', $ids))
+            ->whereHas('masjid')
             ->whereNotIn('status', [MasjidDomain::STATUS_RESERVED, MasjidDomain::STATUS_FAILED])
             ->where(function (Builder $q) use ($tokenConfigured, $due) {
                 $q->where(fn (Builder $moving) => $due($moving->whereIn('status', MasjidDomain::NON_TERMINAL)))

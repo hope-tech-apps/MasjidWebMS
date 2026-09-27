@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\DomainsStillAttached;
 use App\Support\MobileCache;
 use App\Traits\SearchableTrait;
 use Illuminate\Database\Eloquent\Model;
@@ -735,6 +736,26 @@ class Masjid extends Model implements HasMedia
      */
     protected static function booted(): void
     {
+        // A force-delete cascades `masjid_domains` in the database, which fires
+        // no model event, so a host's Cloudflare records (the CNAME, the Pages
+        // custom domain, a zone Studio created) would outlive every row that
+        // tracks them (W2 S2). Refuse while any row still records one. A trash
+        // is reversible and touches nothing, so only this path is guarded.
+        static::forceDeleting(function (Masjid $masjid) {
+            $attached = MasjidDomain::query()
+                ->where('masjid_id', $masjid->id)
+                ->where(fn ($q) => $q->where('cf_zone_created', true)
+                    ->orWhereNotNull('cf_zone_id')
+                    ->orWhereNotNull('cf_dns_record_id')
+                    ->orWhereNotNull('cf_pages_domain_id'))
+                ->orderBy('id')
+                ->get();
+
+            if ($attached->isNotEmpty()) {
+                throw new DomainsStillAttached((int) $masjid->id, $attached);
+            }
+        });
+
         static::forceDeleted(function (Masjid $masjid) {
             // A child whose FORM card payments were charged through this
             // organisation loses that link too (DECISIONS.md 2026-09-15), in the
