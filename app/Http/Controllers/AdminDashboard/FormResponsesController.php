@@ -781,6 +781,10 @@ class FormResponsesController extends Controller
      * rewrites who handed them over. Refused, on the locked row: a registration that is
      * not settled ("Not paid yet" — collected is never a way round paying), and a
      * triage-cancelled one.
+     *
+     * The answers say "checked in", as the screen does: beside a card payment, the owner
+     * read "Mark collected" as money still to take (2026-09-27). The route and the
+     * collected_at / collected_by fields keep their names.
      */
     public function collect(Request $request, $masjid_id, $form_id, $response_id): JsonResponse
     {
@@ -813,8 +817,8 @@ class FormResponsesController extends Controller
         return match ($outcome) {
             'cancelled' => $this->refused('This registration is cancelled. Re-open it before handing anything out.'),
             'unpaid' => $this->refused('Not paid yet.'),
-            'already' => $this->done($form, $response, 'Already marked collected.'),
-            default => $this->done($form, $response, 'Marked collected.'),
+            'already' => $this->done($form, $response, 'Already checked in.'),
+            default => $this->done($form, $response, 'Checked in.'),
         };
     }
 
@@ -829,7 +833,7 @@ class FormResponsesController extends Controller
             return $this->failed($e);
         }
 
-        return $this->done($form, $response, $undone ? 'Collection undone.' : 'This registration was not marked collected.');
+        return $this->done($form, $response, $undone ? 'Check-in undone.' : 'This registration was not checked in.');
     }
 
     /**

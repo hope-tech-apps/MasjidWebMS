@@ -3841,3 +3841,26 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   is always `Form::priceFor($data, now)` and Stripe's page shows it before payment. Accepted:
   MEC's Zakat-ul-Fitr has no tiers, and per-entry `unitMinor` has behaved the same since
   2026-09-11. Recorded in burlington-masjid-site DECISIONS.md with the alternatives.
+
+
+## 2026-09-27 — Responses list: "Checked in" for the door, and status changed from the list
+- **The door's "Collected" reads "Checked in" wherever a person reads it** (the list column,
+  its badge and "Check in" button, the filter, the detail's label and buttons, the toasts, the
+  undo question, and the collect / uncollect answers: "Checked in.", "Already checked in.",
+  "Check-in undone.", "This registration was not checked in."). The owner read "Mark
+  collected" beside "Paid by card $60.00" as money not yet taken; it is the door
+  (`collected_at`, stamped by the first press, refused until settled). The route, the
+  `collected` filter values and the `collected_at` / `collected_by` fields keep their names.
+  The two CSV exports keep their "Collected" headers: a spreadsheet already reading them by
+  name is not broken for a word. Pinned by
+  `FormResponsesMoneyAdminTest::bracelets_are_stamped_by_the_first_press_and_undo_clears_them`.
+- **Each list row's Status is a select that saves on change,** through the detail's own PUT
+  (`FormResponsesController::update()`), so a cancel from the list closes a card page and
+  answers exactly as a cancel from the detail does. The row is patched where it stands, not the
+  page re-read, as the door's actions are: on a list filtered or sorted by status a slip stays in
+  view to be put right. Moving into Cancelled is asked first, in sentences each tied to what the
+  code does (`formResponseStatus.ts::cancelQuestion()`): no card refund, an open card page
+  closed, cash kept in the cancelled column, no check-in or payment while cancelled, no email, a
+  reserved date offered to others, capacity not freed. Leaving Cancelled is not asked: a restore
+  whose date is taken is refused by the server with the date named, and the select reverts.
+  Pinned by `resources/vue-app/tests/form-response-status.test.ts`.
