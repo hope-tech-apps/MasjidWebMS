@@ -112,20 +112,22 @@ class PlaceholderChecklistTest extends TestCase
         foreach ($data['pages'] as $page) {
             foreach ($page['sections'] as $section) {
                 foreach ($section['placeholders'] as $placeholder) {
-                    if ($target === null && $placeholder['open'] && $placeholder['kind'] === 'text') {
-                        $target = [$page['page_id'], $section['section_id'], $placeholder['field']];
+                    // The starter blocks' fillable placeholders are images and
+                    // lists (config/studio_layouts.php); an image field is one value.
+                    if ($target === null && $placeholder['open'] && in_array($placeholder['kind'], ['text', 'image'], true)) {
+                        $target = [$page['page_id'], $section['section_id'], $placeholder['field'], $placeholder['kind']];
                     }
                 }
             }
         }
-        $this->assertNotNull($target, 'the premise: a minimal site has an open text placeholder');
-        [$pageId, $sectionId, $field] = $target;
+        $this->assertNotNull($target, 'the premise: a minimal site has an open text or image placeholder');
+        [$pageId, $sectionId, $field, $kind] = $target;
 
         // Through the page builder, exactly as SectionFormModal saves: a
         // form POST with _method=PUT and JSON-encoded content and settings.
         $section = Section::findOrFail($sectionId);
         $content = json_decode((string) $section->getRawOriginal('content'), true);
-        data_set($content, $field, 'Written by the admin');
+        data_set($content, $field, $kind === 'image' ? 'https://cdn.example.test/about.jpg' : 'Written by the admin');
         $this->post("/api/admin/masjids/{$id}/pages/{$pageId}/sections/{$sectionId}", [
             '_method' => 'PUT',
             'section_type' => $section->getRawOriginal('section_type'),
