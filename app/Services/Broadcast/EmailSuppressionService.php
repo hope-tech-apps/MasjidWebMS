@@ -316,6 +316,21 @@ class EmailSuppressionService
      * after the opt-out still picks the badge up.
      *
      * Pinned by `replaying_the_one_click_post_does_not_move_the_date_the_opt_out_began`.
+     *
+     * ## Except over a hold for want of consent
+     *
+     * A row in force whose reason is one staff may lift
+     * (EmailSuppression::STAFF_LIFTABLE_REASONS: an import held the address
+     * because no consent was on record) is not an opt-out, and what staff may
+     * lift is read from the reason alone. If a real opt-out landing on it
+     * wrote nothing, the person's unsubscribe would sit under a reason staff
+     * can lift, one "Record consent" away from being overridden. So an
+     * incoming reason staff may NOT lift replaces it: this is a genuinely new
+     * opt-out and gets the new reason, date and provenance, exactly as a
+     * released row does. The hold it replaces is kept in `held_reason` and
+     * `held_since`. The row only ever gets stricter this way, never released.
+     * A hold arriving over a hold changes nothing. Pinned by
+     * `ContactEmailConsentTest::an_unsubscribe_on_a_held_address_replaces_the_hold_and_staff_can_no_longer_lift_it`.
      */
     public function suppress(
         int $masjidId,
@@ -343,7 +358,15 @@ class EmailSuppressionService
             'released_at' => null,
         ];
 
-        if ($suppression?->isActive()) {
+        if ($suppression !== null && self::replacesHold($suppression->reason, $reason)) {
+            // A person's opt-out over an import's hold (or over a hold staff
+            // lifted): the new reason, date and provenance, with the hold kept
+            // beside them — see "Except over a hold" above.
+            $suppression->forceFill($attributes + [
+                'held_reason' => $suppression->reason,
+                'held_since' => $suppression->suppressed_at,
+            ])->save();
+        } elseif ($suppression?->isActive()) {
             // Already in force: nothing is rewritten. The opt-out is honoured
             // exactly as it stands and the record of when it began is left
             // alone — see the docblock above for why that matters.
@@ -373,6 +396,19 @@ class EmailSuppressionService
         $this->mirrorOntoContacts($masjidId, $address, $suppression->suppressed_at);
 
         return $suppression;
+    }
+
+    /**
+     * Whether a suppression of `$incoming` reason replaces a row that carries
+     * `$current`: true exactly when the row is a hold staff may lift and the
+     * incoming reason is one they may not. suppress() and the Wix contact
+     * import's plan both ask this, so the count the operator reads and the
+     * write it describes cannot disagree.
+     */
+    public static function replacesHold(?string $current, string $incoming): bool
+    {
+        return in_array($current, EmailSuppression::STAFF_LIFTABLE_REASONS, true)
+            && ! in_array($incoming, EmailSuppression::STAFF_LIFTABLE_REASONS, true);
     }
 
     /**
@@ -415,8 +451,8 @@ class EmailSuppressionService
      *
      * Why a staff path exists for these reasons and no other
      * (EmailSuppression::STAFF_LIFTABLE_REASONS): neither records a request
-     * from the person, only that the platform the list came from never had
-     * their consent. The subscriber's own release needs a link that only a
+     * from the person, only that no consent to email was on record in Manara
+     * when the import wrote it. The subscriber's own release needs a link that only a
      * broadcast carries, and a suppressed address never receives one, so
      * without this the precaution would outlive any consent the person later
      * gives. Every OTHER reason — an unsubscribe, a manual opt-out, a
@@ -426,7 +462,11 @@ class EmailSuppressionService
      * The evidence, the staff account and the source are written onto the row
      * beside `released_at`, so the record says who lifted it and why. The row
      * is kept, as every release keeps it, and a later import run reads a
-     * released row as the person's decision and never re-suppresses it.
+     * released row as the person's decision and never re-suppresses it, with
+     * one exception: a lifted ORDER-HISTORY hold that the Wix contact import
+     * then finds unsubscribed, complained or bounced on Wix is suppressed again
+     * (WixContactImport::plan; DECISIONS.md 2026-09-27, "held order lifted
+     * before the contact import"), because staff lifted it without seeing Wix.
      */
     public function liftPrecaution(int $masjidId, ?string $email, string $evidence, ?int $userId): ?EmailSuppression
     {

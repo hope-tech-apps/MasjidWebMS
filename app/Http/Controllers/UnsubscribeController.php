@@ -91,7 +91,12 @@ class UnsubscribeController extends Controller
             return $this->invalid();
         }
 
-        $already = $this->suppression->isSuppressed($link['masjid_id'], $link['email']);
+        // A hold an import wrote for want of consent is not the person's
+        // opt-out, and staff may lift it: offer the real unsubscribe, which
+        // replaces the hold (EmailSuppressionService::suppress()), rather than
+        // telling them they already asked.
+        $reason = $this->suppression->activeReason($link['masjid_id'], $link['email']);
+        $already = $reason !== null && ! in_array($reason, EmailSuppression::STAFF_LIFTABLE_REASONS, true);
 
         return $this->page($already ? 'already' : 'confirm', $link, $token);
     }

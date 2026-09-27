@@ -3883,3 +3883,40 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   for a buyer missing from the contacts export the first run read and present in a later one. Revisit
   if the new row shows real numbers on MEC's data. Pinned by
   `WixContactImportTest::an_order_history_hold_on_an_address_wix_says_is_subscribed_is_counted_on_its_own_row_and_kept`.
+- **A real opt-out on a hold replaces the hold's reason (review fix).** Staff lifting reads only the
+  reason, and nothing used to rewrite a reason on a row in force: `suppress()` wrote nothing ("already
+  in force") and the contact import skipped any address with a row. So an unsubscribe link, or a Wix
+  UNSUBSCRIBED / SPAM_COMPLAINT / BOUNCED, landing on an `order_history_import` or `not_opted_in` row
+  left it liftable by staff. Now `EmailSuppressionService::replacesHold()` (current reason
+  staff-liftable, incoming reason not) makes `suppress()` write the new reason, date and provenance,
+  and keep the hold in two new nullable columns, `held_reason` and `held_since`. `suppressed_at` moves
+  to the opt-out's date, because a row reading "unsubscribed on the day the order import ran" would be
+  untrue. The contact import makes the same rewrite, counts it on its own row ("Held in Manara for
+  want of consent, but opted out, complained or bounced on Wix") instead of "Already suppressed", and
+  does NOT link the row in `import_links`: the run did not insert it, so its undo leaves the stricter
+  reason in place (errs towards not mailing; a re-run from the same file would write it again).
+  Alternative: have `liftPrecaution` look for an opt-out elsewhere. Rejected: there is no elsewhere;
+  the row is the record. The unsubscribe landing page now offers the real unsubscribe over a hold
+  instead of "You are already unsubscribed". Pinned by
+  `ContactEmailConsentTest::an_unsubscribe_on_a_held_address_replaces_the_hold_and_staff_can_no_longer_lift_it`,
+  `a_wix_unsubscribe_complaint_or_bounce_imported_over_a_hold_cannot_be_lifted_by_staff`, and
+  `WixContactImportTest::a_wix_opt_out_over_a_hold_replaces_its_reason_on_a_row_of_its_own_and_survives_the_runs_undo`.
+- **Held order lifted before the contact import: a Wix opt-out suppresses it again.** The order import
+  holds a buyer without reading Wix's email status, so staff lifting that hold (release_source
+  `staff_recorded_consent`) did not decide anything over a Wix opt-out; they could not see one. When
+  the contact import then finds Wix UNSUBSCRIBED, SPAM_COMPLAINT or BOUNCED for that address, it
+  suppresses it again with Wix's reason (keeping the hold in `held_reason`), counts it on its own row
+  ("Order hold staff lifted in Manara, but opted out ... (suppressed again)") and prints a warning,
+  so the office knows whose recorded consent no longer applies. Rule: the address ends where it
+  would had the contact import run first, when staff could not have lifted a Wix opt-out at all
+  (rule 3 on `EmailSuppressionService`: only the person undoes an opt-out). Wix with no opt-out
+  (NOT_SET, pending) leaves the recorded consent alone. A `not_opted_in` staff lifted is NOT reopened:
+  the contact import had read Wix before writing it, so the lift was made knowing Wix had no opt-out.
+  Alternative: refuse the staff lift of an order hold until the contact import has run. Rejected: an
+  organisation that never runs the contact import (or a buyer missing from its export) could then
+  never be mailed, and "has the contact import run for this address" has no single answer. Pinned by
+  `ContactEmailConsentTest::an_order_hold_staff_lifted_before_the_contact_import_is_suppressed_again_when_wix_has_an_opt_out`.
+- **The consent dialog says what each import knew.** For `order_history_import` it reads "This address
+  came in with an imported order, and no consent to email is on record in Manara, so it is held";
+  only `not_opted_in` says the old website had no consent (`emailConsentPrompt` in `emailOptOut.ts`,
+  pinned in `email-opt-out.test.ts`). The `STAFF_LIFTABLE_REASONS` docblock says the same.

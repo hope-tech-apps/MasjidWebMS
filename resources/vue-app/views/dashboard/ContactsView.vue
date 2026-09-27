@@ -1262,7 +1262,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
 import ContactTagsManager from '@/views/dashboard/contacts/ContactTagsManager.vue';
 import { selectableIds, tagsNotOn, toggleId, togglePage } from '@/views/dashboard/contacts/contactTags';
-import { emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
+import { emailConsentPrompt, emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     ADMIN_SELECTABLE_SMS_CONSENT_SOURCES,
@@ -1366,8 +1366,7 @@ const recordEmailConsent = async () => {
 
     const result = await Swal.fire({
         title: 'Record consent to email',
-        text: 'The old website never had this person\'s consent, so the import held their email back. '
-            + 'Record how they have now agreed to receive this organization\'s emails.',
+        text: emailConsentPrompt(selectedContact.value.email_opt_out_reason),
         input: 'text',
         inputPlaceholder: 'Signed the newsletter sheet at Jumu\'ah on 3 Oct',
         inputAttributes: { maxlength: '500' },

@@ -489,24 +489,84 @@ class WixContactImportTest extends TestCase
         // The order-history import ran first (--without-contact-import) and
         // held a buyer it had to create; Wix says that buyer is SUBSCRIBED and
         // VALID. The import does not release it (DECISIONS.md 2026-09-27): it
-        // tells the operator, and staff lift each by recording consent.
-        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'buyer@example.test']);
-        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'buyer@example.test', EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        // tells the operator, and staff lift each by recording consent. The
+        // "of which" row counts ONLY that: not a hold Wix says was an opt-out
+        // or a complaint (its reason is replaced, and it is counted there), not
+        // a hold staff already lifted, and not a contact the office deleted.
+        $service = app(EmailSuppressionService::class);
+        foreach (['buyer', 'opted-out', 'complained', 'lifted', 'deleted'] as $who) {
+            Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => "{$who}@example.test"]);
+            $service->suppress($this->masjid->id, "{$who}@example.test", EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        }
+        $service->liftPrecaution($this->masjid->id, 'lifted@example.test', 'Signed the sheet', null);
+        $this->contactWithEmail('deleted@example.test')->delete();
         Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'left@example.test']);
-        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'left@example.test');
+        $service->suppress($this->masjid->id, 'left@example.test');
 
         [, $output] = $this->import($this->file([
             $this->wix('w1', ['email' => 'buyer@example.test']),
             $this->wix('w2', ['email' => 'left@example.test']),
+            $this->wix('w3', ['email' => 'opted-out@example.test', 'sub' => 'UNSUBSCRIBED']),
+            $this->wix('w4', ['email' => 'complained@example.test', 'deliv' => 'SPAM_COMPLAINT']),
+            $this->wix('w5', ['email' => 'lifted@example.test']),
+            $this->wix('w6', ['email' => 'deleted@example.test']),
         ]), ['--execute' => true, '--batch' => 'b1']);
 
         $this->assertSame([
             'buyer@example.test' => EmailSuppression::REASON_ORDER_HISTORY_HOLD,
+            'complained@example.test' => EmailSuppression::REASON_COMPLAINT,
+            'deleted@example.test' => EmailSuppression::REASON_ORDER_HISTORY_HOLD,
             'left@example.test' => EmailSuppression::REASON_UNSUBSCRIBE_LINK,
-        ], collect($this->suppressions())->sortKeys()->all(), 'both stay in force');
-        $this->assertSame([], $this->everyoneEmailed());
-        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix, but suppressed in Manara \(kept suppressed\)\s*\|\s*2/', $output);
-        $this->assertMatchesRegularExpression('/of which held by the Wix order-history import \(staff can record consent\)\s*\|\s*1/', $output);
+            'opted-out@example.test' => EmailSuppression::REASON_IMPORTED_OPT_OUT,
+        ], collect($this->suppressions())->sortKeys()->all(), 'the subscribed hold stays in force');
+        $this->assertSame(['lifted@example.test'], $this->everyoneEmailed());
+        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix, but suppressed in Manara \(kept suppressed\)\s*\|\s*2\s/', $output);
+        $this->assertMatchesRegularExpression('/of which held by the Wix order-history import \(staff can record consent\)\s*\|\s*1\s/', $output);
+    }
+
+    #[Test]
+    public function a_wix_opt_out_over_a_hold_replaces_its_reason_on_a_row_of_its_own_and_survives_the_runs_undo(): void
+    {
+        // A hold for want of consent is liftable by staff; a Wix opt-out,
+        // complaint or bounce is not. When Wix says the held person opted out,
+        // the row takes Wix's reason (EmailSuppressionService::replacesHold),
+        // and the operator sees it apart from "Already suppressed". The run
+        // did not insert the row, so its undo leaves the stricter reason.
+        $service = app(EmailSuppressionService::class);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'buyer@example.test']);
+        $service->suppress($this->masjid->id, 'buyer@example.test', EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'left@example.test']);
+        $service->suppress($this->masjid->id, 'left@example.test');
+        $this->import($this->file([$this->wix('w1', ['email' => 'later@example.test', 'sub' => 'NOT_SET'])]), ['--execute' => true, '--batch' => 'b1']);
+        $this->assertSame(EmailSuppression::REASON_NOT_OPTED_IN, $this->suppressions()['later@example.test'], 'the premise');
+
+        $file = $this->file([
+            $this->wix('w1', ['email' => 'later@example.test', 'sub' => 'UNSUBSCRIBED']),
+            $this->wix('w2', ['email' => 'buyer@example.test', 'deliv' => 'BOUNCED']),
+            $this->wix('w3', ['email' => 'left@example.test', 'deliv' => 'SPAM_COMPLAINT']),
+        ]);
+        [, $dry] = $this->import($file);
+        $this->assertMatchesRegularExpression('/Held in Manara for want of consent, but opted out, complained or bounced on Wix \(now that reason; staff can no longer lift it\)\s*\|\s*2\s/', $dry);
+        $this->assertMatchesRegularExpression('/Already suppressed in Manara\s*\|\s*1\s/', $dry, 'only the unsubscribe, which keeps its own reason');
+        $this->assertMatchesRegularExpression('/Suppress: unsubscribed on Wix\s*\|\s*0\s/', $dry, 'no new row is written for either');
+
+        [, $output] = $this->import($file, ['--execute' => true, '--batch' => 'b2']);
+        $this->assertMatchesRegularExpression('/email holds replaced\s*\|\s*2\s/', $output);
+
+        $expected = [
+            'buyer@example.test' => EmailSuppression::REASON_BOUNCE,
+            'later@example.test' => EmailSuppression::REASON_IMPORTED_OPT_OUT,
+            'left@example.test' => EmailSuppression::REASON_UNSUBSCRIBE_LINK,
+        ];
+        $this->assertSame($expected, collect($this->suppressions())->sortKeys()->all());
+        $this->assertSame(EmailSuppression::REASON_ORDER_HISTORY_HOLD,
+            EmailSuppression::withoutMasjidScope()->where('email_normalized', 'buyer@example.test')->value('held_reason'));
+        $this->assertNull($service->liftPrecaution($this->masjid->id, 'buyer@example.test', 'Signed the sheet', null));
+        $this->assertNull($service->liftPrecaution($this->masjid->id, 'later@example.test', 'Signed the sheet', null));
+
+        [$code, $undo] = $this->import(null, ['--undo' => 'b2']);
+        $this->assertSame(0, $code, $undo);
+        $this->assertSame($expected, collect($this->suppressions())->sortKeys()->all(), 'the undo of b2 leaves rows it did not insert');
     }
 
     #[Test]

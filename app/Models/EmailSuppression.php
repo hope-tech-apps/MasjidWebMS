@@ -58,8 +58,10 @@ use Illuminate\Database\Eloquent\Model;
  * The rows staff MAY lift are the two an import writes because it has no
  * consent on record (STAFF_LIFTABLE_REASONS): the contact import's
  * `not_opted_in` precaution and the order-history import's hold. Neither
- * records a request from anybody — only that the old platform never had
- * consent. The person they silence never receives a broadcast, so the
+ * records a request from anybody — only that no consent to email was on
+ * record in Manara (the order import never read the old platform's consent at
+ * all). A real opt-out landing on either replaces its reason, so it stops
+ * being liftable (EmailSuppressionService::suppress()). The person they silence never receives a broadcast, so the
  * subscriber's own link can never reach them; without a staff path "never
  * opted in on Wix" would mean "can never opt in". Lifting one requires the
  * staff member's evidence of consent given in Manara and is written onto the
@@ -144,10 +146,19 @@ class EmailSuppression extends Model
     /**
      * The reasons staff may lift by recording consent given in Manara
      * (EmailSuppressionService::liftPrecaution): each was written by an import
-     * because the old platform had no consent on record, never on anybody's
-     * request. Every reason not listed — an unsubscribe, a manual opt-out, a
-     * complaint, an imported opt-out, a bounce, and any reason added later —
-     * stays the subscriber's to release.
+     * because no consent to email was on record in Manara, never on anybody's
+     * request. The contact import writes `not_opted_in` after reading that Wix
+     * had none; the order-history import holds every buyer it creates without
+     * reading Wix's email status at all, so a hold can sit on an address Wix
+     * lists as subscribed. Every reason not listed — an unsubscribe, a manual
+     * opt-out, a complaint, an imported opt-out, a bounce, and any reason added
+     * later — stays the subscriber's to release.
+     *
+     * Because the reason alone decides what staff may lift, a real opt-out that
+     * lands on one of these rows REPLACES the reason rather than being dropped
+     * as "already suppressed" (EmailSuppressionService::suppress(), and the
+     * contact import's own write): otherwise an unsubscribe would sit under a
+     * reason staff can lift. The replaced reason is kept in `held_reason`.
      */
     public const STAFF_LIFTABLE_REASONS = [self::REASON_NOT_OPTED_IN, self::REASON_ORDER_HISTORY_HOLD];
 
@@ -186,6 +197,8 @@ class EmailSuppression extends Model
         'release_source',
         'release_evidence',
         'released_by_user_id',
+        'held_reason',
+        'held_since',
     ];
 
     protected function casts(): array
@@ -193,6 +206,7 @@ class EmailSuppression extends Model
         return [
             'suppressed_at' => 'datetime',
             'released_at' => 'datetime',
+            'held_since' => 'datetime',
         ];
     }
 

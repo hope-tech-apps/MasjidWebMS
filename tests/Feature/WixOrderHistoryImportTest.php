@@ -16,6 +16,7 @@ use App\Models\Offering;
 use App\Models\Registration;
 use App\Models\RegistrationAdjustment;
 use App\Models\RegistrationPayment;
+use App\Services\Broadcast\EmailSuppressionService;
 use App\Services\Crm\WixOrderHistoryImporter;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -667,10 +668,11 @@ class WixOrderHistoryImportTest extends TestCase
         $this->freezeTime();
         $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
 
-        // The person later used the unsubscribe link: EmailSuppressionService
-        // rewrites the reason on the row the import recorded.
-        DB::table('email_suppressions')->where('email_normalized', 'maryam@example.test')
-            ->update(['reason' => EmailSuppression::REASON_UNSUBSCRIBE_LINK]);
+        // The person later used the unsubscribe link. suppress() replaces the
+        // hold's reason on the row the import recorded, because a hold is one
+        // staff may lift and an unsubscribe is not (EmailSuppressionService,
+        // "Except over a hold for want of consent").
+        app(EmailSuppressionService::class)->suppress($this->org->id, 'maryam@example.test', EmailSuppression::REASON_UNSUBSCRIBE_LINK);
 
         $this->undoAsService('b1');
 
@@ -689,7 +691,8 @@ class WixOrderHistoryImportTest extends TestCase
         // precautions are its own undo's to remove — never this one's, even
         // though staff may lift both reasons alike (DECISIONS.md 2026-09-27).
         // No real sequence gets here (this import holds only an address with
-        // no row), so the reason is rewritten by hand, as the test above does.
+        // no row, and nothing turns a hold into a not_opted_in), so the reason
+        // is rewritten by hand.
         $this->freezeTime();
         $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
 
