@@ -728,6 +728,11 @@ Route::prefix('admin')->group(function () {
             // live page sections show it, and the last changes. Same in-controller
             // 403 as the writers above.
             Route::get('{masjid_id}/capabilities', [MasjidsController::class, 'capabilities']);
+            // SuperAdmin-only: rebuild the favicon, touch icon and share image
+            // from the current logo (Studio W2 S8, BrandAssets). A per-org
+            // decision on a live organisation: it adds three keys to its
+            // /api/v1/settings. Purges the renderer itself, after commit.
+            Route::post('{masjid_id}/brand-assets/regenerate', [\App\Http\Controllers\AdminDashboard\BrandAssetsController::class, 'regenerate']);
             // SuperAdmin-only: charge a child program org's FORM card payments
             // through its parent's Connect account (DECISIONS.md 2026-09-15). The
             // SuperAdmin check is SetFormsCardAccountRequest::authorize(), so a

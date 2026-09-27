@@ -4317,3 +4317,46 @@ which will store Studio's Jumu'ah times as khutbah times. The flag must follow: 
 that gives any khutbah time or an iqama is supplied (`is_default` false), and the 13:30 iqama is
 written, flagged, only when neither is given. An iqama nobody gave is never written beside
 supplied khutbah times.
+
+## 2026-09-27 — Studio W2 S8: regenerating an existing organisation's brand images
+
+`BrandAssets::regenerate(Masjid, ?bg, ?actor)` rebuilds the favicon (48×48,
+transparent), touch icon (180×180, opaque) and share image (1200×630) from the
+organisation's current `logos` row, with the same image code Studio uses at
+provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
+(`{background_color?}`, SuperAdmin, in-controller 403) returns the four URLs.
+
+- **One image code.** `LogoDerivatives::generate(StudioDraft)` and the new
+  `fromFile(path)` are both thin callers of one private `derive()`; the plan's
+  wording was "generate becomes a caller of fromFile", and this keeps its point
+  (one implementation, provision output unchanged: `StudioProvisionLogoTest`
+  unedited) without writing the draft's bytes to disk twice.
+- **Source and colour.** The logo must be a PNG or JPEG by its bytes
+  (`getimagesize`), else 422 `logo: "Upload a PNG or JPEG logo first."`; a logo
+  GD then fails to decode gets the same answer, with the reason logged. The
+  colour defaults to `theme_settings.background_color`; with none and none sent,
+  422 `background_color`.
+- **New first, old after commit.** The three new rows are added (with
+  `preservingOriginal()`) in one transaction; the previous rows of the three
+  collections are deleted only after it commits. Checked in vendor: medialibrary
+  11.23.3 removes a row's files in `MediaObserver::deleted`, at the delete, not
+  at commit, so deleting first inside the transaction would lose the old files
+  on a rollback. A failure before the commit deletes the directories of the
+  rows it made (StudioProvisioning's pattern); the old derivatives stay. A
+  failed delete of an old row after commit is a warning, not an error: the new
+  row is the latest and is what every reader takes.
+- **After commit** it schedules the renderer purge and writes
+  `Log::warning('Brand assets regenerated')` with the actor (production's level).
+  No mobile cache is flushed: no mobile payload reads the derivatives (they read
+  `logos`, which this never writes).
+- **Logo uploads keep them in step, only where they exist.** After either admin
+  logo upload (`MasjidDetailsController::updateDetails`, `MasjidsController::update`)
+  has committed, `BrandAssets::afterLogoUpload` regenerates for an organisation
+  that already has any of the three rows (a Studio one) and does nothing for one
+  that has none, which is every live organisation today. It never throws and
+  never changes the upload's answer; a failure is a warning and the old
+  derivatives stay.
+- **Live effect needs the owner's go per organisation.** Regenerating a live
+  organisation adds `favicon_url`, `touch_icon_url` and `share_image_url` to its
+  `/api/v1/settings` and changes its tab icon and share card (W1 R11). Studio's
+  confirm dialog (S9) says so.

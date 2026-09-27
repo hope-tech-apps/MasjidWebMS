@@ -25,9 +25,10 @@ use Throwable;
  *
  * spatie/image on GD (config/media-library.php's image_driver), as the rest of
  * the app. No ICO and no SVG: GD writes neither, and every browser takes a PNG
- * favicon. The files go to `storage/app/private/studio-tmp/{draft}-{random}/`,
- * which is not served; medialibrary copies them to the public disk inside the
- * transaction, and StudioProvisioning deletes the directory afterwards,
+ * favicon. The files go to `storage/app/private/studio-tmp/{draft}-{random}/`
+ * (or `org-{random}/` for BrandAssets::regenerate), which is not served;
+ * medialibrary copies them to the public disk inside the transaction, and the
+ * caller (StudioProvisioning, BrandAssets) deletes the directory afterwards,
  * committed or not.
  *
  * An instance from the container, not static, so a test can stand in for it at
@@ -46,12 +47,53 @@ class LogoDerivatives
             throw new RuntimeException("Studio draft {$draft->id} has no logo bytes to derive from.");
         }
 
-        $directory = storage_path('app/private/studio-tmp/' . $draft->id . '-' . Str::lower(Str::random(16)));
+        return $this->derive(
+            (string) $draft->id,
+            $draft->logo_mime_type === 'image/jpeg' ? 'jpg' : 'png',
+            fn (string $logo) => file_put_contents($logo, $bytes),
+            $backgroundColor,
+        );
+    }
+
+    /**
+     * The same three images from a logo already on disk, for an organisation
+     * that exists (Studio W2 S8, BrandAssets::regenerate). The source is copied
+     * into the temporary directory as `logo.{png|jpg}` and never modified.
+     *
+     * @throws RuntimeException when the file is not a PNG or JPEG
+     */
+    public function fromFile(string $absPath, string $backgroundColor): LogoFiles
+    {
+        $type = is_file($absPath) ? (@getimagesize($absPath)[2] ?? null) : null;
+        $extension = match ($type) {
+            IMAGETYPE_PNG => 'png',
+            IMAGETYPE_JPEG => 'jpg',
+            default => throw new RuntimeException('The logo is not a PNG or JPEG image.'),
+        };
+
+        return $this->derive(
+            'org',
+            $extension,
+            fn (string $logo) => copy($absPath, $logo) ?: throw new RuntimeException('The logo could not be copied.'),
+            $backgroundColor,
+        );
+    }
+
+    /**
+     * The image code both entry points share: write the logo into a fresh
+     * directory under `studio-tmp/`, then the favicon, touch icon and share
+     * image beside it. A failure deletes the directory.
+     *
+     * @param  callable(string): mixed  $writeLogo  writes the source to the path it is given
+     */
+    private function derive(string $prefix, string $extension, callable $writeLogo, string $backgroundColor): LogoFiles
+    {
+        $directory = storage_path('app/private/studio-tmp/' . $prefix . '-' . Str::lower(Str::random(16)));
         File::ensureDirectoryExists($directory, 0700);
 
         try {
-            $logo = $directory . '/logo.' . ($draft->logo_mime_type === 'image/jpeg' ? 'jpg' : 'png');
-            file_put_contents($logo, $bytes);
+            $logo = $directory . '/logo.' . $extension;
+            $writeLogo($logo);
 
             $files = new LogoFiles(
                 directory: $directory,
