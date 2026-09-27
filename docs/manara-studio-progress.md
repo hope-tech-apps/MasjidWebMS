@@ -35,5 +35,26 @@ no Co-Authored-By or AI attribution lines; mobile work means iOS AND Android.
 | Slice | Track | State |
 |---|---|---|
 | W2/W3 plans merged to main | point | done 2026-09-27 |
-| Studio walkthrough with NAFIS (demo, not a real client) | point | in progress |
-| Lesson-plan standards autofill (Al-Razi teachers' report) | point | in progress |
+| Studio walkthrough with NAFIS (demo, not a real client) | point | Steps 0–2 done in draft 1; Provision waits for the owner's click |
+| Lesson-plan standards autofill (Al-Razi teachers' report) | point | shipping (branch feat/lesson-plan-standard-autofill) |
+| T1–T5 track sessions | T1–T5 | running since 2026-09-27 |
+
+### Walkthrough findings to fold into W2 (NAFIS, 2026-09-27)
+
+Studio Steps 0–2 worked end to end on production with NAFIS's own content: autosave, address
+geocoding, the subdomain check, logo upload, colours with the contrast check, feature defaults, and
+the three layouts drawn with the client's name and TO FILL IN markers. What got in the way:
+
+1. **City picker.** A plain select of 21,008 US cities, with duplicates that carry no state (three
+   "Raleigh"), populated seconds after the country changes. Needs type-to-search with the state.
+2. **Iqama.** Only "minutes after adhan", and all five are required. NAFIS gives fixed clock times for
+   Fajr, Dhuhr and Asr, so the only path is "Client has not given iqama times" and setting them after
+   provisioning, in Prayer settings, which already supports fixed times.
+3. **Jumu'ah.** One iqama time. NAFIS runs two shifts.
+4. **Features summary** says "1 changed from the defaults" when the operator changed nothing (Website
+   pages is suggested with Web). It reads as an edit nobody made.
+5. **Text on primary** is picked for contrast (#111827 on NAFIS green) where NAFIS's own theme uses
+   white. Correct, but a client comparing with their current site will ask.
+
+Rules for the build-gate, from the owner (2026-09-27): Docker Desktop's VM is exempt. Only a running
+`xcodebuild` or an Android emulator (a qemu started with `-avd`) blocks an iOS build or simulator boot.
