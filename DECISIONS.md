@@ -3841,3 +3841,88 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   is always `Form::priceFor($data, now)` and Stripe's page shows it before payment. Accepted:
   MEC's Zakat-ul-Fitr has no tiers, and per-entry `unitMinor` has behaved the same since
   2026-09-11. Recorded in burlington-masjid-site DECISIONS.md with the alternatives.
+
+## 2026-09-24 — Studio W2/W3: the owner's answers to the plans' open questions
+
+Put to the owner in an interview after the W2/W3 plans' first draft
+(`docs/manara-studio-w2.md` §8, `docs/manara-studio-w3.md` §8, where each is
+recorded against its question).
+
+**Apps**
+
+- New apps are `com.hopetechapps.<slug>` on both platforms.
+- The managed Apple account is the team NAFIS and MEC ship under. The managed
+  Play console is the one that holds `com.app.masajid`.
+- The legacy "Generate Apps" button stops signing and uploading, like Studio (D10).
+- Burlington, NAFIS and MEC move to their own OneSignal apps later, in a plan
+  of their own, once the first Studio client is live.
+- One Firebase project serves every client's Android push.
+
+**TV and prayer display**
+
+- Burlington's Apple TV board takes the D11 board (iqama countdown, events,
+  appeal) on its next TV release.
+- A Jumu'ah time the client never supplied is hidden everywhere. The
+  prayer-settings payload emits `jumaa_is_default: true` only when it is true,
+  and the board and both phone apps honour it.
+
+**Arabic**
+
+- The owner reviews the Arabic starter labels. Studio offers Arabic only after
+  that review.
+
+**Domains**
+
+- For a client's own domain, `www` serves and the apex redirects.
+- A host is re-confirmed daily. A Studio host is demoted after three misses
+  over at least 72 hours. Imported hosts are never demoted automatically; the
+  owner is emailed instead.
+- Pages ceiling notices go out at 50, 70, 85 and 95 percent.
+
+**Web export and handover**
+
+- A web export is frozen code on live Manara data. Its hosting is chosen per
+  client, like the apps' account question, with Hope Tech's Cloudflare as the
+  default.
+- A handover is a zip. A continuing client gets the config repo only. A
+  one-and-done client gets a standalone build, with MasjidKit vendored in
+  under a licence the owner will provide.
+
+**Repos and runners**
+
+- The MasjidKit refactor ships slice by slice.
+- BYO store credentials are still collected, per D1.
+- Macs: a dedicated self-hosted Mac that holds no other keys. The
+  organisation stays on GitHub Free; the owner's personal Pro plan does not
+  apply to it.
+- Client repos are named `manara-<slug>-ios`, `-android` and `-web`.
+- Existing clients move to their own repos one at a time, Burlington last.
+- A dedicated machine account holds the read tokens.
+- Exports keep other tenants' inert configuration.
+- LLM-written copy is planned after W3.
+
+**MasjidWebMS** becomes a private repository. The owner changes the
+visibility.
+
+**Setup the owner has taken on:**
+
+- `OPS_ALERT_EMAIL`;
+- the OneSignal organisation key and `ONESIGNAL_ORG_ID`;
+- the Cloudflare redirect-rules scope;
+- the GitHub pull-request setting, the two ops repos, the repo-ops App, the
+  machine account and `GITHUB_OPS_TOKEN`;
+- rotating the unused Google key in the iOS repo;
+- the dedicated build Mac.
+
+**Still open:**
+
+- who holds each Android upload key;
+- whether GitHub Packages can grant a new repo read access by API;
+- which distribution certificate store-ops uses;
+- the handover licence text;
+- the S2b cutover's blocking rule (ASSUMPTIONS.md:37).
+
+Rationale: each answer is the owner's; the plans' recommended defaults were
+taken except for export hosting (per client, not always the client's own) and
+the one-and-done handover (a standalone vendored build), which the plans now
+carry as contracts (W3 S17, S18).
