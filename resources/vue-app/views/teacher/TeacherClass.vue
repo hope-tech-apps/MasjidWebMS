@@ -1131,7 +1131,7 @@
                      role="group" aria-label="This day's plans">
                     <button v-for="p in dayPlans" :key="p.id" type="button" class="btn btn-sm"
                             :class="p.id === planId ? 'btn-success' : 'btn-outline-secondary'"
-                            :aria-pressed="p.id === planId" @click="selectPlan(p.id)">
+                            :aria-pressed="p.id === planId" @click="p.id !== planId && selectPlan(p.id)">
                         {{ planLabel(p) }}
                     </button>
                     <span v-if="planId === null" class="btn btn-sm btn-success disabled" aria-current="true">
@@ -2095,7 +2095,7 @@ import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import {
-    canSavePlan, copyRequest, formTicket, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
+    canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
     subjectClash, subjectKey, takenSubjectKeys,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
@@ -2502,7 +2502,10 @@ const addSubjectPlan = () => {
 const jumpToDay = (iso: string, id: number | null = null) => {
     planView.value = 'day';
     if (planDate.value === iso) {
-        selectPlan(pickPlan(plans.value, iso, id));
+        // Back to the day already open: stay on the plan being written unless
+        // another one was asked for — see jumpTarget.
+        const next = jumpTarget(plans.value, iso, id, planId.value);
+        if (next !== undefined) selectPlan(next);
         return;
     }
     // The planDate watcher opens it: it keeps planId when that plan is on the
@@ -2526,8 +2529,6 @@ const curriculum = ref<{ grades: string[]; subjects: string[]; weeks: any[] }>({
  * picked from a list left over from another day's plan must not fill this one.
  */
 const curriculumFor = ref({ grade: '', subject: '' });
-/** The pair the newest load ASKED for, set when it starts — see syncCurriculum. */
-let curriculumWant = { grade: '', subject: '' };
 let curriculumSeq = 0;
 const prefilling = ref(false);
 const copying = ref(false);
@@ -2539,7 +2540,6 @@ const canPrefill = computed(() =>
 
 const loadCurriculum = async (grade?: string, subject?: string) => {
     const seq = ++curriculumSeq;
-    curriculumWant = { grade: grade ?? '', subject: subject ?? '' };
     try {
         const q = new URLSearchParams();
         if (grade) q.set('grade', grade);
@@ -2567,21 +2567,6 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
         curriculum.value = { grades: [], subjects: [], weeks: [] };
         curriculumFor.value = { grade: '', subject: '' };
     }
-};
-
-/**
- * The subject and week lists follow the plan on screen. Without this, opening
- * another day kept the last-edited plan's week list, and picking a week from it
- * now fills the plan.
- */
-const syncCurriculum = () => {
-    if (!curriculum.value.grades.length) return; // no guide, or not loaded yet
-    const grade = planForm.value.grade_label || '';
-    const subject = planForm.value.subject || '';
-    // Against what was last ASKED for: a load still in flight for the day the
-    // teacher just left must not count as this day's.
-    if (curriculumWant.grade === grade && curriculumWant.subject === subject) return;
-    loadCurriculum(grade || undefined, subject || undefined);
 };
 
 const onGradeChange = async () => {
@@ -2614,13 +2599,11 @@ const onSubjectPick = async () => {
         planForm.value.subject = '';
         planForm.value.curriculum_week_no = null;
         subjectOther.value = true;
-        // The previous subject's weeks are not this subject's. Recorded as
-        // asked-for and loaded both, and any load in flight is dropped, or a
-        // day with the same grade and subject would skip its reload.
+        // The previous subject's weeks are not this subject's, and a load
+        // still in flight for it must not bring them back.
         curriculumSeq++;
         curriculum.value = { ...curriculum.value, weeks: [] };
         curriculumFor.value = { grade: planForm.value.grade_label || '', subject: '' };
-        curriculumWant = { ...curriculumFor.value };
         return;
     }
     await onSubjectChange();
@@ -2957,7 +2940,10 @@ const copyAcrossWeek = async () => {
                 ? TeacherApiService.put(req.url, req.payload)
                 : TeacherApiService.post(req.url, req.payload));
         }
-        await loadLessonPlans();
+        // A copy writes the OTHER days, never the plan on screen, so the form
+        // is kept as the teacher left it — this plan, or one she opened while
+        // the copy ran — rather than reloaded from its saved copy.
+        await loadLessonPlans(false);
     } catch {
         planError.value = 'Could not copy across the week.';
     } finally {
@@ -2965,7 +2951,13 @@ const copyAcrossWeek = async () => {
     }
 };
 
-const loadLessonPlans = async () => {
+/**
+ * Reload the week. `resync` false keeps the form as the teacher left it: a save
+ * or copy that answers after she opened another plan must not reload that
+ * plan's saved copy over what she is writing. The plan she is on is kept only
+ * while it still exists; one that has gone falls back as a resync would.
+ */
+const loadLessonPlans = async (resync = true) => {
     planError.value = '';
     try {
         const days = weekDays.value;
@@ -2975,6 +2967,7 @@ const loadLessonPlans = async () => {
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
+        if (!resync && (planId.value === null || plans.value.some((p) => p.id === planId.value))) return;
         // Stay on the plan that was open if it is still there (a save, a copy),
         // else the day's first plan, else a new one.
         planId.value = pickPlan(plans.value, planDate.value, planId.value);
@@ -3009,15 +3002,6 @@ const syncPlanForm = () => {
     cancelPrefill();
     planForms.replace();
     closeStandards();
-    // The subject box follows THIS plan: a hand-typed subject on another day
-    // must not turn this day's guide subject into a text box. Re-checked when
-    // syncCurriculum's load lands with this grade's subjects.
-    {
-        const subject = planForm.value.subject;
-        const subjects = curriculum.value.subjects;
-        subjectOther.value = !!subject && subjects.length > 0 && !subjects.includes(subject);
-    }
-    syncCurriculum();
 
     // The pickers follow the plan on screen. Another subject's plan brings
     // another subject's weeks, and a week list left over from the last plan
@@ -3033,11 +3017,18 @@ const syncPlanForm = () => {
 };
 
 watch(planDate, (iso) => selectPlan(pickPlan(plans.value, iso, planId.value)));
-watch(weekStart, loadLessonPlans);
+watch(weekStart, () => loadLessonPlans());
 
 const shiftWeek = (delta: number) => {
     const d = new Date(weekStart.value + 'T00:00:00');
     d.setDate(d.getDate() + delta * 7);
+    // The open day moves with the week. Left behind, it was a day the loaded
+    // week does not hold: no plan chips, and the one-plan-per-subject check
+    // read an empty day while the server refused the clash anyway.
+    const day = new Date(planDate.value + 'T00:00:00');
+    day.setDate(day.getDate() + delta * 7);
+    planId.value = null;
+    planDate.value = localDay(day);
     weekStart.value = localDay(d);
 };
 
@@ -3069,7 +3060,9 @@ const savePlan = async () => {
         // teacher stays there.
         const stillOpen = planForms.isCurrent(ticket);
         if (stillOpen) planId.value = res.data?.data?.id ?? planId.value;
-        await loadLessonPlans();
+        // Re-sync only the plan that was saved; another one opened meanwhile
+        // keeps what the teacher is writing in it.
+        await loadLessonPlans(stillOpen);
         // After the reload, which re-syncs the form and clears the flag.
         planSaved.value = stillOpen;
     } catch (e: any) {
@@ -4930,8 +4923,7 @@ watch(activeTab, (tab) => {
     // Every time, not once: the counts move whenever a child is marked, and this
     // is the screen the teacher comes back to between children.
     if (tab === 'letters') loadLettersOverview();
-    // Then follow the plan on screen, in case its day loaded first.
-    if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum().then(syncCurriculum); }
+    if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
     if (tab === 'reports' && !reportRows.value.length && !reportsLoading.value) loadReportCards();

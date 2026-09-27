@@ -11,6 +11,7 @@ import {
     canSavePlan,
     copyRequest,
     formTicket,
+    jumpTarget,
     pickPlan,
     planDeleteUrl,
     planLabel,
@@ -181,4 +182,36 @@ test('a guide fill or a save that answers after the teacher opened another plan 
     const save = fn('savePlan');
     assert.ok(save.indexOf('const ticket = planForms.current();') < save.indexOf('await TeacherApiService.'));
     assert.match(save, /const stillOpen = planForms\.isCurrent\(ticket\);\s+if \(stillOpen\) planId\.value = /);
+});
+
+test('a jump back into the open day stays on the plan being written', () => {
+    // Nothing asked for, or the open plan asked for: stay, keeping the draft.
+    assert.equal(jumpTarget(week, '2026-09-14', null, 7), undefined);
+    assert.equal(jumpTarget(week, '2026-09-14', 7, 7), undefined);
+    assert.equal(jumpTarget(week, '2026-09-14', null, null), undefined, 'a new plan being written stays too');
+    // Another plan of that day: open it.
+    assert.equal(jumpTarget(week, '2026-09-14', 3, 7), 3);
+    // A plan not on that day falls back to the day's first, as pickPlan does.
+    assert.equal(jumpTarget(week, '2026-09-14', 4, 7), 9);
+
+    assert.match(fn('jumpToDay'), /const next = jumpTarget\(plans\.value, iso, id, planId\.value\);\s+if \(next !== undefined\) selectPlan\(next\);/);
+    assert.match(view, /@click="p\.id !== planId && selectPlan\(p\.id\)"/, 'the open plan\'s chip does nothing');
+});
+
+test('a save or copy that answers late does not reload over the plan the teacher moved to', () => {
+    assert.match(fn('loadLessonPlans'), /if \(!resync && \(planId\.value === null \|\| plans\.value\.some\(\(p\) => p\.id === planId\.value\)\)\) return;/);
+    assert.match(fn('savePlan'), /await loadLessonPlans\(stillOpen\);/);
+    assert.match(fn('copyAcrossWeek'), /await loadLessonPlans\(false\);/);
+    assert.match(view, /watch\(weekStart, \(\) => loadLessonPlans\(\)\);/, 'a watcher passes its value, never a resync flag');
+});
+
+test('the open day moves with the week, so the day view reads the week that is loaded', () => {
+    const shift = fn('shiftWeek');
+    assert.ok(shift.indexOf('planDate.value = ') !== -1 && shift.indexOf('planDate.value = ') < shift.indexOf('weekStart.value = '));
+});
+
+test('a plan switch loads the subject and week lists once', () => {
+    const sync = fn('syncPlanForm');
+    assert.equal((sync.match(/loadCurriculum\(/g) ?? []).length, 1);
+    assert.doesNotMatch(view, /syncCurriculum/);
 });

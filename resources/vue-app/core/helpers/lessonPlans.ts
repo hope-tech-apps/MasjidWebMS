@@ -97,6 +97,22 @@ export function pickPlan(plans: DayPlan[], iso: string, preferredId: number | nu
     return day[0]?.id ?? null;
 }
 
+/**
+ * The plan a jump into the day ALREADY open should open, or `undefined` to stay.
+ *
+ * Opening a plan reloads its saved copy into the form, so re-opening the one on
+ * screen would throw away its unsaved draft — a guide fill, typed activities.
+ * A jump that names no plan (a phone's day card, a day row with no plan) or
+ * names the open one stays; a jump that names another plan of that day opens it.
+ */
+export function jumpTarget(plans: DayPlan[], iso: string, id: number | null, openId: number | null): number | null | undefined {
+    if (id === null || id === openId) {
+        return undefined;
+    }
+
+    return pickPlan(plans, iso, id);
+}
+
 /** How a plan names itself in a list of the day's plans. */
 export function planLabel(plan: DayPlan | null | undefined): string {
     const subject = String(plan?.subject ?? '').trim();
