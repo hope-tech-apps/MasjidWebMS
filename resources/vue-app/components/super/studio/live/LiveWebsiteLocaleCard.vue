@@ -65,10 +65,12 @@ async function save() {
         ? [
             `${org}'s website is then read in Arabic, right to left: its menus, dates and buttons in Arabic, its whole layout mirrored.`,
             'Its own pages keep the words they have; nothing is translated.',
+            'Visitors see the change within about five minutes, as the website\'s servers refresh what they hold for it.',
             `${org} is a live organisation: go ahead only with the owner's go.`,
         ]
         : [
             `${org}'s website is then read in ${LABELS[chosen.value]}, left to right.`,
+            'Visitors see the change within about five minutes, as the website\'s servers refresh what they hold for it.',
             `${org} is a live organisation: go ahead only with the owner's go.`,
         ];
 
@@ -89,6 +91,8 @@ async function save() {
         failure.value = result.message;
         return;
     }
-    saved.value = 'Saved. The website shows it once its pages refresh, within a minute.';
+    // The renderer's per-server lookup memo (300 s) is the bound; its page cache is
+    // purged and keyed by locale (renderer DECISIONS, Studio W2 S13).
+    saved.value = 'Saved. Visitors see it within about five minutes.';
 }
 </script>

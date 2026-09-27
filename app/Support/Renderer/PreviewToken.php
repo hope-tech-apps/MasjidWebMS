@@ -2,6 +2,7 @@
 
 namespace App\Support\Renderer;
 
+use App\Models\Masjid;
 use InvalidArgumentException;
 
 /**
@@ -10,7 +11,11 @@ use InvalidArgumentException;
  *     v1.<base64url(JSON claims)>.<base64url(HMAC-SHA256(secret, "manara-preview|v1|" + payload))>
  *
  * Claims: o (organisation id), s (surface: pages|theme|splash), p (the one path it may
- * render), a (the admin origin allowed to frame it), e (expiry, unix seconds).
+ * render), a (the admin origin allowed to frame it), e (expiry, unix seconds), and l (the
+ * organisation's website locale, Studio W2 S12/S13), last and ONLY when set, so every
+ * other token is byte-for-byte what it was. The renderer applies `l` to an organisation
+ * its static map does not know, so a lookup-resolved Arabic site previews right to left,
+ * as it renders live.
  *
  * The renderer verifies it (burlington-masjid-site shared/previewToken.ts). Both sides
  * pin the same vector (tests/Unit/PreviewTokenVectorTest.php and the renderer's
@@ -32,6 +37,7 @@ final class PreviewToken
         string $path,
         string $adminOrigin,
         int $expiresAt,
+        ?string $locale = null,
     ): string {
         if ($organisationId < 1 || ! in_array($surface, self::SURFACES, true) || ! self::isSafePath($path)) {
             throw new InvalidArgumentException('Invalid preview token claims.');
@@ -39,14 +45,22 @@ final class PreviewToken
         if (RendererConfig::origin($adminOrigin) !== $adminOrigin) {
             throw new InvalidArgumentException('Invalid preview admin origin.');
         }
+        if ($locale !== null && ! in_array($locale, Masjid::WEBSITE_LOCALES, true)) {
+            throw new InvalidArgumentException('Invalid preview locale.');
+        }
 
-        $payload = self::base64Url(json_encode([
+        $claims = [
             'o' => $organisationId,
             's' => $surface,
             'p' => $path,
             'a' => $adminOrigin,
             'e' => $expiresAt,
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        ];
+        if ($locale !== null) {
+            $claims['l'] = $locale;
+        }
+
+        $payload = self::base64Url(json_encode($claims, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
 
         $signature = self::base64Url(hash_hmac('sha256', 'manara-preview|v1|'.$payload, $secret, true));
 
