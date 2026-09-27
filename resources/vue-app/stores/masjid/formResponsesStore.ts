@@ -346,6 +346,7 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         const body = new URLSearchParams();
         if (payload.status !== undefined) body.append('status', payload.status);
         if (payload.admin_notes !== undefined) body.append('admin_notes', payload.admin_notes);
+        if (payload.expected_status !== undefined) body.append('expected_status', payload.expected_status);
 
         const res: AxiosResponse = await ApiService.put(
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}`,
@@ -372,7 +373,10 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
     // ---------------------------------------------------------------- the door
 
-    /** Mark collected: stamped by the first press. Refused unless settled and not cancelled. */
+    /**
+     * Check in (collected_at): stamped by the first press. Refused unless settled and not
+     * cancelled. Worded "check in" wherever it can reach the screen, as the list is.
+     */
     async function collectResponse(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
         const id = requireMasjidId();
 
@@ -381,10 +385,10 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
             new FormData()
         );
 
-        return actionResult(res, 'Could not mark this registration collected.');
+        return actionResult(res, 'Could not check this registration in.');
     }
 
-    /** Undo "Mark collected". */
+    /** Undo "Check in". */
     async function uncollectResponse(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
         const id = requireMasjidId();
 
@@ -392,7 +396,7 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/collect`
         );
 
-        return actionResult(res, 'Could not undo the collection.');
+        return actionResult(res, 'Could not undo the check-in.');
     }
 
     /**

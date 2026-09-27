@@ -109,7 +109,7 @@ class FormResponsesMoneyAdminTest extends TestCase
 
         $this->postJson($this->url("/{$row->id}/collect"))
             ->assertOk()
-            ->assertJsonPath('message', 'Marked collected.')
+            ->assertJsonPath('message', 'Checked in.')
             ->assertJsonPath('data.collected_by.id', $this->admin->id);
 
         $stamped = $row->fresh()->collected_at;
@@ -121,7 +121,7 @@ class FormResponsesMoneyAdminTest extends TestCase
 
         $this->postJson($this->url("/{$row->id}/collect"))
             ->assertOk()
-            ->assertJsonPath('message', 'Already marked collected.')
+            ->assertJsonPath('message', 'Already checked in.')
             ->assertJsonPath('data.collected_by.id', $this->admin->id);
 
         $this->assertTrue($stamped->equalTo($row->fresh()->collected_at), 'the first press is the one recorded');
@@ -129,11 +129,18 @@ class FormResponsesMoneyAdminTest extends TestCase
 
         $this->deleteJson($this->url("/{$row->id}/collect"))
             ->assertOk()
+            ->assertJsonPath('message', 'Check-in undone.')
             ->assertJsonPath('data.collected_at', null)
             ->assertJsonPath('data.collected_by', null);
 
         $this->assertNull($row->fresh()->collected_at);
         $this->assertNull($row->fresh()->collected_by_user_id);
+
+        // The screen toasts these answers, so they say "checked in" as it does: "Mark
+        // collected" beside a card payment read as money still to take (2026-09-27).
+        $this->deleteJson($this->url("/{$row->id}/collect"))
+            ->assertOk()
+            ->assertJsonPath('message', 'This registration was not checked in.');
     }
 
     #[Test]

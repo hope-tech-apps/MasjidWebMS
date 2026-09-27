@@ -133,7 +133,7 @@
                             <label class="form-label small text-muted mb-1" for="responses-status">Status</label>
                             <select id="responses-status" class="form-select" v-model="statusFilter">
                                 <option value="">All statuses</option>
-                                <option v-for="s in statuses" :key="s" :value="s" class="text-capitalize">{{ s }}</option>
+                                <option v-for="choice in statusOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
                             </select>
                         </div>
                         <div class="col-md-6 col-lg-2">
@@ -167,11 +167,14 @@
                             </select>
                         </div>
                         <div class="col-md-4 col-lg-3">
-                            <label class="form-label small text-muted mb-1" for="responses-collected">Collected</label>
+                            <!-- "Checked in", not "Collected": beside a card payment, the owner read
+                                 "Mark collected" as money still to take (2026-09-27). It is the door
+                                 (collected_at), and the API keeps its names. -->
+                            <label class="form-label small text-muted mb-1" for="responses-collected">Checked in</label>
                             <select id="responses-collected" class="form-select" v-model="collectedFilter">
-                                <option value="">Collected or not</option>
-                                <option value="no">Not collected yet</option>
-                                <option value="yes">Collected</option>
+                                <option value="">Checked in or not</option>
+                                <option value="no">Not checked in</option>
+                                <option value="yes">Checked in</option>
                             </select>
                         </div>
                         <div v-if="staffCodeOptions.length" class="col-md-4 col-lg-3">
@@ -200,9 +203,9 @@
                     <div v-if="doorMode && paymentEnabled" class="alert alert-success py-2 small mb-3" role="status">
                         <strong>At the door.</strong>
                         With the search box empty, this shows registrations that are paid, or have nothing to pay,
-                        and have not collected yet. A search (name, email, phone or #number) shows every
-                        registration that matches, including unpaid ones and ones already collected, so nobody is
-                        registered twice. Cancelled registrations are flagged and cannot be marked collected.
+                        and have not checked in yet. A search (name, email, phone or #number) shows every
+                        registration that matches, including unpaid ones and ones already checked in, so nobody is
+                        registered twice. Cancelled registrations are flagged and cannot be checked in.
                     </div>
 
                     <p v-if="dateRangeInvalid" class="text-danger small mb-3">
@@ -545,7 +548,7 @@
                                         <span v-else>{{ column.label }}</span>
                                     </th>
                                     <th v-if="paymentEnabled">Payment</th>
-                                    <th v-if="paymentEnabled">Collected</th>
+                                    <th v-if="paymentEnabled">Checked in</th>
                                     <th class="text-end">Actions</th>
                                 </tr>
                             </thead>
@@ -580,10 +583,35 @@
                                             {{ breakdownText(response) }}
                                         </div>
                                     </td>
+                                    <!-- Status, changed right here (the owner, 2026-09-27): the detail's PUT, saved
+                                         once chosen (statusSelectController(): picked from the open list, or
+                                         Enter / leaving the select after arrow-key steps, never on a step).
+                                         Disabled while any row action or status save runs (busyRowId).
+                                         Coloured like the old pill so the list still scans by status. -->
                                     <td>
-                                        <span class="badge text-capitalize" :class="statusClass(response.status)">
-                                            {{ response.status }}
-                                        </span>
+                                        <div class="d-flex align-items-center gap-1 flex-wrap">
+                                            <select
+                                                class="form-select form-select-sm status-select"
+                                                :class="statusClass(shownStatus(response))"
+                                                :value="shownStatus(response)"
+                                                :disabled="busyRowId !== null"
+                                                :aria-busy="statusSavingId === response.id ? 'true' : undefined"
+                                                :aria-label="statusSelectLabel(response.id, response.respondent_name)"
+                                                :aria-describedby="heldStatuses.has(response.id) ? `status-held-${response.id}` : undefined"
+                                                @pointerdown="statusSelect.pointerdown()"
+                                                @keydown="onStatusEvent('keydown', response, $event)"
+                                                @change="onStatusEvent('change', response, $event)"
+                                                @blur="onStatusEvent('blur', response, $event)"
+                                            >
+                                                <option v-for="choice in statusOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
+                                            </select>
+                                            <span v-if="statusSavingId === response.id" class="spinner-border spinner-border-sm text-secondary" role="status">
+                                                <span class="visually-hidden">Saving the status</span>
+                                            </span>
+                                            <span v-if="heldStatuses.has(response.id)" :id="`status-held-${response.id}`" class="small text-muted">
+                                                Not saved: Enter saves, Esc undoes
+                                            </span>
+                                        </div>
                                     </td>
 
                                     <!-- Payment: the badge, who holds cash, and the two ways to settle by hand -->
@@ -629,10 +657,12 @@
                                         </div>
                                     </td>
 
-                                    <!-- Collected: handed out at the table, stamped by the first press -->
+                                    <!-- Checked in (collected_at): handed out at the table, stamped by the first
+                                         press. Worded "Checked in" because "Mark collected" beside a card payment
+                                         read as money still to take. -->
                                     <td v-if="paymentEnabled">
                                         <template v-if="response.collected_at">
-                                            <span class="badge bg-success-subtle text-success-emphasis">Collected</span>
+                                            <span class="badge bg-success-subtle text-success-emphasis">Checked in</span>
                                             <div class="small text-muted">
                                                 {{ formatDateTime(response.collected_at) }}<template v-if="response.collected_by?.name"> · {{ response.collected_by.name }}</template>
                                             </div>
@@ -640,7 +670,7 @@
                                                 type="button"
                                                 class="btn btn-sm btn-link p-0"
                                                 :disabled="busyRowId !== null"
-                                                :aria-label="`Undo collected for registration #${response.id}`"
+                                                :aria-label="`Undo check-in for registration #${response.id}`"
                                                 @click="uncollect(response)"
                                             >
                                                 Undo
@@ -657,10 +687,10 @@
                                                 type="button"
                                                 class="btn btn-sm btn-success"
                                                 :disabled="busyRowId !== null"
-                                                :aria-label="`Mark registration #${response.id} collected`"
+                                                :aria-label="`Check in registration #${response.id}`"
                                                 @click="collect(response)"
                                             >
-                                                Mark collected
+                                                Check in
                                             </button>
                                             <div class="small text-muted">For {{ response.entry_count }} {{ response.entry_count === 1 ? 'person' : 'people' }}</div>
                                         </template>
@@ -669,8 +699,11 @@
 
                                     <td class="text-end">
                                         <div class="btn-group btn-group-sm">
+                                            <!-- Not while this row's status or a door action is saving: the
+                                                 detail would open on the row as it was. -->
                                             <button
                                                 class="btn btn-outline-primary"
+                                                :disabled="busyRowId === response.id"
                                                 @click="openDetail(response)"
                                                 title="View Details"
                                                 :aria-label="`View details of registration #${response.id}`"
@@ -729,7 +762,7 @@
                                         <i class="bi sort-icon" :class="sortIcon('status')"></i>
                                     </th>
                                     <th v-if="paymentEnabled">Payment</th>
-                                    <th v-if="paymentEnabled">Collected</th>
+                                    <th v-if="paymentEnabled">Checked in</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -787,7 +820,7 @@
                                 <strong>The summary is not shown while the door's filters are on.</strong>
                             </p>
                             <p class="mb-2 small">
-                                The payment, collected and staff-code filters narrow the table but not the
+                                The payment, check-in and staff-code filters narrow the table but not the
                                 summary, so the two would print different head counts for the same screen.
                                 The search, status and date filters do apply.
                             </p>
@@ -1240,7 +1273,7 @@
                                         </div>
                                         <div v-if="unpaidButOwesNothing(selectedResponse)" class="small text-muted mt-1">
                                             This registration owed nothing when it was submitted, so it cannot be paid or
-                                            marked collected here. To charge it, cancel it and register again at the
+                                            checked in here. To charge it, cancel it and register again at the
                                             current price.
                                         </div>
                                     </dd>
@@ -1301,7 +1334,7 @@
                                         <dd class="col-sm-8">{{ selectedResponse.marked_paid_by.name }}</dd>
                                     </template>
 
-                                    <dt class="col-sm-4 text-muted fw-normal small">Collected</dt>
+                                    <dt class="col-sm-4 text-muted fw-normal small">Checked in</dt>
                                     <dd class="col-sm-8">
                                         <template v-if="selectedResponse.collected_at">
                                             {{ formatDateTime(selectedResponse.collected_at) }}<template v-if="selectedResponse.collected_by?.name"> by {{ selectedResponse.collected_by.name }}</template>
@@ -1325,7 +1358,7 @@
                                         :disabled="busyRowId !== null"
                                         @click="collect(selectedResponse)"
                                     >
-                                        Mark collected
+                                        Check in
                                     </button>
                                     <button
                                         v-if="selectedResponse.collected_at"
@@ -1334,7 +1367,7 @@
                                         :disabled="busyRowId !== null"
                                         @click="uncollect(selectedResponse)"
                                     >
-                                        Undo collected
+                                        Undo check-in
                                     </button>
                                     <button
                                         v-if="canTakePayment(selectedResponse)"
@@ -1461,8 +1494,8 @@
                             <div class="row g-3">
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted mb-1" for="response-edit-status">Status</label>
-                                    <select id="response-edit-status" class="form-select text-capitalize" v-model="editStatus">
-                                        <option v-for="s in statuses" :key="s" :value="s" class="text-capitalize">{{ s }}</option>
+                                    <select id="response-edit-status" class="form-select" v-model="editStatus">
+                                        <option v-for="choice in statusOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
                                     </select>
                                 </div>
                                 <div
@@ -1730,6 +1763,16 @@ import { useRoute } from 'vue-router';
 import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
+import {
+    FALLBACK_STATUSES,
+    cancelDialogOptions,
+    cancelQuestion,
+    refreshesAfterStatusChange,
+    statusChoices,
+    statusLabel,
+    statusSelectController,
+    statusSelectLabel
+} from './formResponseStatus';
 import Swal from 'sweetalert2';
 
 // Store
@@ -1767,7 +1810,6 @@ const DEFAULT_DIRECTIONS: Record<FormResponseSortColumn, FormResponseSortDirecti
     amount_due: 'desc'
 };
 
-const FALLBACK_STATUSES: FormResponseStatus[] = ['new', 'confirmed', 'waitlisted', 'cancelled'];
 const FALLBACK_SORTABLE: FormResponseSortColumn[] = [
     'submitted_at', 'respondent_name', 'respondent_email', 'status', 'entry_count', 'amount_due'
 ];
@@ -1813,7 +1855,7 @@ let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 /**
  * "At the door". With the search box empty: registrations paid (or owing nothing) and not
  * collected yet, the ones still to serve. While searching: EVERY match, so an unpaid card
- * payer is found and flagged, and a family already served shows its "Collected" stamp.
+ * payer is found and flagged, and a family already served shows its "Checked in" stamp.
  * Hidden, either would be registered, and paid for, a second time.
  */
 const doorMode = ref(false);
@@ -1877,6 +1919,8 @@ const formOptions = computed<FormOption[]>(() => formResponsesStore.formOptions)
 const meta = computed<FormResponsesMeta | undefined>(() => formResponsesStore.responsesMeta);
 const responses = computed<FormResponseRow[]>(() => (formResponsesStore.responsesPaginated?.data as FormResponseRow[]) || []);
 const statuses = computed<FormResponseStatus[]>(() => meta.value?.statuses ?? FALLBACK_STATUSES);
+/** The status filter, the list's selects and the detail's, all in one order and one set of words. */
+const statusOptions = computed(() => statusChoices(statuses.value));
 const sortableColumns = computed<FormResponseSortColumn[]>(() => meta.value?.sortable ?? FALLBACK_SORTABLE);
 const columns = computed<FormResponseColumn[]>(() => meta.value?.columns ?? []);
 
@@ -2007,7 +2051,7 @@ const cashFilterSummary = computed<string[]>(() => {
     if (applied.from) parts.push(`submitted from ${applied.from}`);
     if (applied.to) parts.push(`submitted to ${applied.to}`);
     if (applied.payment) parts.push(`payment: ${(PAYMENT_FILTER_LABELS[applied.payment] ?? applied.payment).toLowerCase()}`);
-    if (applied.collected) parts.push(applied.collected === 'no' ? 'not collected yet' : 'collected');
+    if (applied.collected) parts.push(applied.collected === 'no' ? 'not checked in' : 'checked in');
     if (applied.staff_code_id !== '' && applied.staff_code_id !== null && applied.staff_code_id !== undefined) {
         const code = staffCodeOptions.value.find(option => option.id === Number(applied.staff_code_id));
         parts.push(code ? `entered with ${code.holder_name}'s code` : 'one staff code');
@@ -2495,7 +2539,7 @@ const personName = (row: FormResponseRow): string => row.respondent_name || `reg
 
 /**
  * One door action on one row: the answer replaces the row where it stands, rather than
- * re-fetching the page, so a mistaken "Mark collected" can be undone on the spot even
+ * re-fetching the page, so a mistaken "Check in" can be undone on the spot even
  * when the list is filtered to rows not yet collected. A refusal shows in the server's
  * own words ("Not paid yet.", "Do not take a second payment.").
  */
@@ -2586,11 +2630,11 @@ const collect = async (row: FormResponseRow) => {
     const result = await runRowAction(
         row,
         formId => formResponsesStore.collectResponse(formId, row.id),
-        'Not marked collected',
-        'Could not mark this registration collected.'
+        'Not checked in',
+        'Could not check this registration in.'
     );
 
-    if (result) toast('success', result.message ?? 'Marked collected.');
+    if (result) toast('success', result.message ?? 'Checked in.');
 };
 
 const uncollect = async (row: FormResponseRow) => {
@@ -2600,12 +2644,12 @@ const uncollect = async (row: FormResponseRow) => {
     const who = row.collected_by?.name ? ` by ${row.collected_by.name}` : '';
 
     const confirmed = await Swal.fire({
-        title: `Undo the collection of #${row.id}?`,
-        text: `It was marked collected${when}${who}. Undoing removes ${who ? 'their name and the time' : 'the time'}, and #${row.id} can be handed out again.`,
+        title: `Undo the check-in of #${row.id}?`,
+        text: `It was checked in${when}${who}. Undoing removes ${who ? 'their name and the time' : 'the time'}, and #${row.id} can be checked in again.`,
         icon: 'warning',
         showCancelButton: true,
-        confirmButtonText: 'Undo collection',
-        cancelButtonText: 'Keep it collected'
+        confirmButtonText: 'Undo check-in',
+        cancelButtonText: 'Keep it checked in'
     });
 
     if (!confirmed.isConfirmed) return;
@@ -2614,10 +2658,10 @@ const uncollect = async (row: FormResponseRow) => {
         row,
         formId => formResponsesStore.uncollectResponse(formId, row.id),
         'Not undone',
-        'Could not undo the collection.'
+        'Could not undo the check-in.'
     );
 
-    if (result) toast('success', result.message ?? 'Collection undone.');
+    if (result) toast('success', result.message ?? 'Check-in undone.');
 };
 
 /**
@@ -3067,6 +3111,15 @@ const showTriageAnswer = async (result: FormResponseActionResult, asked: 'save' 
         return;
     }
 
+    if (await askTriageAnswer(answer)) await recloseCardPage(result.data);
+};
+
+/**
+ * An answer that stays until dismissed. True when the admin asked to close the card page
+ * again, which the caller does: the list's status select does it only after letting go of
+ * the row lock that closing goes through (runRowAction()).
+ */
+const askTriageAnswer = async (answer: TriageAnswer): Promise<boolean> => {
     const choice = await Swal.fire({
         icon: answer.icon,
         title: answer.title,
@@ -3076,7 +3129,7 @@ const showTriageAnswer = async (result: FormResponseActionResult, asked: 'save' 
         cancelButtonText: 'Not now'
     });
 
-    if (answer.retry && choice.isConfirmed) await recloseCardPage(result.data);
+    return answer.retry && choice.isConfirmed;
 };
 
 // --- Cash by staff member ----------------------------------------------------
@@ -3156,6 +3209,10 @@ const openDetail = async (response: FormResponseRow) => {
     try {
         const full = await formResponsesStore.fetchResponse(selectedFormId.value, response.id);
         if (full) {
+            // The list row can be out of date (another admin, or a status save still
+            // settling): Save must start from the status the server has, unless the admin
+            // has already chosen one here.
+            if (editStatus.value === response.status) editStatus.value = full.status;
             detail.value = full;
             selectedResponse.value = full;
         }
@@ -3223,7 +3280,146 @@ const reloadAfterSave = async () => {
     refreshCashIfOpen();
 };
 
+// --- Status, changed from the list -------------------------------------------
+
+/** The row whose status PUT is in flight: its spinner. The lock itself is busyRowId. */
+const statusSavingId = ref<number | null>(null);
+
+/**
+ * Arrow-key steps not saved yet, by row id (statusSelectController()). The select shows
+ * one while it is held; Enter or leaving the select saves it, Escape puts the saved status
+ * back.
+ */
+const heldStatuses = ref(new Map<number, FormResponseStatus>());
+
+/** What a row's select shows: a held keyboard step, else the saved status. */
+const shownStatus = (row: FormResponseRow): FormResponseStatus => heldStatuses.value.get(row.id) ?? row.status;
+
+/**
+ * A status chosen in a row's select: the same PUT (and so the same server-side cancel)
+ * as the detail's Save, sent for the status alone, with the status the list showed as its
+ * precondition (a list read before another admin's cancel is answered 409, not obeyed).
+ *
+ * When it saves, and what it locks, is statusSelectController()'s: saved only once chosen,
+ * never on an arrow-key step, and under busyRowId, the one lock every row action takes, from
+ * the question to the answer. So the door and payment buttons and View wait while a status
+ * saves, the two answers never land out of order, and no popup replaces another.
+ *
+ * The row is patched where it stands rather than the page re-read, as the door's actions
+ * are (runRowAction()): on a list filtered or sorted by status a slip stays in view to be
+ * put right, and the next load files it. What a cancel or restore moves elsewhere on
+ * screen (refreshesAfterStatusChange()) is re-read.
+ */
+const statusSelect = statusSelectController<FormResponseActionResult>({
+    held: heldStatuses.value,
+    isBusy: () => busyRowId.value !== null,
+    lock: rowId => { busyRowId.value = rowId; },
+    saving: rowId => { statusSavingId.value = rowId; },
+    ask: row => confirmCancel(row as FormResponseRow),
+    save: (row, next, expected) => {
+        if (!selectedFormId.value) return Promise.reject(new Error('No form is selected.'));
+        return formResponsesStore.updateResponse(selectedFormId.value, row.id, { status: next, expected_status: expected });
+    },
+    saved: async (row, from, next, result) => {
+        applyRow(result.data);
+
+        const moves = refreshesAfterStatusChange(from, next, meta.value?.reservations === true);
+        if (moves.cash) refreshCashIfOpen();
+        if (moves.reservations) loadReservations();
+
+        // A cancel can come back with something to act on (a card payment that stands, a card
+        // page not closed): that stays until dismissed, still under the lock. A plain save is
+        // a toast.
+        const answer = triageAnswer(result, 'save');
+        if (answer.quiet) {
+            toast('success', `#${row.id} is now ${statusLabel(result.data.status)}.`);
+            return;
+        }
+
+        // "Close its card payment page again" is a row action of its own, so it runs once
+        // this save has let go of the lock.
+        if (await askTriageAnswer(answer)) return () => recloseCardPage(result.data);
+    },
+    refused: async (row, error: any) => {
+        // A refusal (a restore whose date is now someone else's) or a 409 (the row moved
+        // since the list was read) means the row is not what the list shows: show it as the
+        // server has it, as runRowAction() does.
+        const status = error?.response?.status;
+        if (status === 422 || status === 409 || status === 503) await refreshRow(row.id);
+        refusalToast('Status not changed', serverMessage(error, 'Could not change the status.'));
+    }
+});
+
+/**
+ * The select's own events, passed to statusSelectController(). Locking disables the focused
+ * select, which drops focus to the page and would leave a keyboard user at the top of it:
+ * focus goes back to it once the change has settled.
+ */
+const onStatusEvent = async (
+    kind: 'keydown' | 'change' | 'blur',
+    row: FormResponseRow,
+    event: Event
+) => {
+    const select = event.target as HTMLSelectElement;
+
+    const settled = kind === 'keydown'
+        ? await statusSelect.keydown(row, event as KeyboardEvent, select)
+        : kind === 'change'
+            ? await statusSelect.change(row, select)
+            : await statusSelect.blur(row, select);
+
+    if (settled === null || kind === 'blur') return;
+
+    await nextTick();
+    if (select.isConnected && (!document.activeElement || document.activeElement === document.body)) select.focus();
+};
+
+/**
+ * Asked before a cancel from the list, in the words of cancelQuestion(). Built as DOM text,
+ * never HTML, and titled through cancelDialogOptions()'s titleText: the title carries the
+ * respondent's own name.
+ */
+const confirmCancel = async (row: FormResponseRow): Promise<boolean> => {
+    const refundedMinor = row.charge_refunded_minor ?? null;
+    const question = cancelQuestion({
+        id: row.id,
+        name: row.respondent_name,
+        paymentEnabled: paymentEnabled.value,
+        paymentMethod: row.payment_method ?? null,
+        paymentState: row.payment_state ?? null,
+        paidAmount: row.payment_state === 'paid' && row.total_minor !== null && row.total_minor !== undefined
+            ? money(row.total_minor, row.currency)
+            : null,
+        cardPageOpened: cardPageStarted(row),
+        pageUnreachable: row.page_unreachable === true,
+        chargedThrough: row.charged_through?.name ?? null,
+        refundedAmount: refundedMinor !== null && refundedMinor > 0 ? money(refundedMinor, row.currency) : null,
+        refundedInFull: refundedMinor !== null && refundedMinor > 0
+            && row.total_minor !== null && row.total_minor !== undefined && refundedMinor >= row.total_minor,
+        hasPayment: isMoneyRow(row),
+        checkedIn: !!row.collected_at,
+        reservesDates: meta.value?.reservations === true,
+        capacity: meta.value?.form?.capacity ?? null
+    });
+
+    const body = document.createElement('div');
+    body.className = 'text-start small';
+    for (const line of question.lines) {
+        const paragraph = document.createElement('p');
+        paragraph.className = 'mb-2';
+        paragraph.textContent = line;
+        body.appendChild(paragraph);
+    }
+
+    const choice = await Swal.fire(cancelDialogOptions(question, body));
+
+    return choice.isConfirmed;
+};
+
 const confirmDelete = async (response: FormResponseRow) => {
+    // Not while a row action or status save runs: its answer would close this question.
+    if (busyRowId.value !== null) return;
+
     if (isMoneyRow(response)) {
         Swal.fire({ icon: 'info', title: 'This registration cannot be deleted', text: DELETE_REFUSED });
         return;
@@ -3534,6 +3730,11 @@ const toast = (icon: 'success' | 'error', text: string) => {
     Swal.fire({ icon, text, timer: 2500, showConfirmButton: false, toast: true, position: 'top-end' });
 };
 
+/** A refusal can run to two sentences (a restore whose date is taken): it stays longer, and closes by hand. */
+const refusalToast = (title: string, text: string) => {
+    Swal.fire({ icon: 'error', title, text, timer: 8000, timerProgressBar: true, showConfirmButton: false, showCloseButton: true, toast: true, position: 'top-end' });
+};
+
 // Lock body scroll while the modal is open
 watch(showDetailModal, (open) => {
     document.body.style.overflow = open ? 'hidden' : '';
@@ -3544,6 +3745,14 @@ watch(showDetailModal, (open) => {
 .card {
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* The row's status select: wide enough for "Waitlisted", no wider, so the column stays
+   compact on a phone. Bootstrap's own focus ring shows on it. */
+.status-select {
+    width: auto;
+    min-width: 7.75rem;
+    font-weight: 600;
 }
 
 /* Sortable column header — a real button so it is keyboard reachable. */

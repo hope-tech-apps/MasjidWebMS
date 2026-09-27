@@ -288,6 +288,74 @@ class FormResponsesAdminTest extends TestCase
         $this->assertNotSame('Tampered', $target->data['registrantName']);
     }
 
+    /**
+     * The list's status select sends the status it showed (2026-09-27). Another admin
+     * cancelled this registration after the list was read; the stale "confirmed -> new"
+     * must not quietly restore it.
+     */
+    #[Test]
+    public function a_status_change_from_a_list_read_before_another_admins_cancel_is_refused_and_changes_nothing(): void
+    {
+        $this->actingAsAdmin();
+
+        $target = FormResponse::where('form_id', $this->formA->id)->where('status', 'confirmed')->firstOrFail();
+        $target->forceFill(['status' => 'cancelled'])->save();
+
+        $this->putJson($this->url($this->masjidA, $this->formA, "/{$target->id}"), [
+            'status' => 'new',
+            'expected_status' => 'confirmed',
+        ])
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'status_changed')
+            ->assertJsonPath('message', 'This registration changed since the list was loaded: it is now Cancelled. Nothing was saved; the row now shows it as it stands.');
+
+        $this->assertSame('cancelled', $target->fresh()->status);
+    }
+
+    #[Test]
+    public function a_status_change_whose_expected_status_still_holds_is_saved(): void
+    {
+        $this->actingAsAdmin();
+
+        $target = FormResponse::where('form_id', $this->formA->id)->where('status', 'confirmed')->firstOrFail();
+
+        $this->putJson($this->url($this->masjidA, $this->formA, "/{$target->id}"), [
+            'status' => 'waitlisted',
+            'expected_status' => 'confirmed',
+        ])->assertOk()->assertJsonPath('data.status', 'waitlisted');
+
+        $this->assertSame('waitlisted', $target->fresh()->status);
+    }
+
+    /**
+     * The list's cancel question says a cancelled registration still counts towards the
+     * form's limit and only a delete frees a place (formResponseStatus.ts::cancelQuestion()).
+     * That holds because update() never touches forms.response_count; only the deleted hook
+     * lowers it. If this changes, change the sentence with it.
+     */
+    #[Test]
+    public function cancelling_a_registration_keeps_its_place_and_only_deleting_frees_one(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->formA->forceFill(['capacity' => 3])->save();
+        $this->assertTrue($this->formA->fresh()->isAtCapacity(), 'the premise: three registrations fill a limit of three');
+
+        $target = FormResponse::where('form_id', $this->formA->id)->orderBy('id')->firstOrFail();
+
+        $this->putJson($this->url($this->masjidA, $this->formA, "/{$target->id}"), ['status' => 'cancelled'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'cancelled');
+
+        $this->assertSame(3, $this->formA->fresh()->response_count);
+        $this->assertTrue($this->formA->fresh()->isAtCapacity(), 'a cancelled registration still holds its place');
+
+        $this->deleteJson($this->url($this->masjidA, $this->formA, "/{$target->id}"))->assertOk();
+
+        $this->assertSame(2, $this->formA->fresh()->response_count);
+        $this->assertFalse($this->formA->fresh()->isAtCapacity());
+    }
+
     // --------------------------------------------------------------------- export
 
     #[Test]

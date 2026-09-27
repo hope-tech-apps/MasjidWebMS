@@ -116,6 +116,9 @@ class FormResponsesController extends Controller
 
     private const PAGE_NOT_CLOSED = 'Cancelled, but its card payment page could not be closed, so it may still take a payment. Cancel it again to retry.';
 
+    /** update()'s 409 when `expected_status` is not the row's status any more. %s: the status it has now. */
+    private const STATUS_CHANGED = 'This registration changed since the list was loaded: it is now %s. Nothing was saved; the row now shows it as it stands.';
+
     /**
      * GET /api/admin/masjids/{masjid_id}/forms/{form_id}/responses
      *
@@ -442,13 +445,22 @@ class FormResponsesController extends Controller
      * Restoring a cancelled registration that reserved a date takes the date back
      * (FormReservations::reclaimForRestore()), or is refused with a 422 naming the date
      * when another payer has since reserved it; nothing changes then.
+     *
+     * `expected_status`, when sent, is the status the admin was looking at. A row whose
+     * status has moved since is answered 409 `status_changed`, and nothing is written: the
+     * list's select saves one status at a glance (2026-09-27), and without this a list read
+     * before another admin's cancel would restore that registration, reopening its check-in
+     * and its payment, with no question asked. Checked on the locked row.
      */
     public function update(UpdateFormResponseRequest $request, $masjid_id, $form_id, $response_id)
     {
         [, $form, $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
 
+        $expected = $request->validated('expected_status');
+        $movedTo = null;
+
         try {
-            [$message, $warning, $cardPage] = DB::transaction(function () use ($request, $form, $response): array {
+            [$message, $warning, $cardPage] = DB::transaction(function () use ($request, $form, $response, $expected, &$movedTo): array {
                 // On a form that reserves dates, the FORM row is locked first, as the public
                 // submit locks it, so a restore and a submit asking for the same date queue
                 // in one order and never deadlock.
@@ -457,8 +469,15 @@ class FormResponsesController extends Controller
                     : null;
 
                 $row = $this->lockRow($response, $form);
+
+                if ($expected !== null && $row->status !== $expected) {
+                    $movedTo = $row->status;
+
+                    return [null, false, null];
+                }
+
                 $wasCancelled = $row->isCancelled();
-                $row->fill($request->safe()->all());
+                $row->fill($request->safe()->except('expected_status'));
 
                 // Read before save() clears it: whether it is THIS request that cancels.
                 $cancelling = $row->isDirty('status') && $row->status === FormResponse::STATUS_CANCELLED;
@@ -480,6 +499,14 @@ class FormResponsesController extends Controller
                     ? $this->closePageOfCancelled($row, $cancelling)
                     : [null, false, null];
             });
+
+            if ($movedTo !== null) {
+                return response()->json([
+                    'status' => 'failed',
+                    'code' => 'status_changed',
+                    'message' => sprintf(self::STATUS_CHANGED, ucfirst($movedTo)),
+                ], Response::HTTP_CONFLICT);
+            }
 
             $body = [
                 'status' => 'success',
@@ -781,6 +808,10 @@ class FormResponsesController extends Controller
      * rewrites who handed them over. Refused, on the locked row: a registration that is
      * not settled ("Not paid yet" — collected is never a way round paying), and a
      * triage-cancelled one.
+     *
+     * The answers say "checked in", as the screen does: beside a card payment, the owner
+     * read "Mark collected" as money still to take (2026-09-27). The route and the
+     * collected_at / collected_by fields keep their names.
      */
     public function collect(Request $request, $masjid_id, $form_id, $response_id): JsonResponse
     {
@@ -813,8 +844,8 @@ class FormResponsesController extends Controller
         return match ($outcome) {
             'cancelled' => $this->refused('This registration is cancelled. Re-open it before handing anything out.'),
             'unpaid' => $this->refused('Not paid yet.'),
-            'already' => $this->done($form, $response, 'Already marked collected.'),
-            default => $this->done($form, $response, 'Marked collected.'),
+            'already' => $this->done($form, $response, 'Already checked in.'),
+            default => $this->done($form, $response, 'Checked in.'),
         };
     }
 
@@ -829,7 +860,7 @@ class FormResponsesController extends Controller
             return $this->failed($e);
         }
 
-        return $this->done($form, $response, $undone ? 'Collection undone.' : 'This registration was not marked collected.');
+        return $this->done($form, $response, $undone ? 'Check-in undone.' : 'This registration was not checked in.');
     }
 
     /**
