@@ -42,6 +42,11 @@ class JumaaSettingsController extends Controller
                 ->all();
             $payload['shifts'] = count($shifts) ? $shifts : null;
 
+            // A person saved this screen, so the time is theirs now, not the
+            // provisioning placeholder (W2 S18): /prayers/settings stops sending
+            // `jumaa_is_default` and the board and the apps draw Jumu'ah again.
+            $payload['is_default'] = false;
+
             if ($jumaaSettings) {
                 // Reset athans before update so a missing value clears the field.
                 // `shifts` is always present in $payload, so it clears on its own.

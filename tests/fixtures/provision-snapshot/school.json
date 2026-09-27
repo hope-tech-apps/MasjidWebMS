@@ -172,7 +172,8 @@
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>",
                 "athans": "[]",
-                "shifts": null
+                "shifts": null,
+                "is_default": 1
             }
         ],
         "masjid_app_publishing": [

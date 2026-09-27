@@ -1,0 +1,198 @@
+<?php
+
+namespace Tests\Feature\Studio;
+
+use App\Models\JumaaSetting;
+use App\Models\Masjid;
+use App\Support\MobileCache;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\Feature\Studio\Concerns\ProvisionsStudioDrafts;
+use Tests\TestCase;
+
+/**
+ * W2 S18: a Jumu'ah time nobody supplied is hidden by the TV board and both
+ * phone apps. Provisioning still stores its 13:30 placeholder (W1 S8), now
+ * flagged `jumaa_settings.is_default = true`, and /prayers/settings says so
+ * with `jumaa_is_default: true`, sent ONLY when it is true.
+ *
+ * The live organisations' rows predate the column (NULL, no backfill), so their
+ * payloads must not change by a byte. The key lists below are production's, read
+ * from /api/mobile/masjids/{1,5,13,14,18}/prayers/settings on 2026-09-27 before
+ * this column existed: every one of the five answered exactly these keys.
+ */
+class JumaaIsDefaultTest extends TestCase
+{
+    use ProvisionsStudioDrafts;
+    use RefreshDatabase;
+
+    private const DATA_KEYS = ['calculation', 'iqama', 'jumaa', 'masjid'];
+
+    private const JUMAA_KEYS = ['athans', 'created_at', 'id', 'iqama', 'masjid_id', 'shifts', 'updated_at'];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->setUpProvisioning();
+    }
+
+    private function organisation(?bool $isDefault): Masjid
+    {
+        $masjid = Masjid::create([
+            'name' => 'Jumuah Org ' . uniqid(),
+            'email' => 'jumuah-' . uniqid() . '@test.local',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+            'country_id' => (string) $this->countryId,
+            'city_id' => (string) $this->cityId,
+            'address' => '1 Test St',
+            'latitude' => 43.3255,
+            'longitude' => -79.799,
+            'timezone' => 'America/Toronto',
+        ]);
+
+        $row = ['masjid_id' => $masjid->id, 'iqama' => '13:30', 'athans' => []];
+        if ($isDefault !== null) {
+            $row['is_default'] = $isDefault;
+        }
+        JumaaSetting::create($row);
+
+        return $masjid;
+    }
+
+    private function settings(int $masjidId): array
+    {
+        return $this->getJson("/api/mobile/masjids/{$masjidId}/prayers/settings")->assertOk()->json('data');
+    }
+
+    /** Provisions the draft and returns the new masjid id, naming the refusal if there is one. */
+    private function provisioned(int $draftId): int
+    {
+        $response = $this->provision($draftId);
+        $this->assertSame(201, $response->getStatusCode(), $response->getContent());
+
+        return (int) $response->json('data.masjid_id');
+    }
+
+    private static function keys(array $payload): array
+    {
+        $keys = array_keys($payload);
+        sort($keys);
+
+        return $keys;
+    }
+
+    #[Test]
+    public function a_row_that_predates_the_flag_keeps_exactly_the_live_keys(): void
+    {
+        $masjid = $this->organisation(null);
+
+        $response = $this->getJson("/api/mobile/masjids/{$masjid->id}/prayers/settings")->assertOk();
+
+        $this->assertSame(self::DATA_KEYS, self::keys($response->json('data')));
+        $this->assertSame(self::JUMAA_KEYS, self::keys($response->json('data.jumaa')));
+        $this->assertStringNotContainsString('is_default', $response->getContent());
+    }
+
+    #[Test]
+    public function a_supplied_time_sends_no_flag_either(): void
+    {
+        $masjid = $this->organisation(false);
+
+        $data = $this->settings($masjid->id);
+
+        $this->assertSame(self::DATA_KEYS, self::keys($data));
+        $this->assertSame(self::JUMAA_KEYS, self::keys($data['jumaa']));
+    }
+
+    #[Test]
+    public function the_placeholder_adds_one_true_key_and_changes_nothing_else(): void
+    {
+        $flagged = $this->organisation(true);
+        $plain = $this->organisation(null);
+
+        $data = $this->settings($flagged->id);
+
+        $expected = [...self::DATA_KEYS, 'jumaa_is_default'];
+        sort($expected);
+        $this->assertSame($expected, self::keys($data));
+        $this->assertTrue($data['jumaa_is_default'], 'a JSON true, not 1 or "1": both apps decode a boolean');
+        $this->assertSame(self::JUMAA_KEYS, self::keys($data['jumaa']), 'the jumaa object itself is untouched');
+        $this->assertSame($this->settings($plain->id)['jumaa']['iqama'], $data['jumaa']['iqama'],
+            'the stored time is still sent as before; the flag says not to show it');
+    }
+
+    #[Test]
+    public function provisioning_without_a_jumuah_time_flags_the_placeholder(): void
+    {
+        $this->actAsSuperAdmin();
+
+        $id = $this->provisioned($this->draftWith($this->studioAnswers())->id);
+
+        $row = JumaaSetting::where('masjid_id', $id)->sole();
+        $this->assertSame('13:30', substr((string) $row->iqama, 0, 5));
+        $this->assertTrue($row->is_default);
+        $this->assertTrue($this->settings($id)['jumaa_is_default']);
+    }
+
+    #[Test]
+    public function provisioning_with_a_jumuah_time_does_not(): void
+    {
+        $this->actAsSuperAdmin();
+        $answers = $this->studioAnswers(sections: ['prayer' => [
+            'method' => 'NorthAmerica', 'madhab' => 'Shafi', 'high_latitude_rule' => 'MiddleOfTheNight',
+            'jumaa_iqama' => '13:15',
+        ]]);
+
+        $id = $this->provisioned($this->draftWith($answers)->id);
+
+        $row = JumaaSetting::where('masjid_id', $id)->sole();
+        $this->assertSame('13:15', substr((string) $row->iqama, 0, 5));
+        $this->assertFalse($row->is_default);
+        $this->assertArrayNotHasKey('jumaa_is_default', $this->settings($id));
+    }
+
+    #[Test]
+    public function an_admin_save_makes_the_time_supplied_and_the_cached_payload_follows(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(true);
+        $this->assertTrue($this->settings($masjid->id)['jumaa_is_default'], 'cached with the flag first');
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", ['iqama' => '13:20', 'athans' => ['13:00']])->assertOk();
+
+        $this->assertFalse(JumaaSetting::where('masjid_id', $masjid->id)->sole()->is_default);
+        $data = $this->settings($masjid->id);
+        $this->assertArrayNotHasKey('jumaa_is_default', $data, 'the save flushed the cached payload');
+        $this->assertSame(['13:00'], $data['jumaa']['athans']);
+    }
+
+    #[Test]
+    public function the_flag_never_rides_the_rows_other_serializations(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(true);
+
+        $admin = $this->getJson("/api/admin/masjids/{$masjid->id}/jumaa")->assertOk();
+        $this->assertSame(self::JUMAA_KEYS, self::keys($admin->json('data')), 'the admin Jumu\'ah screen reads the row unchanged');
+
+        $website = $this->getJson('/api/v1/settings', ['masjid-id' => (string) $masjid->id])->assertOk();
+        $this->assertStringNotContainsString('is_default', $website->getContent());
+
+        // PrayersController::store writes every Friday's `prayers.jumaa_data`
+        // as json_encode() of this row, so that encoding is what must stay clean.
+        $this->assertStringNotContainsString('is_default', json_encode(JumaaSetting::where('masjid_id', $masjid->id)->sole()));
+    }
+
+    #[Test]
+    public function the_flag_is_cached_like_the_rest_of_the_payload(): void
+    {
+        $masjid = $this->organisation(true);
+        $this->settings($masjid->id);
+
+        $cached = Cache::get(MobileCache::masjidKey($masjid->id, MobileCache::PRAYERS_SETTINGS));
+
+        $this->assertTrue($cached['jumaa_is_default']);
+    }
+}
