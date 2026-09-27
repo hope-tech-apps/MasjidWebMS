@@ -2354,6 +2354,15 @@ const planDeleting = ref(false);
 let lessonsLoaded = false;
 /** Every week load bumps it; an older week's answer landing after a newer one is dropped. */
 let plansSeq = 0;
+/**
+ * A dropped load that was asked to re-sync (a week change, a removal) leaves
+ * the re-sync owed to the load that replaced it — or a week changed during a
+ * save would open no plan at all.
+ */
+let resyncOwed = false;
+/** The form as syncPlanForm last loaded it, so a reload can tell a draft from an untouched plan. */
+let planSnapshot = '';
+const planDirty = () => JSON.stringify(planForm.value) !== planSnapshot;
 const planSaved = ref(false);
 const planError = ref('');
 
@@ -2941,6 +2950,7 @@ const copyAcrossWeek = async () => {
 
     copying.value = true;
     planError.value = '';
+    let failed = false;
     try {
         for (const iso of days) {
             if (iso === sourceDay) continue;
@@ -2954,13 +2964,18 @@ const copyAcrossWeek = async () => {
             const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null)?.id;
             if (id) written.add(id);
         }
-        // The form reloads only if it shows a plan this copy wrote (one the
-        // teacher opened on another day while it ran); the plan she copied from,
-        // or any other, keeps what she is writing in it.
-        await loadLessonPlans(() => planId.value !== null && written.has(planId.value));
     } catch {
-        planError.value = 'Could not copy across the week.';
+        failed = true;
+    }
+    try {
+        // Reload even after a failure: the days already written must show, or a
+        // retry reads the old list and POSTs plans that now exist. The form
+        // reloads only if it shows a plan this copy wrote AND the teacher has
+        // not started changing it; anything else keeps what she is writing.
+        await loadLessonPlans(() => planId.value !== null && written.has(planId.value) && !planDirty());
     } finally {
+        // After the reload, which clears the message when it starts.
+        if (failed) planError.value = 'Could not copy across the week.';
         copying.value = false;
     }
 };
@@ -2977,6 +2992,7 @@ const copyAcrossWeek = async () => {
  */
 const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promise<boolean> => {
     const seq = ++plansSeq;
+    if (resync === true) resyncOwed = true;
     planError.value = '';
     try {
         const days = weekDays.value;
@@ -2988,7 +3004,8 @@ const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promis
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
-        const again = typeof resync === 'function' ? resync() : resync;
+        const again = resyncOwed || (typeof resync === 'function' ? resync() : resync);
+        resyncOwed = false;
         if (!again && (planId.value === null || plans.value.some((p) => p.id === planId.value))) return false;
         // Stay on the plan that was open if it is still there (a save, a copy),
         // else the day's first plan, else a new one.
@@ -3013,6 +3030,7 @@ const syncPlanForm = () => {
     // Arrays must never come back null, or v-model has nothing to bind.
     planForm.value.learning_outcomes = planForm.value.learning_outcomes ?? [];
     planForm.value.teaching_methods = planForm.value.teaching_methods ?? [];
+    planSnapshot = JSON.stringify(planForm.value);
 
     // A section that already has content opens itself: seven closed rows on a
     // written plan reads as an empty plan. Reflection also opens once the day
@@ -3112,7 +3130,9 @@ const deletePlan = async () => {
         // another while the removal ran: she stays there, with her draft.
         if (planForms.isCurrent(ticket)) {
             planId.value = null;
-            await loadLessonPlans();
+            // Asked when the week's answer lands: a plan opened during that
+            // request keeps its draft too.
+            await loadLessonPlans(() => planForms.isCurrent(ticket));
         } else {
             await loadLessonPlans(false);
         }

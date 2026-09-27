@@ -204,8 +204,11 @@ test('a save, copy or removal that answers late does not reload over the plan th
     // older week's answer landing after a newer one's is dropped.
     const landed = load.indexOf('await TeacherApiService.get(');
     assert.ok(landed < load.indexOf('if (seq !== plansSeq) return false;'));
-    assert.ok(load.indexOf('if (seq !== plansSeq) return false;') < load.indexOf("const again = typeof resync === 'function' ? resync() : resync;"));
+    assert.ok(load.indexOf('if (seq !== plansSeq) return false;') < load.indexOf('const again = resyncOwed'));
     assert.match(load, /if \(!again && \(planId\.value === null \|\| plans\.value\.some\(\(p\) => p\.id === planId\.value\)\)\) return false;/);
+    // A re-sync a dropped load was asked for is carried to the load that replaced it.
+    assert.ok(load.indexOf('if (resync === true) resyncOwed = true;') < landed);
+    assert.match(load, /const again = resyncOwed \|\| \(typeof resync === 'function' \? resync\(\) : resync\);\s+resyncOwed = false;/);
 
     const save = fn('savePlan');
     assert.match(save, /await loadLessonPlans\(\s*\(\) => planForms\.isCurrent\(ticket\) \|\| planId\.value === savedId\)/);
@@ -214,11 +217,16 @@ test('a save, copy or removal that answers late does not reload over the plan th
     const copy = fn('copyAcrossWeek');
     assert.match(copy, /const sourceDay = planDate\.value;/);
     assert.match(copy, /copyRequest\(base\.value, list, source, iso\)/, 'the list as it was when the copy began');
-    assert.match(copy, /await loadLessonPlans\(\(\) => planId\.value !== null && written\.has\(planId\.value\)\);/);
+    assert.match(copy, /await loadLessonPlans\(\(\) => planId\.value !== null && written\.has\(planId\.value\) && !planDirty\(\)\);/);
+    // The reload runs after a failed write too, and the message is set after it.
+    assert.ok(copy.indexOf('failed = true;') < copy.indexOf('await loadLessonPlans('));
+    assert.ok(copy.indexOf('await loadLessonPlans(') < copy.indexOf("if (failed) planError.value"));
 
     const remove = fn('deletePlan');
     assert.ok(remove.indexOf('const ticket = planForms.current();') < remove.indexOf('await TeacherApiService.delete('));
     assert.match(remove, /else \{\s+await loadLessonPlans\(false\);/);
+    assert.match(remove, /await loadLessonPlans\(\(\) => planForms\.isCurrent\(ticket\)\);/);
+    assert.match(fn('syncPlanForm'), /planSnapshot = JSON\.stringify\(planForm\.value\);/);
 
     assert.match(view, /watch\(weekStart, \(\) => loadLessonPlans\(\)\);/, 'a watcher passes its value, never a resync flag');
     assert.match(view, /if \(tab === 'lessons'\) \{ loadLessonPlans\(!lessonsLoaded\);/, 'coming back to the tab keeps the draft');
