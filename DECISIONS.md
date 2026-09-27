@@ -3926,3 +3926,22 @@ Rationale: each answer is the owner's; the plans' recommended defaults were
 taken except for export hosting (per client, not always the client's own) and
 the one-and-done handover (a standalone vendored build), which the plans now
 carry as contracts (W3 S17, S18).
+
+## 2026-09-27 — Masjid's gallery, header and footer logos read media by the whole key
+Decision: Masjid::gallery(), header_logo() and footer_logo() gain
+`->where('model_type', self::class)`, as logo() and brandDerivative() already
+had. Spatie's `media.model_id` is half a key.
+Alternatives: leave them, since production holds no colliding row. Rejected:
+nothing stops another model from writing a `galleries`, `header_logos` or
+`footer_logos` collection, and the gallery relation also DELETES
+(MasjidGalleryController::delete and the index's orphan cleanup), so a collision
+would let one organisation's admin screen delete another organisation's file.
+Rationale: measured read-only on production 2026-09-27, every media collection
+belongs to exactly one model type. `galleries` is 26 Masjid rows (masjid 13),
+`header_logos` and `footer_logos` are empty, so no served payload changes.
+tests/Feature/MasjidMediaModelTypeTest.php builds the collision (a Service,
+owned by the other organisation, whose id equals the masjid's id). It covers
+/api/v1/gallery (index and show), /api/mobile/masjids/{id}/gallery, the admin
+gallery index, its orphan cleanup and delete, /api/v1/settings header and
+footer logo urls, and the app's header_image_url. Against the old relations
+all six tests fail.
