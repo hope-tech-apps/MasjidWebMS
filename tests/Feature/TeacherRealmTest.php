@@ -157,6 +157,13 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
+            // A plan per subject per day (2026-09-27): one day now holds several
+            // plans, so the day view creates one and edits or removes one by
+            // id. The same authority as the two above — the teacher's own
+            // class's plans — and the id is resolved through that class.
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans/{plan_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans/{plan_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',

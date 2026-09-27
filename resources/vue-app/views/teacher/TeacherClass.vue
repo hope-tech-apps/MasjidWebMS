@@ -1111,11 +1111,34 @@
                 </div>
 
                 <div v-if="planView === 'day'" class="d-flex gap-1 mb-3 flex-wrap">
+                    <!-- A day with several subjects' plans says how many; a
+                         dot alone would read as "this day is planned" when it
+                         may hold one subject of four. -->
                     <button v-for="d in weekDays" :key="d.iso" type="button"
                             class="btn btn-sm"
-                            :class="d.iso === planDate ? 'btn-success' : (planFor(d.iso) ? 'btn-outline-success' : 'btn-outline-secondary')"
+                            :class="d.iso === planDate ? 'btn-success' : (dayPlansOn(d.iso).length ? 'btn-outline-success' : 'btn-outline-secondary')"
+                            :aria-label="`${d.label}: ${dayPlansOn(d.iso).length} plan${dayPlansOn(d.iso).length === 1 ? '' : 's'}`"
                             @click="planDate = d.iso">
-                        {{ d.label }}<i v-if="planFor(d.iso)" class="bi bi-dot"></i>
+                        {{ d.label }}<i v-if="dayPlansOn(d.iso).length === 1" class="bi bi-dot"></i>
+                        <span v-else-if="dayPlansOn(d.iso).length > 1" class="ms-1 small">·{{ dayPlansOn(d.iso).length }}</span>
+                    </button>
+                </div>
+
+                <!-- The day's plans, one per subject. Shown once a day has one:
+                     before that the form below IS the new plan, and a lone
+                     "add" button would only duplicate it. -->
+                <div v-if="planView === 'day' && dayPlans.length" class="d-flex gap-1 mb-3 flex-wrap align-items-center"
+                     role="group" aria-label="This day's plans">
+                    <button v-for="p in dayPlans" :key="p.id" type="button" class="btn btn-sm"
+                            :class="p.id === planId ? 'btn-success' : 'btn-outline-secondary'"
+                            :aria-pressed="p.id === planId" @click="selectPlan(p.id)">
+                        {{ planLabel(p) }}
+                    </button>
+                    <span v-if="planId === null" class="btn btn-sm btn-success disabled" aria-current="true">
+                        New plan
+                    </span>
+                    <button v-else type="button" class="btn btn-sm btn-link px-1" @click="addSubjectPlan">
+                        <i class="bi bi-plus-lg me-1"></i>Add a plan for another subject
                     </button>
                 </div>
 
@@ -1161,7 +1184,13 @@
                                             class="form-select form-select-sm"
                                             v-model="planForm.subject" @change="onSubjectPick">
                                         <option value="">—</option>
-                                        <option v-for="s in curriculum.subjects" :key="s" :value="s">{{ s }}</option>
+                                        <!-- A subject another plan already holds that
+                                             day is shown but not offered: one plan per
+                                             subject per day. -->
+                                        <option v-for="s in curriculum.subjects" :key="s" :value="s"
+                                                :disabled="takenSubjects.has(subjectKey(s))">
+                                            {{ s }}{{ takenSubjects.has(subjectKey(s)) ? ' — already planned' : '' }}
+                                        </option>
                                         <option :value="SUBJECT_OTHER">Other…</option>
                                     </select>
                                     <div v-else class="d-flex gap-1">
@@ -1189,6 +1218,20 @@
                                 </div>
                             </div>
 
+                            <!-- Said before Save, beside the field, with the way out:
+                                 the plan that already has this subject is one tap
+                                 away. The server refuses the clash regardless. -->
+                            <div v-if="planClash" class="alert alert-warning py-1 px-2 small mb-2" role="alert">
+                                <template v-if="planClash.subject">
+                                    This day already has a {{ planClash.subject }} plan.
+                                </template>
+                                <template v-else>
+                                    This day already has a plan with no subject. Choose a subject for this one.
+                                </template>
+                                <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
+                                        @click="selectPlan(planClash.id)">Open it</button>
+                            </div>
+
                             <div v-if="curriculum.grades.length" class="d-flex align-items-center gap-2 mb-2 flex-wrap">
                                 <button class="btn btn-sm btn-outline-success" :disabled="!canPrefill || prefilling"
                                         @click="prefillFromGuide()">
@@ -1201,9 +1244,9 @@
                                 <span v-if="prefillKept" class="text-muted small">
                                     Kept what this plan already says. Clear a field to fill it from the guide.
                                 </span>
-                                <button v-if="planFor(planDate) && weekdaysOnly.length > 1" class="btn btn-sm btn-link px-0"
+                                <button v-if="selectedPlan && weekdaysOnly.length > 1" class="btn btn-sm btn-link px-0"
                                         :disabled="copying" @click="copyAcrossWeek">
-                                    {{ copying ? 'Copying…' : 'Copy to the rest of this week' }}
+                                    {{ copying ? 'Copying…' : (selectedPlan.subject ? `Copy this ${selectedPlan.subject} plan to the rest of this week` : 'Copy to the rest of this week') }}
                                 </button>
                             </div>
 
@@ -1358,12 +1401,12 @@
                     </div>
 
                     <div class="d-flex align-items-center gap-2 mt-3">
-                        <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim()"
+                        <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim() || !!planClash"
                                 @click="savePlan">
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
-                        <button v-if="planFor(planDate)" class="btn btn-sm btn-link text-danger"
-                                @click="deletePlan">Remove</button>
+                        <button v-if="selectedPlan" class="btn btn-sm btn-link text-danger"
+                                @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan)} plan` : '' }}</button>
                         <span v-if="planSaved" class="text-success small">
                             <i class="bi bi-check-circle me-1"></i>Saved
                         </span>
@@ -1382,6 +1425,7 @@
                             <thead>
                                 <tr>
                                     <th style="width:6rem">Day</th>
+                                    <th>Subject</th>
                                     <th v-if="!planHidden.has('standard_code')">Standard</th>
                                     <th>Objective</th>
                                     <th>Activities</th>
@@ -1390,15 +1434,22 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="d in weekdaysOnly" :key="d.iso"
-                                    style="cursor:pointer" @click="jumpToDay(d.iso)">
-                                    <td class="fw-semibold small">{{ d.label }}</td>
-                                    <td v-if="!planHidden.has('standard_code')" class="small">{{ planFor(d.iso)?.standard_code || '—' }}</td>
-                                    <td class="small">{{ planFor(d.iso)?.objective || '—' }}</td>
-                                    <td class="small">{{ planFor(d.iso)?.body || '—' }}</td>
-                                    <td v-if="!planHidden.has('differentiation_support')" class="small">{{ planFor(d.iso)?.differentiation_support || '—' }}</td>
-                                    <td class="small">{{ planFor(d.iso)?.assessment_formative || '—' }}</td>
-                                </tr>
+                                <!-- One row per plan, so a day with three
+                                     subjects is three rows; a day with none is
+                                     one row of dashes, still a way into it. -->
+                                <template v-for="d in weekdaysOnly" :key="d.iso">
+                                    <tr v-for="(p, i) in (dayPlansOn(d.iso).length ? dayPlansOn(d.iso) : [null])"
+                                        :key="`${d.iso}-${p?.id ?? 'none'}`"
+                                        style="cursor:pointer" @click="jumpToDay(d.iso, p?.id ?? null)">
+                                        <td class="fw-semibold small">{{ i === 0 ? d.label : '' }}</td>
+                                        <td class="small">{{ p ? planLabel(p) : '—' }}</td>
+                                        <td v-if="!planHidden.has('standard_code')" class="small">{{ p?.standard_code || '—' }}</td>
+                                        <td class="small">{{ p?.objective || '—' }}</td>
+                                        <td class="small">{{ p?.body || '—' }}</td>
+                                        <td v-if="!planHidden.has('differentiation_support')" class="small">{{ p?.differentiation_support || '—' }}</td>
+                                        <td class="small">{{ p?.assessment_formative || '—' }}</td>
+                                    </tr>
+                                </template>
                             </tbody>
                         </table>
                     </div>
@@ -1410,7 +1461,11 @@
                                 class="card border-0 shadow-sm text-start" @click="jumpToDay(d.iso)">
                             <div class="card-body py-2">
                                 <div class="fw-semibold small">{{ d.label }}</div>
-                                <div class="text-muted small">{{ planFor(d.iso)?.body || 'No plan yet' }}</div>
+                                <div v-if="!dayPlansOn(d.iso).length" class="text-muted small">No plan yet</div>
+                                <div v-for="p in dayPlansOn(d.iso)" :key="p.id" class="text-muted small">
+                                    <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ planLabel(p) }}:</span>
+                                    {{ p.body }}
+                                </div>
                             </div>
                         </button>
                     </div>
@@ -2039,6 +2094,7 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
+import { pickPlan, planLabel, plansOn, subjectClash, subjectKey, takenSubjectKeys } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -2274,6 +2330,15 @@ const weekStart = ref<string>(localDay(startOfWeek(new Date())));
 const planDate = ref<string>(todayIso);
 const planView = ref<'day' | 'week'>('day');
 const plans = ref<any[]>([]);
+/**
+ * The plan open in the day view: one per subject per day, so the day holds a
+ * list and this says which. NULL is a new plan — the empty form for another
+ * subject. Every change to it is followed by syncPlanForm() (selectPlan, the
+ * planDate watcher, loadLessonPlans), so everything keyed to "the plan on
+ * screen" (the guide's autoFilled record, the standard typeahead, the
+ * curriculum lists) is reset whenever the plan changes, not only the day.
+ */
+const planId = ref<number | null>(null);
 const planSaving = ref(false);
 const planSaved = ref(false);
 const planError = ref('');
@@ -2389,9 +2454,53 @@ const planDayLabel = computed(() =>
     new Date(planDate.value + 'T00:00:00')
         .toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }));
 
-const planFor = (iso: string) => plans.value.find((p) => p.session_date === iso) ?? null;
+/** Every plan on one day, general first, then by subject. */
+const dayPlansOn = (iso: string) => plansOn(plans.value, iso);
+const dayPlans = computed(() => dayPlansOn(planDate.value));
+const selectedPlan = computed(() =>
+    planId.value === null ? null : (plans.value.find((p) => p.id === planId.value) ?? null));
 
-const jumpToDay = (iso: string) => { planDate.value = iso; planView.value = 'day'; };
+/**
+ * The subjects the day's OTHER plans already hold, so the picker does not offer
+ * one twice; and the plan the form's subject would collide with, so the form
+ * says so before Save rather than after. The server refuses a clash either way.
+ */
+const takenSubjects = computed(() => takenSubjectKeys(plans.value, planDate.value, planId.value));
+const planClash = computed(() =>
+    subjectClash(plans.value, planDate.value, planForm.value.subject, planId.value));
+
+/** Open one plan of the selected day, or NULL for a new one. */
+const selectPlan = (id: number | null) => {
+    planId.value = id;
+    syncPlanForm();
+};
+
+/**
+ * A plan for another subject on the same day. The grade carries over — a
+ * teacher writing Science after Math is usually still teaching the same grade —
+ * and nothing else does: the subject is the one thing that must differ.
+ */
+const addSubjectPlan = () => {
+    const grade = planForm.value.grade_label;
+    selectPlan(null);
+    if (grade) {
+        planForm.value.grade_label = grade;
+        loadCurriculum(grade);
+    }
+};
+
+/** From the week grid to one plan (or the day's first) in the day view. */
+const jumpToDay = (iso: string, id: number | null = null) => {
+    planView.value = 'day';
+    if (planDate.value === iso) {
+        selectPlan(pickPlan(plans.value, iso, id));
+        return;
+    }
+    // The planDate watcher opens it: it keeps planId when that plan is on the
+    // new day, and falls back to the day's first plan when it is not.
+    planId.value = id;
+    planDate.value = iso;
+};
 
 const toggleMethod = (value: string) => {
     const list: string[] = planForm.value.teaching_methods;
@@ -2418,6 +2527,10 @@ const prefillKept = ref(false);
 
 const canPrefill = computed(() =>
     !!planForm.value.grade_label && !!planForm.value.subject && !!planForm.value.curriculum_week_no);
+
+// A slower answer for the plan the teacher just left must not overwrite the
+// lists for the one they opened.
+let curriculumSeq = 0;
 
 const loadCurriculum = async (grade?: string, subject?: string) => {
     const seq = ++curriculumSeq;
@@ -2817,7 +2930,7 @@ const pickStandard = async (m: any) => {
  * stored, so a half-typed form cannot be broadcast across the week.
  */
 const copyAcrossWeek = async () => {
-    const source = planFor(planDate.value);
+    const source = selectedPlan.value;
     if (!source) return;
 
     copying.value = true;
@@ -2825,13 +2938,17 @@ const copyAcrossWeek = async () => {
     try {
         for (const d of weekdaysOnly.value) {
             if (d.iso === planDate.value) continue;
+            // THIS subject's plan on each other day, by the (day, subject)
+            // address: Thursday's Math plan is written, its Science plan is not
+            // touched, and a day with no Math plan gets one.
+            const sameSubject = subjectClash(plans.value, d.iso, source.subject, null);
             await TeacherApiService.put(`${base.value}/lesson-plans`, {
                 ...source,
                 session_date: d.iso,
                 // The other days keep their OWN activities if they have any:
                 // the shared part of a week is its standard and objective, not
                 // what the class actually did on Thursday.
-                body: planFor(d.iso)?.body || source.body,
+                body: sameSubject?.body || source.body,
             });
         }
         await loadLessonPlans();
@@ -2852,15 +2969,18 @@ const loadLessonPlans = async () => {
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
+        // Stay on the plan that was open if it is still there (a save, a copy),
+        // else the day's first plan, else a new one.
+        planId.value = pickPlan(plans.value, planDate.value, planId.value);
         syncPlanForm();
     } catch {
         planError.value = 'Could not load this week.';
     }
 };
 
-/** The form always shows the SELECTED day — never a stale one. */
+/** The form always shows the SELECTED plan of the selected day — never a stale one. */
 const syncPlanForm = () => {
-    const p = planFor(planDate.value);
+    const p = selectedPlan.value;
     const blank = emptyPlan();
 
     planForm.value = p
@@ -2892,10 +3012,20 @@ const syncPlanForm = () => {
     }
     syncCurriculum();
 
+    // The pickers follow the plan on screen. Another subject's plan brings
+    // another subject's weeks, and a week list left over from the last plan
+    // would label this one's week with that subject's focus. The lists are
+    // emptied first so the "subject not in the guide" check never compares
+    // this plan's subject with the last plan's list.
+    subjectOther.value = false;
+    curriculum.value = { grades: curriculum.value.grades, subjects: [], weeks: [] };
+    const grade = planForm.value.grade_label || undefined;
+    loadCurriculum(grade, grade ? (planForm.value.subject || undefined) : undefined);
+
     planSaved.value = false;
 };
 
-watch(planDate, syncPlanForm);
+watch(planDate, (iso) => selectPlan(pickPlan(plans.value, iso, planId.value)));
 watch(weekStart, loadLessonPlans);
 
 const shiftWeek = (delta: number) => {
@@ -2912,17 +3042,26 @@ const savePlan = async () => {
         // The WHOLE object, every time. The API declares every template field
         // nullable rather than sometimes, so an omitted field CLEARS — which is
         // why there is deliberately no per-section autosave here.
-        await TeacherApiService.put(`${base.value}/lesson-plans`, {
+        const payload = {
             ...planForm.value,
             session_date: planDate.value,
             title: planForm.value.title || null,
+            subject: planForm.value.subject || null,
             curriculum_week_no: planForm.value.curriculum_week_no || null,
             learning_outcomes: planForm.value.learning_outcomes.filter((o: string) => o && o.trim()),
-        });
-        planSaved.value = true;
+        };
+        // An open plan is rewritten by its id; a new one is created, and the
+        // server refuses it if the day already has that subject.
+        const res = planId.value === null
+            ? await TeacherApiService.post(`${base.value}/lesson-plans`, payload)
+            : await TeacherApiService.put(`${base.value}/lesson-plans/${planId.value}`, payload);
+        planId.value = res.data?.data?.id ?? planId.value;
         await loadLessonPlans();
+        // After the reload, which re-syncs the form and clears the flag.
+        planSaved.value = true;
     } catch (e: any) {
-        planError.value = e?.response?.data?.data?.session_date?.[0]
+        planError.value = e?.response?.data?.data?.subject?.[0]
+            ?? e?.response?.data?.data?.session_date?.[0]
             ?? e?.response?.data?.data?.body?.[0]
             ?? 'That plan could not be saved.';
     } finally {
@@ -2930,9 +3069,12 @@ const savePlan = async () => {
     }
 };
 
+/** Remove the open plan; the day's other subjects' plans stay. */
 const deletePlan = async () => {
+    if (planId.value === null) return;
     try {
-        await TeacherApiService.delete(`${base.value}/lesson-plans?date=${planDate.value}`);
+        await TeacherApiService.delete(`${base.value}/lesson-plans/${planId.value}`);
+        planId.value = null;
         await loadLessonPlans();
     } catch {
         planError.value = 'That plan could not be removed.';

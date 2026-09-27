@@ -7,7 +7,12 @@ use App\Models\LessonPlan;
 use Illuminate\Validation\Rule;
 
 /**
- * Writing one day's lesson plan.
+ * Writing one lesson plan — one class, one day, one subject.
+ *
+ * `subject` stays optional: blank is the day's single general plan. Whether the
+ * day already HAS a plan for that subject is not a rule here but a question the
+ * controller asks against the table (LessonPlanController::write), because the
+ * answer depends on which plan is being written, not on the payload alone.
  *
  * THE DATE RULE IS THE MIRROR IMAGE OF THE REGISTER'S, and copying the
  * register's would break the only thing this feature is for.
@@ -18,7 +23,7 @@ use Illuminate\Validation\Rule;
  *
  * ## EVERY TEMPLATE FIELD IS `nullable`, NEVER `sometimes`
  *
- * The endpoint is a whole-row upsert, so the client must send the whole object
+ * Every write rewrites the whole row, so the client must send the whole object
  * every time and an omitted field means "cleared". `sometimes` would make a
  * partial payload silently keep stale prose while appearing to save — the worst
  * of both. The one consequence the frontend must honour is that there can be no

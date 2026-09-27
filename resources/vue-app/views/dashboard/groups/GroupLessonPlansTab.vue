@@ -44,34 +44,46 @@
                         <span v-if="!day.meets" class="badge bg-light text-muted fw-normal">
                             Not a scheduled day
                         </span>
-                        <span v-if="day.plan?.prefill_source"
-                              class="badge bg-success-subtle text-success-emphasis fw-normal">
-                            from the pacing guide
-                        </span>
-                        <span v-if="day.plan?.updated_at" class="text-muted small ms-auto">
-                            Last edited {{ when(day.plan.updated_at) }}
+                        <span v-if="day.plans.length > 1" class="text-muted small">
+                            {{ day.plans.length }} plans
                         </span>
                     </div>
 
                     <!-- A plain sentence, not a dash. "No plan" and "a plan with
                          nothing in it" are different facts about a teacher's
                          week and the office is reading this to tell them apart. -->
-                    <p v-if="!day.plan" class="text-muted small mb-0">
+                    <p v-if="!day.plans.length" class="text-muted small mb-0">
                         No plan was written for this day.
                     </p>
 
-                    <template v-else>
-                        <div v-if="day.plan.title" class="fw-semibold small mb-1">{{ day.plan.title }}</div>
+                    <!-- One block per plan: a combined-grade homeroom plans each
+                         subject it teaches that day, and each block leads with
+                         the subject so two plans are never read as one. -->
+                    <div v-for="(entry, i) in day.plans" :key="entry.plan.id"
+                         :class="{ 'border-top pt-2 mt-2': i > 0 }">
+                        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                            <span v-if="day.plans.length > 1 || entry.plan.subject"
+                                  class="badge bg-light text-dark border fw-semibold">{{ planLabel(entry.plan) }}</span>
+                            <span v-if="entry.plan.prefill_source"
+                                  class="badge bg-success-subtle text-success-emphasis fw-normal">
+                                from the pacing guide
+                            </span>
+                            <span v-if="entry.plan.updated_at" class="text-muted small ms-auto">
+                                Last edited {{ when(entry.plan.updated_at) }}
+                            </span>
+                        </div>
+
+                        <div v-if="entry.plan.title" class="fw-semibold small mb-1">{{ entry.plan.title }}</div>
 
                         <!-- Activities lead: it is the one field the teacher's
                              form requires, so it is the one field every plan on
                              this screen is guaranteed to have. -->
-                        <p v-if="day.plan.body" class="small mb-2" style="white-space:pre-wrap">
-                            {{ day.plan.body }}
+                        <p v-if="entry.plan.body" class="small mb-2" style="white-space:pre-wrap">
+                            {{ entry.plan.body }}
                         </p>
 
-                        <dl v-if="day.rows.length" class="row small mb-0">
-                            <template v-for="row in day.rows" :key="row.key">
+                        <dl v-if="entry.rows.length" class="row small mb-0">
+                            <template v-for="row in entry.rows" :key="row.key">
                                 <dt class="col-sm-4 fw-semibold text-muted">{{ row.label }}</dt>
                                 <dd class="col-sm-8">
                                     <ul v-if="row.list" class="mb-0 ps-3">
@@ -82,10 +94,10 @@
                             </template>
                         </dl>
 
-                        <p v-else-if="!day.plan.body" class="text-muted small mb-0">
+                        <p v-else-if="!entry.plan.body" class="text-muted small mb-0">
                             This plan was saved with nothing filled in.
                         </p>
-                    </template>
+                    </div>
                 </div>
             </div>
 
@@ -98,6 +110,7 @@
 
 <script setup lang="ts">
 import ApiService from '@/core/services/ApiService';
+import { planLabel, plansOn } from '@/core/helpers/lessonPlans';
 import {
     formatSchoolDay,
     isoDayToUtcDate,
@@ -248,7 +261,8 @@ const weekLabel = computed(() => {
 });
 
 /**
- * The plan for one day, matched on the DAY and not on the whole string.
+ * Every plan for one day — one per subject — matched on the DAY and not on the
+ * whole string (plansOn slices `session_date`).
  *
  * `session_date` is a `date` cast, and a cast column that reaches a payload
  * without being asked for a date string arrives as a full timestamp
@@ -256,8 +270,7 @@ const weekLabel = computed(() => {
  * matches nothing, and a week of written plans would render as seven days
  * nobody planned — a wrong answer that looks exactly like a true one.
  */
-const planFor = (iso: string) =>
-    plans.value.find((p: any) => String(p?.session_date ?? '').slice(0, 10) === iso) ?? null;
+const plansFor = (iso: string) => plansOn(plans.value, iso);
 
 // ------------------------------------------------------------------ one plan
 
@@ -288,6 +301,9 @@ const rowsFor = (plan: any): { key: string; label: string; text?: string; list?:
 
     for (const field of FIELD_LABELS) {
         if (hiddenFields.value.has(field.key)) continue;
+        // The subject heads its plan's block already; a row repeating it
+        // would be the first thing read and the least informative.
+        if (field.key === 'subject') continue;
 
         const value = plan?.[field.key];
         if (value === null || value === undefined) continue;
@@ -320,8 +336,8 @@ const rowsFor = (plan: any): { key: string; label: string; text?: string; list?:
 };
 
 /**
- * The days this week that the office is shown, each with its plan already
- * resolved and already reduced to the rows it draws.
+ * The days this week that the office is shown, each with its plans (one per
+ * subject) already resolved and each already reduced to the rows it draws.
  *
  * The meeting days from the school calendar, or Monday to Friday without one —
  * the same fallback the teacher's grid uses. PLUS any other day that actually
@@ -333,9 +349,9 @@ const daysOnScreen = computed(() => {
     const meets = new Set(meetingWeekdays.value ?? [1, 2, 3, 4, 5]);
 
     return weekDays.value
-        .map((d) => ({ ...d, meets: meets.has(d.weekday), plan: planFor(d.iso) }))
-        .filter((d) => d.meets || d.plan)
-        .map((d) => ({ ...d, rows: d.plan ? rowsFor(d.plan) : [] }));
+        .map((d) => ({ ...d, meets: meets.has(d.weekday), dayPlans: plansFor(d.iso) }))
+        .filter((d) => d.meets || d.dayPlans.length)
+        .map((d) => ({ ...d, plans: d.dayPlans.map((plan: any) => ({ plan, rows: rowsFor(plan) })) }));
 });
 
 /** `updated_at` is a timestamp, not a school day, so it is read as one. */

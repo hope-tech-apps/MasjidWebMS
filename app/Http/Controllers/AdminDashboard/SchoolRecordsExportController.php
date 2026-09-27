@@ -502,16 +502,22 @@ class SchoolRecordsExportController extends Controller
         );
     }
 
-    /** @param resource $out */
+    /**
+     * A day can hold one plan per subject, so the subject travels with each row:
+     * without it, two rows for the same class and date read as a duplicate.
+     *
+     * @param resource $out
+     */
     private function writeLessonPlans($out): void
     {
-        Csv::row($out, ['Plan id', 'Class id', 'Session date', 'Title', 'Body']);
+        Csv::row($out, ['Plan id', 'Class id', 'Session date', 'Subject', 'Title', 'Body']);
 
         Csv::each(
             LessonPlan::whereIn('group_id', $this->schoolGroupIds()),
             fn (LessonPlan $p) => Csv::row($out, [
                 Csv::num($p->id), Csv::num($p->group_id),
                 Csv::num($p->session_date?->toDateString()),
+                Csv::text($p->subject),
                 Csv::text($p->title), Csv::text($p->body),
             ])
         );

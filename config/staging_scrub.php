@@ -598,7 +598,7 @@ return [
         'meal_menus.notes' => 'Operational notes on a public menu ("collect at the side door"). Kept because the pickup flow reads it; if a tenant is ever found using it for customer names, move it to `anonymise` with `free_text`.',
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',
         'sections.content' => 'JSON page content an admin composed for the public website. Kept so staging renders real pages; the inventory flags it for a spot-check rather than a blanket scrub because it is publication copy.',
-        'lesson_plans.body' => 'Curriculum content for a lesson, UNIQUE(group_id, session_date). The two columns on this table that name children — reflection_worked and reflection_improve — ARE anonymised.',
+        'lesson_plans.body' => 'Curriculum content for a lesson, UNIQUE(group_id, session_date, subject_key). The two columns on this table that name children — reflection_worked and reflection_improve — ARE anonymised.',
         'contact_credentials.issuing_body' => 'Who issued a professional credential ("State of North Carolina"). An institution, not a person; the licence NUMBER beside it is an encrypted column that is nulled.',
 
         // --- Spatie media library. This is the logo and app-icon estate on the

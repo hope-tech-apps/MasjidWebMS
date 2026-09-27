@@ -7,6 +7,7 @@ use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\LessonPlan;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
@@ -277,6 +278,25 @@ class SchoolRecordsExportTest extends TestCase
         $this->assertStringContainsString('Not included', $csv,
             'a school must be told what the export deliberately leaves out');
         $this->assertStringContainsString('messages', $csv);
+    }
+
+    #[Test]
+    public function the_lesson_plans_file_says_which_subject_each_plan_of_a_day_is(): void
+    {
+        foreach (['Math' => 'Count to twenty.', 'Science' => 'Sink or float.'] as $subject => $body) {
+            LessonPlan::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'session_date' => '2026-09-14', 'subject' => $subject, 'body' => $body,
+            ]);
+        }
+
+        $rows = array_map('str_getcsv', array_filter(explode("\n", $this->body('lesson_plans'))));
+        $header = array_shift($rows);
+
+        $this->assertContains('Subject', $header);
+        $subject = array_search('Subject', $header, true);
+        $this->assertEqualsCanonicalizing(['Math', 'Science'], array_column($rows, $subject),
+            'two plans for one class on one day are told apart by their subject');
     }
 
     #[Test]

@@ -169,12 +169,18 @@ Route::prefix('teacher')
                         Route::put('/attendance', [AttendanceController::class, 'save']);
                         Route::get('/members/{membership_id}/attendance', [AttendanceController::class, 'forMember']);
 
-                        // Lesson plans. Addressed by (class, date) — there is no
-                        // {plan_id} anywhere, which is what the per-day unique
-                        // index buys: saving is an upsert.
+                        // Lesson plans: one per class, per day, per subject.
+                        // The day view addresses a plan by its id — POST refuses
+                        // a subject the day already has. The two id-less writes
+                        // are the (day, subject) address: an upsert that "copy to
+                        // the rest of this week" uses, and the address an older
+                        // screen still open in a tab knows. See the controller.
                         Route::get('/lesson-plans', [LessonPlanController::class, 'index']);
+                        Route::post('/lesson-plans', [LessonPlanController::class, 'store']);
                         Route::put('/lesson-plans', [LessonPlanController::class, 'save']);
                         Route::delete('/lesson-plans', [LessonPlanController::class, 'destroy']);
+                        Route::put('/lesson-plans/{plan_id}', [LessonPlanController::class, 'update'])->whereNumber('plan_id');
+                        Route::delete('/lesson-plans/{plan_id}', [LessonPlanController::class, 'destroyPlan'])->whereNumber('plan_id');
 
                         // The gradebook. The first CLASS-LEVEL create and delete
                         // this realm allows — still not roster mutation: a

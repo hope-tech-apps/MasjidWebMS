@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Models\LessonPlan;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -14,15 +15,28 @@ use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * What a class is planned to cover, one row per day.
+ * What a class is planned to cover: one row per class, per day, per subject.
  *
- * Addressed by (class, date) throughout — there is no {plan_id} in any route,
- * which is exactly what `lesson_plan_class_day_unique` buys: saving is an upsert
- * and a teacher opening a day either finds its plan or an empty form. No drafts
- * to reconcile, no list of near-duplicates.
+ * A combined-grade homeroom teaches several subjects a day, so a day holds a
+ * LIST of plans, each addressed by its id (`/lesson-plans/{plan_id}`), and
+ * `lesson_plan_class_day_subject_unique` keeps it to one plan per subject. A
+ * plan with no subject is the day's single general plan — a school with no
+ * pacing guide never picks one, and its teachers work exactly as before.
+ *
+ * Two addresses, on purpose:
+ *
+ *   - BY ID (POST to create, PUT/DELETE `/{plan_id}`) is what the day view uses.
+ *     Creating REFUSES a subject that day already has, with a sentence naming
+ *     it, rather than overwriting the plan a teacher could not see.
+ *   - BY DAY AND SUBJECT (PUT `/lesson-plans`, an upsert) is what "copy to the
+ *     rest of this week" uses — make this subject's plan on Thursday match — and
+ *     it is the address every route had before per-subject plans, so a teacher
+ *     with the old screen still open saves where they expect to.
  *
  * `teacher.leads` has already answered "may this teacher touch this class"
- * before any method here runs.
+ * before any method here runs. A plan id is always resolved THROUGH that class
+ * (`$group->lessonPlans()`), so an id from another class is a 404, never a
+ * write to a room this teacher does not lead.
  */
 class LessonPlanController extends TeacherController
 {
@@ -47,6 +61,10 @@ class LessonPlanController extends TeacherController
             ->whereDate('session_date', '>=', $from->toDateString())
             ->whereDate('session_date', '<=', $to->toDateString())
             ->orderBy('session_date')
+            // Within a day: the general plan (key '') first, then subjects
+            // alphabetically — the same order on every screen that lists them.
+            ->orderBy('subject_key')
+            ->orderBy('id')
             ->get();
 
         return response()->json([
@@ -69,11 +87,36 @@ class LessonPlanController extends TeacherController
     }
 
     /**
-     * Write one day's plan.
+     * Write a NEW plan for a day. Refused, with the reason, when that day already
+     * has a plan for this subject (or already has its general plan): the teacher
+     * is sent to the plan that exists instead of silently replacing it.
+     */
+    public function store(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+
+        return $this->write($request, $masjid_id, $group, new LessonPlan(['group_id' => $group->id]));
+    }
+
+    /**
+     * Rewrite one plan, by id. Its subject and its day may both change; landing
+     * on a subject that day already has is refused exactly as creating is.
+     */
+    public function update(SaveLessonPlanRequest $request, $masjid_id, $group_id, $plan_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+        $plan = $group->lessonPlans()->findOrFail($plan_id);
+
+        return $this->write($request, $masjid_id, $group, $plan);
+    }
+
+    /**
+     * Write the plan for (day, subject), creating it or replacing it.
      *
-     * An upsert against the per-day unique index, so saving twice corrects the
-     * same day rather than minting a second plan. No transaction: this is one
-     * row, unlike the register's twelve.
+     * An upsert on the natural key — the per-subject unique index — so saving
+     * twice corrects the same plan rather than minting a second. "Copy to the
+     * rest of this week" is this call once per day; an older screen that knew
+     * only one plan a day lands here too, on the plan for the subject it sent.
      */
     public function save(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
     {
@@ -85,15 +128,84 @@ class LessonPlanController extends TeacherController
         // puts it through the `date` cast, so a lookup by the string
         // '2026-09-11' does not match a row the cast stored as
         // '2026-09-11 00:00:00' — the second save then misses and collides with
-        // lesson_plan_class_day_unique. Measured: a 500 on the second save.
+        // the unique index. Measured: a 500 on the second save.
         //
         // whereDate() compares the DATE PART on both MySQL and SQLite, so this
         // is right whichever the column ends up holding.
-        $plan = LessonPlan::query()
+        $plan = $this->planOn($group, $date, LessonPlan::subjectKeyFor($request->validated('subject')))
+            ?? new LessonPlan(['group_id' => $group->id]);
+
+        return $this->write($request, $masjid_id, $group, $plan);
+    }
+
+    /**
+     * Remove one plan, by id. The other subjects' plans that day are untouched.
+     *
+     * This verb exists because `body` is NOT NULL: a plan typed against the
+     * wrong day cannot be blanked, so without a delete it would be an unfixable
+     * row. A hard delete — the table holds no record about a child and no bytes,
+     * so there is nothing to retain.
+     */
+    public function destroyPlan(Request $request, $masjid_id, $group_id, $plan_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+        $plan = $group->lessonPlans()->findOrFail($plan_id);
+
+        $date = $plan->session_date->toDateString();
+        $plan->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['id' => (int) $plan_id, 'session_date' => $date],
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Remove a day's plan by its date — the address from before per-subject
+     * plans, kept so an older screen still works.
+     *
+     * It removes the day's plan only while there is exactly one. With several,
+     * "remove the plan for Tuesday" no longer names one, and deleting every
+     * subject's plan because one was meant would erase work the teacher did not
+     * point at; it answers 409 and the teacher removes them one at a time.
+     */
+    public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+
+        $date = $request->query('date');
+
+        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['date' => ['Name the day to remove, as YYYY-MM-DD.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $onDay = LessonPlan::query()
             ->where('group_id', $group->id)
-            ->whereDate('session_date', $date->toDateString())
-            ->first()
-            ?? new LessonPlan(['group_id' => $group->id, 'session_date' => $date]);
+            ->whereDate('session_date', $date);
+
+        if ((clone $onDay)->count() > 1) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['date' => ['This day has a plan for more than one subject. Remove them one at a time.']],
+            ], Response::HTTP_CONFLICT);
+        }
+
+        $onDay->delete();
+
+        return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
+    }
+
+    /**
+     * Fill and save one plan from the request — the one write path all three
+     * write verbs share, so the clash rule and the hidden-field rule cannot
+     * drift apart between them.
+     */
+    private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
+    {
+        $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
 
         // The whole object, every time. The request declares every template
         // field `nullable` rather than `sometimes` precisely so that an omitted
@@ -113,10 +225,28 @@ class LessonPlanController extends TeacherController
             ->all();
 
         $plan->fill($fields + [
+            'session_date' => $date,
             'title' => $request->validated('title'),
             'body' => $request->validated('body'),
             'author_user_id' => Auth::id(),
-        ])->save();
+        ]);
+
+        // Asked before the INSERT so the answer is a sentence naming the
+        // subject; the unique index below is what holds when two saves race.
+        $key = LessonPlan::subjectKeyFor($plan->subject);
+        $clash = $this->planOn($group, $date, $key);
+
+        // Named as the EXISTING plan spells it: the teacher typed "math", but
+        // the plan they are being sent to open is the one called "Math".
+        if ($clash && $clash->id !== $plan->id) {
+            return $this->clash($clash->subject);
+        }
+
+        try {
+            $plan->save();
+        } catch (UniqueConstraintViolationException) {
+            return $this->clash(LessonPlan::cleanSubject($plan->subject));
+        }
 
         return response()->json([
             'status' => 'success',
@@ -124,33 +254,32 @@ class LessonPlanController extends TeacherController
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Remove one day's plan.
-     *
-     * This verb exists because `body` is NOT NULL: a plan typed against the
-     * wrong day cannot be blanked, so without a delete it would be an unfixable
-     * row. A hard delete — the table holds no record about a child and no bytes,
-     * so there is nothing to retain.
-     */
-    public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
+    /** The plan a class already has for (day, subject key), if any. */
+    private function planOn(Group $group, Carbon $date, string $subjectKey): ?LessonPlan
     {
-        $group = Group::findOrFail($group_id);
-
-        $date = $request->query('date');
-
-        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => ['date' => ['Name the day to remove, as YYYY-MM-DD.']],
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        LessonPlan::query()
+        return LessonPlan::query()
             ->where('group_id', $group->id)
-            ->whereDate('session_date', $date)
-            ->delete();
+            ->whereDate('session_date', $date->toDateString())
+            ->where('subject_key', $subjectKey)
+            ->first();
+    }
 
-        return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
+    /**
+     * A second plan for a subject the day already has. 422 under `subject`, the
+     * shape every validation failure in this realm has, so the form shows it
+     * beside the field that caused it.
+     */
+    private function clash(?string $subject): JsonResponse
+    {
+        $message = $subject === null
+            ? 'This day already has a plan with no subject. Choose a subject for this one, or open that plan to change it.'
+            : "This day already has a {$subject} plan. Open it to change it, or choose another subject.";
+
+        return response()->json([
+            'status' => 'failed',
+            'message' => $message,
+            'data' => ['subject' => [$message]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     /**

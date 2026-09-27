@@ -1156,6 +1156,9 @@ Route::prefix('admin')->group(function () {
                 // the prose with an empty form and leave no earlier version to
                 // go back to.
                 //
+                // Nor the per-plan verbs (POST, PUT/DELETE /{plan_id}) that
+                // arrived with a plan per subject: the same reasons, per plan.
+                //
                 // `index` is identity-free: it takes ?from=&to=, asks the group
                 // and never the caller, which is what makes it safe to mount
                 // here as it stands. The office asks what the class is due to

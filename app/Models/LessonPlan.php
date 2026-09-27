@@ -8,7 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * What a class is going to cover on one day. One per class per day.
+ * What a class is going to cover on one day, in one subject. One per class, per
+ * day, per subject (`lesson_plan_class_day_subject_unique`): a combined-grade
+ * homeroom teaches several subjects a day and plans each. A plan with no subject
+ * is the day's single general plan, for a school with no pacing guide.
  *
  * Carries the school's own lesson-plan template (see the
  * add_lesson_plan_template_to_lesson_plans_table migration for what it
@@ -89,6 +92,45 @@ class LessonPlan extends Model
         'prefill_source',
         ...self::TEMPLATE_FIELDS,
     ];
+
+    /**
+     * `subject_key` is plumbing for the unique index — derived from `subject` on
+     * every save — and not something a screen should read or a client send.
+     */
+    protected $hidden = [
+        'subject_key',
+    ];
+
+    protected static function booted(): void
+    {
+        // Here, not in the controller, so every writer — the teacher API, a
+        // console session, a seeder — lands on the same key. A subject that is
+        // only whitespace is no subject: it becomes NULL and keys as the day's
+        // general plan rather than as a subject nobody can see.
+        static::saving(function (LessonPlan $plan): void {
+            $plan->subject = self::cleanSubject($plan->subject);
+            $plan->subject_key = self::subjectKeyFor($plan->subject);
+        });
+    }
+
+    /** Trimmed, runs of whitespace collapsed to one space; NULL when nothing is left. */
+    public static function cleanSubject(?string $subject): ?string
+    {
+        $clean = trim((string) preg_replace('/\s+/u', ' ', (string) $subject));
+
+        return $clean === '' ? null : $clean;
+    }
+
+    /**
+     * The comparison key: two plans on one day whose subjects share a key are the
+     * same subject's plan, and the unique index refuses the second. '' is "no
+     * subject" — NOT NULL, because a NULL never collides in a MySQL unique index
+     * and two general plans for one day would both be admitted.
+     */
+    public static function subjectKeyFor(?string $subject): string
+    {
+        return mb_strtolower((string) self::cleanSubject($subject));
+    }
 
     protected function casts(): array
     {

@@ -206,6 +206,150 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         $this->assertDatabaseCount('lesson_plans', 0);
     }
 
+    // ------------------------------------------------- a plan per subject
+
+    #[Test]
+    public function a_second_subject_on_the_same_day_is_a_second_plan(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+
+        $math = $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
+        ])->assertOk()->json('data.id');
+        $science = $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Science', 'body' => 'Sink or float.',
+        ])->assertOk()->json('data.id');
+
+        $this->assertNotSame($math, $science);
+
+        $plans = collect($this->getJson($this->url() . "/lesson-plans?from={$day}&to={$day}")
+            ->assertOk()->json('data.plans'));
+        $this->assertSame(['Math', 'Science'], $plans->pluck('subject')->all());
+        $this->assertSame(['Count to twenty.', 'Sink or float.'], $plans->pluck('body')->all());
+    }
+
+    #[Test]
+    public function the_same_subject_twice_on_one_day_is_refused_by_name(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+
+        $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
+        ])->assertOk();
+
+        // Different case and stray spaces are still the same subject.
+        $refused = $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => '  math ', 'body' => 'Would replace the first.',
+        ])->assertUnprocessable();
+
+        $this->assertStringContainsString('already has a Math plan', $refused->json('data.subject.0'));
+        $this->assertDatabaseCount('lesson_plans', 1);
+        $this->assertSame('Count to twenty.', LessonPlan::first()->body);
+    }
+
+    #[Test]
+    public function a_day_with_no_subject_keeps_one_general_plan(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $day, 'body' => 'Circle time.'])
+            ->assertOk();
+
+        // A blank subject is no subject, not a second one.
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $day, 'subject' => '   ', 'body' => 'Again.'])
+            ->assertUnprocessable()
+            ->assertJsonPath('data.subject.0', 'This day already has a plan with no subject. Choose a subject for this one, or open that plan to change it.');
+
+        // A subject beside the general plan is fine.
+        $this->postJson($this->url() . '/lesson-plans', ['session_date' => $day, 'subject' => 'Arabic', 'body' => 'Letter ba.'])
+            ->assertOk();
+
+        $this->assertSame([null, 'Arabic'], LessonPlan::query()->orderBy('id')->pluck('subject')->all());
+    }
+
+    #[Test]
+    public function editing_one_subjects_plan_leaves_the_others_and_cannot_take_their_subject(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $math = $this->newPlan($day, 'Math', 'Count to twenty.');
+        $science = $this->newPlan($day, 'Science', 'Sink or float.');
+
+        $this->putJson($this->url() . "/lesson-plans/{$math}", [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to thirty.',
+        ])->assertOk()->assertJsonPath('data.id', $math);
+
+        $this->assertSame('Count to thirty.', LessonPlan::find($math)->body);
+        $this->assertSame('Sink or float.', LessonPlan::find($science)->body);
+
+        $this->putJson($this->url() . "/lesson-plans/{$math}", [
+            'session_date' => $day, 'subject' => 'Science', 'body' => 'Would collide.',
+        ])->assertUnprocessable()->assertJsonPath('data.subject.0', 'This day already has a Science plan. Open it to change it, or choose another subject.');
+
+        $this->assertSame('Math', LessonPlan::find($math)->subject);
+    }
+
+    #[Test]
+    public function removing_one_subjects_plan_leaves_the_others(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $math = $this->newPlan($day, 'Math', 'Count to twenty.');
+        $science = $this->newPlan($day, 'Science', 'Sink or float.');
+
+        $this->deleteJson($this->url() . "/lesson-plans/{$math}")->assertOk();
+
+        $this->assertNull(LessonPlan::find($math));
+        $this->assertNotNull(LessonPlan::find($science));
+    }
+
+    #[Test]
+    public function removing_by_date_refuses_when_the_day_has_several_subjects(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $this->newPlan($day, 'Math', 'Count to twenty.');
+        $this->newPlan($day, 'Science', 'Sink or float.');
+
+        // The address an older screen still uses. "Remove Tuesday's plan" no
+        // longer names one plan, so it removes none.
+        $this->deleteJson($this->url() . "/lesson-plans?date={$day}")->assertStatus(409);
+        $this->assertDatabaseCount('lesson_plans', 2);
+    }
+
+    #[Test]
+    public function the_day_and_subject_address_writes_that_subjects_plan_only(): void
+    {
+        // The upsert "copy to the rest of this week" makes once per day.
+        $day = now()->addDays(2)->toDateString();
+        $science = $this->newPlan($day, 'Science', 'Sink or float.');
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Count to twenty.',
+        ])->assertOk();
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Corrected.',
+        ])->assertOk();
+
+        $this->assertDatabaseCount('lesson_plans', 2);
+        $this->assertSame('Corrected.', LessonPlan::where('subject', 'Math')->value('body'));
+        $this->assertSame('Sink or float.', LessonPlan::find($science)->body);
+    }
+
+    #[Test]
+    public function a_plan_from_another_class_cannot_be_reached_through_mine(): void
+    {
+        $day = now()->addDays(2)->toDateString();
+        $theirs = LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->notMine->id,
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Not yours.',
+        ]);
+
+        $this->putJson($this->url() . "/lesson-plans/{$theirs->id}", [
+            'session_date' => $day, 'subject' => 'Math', 'body' => 'Overwritten.',
+        ])->assertNotFound();
+        $this->deleteJson($this->url() . "/lesson-plans/{$theirs->id}")->assertNotFound();
+
+        $this->assertSame('Not yours.', $theirs->fresh()->body);
+    }
+
     // -------------------------------------------------------------- gradebook
 
     #[Test]
@@ -645,6 +789,13 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         ]);
 
         return $parent;
+    }
+
+    private function newPlan(string $day, ?string $subject, string $body): int
+    {
+        return (int) $this->postJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'subject' => $subject, 'body' => $body,
+        ])->assertOk()->json('data.id');
     }
 
     private function url(): string

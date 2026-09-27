@@ -3926,3 +3926,27 @@ Rationale: each answer is the owner's; the plans' recommended defaults were
 taken except for export hosting (per client, not always the client's own) and
 the one-and-done handover (a standalone vendored build), which the plans now
 carry as contracts (W3 S17, S18).
+
+## 2026-09-27 — Lesson plans: one per class, per day, per subject
+Decision: an Al-Razi teacher asked for a plan per subject per day (combined-grade
+homerooms, several subjects a day); the owner said to add it. The unique key is
+now (group_id, session_date, subject_key), `lesson_plan_class_day_subject_unique`,
+where `subject_key` is a NOT NULL column the model derives on every save
+(subject trimmed, whitespace collapsed, lower-cased; '' for no subject), the
+`contact_tags.name_key` shape. A plan with no subject is the day's one general
+plan, so a school with no pacing guide works as before. The day view addresses a
+plan by id (POST creates and refuses a subject the day already has with a 422
+naming it; PUT/DELETE `/lesson-plans/{plan_id}`, resolved through the teacher's
+own class). The id-less PUT stays as the (day, subject) upsert that "copy to the
+rest of this week" uses and an older open tab still sends; the id-less DELETE
+removes a day's plan only while it has exactly one (409 otherwise). The office
+tab and the records export list every plan of a day with its subject.
+`down()` refuses, naming the plan ids, while any class-day holds two plans.
+Alternatives: a STORED generated column COALESCE(subject, '') (the rules'
+example) — rejected: it cannot carry the case/whitespace rule without a
+MySQL-only expression, SQLite cannot ADD a STORED column, and the index would
+then mean different things on the two drivers; a unique key on the nullable
+`subject` — rejected, NULLs never collide, so two general plans would pass;
+dropping the id-less routes — rejected, a tab open across the deploy would 404.
+Rationale: the smallest change that keeps every existing reader right and makes
+"the same subject twice" a refusal with a sentence rather than an overwrite.

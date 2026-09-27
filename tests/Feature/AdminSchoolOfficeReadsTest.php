@@ -158,6 +158,27 @@ class AdminSchoolOfficeReadsTest extends TestCase
     }
 
     #[Test]
+    public function the_office_reads_every_subjects_plan_on_a_day_that_has_several(): void
+    {
+        // Al-Razi's homerooms plan each subject separately. The office's week
+        // must carry all of a day's plans, each saying which subject it is —
+        // not the first one the query happened to return.
+        LessonPlan::create([
+            'masjid_id' => $this->masjid->id, 'group_id' => $this->class->id,
+            'author_user_id' => $this->admin->id, 'session_date' => '2026-09-14',
+            'subject' => 'Science', 'body' => 'Sink or float.',
+        ]);
+        $this->monday->update(['subject' => 'Math']);
+
+        $plans = collect($this->getJson($this->url('/lesson-plans?from=2026-09-14&to=2026-09-14'))
+            ->assertOk()->json('data.plans'));
+
+        $this->assertSame(['Math', 'Science'], $plans->pluck('subject')->all(),
+            'both subjects that Monday, alphabetically');
+        $this->assertSame(['Letters: alif to jeem', null], $plans->pluck('title')->all());
+    }
+
+    #[Test]
     public function the_office_sees_and_downloads_a_staff_only_file(): void
     {
         $data = $this->getJson($this->url('/resources'))->assertOk()->json('data');
@@ -186,6 +207,13 @@ class AdminSchoolOfficeReadsTest extends TestCase
                 'session_date' => '2026-09-14', 'title' => 'Rewritten by the office', 'body' => 'Nothing.',
             ]],
             ['delete', $this->url('/lesson-plans?date=2026-09-14'), []],
+            ['post', $this->url('/lesson-plans'), [
+                'session_date' => '2026-09-14', 'subject' => 'Science', 'body' => 'Added by the office.',
+            ]],
+            ['put', $this->url("/lesson-plans/{$this->monday->id}"), [
+                'session_date' => '2026-09-14', 'body' => 'Rewritten by the office.',
+            ]],
+            ['delete', $this->url("/lesson-plans/{$this->monday->id}"), []],
             ['post', $this->url('/resources'), ['title' => 'Sneaky']],
             ['put', $this->url("/resources/{$this->staffOnly->id}"), [
                 'title' => 'Renamed', 'visibility' => GroupResource::VISIBILITY_FAMILIES,
