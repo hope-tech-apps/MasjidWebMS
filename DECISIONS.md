@@ -3926,3 +3926,47 @@ Rationale: each answer is the owner's; the plans' recommended defaults were
 taken except for export hosting (per client, not always the client's own) and
 the one-and-done handover (a standalone vendored build), which the plans now
 carry as contracts (W3 S17, S18).
+
+## 2026-09-27 — The Friday lunch door answers a Stripe failure with the saved order, not a 500
+
+Decision: `JummahLunchOrdersController::store()` now catches any failure to open the card page
+(after its existing `RuntimeException` refusal catch) and answers 422 with the saved, unpaid order
+and a fixed sentence (`PAGE_NOT_OPENED`), recording the error through `Errors::publicMessage`, which
+logs it at ERROR. This is the Halal Kitchen door's handling (2026-09-25 review fixes), which that
+entry left "for its own change". Before, Stripe's `ApiErrorException` (it extends `\Exception`, not
+`RuntimeException`) fell to the outer catch: a bare 500 with no order, while the order sat saved and
+unpaid. Only `store()` changed; `update()` and the top-up path already catch `\Throwable` or Stripe's
+`ExceptionInterface`, and `MealOrderCheckoutService` is untouched.
+
+The sentence differs from the kitchen's on purpose. The kitchen's says to try paying again from the
+order; a Friday order page has no pay button, so this one names the two ways that exist (pay at
+pickup, which staff record with Mark paid, and a payment link from the board) and says not to order
+again, because the SPA order page (`LunchOrderPage.vue`, `publicLunchStore.placeOrder`) keeps the
+customer on the form on any non-2xx, so a second press places a second order.
+
+Alternatives: (a) catch only `Stripe\Exception\ExceptionInterface`: narrower, but a non-Stripe
+failure after the order is saved would still be a 500 with no order, the same harm; the kitchen door
+chose `\Throwable` and the doors should not differ. (b) Pass Stripe's own message through: refused,
+it is not written for a customer.
+
+Known and not done here: the SPA should send the customer to the saved order on a 422 that carries
+one (the kitchen renderer's `savedUnpaid`), rather than keeping them on the form. That is a
+frontend change beyond this fix; the sentence covers it until then.
+
+Test: `JummahLunchOrderFlowTest::a_card_order_saved_when_stripe_fails_comes_back_with_the_order_instead_of_a_server_error`
+(422, the sentence, the saved order's uuid, unpaid, no session id, one ERROR log naming the Stripe
+exception). Fails on main with a 500.
+
+## 2026-09-27 — `fix/lunch-edit-dead-stripe-link` (f9ef0836) needs no integration: it is already on main
+
+Decision: nothing cherry-picked. f9ef0836 was reported unmerged, and it is (its branch is not an
+ancestor of main), but its patch reached main as bd6a093f: same subject, same author date
+(2026-09-18 13:42:45), and an identical `git patch-id` (8a63c17d). Main's `MealOrderEditor::apply()`
+still carries the repair (`$closedSessionId`, `forgetClosedPage()`, the
+`lunch.edit.page_closed_but_edit_failed` / `lunch.edit.dead_page_not_cleared` logs), and the test
+`MealOrderEditTest::an_edit_that_fails_after_closing_the_page_does_not_leave_a_dead_link_on_the_order`
+is on main and runs in the full suite. The two later edits to the editor (1eaf4c4e, ae9a8820, the
+paid-order top-up) did not move the close or the repair: the close still happens only for an UNPAID
+order's session inside the transaction, and the catch still clears exactly the id it closed.
+Cherry-picking would add an empty commit or conflict with nothing to gain. The branch
+`fix/lunch-edit-dead-stripe-link` can be deleted by whoever owns branch housekeeping.

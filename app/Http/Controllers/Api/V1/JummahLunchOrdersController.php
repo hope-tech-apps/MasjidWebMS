@@ -48,6 +48,18 @@ use Illuminate\Support\Facades\DB;
 class JummahLunchOrdersController extends Controller
 {
     /**
+     * A saved card order whose Stripe page failed to open for a reason the
+     * customer cannot act on (Stripe down, or refusing the call). Unlike the
+     * kitchen's sentence it does not say "try paying again from your order":
+     * a Friday order page has no pay button, so the ways that really exist are
+     * paying at pickup (staff record it with Mark paid) or a link from the board.
+     * It leads with "saved" and "do not order again" because the order page
+     * keeps the customer on the form on any refusal, and a second press there
+     * would place a second order.
+     */
+    private const PAGE_NOT_OPENED = 'Your order is saved, but its card payment page could not be opened. Please do not order again: pay when you pick up after Jummah, or ask the masjid for a payment link.';
+
+    /**
      * The sentences a customer is given when their order cannot be changed. Each
      * one says what is true and what they can do about it; none of them mention
      * an endpoint, a status column or a menu id.
@@ -330,6 +342,17 @@ class JummahLunchOrdersController extends Controller
                 } catch (\RuntimeException $e) {
                     // The order is saved (unpaid); surface why checkout couldn't open.
                     return response()->api(422, $e->getMessage(), [
+                        'order' => $this->serializeOrder($order, $menu),
+                    ]);
+                } catch (\Throwable $e) {
+                    // Stripe itself failing: its ApiErrorException extends
+                    // \Exception, not RuntimeException, so it used to fall to the
+                    // outer catch and come back as a bare 500 with no order, while
+                    // the order sat saved and unpaid. Answered like a refusal, as
+                    // the kitchen door does, with a fixed sentence (Stripe's own
+                    // message is not for a customer) and the error written down at
+                    // ERROR by Errors::publicMessage, which production keeps.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
                         'order' => $this->serializeOrder($order, $menu),
                     ]);
                 }

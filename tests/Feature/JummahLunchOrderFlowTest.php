@@ -183,6 +183,45 @@ class JummahLunchOrderFlowTest extends TestCase
         $this->assertSame('cs_test_stub', $order->stripe_checkout_session_id);
     }
 
+    #[Test]
+    public function a_card_order_saved_when_stripe_fails_comes_back_with_the_order_instead_of_a_server_error(): void
+    {
+        // Production answers with the fixed sentence, never Stripe's own text.
+        config(['app.debug' => false]);
+        Log::spy();
+        $this->app->bind(MealOrderCheckoutService::class, fn ($app) => new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
+        {
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                // Stripe's errors extend \Exception, not RuntimeException.
+                throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
+            }
+        });
+
+        $response = $this->postJson('/api/v1/lunch-orders', [
+            'menu_uuid' => $this->menu->uuid,
+            'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]],
+            'customer_name' => 'Card Payer',
+            'customer_phone' => '3365550000',
+            'payment_method' => 'online',
+        ], $this->header())
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Your order is saved, but its card payment page could not be opened. Please do not order again: pay when you pick up after Jummah, or ask the masjid for a payment link.');
+
+        // The order the customer is told about is the one that was saved, still
+        // unpaid and holding no payment page.
+        $order = MealOrder::withoutMasjidScope()->sole();
+        $response->assertJsonPath('data.order.uuid', $order->uuid)
+            ->assertJsonPath('data.order.payment_status', MealOrder::PAYMENT_UNPAID);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        $this->assertNull($order->stripe_checkout_session_id);
+
+        // Written down at a level production keeps (LOG_LEVEL=warning drops info).
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message, $context = []) => ($context['exception'] ?? null) === \Stripe\Exception\ApiConnectionException::class)
+            ->once();
+    }
+
     // ------------------------------------------------------------- the webhook
 
     #[Test]
