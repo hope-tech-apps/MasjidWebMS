@@ -4455,4 +4455,11 @@ in (plan R11: per organisation, so the starter labels and the site's chrome agre
   table words starter pages; this changes the renderer's chrome, whose Arabic catalogue
   exists). After the write it schedules the renderer purge and logs a warning with the
   actor. Studio's live view shows it beside Identity with a confirm dialog that says the
-  site turns right-to-left and needs the owner's go.
+  site turns right-to-left, needs the owner's go, and reaches visitors within about five
+  minutes: the renderer's page cache is purged and keyed by locale, but each renderer
+  server's lookup memo (300 s) cannot be purged (renderer DECISIONS, S13 review fixes).
+- **Preview.** The live-preview token carries the website locale as its last claim `l`,
+  only when set (`PreviewToken::mint(..., ?string $locale)`), so a lookup-resolved
+  organisation previews in its live language and direction; every other token is
+  byte-identical. The cross-language vector is pinned in `PreviewTokenVectorTest` and the
+  renderer's `tests/preview-token.test.ts`.

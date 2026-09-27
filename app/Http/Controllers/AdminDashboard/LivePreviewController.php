@@ -89,13 +89,18 @@ class LivePreviewController extends Controller
 
         $path = $request->previewPath();
         $expiresAt = now()->addSeconds(PreviewToken::TTL_SECONDS);
+        $organisationId = $this->organisationId($routeMasjidId);
         $token = PreviewToken::mint(
             $secret,
-            $this->organisationId($routeMasjidId),
+            $organisationId,
             $surface,
             $path,
             $adminOrigin,
             $expiresAt->getTimestamp(),
+            // The website locale (Studio W2 S12), so a lookup-resolved organisation
+            // previews in the language and direction its live site renders (S13). Null,
+            // and so no claim, for every organisation that never chose one.
+            self::websiteLocale($organisationId),
         );
 
         return response()->json([
@@ -117,6 +122,13 @@ class LivePreviewController extends Controller
     private function organisationId(int $routeMasjidId): int
     {
         return app(TenantContext::class)->get() ?? $routeMasjidId;
+    }
+
+    private static function websiteLocale(int $organisationId): ?string
+    {
+        $locale = Masjid::withoutGlobalScopes()->whereKey($organisationId)->value('website_locale');
+
+        return in_array($locale, Masjid::WEBSITE_LOCALES, true) ? $locale : null;
     }
 
     /**

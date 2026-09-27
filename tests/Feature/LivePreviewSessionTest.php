@@ -139,6 +139,23 @@ class LivePreviewSessionTest extends TestCase
     }
 
     #[Test]
+    public function the_token_carries_the_website_locale_only_when_one_was_chosen(): void
+    {
+        // Studio W2 S12/S13: a lookup-resolved organisation previews in its own language.
+        $masjid = $this->org();
+        $this->set($masjid, 'web_pages', true);
+        $admin = $this->admin($masjid);
+
+        $plain = $this->claims($this->ask($admin, $masjid, 'pages', ['path' => '/about'])->assertOk()->json('data.url'));
+        $this->assertSame(['o', 's', 'p', 'a', 'e'], array_keys($plain), 'no locale chosen: the token every organisation had');
+
+        $masjid->update(['website_locale' => 'ar']);
+        $arabic = $this->claims($this->ask($admin, $masjid, 'pages', ['path' => '/about'])->assertOk()->json('data.url'));
+        $this->assertSame(['o', 's', 'p', 'a', 'e', 'l'], array_keys($arabic));
+        $this->assertSame('ar', $arabic['l']);
+    }
+
+    #[Test]
     public function the_home_page_is_the_default_path(): void
     {
         $masjid = $this->org();

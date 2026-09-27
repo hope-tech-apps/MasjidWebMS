@@ -29,6 +29,25 @@ class PreviewTokenVectorTest extends TestCase
     }
 
     #[Test]
+    public function a_locale_bearing_token_is_the_cross_language_vector(): void
+    {
+        // Studio W2 S12/S13: `l` last, only when set. The renderer's
+        // tests/preview-token.test.ts asserts this same token.
+        $this->assertSame(
+            'v1.eyJvIjozMSwicyI6InBhZ2VzIiwicCI6Ii9hYm91dCIsImEiOiJodHRwczovL21hc2ppZC5ob3BldGVjaGFwcHMuY29tIiwiZSI6MTc5MDAwMDAwMCwibCI6ImFyIn0.tjy2pmGivTnwE0B5IyFdRJg7uCKZs2xVXZiMgyF7JjU',
+            PreviewToken::mint(self::SECRET, 31, 'pages', '/about', 'https://masjid.hopetechapps.com', 1790000000, 'ar'),
+        );
+        // No locale: exactly the token it always was.
+        $this->assertSame(
+            PreviewToken::mint(self::SECRET, 13, 'pages', '/about', 'https://masjid.hopetechapps.com', 1790000000),
+            PreviewToken::mint(self::SECRET, 13, 'pages', '/about', 'https://masjid.hopetechapps.com', 1790000000, null),
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        PreviewToken::mint(self::SECRET, 31, 'pages', '/about', 'https://masjid.hopetechapps.com', 1790000000, 'fr');
+    }
+
+    #[Test]
     public function an_arabic_slug_token_is_the_cross_language_vector(): void
     {
         // The canonical path is the DECODED one; the renderer's tests/preview-token.test.ts
