@@ -130,6 +130,10 @@ class CurriculumController extends TeacherController
         }
 
         $words = self::words($q);
+        // A digit means a code: "RI.3.1", "MP1", "NF 1". Topic words never
+        // carry one, and a query without one ("NC" for the NC-history weeks)
+        // must keep its word matches.
+        $codeQuery = (bool) preg_match('/\p{N}/u', $q);
 
         $rows = CurriculumWeek::query()
             ->orderBy('grade_label')->orderBy('subject')->orderBy('week_no')
@@ -150,7 +154,7 @@ class CurriculumController extends TeacherController
                 continue;
             }
 
-            $codeMatched = $codeMatched || $score >= self::CODE_MATCH;
+            $codeMatched = $codeMatched || ($codeQuery && $score >= self::CODE_MATCH);
             $key = implode("\0", [$row->grade_label, $row->subject, (string) $row->standard_code, $row->focus]);
 
             if (! isset($found[$key])) {
@@ -167,18 +171,19 @@ class CurriculumController extends TeacherController
             $found[$key]['weeks'][] = (int) $row->week_no;
         }
 
-        // A query that names a code is a code search. The words its letters
-        // happen to start ("ri" from "RI.5.1", "nc" from "NC.4.G.1") are noise
-        // beside the standard the teacher actually typed.
+        // A code-shaped query that found its code is a code search. The words
+        // its letters happen to start ("ri" from "RI.5.1") are noise beside
+        // the standard the teacher actually typed.
         if ($codeMatched) {
             $found = array_filter($found, fn (array $f): bool => $f['score'] >= self::CODE_MATCH);
         }
 
         $ranked = collect($found)
             ->sortBy([
-                // The exact code typed, wherever it lives.
-                fn (array $a, array $b): int => ($b['score'] === self::EXACT) <=> ($a['score'] === self::EXACT),
-                // Then the form's own grade and subject, then its grade alone.
+                // The form's own grade and subject first, then its grade alone.
+                // Scope before score: Social Studies' "3.G.1" is an exact match
+                // for "3.G.1", but on a Grade 3 Maths form the teacher means
+                // NC.3.G.1, typed without its state prefix.
                 fn (array $a, array $b): int => $b['scope'] <=> $a['scope'],
                 fn (array $a, array $b): int => $b['score'] <=> $a['score'],
                 // The week the form is on, when the guide teaches it then.
@@ -230,8 +235,34 @@ class CurriculumController extends TeacherController
         'is', 'it', 'of', 'on', 'or', 'the', 'to', 'with',
     ];
 
-    /** Endings dropped so "fluency" meets "fluently" and "rhyming" meets "rhyme". */
-    private const SUFFIXES = ['ations', 'ation', 'ings', 'ing', 'ions', 'ion', 'ies', 'es', 'ly', 'cy', 'ed', 's'];
+    /**
+     * Endings that make another form of the same word, longest first, each with
+     * what replaces it and the fewest letters that must remain. Two words meet
+     * only when their roots are EQUAL, never when one is a prefix of the other:
+     * "plants" must not meet "plan", nor "counterclaims" meet "count".
+     *
+     * @var list<array{string, string, int}>
+     */
+    private const ENDINGS = [
+        ['ication', 'y', 3],   // multiplication → multiply
+        ['ition', '', 3],      // addition → add, composition → compose
+        ['ision', 'ide', 3],   // division → divide
+        ['ations', '', 3], ['ation', '', 3],
+        ['ingly', '', 3], ['ings', '', 3], ['ing', '', 3],
+        ['ments', '', 3], ['ment', '', 3],
+        ['ions', '', 3], ['ion', '', 3],   // subtraction → subtract
+        ['ency', 'ent', 3],    // fluency → fluent
+        ['ancy', 'ant', 3],
+        ['ies', 'y', 3],
+        ['edly', '', 3], ['ed', '', 3],
+        ['ers', '', 3], ['er', '', 3],
+        ['ly', '', 4],         // fluently → fluent; "early" is not "ear"
+        ['es', '', 3],         // shapes → shape
+        ['s', '', 4],          // sounds → sound; "this" is not "thi"
+    ];
+
+    /** @var array<string, string> */
+    private static array $roots = [];
 
     private function matches(array $matches): JsonResponse
     {
@@ -265,15 +296,39 @@ class CurriculumController extends TeacherController
         return (string) preg_replace('/[^\p{L}\p{N}]+/u', '', self::fold((string) $s));
     }
 
-    /** @return list<string> the words of a string that can describe something */
+    /**
+     * The words of a query worth matching. A stop word is dropped only from a
+     * phrase and never when it is the LAST word: "is" may be the start of
+     * "Islamic" that the teacher is still typing.
+     *
+     * @return list<string>
+     */
     private static function words(string $s): array
     {
-        $words = array_filter(
+        $all = array_values(array_filter(
             preg_split('/[^\p{L}\p{N}]+/u', self::fold($s)) ?: [],
-            fn (string $w): bool => mb_strlen($w) >= 2 && ! in_array($w, self::STOP_WORDS, true)
-        );
+            fn (string $w): bool => mb_strlen($w) >= 2
+        ));
+        $last = count($all) - 1;
+        $words = [];
+
+        foreach ($all as $i => $w) {
+            if ($i < $last && in_array($w, self::STOP_WORDS, true)) {
+                continue;
+            }
+            $words[] = $w;
+        }
 
         return array_slice(array_values(array_unique($words)), 0, self::MAX_WORDS);
+    }
+
+    /** @return list<string> */
+    private static function tokens(string $s): array
+    {
+        return array_values(array_unique(array_filter(
+            preg_split('/[^\p{L}\p{N}]+/u', self::fold($s)) ?: [],
+            fn (string $t): bool => $t !== ''
+        )));
     }
 
     /**
@@ -316,23 +371,31 @@ class CurriculumController extends TeacherController
             return 0;
         }
 
-        // Every typed word must meet a word of the row — its start ("fract"
-        // finds "Fractions"), or a longer form of it ("counting" finds "Count"),
-        // or the same stem ("fluency" finds "fluently"). A fragment inside a
-        // word is not a meeting: "oa" from "OA.5" must not find "goal". The
-        // grade and subject count, so "math fractions" narrows rather than misses.
-        $tokens = array_values(array_unique(array_filter(
-            preg_split('/[^\p{L}\p{N}]+/u', self::fold($row->focus . ' ' . $row->subject . ' ' . $row->grade_label)) ?: [],
-            fn (string $t): bool => $t !== '' && ! in_array($t, self::STOP_WORDS, true)
-        )));
+        // Every typed word must meet a word of the row. The focus is the row's
+        // own words: a typed word meets one it starts ("fract" → "Fractions")
+        // or another form of it ("counting" → "Count", "tajweed" → "Tajwīd").
+        // The grade and subject labels only narrow ("math fractions") and meet
+        // by their start alone — as roots, "Pre-Kindergarten" would answer
+        // every "pre…" and "Studies" every "student".
+        $focus = self::tokens((string) $row->focus);
+        $labels = self::tokens($row->subject . ' ' . $row->grade_label);
 
         foreach ($words as $w) {
             $hit = false;
 
-            foreach ($tokens as $t) {
+            foreach ($focus as $t) {
                 if (self::meets($w, $t)) {
                     $hit = true;
                     break;
+                }
+            }
+
+            if (! $hit) {
+                foreach ($labels as $t) {
+                    if (str_starts_with($t, $w)) {
+                        $hit = true;
+                        break;
+                    }
                 }
             }
 
@@ -350,27 +413,49 @@ class CurriculumController extends TeacherController
             return true;
         }
 
-        // A longer form of a short word in the guide: "counting" → "Count".
-        // Three letters at least, or "a" would meet everything.
-        if (mb_strlen($token) >= 3 && str_starts_with($word, $token)) {
+        if (self::root($word) === self::root($token) && mb_strlen(self::root($word)) >= 3) {
             return true;
         }
 
-        $w = self::stem($word);
-        $t = self::stem($token);
+        // The guide spells one Arabic term two ways across grades: "tajweed"
+        // and "Tajwīd", "noon" and "Nūn", "meem" and "Mīm". Doubled vowels are
+        // folded for an EQUAL comparison only, so English words cannot drift.
+        $w = self::root(self::longVowels($word));
 
-        return mb_strlen($w) >= 3 && mb_strlen($t) >= 3
-            && (str_starts_with($t, $w) || str_starts_with($w, $t));
+        return mb_strlen($w) >= 3 && $w === self::root(self::longVowels($token));
     }
 
-    private static function stem(string $word): string
+    private static function longVowels(string $s): string
     {
-        foreach (self::SUFFIXES as $suffix) {
-            if (mb_strlen($word) - mb_strlen($suffix) >= 3 && str_ends_with($word, $suffix)) {
-                return mb_substr($word, 0, -mb_strlen($suffix));
+        return str_replace(['ee', 'oo', 'aa'], ['i', 'u', 'a'], $s);
+    }
+
+    /** The word without an inflecting ending, and without a final silent "e". */
+    private static function root(string $word): string
+    {
+        if (isset(self::$roots[$word])) {
+            return self::$roots[$word];
+        }
+
+        // Two passes, on both sides alike, so a replaced ending is reduced the
+        // same way as the plain word: "multiplication" → "multiply" → "multip",
+        // "multiply" → "multip".
+        $root = $word;
+
+        for ($pass = 0; $pass < 2; $pass++) {
+            foreach (self::ENDINGS as [$ending, $with, $keep]) {
+                if (str_ends_with($root, $ending) && mb_strlen($root) - mb_strlen($ending) >= $keep) {
+                    $root = mb_substr($root, 0, -mb_strlen($ending)) . $with;
+                    break;
+                }
             }
         }
 
-        return $word;
+        // "rhyme" and "rhyming", "compare" and "comparing", "shape" and "shapes".
+        if (mb_strlen($root) >= 4 && str_ends_with($root, 'e')) {
+            $root = mb_substr($root, 0, -1);
+        }
+
+        return self::$roots[$word] = $root;
     }
 }

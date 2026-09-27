@@ -78,6 +78,18 @@ class TeacherCurriculumStandardsTest extends TestCase
             ['Grade 5', 'Qur’an & Islamic Studies', 1, null, 'Tajwīd review; begin Surah Al-Mulk ḥifẓ'],
             ['Pre-Kindergarten', 'Healthful Living', 2, 'HPD-2', 'ṭahāra: washing hands before eating'],
             ['Pre-Kindergarten', 'Qur’an & Islamic Studies', 9, null, 'Letter sound ʿayn'],
+            // One term, two spellings, in different grades — as in Al-Razi's guide.
+            ['Grade 1', 'Qur’an & Islamic Studies', 24, null, 'Read with tajweed care; memorize Surah Quraysh'],
+            ['Grade 3', 'Qur’an & Islamic Studies', 6, null, 'Tajwid: noon sakinah basics'],
+            // Social Studies' "3.G.1" is Maths' NC.3.G.1 without its prefix.
+            ['Grade 3', 'Social Studies', 7, '3.G.1', 'Maps, landforms & regions'],
+            ['Grade 4', 'Social Studies', 3, '4.H.1', 'Indigenous nations of NC'],
+            ['Pre-Kindergarten', 'Science', 15, 'CD-15', 'Weather chart; predict tomorrow'],
+            ['Grade 1', 'Science', 4, 'PS.1.1', "Plan a fair test of a rolling ball's motion"],
+            ['Grade 1', 'Science', 6, 'LS.1.1', 'Life science: the basic needs of plants'],
+            ['Grade 3', 'English Language Arts', 9, 'RL.3.2', 'Fractions of a story: beginning, middle, end'],
+            ['Grade 3', 'Mathematics', 14, 'NC.3.OA.1', 'Multiplication strategies with arrays'],
+            ['Grade 3', 'Mathematics', 15, 'NC.3.OA.3', 'Multiply & divide within 100'],
         ]);
 
         // Another school's guide, with a code the query below would match.
@@ -174,18 +186,77 @@ class TeacherCurriculumStandardsTest extends TestCase
     public function the_forms_grade_ranks_its_other_subjects_above_other_grades(): void
     {
         // "Arabic" is typed by hand (not in the guide), so only the grade can
-        // place anything — it must still place Grade 3 first.
-        $matches = $this->search(['q' => 'nf1', 'grade' => 'Grade 3', 'subject' => 'Arabic']);
+        // place anything. Grade 4, because the guide loads Grade 3 first and
+        // that order alone would pass for Grade 3.
+        $matches = $this->search(['q' => 'nf1', 'grade' => 'Grade 4', 'subject' => 'Arabic']);
 
-        $this->assertSame(['NC.3.NF.1', 'NC.4.NF.1'], array_column($matches, 'standard_code'));
+        $this->assertSame(['NC.4.NF.1', 'NC.3.NF.1'], array_column($matches, 'standard_code'));
         $this->assertSame([false, false], array_column($matches, 'in_scope'));
+
+        // Same grade, other subject (the same children) above same subject,
+        // other grade, above neither.
+        $codes = $this->codes(['q' => 'fractions', 'grade' => 'Grade 4', 'subject' => 'English Language Arts']);
+
+        $this->assertSame(['NC.4.NF.1', 'RL.3.2'], array_slice($codes, 0, 2));
+    }
+
+    #[Test]
+    public function the_forms_own_code_typed_without_its_prefix_ranks_above_another_subjects_exact_code(): void
+    {
+        $matches = $this->search(['q' => '3.G.1', 'grade' => 'Grade 3', 'subject' => 'Mathematics']);
+
+        $this->assertSame(['NC.3.G.1', '3.G.1'], array_column($matches, 'standard_code'));
+        $this->assertSame([true, false], array_column($matches, 'in_scope'));
+    }
+
+    #[Test]
+    public function a_topic_query_without_a_digit_keeps_the_forms_own_word_matches(): void
+    {
+        // "NC" is inside every NC.* Maths code, but on a Grade 4 Social Studies
+        // form the teacher is looking for the NC-history weeks.
+        $this->assertSame('4.H.1', $this->codes(['q' => 'NC', 'grade' => 'Grade 4', 'subject' => 'Social Studies'])[0] ?? null);
+    }
+
+    #[Test]
+    public function a_grade_or_subject_name_is_not_a_wildcard_for_a_topic_word(): void
+    {
+        // "Pre-Kindergarten" must not answer every "pre…", nor "Studies"
+        // every "student", nor "plan" the word "plants".
+        $this->assertSame(['CD-15'], $this->codes(['q' => 'predict']));
+        $this->assertSame([], $this->codes(['q' => 'students']));
+        $this->assertSame(['LS.1.1'], $this->codes(['q' => 'plants', 'grade' => 'Grade 1', 'subject' => 'Science']));
+    }
+
+    #[Test]
+    public function one_term_spelled_two_ways_across_grades_is_found_both_ways(): void
+    {
+        $qs = 'Qur’an & Islamic Studies';
+
+        $this->assertSame(
+            'Read with tajweed care; memorize Surah Quraysh',
+            $this->search(['q' => 'tajwid', 'grade' => 'Grade 1', 'subject' => $qs])[0]['focus'] ?? null
+        );
+        $this->assertSame(
+            'Tajwid: noon sakinah basics',
+            $this->search(['q' => 'tajweed', 'grade' => 'Grade 3', 'subject' => $qs])[0]['focus'] ?? null
+        );
+        $this->assertSame(['Tajwid: noon sakinah basics'], array_column($this->search(['q' => 'nun']), 'focus'));
+    }
+
+    #[Test]
+    public function a_stop_word_still_being_typed_is_searched(): void
+    {
+        // "is" on the way to "Islamic" — dropped only from a phrase.
+        $subjects = array_unique(array_column($this->search(['q' => 'is']), 'subject'));
+
+        $this->assertSame(['Qur’an & Islamic Studies'], array_values($subjects));
     }
 
     #[Test]
     public function plain_typing_finds_the_guides_transliterations(): void
     {
         $this->assertSame(['Tajwīd review; begin Surah Al-Mulk ḥifẓ'], array_column($this->search(['q' => 'hifz']), 'focus'));
-        $this->assertSame(['Tajwīd review; begin Surah Al-Mulk ḥifẓ'], array_column($this->search(['q' => 'tajwid']), 'focus'));
+        $this->assertContains('Tajwīd review; begin Surah Al-Mulk ḥifẓ', array_column($this->search(['q' => 'tajwid']), 'focus'));
         $this->assertSame(['HPD-2'], $this->codes(['q' => 'tahara']));
         $this->assertSame(['Letter sound ʿayn'], array_column($this->search(['q' => 'ayn']), 'focus'));
     }
@@ -197,6 +268,8 @@ class TeacherCurriculumStandardsTest extends TestCase
         $this->assertSame(['NC.K.OA.5'], $this->codes(['q' => 'subtraction']));
         $this->assertSame(['RF.3.4'], $this->codes(['q' => 'fluency']));
         $this->assertSame(['RF.3.4'], $this->codes(['q' => 'the fluency with expression']));
+        // "multiplication" is "multiply" once both lose their endings.
+        $this->assertSame(['NC.3.OA.1', 'NC.3.OA.3'], $this->codes(['q' => 'multiplication']));
     }
 
     #[Test]

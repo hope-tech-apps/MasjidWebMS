@@ -2401,6 +2401,8 @@ const curriculum = ref<{ grades: string[]; subjects: string[]; weeks: any[] }>({
  * picked from a list left over from another day's plan must not fill this one.
  */
 const curriculumFor = ref({ grade: '', subject: '' });
+/** The pair the newest load ASKED for, set when it starts — see syncCurriculum. */
+let curriculumWant = { grade: '', subject: '' };
 let curriculumSeq = 0;
 const prefilling = ref(false);
 const copying = ref(false);
@@ -2412,6 +2414,7 @@ const canPrefill = computed(() =>
 
 const loadCurriculum = async (grade?: string, subject?: string) => {
     const seq = ++curriculumSeq;
+    curriculumWant = { grade: grade ?? '', subject: subject ?? '' };
     try {
         const q = new URLSearchParams();
         if (grade) q.set('grade', grade);
@@ -2427,6 +2430,12 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
             weeks: d.weeks ?? [],
         };
         curriculumFor.value = { grade: grade ?? '', subject: subject ?? '' };
+        // A subject shown in the free-text box that this grade's guide does
+        // list goes back to the picker (the watch below only ever sets it).
+        const shown = planForm.value.subject;
+        if (subjectOther.value && shown && curriculum.value.subjects.includes(shown)) {
+            subjectOther.value = false;
+        }
     } catch {
         if (seq !== curriculumSeq) return;
         // No guide imported for this school: the form falls back to free text.
@@ -2444,12 +2453,14 @@ const syncCurriculum = () => {
     if (!curriculum.value.grades.length) return; // no guide, or not loaded yet
     const grade = planForm.value.grade_label || '';
     const subject = planForm.value.subject || '';
-    if (curriculumFor.value.grade === grade && curriculumFor.value.subject === subject) return;
+    // Against what was last ASKED for: a load still in flight for the day the
+    // teacher just left must not count as this day's.
+    if (curriculumWant.grade === grade && curriculumWant.subject === subject) return;
     loadCurriculum(grade || undefined, subject || undefined);
 };
 
 const onGradeChange = async () => {
-    prefillSeq++;
+    cancelPrefill();
     planForm.value.subject = '';
     planForm.value.curriculum_week_no = null;
     await loadCurriculum(planForm.value.grade_label);
@@ -2466,7 +2477,7 @@ const SUBJECT_OTHER = '__other__';
 const subjectOther = ref(false);
 
 const onSubjectChange = async () => {
-    prefillSeq++;
+    cancelPrefill();
     planForm.value.curriculum_week_no = null;
     await loadCurriculum(planForm.value.grade_label, planForm.value.subject);
 };
@@ -2474,7 +2485,7 @@ const onSubjectChange = async () => {
 /** Picking "Other…" clears the box rather than storing the sentinel. */
 const onSubjectPick = async () => {
     if (planForm.value.subject === SUBJECT_OTHER) {
-        prefillSeq++;
+        cancelPrefill();
         planForm.value.subject = '';
         planForm.value.curriculum_week_no = null;
         subjectOther.value = true;
@@ -2564,6 +2575,13 @@ const onWeekPick = () => {
  * dropped instead of landing under the new one.
  */
 let prefillSeq = 0;
+
+/** Drop a prefill in flight and the "Filling…" and "Kept" states with it. */
+function cancelPrefill() {
+    prefillSeq++;
+    prefilling.value = false;
+    prefillKept.value = false;
+}
 
 /**
  * Copy the week's cell into the form. Every field lands EDITABLE and nothing is
@@ -2701,12 +2719,17 @@ const searchStandards = async (field: string, q: string) => {
         // A new list, so no row of the old one is highlighted in it.
         stdActive.value = -1;
         stdEmptyFor.value = stdMatches.value.length ? null : q;
+        // Text the guide knows nothing of is the teacher's own label, and the
+        // note under the box promises it is kept — so a fill must not take it.
+        if (!stdMatches.value.length && stdLeft.value[field] === q) delete stdLeft.value[field];
     } catch {
         if (seq === stdSeq) stdMatches.value = [];
     }
 };
 
 const onStandardKey = (e: KeyboardEvent) => {
+    // Keys pressed while a keyboard is composing belong to the composition.
+    if (e.isComposing) return;
     const n = stdMatches.value.length;
     if (e.key === 'Escape') { closeStandards(); return; }
     if (!n) return;
@@ -2736,11 +2759,15 @@ const weeksLabel = (weeks: number[]) => {
 const pickStandard = async (m: any) => {
     if (!m) return;
     const typedIn = stdOpen.value;
+    // A tap on a row keeps focus in the box (mousedown is prevented), so an
+    // Android keyboard may still be composing the word. Blurring commits it
+    // NOW; otherwise the composed text lands later, through v-model, over
+    // the pick. The commit's own input event runs before the writes below.
+    const box = document.getElementById(`std-${typedIn}`);
+    if (box && document.activeElement === box) (box as HTMLElement).blur();
     closeStandards();
     // The pick is the answer now; a week prefill still in flight is not.
-    prefillSeq++;
-    prefilling.value = false;
-    prefillKept.value = false;
+    cancelPrefill();
 
     // An uncoded row (the Islamic Studies column) clears the search text out
     // of the code box rather than leaving "wudu" standing as a standard.
@@ -2831,10 +2858,16 @@ const syncPlanForm = () => {
     planOpen.value = opened;
     autoFilled.value = {};
     stdLeft.value = {};
-    prefillSeq++;
-    prefilling.value = false;
-    prefillKept.value = false;
+    cancelPrefill();
     closeStandards();
+    // The subject box follows THIS plan: a hand-typed subject on another day
+    // must not turn this day's guide subject into a text box. Re-checked when
+    // syncCurriculum's load lands with this grade's subjects.
+    {
+        const subject = planForm.value.subject;
+        const subjects = curriculum.value.subjects;
+        subjectOther.value = !!subject && subjects.length > 0 && !subjects.includes(subject);
+    }
     syncCurriculum();
 
     planSaved.value = false;
