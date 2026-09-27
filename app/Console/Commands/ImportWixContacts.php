@@ -63,6 +63,7 @@ class ImportWixContacts extends Command
         'Email' => [
             'Stay mailable (SUBSCRIBED and VALID on Wix, not suppressed in Manara)' => 'mailable',
             'SUBSCRIBED on Wix, but suppressed in Manara (kept suppressed)' => 'suppressed_but_now_subscribed',
+            '  of which held by the Wix order-history import (staff can record consent)' => 'order_holds_now_subscribed',
             'No email address (phone only)' => 'no_email',
             'Suppress: spam complaint on Wix' => 'suppress_complaint',
             'Suppress: unsubscribed on Wix' => 'suppress_opt_out',

@@ -11,15 +11,18 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Staff record a contact's consent to this organisation's email, which lifts
- * an import's `not_opted_in` precaution — and only that.
+ * a row an import wrote for want of consent — the contact import's
+ * `not_opted_in` precaution or the order-history import's hold
+ * (EmailSuppression::STAFF_LIFTABLE_REASONS) — and only that.
  *
- * Why it exists: the MEC Wix import writes `not_opted_in` for every address
- * Wix never had consent for (owner: "Everyone, most blocked"). That is the
- * import's inference, not the person's request, and the person it silences
- * never receives a broadcast, so the subscriber's own re-subscribe link can
- * never reach them. Without this, "never opted in on Wix" would mean "can never
- * opt in". The argument, and the refusal of every other reason, is on
- * EmailSuppressionService::liftPrecaution.
+ * Why it exists: the MEC Wix contact import writes `not_opted_in` for every
+ * address Wix never had consent for (owner: "Everyone, most blocked"), and the
+ * order-history import holds the address of every buyer it had to create.
+ * Both are the import's inference, not the person's request, and the person
+ * they silence never receives a broadcast, so the subscriber's own
+ * re-subscribe link can never reach them. Without this, "never opted in on
+ * Wix" would mean "can never opt in". The argument, and the refusal of every
+ * other reason, is on EmailSuppressionService::liftPrecaution.
  *
  * Refuses (422) when the address has no suppression in force, or when it has
  * one for any other reason: an unsubscribe, an imported opt-out, a complaint or

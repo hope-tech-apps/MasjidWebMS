@@ -484,6 +484,32 @@ class WixContactImportTest extends TestCase
     }
 
     #[Test]
+    public function an_order_history_hold_on_an_address_wix_says_is_subscribed_is_counted_on_its_own_row_and_kept(): void
+    {
+        // The order-history import ran first (--without-contact-import) and
+        // held a buyer it had to create; Wix says that buyer is SUBSCRIBED and
+        // VALID. The import does not release it (DECISIONS.md 2026-09-27): it
+        // tells the operator, and staff lift each by recording consent.
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'buyer@example.test']);
+        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'buyer@example.test', EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'left@example.test']);
+        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'left@example.test');
+
+        [, $output] = $this->import($this->file([
+            $this->wix('w1', ['email' => 'buyer@example.test']),
+            $this->wix('w2', ['email' => 'left@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $this->assertSame([
+            'buyer@example.test' => EmailSuppression::REASON_ORDER_HISTORY_HOLD,
+            'left@example.test' => EmailSuppression::REASON_UNSUBSCRIBE_LINK,
+        ], collect($this->suppressions())->sortKeys()->all(), 'both stay in force');
+        $this->assertSame([], $this->everyoneEmailed());
+        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix, but suppressed in Manara \(kept suppressed\)\s*\|\s*2/', $output);
+        $this->assertMatchesRegularExpression('/of which held by the Wix order-history import \(staff can record consent\)\s*\|\s*1/', $output);
+    }
+
+    #[Test]
     public function a_contact_the_office_deleted_is_not_recreated(): void
     {
         // Deleted before the first run…
@@ -791,6 +817,30 @@ class WixContactImportTest extends TestCase
         ], collect($this->suppressions())->sortKeys()->all(), 'rows that existed before the run are untouched');
         $this->assertNull($matched->fresh()->email_opted_out_at, 'the badge follows the list');
         $this->assertMatchesRegularExpression('/Precaution suppressions the run wrote \(not opted in, bounced\), removed\s*\|\s*2/', $output);
+    }
+
+    #[Test]
+    public function undo_never_deletes_an_order_history_hold_even_when_its_run_record_names_the_row(): void
+    {
+        // The second key. A run's undo deletes a row only when its own record
+        // names the row AND the reason is one of ITS precautions
+        // (EmailSuppression::PRECAUTION_REASONS). No real sequence makes this
+        // import's record name the order import's hold — it inserts only
+        // where no row exists — so the record is forged here, to pin that the
+        // reason alone would still keep the hold (DECISIONS.md 2026-09-27).
+        $this->import($this->file([$this->wix('w1', ['email' => 'later@example.test', 'sub' => 'NOT_SET'])]), ['--execute' => true, '--batch' => 'b1']);
+        $hold = app(EmailSuppressionService::class)->suppress($this->masjid->id, 'buyer@example.test', EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        DB::table('import_links')->insert([
+            'masjid_id' => $this->masjid->id, 'source' => ImportLink::SOURCE_WIX, 'kind' => ImportLink::KIND_EMAIL_SUPPRESSION,
+            'external_id' => (string) $hold->id, 'local_id' => $hold->id, 'created_local' => true, 'import_batch' => 'b1',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(['buyer@example.test' => EmailSuppression::REASON_ORDER_HISTORY_HOLD], $this->suppressions(),
+            'the run\'s own precaution went; the order import\'s hold did not');
     }
 
     #[Test]

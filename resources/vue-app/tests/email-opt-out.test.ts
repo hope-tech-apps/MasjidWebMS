@@ -14,6 +14,10 @@ test('an import\'s "not opted in" reads differently from an unsubscribe, and onl
     }
 });
 
+test('an order-history hold reads as a hold, not an unsubscribe, and offers recording consent like "not opted in"', () => {
+    assert.deepEqual(emailOptOutBadge('2026-10-01', 'order_history_import'), { label: 'Emails: held (imported order, no consent on record)', canRecordConsent: true });
+});
+
 test('no badge for a mailable address, and a record without its reason yet reads as the stricter "unsubscribed"', () => {
     assert.equal(emailOptOutBadge(null, 'not_opted_in'), null);
     assert.deepEqual(emailOptOutBadge('2026-10-01', undefined), { label: 'Emails: unsubscribed', canRecordConsent: false });

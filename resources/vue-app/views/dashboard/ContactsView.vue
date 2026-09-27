@@ -358,10 +358,10 @@
                                             {{ emailBadge.label }} {{ formatDate(emailOptedOutAt) }}
                                         </span>
                                         <!--
-                                            Only for an import's "not opted in": the person
-                                            never received a broadcast, so their own link
-                                            can never reach them. Every opt-out stays theirs
-                                            to undo; the server refuses it (422) regardless.
+                                            Only for an import's "not opted in" or order-history
+                                            hold: the person never received a broadcast, so their
+                                            own link can never reach them. Every opt-out stays
+                                            theirs to undo; the server refuses it (422) regardless.
                                         -->
                                         <button
                                             v-if="emailBadge.canRecordConsent"
@@ -1358,8 +1358,8 @@ const emailBadge = computed(() =>
 
 /**
  * Staff record that the person consented to email in Manara, with their own
- * words for how. Lifts an import's "not opted in" precaution only; the server's
- * refusal sentence is shown as it comes.
+ * words for how. Lifts an import's "not opted in" precaution or order-history
+ * hold only; the server's refusal sentence is shown as it comes.
  */
 const recordEmailConsent = async () => {
     if (!selectedContact.value) return;

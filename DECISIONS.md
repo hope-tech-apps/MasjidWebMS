@@ -3841,3 +3841,45 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   is always `Form::priceFor($data, now)` and Stripe's page shows it before payment. Accepted:
   MEC's Zakat-ul-Fitr has no tiers, and per-entry `unitMinor` has behaved the same since
   2026-09-11. Recorded in burlington-masjid-site DECISIONS.md with the alternatives.
+
+## 2026-09-27 — Staff consent lifts the Wix order-history hold; the contact import still does not
+The order-history import (`crm:import-wix-orders`) holds the address of every Wix buyer it has to
+create (`EmailSuppression::REASON_ORDER_HISTORY_HOLD`, `order_history_import`). Its docblock said "a
+later consent decision may lift" such a hold, but the staff consent path lifted only `not_opted_in`,
+and the member record badged the hold as "Emails: unsubscribed", which is untrue.
+- **Staff may lift an order-history hold exactly as they lift `not_opted_in`.** New
+  `EmailSuppression::STAFF_LIFTABLE_REASONS = [not_opted_in, order_history_import]`, read by
+  `EmailSuppressionService::liftPrecaution`: same endpoint, same required evidence, same
+  `release_source = staff_recorded_consent`, `release_evidence`, `released_by_user_id`, same 422 for
+  every other reason. Both reasons mean "an import had no consent on record", never "the person
+  asked". Pinned by `ContactEmailConsentTest::staff_can_lift_an_order_history_hold_exactly_as_they_lift_a_not_opted_in_precaution`
+  and `every_reason_but_the_two_import_precautions_is_refused_to_staff_including_any_added_later`
+  (sweeps every `REASON_*` constant, so a reason added later is refused until decided).
+- **The badge says "Emails: held (imported order, no consent on record)"** with the same "Record
+  consent to email" action (`emailOptOut.ts`, pinned in `email-opt-out.test.ts`).
+- **`order_history_import` does NOT join `PRECAUTION_REASONS`.** Every use checked: (1)
+  `WixContactImport::counts()` filters its own planned reasons, which can never be the order hold, so
+  membership would change nothing there; (2) `WixContactImport::undo()` deletes a row its batch linked
+  in `import_links` when the reason is in `PRECAUTION_REASONS`. Neither import can naturally name the
+  other's row (each inserts only where the address has no row at all), so today the lists only
+  matter as the SECOND key: each undo deletes a row only when its own record names it AND the reason
+  is its own (`WixOrderHistoryImporter` checks `reason === order_history_import`). Kept disjoint, a
+  provenance record that ever pointed at the other import's row still cannot delete it; merged, the
+  contact-import undo would delete an order hold its record happened to name. The shared meaning
+  ("staff may lift") got its own constant instead. Pinned both ways with a forged record:
+  `WixContactImportTest::undo_never_deletes_an_order_history_hold_even_when_its_run_record_names_the_row`,
+  `WixOrderHistoryImportTest::undo_never_deletes_a_contact_import_precaution_even_when_its_record_names_the_row`.
+  Alternative (add it, since it is "an import's precaution" in words): rejected for the reason above.
+- **The contact import does not lift an order hold, even when Wix says SUBSCRIBED and VALID.** It
+  counts it instead, on a new dry-run/apply row "of which held by the Wix order-history import (staff
+  can record consent)" under "SUBSCRIBED on Wix, but suppressed in Manara (kept suppressed)". Why not
+  lift: a RELEASED row is read in three places as the person's own newer decision — the contact
+  import's plan never re-suppresses it, the order import never holds over it, and staff consent only
+  looks at rows in force. A row released by an import would inherit that meaning, so a later Wix pull
+  saying UNSUBSCRIBED could never suppress the address again: the dangerous direction. Making it safe
+  needs a new release source that every one of those readers excludes, a re-suppress path, and undo
+  of the release — a wide change to an importer that has not run in production yet, for a rare case:
+  the contact import is enforced to run first, so it arises only under `--without-contact-import` or
+  for a buyer missing from the contacts export the first run read and present in a later one. Revisit
+  if the new row shows real numbers on MEC's data. Pinned by
+  `WixContactImportTest::an_order_history_hold_on_an_address_wix_says_is_subscribed_is_counted_on_its_own_row_and_kept`.

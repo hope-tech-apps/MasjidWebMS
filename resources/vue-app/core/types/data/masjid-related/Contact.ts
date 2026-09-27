@@ -86,8 +86,9 @@ export type Contact = {
     email_opted_out_at?: string | null;
     /**
      * WHY the address is suppressed (`email_suppressions.reason`), on the single
-     * record only (ContactsController::show). `not_opted_in` is an import's
-     * precaution staff may lift; every other reason is the person's to undo.
+     * record only (ContactsController::show). `not_opted_in` and
+     * `order_history_import` are an import's precautions staff may lift;
+     * every other reason is the person's to undo.
      * Display only, like the date above.
      */
     email_opt_out_reason?: string | null;

@@ -7,10 +7,14 @@
  *
  * The reason matters to staff because they act on it differently. An
  * unsubscribe, a complaint or an opt-out carried from the old website is the
- * person's own request and only the person can undo it. "Not opted in" is an
- * import's precaution (the old website never had their consent), and staff can
- * lift it once the person consents in Manara — which is what `canRecordConsent`
- * offers. A bounce says the address did not work there.
+ * person's own request and only the person can undo it. "Not opted in" (the
+ * contact import) and "held" (the order-history import, for a buyer it had to
+ * create) are an import's precautions: the old website never had their
+ * consent, nobody asked to be left alone, and staff can lift either once the
+ * person consents in Manara — which is what `canRecordConsent` offers, and
+ * what the server's EmailSuppression::STAFF_LIFTABLE_REASONS allows. Calling a
+ * hold "unsubscribed" would be untrue, and would hide the one action that
+ * applies. A bounce says the address did not work there.
  */
 
 export type EmailOptOutBadge = {
@@ -32,6 +36,8 @@ export function emailOptOutBadge(optedOutAt: string | null | undefined, reason: 
     switch (reason) {
         case 'not_opted_in':
             return { label: 'Emails: not opted in (imported)', canRecordConsent: true };
+        case 'order_history_import':
+            return { label: 'Emails: held (imported order, no consent on record)', canRecordConsent: true };
         case 'bounce':
             return { label: 'Emails: address bounced', canRecordConsent: false };
         default:

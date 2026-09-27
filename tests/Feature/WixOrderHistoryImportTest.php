@@ -682,6 +682,30 @@ class WixOrderHistoryImportTest extends TestCase
     }
 
     #[Test]
+    public function undo_never_deletes_a_contact_import_precaution_even_when_its_record_names_the_row(): void
+    {
+        // The second key, from this side. The batch's record names the row, but
+        // the row carries the CONTACT import's reason, and that import's
+        // precautions are its own undo's to remove — never this one's, even
+        // though staff may lift both reasons alike (DECISIONS.md 2026-09-27).
+        // No real sequence gets here (this import holds only an address with
+        // no row), so the reason is rewritten by hand, as the test above does.
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        DB::table('email_suppressions')->where('email_normalized', 'maryam@example.test')
+            ->update(['reason' => EmailSuppression::REASON_NOT_OPTED_IN]);
+
+        $this->undoAsService('b1');
+
+        $this->assertNull(Contact::withoutMasjidScope()->withTrashed()->where('email', 'maryam@example.test')->first(),
+            'the premise: the contact the batch made went');
+        $row = EmailSuppression::withoutMasjidScope()->where('email_normalized', 'maryam@example.test')->sole();
+        $this->assertSame(EmailSuppression::REASON_NOT_OPTED_IN, $row->reason);
+        $this->assertNull($row->released_at, 'still in force');
+    }
+
+    #[Test]
     public function undo_leaves_a_hold_that_has_since_been_released(): void
     {
         $this->freezeTime();

@@ -39,9 +39,11 @@ use Illuminate\Support\Facades\Crypt;
  *     be one — a staff button that re-enables mail to somebody who unsubscribed
  *     is the button that turns an obligation into a complaint. Pinned by
  *     `an_admin_cannot_re_subscribe_somebody_who_unsubscribed`. The single
- *     exception is not an opt-out at all: an import's `not_opted_in`
- *     precaution, which staff may lift on recorded evidence of consent given
- *     in Manara (`liftPrecaution()`, the argument is on it).
+ *     exception is not an opt-out at all: a row an import wrote because it had
+ *     no consent on record (EmailSuppression::STAFF_LIFTABLE_REASONS — the
+ *     contact import's `not_opted_in`, the order-history import's hold), which
+ *     staff may lift on recorded evidence of consent given in Manara
+ *     (`liftPrecaution()`, the argument is on it).
  *
  *  4. **The suppression belongs to an ADDRESS, not to a person.** That is what
  *     makes the merge rule below the only defensible one, and it is why the
@@ -406,18 +408,20 @@ class EmailSuppressionService
     }
 
     /**
-     * Lift an import's `not_opted_in` precaution because the person has now
-     * consented in Manara, as staff witnessed it. Returns the released row, or
-     * null when there is nothing this path may lift.
+     * Lift a row an import wrote for want of consent — the contact import's
+     * `not_opted_in` precaution or the order-history import's hold — because
+     * the person has now consented in Manara, as staff witnessed it. Returns
+     * the released row, or null when there is nothing this path may lift.
      *
-     * Why a staff path exists for this reason and no other: `not_opted_in`
-     * records no request from the person, only that the platform the list came
-     * from never had their consent (EmailSuppression::REASON_NOT_OPTED_IN). The
-     * subscriber's own release needs a link that only a broadcast carries, and
-     * a suppressed address never receives one, so without this the precaution
-     * would outlive any consent the person later gives. Every OTHER reason —
-     * an unsubscribe, a complaint, an imported opt-out, a bounce — is refused
-     * here and stays the subscriber's to release (rule 3 on this class).
+     * Why a staff path exists for these reasons and no other
+     * (EmailSuppression::STAFF_LIFTABLE_REASONS): neither records a request
+     * from the person, only that the platform the list came from never had
+     * their consent. The subscriber's own release needs a link that only a
+     * broadcast carries, and a suppressed address never receives one, so
+     * without this the precaution would outlive any consent the person later
+     * gives. Every OTHER reason — an unsubscribe, a manual opt-out, a
+     * complaint, an imported opt-out, a bounce — is refused here and stays the
+     * subscriber's to release (rule 3 on this class).
      *
      * The evidence, the staff account and the source are written onto the row
      * beside `released_at`, so the record says who lifted it and why. The row
@@ -436,7 +440,7 @@ class EmailSuppressionService
             ->where('masjid_id', $masjidId)
             ->where('email_normalized', $address)
             ->whereNull('released_at')
-            ->where('reason', EmailSuppression::REASON_NOT_OPTED_IN)
+            ->whereIn('reason', EmailSuppression::STAFF_LIFTABLE_REASONS)
             ->first();
 
         if ($suppression === null) {
@@ -457,8 +461,9 @@ class EmailSuppressionService
 
     /**
      * The reason on the suppression in force for this address, or null when it
-     * is mailable. For the directory's badge only: "not opted in (imported)"
-     * and "unsubscribed" are different facts and staff act on them differently.
+     * is mailable. For the directory's badge only: "not opted in (imported)",
+     * "held (imported order)" and "unsubscribed" are different facts and staff
+     * act on them differently.
      */
     public function activeReason(int $masjidId, ?string $email): ?string
     {

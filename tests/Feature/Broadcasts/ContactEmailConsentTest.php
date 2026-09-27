@@ -20,7 +20,8 @@ use Tests\TestCase;
 /**
  * Staff recording email consent given in Manara
  * (POST /contacts/{id}/email-consent, ContactEmailConsentController), which
- * lifts an import's `not_opted_in` precaution and refuses every other reason.
+ * lifts an import's `not_opted_in` precaution or order-history hold and
+ * refuses every other reason.
  *
  * Why it exists: the person an import silenced in advance never receives a
  * broadcast, so the subscriber's own re-subscribe link can never reach them.
@@ -135,6 +136,63 @@ class ContactEmailConsentTest extends TestCase
             $this->postJson($this->url($contact), ['evidence' => 'They asked at the desk'])
                 ->assertStatus(422)
                 ->assertJsonPath('message', 'This address opted out or could not be delivered to. Only the person can resume email, from the link in an email they receive; staff cannot.');
+
+            $this->assertNull(
+                EmailSuppression::withoutMasjidScope()->where('email_normalized', "{$reason}@example.test")->value('released_at'),
+                "{$reason} stays in force",
+            );
+        }
+
+        $this->assertSame([], $this->everyoneEmailed());
+    }
+
+    #[Test]
+    public function staff_can_lift_an_order_history_hold_exactly_as_they_lift_a_not_opted_in_precaution(): void
+    {
+        // The Wix order-history import holds the address of a buyer it had to
+        // create (WixOrderHistoryImporter::createHeldContact): no consent on
+        // record, nobody's request. Recording consent lifts it with the same
+        // record as a `not_opted_in`, and the row keeps saying what it was.
+        $contact = $this->contactSuppressedAs('buyer@example.test', EmailSuppression::REASON_ORDER_HISTORY_HOLD);
+        $this->assertSame([], $this->everyoneEmailed());
+
+        Sanctum::actingAs($this->admin);
+        $this->postJson($this->url($contact), ['evidence' => 'Ticked the email box on the festival sign-up'])
+            ->assertOk()
+            ->assertJsonPath('data.email_opted_out_at', null)
+            ->assertJsonPath('data.email_opt_out_reason', null);
+
+        $row = EmailSuppression::withoutMasjidScope()->where('email_normalized', 'buyer@example.test')->sole();
+        $this->assertNotNull($row->released_at, 'released, not deleted: the row is the record');
+        $this->assertSame(EmailSuppression::REASON_ORDER_HISTORY_HOLD, $row->reason);
+        $this->assertSame(EmailSuppression::RELEASE_STAFF_RECORDED_CONSENT, $row->release_source);
+        $this->assertSame('Ticked the email box on the festival sign-up', $row->release_evidence);
+        $this->assertSame($this->admin->id, (int) $row->released_by_user_id);
+        $this->assertSame(['buyer@example.test'], $this->everyoneEmailed());
+    }
+
+    #[Test]
+    public function every_reason_but_the_two_import_precautions_is_refused_to_staff_including_any_added_later(): void
+    {
+        // Read from the class, so a reason added later is refused by default
+        // until somebody decides otherwise here. The two liftable reasons are
+        // named literally: widening what staff may lift must fail this test.
+        $liftable = ['not_opted_in', 'order_history_import'];
+        $reasons = collect((new \ReflectionClass(EmailSuppression::class))->getConstants())
+            ->filter(fn ($value, $name) => str_starts_with($name, 'REASON_'))
+            ->reject(fn ($value) => in_array($value, $liftable, true))
+            ->values();
+
+        $this->assertContains(EmailSuppression::REASON_UNSUBSCRIBE_LINK, $reasons, 'the premise: the opt-outs are in the sweep');
+        $this->assertContains(EmailSuppression::REASON_COMPLAINT, $reasons);
+        $this->assertContains(EmailSuppression::REASON_BOUNCE, $reasons);
+
+        Sanctum::actingAs($this->admin);
+
+        foreach ($reasons as $reason) {
+            $contact = $this->contactSuppressedAs("{$reason}@example.test", $reason);
+
+            $this->postJson($this->url($contact), ['evidence' => 'They asked at the desk'])->assertStatus(422);
 
             $this->assertNull(
                 EmailSuppression::withoutMasjidScope()->where('email_normalized', "{$reason}@example.test")->value('released_at'),

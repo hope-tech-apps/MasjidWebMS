@@ -64,10 +64,18 @@ use Illuminate\Support\Facades\DB;
  *
  * A suppression is never released by this class. So a re-run where Wix now
  * says SUBSCRIBED for an address an earlier run suppressed as a precaution is
- * COUNTED, not changed. The other way round holds too: an address (or number)
- * whose suppression row was RELEASED in Manara — by the subscriber's own link,
- * or by staff recording their consent — is the person's newer decision, and a
- * run never re-suppresses it from older Wix data; it is counted instead.
+ * COUNTED, not changed — and so is an address the Wix order-history import
+ * held (EmailSuppression::REASON_ORDER_HISTORY_HOLD) that Wix says is
+ * SUBSCRIBED and VALID, on a row of its own so the operator knows staff can
+ * lift each by recording consent. Why this import does not lift that hold
+ * itself is in DECISIONS.md 2026-09-27: a released row is read everywhere as
+ * the person's own newer decision, and one released by an import would stop
+ * a later Wix UNSUBSCRIBED from ever suppressing the address again.
+ *
+ * The reverse holds too: an address (or number) whose suppression row was
+ * RELEASED in Manara — by the subscriber's own link, or by staff recording
+ * their consent — is the person's newer decision, and a run never
+ * re-suppresses it from older Wix data; it is counted instead.
  *
  * Only a row the run INSERTS is its own: each is recorded in `import_links`
  * (KIND_EMAIL_SUPPRESSION / KIND_SMS_SUPPRESSION), and a row that already
@@ -331,8 +339,10 @@ final class WixContactImport
 
         // Every row in any state, split: in force, or RELEASED — the person's
         // decision in Manara, which older Wix data never overrides.
-        $emailRows = EmailSuppression::query()->get(['email_normalized', 'released_at']);
+        $emailRows = EmailSuppression::query()->get(['email_normalized', 'reason', 'released_at']);
         $suppressed = $emailRows->whereNull('released_at')->pluck('email_normalized')->flip()->all();
+        $orderHeld = $emailRows->whereNull('released_at')->where('reason', EmailSuppression::REASON_ORDER_HISTORY_HOLD)
+            ->pluck('email_normalized')->flip()->all();
         $released = $emailRows->whereNotNull('released_at')->pluck('email_normalized')->flip()->all();
         $smsReleased = SmsSuppression::query()->whereNotNull('released_at')->pluck('phone_e164')->flip()->all();
 
@@ -389,6 +399,7 @@ final class WixContactImport
             // contact (the owner's rule), unless Manara holds a RELEASED row —
             // then the person already decided here and the Wix status is older.
             $group['already_suppressed'] = $group['address'] !== null && isset($suppressed[$group['address']]);
+            $group['order_held'] = $group['address'] !== null && isset($orderHeld[$group['address']]);
             $group['released_in_manara'] = $group['address'] !== null && isset($released[$group['address']]);
             $group['suppress'] = $group['address'] !== null && ! $group['released_in_manara'] ? $group['reason'] : null;
 
@@ -694,6 +705,8 @@ final class WixContactImport
             'already_suppressed' => $groups->filter(fn ($g) => $g['suppress'] !== null && $g['already_suppressed'])->count(),
             'suppressed_but_now_subscribed' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
                 && $g['already_suppressed'] && $g['action'] !== 'skip_deleted')->count(),
+            'order_holds_now_subscribed' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
+                && $g['order_held'] && $g['action'] !== 'skip_deleted')->count(),
             'released_in_manara_kept' => $groups->filter(fn ($g) => $g['reason'] !== null && $g['released_in_manara'])->count(),
             'sms_opt_outs' => $groups->whereNotNull('sms_opt_out')->count(),
             'sms_released_in_manara_kept' => $groups->where('sms_released_in_manara', true)->count(),
