@@ -3004,7 +3004,9 @@ const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promis
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
-        const again = resyncOwed || (typeof resync === 'function' ? resync() : resync);
+        // An owed re-sync opens the week's plan in an UNTOUCHED form only: a
+        // draft the teacher started since (a new plan on the blank form) stays.
+        const again = (resyncOwed && !planDirty()) || (typeof resync === 'function' ? resync() : resync);
         resyncOwed = false;
         if (!again && (planId.value === null || plans.value.some((p) => p.id === planId.value))) return false;
         // Stay on the plan that was open if it is still there (a save, a copy),
@@ -3013,7 +3015,11 @@ const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promis
         syncPlanForm();
         return true;
     } catch {
-        if (seq === plansSeq) planError.value = 'Could not load this week.';
+        if (seq === plansSeq) {
+            planError.value = 'Could not load this week.';
+            // Nothing replaced this load, so nothing is owed by it.
+            resyncOwed = false;
+        }
         return false;
     }
 };
@@ -3023,8 +3029,12 @@ const syncPlanForm = () => {
     const p = selectedPlan.value;
     const blank = emptyPlan();
 
+    // Arrays are copied: shared with the loaded list, an unsaved tick or outcome
+    // wrote straight into it — a Copy then sent it, and the snapshot below saw
+    // the draft as the saved plan.
     planForm.value = p
-        ? { ...blank, ...Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v ?? blank[k as keyof typeof blank]])) }
+        ? { ...blank, ...Object.fromEntries(Object.entries(p).map(([k, v]) =>
+            [k, Array.isArray(v) ? [...v] : (v ?? blank[k as keyof typeof blank])])) }
         : blank;
 
     // Arrays must never come back null, or v-model has nothing to bind.
