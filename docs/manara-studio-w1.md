@@ -1991,8 +1991,9 @@ These are not W1 work. Each needs its own ticket.
   falls back to `localhost` (renderer-lookup risk [1]). This is unverified.
 - `SectionType::withoutRenderer()` still lists OFFERING, although the renderer
   draws it (`app/Enums/SectionType.php:242-245`).
-- `Masjid::header_logo()` and `footer_logo()` lack the `model_type` filter
-  (`app/Models/Masjid.php:622-634`).
+- **Fixed 2026-09-27 on `fix/masjid-media-model-type` (c1d5256b):**
+  `Masjid::header_logo()` and `footer_logo()` lacked the `model_type` filter.
+  Both now carry it, and so does `gallery()` (`MasjidMediaModelTypeTest`).
 - `renderer:tests/tenant-unchanged.test.ts:27-43` pins `mec-web`'s map, not
   `manara-renderer`'s.
 - `PagesSeeder` / `seed:pages` writes invented content, and without

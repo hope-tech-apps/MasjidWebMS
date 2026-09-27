@@ -632,8 +632,9 @@ class TenancyCanaryTest extends TestCase
         $service = $this->makeMedia(Service::class, $this->masjidB->id, 'galleries');
         $ids = [$own->id, $service->id];
 
-        // The premise: the relation alone would match both rows.
-        $this->assertSame(2, $relation->getQuery()->getQuery()->whereIn('media.id', $ids)->count(),
+        // The premise: the relation alone would match both rows. On a clone,
+        // so the relation ownerMap() receives is untouched.
+        $this->assertSame(2, (clone $relation->getQuery()->getQuery())->whereIn('media.id', $ids)->count(),
             'the hand-built relation already filters model_type, so this test would pin nothing');
 
         [$key] = $this->ownerKeyOf($relation);

@@ -4115,10 +4115,11 @@ and by the `tables_available` inventory, and the lookup adds the type clause
 itself (TenancyCanary::ownerMap): a plain hasMany may carry no type clause, and
 Relation::noConstraints drops a morph relation's own.
 Alternatives: (a) add `model_id` to `canary.tenant_keys`. Rejected: tenant keys
-are also read out of response bodies, and the mobile services, features, about
-and donation-link endpoints serialize raw media rows (MobileMedia::envelope),
-so a Service icon's `model_id` (the service's id) would read as a cross-tenant
-read on a correct answer. (b) Only put `where('model_type', …)` on
+are also read out of response bodies, and the mobile services, announcements,
+features, about and donation-link endpoints serialize raw media rows
+(MobileMedia::envelope), as splash does with its image row, so a Service icon's
+`model_id` (the service's id) would read as a cross-tenant read on a correct
+answer. (b) Only put `where('model_type', …)` on
 Masjid::gallery() the way logo() has it. That is right for the app, and it
 ships beside this as its own change (next entry), but on its own it changes
 nothing for the canary, which still could not tell that `model_id` names an

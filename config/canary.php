@@ -538,10 +538,11 @@ return [
     | This is row-ownership attribution ONLY (TenancyCanary::ownerKeyFor). It is
     | deliberately not a `tenant_keys` entry: those are read out of response
     | bodies (ResponseFacts::tenantIds walks the whole body), and the mobile
-    | services, features, about and donation-link endpoints serialize raw media
-    | rows through MobileMedia::envelope. A Service's icon there carries
-    | `model_id` = the SERVICE's id, so `model_id` as a tenant key would read
-    | correct answers as cross-tenant reads and page hourly.
+    | services, announcements, features, about and donation-link endpoints
+    | serialize raw media rows through MobileMedia::envelope, as splash does
+    | with its image row. A Service's icon there carries `model_id` = the
+    | SERVICE's id, so `model_id` as a tenant key would read correct answers
+    | as cross-tenant reads and page hourly.
     |
     | A relation keyed on `{name}_id` attributes a row to organisation
     | `{name}_id` only when `{name}_type` is the organisation model's morph class
