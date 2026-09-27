@@ -167,6 +167,49 @@ class MealAndDonationLineTest extends TestCase
     }
 
     #[Test]
+    public function over_the_kitchens_cap_a_catalogue_line_is_refused_like_the_kitchen_door(): void
+    {
+        // KitchenOrdersController refuses an order over max_quantity; the basket must too.
+        $item = $this->dish($this->menu(), ['max_quantity' => 3]);
+
+        $outcome = (new MealLineSource)->reprice($item, 5, 1200, now()->addDays(3));
+
+        $this->assertSame('gone', $outcome->status);
+        $this->assertSame(0, $outcome->totalMinor());
+        $this->assertStringContainsString('Only 3', $outcome->reason);
+    }
+
+    #[Test]
+    public function over_the_cap_a_friday_lunch_line_is_clamped_and_the_shopper_is_told(): void
+    {
+        // JummahLunchOrdersController clamps to max_quantity. The basket clamps too,
+        // but never silently: five chosen, three charged, and the reason says so.
+        $menu = $this->menu([
+            'kind' => MealMenu::KIND_DATED,
+            'service_date' => now()->addDays(2)->toDateString(),
+        ]);
+        $item = $this->dish($menu, ['max_quantity' => 3]);
+
+        $outcome = (new MealLineSource)->reprice($item, 5, 1200);
+
+        $this->assertSame('repriced', $outcome->status, 'a clamp must be flagged, not passed off as "available"');
+        $this->assertSame(3, $outcome->quantity);
+        $this->assertSame(3600, $outcome->totalMinor(), 'charged for the three allowed, never the five chosen');
+        $this->assertStringContainsString('reduced to 3', $outcome->reason);
+    }
+
+    #[Test]
+    public function within_the_cap_nothing_changes(): void
+    {
+        $item = $this->dish($this->menu(), ['max_quantity' => 3]);
+
+        $outcome = (new MealLineSource)->reprice($item, 3, 1200, now()->addDays(3));
+
+        $this->assertSame('available', $outcome->status);
+        $this->assertSame(3600, $outcome->totalMinor());
+    }
+
+    #[Test]
     public function a_donation_to_an_open_fund_is_payable_at_the_amount_the_donor_set(): void
     {
         $fund = Fund::create([

@@ -72,6 +72,25 @@ final readonly class MealLineSource
             return CartLineOutcome::gone($label, 'This no longer has a quantity to pay for.');
         }
 
+        // The kitchen's per-order cap. The two public doors already disagree about
+        // it on purpose, and the basket follows each one rather than picking a side:
+        // KitchenOrdersController REFUSES an order over the cap, and
+        // JummahLunchOrdersController CLAMPS it to the cap (LunchOrderLines::CAP_*).
+        // The one thing the basket adds is that a clamp is never silent — a shopper
+        // who chose five and is charged for three is told, because the reduction
+        // happened after they last looked.
+        $capped = false;
+        $cap = $item->max_quantity;
+
+        if ($cap !== null && $quantity > $cap) {
+            if ($menu->isCatalogue()) {
+                return CartLineOutcome::gone($label, "Only {$cap} × {$label} per order.");
+            }
+
+            $quantity = (int) $cap;
+            $capped = true;
+        }
+
         // Only a catalogue lets the customer choose when to collect; a dated menu
         // has one service date, and there is nothing for the customer to pick.
         if ($menu->isCatalogue() && $pickupAt !== null) {
@@ -90,14 +109,20 @@ final readonly class MealLineSource
         }
 
         $unitMinor = (int) $item->price_minor;
+        $reasons = [];
+
+        if ($capped) {
+            $reasons[] = "Only {$cap} × {$label} per order, so this was reduced to {$cap}.";
+        }
 
         if ($unitMinor !== $unitAmountShownMinor) {
-            return CartLineOutcome::repriced(
-                $unitMinor,
-                $quantity,
-                $label,
-                'The price changed while this was in your basket.',
-            );
+            $reasons[] = 'The price changed while this was in your basket.';
+        }
+
+        // Either change means the shopper is no longer paying what they last saw,
+        // so both go through `repriced` — still payable, never silent.
+        if ($reasons !== []) {
+            return CartLineOutcome::repriced($unitMinor, $quantity, $label, implode(' ', $reasons));
         }
 
         return CartLineOutcome::available($unitMinor, $quantity, $label);
