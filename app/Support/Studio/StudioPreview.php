@@ -8,9 +8,7 @@ use App\Models\StudioDraft;
 use App\Models\ThemeSetting;
 use App\Support\AppFeaturePivot;
 use App\Support\AppMenu;
-use App\Support\CapabilityCatalogue;
 use App\Support\DesignTokens;
-use App\Support\HostName;
 use App\Support\WcagColor;
 
 /**
@@ -31,10 +29,12 @@ use App\Support\WcagColor;
  *  - the web plan is StarterSite::plan(), which S8 writes;
  *  - the tvOS values are TvConfigController's own constants.
  *
- * The organisation is an UNSAVED Masjid built from the answers. Every switch
- * reader (Masjid::hasCapability, moduleIsOff, AppMenu) reads attributes, not
- * rows, so it answers exactly as the provisioned org will. Nothing is written:
- * not the draft, not an organisation, not a theme.
+ * The organisation is an UNSAVED Masjid built from the answers, or, for an
+ * organisation that already exists (Studio W2 S9), an in-memory clone of it
+ * with the switches being considered (PreviewInput). Every switch reader
+ * (Masjid::hasCapability, moduleIsOff, AppMenu) reads attributes, not rows, so
+ * it answers exactly as the saved org will. Nothing is written: not the draft,
+ * not an organisation, not a theme.
  *
  * `platform_contrast` is ADVISORY (R16). The iOS home header is hard-coded
  * white and Android's selected tab is hard-coded green, and no stored token can
@@ -68,79 +68,54 @@ final class StudioPreview
      */
     public const ANDROID_TABS = [10 => 'announcements', 11 => 'contact', 6 => 'donate'];
 
-    /** The draft keys StarterFacts reads; nothing else (not `vibe`, R12) leaves the draft. */
-    private const FACT_KEYS = [
-        'identity' => ['name', 'description', 'email', 'phone', 'address', 'facebook_url', 'instagram_url', 'youtube_url', 'whatsapp_url', 'donation_link'],
-        'content' => ['about', 'mission', 'vision'],
-    ];
-
     /**
+     * A draft's preview (W1): unchanged, now by way of PreviewInput::fromDraft.
+     *
      * @param  array<string, array<string, mixed>|null>  $answerOverrides  whole sections that replace the
      *                                                                     saved ones for this preview only; null clears one
      * @return array<string, mixed>
      */
     public static function build(StudioDraft $draft, array $answerOverrides = []): array
     {
-        $answers = $draft->answers;
+        return self::forInput(PreviewInput::fromDraft($draft, $answerOverrides));
+    }
 
-        foreach ($answerOverrides as $section => $value) {
-            if ($value === null) {
-                unset($answers[$section]);
-            } else {
-                $answers[$section] = $value;
-            }
-        }
-
-        // An unsaved draft carrying the effective answers, so the colour rules
-        // are StudioDraft's own. It is never saved.
-        $effective = new StudioDraft;
-        $effective->answers = $answers;
-
-        $identity = $effective->section('identity');
-        $orgType = in_array($identity['org_type'] ?? null, Masjid::ORG_TYPES, true)
-            ? $identity['org_type']
-            : Masjid::ORG_TYPE_MASJID;
-
-        $org = self::organisation($orgType, $identity, $effective->section('features'));
-
-        $layout = $effective->section('layout');
-        $chosen = is_string($layout['preset'] ?? null) ? $layout['preset'] : null;
-        $presetKey = in_array($chosen, LayoutPresets::keysFor($orgType), true) ? $chosen : LayoutPresets::defaultFor($orgType);
-        $preset = LayoutPresets::find($presetKey);
-
-        $plan = StarterSite::plan($org, $presetKey, self::facts($effective));
-
-        $colours = $effective->brandColours();
+    /**
+     * The preview of whatever the input describes: a draft, or an existing
+     * organisation with the changes being considered (Studio W2 S9). Writes
+     * nothing.
+     *
+     * @return array<string, mixed>
+     */
+    public static function forInput(PreviewInput $in): array
+    {
+        $org = $in->org;
         $palette = null;
         $webTokens = null;
 
-        if ($colours !== null) {
-            $inks = $effective->section('brand')['ink_overrides'] ?? [];
+        if ($in->colours !== null) {
+            $palette = PaletteContrast::report($in->colours, $in->inks, $in->logoDims);
 
-            $palette = PaletteContrast::report(
-                $colours,
-                is_array($inks) ? $inks : [],
-                $draft->hasLogo() ? ['width' => $draft->logo_width, 'height' => $draft->logo_height] : null,
-            );
+            // A draft is painted with the inks Step 3 will write; an existing
+            // organisation with the tokens its theme already stores, which is
+            // what the renderer will use once the colours are saved.
+            $tokens = $in->paintsPaletteInks
+                ? ['color' => $palette['tokens']['color']] + $in->storedTokens
+                : $in->storedTokens;
 
-            $webTokens = DesignTokens::resolve(new ThemeSetting($colours + [
-                'tokens' => ['color' => $palette['tokens']['color'], 'layout' => $preset['theme_layout']],
-            ]))['color'];
+            $webTokens = DesignTokens::resolve(new ThemeSetting($in->colours + ['tokens' => $tokens]))['color'];
         }
-
-        $platforms = $effective->section('platforms')['platforms'] ?? [];
-        $donationLink = trim((string) ($identity['donation_link'] ?? ''));
 
         return [
             'org' => [
                 'name' => $org->name,
-                'org_type' => $orgType,
-                'host' => self::host($identity, $effective->section('domain')),
+                'org_type' => $in->orgType,
+                'host' => $in->host,
             ],
-            'platforms' => is_array($platforms) ? array_values($platforms) : [],
+            'platforms' => $in->platforms,
             'palette' => $palette,
             'web_tokens' => $webTokens,
-            'platform_contrast' => $colours === null ? null : self::platformContrast($colours['primary_color'], $webTokens),
+            'platform_contrast' => $in->colours === null ? null : self::platformContrast($in->colours['primary_color'], $webTokens),
             'app' => [
                 'ios' => [
                     'tabs' => AppMenu::tabs($org),
@@ -150,15 +125,7 @@ final class StudioPreview
                     'tabs' => self::androidTabs($org),
                 ],
             ],
-            'web' => $plan->toArray() + [
-                'theme_layout' => $preset['theme_layout'],
-                // 'draft' when this is the draft's own choice; 'default' when the
-                // draft has none for this org type and Step 2 starts on the default.
-                'preset_source' => $presetKey === $chosen ? 'draft' : 'default',
-                // R27: web needs an approved preset, and only the draft's own
-                // choice can have been approved.
-                'approved' => $presetKey === $chosen && filled($layout['approved_at'] ?? null),
-            ],
+            'web' => $in->web,
             'tvos' => [
                 'theme' => TvConfigController::THEME,
                 // The board falls back to the organisation's name when tv-config
@@ -166,85 +133,11 @@ final class StudioPreview
                 'header_title' => $org->name,
                 'carousel_interval_seconds' => TvConfigController::CAROUSEL_INTERVAL_SECONDS,
                 'show_prayer_panel' => $org->isMasjid(),
-                'show_qr' => $donationLink !== '',
+                'show_qr' => $in->donationLink !== '',
                 'donate_caption' => TvConfigController::DONATE_CAPTION,
                 'announcement_selection' => TvConfigController::ANNOUNCEMENT_SELECTION,
             ],
         ];
-    }
-
-    /**
-     * The organisation Step 3 would create, unsaved, with its switches set the
-     * way S8's writer sets them: each column-backed grant on its column, and
-     * every other key stored only where it departs from the org type's default
-     * at creation (R9, R26).
-     *
-     * @param  array<string, mixed>  $identity
-     * @param  array<string, mixed>  $features
-     */
-    private static function organisation(string $orgType, array $identity, array $features): Masjid
-    {
-        $name = is_string($identity['name'] ?? null) ? trim($identity['name']) : '';
-
-        $org = new Masjid(['name' => $name, 'org_type' => $orgType]);
-
-        $choices = is_array($features['capabilities'] ?? null) ? $features['capabilities'] : [];
-        $desired = CapabilityCatalogue::resolve($orgType, $choices);
-        $overrides = [];
-
-        foreach ((array) config('capabilities', []) as $key => $definition) {
-            if (! is_array($definition)) {
-                continue;
-            }
-
-            $value = $desired[$key] ?? CapabilityCatalogue::defaultAtCreation($key, $orgType);
-
-            if (! empty($definition['column'])) {
-                $org->setAttribute($definition['column'], $value);
-            } elseif (array_key_exists($key, $desired) && $value !== CapabilityCatalogue::defaultAtCreation($key, $orgType)) {
-                $overrides[$key] = $value;
-            }
-        }
-
-        // Not fillable, on purpose (Masjid::hasCapability); set on this
-        // in-memory model only.
-        $org->forceFill(['capability_overrides' => $overrides === [] ? null : $overrides]);
-
-        return $org;
-    }
-
-    private static function facts(StudioDraft $effective): StarterFacts
-    {
-        $facts = [];
-
-        foreach (self::FACT_KEYS as $section => $keys) {
-            $facts += array_intersect_key($effective->section($section), array_flip($keys));
-        }
-
-        return StarterFacts::fromArray($facts + ['locale' => StarterFacts::DEFAULT_LOCALE]);
-    }
-
-    /**
-     * The host the site will answer on: the client's own domain when one is
-     * set, otherwise the managed subdomain, otherwise null (no slug yet).
-     *
-     * @param  array<string, mixed>  $identity
-     * @param  array<string, mixed>  $domain
-     */
-    private static function host(array $identity, array $domain): ?string
-    {
-        $custom = $domain['custom']['host'] ?? null;
-        $custom = is_string($custom) ? HostName::normalize($custom) : null;
-
-        if ($custom !== null) {
-            return $custom;
-        }
-
-        $slug = is_string($identity['slug'] ?? null) ? strtolower(trim($identity['slug'])) : '';
-
-        return $slug !== '' && HostName::isLabel($slug)
-            ? $slug . '.' . config('cloudflare.managed_suffix')
-            : null;
     }
 
     /** @return list<string> */

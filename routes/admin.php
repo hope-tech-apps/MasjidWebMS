@@ -1735,6 +1735,12 @@ Route::prefix('admin')->group(function () {
 
             // Step 3 (S8): the draft becomes an organisation, once.
             Route::post('/drafts/{draft_id}/provision', [StudioProvisionController::class, 'provision'])->whereNumber('draft_id');
+
+            // W2 S9: an organisation that already exists, seen through Studio's
+            // sections. Read-only, whatever the verb: its writers are the bulk
+            // capability PATCH, the theme save and brand-asset regeneration.
+            Route::get('/organisations/{masjid_id}', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'show'])->whereNumber('masjid_id');
+            Route::post('/organisations/{masjid_id}/preview', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'preview'])->whereNumber('masjid_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {
