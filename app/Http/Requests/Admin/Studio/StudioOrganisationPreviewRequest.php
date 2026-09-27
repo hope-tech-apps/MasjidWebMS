@@ -24,9 +24,14 @@ class StudioOrganisationPreviewRequest extends BaseFormRequest
         $sent = $this->input('capabilities');
 
         if (is_array($sent)) {
+            // Null, '' and arrays are left for `required|boolean` to refuse:
+            // filter_var reads null and '' as FALSE even with
+            // FILTER_NULL_ON_FAILURE (SetCapabilitiesRequest::coerce, S7).
             $this->merge([
                 'capabilities' => array_map(
-                    fn ($value) => is_bool($value) ? $value : filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
+                    fn ($value) => is_bool($value) || $value === null || $value === '' || ! is_scalar($value)
+                        ? $value
+                        : filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
                     $sent
                 ),
             ]);

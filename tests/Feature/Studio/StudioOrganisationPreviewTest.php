@@ -134,6 +134,9 @@ class StudioOrganisationPreviewTest extends TestCase
             ->assertExactJson(['status' => 'failed', 'data' => ['capability' => ['This capability has its own switch on this screen.']]]);
         $this->preview($org, ['capabilities' => ['giving.defaults' => '1']])->assertStatus(422);
         $this->preview($org, ['capabilities' => ['events' => 'maybe']])->assertStatus(422)->assertJsonPath('status', 'failed');
+        // Null or empty is refused, never previewed as off.
+        $this->preview($org, ['capabilities' => ['events' => '']])->assertStatus(422)->assertJsonPath('status', 'failed');
+        $this->postJson("/api/admin/studio/organisations/{$org->id}/preview", ['capabilities' => ['events' => null]])->assertStatus(422);
         $this->preview($org, ['brand' => ['primary_color' => 'green']])->assertStatus(422);
 
         $this->assertSame($before, $this->footprint($org));
