@@ -48,6 +48,18 @@ use Illuminate\Support\Facades\DB;
 class JummahLunchOrdersController extends Controller
 {
     /**
+     * A saved card order whose Stripe page failed to open for a reason the
+     * customer cannot act on (Stripe down, or refusing the call). Unlike the
+     * kitchen's sentence it does not say "try paying again from your order":
+     * a Friday order page has no pay button, so the ways that really exist are
+     * paying at pickup (staff record it with Mark paid) or a link from the board.
+     * It leads with "saved" and "do not order again" because the order page
+     * keeps the customer on the form on any refusal, and a second press there
+     * would place a second order.
+     */
+    private const PAGE_NOT_OPENED = 'Your order is saved, but its card payment page could not be opened. Please do not order again: pay when you pick up after Jummah, or ask the masjid for a payment link.';
+
+    /**
      * The sentences a customer is given when their order cannot be changed. Each
      * one says what is true and what they can do about it; none of them mention
      * an endpoint, a status column or a menu id.
@@ -327,9 +339,35 @@ class JummahLunchOrdersController extends Controller
                         'order' => $this->serializeOrder($result['order'], $menu),
                         'checkout_url' => $result['checkout_url'],
                     ]);
+                } catch (\PDOException|\Stripe\Exception\ExceptionInterface $e) {
+                    // Stripe or the database failing after the order was saved.
+                    // Stripe's ApiErrorException extends \Exception, so it used to
+                    // fall to the outer catch: a bare 500 with no order, while the
+                    // order sat saved and unpaid. This sits BEFORE RuntimeException
+                    // because the rest can BE one: PDOException extends it, and so
+                    // does Eloquent's QueryException (a lock wait or a deadlock in
+                    // checkout's own transaction) and the SDK's
+                    // UnexpectedValueException (a garbled answer from Stripe); the
+                    // refusal catch below handed the customer their SQL or Stripe's
+                    // words, unlogged. Answered as the kitchen door does: a fixed
+                    // sentence and the error written down at ERROR by
+                    // Errors::publicMessage, which production keeps.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
+                        'order' => $this->serializeOrder($order, $menu),
+                    ]);
                 } catch (\RuntimeException $e) {
-                    // The order is saved (unpaid); surface why checkout couldn't open.
+                    // The checkout service's refusals, each worded for the customer
+                    // (for one, the masjid cannot take card payments yet). The
+                    // order is saved (unpaid); surface why checkout couldn't open.
                     return response()->api(422, $e->getMessage(), [
+                        'order' => $this->serializeOrder($order, $menu),
+                    ]);
+                } catch (\Throwable $e) {
+                    // Anything else that fails after the save (an ErrorException
+                    // from a missing key, say) leaves the same saved, unpaid order,
+                    // so it gets the same answer rather than the outer catch's 500
+                    // with no order. Deliberately not narrowed to Stripe's errors.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
                         'order' => $this->serializeOrder($order, $menu),
                     ]);
                 }

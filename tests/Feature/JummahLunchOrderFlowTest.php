@@ -12,6 +12,7 @@ use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
 use Tests\TestCase;
@@ -181,6 +182,115 @@ class JummahLunchOrderFlowTest extends TestCase
         $this->assertSame(MealOrder::METHOD_ONLINE, $order->payment_method);
         $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status, 'the redirect is not a payment');
         $this->assertSame('cs_test_stub', $order->stripe_checkout_session_id);
+    }
+
+    /**
+     * Every failure to open the card page that the customer cannot act on, each
+     * taking a different route through store()'s catches:
+     *
+     *  - Stripe unreachable: ApiErrorException extends \Exception, not
+     *    RuntimeException, so it once fell to the outer catch as a bare 500.
+     *  - Stripe answering garbage: the SDK's UnexpectedValueException IS a
+     *    RuntimeException, so it would take the refusal branch and hand the
+     *    customer Stripe's own words, unlogged.
+     *  - The database failing inside checkout's transaction (a lock wait, a
+     *    deadlock): QueryException extends PDOException extends RuntimeException,
+     *    the same trap, with SQL as the "reason"; a bare PDOException too.
+     *  - Anything else (here an ErrorException, which is neither Stripe's nor a
+     *    RuntimeException): the order is saved either way, so a catch narrowed
+     *    to Stripe's errors would still answer a 500 with no order.
+     *
+     * @return array<string, array{\Closure(): \Throwable}>
+     */
+    public static function checkoutFailuresTheCustomerCannotActOn(): array
+    {
+        return [
+            'Stripe unreachable' => [fn () => \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.')],
+            'Stripe answering garbage' => [fn () => new \Stripe\Exception\UnexpectedValueException('Invalid response body from API: <html> (HTTP response code was 502)', 502)],
+            'the database failing mid-checkout' => [fn () => new \Illuminate\Database\QueryException(
+                'mysql',
+                'update `meal_orders` set `stripe_checkout_idempotency_key` = ? where `id` = ?',
+                ['moc_1', 1],
+                new \PDOException('SQLSTATE[HY000]: General error: 1 disk I/O error'),
+            )],
+            // DB::transaction() opens with beginTransaction(), which rethrows the
+            // driver's own PDOException, unwrapped, on anything but a lost connection.
+            'the database refusing to open the transaction' => [fn () => new \PDOException('SQLSTATE[HY000]: General error: 1 disk I/O error')],
+            'any other failure' => [fn () => new \ErrorException('Undefined array key "url"')],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('checkoutFailuresTheCustomerCannotActOn')]
+    public function a_card_order_saved_when_its_page_cannot_open_comes_back_with_the_order_and_a_fixed_sentence(\Closure $failure): void
+    {
+        // Production answers with the fixed sentence, never the failure's own text.
+        config(['app.debug' => false]);
+        Log::spy();
+        $thrown = $failure();
+        $this->app->bind(MealOrderCheckoutService::class, fn ($app) => new class($app->make(StripeClient::class), $thrown) extends MealOrderCheckoutService
+        {
+            public function __construct(StripeClient $stripe, private \Throwable $thrown)
+            {
+                parent::__construct($stripe);
+            }
+
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                throw $this->thrown;
+            }
+        });
+
+        $response = $this->postJson('/api/v1/lunch-orders', [
+            'menu_uuid' => $this->menu->uuid,
+            'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]],
+            'customer_name' => 'Card Payer',
+            'customer_phone' => '3365550000',
+            'payment_method' => 'online',
+        ], $this->header())
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Your order is saved, but its card payment page could not be opened. Please do not order again: pay when you pick up after Jummah, or ask the masjid for a payment link.');
+
+        // The order the customer is told about is the one that was saved, still
+        // unpaid and holding no payment page.
+        $order = MealOrder::withoutMasjidScope()->sole();
+        $response->assertJsonPath('data.order.uuid', $order->uuid)
+            ->assertJsonPath('data.order.payment_status', MealOrder::PAYMENT_UNPAID);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        $this->assertNull($order->stripe_checkout_session_id);
+
+        // Written down at a level production keeps (LOG_LEVEL=warning drops info).
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message, $context = []) => ($context['exception'] ?? null) === $thrown::class)
+            ->once();
+    }
+
+    #[Test]
+    public function a_card_order_the_masjid_cannot_take_yet_is_refused_in_the_services_own_words_with_the_saved_order(): void
+    {
+        // The door checks only the menu's allow_online_payment; the Connect gate
+        // is the checkout service's preflight, after the order is saved. Its
+        // refusal is written for the customer and is not a failure, so it must
+        // reach them verbatim and must not be logged as an error: the broad
+        // catch beneath it would otherwise swallow it into the fixed sentence.
+        config(['app.debug' => false]);
+        Log::spy();
+        $this->masjid->update(['stripe_charges_enabled' => false]);
+
+        $response = $this->postJson('/api/v1/lunch-orders', [
+            'menu_uuid' => $this->menu->uuid,
+            'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]],
+            'customer_name' => 'Card Payer',
+            'customer_phone' => '3365550000',
+            'payment_method' => 'online',
+        ], $this->header())
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'This organization is not able to accept online payments yet.');
+
+        $order = MealOrder::withoutMasjidScope()->sole();
+        $response->assertJsonPath('data.order.uuid', $order->uuid);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        Log::shouldNotHaveReceived('error');
     }
 
     // ------------------------------------------------------------- the webhook

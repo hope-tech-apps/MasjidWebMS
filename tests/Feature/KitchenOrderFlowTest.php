@@ -16,9 +16,11 @@ use App\Support\PaymentMethods;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
 use Tests\TestCase;
@@ -311,6 +313,61 @@ class KitchenOrderFlowTest extends TestCase
         $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
         $this->assertNull($order->stripe_checkout_session_id);
         Mail::assertNothingQueued();
+    }
+
+    /**
+     * Two failures that ARE RuntimeExceptions without being the checkout
+     * service's refusals, so the refusal catch used to take them: the database
+     * failing inside checkout's transaction (QueryException extends PDOException
+     * extends RuntimeException) and a garbled answer from Stripe (the SDK's
+     * UnexpectedValueException). The customer was handed the SQL or Stripe's
+     * words as the reason, and nothing was logged.
+     *
+     * @return array<string, array{\Closure(): \Throwable}>
+     */
+    public static function failuresThatLookLikeRefusals(): array
+    {
+        return [
+            'the database failing mid-checkout' => [fn () => new \Illuminate\Database\QueryException(
+                'mysql',
+                'update `meal_orders` set `stripe_checkout_idempotency_key` = ? where `id` = ?',
+                ['moc_1', 1],
+                new \PDOException('SQLSTATE[HY000]: General error: 1 disk I/O error'),
+            )],
+            'Stripe answering garbage' => [fn () => new \Stripe\Exception\UnexpectedValueException('Invalid response body from API: <html> (HTTP response code was 502)', 502)],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('failuresThatLookLikeRefusals')]
+    public function a_card_order_whose_page_fails_inside_checkout_gets_the_fixed_sentence_not_the_failures_own_words(\Closure $failure): void
+    {
+        config(['app.debug' => false]);
+        Log::spy();
+        $thrown = $failure();
+        $this->app->bind(MealOrderCheckoutService::class, fn ($app) => new class($app->make(StripeClient::class), $thrown) extends MealOrderCheckoutService
+        {
+            public function __construct(StripeClient $stripe, private \Throwable $thrown)
+            {
+                parent::__construct($stripe);
+            }
+
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                throw $this->thrown;
+            }
+        });
+
+        $response = $this->placeOrder(['payment_method' => PaymentMethods::CARD], ['Origin' => self::SITE])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Your order is saved, but its card payment page could not be opened. Please try paying again from your order.');
+
+        $order = MealOrder::withoutMasjidScope()->sole();
+        $response->assertJsonPath('data.order.uuid', $order->uuid);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message, $context = []) => ($context['exception'] ?? null) === $thrown::class)
+            ->once();
     }
 
     #[Test]
