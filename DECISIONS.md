@@ -4362,3 +4362,40 @@ provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
   confirm dialog (S9) says so.
 
 - 2026-09-28 (review fix S8-1): the SuperAdmin update route (`POST /api/admin/masjids/{id}`, `MasjidsController::update`) now has its own two tests, because its `BrandAssets::afterLogoUpload` call was pinned by nothing: one where a Studio org's derivatives are replaced from the new logo, one where an org without any stays without any. Test-only; no code changed. Not run locally (no PHP).
+
+## 2026-09-27 — Studio W2 S9: Studio opens an organisation that already exists
+
+A SuperAdmin opens any organisation in Studio at
+`/dashboard/super/studio/organisations/:id` (Studio's list gains an Organisations tab
+over the existing masjids index). No draft (plan R14).
+
+- **Snapshot** (`GET /api/admin/studio/organisations/{id}`, `OrganisationSnapshot`):
+  Studio's sections in Studio's order plus `apps` (S17 fills it). Each is
+  `{data, edit_in}`; `edit_in` is `studio` for features and brand, otherwise the SPA
+  route of the screen that already writes it (`/masjid/details#basic-info`,
+  `#prayer-calculation`, `/masjid/about`, `/masjid/pages`, the super organisation
+  screen). A `/masjid/…` link first switches the dashboard's current organisation, as
+  the masjids list does, and asks first when there are unsaved changes. Every value is
+  picked by name: `platforms` carries modes and `has_*` flags only, never a credential
+  or identifier. `features` is `CapabilityCatalogue::forOrgType` with each entry's
+  effective value (`moduleIsOff` / `hasCapability`) and whether it was `decided`.
+- **Preview** (`POST …/preview`, writes nothing): `StudioPreview` now takes a
+  `PreviewInput`. `fromDraft` is W1's derivation moved unchanged (the draft preview
+  tests pass unedited); `fromMasjid` clones the organisation in memory with the
+  candidate switches (only keys `CapabilityWriter::assertWritable` accepts, so the
+  preview can never show a change Studio could not save) and paints the web with the
+  theme's STORED tokens and the candidate colours, which is what the renderer draws
+  once the colours are saved. The web mockup draws the organisation's own pages in the
+  starter plan's shape (`preset_source: live`).
+- **Writers are the existing ones.** Features: S7's bulk PATCH, only changed
+  `writer === capability` keys (never crm or assistant, shown read-only with "Change on
+  the organisation's details screen."). Colours: the theme screen's own endpoint with
+  the four colours only (`tokens` is never sent, so stored tokens survive; the confirm
+  lists failing contrast pairs and asks to save anyway: for a live org the palette is
+  advisory). Brand images: S8's regenerate, whose confirm says in words, for an
+  organisation with none, that it adds a favicon, home-screen icon and share image to
+  its site and settings and needs the owner's go.
+- **Reuse, not a refactor.** The Features card reuses Step 1's `FeatureRow` and
+  `featureGroups` rather than making `StudioFeatureStep` dual-mode (W1 pins it); the
+  frames (Web/iOS/Android/TV) and `PlatformContrastList` are reused as they are. The
+  palette pair names moved into `core/studio/paletteLabels.ts`, shared by two screens.

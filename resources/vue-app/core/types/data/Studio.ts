@@ -283,7 +283,8 @@ export type StudioPlanSection = {
     has_renderer: boolean;
     content: Record<string, unknown>;
     placeholders: StudioPlanPlaceholder[];
-    refs: { field: string; page?: string; form_template?: string }[];
+    /** Absent on a live organisation's pages (PreviewInput::livePages), which are not a plan. */
+    refs?: { field: string; page?: string; form_template?: string }[];
 };
 
 /** One page of a starter plan (StarterSite::plan). */
@@ -298,7 +299,12 @@ export type StudioPlanPage = {
     sections: StudioPlanSection[];
 };
 
-/** `StudioPreview::build()` (app/Support/Studio/StudioPreview.php). */
+/**
+ * `StudioPreview::build()` (app/Support/Studio/StudioPreview.php). A live
+ * organisation's preview (W2 S9, `PreviewInput::fromMasjid`) has the same
+ * shape: its `web` has no preset, `preset_source` is `'live'`, and its pages
+ * are the organisation's own.
+ */
 export type StudioPreview = {
     org: { name: string; org_type: OrgType; host: string | null };
     platforms: StudioPlatform[];
@@ -314,11 +320,11 @@ export type StudioPreview = {
         android: { tabs: string[] };
     };
     web: {
-        preset: string;
+        preset: string | null;
         locale: string;
         pages: StudioPlanPage[];
         theme_layout: Record<string, unknown> | null;
-        preset_source: 'draft' | 'default';
+        preset_source: 'draft' | 'default' | 'live';
         approved: boolean;
     };
     tvos: {
