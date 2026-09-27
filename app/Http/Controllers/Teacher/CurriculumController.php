@@ -247,6 +247,13 @@ class CurriculumController extends TeacherController
      */
     private const ENDINGS = [
         ['ications', ['y'], 3], ['ication', ['y'], 3],       // multiplication → multiply
+        // The guide is written in verbs; teachers type the nouns.
+        ['isons', ['e'], 4], ['ison', ['e'], 4],             // comparison → compare
+        ['aries', ['arize', 'arise'], 4], ['ary', ['arize', 'arise'], 4], // summary → summarize
+        ['iptions', ['ibe'], 3], ['iption', ['ibe'], 3],     // description → describe
+        ['utions', ['ve'], 3], ['ution', ['ve'], 3],         // solution → solve
+        ['anations', ['ain'], 3], ['anation', ['ain'], 3],   // explanation → explain
+        ['wth', ['w'], 3],                                    // growth → grow (not "th": health is not heal)
         ['dition', ['d'], 3],                                 // addition → add
         ['itions', ['e'], 4], ['ition', ['e'], 4],            // composition → compose
         ['isions', ['ide', 'ise'], 3], ['ision', ['ide', 'ise'], 3], // division → divide
@@ -292,6 +299,9 @@ class CurriculumController extends TeacherController
         $s = str_replace(["\u{2019}", "'", "\u{02BC}", "\u{2018}", "\u{02BE}", "\u{02BF}"], '', $s);
         // "1,000" is "1000": Grade 2 writes one, Grade 3 the other.
         $s = (string) preg_replace('/(?<=\p{N}),(?=\p{N}{3})/u', '', $s);
+        // "2-D" is "2D": Kindergarten writes one, Grades 1 and 5 the other. A
+        // lone letter only, so "0-5" and "4-letter" stay apart.
+        $s = (string) preg_replace('/(?<=\p{N})-(?=\p{L}(?!\p{L}))/u', '', $s);
 
         if (class_exists(\Normalizer::class)) {
             $s = (string) preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($s, \Normalizer::FORM_D));

@@ -105,6 +105,12 @@ class TeacherCurriculumRealGuideTest extends TestCase
             ['investigate', 'Grade 4', 'Science', 'investigat'],
             ['predict', 'Pre-Kindergarten', 'Science', 'predict'],
             ['plants', 'Grade 1', 'Science', 'plant'],
+            // The guide is written in verbs; teachers type the nouns.
+            ['comparison', 'Kindergarten', 'Mathematics', 'compar'],
+            ['summary', 'Grade 5', 'English Language Arts', 'summar'],
+            ['growth', 'Grade 1', 'Science', 'grow'],
+            ['2D shapes', 'Grade 1', 'Mathematics', '2-D'],
+            ['3-D', 'Kindergarten', 'Mathematics', '3D'],
         ];
 
         foreach ($cases as [$q, $grade, $subject, $fragment]) {

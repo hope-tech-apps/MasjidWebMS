@@ -2542,7 +2542,7 @@ const autoFilled = ref<Record<string, string>>({});
  * teacher was typing a search into: it is replaced even though they wrote it,
  * because what they wrote there was the question, not the answer. So is search
  * text they typed and left without picking ("fractions" in the Code box) — see
- * stdLeft. True when it wrote a value.
+ * stdLeft. True when the field changed — written, or emptied.
  */
 const autoFill = (k: string, v: unknown, typedIn = ''): boolean => {
     if (planHidden.value.has(k)) return false;
@@ -2555,7 +2555,7 @@ const autoFill = (k: string, v: unknown, typedIn = ''): boolean => {
     planForm.value[k] = value;
     autoFilled.value[k] = value;
     delete stdLeft.value[k];
-    return value !== '';
+    return value !== current;
 };
 
 /** Open every section the guide just wrote into, so a fill is never hidden. */
@@ -2713,10 +2713,11 @@ const onStandardInput = (field: string, e: Event, typed = true) => {
         stdEmptyFor.value = null;
         return;
     }
-    stdTimer = setTimeout(() => searchStandards(field, q), 200);
+    stdTimer = setTimeout(() => searchStandards(field, q, typed), 200);
 };
 
-const searchStandards = async (field: string, q: string) => {
+/** `typed` is false for the search a focus runs over text already in the box. */
+const searchStandards = async (field: string, q: string, typed = true) => {
     const seq = ++stdSeq;
     try {
         const params = new URLSearchParams({ q });
@@ -2735,8 +2736,10 @@ const searchStandards = async (field: string, q: string) => {
         // Topic words the guide answered ("fractions"), left in the box without
         // a pick, are a question a later fill may answer. A hand-typed code, or
         // text the guide knows nothing of, stays the teacher's.
-        if (stdMatches.value.length && !looksLikeCode(q)
-            && String(planForm.value[field] ?? '').trim() === q) {
+        // Only text typed now: a focus on a saved plan's own label must not
+        // hand it to the next fill. Compared with the box itself, which an
+        // Android keyboard updates before v-model does.
+        if (typed && stdMatches.value.length && !looksLikeCode(q) && stdTyped.value === q) {
             stdLeft.value[field] = q;
         }
     } catch {
