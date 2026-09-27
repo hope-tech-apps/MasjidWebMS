@@ -208,6 +208,21 @@ class KitchenOrdersController extends Controller
                         'order' => $this->serializeOrder($result['order'], $menu, $masjid),
                         'checkout_url' => $result['checkout_url'],
                     ]);
+                } catch (\PDOException|\Stripe\Exception\ExceptionInterface $e) {
+                    // Stripe or the database failing after the order was saved.
+                    // Stripe's ApiErrorException extends \Exception, so it used to
+                    // fall to the outer catch: a bare 500 with no order, the page
+                    // kept the customer on the form, and trying again placed a
+                    // second order. This sits BEFORE RuntimeException because the
+                    // rest can BE one: PDOException extends it, and so does
+                    // Eloquent's QueryException (a lock wait or a deadlock in
+                    // checkout's own transaction) and the SDK's
+                    // UnexpectedValueException (a garbled answer from Stripe); the
+                    // refusal catch below handed the customer their SQL or Stripe's
+                    // words, unlogged.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
+                        'order' => $this->serializeOrder($order, $menu, $masjid),
+                    ]);
                 } catch (\RuntimeException $e) {
                     // The order is saved (unpaid). Its uuid comes back with the
                     // reason, so the page sends the customer to that order, where
@@ -216,11 +231,10 @@ class KitchenOrdersController extends Controller
                         'order' => $this->serializeOrder($order, $menu, $masjid),
                     ]);
                 } catch (\Throwable $e) {
-                    // Stripe itself failing (its ApiErrorException is not a
-                    // RuntimeException) leaves the same saved, unpaid order. Left
-                    // to the outer catch it came back as a bare 500 with no order,
-                    // the page kept the customer on the form, and trying again
-                    // placed a second order. Recorded, and answered like the above.
+                    // Anything else that fails after the save leaves the same saved,
+                    // unpaid order, so it gets the same answer rather than the outer
+                    // catch's 500 with no order. Recorded, and answered like the
+                    // first catch above.
                     return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
                         'order' => $this->serializeOrder($order, $menu, $masjid),
                     ]);

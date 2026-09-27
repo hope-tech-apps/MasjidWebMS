@@ -3970,3 +3970,42 @@ paid-order top-up) did not move the close or the repair: the close still happens
 order's session inside the transaction, and the catch still clears exactly the id it closed.
 Cherry-picking would add an empty commit or conflict with nothing to gain. The branch
 `fix/lunch-edit-dead-stripe-link` can be deleted by whoever owns branch housekeeping.
+
+## 2026-09-27 — Review of the lunch-door fix: database and garbled-Stripe failures leave the refusal branch, and both catches are pinned
+
+Decision: in both public card doors (`JummahLunchOrdersController::store()` and the kitchen door,
+`KitchenOrdersController`), `\PDOException` (which covers Eloquent's `QueryException`) and Stripe's
+`ExceptionInterface` are caught BEFORE the
+`RuntimeException` refusal catch and answered with the fixed `PAGE_NOT_OPENED` sentence through
+`Errors::publicMessage` (logged at ERROR). The earlier entry's "any other failure gets the fixed
+sentence" was not true: `QueryException extends PDOException extends RuntimeException`, and so does
+the SDK's `Stripe\Exception\UnexpectedValueException` (thrown on an unreadable API response). Both
+took the verbatim refusal branch, so a lock wait or deadlock inside `checkout()`'s own transaction
+(it has no retry count) handed the customer the SQL, and a garbled Stripe answer handed them
+Stripe's words, with nothing logged either way.
+
+This is the order the codebase already uses wherever a service call sits beside a refusal catch
+(`update()` on this controller, `MealOrdersController`, `ContactFamilyLoginController`), so the
+doors now match it. `MealOrderCheckoutService` is untouched: its refusals stay plain
+`RuntimeException`s worded for the customer.
+
+Alternatives: (a) answer only exact-class `RuntimeException` verbatim (`$e::class ===
+RuntimeException::class`), which would also cover `ModelNotFoundException`: broader, but a rule
+nobody else in the codebase follows, and a findOrFail on an order saved a moment earlier is not a
+failure worth a new idiom. (b) Catch `QueryException` only, as those callers do: narrower than it
+looks, because `DB::transaction()` opens with `beginTransaction()`, which rethrows the driver's raw
+`PDOException` (not wrapped) on any failure that is not a lost connection.
+
+Tests, each run against a mutant that removes what it pins (logs on the droplet under
+`/root/manara-ci-lunchdoor-mut/storage/logs/mut-*.txt`):
+- `JummahLunchOrderFlowTest::a_card_order_saved_when_its_page_cannot_open_comes_back_with_the_order_and_a_fixed_sentence`,
+  a data provider over Stripe unreachable, Stripe answering garbage, the database failing
+  mid-checkout (a `QueryException`, and a bare `PDOException`), and a non-Stripe, non-Runtime
+  `ErrorException` (the last pins the `\Throwable` choice in the entry above: without that catch,
+  a 500).
+- `JummahLunchOrderFlowTest::a_card_order_the_masjid_cannot_take_yet_is_refused_in_the_services_own_words_with_the_saved_order`:
+  the Connect gate in `preflight()` refuses after the order is saved; 422, the service's sentence,
+  the saved uuid, and no ERROR log. Without the `RuntimeException` catch, the broad catch would
+  silently turn this refusal into the fixed sentence and every other lunch-door test stayed green.
+- `KitchenOrderFlowTest::a_card_order_whose_page_fails_inside_checkout_gets_the_fixed_sentence_not_the_failures_own_words`,
+  the database and garbled-Stripe cases for the kitchen door.

@@ -339,19 +339,34 @@ class JummahLunchOrdersController extends Controller
                         'order' => $this->serializeOrder($result['order'], $menu),
                         'checkout_url' => $result['checkout_url'],
                     ]);
+                } catch (\PDOException|\Stripe\Exception\ExceptionInterface $e) {
+                    // Stripe or the database failing after the order was saved.
+                    // Stripe's ApiErrorException extends \Exception, so it used to
+                    // fall to the outer catch: a bare 500 with no order, while the
+                    // order sat saved and unpaid. This sits BEFORE RuntimeException
+                    // because the rest can BE one: PDOException extends it, and so
+                    // does Eloquent's QueryException (a lock wait or a deadlock in
+                    // checkout's own transaction) and the SDK's
+                    // UnexpectedValueException (a garbled answer from Stripe); the
+                    // refusal catch below handed the customer their SQL or Stripe's
+                    // words, unlogged. Answered as the kitchen door does: a fixed
+                    // sentence and the error written down at ERROR by
+                    // Errors::publicMessage, which production keeps.
+                    return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
+                        'order' => $this->serializeOrder($order, $menu),
+                    ]);
                 } catch (\RuntimeException $e) {
-                    // The order is saved (unpaid); surface why checkout couldn't open.
+                    // The checkout service's refusals, each worded for the customer
+                    // (for one, the masjid cannot take card payments yet). The
+                    // order is saved (unpaid); surface why checkout couldn't open.
                     return response()->api(422, $e->getMessage(), [
                         'order' => $this->serializeOrder($order, $menu),
                     ]);
                 } catch (\Throwable $e) {
-                    // Stripe itself failing: its ApiErrorException extends
-                    // \Exception, not RuntimeException, so it used to fall to the
-                    // outer catch and come back as a bare 500 with no order, while
-                    // the order sat saved and unpaid. Answered like a refusal, as
-                    // the kitchen door does, with a fixed sentence (Stripe's own
-                    // message is not for a customer) and the error written down at
-                    // ERROR by Errors::publicMessage, which production keeps.
+                    // Anything else that fails after the save (an ErrorException
+                    // from a missing key, say) leaves the same saved, unpaid order,
+                    // so it gets the same answer rather than the outer catch's 500
+                    // with no order. Deliberately not narrowed to Stripe's errors.
                     return response()->api(422, Errors::publicMessage($e, self::PAGE_NOT_OPENED), [
                         'order' => $this->serializeOrder($order, $menu),
                     ]);
