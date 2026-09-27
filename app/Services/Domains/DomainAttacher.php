@@ -9,6 +9,7 @@ use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Moves one `masjid_domains` row one step closer to serving (Manara Studio W1,
@@ -69,8 +70,16 @@ use Illuminate\Support\Facades\Cache;
  * in Cloudflare in memory until its one save at the end: a row deleted mid-step
  * would leave a CNAME, a Pages domain or a whole zone that nothing records.
  *
- * `serving_confirmed_at` is set by every probe match and never cleared by a
- * later miss in W1 (plan §6).
+ * ## Re-confirmation (W2 S4)
+ *
+ * A host once seen serving is probed again at most once a day
+ * (config `cloudflare.reconfirm`), by reconfirm(). A match records
+ * `serving_last_seen_at`; a miss counts toward `serving_miss_count` from
+ * `serving_missed_since`. A Studio row loses `serving_confirmed_at`, and with it
+ * CORS and card-payment-return admission, only after three misses in a row
+ * spanning at least 72 hours; its status is unchanged, so the lookup keeps
+ * answering and a later match re-confirms it. An imported or adopted row is
+ * never demoted: at its third miss the owner is emailed through `monitors`.
  */
 class DomainAttacher
 {
@@ -124,6 +133,18 @@ class DomainAttacher
     /** Per row: an activation check went in the last ACTIVATION_CHECK_EVERY_HOURS. */
     private const ACTIVATION_CHECK_KEY = 'masjid-domain:activation-check:';
 
+    /** Per row: the serving re-probe ran in the last `cloudflare.reconfirm.every_hours`. */
+    private const REPROBE_KEY = 'masjid-domain:reprobe:';
+
+    /**
+     * The re-probe marker lives this much less than `every_hours`, so the run
+     * that finds a row due a day later always finds the marker gone. Equal
+     * lifetimes race: `next_check_at` is stored to the second, the run can
+     * reach the row a moment before the marker expires, and the probe would
+     * slip a whole day.
+     */
+    private const REPROBE_MARGIN_MINUTES = 30;
+
     /** Per row: when a zone POST went out whose answer never came back. */
     private const ZONE_CREATE_SENT_KEY = 'masjid-domain:zone-create-sent:';
 
@@ -133,6 +154,9 @@ class DomainAttacher
     private const PAGES_FAILED = ['error', 'blocked', 'deactivated'];
 
     private const ZONE_WAITING = ['initializing', 'pending'];
+
+    /** Whether the step in progress has already probed its row, so no step probes twice. */
+    private bool $probedThisStep = false;
 
     public function __construct(
         private readonly CloudflareService $cloudflare,
@@ -208,7 +232,8 @@ class DomainAttacher
 
             if ($this->organisationLive($domain)) {
                 $this->restartIfFailed($domain);
-                $this->step($domain);
+                // An operator asked: a confirmed row is probed now, not when due.
+                $this->step($domain, reprobeNow: true);
             }
         } finally {
             $lock->release();
@@ -280,8 +305,10 @@ class DomainAttacher
         return $domain;
     }
 
-    private function step(MasjidDomain $domain): void
+    private function step(MasjidDomain $domain, bool $reprobeNow = false): void
     {
+        $this->probedThisStep = false;
+
         // `detaching` belongs to DomainDetacher (W2 S3): attaching it again
         // mid-removal would re-create what is being taken away.
         if (in_array($domain->status, [MasjidDomain::STATUS_RESERVED, MasjidDomain::STATUS_FAILED, MasjidDomain::STATUS_DETACHING], true)) {
@@ -289,6 +316,22 @@ class DomainAttacher
         }
 
         $domain->last_checked_at = now();
+
+        if ($domain->underReconfirmation()) {
+            $this->reconfirm($domain, $reprobeNow);
+
+            // With a token a manual or imported row is still promoted by
+            // reads, as in W1; nothing else about a confirmed row changes.
+            if ($this->cloudflare->isConfigured()
+                && $domain->status !== MasjidDomain::STATUS_ACTIVE
+                && ($domain->source === MasjidDomain::SOURCE_IMPORTED || $domain->status === MasjidDomain::STATUS_MANUAL)) {
+                $this->promoteByReads($domain);
+            }
+
+            $domain->save();
+
+            return;
+        }
 
         if (! $this->cloudflare->isConfigured()) {
             $this->withoutToken($domain);
@@ -337,7 +380,7 @@ class DomainAttacher
     /** An active row whose serving has not been seen yet: the probe, and nothing else. */
     private function confirmServing(MasjidDomain $domain): void
     {
-        if ($domain->serving_confirmed_at === null) {
+        if ($domain->serving_confirmed_at === null && ! $this->probedThisStep) {
             $this->runProbe($domain);
         }
 
@@ -671,11 +714,19 @@ class DomainAttacher
 
     /**
      * Probe, recording what the host said when it has never been seen serving.
-     * A miss after a match writes nothing: the confirmation stands in W1.
+     * A miss after a match writes nothing here: a confirmed row's later
+     * probes are reconfirm()'s, which keeps its serving health (W2 S4).
      */
     private function runProbe(MasjidDomain $domain): void
     {
         $result = $this->probe->confirm($domain);
+        $this->probedThisStep = true;
+
+        if ($result['matched']) {
+            $domain->serving_last_seen_at = now();
+            $domain->serving_missed_since = null;
+            $domain->serving_miss_count = 0;
+        }
 
         if ($result['matched']) {
             if ($domain->waiting_on === 'token') {
@@ -685,6 +736,100 @@ class DomainAttacher
             $domain->last_error = null;
         } elseif ($domain->serving_confirmed_at === null) {
             $domain->last_error = 'Not serving this organisation yet: ' . $result['seen'];
+        }
+    }
+
+    /**
+     * Probe a host already seen serving (or one demoted and waiting to be seen
+     * again), at most once per `cloudflare.reconfirm.every_hours` unless an
+     * operator pressed Check now, and keep its serving health (W2 S4).
+     *
+     * A match records `serving_last_seen_at` and ends any run of misses; for a
+     * demoted row it is the re-confirmation (DomainProbe::confirm()). A miss
+     * extends the run. A Studio row that is confirmed is demoted, by clearing
+     * `serving_confirmed_at` and nothing that decides serving, only once the
+     * run has reached `demote_after_misses` AND started at least
+     * `demote_after_hours` ago. An imported or adopted row never is (R10): at
+     * exactly the third miss of a run it tells the owner, once per run.
+     */
+    private function reconfirm(MasjidDomain $domain, bool $now): void
+    {
+        $every = (int) config('cloudflare.reconfirm.every_hours', 24);
+        $markerUntil = now()->addHours($every)->subMinutes(self::REPROBE_MARGIN_MINUTES);
+
+        if ($now) {
+            Cache::put(self::REPROBE_KEY . $domain->id, true, $markerUntil);
+        } elseif (! Cache::add(self::REPROBE_KEY . $domain->id, true, $markerUntil)) {
+            // Asked again inside the day (a manual row's six-hourly reads, or a
+            // run that came early): look again once the marker has gone.
+            $domain->next_check_at = now()->addMinutes(self::REPROBE_MARGIN_MINUTES);
+
+            return;
+        }
+
+        $domain->next_check_at = now()->addHours($every);
+
+        $wasConfirmed = $domain->serving_confirmed_at !== null;
+        // A confirmed row keeps the time it was first confirmed; only a
+        // demoted one is stamped again, by confirm().
+        $result = $wasConfirmed ? $this->probe->probe($domain) : $this->probe->confirm($domain);
+        $this->probedThisStep = true;
+
+        if ($result['matched']) {
+            $domain->serving_last_seen_at = now();
+            $domain->serving_missed_since = null;
+            $domain->serving_miss_count = 0;
+
+            if (! $wasConfirmed) {
+                $domain->last_error = null;
+            }
+
+            return;
+        }
+
+        $domain->serving_miss_count = (int) $domain->serving_miss_count + 1;
+        $domain->serving_missed_since ??= now();
+
+        $misses = (int) config('cloudflare.reconfirm.demote_after_misses', 3);
+        $hours = (int) config('cloudflare.reconfirm.demote_after_hours', 72);
+
+        if ($domain->ownedByStudio()) {
+            if ($wasConfirmed
+                && $domain->serving_miss_count >= $misses
+                && $domain->serving_missed_since->lte(now()->subHours($hours))) {
+                $domain->serving_confirmed_at = null;
+                $domain->last_error = "Not seen serving this organisation in {$domain->serving_miss_count} checks since "
+                    . $domain->serving_missed_since->toDateTimeString() . " UTC (last: {$result['seen']}). "
+                    . 'CORS and card-payment returns no longer trust it until a check sees it again.';
+
+                Log::warning('A Studio web address stopped serving its organisation and lost its CORS and payment-return admission.', [
+                    'masjid_domain_id' => $domain->id,
+                    'masjid_id' => (int) $domain->masjid_id,
+                    'host' => $domain->host,
+                    'misses' => $domain->serving_miss_count,
+                    'missed_since' => $domain->serving_missed_since->toIso8601String(),
+                    'seen' => $result['seen'],
+                ]);
+            }
+
+            return;
+        }
+
+        if ($domain->serving_miss_count === $misses) {
+            Log::channel('monitors')->error(
+                "domains: {$domain->host} (organisation #{$domain->masjid_id}, from the live host map) has not answered for its organisation in "
+                . "{$misses} daily checks since " . $domain->serving_missed_since->toDateTimeString() . " UTC. The probe saw: {$result['seen']}. "
+                . 'It keeps its CORS and payment-return admission: an imported host is never withdrawn automatically. '
+                . 'Review it with `php artisan domains:imported list`.',
+                [
+                    'masjid_domain_id' => $domain->id,
+                    'masjid_id' => (int) $domain->masjid_id,
+                    'host' => $domain->host,
+                    'misses' => $domain->serving_miss_count,
+                    'missed_since' => $domain->serving_missed_since->toIso8601String(),
+                    'seen' => $result['seen'],
+                ],
+            );
         }
     }
 

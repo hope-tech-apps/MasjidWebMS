@@ -3169,7 +3169,6 @@ Unknown, needs investigation: what the iOS and Android apps do with an unknown `
 API passes `platforms` through without filtering (`PageSectionResource`); MEC's placement is
 `["web"]`, but whether each app honours that before this goes on a page the apps load is not known.
 
-
 ## 2026-09-25 — `video` section review fixes: `media-src`, the upload NAME, and a tenant-scoped type lookup
 Decision (three calls, each pinned by a test shown to fail without it):
 - **`SecurityHeaders` gains `media-src 'self' blob:`**, plus APP_URL on a second host / proxied page
@@ -3322,7 +3321,6 @@ blocked", "Stage, apply before move", "Import, marked answered", members deferre
   dropped on staging.
 - **SPA**: the tag/untag/list URLs and the composer's payload and push guard moved into pure modules
   (`contactTags.ts`, `broadcastPayload.ts`, `emailOptOut.ts`) so `npm run test:spa` pins them.
-
 
 ## 2026-09-25 — Wix order history: imported as HISTORY, never as money Manara processed
 
@@ -3822,7 +3820,6 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   staff cash entry moved to
   `FormQuantityPaymentTest::a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too`.
 
-
 ## 2026-09-25 — Review of the renderer half: a level's own questions are required by the level only
 - **A schema `required` on a choice form's quantity or date question is set aside**
   (`FormSchema::levelQuestions()`). The renderer never draws either question for a level that
@@ -3955,7 +3952,6 @@ then mean different things on the two drivers; a unique key on the nullable
 dropping the id-less routes — rejected, a tab open across the deploy would 404.
 Rationale: the smallest change that keeps every existing reader right and makes
 "the same subject twice" a refusal with a sentence rather than an overwrite.
-
 
 ## 2026-09-27 — Responses list: "Checked in" for the door, and status changed from the list
 - **The door's "Collected" reads "Checked in" wherever a person reads it** (the list column,
@@ -4425,3 +4421,30 @@ Review fixes (2026-09-28):
   BottomBar.visibleTabs), so the frame draws those four, not a bare Home. On the live card,
   typing emits a colour only at 6 or 8 digits; a #RGB is taken on blur, since every
   six-digit code passes through a valid three-digit prefix.
+
+## 2026-09-27 — Studio W2 S1–S4 (domains lifecycle): the calls made while building
+- **S4 re-probes every confirmed host once a day, token or not, and `DomainsReconcileCommandTest`
+  was edited on purpose.** W1 pinned that production's imported, confirmed rows cause no request
+  without a token (`without_a_token_on_productions_rows_it_selects_nothing_and_sends_nothing`) and
+  that a confirmed row is never selected. S4 changes both: the pin is now
+  `without_a_token_confirmed_rows_are_probed_once_a_day_on_their_own_host_only` (a GET of each
+  host's own `/api/tenant`, twice in two days, never Cloudflare), the selection test lists the
+  three confirmed rows, and the token test's confirmed row carries a future `next_check_at`.
+  Cadence is `next_check_at` plus a per-row `Cache::add` marker (the attacher's existing
+  rate-limit pattern), because a manual row with a token is also selected every six hours for
+  W1's reads. A lost cache can only bring one probe forward.
+- **A miss on a confirmed row does not write `last_error`.** W1's "a miss after a match writes
+  nothing" holds for the row the screens read; the run of misses lives in the new
+  `serving_miss_count` / `serving_missed_since` (now in the admin payload). Demotion, which clears
+  only `serving_confirmed_at`, does write `last_error`, so the screen says why the tick went.
+  With daily probes, "three misses over at least 72 hours" is the fourth miss.
+- **A confirmed row keeps its first `serving_confirmed_at`.** A re-probe match stamps
+  `serving_last_seen_at`; only a demoted row is stamped again, by `DomainProbe::confirm()`.
+- **S3 adds a fifth domain route, so `MasjidDomainsAdminRoutesTest` counts five** (the plan said
+  it passes unedited; its refusal walk now covers detach too). Detach deletes the row even when
+  something Studio did not create is left in Cloudflare: the objects are named in the answer and
+  in a `Log::warning`, because keeping a `detaching` row for an object Studio will never remove
+  would retry forever.
+- **A `detaching` row of a trashed organisation is still finished by reconcile.** S2 keeps the
+  attacher off a trashed organisation's rows; taking hosts off Cloudflare is exactly what a
+  departed organisation needs, so the detach retry ignores the trash.

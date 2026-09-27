@@ -116,6 +116,7 @@ class MasjidDomain extends Model
         'cf_zone_created' => false,
         'cf_dns_record_created' => false,
         'cf_pages_domain_created' => false,
+        'serving_miss_count' => 0,
     ];
 
     protected $fillable = [
@@ -140,6 +141,9 @@ class MasjidDomain extends Model
         'stage_started_at',
         'verified_at',
         'serving_confirmed_at',
+        'serving_last_seen_at',
+        'serving_missed_since',
+        'serving_miss_count',
         'verified_by',
         'created_by_user_id',
     ];
@@ -157,6 +161,9 @@ class MasjidDomain extends Model
             'stage_started_at' => 'datetime',
             'verified_at' => 'datetime',
             'serving_confirmed_at' => 'datetime',
+            'serving_last_seen_at' => 'datetime',
+            'serving_missed_since' => 'datetime',
+            'serving_miss_count' => 'integer',
         ];
     }
 
@@ -283,6 +290,17 @@ class MasjidDomain extends Model
     }
 
     /**
+     * Whether the daily serving re-probe owns this row (W2 S4): an active or
+     * manual host seen serving, or one demoted after a run of misses and
+     * waiting to be seen again. DomainAttacher::reconfirm() probes it.
+     */
+    public function underReconfirmation(): bool
+    {
+        return in_array($this->status, self::TRUSTED, true)
+            && ($this->serving_confirmed_at !== null || $this->serving_missed_since !== null);
+    }
+
+    /**
      * The address to open the live site at, only once a server-side probe has
      * seen our site answer on this host for this organisation (R24). An active
      * certificate alone does not prove it: the renderer's lookup cache can
@@ -353,6 +371,15 @@ class MasjidDomain extends Model
 
         if ($this->serving_confirmed_at !== null && in_array($this->status, self::TRUSTED, true)) {
             return [];
+        }
+
+        // Demoted by the daily re-probe (W2 S4): it was serving, then stopped.
+        if ($this->underReconfirmation()) {
+            return [
+                "{$this->host} stopped answering for this organisation ({$this->serving_miss_count} checks in a row since "
+                    . $this->serving_missed_since?->toDateTimeString() . ' UTC), so CORS and card-payment returns no longer trust it.',
+                'Check the site and its DNS. Studio asks again every day and trusts it again as soon as it answers; press Check now to ask now.',
+            ];
         }
 
         $confirm = "Press Check now. The site is confirmed once https://{$this->host} answers for this organisation.";
@@ -588,6 +615,9 @@ class MasjidDomain extends Model
             'verified_at' => $this->verified_at?->toIso8601String(),
             'verified_by' => $this->verified_by,
             'serving_confirmed_at' => $this->serving_confirmed_at?->toIso8601String(),
+            'serving_last_seen_at' => $this->serving_last_seen_at?->toIso8601String(),
+            'serving_missed_since' => $this->serving_missed_since?->toIso8601String(),
+            'serving_miss_count' => (int) $this->serving_miss_count,
             'live_url' => $this->liveUrl(),
             'manual_steps' => $this->manualSteps(),
             'deletable' => $this->deletableThroughStudio(),

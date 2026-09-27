@@ -23,6 +23,10 @@ use Throwable;
  *  - rows still moving (`pending`, `awaiting_nameservers`, `provisioning`)
  *    whose `next_check_at` has come;
  *  - `active` rows not yet seen serving, for the probe;
+ *  - `active` and `manual` rows seen serving (or demoted and waiting to be
+ *    seen again), for their re-probe once a day (W2 S4). This is the one
+ *    request a run makes without a token for production's imported rows: a
+ *    GET of each host's own /api/tenant, never anything to Cloudflare;
  *  - `manual` and `imported` rows, ONLY when the token is configured, so the
  *    attacher can promote them to `active` by reading Cloudflare;
  *  - `detaching` rows whose `next_check_at` has come (W2 S3), handed to
@@ -30,16 +34,16 @@ use Throwable;
  *    part-way is finished. These are selected even for a trashed organisation:
  *    taking a host off Cloudflare is exactly what a departed one needs.
  *
- * Never `reserved`, never `failed`, and never a row whose organisation is
- * trashed (W2 S2): trashing is reversible and leaves the row as it was, and a
+ * Never `reserved`, never `failed`, and, `detaching` aside, never a row whose
+ * organisation is trashed (W2 S2): trashing is reversible and leaves the row as it was, and a
  * restore resumes it exactly there, but nothing is attached in Cloudflare for
  * an organisation that is not live. The same `whereHas('masjid')` the lookup's
  * served() scope relies on excludes it.
  *
- * So on production today, where the only rows will be the imported ones
- * (manual and reserved) and the token decides the third bullet, a run without
- * the token selects nothing and sends nothing, and a run with it only ever
- * reads.
+ * So on production's imported rows (manual and reserved), a run probes each
+ * confirmed host once a day on its own address and sends nothing else without
+ * the token; with it, it also only ever reads Cloudflare. Neither ever writes
+ * to Cloudflare for them.
  *
  * Without the token, rows that are waiting still get their probe (the only
  * request, to their own host), and the run logs one warning an hour saying
@@ -71,11 +75,16 @@ class ReconcileDomains extends Command
 
         $rows = self::selection($configured, $ids !== [] ? $ids : null)->orderBy('id')->get();
 
-        if (! $configured && $rows->isNotEmpty()
+        // A confirmed host's daily re-probe needs no token, so it is not
+        // "waiting on" one and is not counted here (W2 S4).
+        $waiting = $rows->reject(fn (MasjidDomain $row) => $row->underReconfirmation()
+            || $row->status === MasjidDomain::STATUS_DETACHING);
+
+        if (! $configured && $waiting->isNotEmpty()
             && Cache::add(self::NO_TOKEN_WARNING_KEY, true, now()->addHour())) {
             Log::warning('domains:reconcile: web addresses are waiting on CLOUDFLARE_STUDIO_TOKEN; nothing was sent to Cloudflare.', [
-                'waiting' => $rows->count(),
-                'ids' => $rows->pluck('id')->all(),
+                'waiting' => $waiting->count(),
+                'ids' => $waiting->pluck('id')->values()->all(),
             ]);
         }
 
@@ -148,6 +157,12 @@ class ReconcileDomains extends Command
             $q->where(fn (Builder $moving) => $due($moving->whereIn('status', MasjidDomain::NON_TERMINAL)))
                 ->orWhere(fn (Builder $active) => $due(
                     $active->where('status', MasjidDomain::STATUS_ACTIVE)->whereNull('serving_confirmed_at')
+                ))
+                // Hosts seen serving, and demoted ones waiting to be seen again,
+                // for their daily re-probe (W2 S4; MasjidDomain::underReconfirmation()).
+                ->orWhere(fn (Builder $confirmed) => $due(
+                    $confirmed->whereIn('status', MasjidDomain::TRUSTED)
+                        ->where(fn (Builder $seen) => $seen->whereNotNull('serving_confirmed_at')->orWhereNotNull('serving_missed_since'))
                 ));
 
             if ($tokenConfigured) {

@@ -69,6 +69,22 @@ return [
     // once each (owner, 2026-09-24: "keep me up to date"; W2 §8 OQ7).
     'pages_domain_notice_at' => [50, 70, 85, 95],
 
+    // Re-confirming hosts already seen serving (W2 S4). Each confirmed host is
+    // probed at most once every `every_hours`: one GET of its own
+    // /api/tenant, a no-store renderer route, so a day's cost is one request
+    // per host. A Studio host loses its CORS and card-payment-return admission
+    // only after `demote_after_misses` misses in a row spanning at least
+    // `demote_after_hours` (owner, 2026-09-24: "three misses over at least 72
+    // hours"; W2 §8 OQ6). With daily probes that is the fourth miss, three
+    // days after the first: one blip, a Cloudflare outage or a 5-second
+    // timeout never withdraws it (domains recon R3). An imported or adopted
+    // host is never demoted; the owner is emailed at the third miss instead.
+    'reconfirm' => [
+        'every_hours' => 24,
+        'demote_after_misses' => 3,
+        'demote_after_hours' => 72,
+    ],
+
     'api_base' => 'https://api.cloudflare.com/client/v4',
 
     // Seconds, for every Cloudflare API call.

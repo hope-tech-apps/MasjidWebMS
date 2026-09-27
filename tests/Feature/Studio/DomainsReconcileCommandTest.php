@@ -61,17 +61,20 @@ class DomainsReconcileCommandTest extends TestCase
     }
 
     #[Test]
-    public function it_selects_the_rows_that_are_moving_or_unconfirmed_and_reads_manual_ones_only_with_a_token(): void
+    public function it_selects_the_rows_that_are_moving_unconfirmed_or_due_a_re_probe_and_reads_manual_ones_only_with_a_token(): void
     {
         $rows = $this->everyKindOfRow($this->makeOrg());
 
+        // W2 S4, on purpose (DECISIONS.md 2026-09-27): a confirmed row is
+        // re-probed once a day, token or not, so the three confirmed rows that
+        // are due join the selection without a token too.
         $this->assertSame(
-            ['pending, due', 'awaiting nameservers, due', 'provisioning, due', 'active, unconfirmed'],
+            ['pending, due', 'awaiting nameservers, due', 'provisioning, due', 'active, unconfirmed', 'active, confirmed', 'manual, imported', 'manual, studio'],
             $this->selected($rows, false),
         );
 
         $this->assertSame(
-            ['pending, due', 'awaiting nameservers, due', 'provisioning, due', 'active, unconfirmed', 'manual, imported', 'manual, studio'],
+            ['pending, due', 'awaiting nameservers, due', 'provisioning, due', 'active, unconfirmed', 'active, confirmed', 'manual, imported', 'manual, studio'],
             $this->selected($rows, true),
         );
 
@@ -82,28 +85,45 @@ class DomainsReconcileCommandTest extends TestCase
     }
 
     #[Test]
-    public function without_a_token_on_productions_rows_it_selects_nothing_and_sends_nothing(): void
+    public function without_a_token_confirmed_rows_are_probed_once_a_day_on_their_own_host_only(): void
     {
         // What production holds after the S3 import: imported manual rows seen
-        // serving, and reserved ones. No Studio row yet.
+        // serving, and reserved ones. W2 S4 replaced this pin on purpose
+        // (DECISIONS.md 2026-09-27): W1 selected nothing here; now each
+        // confirmed host is asked once a day whether it still serves its
+        // organisation, on its own /api/tenant, and nothing goes to Cloudflare.
         $org = $this->makeOrg();
         $probed = ['source' => MasjidDomain::SOURCE_IMPORTED, 'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(), 'serving_confirmed_at' => now()];
         $this->makeDomain($org, 'mec.manara.hopetechapps.com', MasjidDomain::STATUS_MANUAL, $probed + ['kind' => MasjidDomain::KIND_MANAGED_SUBDOMAIN, 'zone_apex' => 'hopetechapps.com']);
-        $this->makeDomain($org, 'meccharlotte.org', MasjidDomain::STATUS_RESERVED, ['source' => MasjidDomain::SOURCE_IMPORTED]);
-        $before = MasjidDomain::query()->orderBy('id')->get()->map->getAttributes()->all();
+        $this->makeDomain($org, 'www.burlingtonmasjid.com', MasjidDomain::STATUS_MANUAL, $probed);
+        $reserved = $this->makeDomain($org, 'meccharlotte.org', MasjidDomain::STATUS_RESERVED, ['source' => MasjidDomain::SOURCE_IMPORTED]);
+        $reservedBefore = $reserved->fresh()->getAttributes();
 
-        Http::preventStrayRequests();
-        Http::fake();
+        $this->resolveTo(['93.184.216.34']);
+        $this->fakeCloudflare([
+            'GET https://*/api/tenant' => Http::response('{}', 200, ['x-manara-tenant' => (string) $org->id]),
+        ]);
         Log::spy();
 
-        $this->assertSame(0, Artisan::call('domains:reconcile', ['--json' => true]));
-        $out = json_decode(Artisan::output(), true);
+        // Every hour for two days (the schedule is every five minutes; hourly
+        // is enough to show the cadence, which next_check_at sets).
+        for ($tick = 0; $tick < 48; $tick++) {
+            $this->assertSame(0, Artisan::call('domains:reconcile', ['--json' => true]));
+            $this->travel(1)->hours();
+        }
 
-        $this->assertFalse($out['token_configured']);
-        $this->assertSame(0, $out['selected']);
-        Http::assertNothingSent();
+        $this->assertSame([], $this->sentToCloudflare());
+        $sent = $this->sent();
+        $this->assertSame(['GET https://mec.manara.hopetechapps.com/api/tenant', 'GET https://www.burlingtonmasjid.com/api/tenant'], array_values(array_unique($sent)));
+        $this->assertCount(4, $sent, 'each host twice in two days: once a day');
         Log::shouldNotHaveReceived('warning');
-        $this->assertSame($before, MasjidDomain::query()->orderBy('id')->get()->map->getAttributes()->all());
+
+        foreach (MasjidDomain::query()->where('status', MasjidDomain::STATUS_MANUAL)->get() as $row) {
+            $this->assertNotNull($row->serving_last_seen_at, $row->host);
+            $this->assertSame(0, $row->serving_miss_count);
+            $this->assertNotNull($row->serving_confirmed_at);
+        }
+        $this->assertSame($reservedBefore, $reserved->fresh()->getAttributes(), 'a reserved row is never probed');
     }
 
     #[Test]
@@ -113,8 +133,10 @@ class DomainsReconcileCommandTest extends TestCase
         $org = $this->makeOrg();
         $this->makeDomain($org, 'meccharlotte.org', MasjidDomain::STATUS_RESERVED, ['source' => MasjidDomain::SOURCE_IMPORTED]);
         $this->makeDomain($org, 'k.example.org', MasjidDomain::STATUS_FAILED);
+        // Confirmed, and its daily re-probe not due yet (W2 S4).
         $this->makeDomain($org, 'f.example.org', MasjidDomain::STATUS_ACTIVE, [
             'verified_by' => MasjidDomain::VERIFIED_BY_CLOUDFLARE, 'verified_at' => now(), 'serving_confirmed_at' => now(),
+            'next_check_at' => now()->addHours(20),
         ]);
         $before = MasjidDomain::query()->orderBy('id')->get()->map->getAttributes()->all();
         $this->fakeCloudflare([]);

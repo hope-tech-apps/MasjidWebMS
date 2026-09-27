@@ -40,6 +40,10 @@ export interface MasjidDomain {
     verified_at: string | null;
     verified_by: 'cloudflare' | 'probe' | null;
     serving_confirmed_at: string | null;
+    /** W2 S4: the daily re-probe's last match, and the current run of misses. */
+    serving_last_seen_at: string | null;
+    serving_missed_since: string | null;
+    serving_miss_count: number;
     /** https://<host>, only once our site was seen answering on it. */
     live_url: string | null;
     manual_steps: string[];
@@ -96,9 +100,11 @@ export interface MasjidDomainCheck {
 /**
  * The only two states the panel may show a green tick for: Cloudflare verified
  * the host and our site was seen on it, or the probe itself confirmed it with
- * no token. Anything else is not live, whatever else it says.
+ * no token. Anything else is not live, whatever else it says. Since W2 S4 a
+ * host that stops answering loses `serving_confirmed_at` while keeping its
+ * status and `verified_at`, so both states require it.
  */
 export function isConfirmedServing(domain: MasjidDomain): boolean {
     return (domain.status === 'active' && domain.serving_confirmed_at !== null)
-        || (domain.status === 'manual' && domain.verified_at !== null);
+        || (domain.status === 'manual' && domain.verified_at !== null && domain.serving_confirmed_at !== null);
 }
