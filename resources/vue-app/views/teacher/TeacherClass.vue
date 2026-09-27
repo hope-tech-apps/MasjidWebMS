@@ -2537,10 +2537,6 @@ const prefillKept = ref(false);
 const canPrefill = computed(() =>
     !!planForm.value.grade_label && !!planForm.value.subject && !!planForm.value.curriculum_week_no);
 
-// A slower answer for the plan the teacher just left must not overwrite the
-// lists for the one they opened.
-let curriculumSeq = 0;
-
 const loadCurriculum = async (grade?: string, subject?: string) => {
     const seq = ++curriculumSeq;
     curriculumWant = { grade: grade ?? '', subject: subject ?? '' };
@@ -2745,13 +2741,12 @@ const prefillFromGuide = async (auto = false) => {
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum?${q}`
         );
+        // The teacher opened another plan while the guide answered: this cell
+        // is for the plan she left, not the one on screen now.
+        if (!planForms.isCurrent(ticket)) return;
         const f = planForm.value;
-        // Dropped when a newer fill started, when the teacher opened another
-        // plan while the guide answered (this cell is for the plan she left), or
-        // when the day, grade, subject or week on screen changed underneath it.
-        if (seq !== prefillSeq || !planForms.isCurrent(ticket) || planDate.value !== asked.day
-            || f.grade_label !== asked.grade || f.subject !== asked.subject
-            || f.curriculum_week_no !== asked.week) return;
+        if (seq !== prefillSeq || planDate.value !== asked.day || f.grade_label !== asked.grade
+            || f.subject !== asked.subject || f.curriculum_week_no !== asked.week) return;
 
         const cell = res.data?.data?.cell;
         if (!cell) {
