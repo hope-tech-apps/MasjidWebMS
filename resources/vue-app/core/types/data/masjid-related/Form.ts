@@ -361,6 +361,12 @@ export type FormResponseUpdatePayload = {
      */
     status?: FormResponseStatus;
     admin_notes?: string;
+    /**
+     * The status the screen showed when the new one was chosen. The server answers 409
+     * `status_changed` and saves nothing when the row has moved since (another admin's
+     * cancel). Sent by the list's status select.
+     */
+    expected_status?: FormResponseStatus;
 };
 
 /**

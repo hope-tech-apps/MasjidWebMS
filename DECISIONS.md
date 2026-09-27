@@ -3854,7 +3854,8 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   The two CSV exports keep their "Collected" headers: a spreadsheet already reading them by
   name is not broken for a word. Pinned by
   `FormResponsesMoneyAdminTest::bracelets_are_stamped_by_the_first_press_and_undo_clears_them`.
-- **Each list row's Status is a select that saves on change,** through the detail's own PUT
+- **Each list row's Status is a select that saves on change** (since: saved once chosen, never on
+  an arrow-key step; see "review fixes" below), through the detail's own PUT
   (`FormResponsesController::update()`), so a cancel from the list closes a card page and
   answers exactly as a cancel from the detail does. The row is patched where it stands, not the
   page re-read, as the door's actions are: on a list filtered or sorted by status a slip stays in
@@ -3864,3 +3865,46 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   reserved date offered to others, capacity not freed. Leaving Cancelled is not asked: a restore
   whose date is taken is refused by the server with the date named, and the select reverts.
   Pinned by `resources/vue-app/tests/form-response-status.test.ts`.
+
+## 2026-09-27 — Responses list status select: review fixes
+- **A status is saved once it is chosen, never on an arrow-key step** (WCAG 3.2.2). In Chrome
+  and Edge on Windows, and in Firefox, ArrowUp/ArrowDown, Home/End, the Page keys and
+  type-ahead letters on a closed select change it and fire `change` on every press; saving
+  on `change` saved each status passed through, and a cancelled registration was restored by
+  arrowing past New. `formResponseStatus.ts::statusSelectController()` now holds a change
+  made by those keys ("Not saved: Enter saves, Esc undoes"), saves it on Enter or when focus
+  leaves the select, and puts the saved status back on Escape. A status picked from the open
+  list (mouse, or Alt+ArrowDown / F4 / Space then Enter) is saved at once, as before.
+  Rejected: a Save/Undo button beside each select (a second click on every change, which is
+  what the owner asked to be rid of) and a custom listbox (a native select is already
+  keyboard- and screen-reader-operable). Pinned by `form-response-status.test.ts`.
+- **An inline status change takes `busyRowId`, the one lock every row action takes, from the
+  question to the answer.** Every row's select, every door and payment button, and the row's
+  View wait while it runs, so two answers can never land on a row out of order, and no
+  second SweetAlert (which shows one popup at a time) can replace a cancel question or a
+  must-act answer. "Close its card payment page again" runs after the lock is let go, since it
+  is a row action of its own (`askTriageAnswer()`). Delete waits on the same lock. The detail
+  modal now starts Save from the status it fetched, not the list row's.
+- **The PUT carries `expected_status`** (the status the list showed). `update()` answers 409
+  `status_changed` and writes nothing when the locked row has moved, so a list read before
+  another admin's cancel cannot quietly restore it; the screen re-reads the row and says so.
+  Optional: the detail modal and older clients send none and behave as before. Pinned by
+  `FormResponsesAdminTest::a_status_change_from_a_list_read_before_another_admins_cancel_is_refused_and_changes_nothing`.
+- **The cancel question says only what the code will do.** An open card page: the server
+  "tries to close" it and says when it cannot; one known to be beyond checking
+  (`page_unreachable`) is said not to be closable until it expires. A card payment taken
+  through another organisation: only that organisation can refund it, as
+  `FormChargeAccount::refundInstruction()` says; one already refunded in full is not sent to be
+  refunded again, one refunded in part says how much. A registration with a payment is never
+  deleted, so for it the capacity line says cancelling does not free a place, instead of
+  pointing at a delete the screen refuses. The capacity claim is pinned on the server by
+  `FormResponsesAdminTest::cancelling_a_registration_keeps_its_place_and_only_deleting_frees_one`.
+- **A cancel or restore from the list re-reads the reserved dates whenever the form reserves
+  them, folded or not**: the board's conflict badge shows while folded, and cancelling a
+  conflicting registration is how a conflict is resolved.
+- **No DOM test harness was added for the view.** The SPA's tests run on `node --test` with no
+  jsdom or @vue/test-utils; adding them is a dependency decision beyond this fix. The decisions
+  the view made inline now live in `formResponseStatus.ts` and are tested with fakes, and the
+  template and script wiring is pinned by reading `FormResponsesView.vue` as text, as
+  `newsletter-blocks.test.ts` does. Each of 37 mutations (one at a time, in a copy) failed
+  the suite.

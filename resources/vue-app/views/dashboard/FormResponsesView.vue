@@ -584,22 +584,32 @@
                                         </div>
                                     </td>
                                     <!-- Status, changed right here (the owner, 2026-09-27): the detail's PUT, saved
-                                         on change. Coloured like the old pill so the list still scans by status. -->
+                                         once chosen (statusSelectController(): picked from the open list, or
+                                         Enter / leaving the select after arrow-key steps, never on a step).
+                                         Disabled while any row action or status save runs (busyRowId).
+                                         Coloured like the old pill so the list still scans by status. -->
                                     <td>
-                                        <div class="d-flex align-items-center gap-1">
+                                        <div class="d-flex align-items-center gap-1 flex-wrap">
                                             <select
                                                 class="form-select form-select-sm status-select"
-                                                :class="statusClass(response.status)"
-                                                :value="response.status"
-                                                :disabled="statusSavingIds.has(response.id) || busyRowId === response.id"
-                                                :aria-busy="statusSavingIds.has(response.id) ? 'true' : undefined"
-                                                :aria-label="`Status for ${registrationName(response.id, response.respondent_name)}`"
-                                                @change="changeStatusInline(response, $event)"
+                                                :class="statusClass(shownStatus(response))"
+                                                :value="shownStatus(response)"
+                                                :disabled="busyRowId !== null"
+                                                :aria-busy="statusSavingId === response.id ? 'true' : undefined"
+                                                :aria-label="statusSelectLabel(response.id, response.respondent_name)"
+                                                :aria-describedby="heldStatuses.has(response.id) ? `status-held-${response.id}` : undefined"
+                                                @pointerdown="statusSelect.pointerdown()"
+                                                @keydown="onStatusEvent('keydown', response, $event)"
+                                                @change="onStatusEvent('change', response, $event)"
+                                                @blur="onStatusEvent('blur', response, $event)"
                                             >
                                                 <option v-for="choice in statusOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
                                             </select>
-                                            <span v-if="statusSavingIds.has(response.id)" class="spinner-border spinner-border-sm text-secondary" role="status">
+                                            <span v-if="statusSavingId === response.id" class="spinner-border spinner-border-sm text-secondary" role="status">
                                                 <span class="visually-hidden">Saving the status</span>
+                                            </span>
+                                            <span v-if="heldStatuses.has(response.id)" :id="`status-held-${response.id}`" class="small text-muted">
+                                                Not saved: Enter saves, Esc undoes
                                             </span>
                                         </div>
                                     </td>
@@ -689,8 +699,11 @@
 
                                     <td class="text-end">
                                         <div class="btn-group btn-group-sm">
+                                            <!-- Not while this row's status or a door action is saving: the
+                                                 detail would open on the row as it was. -->
                                             <button
                                                 class="btn btn-outline-primary"
+                                                :disabled="busyRowId === response.id"
                                                 @click="openDetail(response)"
                                                 title="View Details"
                                                 :aria-label="`View details of registration #${response.id}`"
@@ -1752,12 +1765,13 @@ import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
 import {
     FALLBACK_STATUSES,
-    asksBeforeStatusChange,
+    cancelDialogOptions,
     cancelQuestion,
-    registrationName,
-    saveStatusOptimistically,
+    refreshesAfterStatusChange,
     statusChoices,
-    statusLabel
+    statusLabel,
+    statusSelectController,
+    statusSelectLabel
 } from './formResponseStatus';
 import Swal from 'sweetalert2';
 
@@ -3097,6 +3111,15 @@ const showTriageAnswer = async (result: FormResponseActionResult, asked: 'save' 
         return;
     }
 
+    if (await askTriageAnswer(answer)) await recloseCardPage(result.data);
+};
+
+/**
+ * An answer that stays until dismissed. True when the admin asked to close the card page
+ * again, which the caller does: the list's status select does it only after letting go of
+ * the row lock that closing goes through (runRowAction()).
+ */
+const askTriageAnswer = async (answer: TriageAnswer): Promise<boolean> => {
     const choice = await Swal.fire({
         icon: answer.icon,
         title: answer.title,
@@ -3106,7 +3129,7 @@ const showTriageAnswer = async (result: FormResponseActionResult, asked: 'save' 
         cancelButtonText: 'Not now'
     });
 
-    if (answer.retry && choice.isConfirmed) await recloseCardPage(result.data);
+    return answer.retry && choice.isConfirmed;
 };
 
 // --- Cash by staff member ----------------------------------------------------
@@ -3186,6 +3209,10 @@ const openDetail = async (response: FormResponseRow) => {
     try {
         const full = await formResponsesStore.fetchResponse(selectedFormId.value, response.id);
         if (full) {
+            // The list row can be out of date (another admin, or a status save still
+            // settling): Save must start from the status the server has, unless the admin
+            // has already chosen one here.
+            if (editStatus.value === response.status) editStatus.value = full.status;
             detail.value = full;
             selectedResponse.value = full;
         }
@@ -3255,78 +3282,105 @@ const reloadAfterSave = async () => {
 
 // --- Status, changed from the list -------------------------------------------
 
-/** Rows whose status is being saved from the list. Each select waits only on its own save. */
-const statusSavingIds = ref(new Set<number>());
+/** The row whose status PUT is in flight: its spinner. The lock itself is busyRowId. */
+const statusSavingId = ref<number | null>(null);
+
+/**
+ * Arrow-key steps not saved yet, by row id (statusSelectController()). The select shows
+ * one while it is held; Enter or leaving the select saves it, Escape puts the saved status
+ * back.
+ */
+const heldStatuses = ref(new Map<number, FormResponseStatus>());
+
+/** What a row's select shows: a held keyboard step, else the saved status. */
+const shownStatus = (row: FormResponseRow): FormResponseStatus => heldStatuses.value.get(row.id) ?? row.status;
 
 /**
  * A status chosen in a row's select: the same PUT (and so the same server-side cancel)
- * as the detail's Save, sent for the status alone.
+ * as the detail's Save, sent for the status alone, with the status the list showed as its
+ * precondition (a list read before another admin's cancel is answered 409, not obeyed).
+ *
+ * When it saves, and what it locks, is statusSelectController()'s: saved only once chosen,
+ * never on an arrow-key step, and under busyRowId, the one lock every row action takes, from
+ * the question to the answer. So the door and payment buttons and View wait while a status
+ * saves, the two answers never land out of order, and no popup replaces another.
  *
  * The row is patched where it stands rather than the page re-read, as the door's actions
  * are (runRowAction()): on a list filtered or sorted by status a slip stays in view to be
- * put right, and the next load files it. What a cancel moves elsewhere on screen, the cash
- * totals and the reserved dates, is re-read when open.
+ * put right, and the next load files it. What a cancel or restore moves elsewhere on
+ * screen (refreshesAfterStatusChange()) is re-read.
  */
-const changeStatusInline = async (row: FormResponseRow, event: Event) => {
-    const select = event.target as HTMLSelectElement;
-    const next = select.value as FormResponseStatus;
-    const from = row.status;
-    const formId = selectedFormId.value;
-
-    if (!formId || next === from || statusSavingIds.value.has(row.id)) {
-        select.value = from;
-        return;
-    }
-
-    if (asksBeforeStatusChange(from, next) && !(await confirmCancel(row))) {
-        // Nothing changed, so nothing re-renders the select: put it back by hand.
-        select.value = row.status;
-        return;
-    }
-
-    statusSavingIds.value.add(row.id);
-    let result: FormResponseActionResult | null = null;
-
-    try {
-        result = await saveStatusOptimistically(row, next, () => formResponsesStore.updateResponse(formId, row.id, { status: next }));
+const statusSelect = statusSelectController<FormResponseActionResult>({
+    held: heldStatuses.value,
+    isBusy: () => busyRowId.value !== null,
+    lock: rowId => { busyRowId.value = rowId; },
+    saving: rowId => { statusSavingId.value = rowId; },
+    ask: row => confirmCancel(row as FormResponseRow),
+    save: (row, next, expected) => {
+        if (!selectedFormId.value) return Promise.reject(new Error('No form is selected.'));
+        return formResponsesStore.updateResponse(selectedFormId.value, row.id, { status: next, expected_status: expected });
+    },
+    saved: async (row, from, next, result) => {
         applyRow(result.data);
-    } catch (error: any) {
-        // A refusal (a restore whose date is now someone else's) may mean the row moved:
-        // show it as the server has it, as runRowAction() does.
+
+        const moves = refreshesAfterStatusChange(from, next, meta.value?.reservations === true);
+        if (moves.cash) refreshCashIfOpen();
+        if (moves.reservations) loadReservations();
+
+        // A cancel can come back with something to act on (a card payment that stands, a card
+        // page not closed): that stays until dismissed, still under the lock. A plain save is
+        // a toast.
+        const answer = triageAnswer(result, 'save');
+        if (answer.quiet) {
+            toast('success', `#${row.id} is now ${statusLabel(result.data.status)}.`);
+            return;
+        }
+
+        // "Close its card payment page again" is a row action of its own, so it runs once
+        // this save has let go of the lock.
+        if (await askTriageAnswer(answer)) return () => recloseCardPage(result.data);
+    },
+    refused: async (row, error: any) => {
+        // A refusal (a restore whose date is now someone else's) or a 409 (the row moved
+        // since the list was read) means the row is not what the list shows: show it as the
+        // server has it, as runRowAction() does.
         const status = error?.response?.status;
         if (status === 422 || status === 409 || status === 503) await refreshRow(row.id);
         refusalToast('Status not changed', serverMessage(error, 'Could not change the status.'));
-    } finally {
-        statusSavingIds.value.delete(row.id);
     }
+});
 
-    // Disabling the focused select drops focus to the page, which would leave a keyboard
-    // user at the top of it: give focus back once the select is enabled again.
+/**
+ * The select's own events, passed to statusSelectController(). Locking disables the focused
+ * select, which drops focus to the page and would leave a keyboard user at the top of it:
+ * focus goes back to it once the change has settled.
+ */
+const onStatusEvent = async (
+    kind: 'keydown' | 'change' | 'blur',
+    row: FormResponseRow,
+    event: Event
+) => {
+    const select = event.target as HTMLSelectElement;
+
+    const settled = kind === 'keydown'
+        ? await statusSelect.keydown(row, event as KeyboardEvent, select)
+        : kind === 'change'
+            ? await statusSelect.change(row, select)
+            : await statusSelect.blur(row, select);
+
+    if (settled === null || kind === 'blur') return;
+
     await nextTick();
     if (select.isConnected && (!document.activeElement || document.activeElement === document.body)) select.focus();
-
-    if (!result) return;
-
-    if (from === 'cancelled' || next === 'cancelled') {
-        refreshCashIfOpen();
-        if (reservationsOpen.value) loadReservations();
-    }
-
-    // A cancel can come back with something to act on (a card payment that stands, a card
-    // page not closed): that stays until dismissed. A plain save is a toast.
-    const answer = triageAnswer(result, 'save');
-    if (answer.quiet) {
-        toast('success', `#${row.id} is now ${statusLabel(result.data.status)}.`);
-    } else {
-        await showTriageAnswer(result, 'save');
-    }
 };
 
 /**
  * Asked before a cancel from the list, in the words of cancelQuestion(). Built as DOM text,
- * never HTML: the title carries the respondent's own name.
+ * never HTML, and titled through cancelDialogOptions()'s titleText: the title carries the
+ * respondent's own name.
  */
 const confirmCancel = async (row: FormResponseRow): Promise<boolean> => {
+    const refundedMinor = row.charge_refunded_minor ?? null;
     const question = cancelQuestion({
         id: row.id,
         name: row.respondent_name,
@@ -3337,6 +3391,12 @@ const confirmCancel = async (row: FormResponseRow): Promise<boolean> => {
             ? money(row.total_minor, row.currency)
             : null,
         cardPageOpened: cardPageStarted(row),
+        pageUnreachable: row.page_unreachable === true,
+        chargedThrough: row.charged_through?.name ?? null,
+        refundedAmount: refundedMinor !== null && refundedMinor > 0 ? money(refundedMinor, row.currency) : null,
+        refundedInFull: refundedMinor !== null && refundedMinor > 0
+            && row.total_minor !== null && row.total_minor !== undefined && refundedMinor >= row.total_minor,
+        hasPayment: isMoneyRow(row),
         checkedIn: !!row.collected_at,
         reservesDates: meta.value?.reservations === true,
         capacity: meta.value?.form?.capacity ?? null
@@ -3351,21 +3411,15 @@ const confirmCancel = async (row: FormResponseRow): Promise<boolean> => {
         body.appendChild(paragraph);
     }
 
-    const choice = await Swal.fire({
-        icon: 'warning',
-        titleText: question.title,
-        html: body,
-        showCancelButton: true,
-        focusCancel: true,
-        confirmButtonColor: '#d33',
-        confirmButtonText: question.confirmText,
-        cancelButtonText: question.keepText
-    });
+    const choice = await Swal.fire(cancelDialogOptions(question, body));
 
     return choice.isConfirmed;
 };
 
 const confirmDelete = async (response: FormResponseRow) => {
+    // Not while a row action or status save runs: its answer would close this question.
+    if (busyRowId.value !== null) return;
+
     if (isMoneyRow(response)) {
         Swal.fire({ icon: 'info', title: 'This registration cannot be deleted', text: DELETE_REFUSED });
         return;
