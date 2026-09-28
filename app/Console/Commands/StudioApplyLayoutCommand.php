@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Masjid;
+use App\Support\MobileCache;
 use App\Support\Renderer\RendererPurgeScheduler;
 use App\Support\Studio\LayoutPresets;
 use App\Support\Studio\StarterFacts;
@@ -82,7 +83,7 @@ class StudioApplyLayoutCommand extends Command
         ));
 
         if (! $execute) {
-            $this->report(StarterSite::outcome(StarterSite::plan($org, $presetKey, $facts), $held), $held, $withThemeLayout, $themeLayout, false);
+            $this->report(StarterSite::outcome(StarterSite::plan($org, $presetKey, $facts, $held), $held), $held, $withThemeLayout, $themeLayout, false);
 
             return self::SUCCESS;
         }
@@ -103,6 +104,13 @@ class StudioApplyLayoutCommand extends Command
         // Committed. The renderer's cached pages do not know the new ones yet.
         RendererPurgeScheduler::afterSave((int) $org->id);
 
+        // tokens.layout is baked into the mobile masjid SHOW payload, so the
+        // apps would keep the old header and footer until the TTL, as after a
+        // theme save in the admin (ThemeSettingsController::save).
+        if ($withThemeLayout) {
+            MobileCache::flushFamily($org);
+        }
+
         // Warning, not info: production runs LOG_LEVEL=warning, and this added
         // pages to an organisation's site.
         Log::warning('studio:apply-layout wrote a starter site', [
@@ -111,6 +119,7 @@ class StudioApplyLayoutCommand extends Command
             'operator' => self::operator(),
             'pages_created' => count($outcome['created']),
             'pages_skipped' => count($outcome['skipped']),
+            'links_to_unlive_pages' => count($outcome['unlive_links']),
             'sections_active' => $outcome['sections_active'],
             'sections_inactive' => count($outcome['sections_inactive']),
             'placeholders_open' => $outcome['placeholders_open'],
@@ -123,8 +132,8 @@ class StudioApplyLayoutCommand extends Command
     }
 
     /**
-     * @param  array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int}  $outcome
-     * @param  array<string, array{id: int, trashed: bool}>  $held
+     * @param  array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int, unlive_links: list<array{page: string, target: string}>}  $outcome
+     * @param  array<string, array{id: int, trashed: bool, active: bool}>  $held
      * @param  array<string, string>  $themeLayout  e.g. {header: overlay, footer: columns}
      */
     private function report(array $outcome, array $held, bool $withThemeLayout, array $themeLayout, bool $written): void
@@ -138,6 +147,15 @@ class StudioApplyLayoutCommand extends Command
                 '  Skipped "%s": the organisation already has a %s page with this slug, and it is left untouched.',
                 $slug,
                 ($held[$slug]['trashed'] ?? false) ? 'trashed' : 'live',
+            ));
+        }
+
+        foreach ($outcome['unlive_links'] as $link) {
+            $this->line(sprintf(
+                '  "%s" links to "%s", which the organisation holds but the site does not serve (%s): a banner loses that button, any other section waits inactive.',
+                $link['page'],
+                $link['target'],
+                ($held[$link['target']]['trashed'] ?? false) ? 'trashed' : 'inactive',
             ));
         }
 

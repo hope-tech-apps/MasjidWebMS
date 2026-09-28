@@ -97,12 +97,18 @@ final class StarterSite
     /**
      * The starter website `$presetKey` would write for `$org`, from `$f`.
      *
+     * `$held` is heldPages() for an organisation that already has pages. A
+     * held slug is skipped by applyTo(), so whether a link to it is live is
+     * decided by the held page (active and not trashed), not by the planned
+     * one. Omitted for a brand-new organisation, which holds nothing.
+     *
+     * @param  array<string, array{id: int, trashed: bool, active: bool}>  $held
      * @throws \InvalidArgumentException when the preset does not exist or
      *                                   belongs to another vertical
      * @throws \LogicException when the config breaks the no-invention rule or
      *                         names a block, label or hint that does not exist
      */
-    public static function plan(Masjid $org, string $presetKey, StarterFacts $f): StarterPlan
+    public static function plan(Masjid $org, string $presetKey, StarterFacts $f, array $held = []): StarterPlan
     {
         $preset = LayoutPresets::find($presetKey);
 
@@ -145,10 +151,14 @@ final class StarterSite
             ];
         }
 
-        $pages = self::settle($pages, $labels);
+        $pages = self::settle($pages, $labels, $held);
 
         foreach ($pages as &$page) {
             unset($page['button_when_active']);
+
+            if (isset($page['held_links'])) {
+                $page['held_links'] = array_values($page['held_links']);
+            }
 
             foreach ($page['sections'] as &$section) {
                 unset($section['links']);
@@ -180,16 +190,17 @@ final class StarterSite
      *   savepoint inside the provisioner's, so a failure part-way leaves no
      *   page behind and still unwinds the caller.
      *
-     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int}
+     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int, unlive_links: list<array{page: string, target: string}>}
      *
      * @throws \InvalidArgumentException when the preset does not exist or belongs to another vertical
      */
     public static function applyTo(Masjid $org, string $presetKey, StarterFacts $f): array
     {
-        $plan = self::plan($org, $presetKey, $f);
-
-        return DB::transaction(function () use ($org, $plan) {
+        return DB::transaction(function () use ($org, $presetKey, $f) {
+            // Read once: the plan's link decisions, the skips and the outcome
+            // all rest on the same held pages.
             $held = self::heldPages($org);
+            $plan = self::plan($org, $presetKey, $f, $held);
             $taken = array_map(fn (array $page) => $page['id'], $held);
 
             $written = [];
@@ -248,14 +259,14 @@ final class StarterSite
      * slugs applyTo() skips. Also studio:apply-layout's dry run, so the dry
      * run and the write cannot disagree about what is skipped.
      *
-     * @return array<string, array{id: int, trashed: bool}>
+     * @return array<string, array{id: int, trashed: bool, active: bool}>
      */
     public static function heldPages(Masjid $org): array
     {
         $held = [];
 
-        foreach (Page::withTrashed()->where('masjid_id', $org->id)->get(['id', 'slug', 'deleted_at']) as $page) {
-            $held[$page->slug] = ['id' => (int) $page->id, 'trashed' => $page->deleted_at !== null];
+        foreach (Page::withTrashed()->where('masjid_id', $org->id)->get(['id', 'slug', 'is_active', 'deleted_at']) as $page) {
+            $held[$page->slug] = ['id' => (int) $page->id, 'trashed' => $page->deleted_at !== null, 'active' => (bool) $page->is_active];
         }
 
         return $held;
@@ -268,7 +279,11 @@ final class StarterSite
      * after its writes, and studio:apply-layout prints it without them.
      *
      * @param  array<string, mixed>  $held  keyed by slug (heldPages())
-     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int}
+     * `unlive_links` names each created page that links to a held page the
+     * public site does not serve (trashed or inactive): that button is left
+     * out, or its section written inactive.
+     *
+     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int, unlive_links: list<array{page: string, target: string}>}
      */
     public static function outcome(StarterPlan $plan, array $held): array
     {
@@ -279,6 +294,7 @@ final class StarterSite
             'sections_active' => 0,
             'sections_inactive' => [],
             'placeholders_open' => 0,
+            'unlive_links' => [],
         ];
 
         foreach ($plan->pages as $page) {
@@ -294,6 +310,10 @@ final class StarterSite
         foreach ($plan->pages as $page) {
             if (array_key_exists($page['slug'], $held)) {
                 continue;
+            }
+
+            foreach ($page['held_links'] ?? [] as $target) {
+                $result['unlive_links'][] = ['page' => $page['slug'], 'target' => $target];
             }
 
             foreach ($page['sections'] as $section) {
@@ -566,11 +586,16 @@ final class StarterSite
      * a section can empty a page, and deactivating a page can hold back a
      * section on another page that links to it.
      *
+     * A held page is what a link to its slug reaches, so it decides whether
+     * the link is live (active and not trashed); its planned copy is skipped.
+     * Each page records the held targets its links lost, as `held_links`.
+     *
      * @param  list<array<string, mixed>>  $pages
      * @param  array<string, string>  $labels
+     * @param  array<string, array{id: int, trashed: bool, active: bool}>  $held
      * @return list<array<string, mixed>>
      */
-    private static function settle(array $pages, array $labels): array
+    private static function settle(array $pages, array $labels, array $held = []): array
     {
         $hint = self::placeholder(
             ['field' => 'button_link', 'kind' => 'review', 'hint' => self::LINKED_PAGE_HINT],
@@ -595,6 +620,10 @@ final class StarterSite
 
             $live = array_column($pages, 'is_active', 'slug');
 
+            foreach ($held as $slug => $heldPage) {
+                $live[$slug] = $heldPage['active'] && ! $heldPage['trashed'];
+            }
+
             foreach ($pages as &$page) {
                 $kept = [];
 
@@ -604,6 +633,10 @@ final class StarterSite
 
                         if ($target === true) {
                             continue;
+                        }
+
+                        if ($target === false && isset($held[$link['page']])) {
+                            $page['held_links'][$link['page']] = $link['page'];
                         }
 
                         if ($section['section_type'] === SectionType::PAGE_TITLE->value) {

@@ -4505,3 +4505,19 @@ gives an organisation that already exists a Studio starter site.
 - **English labels** until S12 gives organisations a stored website locale.
 - Running it against a live organisation adds pages and sections under slugs it
   does not hold, so it needs the owner's go per organisation.
+
+**2026-09-28 review fixes (S11-1, S11-2, S11-3).**
+- **A held page decides whether a link to it is live.** `plan()` and
+  `settle()` take `heldPages()` (now also carrying `active`). A held slug is
+  live only when the page is active and not trashed; otherwise a banner loses
+  its button and any other linking section is written inactive with the
+  `linked_page` hint, the same path a planned-but-inactive page takes. The
+  outcome lists each such link as `unlive_links`, the command prints it and the
+  warning log counts it. `applyTo()` now reads `heldPages()` once, inside its
+  transaction, and plans from it. A brand-new organisation passes no held pages
+  and plans exactly as before.
+- **`--with-theme-layout` flushes `MobileCache::flushFamily($org)` after
+  commit**, as `ThemeSettingsController::save` does, because `tokens.layout`
+  is baked into the cached mobile SHOW payload.
+- **The dry-run test now compares the rows `--execute` wrote** (page slugs,
+  active and inactive section counts) with what the dry run reported.

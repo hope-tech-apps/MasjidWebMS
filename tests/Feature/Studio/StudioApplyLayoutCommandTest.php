@@ -6,11 +6,13 @@ use App\Jobs\PurgeRendererCache;
 use App\Models\Masjid;
 use App\Models\Page;
 use App\Models\ThemeSetting;
+use App\Support\MobileCache;
 use App\Support\Studio\LayoutPresets;
 use App\Support\Studio\StarterFacts;
 use App\Support\Studio\StarterSite;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
@@ -106,12 +108,85 @@ class StudioApplyLayoutCommandTest extends TestCase
         $org = $this->org();
         Page::create(['masjid_id' => $org->id, 'slug' => $this->slugs()[1], 'title' => 'Ours', 'is_active' => true, 'order' => 1]);
 
+        $before = Page::withTrashed()->where('masjid_id', $org->id)->pluck('id')->all();
+
         $facts = StarterFacts::fromMasjid($org);
-        $dry = StarterSite::outcome(StarterSite::plan($org, self::PRESET, $facts), StarterSite::heldPages($org));
+        $held = StarterSite::heldPages($org);
+        $dry = StarterSite::outcome(StarterSite::plan($org, self::PRESET, $facts, $held), $held);
 
         $this->assertSame($dry, StarterSite::applyTo($org, self::PRESET, $facts));
         $this->assertNotSame([], $dry['created']);
         $this->assertSame([$this->slugs()[1]], $dry['skipped']);
+
+        // What the dry run reported, against the rows the write inserted.
+        $written = Page::withTrashed()->where('masjid_id', $org->id)->whereNotIn('id', $before)->get();
+        $this->assertEqualsCanonicalizing($dry['created'], $written->pluck('slug')->all());
+
+        $sectionIds = DB::table('page_section')->whereIn('page_id', $written->pluck('id'))->pluck('section_id');
+        $rows = DB::table('sections')->whereIn('id', $sectionIds)->get();
+        $this->assertSame($dry['sections_active'], $rows->where('is_active', 1)->count());
+        $this->assertSame(count($dry['sections_inactive']), $rows->where('is_active', 0)->count());
+    }
+
+    /** The first section of a written page, raw from its row. */
+    private function firstSectionOf(Masjid $org, string $slug): object
+    {
+        $page = Page::where('masjid_id', $org->id)->where('slug', $slug)->firstOrFail();
+        $sectionId = DB::table('page_section')->where('page_id', $page->id)->orderBy('order')->value('section_id');
+
+        return DB::table('sections')->where('id', $sectionId)->first();
+    }
+
+    #[Test]
+    public function a_banner_loses_its_button_to_a_held_page_the_site_does_not_serve(): void
+    {
+        $preset = 'masjid.essentials';
+
+        // A live held page: the button stays and nothing is reported.
+        $live = $this->org();
+        Page::create(['masjid_id' => $live->id, 'slug' => 'contact', 'title' => 'Ours', 'is_active' => true, 'order' => 1]);
+        [$code, $out] = $this->run_($live, $preset, ['--execute' => true]);
+        $this->assertSame(0, $code, $out);
+        $this->assertStringContainsString('contact', (string) json_decode($this->firstSectionOf($live, 'home')->content, true)['button_link']);
+        $this->assertStringNotContainsString('which the organisation holds but the site does not serve', $out);
+
+        foreach (['trashed', 'inactive'] as $state) {
+            $org = $this->org();
+            $held = Page::create(['masjid_id' => $org->id, 'slug' => 'contact', 'title' => 'Ours', 'is_active' => $state !== 'inactive', 'order' => 1]);
+            if ($state === 'trashed') {
+                $held->delete();
+            }
+
+            [$dryCode, $dryOut] = $this->run_($org, $preset);
+            $this->assertSame(0, $dryCode, $dryOut);
+            $this->assertStringContainsString("\"home\" links to \"contact\", which the organisation holds but the site does not serve ({$state})", $dryOut);
+
+            [$code, $out] = $this->run_($org, $preset, ['--execute' => true]);
+            $this->assertSame(0, $code, $out);
+            $this->assertStringContainsString("({$state})", $out);
+
+            $content = json_decode($this->firstSectionOf($org, 'home')->content, true);
+            $this->assertSame('', $content['button_link'], "a {$state} contact page must not be linked from the home banner");
+            $this->assertSame('', $content['button_text']);
+        }
+    }
+
+    #[Test]
+    public function a_section_linking_to_an_unserved_held_page_is_written_inactive_with_the_hint(): void
+    {
+        $org = $this->org('school');
+        Page::create(['masjid_id' => $org->id, 'slug' => 'admissions', 'title' => 'Ours', 'is_active' => false, 'order' => 1]);
+        $facts = StarterFacts::fromMasjid($org);
+
+        $cta = fn ($plan) => collect(collect($plan->pages)->firstWhere('slug', 'home')['sections'])->firstWhere('section_type', 'cta');
+
+        $aware = $cta(StarterSite::plan($org, 'school.essentials', $facts, StarterSite::heldPages($org)));
+        $this->assertNotNull($aware);
+        $this->assertFalse($aware['is_active']);
+        $this->assertContains(StarterSite::LINKED_PAGE_HINT, array_column($aware['placeholders'], 'hint'));
+
+        // Blind to the held page, the plan would have kept the section active.
+        $this->assertTrue($cta(StarterSite::plan($org, 'school.essentials', $facts))['is_active']);
     }
 
     #[Test]
@@ -173,6 +248,23 @@ class StudioApplyLayoutCommandTest extends TestCase
         $this->assertSame(0, $code, $out);
         $this->assertStringContainsString('Theme layout: would be set to header', $out);
         $this->assertSame($custom, $dry->themeSettings()->first()->tokens);
+    }
+
+    #[Test]
+    public function the_theme_layout_flushes_the_mobile_masjid_cache_only_when_written(): void
+    {
+        $with = $this->org();
+        $without = $this->org();
+        $withKey = MobileCache::masjidKey((int) $with->id, MobileCache::SHOW);
+        $withoutKey = MobileCache::masjidKey((int) $without->id, MobileCache::SHOW);
+        Cache::put($withKey, ['stale' => true], 600);
+        Cache::put($withoutKey, ['stale' => true], 600);
+
+        $this->run_($without, self::PRESET, ['--execute' => true]);
+        $this->assertNotNull(Cache::get($withoutKey), 'pages alone do not change the mobile payload');
+
+        $this->run_($with, self::PRESET, ['--execute' => true, '--with-theme-layout' => true]);
+        $this->assertNull(Cache::get($withKey), 'tokens.layout is in the cached SHOW payload');
     }
 
     #[Test]
