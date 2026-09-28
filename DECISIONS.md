@@ -4520,3 +4520,11 @@ placeholders are still to fill. `GET /api/admin/masjids/{id}/pages/placeholders`
 - **The marker survives the page builder's writes** (existing-org recon U3):
   the modal round-trips `settings`, and the reorder PUTs `order` alone, which
   the update does not treat as a settings write (`SectionMarkerSurvivesEditsTest`).
+
+- **2026-09-28, review fix S10-1.** The defensive read now also drops a bound
+  placeholder whose source `StarterFacts` cannot answer, through
+  `StarterFacts::isBoundSource()` (backed by one `BOUND_SOURCES` list that
+  `hasBound()` matches on), instead of catching `InvalidArgumentException`
+  around the whole read. `PlaceholderChecklistTest` pins it: a version 2 marker,
+  an unknown kind, a missing hint and source `nope.nope` are left out, the
+  readable entries kept, and the answer is 200.

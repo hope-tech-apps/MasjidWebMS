@@ -190,6 +190,44 @@ class PlaceholderChecklistTest extends TestCase
     }
 
     #[Test]
+    public function a_marker_or_placeholder_it_cannot_read_is_left_out_not_a_500(): void
+    {
+        $org = Masjid::create([
+            'name' => 'Odd Org', 'email' => 'odd@test.local', 'phone' => '+15550003333',
+            'country_id' => $this->countryId, 'city_id' => $this->cityId, 'address' => '1 Test St',
+            'latitude' => 0.0, 'longitude' => 0.0, 'org_type' => 'masjid',
+        ]);
+        $page = Page::create(['masjid_id' => $org->id, 'slug' => 'home', 'title' => 'Home', 'is_active' => true, 'order' => 1]);
+        $hint = (string) array_key_first((array) config('studio_layouts.hints'));
+        $good = ['kind' => 'text', 'field' => 'body', 'hint' => $hint, 'essential' => true];
+        $goodBound = ['kind' => 'bound', 'field' => 'about', 'hint' => $hint, 'essential' => false, 'source' => 'masjid_about.about'];
+
+        $mixed = Section::create(['masjid_id' => $org->id, 'section_type' => 'text', 'title' => 'Mixed', 'content' => ['body' => ''], 'is_active' => true, 'settings' => ['studio' => [
+            'version' => 1,
+            'placeholders' => [
+                $good,
+                $goodBound,
+                ['kind' => 'nonsense', 'field' => 'a', 'hint' => $hint, 'essential' => true],
+                ['kind' => 'text', 'field' => 'b', 'essential' => true],
+                ['kind' => 'bound', 'field' => 'c', 'hint' => $hint, 'essential' => true, 'source' => 'nope.nope'],
+            ],
+        ]]]);
+        $newer = Section::create(['masjid_id' => $org->id, 'section_type' => 'text', 'title' => 'Newer', 'content' => ['body' => ''], 'is_active' => true, 'settings' => ['studio' => [
+            'version' => 2,
+            'placeholders' => [$good],
+        ]]]);
+        $page->sections()->attach($mixed->id, ['order' => 1]);
+        $page->sections()->attach($newer->id, ['order' => 2]);
+
+        $data = $this->checklist((int) $org->id)->assertOk()->assertJsonPath('status', 'success')->json('data');
+
+        $sections = $data['pages'][0]['sections'];
+        $this->assertCount(1, $sections, 'the version 2 marker is not read');
+        $this->assertSame($mixed->id, $sections[0]['section_id']);
+        $this->assertSame(['body', 'about'], array_column($sections[0]['placeholders'], 'field'));
+    }
+
+    #[Test]
     public function the_route_is_not_captured_by_the_page_show_route(): void
     {
         [$id] = $this->studioOrg('masjid', self::MINIMAL);

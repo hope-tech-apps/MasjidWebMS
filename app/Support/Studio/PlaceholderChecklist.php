@@ -144,6 +144,9 @@ final class PlaceholderChecklist
             return false;
         }
 
-        return $placeholder['kind'] !== 'bound' || is_string($placeholder['source'] ?? null);
+        // hasBound() throws for a source it does not know; a hand-edited row or
+        // a newer preset's source must drop this entry, not fail the endpoint.
+        return $placeholder['kind'] !== 'bound'
+            || (is_string($placeholder['source'] ?? null) && StarterFacts::isBoundSource($placeholder['source']));
     }
 }

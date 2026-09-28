@@ -33,6 +33,9 @@ final readonly class StarterFacts
     ];
 
     /** Social fact => masjid_social_media_links.type, as OrganisationProvisioner writes it. */
+    /** The rows a bound placeholder may name, in hasBound()'s order. */
+    public const BOUND_SOURCES = ['masjid_about.about', 'masjid_about.mission_vision', 'donation_link.link'];
+
     public const SOCIAL_TYPES = [
         'facebook_url' => 'Facebook',
         'instagram_url' => 'Instagram',
@@ -136,6 +139,12 @@ final readonly class StarterFacts
         };
     }
 
+    /** Whether hasBound() can answer for this source; readers ask first, so an unknown one is left out, not thrown. */
+    public static function isBoundSource(string $source): bool
+    {
+        return in_array($source, self::BOUND_SOURCES, true);
+    }
+
     /**
      * Whether a bound placeholder's source row will have something to show.
      *
@@ -144,9 +153,9 @@ final readonly class StarterFacts
     public function hasBound(string $source): bool
     {
         return match ($source) {
-            'masjid_about.about' => $this->hasAbout,
-            'masjid_about.mission_vision' => $this->hasMissionOrVision,
-            'donation_link.link' => $this->hasDonationLink,
+            self::BOUND_SOURCES[0] => $this->hasAbout,
+            self::BOUND_SOURCES[1] => $this->hasMissionOrVision,
+            self::BOUND_SOURCES[2] => $this->hasDonationLink,
             default => throw new \InvalidArgumentException("\"{$source}\" is not a bound source."),
         };
     }
