@@ -4256,3 +4256,20 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   per-class-ceiling rules that Files already enforces, and a new teacher write verb. Known limit
   (L5): the private file disk has no backup, so a plan's files are one disk failure from gone;
   a separate backup item is open.
+- **HELD FOR OWNER B1: negative behaviours always subtract.** (The owner answered B1 "negatives always
+  subtract" on 2026-09-28, so this commit is approved; it stays the LAST commit and its message is reworded
+  at integration.) Today a teacher-made negative skill ("Talking out of turn", polarity negative, default 1)
+  is stored as +1 and every `SUM(points)` ADDED it while the picker showed "-1" (`TeacherClass.vue:4112`,
+  `BehaviorAwardsController`). Every read aggregate (staff summary incl. `by_skill` and `by_polarity`, family
+  summary, class totals) now uses `BehaviorAward::signedPointsSql()`: `CASE WHEN skill_polarity = 'negative'
+  THEN -ABS(points) ELSE points END`. No stored row changes, and prod has 0 live negative awards, so no
+  total moves today. It settles the two conventions the docblocks disagreed on (`DemoSchool.php` and
+  `BehaviorAwardsController::totals`).
+  **Review fix (2026-09-28):** the first version read every non-negative row as `ABS(points)`. That silently
+  reversed a deliberate deduction: `StoreBehaviorAwardRequest` accepts an override from -max to +max and the
+  controller snapshots it as given, so 'Kindness' given with -3 netted -3 and would have netted +3. Rows of
+  every polarity except `negative` now read exactly as stored, so no positive-skill row moves whatever its
+  sign; the count of such rows in prod is therefore not needed (it stays "Unknown, needs investigation" and
+  does not matter). The award LOG rows now show the same signed figure (teacher, office and family screens),
+  so a negative behaviour reads "-1" beside a total that went down. It must be settled before W4 (the weekly
+  report and the buck ledger read these totals).

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { defaultSkillId, inPickerOrder, pickerFrom, polarityRank, withSkillInserted } from '../core/helpers/behaviorSkills.ts';
+import { awardPointsLabel, defaultSkillId, inPickerOrder, pickerFrom, polarityRank, signedAwardPoints, withSkillInserted } from '../core/helpers/behaviorSkills.ts';
 
 const skills = [
     { id: 1, label: 'Argues', polarity: 'negative' },
@@ -112,4 +112,35 @@ test('the teacher screen orders what it loads and what a teacher adds through th
     assert.equal((teacher.match(/awardSkillId\.value = picker\.selectedId;/g) ?? []).length, 2);
     assert.match(teacher, /skills\.value = withSkillInserted\(skills\.value, created\);/);
     assert.doesNotMatch(teacher, /skills\.value = \[\.\.\.skills\.value, created\]|skills\.value\.push\(/, 'a new skill is never appended out of order');
+});
+
+// ---- the award LOG reads the same sign the totals do (B1)
+
+test('a negative behaviour reads as a deduction in the log, whether it was stored as a magnitude or already signed', () => {
+    assert.equal(signedAwardPoints({ polarity: 'negative', points: 1 }), -1, 'stored +1: the total goes DOWN, so the row says -1');
+    assert.equal(signedAwardPoints({ polarity: 'negative', points: -2 }), -2, 'an older row stored signed is not flipped to +2');
+    assert.equal(awardPointsLabel({ polarity: 'negative', points: 1 }), '-1');
+    assert.equal(awardPointsLabel({ polarity: 'negative', points: -2 }), '-2');
+});
+
+test('every other polarity reads as stored: a positive gift adds, a positive skill docked with an override stays negative', () => {
+    assert.equal(awardPointsLabel({ polarity: 'positive', points: 3 }), '+3');
+    assert.equal(awardPointsLabel({ polarity: 'positive', points: -3 }), '-3', 'the server sums -3 here; the log must not say +3');
+    assert.equal(awardPointsLabel({ polarity: 'sideways', points: 2 }), '+2', 'an unrecognised polarity degrades to positive');
+    assert.equal(awardPointsLabel({ polarity: null, points: 0 }), '0');
+    assert.equal(signedAwardPoints({ polarity: 'positive', points: '4' }), 4, 'a numeric string from a payload is a number');
+});
+
+test('the teacher, office and family award logs print the signed figure, not the stored one', () => {
+    const teacherView = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    const familyView = readFileSync(new URL('../views/family/FamilyClass.vue', import.meta.url), 'utf8');
+    const officeView = readFileSync(new URL('../views/dashboard/groups/GroupPointsTab.vue', import.meta.url), 'utf8');
+
+    assert.match(teacherView, /\{\{ awardPointsLabel\(a\) \}\}/);
+    assert.match(familyView, /\{\{ awardPointsLabel\(a\) \}\}/);
+    assert.match(officeView, /\{\{ signedAwardPoints\(award\) \}\}/);
+    for (const [name, view] of [['teacher', teacherView], ['family', familyView]] as const) {
+        assert.doesNotMatch(view, /a\.points > 0 \? '\+' : ''/, `${name}: the stored value is never printed raw`);
+    }
+    assert.doesNotMatch(officeView, /\{\{ award\.points \}\}/, 'office: the stored value is never printed raw');
 });

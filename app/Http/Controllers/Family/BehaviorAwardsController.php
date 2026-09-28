@@ -90,7 +90,7 @@ class BehaviorAwardsController extends FamilyController
         // Both grouped columns are selected, so MySQL's ONLY_FULL_GROUP_BY is
         // satisfied and SQLite behaves identically.
         $rows = $base->clone()
-            ->selectRaw('skill_label, skill_polarity, COUNT(*) as awards_count, SUM(points) as points_total')
+            ->selectRaw('skill_label, skill_polarity, COUNT(*) as awards_count, SUM('.BehaviorAward::signedPointsSql().') as points_total')
             ->groupBy('skill_label', 'skill_polarity');
 
         // Positives first (T-003.1): the polarity column sorts alphabetically, so a

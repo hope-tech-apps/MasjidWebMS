@@ -784,6 +784,19 @@ positioning, not its configuration.
   `forceDelete()`, as it is for threads.
 - **Permissions**: `view contacts` / `manage contacts`, minting nothing.
   `Permission::count() === 8` stays pinned.
+- **A negative skill always SUBTRACTS in every total** (B1, 2026-09-28, owner
+  approved). The vocabulary and the award snapshot store a MAGNITUDE
+  (`points = 1` for "Talking out of turn"); direction comes from
+  `skill_polarity` at READ time through `BehaviorAward::signedPointsSql()`
+  (`CASE WHEN negative THEN -ABS(points) ELSE points END`), in the staff
+  summary, the family summary and the class totals. No stored row changes.
+  Before this, every `SUM(points)` ADDED a correction while the picker showed
+  "-1". Only negative-polarity rows move: every other row reads as stored, so a
+  positive-polarity award typed with a negative override (a teacher docking a
+  child) keeps netting what it always did, and an award row already stored signed
+  is not double-negated. The award LOG shows the same signed figure
+  (`signedAwardPoints`, `core/helpers/behaviorSkills.ts`) on the teacher, office
+  and family screens. Pinned by `BehaviorSignTest` and `behavior-skills.test.ts`.
 - **A picker (and a summary) reads POSITIVE FIRST** (T-003.1, 2026-09-28):
   positives, then negatives, then any unrecognised polarity, then by label.
   `BehaviorSkill::scopeInPickerOrder()` / `orderInPickerOrder()` is the ONE

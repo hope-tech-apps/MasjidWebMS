@@ -353,7 +353,7 @@
                         <ul v-else class="list-unstyled mb-3">
                             <li v-for="a in records[child.membership_id].awards" :key="a.id" class="d-flex gap-2 align-items-baseline">
                                 <span class="badge" :class="a.polarity === 'negative' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-success-subtle text-success-emphasis'">
-                                    {{ a.points > 0 ? '+' : '' }}{{ a.points }}
+                                    {{ awardPointsLabel(a) }}
                                 </span>
                                 <span class="small" dir="auto">
                                     {{ txAwardSkill(a) }}
@@ -900,6 +900,7 @@
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
 import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';

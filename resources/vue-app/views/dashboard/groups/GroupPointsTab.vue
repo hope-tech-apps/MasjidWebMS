@@ -114,7 +114,7 @@
                                 </span>
                                 <div v-if="award.note" class="small text-muted">{{ award.note }}</div>
                             </td>
-                            <td class="text-center">{{ award.points }}</td>
+                            <td class="text-center">{{ signedAwardPoints(award) }}</td>
                             <td class="small text-muted">{{ formatDate(award.awarded_at) }}</td>
                             <td class="small text-muted">{{ award.awarded_by?.name || '—' }}</td>
                             <td class="text-end">
@@ -269,6 +269,7 @@ import {
     BehaviorSkillPayload
 } from '@/core/types/data/masjid-related/Behavior';
 import { useBehaviorStore } from '@/stores/masjid/behaviorStore';
+import { signedAwardPoints } from '@/core/helpers/behaviorSkills';
 import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
 import Swal from 'sweetalert2';
 

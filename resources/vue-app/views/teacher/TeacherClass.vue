@@ -774,7 +774,7 @@
                         <li v-for="a in awards" :key="a.id" class="d-flex gap-2 align-items-baseline py-1 border-bottom">
                             <span class="badge"
                                   :class="a.polarity === 'negative' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-success-subtle text-success-emphasis'">
-                                {{ a.points > 0 ? '+' : '' }}{{ a.points }}
+                                {{ awardPointsLabel(a) }}
                             </span>
                             <span class="small flex-grow-1">
                                 {{ a.skill_label }}
@@ -2163,7 +2163,7 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
-import { pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
+import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,

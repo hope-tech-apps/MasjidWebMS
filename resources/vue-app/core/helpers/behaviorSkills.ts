@@ -63,3 +63,25 @@ export function pickerFrom<T extends PickerSkill>(
         selectedId: currentId ? currentId : defaultSkillId(skills),
     };
 }
+
+/**
+ * What one award moved a child's total by, for the award LOG (B1).
+ *
+ * A negative-polarity award is stored as its magnitude (`points = 1`), and every
+ * total subtracts it (`BehaviorAward::signedPointsSql()`), so the log row must
+ * read "-1" beside a total that went down, not "+1". Any other polarity reads as
+ * stored, which is what the server sums: a positive skill given with an override
+ * of -3 is -3 in the total and -3 here.
+ */
+export function signedAwardPoints(award: { polarity?: string | null; points?: number | string | null }): number {
+    const points = Number(award?.points ?? 0);
+
+    return award?.polarity === 'negative' ? -Math.abs(points) : points;
+}
+
+/** "+2", "-1", "0": the log badge's text for `signedAwardPoints`. */
+export function awardPointsLabel(award: { polarity?: string | null; points?: number | string | null }): string {
+    const points = signedAwardPoints(award);
+
+    return `${points > 0 ? '+' : ''}${points}`;
+}

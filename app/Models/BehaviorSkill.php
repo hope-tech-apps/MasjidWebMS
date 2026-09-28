@@ -37,10 +37,12 @@ class BehaviorSkill extends Model
     /**
      * Whether this skill recognises something or corrects it.
      *
-     * A separate column rather than the sign of `default_points` on purpose: a
-     * school is free to run "Disruption, 1 point" as a tally, and a summary
-     * still has to be able to say which of those points were encouragement. The
-     * two facts are independent, so they are stored independently.
+     * A separate column rather than the sign of `default_points` on purpose: the
+     * vocabulary stores a MAGNITUDE ("Disruption, 1") and polarity carries the
+     * direction, so a summary can say which points were encouragement and a school
+     * never has to type a minus sign. The two facts are stored independently and
+     * READ together: every total treats a negative skill as SUBTRACTING its
+     * magnitude (BehaviorAward::signedPointsSql(), B1).
      *
      * PHP constants, NOT a DB enum — the same reasoning as
      * GroupMembership::ROLES: adding a polarity must never require

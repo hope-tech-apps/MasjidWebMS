@@ -167,7 +167,7 @@ class BehaviorAwardsController extends Controller
         // grouped columns are selected, so MySQL's ONLY_FULL_GROUP_BY is happy
         // and SQLite behaves identically.
         $rows = $base->clone()
-            ->selectRaw('skill_label, skill_polarity, COUNT(*) as awards_count, SUM(points) as points_total')
+            ->selectRaw('skill_label, skill_polarity, COUNT(*) as awards_count, SUM('.BehaviorAward::signedPointsSql().') as points_total')
             ->groupBy('skill_label', 'skill_polarity');
 
         // Positives first (T-003.1): the polarity column sorts alphabetically, so a
@@ -238,9 +238,10 @@ class BehaviorAwardsController extends Controller
      *   - in ROSTER order, with no rank and no position field. Sorting by points
      *     is the leaderboard, and a client that wants it would have to build it;
      *   - each total is the SAME number `summary` reports as `totals.points`
-     *     (and the family summary a parent reads): the net SUM of the
-     *     snapshotted points over non-revoked awards, negatives included. One
-     *     definition, pinned by a test that compares them.
+     *     (and the family summary a parent reads): the net of the snapshotted
+     *     points over non-revoked awards, with negative-polarity awards
+     *     SUBTRACTING (`BehaviorAward::signedPointsSql()`, B1). One definition,
+     *     pinned by a test that compares them.
      *
      * The class figure is the sum of the rows returned, so it can never
      * disagree with the list beneath it. Awards of a child who has since left
@@ -263,7 +264,7 @@ class BehaviorAwardsController extends Controller
 
         $sums = $this->readableAwards($request->user(), $group)
             ->whereIn('group_membership_id', $students->pluck('id'))
-            ->selectRaw('group_membership_id, COUNT(*) as awards_count, SUM(points) as points_total')
+            ->selectRaw('group_membership_id, COUNT(*) as awards_count, SUM('.BehaviorAward::signedPointsSql().') as points_total')
             ->groupBy('group_membership_id')
             ->get()
             ->keyBy('group_membership_id');
