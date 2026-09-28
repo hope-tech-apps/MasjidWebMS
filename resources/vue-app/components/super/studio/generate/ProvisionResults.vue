@@ -124,7 +124,7 @@ const applied = computed(() => props.result.capabilities_applied ?? null);
  * cannot be done, the line says only what the server's list means.
  */
 const split = computed(() => (applied.value
-    ? splitApplied(applied.value.changed, catalogueFor(props.result.masjid.org_type), props.result.app_publishing?.enabled_platforms)
+    ? splitApplied(applied.value, catalogueFor(props.result.masjid.org_type), props.result.app_publishing?.enabled_platforms)
     : null));
 /** Each suggested key, with the platforms that suggested it, by name. */
 const suggestedWith = computed(() => new Map((split.value?.suggested ?? [])

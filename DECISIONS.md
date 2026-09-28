@@ -4558,3 +4558,9 @@ Verified: `npm run test:spa`, `npm run build`, `vue-tsc` (101 errors, the baseli
 `php -l` on the PHP files. Not verified here: the PHP suite, including `CitySearchTest` and the Studio
 source tests (no PHP on the dev Mac), MySQL behaviour of the search (ASSUMPTIONS 26), and the combobox in a
 real browser.
+
+Review fix (CITY-1, 2026-09-28): `splitApplied()` now takes the whole `capabilities_applied` and also walks
+`unchanged`. A switch a platform preselected that the operator turned off sits at its default, so the server
+lists it as unchanged; it now counts as "changed by you", agreeing with the Step 3 review, and is taken out
+of the "at a new organisation's defaults" count so no switch is counted twice. Chosen over dropping the
+"changed by you" wording because the review already makes that claim.

@@ -226,8 +226,9 @@ export type AppliedSplit = {
  * Splits what the server reports as differing from a new organisation's
  * defaults (CapabilityWriter::applyAtCreation, against `default_at_creation`
  * alone) into the switches still where a platform's preselection put them and
- * the ones the operator changed. `platforms` must be the ones the organisation
- * was CREATED with, from the server's answer (`app_publishing.
+ * the ones the operator changed, which includes a preselection turned back
+ * off (listed by the server as unchanged). `platforms` must be the ones the
+ * organisation was CREATED with, from the server's answer (`app_publishing.
  * enabled_platforms`), never the draft's answers as they stand now.
  *
  * Null when it cannot be told: no catalogue, no platforms reported, or a key
@@ -235,7 +236,7 @@ export type AppliedSplit = {
  * from the defaults, which is what the server said.
  */
 export function splitApplied(
-    changed: StudioCapabilitiesApplied['changed'],
+    applied: StudioCapabilitiesApplied,
     catalogue: StudioCatalogue | null,
     platforms: readonly string[] | null | undefined,
 ): AppliedSplit | null {
@@ -243,7 +244,7 @@ export function splitApplied(
 
     const entries = entriesByKey(catalogue);
     const split: AppliedSplit = { suggested: [], suggestedWith: [], byYou: [] };
-    for (const change of changed) {
+    for (const change of applied.changed) {
         const entry = entries.get(change.key);
         if (!entry) return null;
         if (change.enabled === startingValue(entry, platforms) && change.enabled !== entry.default_at_creation) {
@@ -251,6 +252,15 @@ export function splitApplied(
             addSuggesters(split.suggestedWith, entry, platforms);
         } else {
             split.byYou.push(change);
+        }
+    }
+
+    // A preselected switch the operator turned off is back at its default, so
+    // the server files it under `unchanged`; it is still the operator's change.
+    for (const key of applied.unchanged) {
+        const entry = entries.get(key);
+        if (entry && startingValue(entry, platforms) && !entry.default_at_creation) {
+            split.byYou.push({ key, enabled: false });
         }
     }
 
@@ -268,12 +278,15 @@ export function appliedText(
     split: AppliedSplit | null,
     nameOf: (platform: string) => string = (platform) => platform,
 ): string {
-    const unchanged = applied.unchanged.length;
     if (!split) {
+        const unchanged = applied.unchanged.length;
         const differ = applied.changed.length;
         return `Features: ${differ} ${differ === 1 ? 'differs' : 'differ'} from a new organisation's defaults, ${unchanged} ${unchanged === 1 ? 'matches' : 'match'} them`;
     }
 
+    // Switches the operator turned back off are in byYou but also in the server's unchanged list.
+    const changedKeys = new Set(split.byYou.map((change) => change.key));
+    const unchanged = applied.unchanged.filter((key) => !changedKeys.has(key)).length;
     const parts: string[] = [];
     if (split.suggested.length) parts.push(`${split.suggested.length} suggested with ${split.suggestedWith.map(nameOf).join(', ')}`);
     parts.push(`${split.byYou.length} changed by you`);

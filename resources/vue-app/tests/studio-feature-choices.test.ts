@@ -189,7 +189,7 @@ test("the results split the server's departures with the platforms it created th
         unchanged: ['born_on', 'rare'],
     };
 
-    const split = splitApplied(applied.changed, catalogue(), ['ios', 'web']);
+    const split = splitApplied(applied, catalogue(), ['ios', 'web']);
     assert.deepEqual(split, {
         suggested: [{ key: 'site_grant', enabled: true, with: ['web'] }],
         suggestedWith: ['web'],
@@ -200,20 +200,35 @@ test("the results split the server's departures with the platforms it created th
     // The walkthrough's case: nothing moved, Web chosen. Nothing is called changed.
     const onlyWeb = { changed: [{ key: 'site_grant', enabled: true }], unchanged: ['born_on', 'rare', 'plain'] };
     assert.equal(
-        appliedText(onlyWeb, splitApplied(onlyWeb.changed, catalogue(), ['web']), label),
+        appliedText(onlyWeb, splitApplied(onlyWeb, catalogue(), ['web']), label),
         "Features: 1 suggested with Web, 0 changed by you, 3 at a new organisation's defaults",
     );
 
     // The same switch on without Web is the operator's own.
-    assert.deepEqual(splitApplied(onlyWeb.changed, catalogue(), ['ios'])?.byYou, [{ key: 'site_grant', enabled: true }]);
+    assert.deepEqual(splitApplied(onlyWeb, catalogue(), ['ios'])?.byYou, [{ key: 'site_grant', enabled: true }]);
+});
+
+test('a suggestion the operator turned off is counted as their change, agreeing with the review', () => {
+    // Web chosen, site_grant turned off: at its default, so the server lists it as unchanged.
+    const applied = { changed: [], unchanged: ['born_on', 'rare', 'site_grant', 'plain'] };
+    const split = splitApplied(applied, catalogue(), ['web']);
+    assert.deepEqual(split?.byYou, [{ key: 'site_grant', enabled: false }]);
+    assert.deepEqual(split?.suggested, []);
+    assert.equal(appliedText(applied, split, label), "Features: 1 changed by you, 3 at a new organisation's defaults");
+
+    const map = { ...fullChoiceMap(catalogue(), {}, ['web']), site_grant: false };
+    assert.equal(featureCounts(map, catalogue(), ['web']).changed, 1);
+
+    // Without Web there was no suggestion to turn off.
+    assert.deepEqual(splitApplied(applied, catalogue(), ['ios'])?.byYou, []);
 });
 
 test("when the split cannot be told, the results say only what the server's list means", () => {
     const applied = { changed: [{ key: 'site_grant', enabled: true }], unchanged: ['born_on', 'rare', 'plain'] };
 
-    assert.equal(splitApplied(applied.changed, null, ['web']), null, 'no catalogue');
-    assert.equal(splitApplied(applied.changed, catalogue(), null), null, 'no platforms reported');
-    assert.equal(splitApplied([{ key: 'unknown_key', enabled: true }], catalogue(), ['web']), null, 'a key the catalogue does not describe');
+    assert.equal(splitApplied(applied, null, ['web']), null, 'no catalogue');
+    assert.equal(splitApplied(applied, catalogue(), null), null, 'no platforms reported');
+    assert.equal(splitApplied({ changed: [{ key: 'unknown_key', enabled: true }], unchanged: [] }, catalogue(), ['web']), null, 'a key the catalogue does not describe');
 
     assert.equal(appliedText(applied, null), "Features: 1 differs from a new organisation's defaults, 3 match them");
     assert.equal(appliedText({ changed: [], unchanged: ['a'] }, null), "Features: 0 differ from a new organisation's defaults, 1 matches them");
@@ -231,7 +246,7 @@ test('neither Step 3 screen calls a preselection a change any more', () => {
     assert.match(review, /featureCountsText\(features, platformLabel\)/);
 
     // The platforms the SERVER created the organisation with, never the draft's answers (StudioGenerateStepSourceTest).
-    assert.match(results, /splitApplied\(applied\.value\.changed, catalogueFor\(props\.result\.masjid\.org_type\), props\.result\.app_publishing\?\.enabled_platforms\)/);
+    assert.match(results, /splitApplied\(applied\.value, catalogueFor\(props\.result\.masjid\.org_type\), props\.result\.app_publishing\?\.enabled_platforms\)/);
     assert.match(results, /\{\{ appliedText\(applied, split, platformLabel\) \}\}/);
     assert.doesNotMatch(results, /store\.answers/);
 });
