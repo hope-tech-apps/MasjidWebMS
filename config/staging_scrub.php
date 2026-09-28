@@ -334,6 +334,15 @@ return [
             'stripe_payment_intent_id',
         ],
 
+        'orders' => [
+            // A cart checkout's page and payment on the organisation's LIVE account,
+            // nulled as meal_orders null theirs so staging never asks a test-mode
+            // account about a live cs_/pi_ id. The key would replay a live page.
+            'stripe_checkout_session_id',
+            'stripe_payment_intent_id',
+            'idempotency_key',
+        ],
+
         'meal_order_top_ups' => [
             // A paid order's top-up page and its payment, on the organisation's live
             // account: nulled as meal_orders null theirs, so staging never asks a
@@ -471,6 +480,10 @@ return [
 
         'masjid_sms_senders' => [
             'registration_status' => 'fixed:unregistered', // force the sender un-registered so staging cannot believe it may text
+        ],
+
+        'orders' => [
+            'buyer_email' => 'email',
         ],
 
         'meal_orders' => [

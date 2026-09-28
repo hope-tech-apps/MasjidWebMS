@@ -114,6 +114,9 @@ class MemberAccountDeletionCoverageTest extends TestCase
             // donations the same order produced.
             'historical_orders' => ['contact_id'],
             'meal_orders' => ['contact_id'],
+            // 2026-09-28: a cart checkout — a sale the organisation keeps, beside the
+            // other two sales above. Its unpaid basket is LOGIN plumbing instead.
+            'orders' => ['contact_id'],
             'registrants' => ['contact_id'],
             'registrations' => ['contact_id'],
         ], MemberAccountDeletion::OFFICE_RECORDS);

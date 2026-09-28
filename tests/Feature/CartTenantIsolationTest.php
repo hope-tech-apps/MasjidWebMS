@@ -5,8 +5,11 @@ namespace Tests\Feature;
 use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Masjid;
+use App\Models\Order;
+use App\Models\OrderItem;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -148,6 +151,74 @@ class CartTenantIsolationTest extends TestCase
         ]);
 
         $this->assertSame($this->masjidA->id, (int) $line->masjid_id);
+    }
+
+    private function orderIn(Masjid $org): Order
+    {
+        return Order::create([
+            'masjid_id' => $org->id,
+            'uuid' => (string) Str::uuid(),
+            'order_number' => strtoupper(Str::random(8)),
+            'total_minor' => 5000,
+            'currency' => 'usd',
+            'charge_account_id' => 'acct_' . uniqid(),
+            'idempotency_key' => 'cart_order_' . Str::uuid(),
+        ]);
+    }
+
+    #[Test]
+    public function a_bound_tenant_cannot_read_another_organizations_order(): void
+    {
+        // An order is a sale — the organisation's record, not the shopper's — and
+        // it names the account the money went to.
+        $bId = $this->orderIn($this->masjidB)->id;
+
+        $this->tenant->set($this->masjidA->id);
+
+        $this->assertNull(Order::find($bId), 'another organisation\'s order must not be found');
+        $this->assertSame(0, Order::where('id', $bId)->count());
+        $this->assertSame(0, Order::where('id', $bId)->update(['status' => Order::STATUS_PAID]));
+        $this->assertSame(0, Order::where('id', $bId)->delete());
+
+        $this->tenant->forgetTenant();
+        $this->assertSame(Order::STATUS_PENDING, Order::find($bId)->status, 'the refusals changed nothing');
+    }
+
+    #[Test]
+    public function a_bound_tenant_cannot_read_another_organizations_order_lines(): void
+    {
+        $order = $this->orderIn($this->masjidB);
+        $bId = OrderItem::create([
+            'order_id' => $order->id, 'masjid_id' => $this->masjidB->id,
+            'buyable_type' => CartItem::TYPE_DONATION, 'buyable_id' => 1,
+            'recorded_as' => CartItem::RECORDED_AS_DONATION, 'label' => 'Zakat-ul-Fitr',
+            'quantity' => 1, 'unit_amount_minor' => 5000, 'total_minor' => 5000, 'currency' => 'usd',
+        ])->id;
+
+        $this->tenant->set($this->masjidA->id);
+
+        $this->assertNull(OrderItem::find($bId));
+        $this->assertSame(0, OrderItem::where('id', $bId)->update(['total_minor' => 1]));
+        $this->assertSame(0, OrderItem::where('id', $bId)->delete());
+    }
+
+    #[Test]
+    public function creating_an_order_stamps_the_bound_tenant_over_a_client_supplied_masjid_id(): void
+    {
+        $this->tenant->set($this->masjidA->id);
+
+        $order = $this->orderIn($this->masjidB);   // tries to plant it in B
+
+        $this->assertSame($this->masjidA->id, (int) $order->masjid_id);
+    }
+
+    #[Test]
+    public function an_order_never_serialises_its_idempotency_key_or_pinned_account(): void
+    {
+        $order = $this->orderIn($this->masjidA);
+
+        $this->assertArrayNotHasKey('idempotency_key', $order->toArray(), 'the key would let a caller replay a page');
+        $this->assertArrayNotHasKey('charge_account_id', $order->toArray(), 'the account id belongs to the organisation');
     }
 
     #[Test]

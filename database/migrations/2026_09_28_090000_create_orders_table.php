@@ -1,0 +1,113 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * An order: what one checkout of a basket charged (universal cart, DECISIONS
+ * 2026-09-26; design §11).
+ *
+ * orders — ONE ROW PER CHECKOUT ATTEMPT THAT OPENED A STRIPE PAGE.
+ *
+ *   A basket is the shopper's; an order is the ORGANISATION'S. That is why they
+ *   differ on deletion: `carts.contact_id` cascades (login plumbing, gone with the
+ *   account) while an order is a sale the office keeps — MemberAccountDeletion
+ *   lists it with meal_orders and historical_orders, and `contact_id` here only
+ *   nulls out. `cart_id` nulls out too, so erasing the basket never erases the sale.
+ *
+ *   The columns mirror historical_orders on purpose (`order_number`, `status`,
+ *   `total_minor`, `fee_minor`, `currency`), so the portal's "my orders" can list
+ *   nine years of imported Wix orders beside new ones without a translation layer.
+ *   They are separate TABLES because historical rows were paid through Square and
+ *   PayPal and every "what Manara processed" report leaves them out.
+ *
+ *   `charge_account_id` PINS the connected account the page was opened on, as
+ *   FormResponse does: every later retrieve, expire and webhook match uses the pin,
+ *   never a fresh lookup, so a change to the organisation's account cannot redirect
+ *   a payment already in flight. `idempotency_key` is saved BEFORE the Stripe call,
+ *   and `total_minor` is the snapshot the webhook's amount_total is checked against —
+ *   never recomputed at payment time.
+ *
+ *   Status moves only forward and only by the webhook: pending → paid, or pending →
+ *   expired. Checkout never marks anything paid.
+ *
+ * order_items — WHAT THE ORDER CHARGED FOR, frozen at checkout.
+ *
+ *   A snapshot, not a reference: a later price edit or a deleted dish must not
+ *   change what a receipt says was bought. `record_type` / `record_id` link each line
+ *   to the real record its own service created (a form response, a meal order, a
+ *   donation), and `recorded_as` keeps the historical_orders vocabulary so a
+ *   receipt can separate a gift from a purchase.
+ *
+ * Index names are written by hand (MySQL caps an identifier at 64 characters).
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('orders', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('masjid_id')->constrained()->cascadeOnDelete();
+            $table->uuid('uuid');
+            $table->string('order_number', 32);
+
+            // The basket it came from, and the buyer — both null out, never cascade:
+            // the sale outlives both.
+            $table->foreignId('cart_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('contact_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('buyer_email', 255)->nullable();
+
+            $table->string('status', 16)->default('pending');
+
+            $table->unsignedBigInteger('total_minor');
+            $table->unsignedBigInteger('fee_minor')->default(0);
+            $table->char('currency', 3)->default('usd');
+
+            $table->string('charge_account_id', 64);
+            $table->string('idempotency_key', 64)->nullable();
+            $table->string('stripe_checkout_session_id', 255)->nullable();
+            $table->string('stripe_payment_intent_id', 255)->nullable();
+            $table->timestamp('checkout_expires_at')->nullable();
+            $table->timestamp('paid_at')->nullable();
+
+            $table->timestamps();
+
+            $table->unique('uuid', 'orders_uuid_unique');
+            $table->unique(['masjid_id', 'order_number'], 'orders_tenant_number_unique');
+            $table->unique('stripe_checkout_session_id', 'orders_checkout_session_unique');
+            $table->index(['masjid_id', 'status'], 'orders_tenant_status_index');
+            $table->index(['masjid_id', 'contact_id'], 'orders_tenant_contact_index');
+        });
+
+        Schema::create('order_items', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('order_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('masjid_id')->constrained()->cascadeOnDelete();
+
+            $table->string('buyable_type', 64);
+            $table->unsignedBigInteger('buyable_id');
+            $table->string('recorded_as', 16);
+            $table->string('label', 255);
+            $table->unsignedInteger('quantity');
+            $table->unsignedBigInteger('unit_amount_minor');
+            $table->unsignedBigInteger('total_minor');
+            $table->char('currency', 3)->default('usd');
+
+            // The real record the line's own service created for it.
+            $table->string('record_type', 64)->nullable();
+            $table->unsignedBigInteger('record_id')->nullable();
+
+            $table->timestamps();
+
+            $table->index('order_id', 'order_items_order_index');
+            $table->index(['record_type', 'record_id'], 'order_items_record_index');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('order_items');
+        Schema::dropIfExists('orders');
+    }
+};

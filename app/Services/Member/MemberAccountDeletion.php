@@ -132,6 +132,10 @@ class MemberAccountDeletion
         // which the same order's gifts already sit in.
         'historical_orders' => ['contact_id'],
         'meal_orders' => ['contact_id'],
+        // 2026-09-28: a cart checkout — a sale the organisation keeps, like
+        // meal_orders and historical_orders. (Its unpaid BASKET is login plumbing,
+        // listed in LOGIN_RECORDS below and cleared with the account.)
+        'orders' => ['contact_id'],
         'registrants' => ['contact_id'],
         'registrations' => ['contact_id'],
     ];
