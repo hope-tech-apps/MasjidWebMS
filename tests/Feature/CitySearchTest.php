@@ -54,13 +54,13 @@ class CitySearchTest extends TestCase
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
 
         // Canada first, so its Raleigh has the lowest id of all: dedupe must be per country.
-        $this->canada = Country::create(['name' => 'Canada', 'code' => 'CA'])->id;
-        $this->usa = Country::create(['name' => 'United States', 'code' => 'US'])->id;
+        $this->canada = Country::forceCreate(['name' => 'Canada', 'code' => 'CA'])->id;
+        $this->usa = Country::forceCreate(['name' => 'United States', 'code' => 'US'])->id;
     }
 
     private function city(int $countryId, string $name): City
     {
-        return City::create(['name' => $name, 'country_id' => $countryId]);
+        return City::forceCreate(['name' => $name, 'country_id' => $countryId]);
     }
 
     private function actAsSuper(): void
