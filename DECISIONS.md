@@ -5381,3 +5381,18 @@ organisational-domain fallback. No `_dmarc.manara` record, which would take its 
 dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
 Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
 Reply-To bounces.
+## 2026-09-28 — Donation row build extracted from the door: `DonationService::createPendingDonation`
+Decision: the `Donation::create` that `createDonationCheckout` ran before opening Stripe is now
+`DonationService::createPendingDonation`, and the door calls it and reads every value back off the
+returned row. It writes the row and nothing else: no Stripe call, no email, and NO gate (form or
+fund open, `canAcceptDonations`, giving switch, amount bounds stay in `DonationsController`). The
+universal cart calls it only AFTER the shopper has paid, so a gate here would turn taken money into
+an unrecorded payment. `application_fee_amount` and `idempotency_key` are optional inputs whose
+defaults are the door's; `is_zakat` and `zakat_source` are not inputs, only the giver's `zakat`
+answer is, and `ZakatDesignation::resolve` remains the one place it is decided.
+Alternatives: give the cart `Donation::create` of its own (a second zakat/gross-up implementation
+that drifts), or route the cart through `createDonationCheckout` (opens a Session per line).
+Rationale: behaviour-preserving move; pinned by `tests/Feature/Cart/PendingDonationTest.php` and the
+untouched `DonationFlowTest`. Settlement (`markSucceeded` with the cart's own PI and this line's own
+fee/net, then the receipt) is a separate task; `markSucceeded` has no status guard, so the cart must
+check `pending` itself.
