@@ -229,6 +229,24 @@ class CartPricerTest extends TestCase
     }
 
     #[Test]
+    public function an_account_id_that_is_not_a_connected_account_is_never_a_payee(): void
+    {
+        // canAcceptDonations() alone passes any non-null string; a bogus id sent as
+        // `stripe_account` would charge the PLATFORM. Food and donations must be held to
+        // the same isAccount() test forms already are.
+        $org = $this->org(['stripe_account_id' => 'not_a_connected_account']);
+        $cart = $this->cart($org);
+        $this->add($cart, CartItem::TYPE_DONATION, $this->fund($org)->id, 5000);
+        $this->add($cart, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200, 1, ['pickup_at' => now()->addDays(3)->toIso8601String()]);
+
+        $priced = (new CartPricer)->price($cart);
+
+        $this->assertNull($priced->destinationAccountId);
+        $this->assertFalse($priced->isPayable());
+        $this->assertSame(0, $priced->totalMinor);
+    }
+
+    #[Test]
     public function an_unknown_line_type_is_refused_rather_than_guessed(): void
     {
         $org = $this->org();

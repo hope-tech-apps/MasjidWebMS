@@ -172,9 +172,22 @@ final class CartPricer
         return [CartLineOutcome::gone($label, 'This cannot be paid for here.'), null];
     }
 
-    /** The account food and donations go to: the org's own, and only when Stripe says it can charge. */
+    /**
+     * The account food and donations go to: the org's own, and only when Stripe says
+     * it can charge AND the id is really a connected account.
+     *
+     * canAcceptDonations() only asks for a non-null id, so on its own it would pass
+     * any string — and an empty or bogus `stripe_account` sends the call to the
+     * PLATFORM, making it merchant of record. The form rule (FormChargeAccount::for)
+     * already demands isAccount(); food and donations are held to the same test here,
+     * so a bogus id is refused as a line rather than left for checkout's last guard.
+     */
     private function ownAccount(Masjid $org): ?string
     {
-        return $org->canAcceptDonations() ? (string) $org->stripe_account_id : null;
+        if (! $org->canAcceptDonations() || ! FormChargeAccount::isAccount($org->stripe_account_id)) {
+            return null;
+        }
+
+        return (string) $org->stripe_account_id;
     }
 }
