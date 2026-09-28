@@ -4251,8 +4251,10 @@ calls below are where the build departs from, or answers, `docs/manara-studio-w2
 
 - **The flag.** `jumaa_settings.is_default` is nullable with no backfill: true = the 13:30
   placeholder provisioning writes when no `jumaa_iqama` is given (same truthiness as the old
-  `?: '13:30'`), false = a person gave the time (provisioning with one, or any admin Jumu'ah
-  save), NULL = every row that predates the column, which is every live organisation. The column
+  `?: '13:30'`), false = a time was supplied (provisioning with a `jumaa_iqama`, or an admin
+  save that carries an iqama, or athans or shifts saved on a placeholder, which also nulls its
+  13:30), NULL = every row that predates the column, which is every live organisation, and
+  admin saves leave it NULL. The column
   is `$hidden`, because the row is serialized raw into `/prayers/settings`, the admin screen and
   every Friday's `prayers.jumaa_data`; it reaches clients only as `jumaa_is_default: true`, sent
   only when true. Every reader (MasjidKit `suppliedJumaa`, iPhone `showsJumaa`, Android
@@ -4296,15 +4298,22 @@ calls below are where the build departs from, or answers, `docs/manara-studio-w2
   locale, `BoardFormat.numberLocale`: en_US_POSIX in English, as before, and Arabic words with
   Latin digits in Arabic, never the device region's digits. **Owner, 2026-09-28: Latin digits
   on the Arabic board**, which is what that function does; it is the one place to change if that
-  ever changes. Still open with the owner: whether the language should follow the
-  organisation's `website_locale` once S12 lands, and the labels themselves (needs-review).
+  ever changes. **Owner, 2026-09-28: the board's language follows the organisation's website
+  language** (`masjids.website_locale`, added by W2 S12), not the Apple TV's. That is a follow-up
+  slice after this one: the board reads the locale from a payload it already fetches (agreed with
+  the S12 owner; tv-config or `/api/v1/settings` rather than a new endpoint), English when the
+  field is absent, so every live board is unchanged until an organisation sets it; Arabic keeps
+  Latin digits; and the locale is cached with keep-last-good, so a failed fetch never flips the
+  language. Until then the S18 build follows the Apple TV's language. The Arabic labels stay
+  needs-review until the owner signs them off.
 - **Light theme.** tv-config `theme: "light"` drew white text on a light background; a palette
   gives it dark ink. Every dark value is the literal the views used before.
 
-Observed, not changed (a decision for the owner, before the first Studio app ships): a Jumu'ah
-time supplied at provisioning is stored only as the Jumu'ah `iqama`, with no `athans`, and both
-phone apps draw Jumu'ah from `athans`/`shifts`, so a Studio client that gave a time sees an empty
-(iPhone) or no (Android) Friday card until an admin saves the Jumu'ah screen with times; the TV
-board does draw it. That predates S18. Teaching the phones to fall back to `iqama` would start
-drawing Al-Razi's and BISS's stored 13:30 too (their rows predate the flag), so it is not a
-silent fix.
+Phones and a provisioning-supplied Jumu'ah time. **Owner, 2026-09-28: the phone apps keep showing
+ONLY khutbah times (`athans`/`shifts`), with no fallback to the Jumu'ah `iqama`.** No app change.
+Today a Jumu'ah time given at provisioning is stored only as `iqama` (no `athans`), so the phones
+draw no time for it while the TV board does. The fix belongs in Studio's Step 0 prayer slice (T2),
+which will store Studio's Jumu'ah times as khutbah times. The flag must follow: a provisioning
+that gives any khutbah time or an iqama is supplied (`is_default` false), and the 13:30 iqama is
+written, flagged, only when neither is given. An iqama nobody gave is never written beside
+supplied khutbah times.

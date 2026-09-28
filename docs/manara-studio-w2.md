@@ -2048,7 +2048,10 @@ events calendar; a donation / fundraising appeal." The school board is out.
     - a nullable boolean `jumaa_settings.is_default`. `OrganisationProvisioner`
       sets it true when it writes the 13:30 default
       (`app/Support/Studio/OrganisationProvisioner.php:165-168`), and the admin
-      Jumu'ah save sets it false;
+      Jumu'ah save sets it false; (built: only a save that supplies an iqama,
+      athans or shifts clears it, athans or shifts on a placeholder also null
+      its 13:30 iqama, a save with no time keeps it, and NULL rows are
+      untouched. DECISIONS.md 2026-09-27, S18 review fix);
     - the prayer-settings payload emits `jumaa_is_default: true` **only when it
       is true**, the W1 R11 pattern, so every live organisation's bytes are
       unchanged (ABI).
