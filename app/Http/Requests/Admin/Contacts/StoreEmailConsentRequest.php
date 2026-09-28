@@ -6,7 +6,8 @@ use App\Http\Requests\BaseFormRequest;
 
 /**
  * Staff recording that a contact consented, in Manara, to this organisation's
- * email — which lifts an import's `not_opted_in` precaution and nothing else
+ * email — which lifts a row an import wrote for want of consent (`not_opted_in`
+ * or the order-history hold) and nothing else
  * (the broadcast opt-out service's liftPrecaution(); the controller is the
  * one file here allowed to name it, per EmailUnsubscribeTest's guard).
  *

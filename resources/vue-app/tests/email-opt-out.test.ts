@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emailConsentBody, emailOptOutBadge } from '../views/dashboard/contacts/emailOptOut.ts';
+import { emailConsentBody, emailConsentPrompt, emailOptOutBadge } from '../views/dashboard/contacts/emailOptOut.ts';
 
 test('an import\'s "not opted in" reads differently from an unsubscribe, and only it offers recording consent', () => {
     assert.deepEqual(emailOptOutBadge('2026-10-01', 'not_opted_in'), { label: 'Emails: not opted in (imported)', canRecordConsent: true });
@@ -12,6 +12,18 @@ test('an import\'s "not opted in" reads differently from an unsubscribe, and onl
     for (const reason of ['unsubscribe_link', 'imported_opt_out', 'complaint', 'manual']) {
         assert.deepEqual(emailOptOutBadge('2026-10-01', reason), { label: 'Emails: unsubscribed', canRecordConsent: false }, reason);
     }
+});
+
+test('an order-history hold reads as a hold, not an unsubscribe, and offers recording consent like "not opted in"', () => {
+    assert.deepEqual(emailOptOutBadge('2026-10-01', 'order_history_import'), { label: 'Emails: held (imported order, no consent on record)', canRecordConsent: true });
+});
+
+test('the consent dialog for an order-history hold does not claim the old website lacked consent', () => {
+    const order = emailConsentPrompt('order_history_import');
+    assert.match(order, /imported order/);
+    assert.match(order, /no consent to email is on record in Manara/);
+    assert.doesNotMatch(order, /old website/, 'the order import never read the old website\'s consent');
+    assert.match(emailConsentPrompt('not_opted_in'), /old website had no consent/);
 });
 
 test('no badge for a mailable address, and a record without its reason yet reads as the stricter "unsubscribed"', () => {

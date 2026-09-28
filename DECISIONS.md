@@ -4106,6 +4106,100 @@ Tests, each run against a mutant that removes what it pins (logs on the droplet 
 - `KitchenOrderFlowTest::a_card_order_whose_page_fails_inside_checkout_gets_the_fixed_sentence_not_the_failures_own_words`,
   the database and garbled-Stripe cases for the kitchen door.
 
+## 2026-09-27 — Staff consent lifts the Wix order-history hold; the contact import still does not
+The order-history import (`crm:import-wix-orders`) holds the address of every Wix buyer it has to
+create (`EmailSuppression::REASON_ORDER_HISTORY_HOLD`, `order_history_import`). Its docblock said "a
+later consent decision may lift" such a hold, but the staff consent path lifted only `not_opted_in`,
+and the member record badged the hold as "Emails: unsubscribed", which is untrue.
+- **Staff may lift an order-history hold exactly as they lift `not_opted_in`.** New
+  `EmailSuppression::STAFF_LIFTABLE_REASONS = [not_opted_in, order_history_import]`, read by
+  `EmailSuppressionService::liftPrecaution`: same endpoint, same required evidence, same
+  `release_source = staff_recorded_consent`, `release_evidence`, `released_by_user_id`, same 422 for
+  every other reason. Both reasons mean "an import had no consent on record", never "the person
+  asked". Pinned by `ContactEmailConsentTest::staff_can_lift_an_order_history_hold_exactly_as_they_lift_a_not_opted_in_precaution`
+  and `every_reason_but_the_two_import_precautions_is_refused_to_staff_including_any_added_later`
+  (sweeps every `REASON_*` constant, so a reason added later is refused until decided).
+- **The badge says "Emails: held (imported order, no consent on record)"** with the same "Record
+  consent to email" action (`emailOptOut.ts`, pinned in `email-opt-out.test.ts`).
+- **`order_history_import` does NOT join `PRECAUTION_REASONS`.** Every use checked: (1)
+  `WixContactImport::counts()` filters its own planned reasons, which can never be the order hold, so
+  membership would change nothing there; (2) `WixContactImport::undo()` deletes a row its batch linked
+  in `import_links` when the reason is in `PRECAUTION_REASONS`. Neither import can naturally name the
+  other's row (each inserts only where the address has no row at all), so today the lists only
+  matter as the SECOND key: each undo deletes a row only when its own record names it AND the reason
+  is its own (`WixOrderHistoryImporter` checks `reason === order_history_import`). Kept disjoint, a
+  provenance record that ever pointed at the other import's row still cannot delete it; merged, the
+  contact-import undo would delete an order hold its record happened to name. The shared meaning
+  ("staff may lift") got its own constant instead. Pinned both ways with a forged record:
+  `WixContactImportTest::undo_never_deletes_an_order_history_hold_even_when_its_run_record_names_the_row`,
+  `WixOrderHistoryImportTest::undo_never_deletes_a_contact_import_precaution_even_when_its_record_names_the_row`.
+  Alternative (add it, since it is "an import's precaution" in words): rejected for the reason above.
+- **The contact import does not lift an order hold, even when Wix says SUBSCRIBED and VALID.** It
+  counts it instead, on a new dry-run/apply row "of which held by the Wix order-history import (staff
+  can record consent)" under "SUBSCRIBED on Wix, but suppressed in Manara (kept suppressed)". Why not
+  lift: a RELEASED row is read in three places as the person's own newer decision — the contact
+  import's plan never re-suppresses it, the order import never holds over it, and staff consent only
+  looks at rows in force. A row released by an import would inherit that meaning, so a later Wix pull
+  saying UNSUBSCRIBED could never suppress the address again: the dangerous direction. Making it safe
+  needs a new release source that every one of those readers excludes, a re-suppress path, and undo
+  of the release — a wide change to an importer that has not run in production yet, for a rare case:
+  the contact import is enforced to run first, so it arises only under `--without-contact-import` or
+  for a buyer missing from the contacts export the first run read and present in a later one. Revisit
+  if the new row shows real numbers on MEC's data. Pinned by
+  `WixContactImportTest::an_order_history_hold_on_an_address_wix_says_is_subscribed_is_counted_on_its_own_row_and_kept`.
+- **A real opt-out on a hold replaces the hold's reason (review fix).** Staff lifting reads only the
+  reason, and nothing used to rewrite a reason on a row in force: `suppress()` wrote nothing ("already
+  in force") and the contact import skipped any address with a row. So an unsubscribe link, or a Wix
+  UNSUBSCRIBED / SPAM_COMPLAINT / BOUNCED, landing on an `order_history_import` or `not_opted_in` row
+  left it liftable by staff. Now `EmailSuppressionService::replacesHold()` (current reason
+  staff-liftable, incoming reason not) makes `suppress()` write the new reason, date and provenance,
+  and keep the hold in two new nullable columns, `held_reason` and `held_since`. `suppressed_at` moves
+  to the opt-out's date, because a row reading "unsubscribed on the day the order import ran" would be
+  untrue. The contact import makes the same rewrite, counts it on its own row ("Held in Manara for
+  want of consent, but opted out, complained or bounced on Wix") instead of "Already suppressed", and
+  does NOT link the row in `import_links`: the run did not insert it, so its undo leaves the stricter
+  reason in place (errs towards not mailing; a re-run from the same file would write it again).
+  Alternative: have `liftPrecaution` look for an opt-out elsewhere. Rejected: there is no elsewhere;
+  the row is the record. The unsubscribe landing page now offers the real unsubscribe over a hold
+  instead of "You are already unsubscribed". Pinned by
+  `ContactEmailConsentTest::an_unsubscribe_on_a_held_address_replaces_the_hold_and_staff_can_no_longer_lift_it`,
+  `a_wix_unsubscribe_complaint_or_bounce_imported_over_a_hold_cannot_be_lifted_by_staff`, and
+  `WixContactImportTest::a_wix_opt_out_over_a_hold_replaces_its_reason_on_a_row_of_its_own_and_survives_the_runs_undo`.
+- **Held order lifted before the contact import: a Wix opt-out suppresses it again.** The order import
+  holds a buyer without reading Wix's email status, so staff lifting that hold (release_source
+  `staff_recorded_consent`) did not decide anything over a Wix opt-out; they could not see one. When
+  the contact import then finds Wix UNSUBSCRIBED, SPAM_COMPLAINT or BOUNCED for that address, it
+  suppresses it again with Wix's reason (keeping the hold in `held_reason`), counts it on its own row
+  ("Order hold staff lifted in Manara, but opted out ... (suppressed again)") and prints a warning,
+  so the office knows whose recorded consent no longer applies. Rule: the address ends where it
+  would had the contact import run first, when staff could not have lifted a Wix opt-out at all
+  (rule 3 on `EmailSuppressionService`: only the person undoes an opt-out). Wix with no opt-out
+  (NOT_SET, pending) leaves the recorded consent alone. A `not_opted_in` staff lifted is NOT reopened:
+  the contact import had read Wix before writing it, so the lift was made knowing Wix had no opt-out.
+  Alternative: refuse the staff lift of an order hold until the contact import has run. Rejected: an
+  organisation that never runs the contact import (or a buyer missing from its export) could then
+  never be mailed, and "has the contact import run for this address" has no single answer. Pinned by
+  `ContactEmailConsentTest::an_order_hold_staff_lifted_before_the_contact_import_is_suppressed_again_when_wix_has_an_opt_out`.
+- **The consent dialog says what each import knew.** For `order_history_import` it reads "This address
+  came in with an imported order, and no consent to email is on record in Manara, so it is held";
+  only `not_opted_in` says the old website had no consent (`emailConsentPrompt` in `emailOptOut.ts`,
+  pinned in `email-opt-out.test.ts`). The `STAFF_LIFTABLE_REASONS` docblock says the same.
+
+## 2026-09-27 — Two couplings to keep in step (recorded at the order-hold ship)
+
+- **The meal doors' per-order cap modes are mirrored by the cart.** The Halal Kitchen door passes
+  `LunchOrderLines::CAP_REFUSE` (`KitchenOrdersController`) and the Friday lunch door passes
+  `CAP_CLAMP` (`JummahLunchOrdersController`). The universal cart's `MealLineSource`
+  (feat/universal-cart, not yet on main) deliberately copies each door's mode rather than
+  choosing one, and always tells the shopper when it clamps. Changing either door's cap mode
+  means changing the basket with it, or the two will disagree about the same order. The
+  lunch-door Stripe fix (01df855a) maps errors only and moves neither mode.
+- **A contact-import undo can delete a row a later batch made stricter.** Batch A inserts a
+  `not_opted_in` row (linked to A); batch B rewrites it to `bounce` because Wix says BOUNCED;
+  undoing A then deletes the row, because `bounce` is in `PRECAUTION_REASONS`. The end state is
+  the same as before the order-hold fix (where B never wrote the bounce and undo A deleted the
+  `not_opted_in` row), so it is not a regression. Accepted as is.
+
 ## 2026-09-27 — The canary attributes gallery rows through the `model` morph pair, not a new tenant key
 Decision: `config/canary.php` gains `tenant_morphs => ['model']`. For
 row-ownership attribution only, a relation keyed on `model_id` (Masjid::gallery)

@@ -64,14 +64,35 @@ use Illuminate\Support\Facades\DB;
  *
  * A suppression is never released by this class. So a re-run where Wix now
  * says SUBSCRIBED for an address an earlier run suppressed as a precaution is
- * COUNTED, not changed. The other way round holds too: an address (or number)
- * whose suppression row was RELEASED in Manara — by the subscriber's own link,
- * or by staff recording their consent — is the person's newer decision, and a
- * run never re-suppresses it from older Wix data; it is counted instead.
+ * COUNTED, not changed — and so is an address the Wix order-history import
+ * held (EmailSuppression::REASON_ORDER_HISTORY_HOLD) that Wix says is
+ * SUBSCRIBED and VALID, on a row of its own so the operator knows staff can
+ * lift each by recording consent. Why this import does not lift that hold
+ * itself is in DECISIONS.md 2026-09-27: a released row is read everywhere as
+ * the person's own newer decision, and one released by an import would stop
+ * a later Wix UNSUBSCRIBED from ever suppressing the address again.
+ *
+ * The reverse holds too: an address (or number) whose suppression row was
+ * RELEASED in Manara — by the subscriber's own link, or by staff recording
+ * their consent — is the person's newer decision, and a run never
+ * re-suppresses it from older Wix data; it is counted instead. The one
+ * exception is an order-history hold staff lifted: the order import wrote it
+ * without reading Wix, so staff lifted it without knowing whether Wix had an
+ * opt-out. If Wix has one (unsubscribed, complaint, bounce) the address is
+ * suppressed again with that reason, on a count and a warning of its own,
+ * which is where it would stand had this import run first (DECISIONS.md
+ * 2026-09-27).
+ *
+ * The other direction never waits: a hold for want of consent still in force
+ * (EmailSuppression::STAFF_LIFTABLE_REASONS) where Wix says unsubscribed,
+ * complained or bounced takes Wix's reason, so staff can no longer lift it
+ * (EmailSuppressionService::replacesHold). It is counted on its own row, not
+ * as "already suppressed".
  *
  * Only a row the run INSERTS is its own: each is recorded in `import_links`
- * (KIND_EMAIL_SUPPRESSION / KIND_SMS_SUPPRESSION), and a row that already
- * existed in any state is left exactly as it was.
+ * (KIND_EMAIL_SUPPRESSION / KIND_SMS_SUPPRESSION). A row that already existed
+ * is left exactly as it was, except for the two stricter rewrites above,
+ * which are not linked, so the run's undo leaves them in place.
  *
  * No SMS consent is ever written (nobody opted in to SMS on Wix, and a phone
  * number is not consent). A Wix SMS UNSUBSCRIBED becomes an SMS suppression.
@@ -329,11 +350,17 @@ final class WixContactImport
 
         $index = $this->existingContacts();
 
-        // Every row in any state, split: in force, or RELEASED — the person's
-        // decision in Manara, which older Wix data never overrides.
-        $emailRows = EmailSuppression::query()->get(['email_normalized', 'released_at']);
-        $suppressed = $emailRows->whereNull('released_at')->pluck('email_normalized')->flip()->all();
+        // Every row in any state, split: in force (by reason), or RELEASED —
+        // the person's decision in Manara, which older Wix data never
+        // overrides, except over an order-history hold staff lifted without
+        // seeing Wix (below).
+        $emailRows = EmailSuppression::query()->get(['email_normalized', 'reason', 'released_at', 'release_source']);
+        $inForce = $emailRows->whereNull('released_at')->pluck('reason', 'email_normalized')->all();
         $released = $emailRows->whereNotNull('released_at')->pluck('email_normalized')->flip()->all();
+        $liftedOrderHolds = $emailRows->whereNotNull('released_at')
+            ->where('reason', EmailSuppression::REASON_ORDER_HISTORY_HOLD)
+            ->where('release_source', EmailSuppression::RELEASE_STAFF_RECORDED_CONSENT)
+            ->pluck('email_normalized')->flip()->all();
         $smsReleased = SmsSuppression::query()->whereNotNull('released_at')->pluck('phone_e164')->flip()->all();
 
         $tags = $this->planTags($groups, $labelNames, $tagLinks);
@@ -388,9 +415,27 @@ final class WixContactImport
             // Which suppression this address gets: its reason, for every
             // contact (the owner's rule), unless Manara holds a RELEASED row —
             // then the person already decided here and the Wix status is older.
-            $group['already_suppressed'] = $group['address'] !== null && isset($suppressed[$group['address']]);
-            $group['released_in_manara'] = $group['address'] !== null && isset($released[$group['address']]);
-            $group['suppress'] = $group['address'] !== null && ! $group['released_in_manara'] ? $group['reason'] : null;
+            $address = $group['address'];
+            $current = $address !== null ? ($inForce[$address] ?? null) : null;
+            $group['already_suppressed'] = $current !== null;
+            $group['order_held'] = $current === EmailSuppression::REASON_ORDER_HISTORY_HOLD;
+            // A hold for want of consent that Wix says was really an opt-out,
+            // a complaint or a bounce: the row takes Wix's reason, so staff can
+            // no longer lift it (EmailSuppressionService::replacesHold).
+            $group['replaces_hold'] = $group['reason'] !== null
+                && EmailSuppressionService::replacesHold($current, $group['reason']);
+            // An order-history hold staff lifted by recording consent, before
+            // this import told Manara what Wix knew. The order import wrote the
+            // hold without reading Wix's email status, so the lift was not a
+            // decision made over a Wix opt-out: the address ends up exactly as
+            // it would had this import run first (DECISIONS.md 2026-09-27).
+            // A contact-import precaution staff lifted is NOT reopened: that
+            // import had read Wix before writing it.
+            $group['lifted_hold_opted_out'] = $address !== null && isset($liftedOrderHolds[$address])
+                && $group['reason'] !== null
+                && ! in_array($group['reason'], EmailSuppression::STAFF_LIFTABLE_REASONS, true);
+            $group['released_in_manara'] = $address !== null && isset($released[$address]) && ! $group['lifted_hold_opted_out'];
+            $group['suppress'] = $address !== null && ! $group['released_in_manara'] ? $group['reason'] : null;
 
             $group['sms_released_in_manara'] = $group['sms_opt_out'] !== null && isset($smsReleased[$group['sms_opt_out']]);
             if ($group['sms_released_in_manara']) {
@@ -661,7 +706,10 @@ final class WixContactImport
     {
         $groups = collect($plan['groups']);
         $action = fn (string $a) => $groups->where('action', $a)->count();
-        $writes = $groups->filter(fn ($g) => $g['suppress'] !== null && ! $g['already_suppressed']);
+        // New rows only. A hold whose reason Wix replaces and a lifted order
+        // hold Wix suppresses again rewrite an existing row, and are counted
+        // on rows of their own below.
+        $writes = $groups->filter(fn ($g) => $g['suppress'] !== null && ! $g['already_suppressed'] && ! $g['lifted_hold_opted_out']);
 
         return [
             'records' => $plan['records'],
@@ -691,9 +739,13 @@ final class WixContactImport
                 && in_array($g['action'], ['match_email', 'match_phone', 'linked', 'skip_deleted'], true))->count(),
             'precautions_on_existing_contacts' => $writes->filter(fn ($g) => in_array($g['suppress'], EmailSuppression::PRECAUTION_REASONS, true)
                 && in_array($g['action'], ['match_email', 'match_phone', 'linked', 'skip_deleted'], true))->count(),
-            'already_suppressed' => $groups->filter(fn ($g) => $g['suppress'] !== null && $g['already_suppressed'])->count(),
+            'already_suppressed' => $groups->filter(fn ($g) => $g['suppress'] !== null && $g['already_suppressed'] && ! $g['replaces_hold'])->count(),
+            'holds_replaced_by_wix_opt_out' => $groups->where('replaces_hold', true)->count(),
+            'lifted_order_holds_suppressed_again' => $groups->where('lifted_hold_opted_out', true)->count(),
             'suppressed_but_now_subscribed' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
                 && $g['already_suppressed'] && $g['action'] !== 'skip_deleted')->count(),
+            'order_holds_now_subscribed' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
+                && $g['order_held'] && $g['action'] !== 'skip_deleted')->count(),
             'released_in_manara_kept' => $groups->filter(fn ($g) => $g['reason'] !== null && $g['released_in_manara'])->count(),
             'sms_opt_outs' => $groups->whereNotNull('sms_opt_out')->count(),
             'sms_released_in_manara_kept' => $groups->where('sms_released_in_manara', true)->count(),
@@ -718,7 +770,8 @@ final class WixContactImport
     {
         $masjidId = (int) $plan['masjid_id'];
         $written = ['contacts_created' => 0, 'contacts_updated' => 0, 'links' => 0, 'tags_created' => 0,
-            'tag_assignments' => 0, 'email_suppressions' => 0, 'sms_suppressions' => 0];
+            'tag_assignments' => 0, 'email_suppressions' => 0, 'email_holds_replaced' => 0,
+            'email_lifted_holds_suppressed_again' => 0, 'sms_suppressions' => 0];
 
         DB::transaction(function () use ($plan, $batch, $masjidId, &$written) {
             $tagIds = $this->applyTags($plan['tags'], $batch, $written);
@@ -744,24 +797,48 @@ final class WixContactImport
     }
 
     /**
-     * Write a suppression only where the address has NO row at all, and record
-     * the row as this run's. A row in force is honoured as it stands (its date
-     * is the evidence); a RELEASED row is the person's own decision in Manara,
+     * Write a suppression where the address has NO row at all, and record the
+     * row as this run's. A row in force is honoured as it stands (its date is
+     * the evidence); a RELEASED row is the person's own decision in Manara,
      * which suppress() would otherwise overwrite by re-suppressing it. Re-read
      * here, inside the transaction, rather than trusted from the plan.
+     *
+     * Two existing rows are rewritten instead, both only ever stricter: a hold
+     * for want of consent that Wix says was an opt-out, complaint or bounce
+     * (the row takes Wix's reason), and an order-history hold staff lifted
+     * before Wix's opt-out was known (suppressed again). suppress() makes both
+     * writes and keeps the hold in `held_reason`. Neither row is linked to
+     * this run: it did not insert it, so its undo leaves it as it is, the
+     * stricter reason included — erring towards not mailing, and a re-run
+     * from the same file would write it again anyway.
      */
     private function applyEmailSuppression(int $masjidId, string $address, string $reason, string $batch, array &$written): void
     {
-        if (EmailSuppression::withoutMasjidScope()->where('masjid_id', $masjidId)->where('email_normalized', $address)->exists()) {
+        $existing = EmailSuppression::withoutMasjidScope()->where('masjid_id', $masjidId)->where('email_normalized', $address)->first();
+
+        if ($existing === null) {
+            $row = $this->emailSuppression->suppress($masjidId, $address, $reason);
+
+            if ($row !== null) {
+                $this->link(ImportLink::KIND_EMAIL_SUPPRESSION, (string) $row->id, (int) $row->id, true, null, $batch);
+                $written['email_suppressions']++;
+                $written['links']++;
+            }
+
             return;
         }
 
-        $row = $this->emailSuppression->suppress($masjidId, $address, $reason);
+        if (! EmailSuppressionService::replacesHold($existing->reason, $reason)) {
+            return;
+        }
 
-        if ($row !== null) {
-            $this->link(ImportLink::KIND_EMAIL_SUPPRESSION, (string) $row->id, (int) $row->id, true, null, $batch);
-            $written['email_suppressions']++;
-            $written['links']++;
+        if ($existing->isActive()) {
+            $this->emailSuppression->suppress($masjidId, $address, $reason);
+            $written['email_holds_replaced']++;
+        } elseif ($existing->reason === EmailSuppression::REASON_ORDER_HISTORY_HOLD
+            && $existing->release_source === EmailSuppression::RELEASE_STAFF_RECORDED_CONSENT) {
+            $this->emailSuppression->suppress($masjidId, $address, $reason);
+            $written['email_lifted_holds_suppressed_again']++;
         }
     }
 

@@ -303,9 +303,20 @@ unique index over `(masjid_id, phone_e164)` makes a re-STOP an update rather tha
 a second contradictory row. The single deletion, on both lists, is a staged
 import's undo removing rows that same run INSERTED (tracked row by row in
 `import_links`): its own precautions always, the opt-outs it copied only with
-`--remove-opt-outs` (the run went into the wrong organisation). Staff may lift one
-email reason only, an import's `not_opted_in`, on recorded evidence of consent
-(`EmailSuppressionService::liftPrecaution`).
+`--remove-opt-outs` (the run went into the wrong organisation). The Wix
+order-history import's undo removes its own hold the same way, tracked in
+`historical_import_records`; each undo also checks the row still carries ITS
+import's reason, so neither can delete the other's. Staff may lift two email
+reasons only, both written by an import for want of consent — the contact
+import's `not_opted_in` and the order-history import's `order_history_import`
+hold (`EmailSuppression::STAFF_LIFTABLE_REASONS`) — on recorded evidence of
+consent (`EmailSuppressionService::liftPrecaution`). Because that permission is
+read from the reason alone, **a real opt-out landing on such a hold replaces its
+reason** (an unsubscribe link, or a Wix unsubscribe, complaint or bounce the
+contact import reads later; `EmailSuppressionService::replacesHold`), keeping
+the hold in `held_reason` / `held_since`. Any new writer of a stricter reason
+must go through `suppress()` or do the same, or it leaves an opt-out one staff
+click from being overridden.
 
 Suppression is **per tenant**, because consent is: STOP is a reply to one
 registered number, each masjid has its own, and unsubscribing from your masjid

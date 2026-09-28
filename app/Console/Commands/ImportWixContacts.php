@@ -63,6 +63,7 @@ class ImportWixContacts extends Command
         'Email' => [
             'Stay mailable (SUBSCRIBED and VALID on Wix, not suppressed in Manara)' => 'mailable',
             'SUBSCRIBED on Wix, but suppressed in Manara (kept suppressed)' => 'suppressed_but_now_subscribed',
+            '  of which held by the Wix order-history import (staff can record consent)' => 'order_holds_now_subscribed',
             'No email address (phone only)' => 'no_email',
             'Suppress: spam complaint on Wix' => 'suppress_complaint',
             'Suppress: unsubscribed on Wix' => 'suppress_opt_out',
@@ -71,6 +72,8 @@ class ImportWixContacts extends Command
             '  of which Wix opt-outs on contacts already in Manara' => 'opt_outs_on_existing_contacts',
             '  of which precautions on contacts already in Manara' => 'precautions_on_existing_contacts',
             'Already suppressed in Manara' => 'already_suppressed',
+            'Held in Manara for want of consent, but opted out, complained or bounced on Wix (now that reason; staff can no longer lift it)' => 'holds_replaced_by_wix_opt_out',
+            'Order hold staff lifted in Manara, but opted out, complained or bounced on Wix (suppressed again)' => 'lifted_order_holds_suppressed_again',
             'Released in Manara by the person or staff (Wix status not applied)' => 'released_in_manara_kept',
         ],
         'Text messages' => [
@@ -161,6 +164,12 @@ class ImportWixContacts extends Command
 
         if ($counts['labels'] > 0 && $labelNames === []) {
             $this->warn('No --labels file: tags will be named from the Wix label keys.');
+        }
+
+        if ($counts['lifted_order_holds_suppressed_again'] > 0) {
+            // Staff recorded these people's consent while the only record was
+            // the order import's hold; the office should know Wix disagrees.
+            $this->warn("{$counts['lifted_order_holds_suppressed_again']} address(es) staff recorded consent for are suppressed again: Wix records an opt-out, complaint or bounce that staff could not see. Only the person can resume email now.");
         }
 
         if (! $execute) {

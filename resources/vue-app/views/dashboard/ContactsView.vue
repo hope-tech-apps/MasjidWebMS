@@ -358,10 +358,10 @@
                                             {{ emailBadge.label }} {{ formatDate(emailOptedOutAt) }}
                                         </span>
                                         <!--
-                                            Only for an import's "not opted in": the person
-                                            never received a broadcast, so their own link
-                                            can never reach them. Every opt-out stays theirs
-                                            to undo; the server refuses it (422) regardless.
+                                            Only for an import's "not opted in" or order-history
+                                            hold: the person never received a broadcast, so their
+                                            own link can never reach them. Every opt-out stays
+                                            theirs to undo; the server refuses it (422) regardless.
                                         -->
                                         <button
                                             v-if="emailBadge.canRecordConsent"
@@ -1262,7 +1262,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
 import ContactTagsManager from '@/views/dashboard/contacts/ContactTagsManager.vue';
 import { selectableIds, tagsNotOn, toggleId, togglePage } from '@/views/dashboard/contacts/contactTags';
-import { emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
+import { emailConsentPrompt, emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     ADMIN_SELECTABLE_SMS_CONSENT_SOURCES,
@@ -1358,16 +1358,15 @@ const emailBadge = computed(() =>
 
 /**
  * Staff record that the person consented to email in Manara, with their own
- * words for how. Lifts an import's "not opted in" precaution only; the server's
- * refusal sentence is shown as it comes.
+ * words for how. Lifts an import's "not opted in" precaution or order-history
+ * hold only; the server's refusal sentence is shown as it comes.
  */
 const recordEmailConsent = async () => {
     if (!selectedContact.value) return;
 
     const result = await Swal.fire({
         title: 'Record consent to email',
-        text: 'The old website never had this person\'s consent, so the import held their email back. '
-            + 'Record how they have now agreed to receive this organization\'s emails.',
+        text: emailConsentPrompt(selectedContact.value.email_opt_out_reason),
         input: 'text',
         inputPlaceholder: 'Signed the newsletter sheet at Jumu\'ah on 3 Oct',
         inputAttributes: { maxlength: '500' },
