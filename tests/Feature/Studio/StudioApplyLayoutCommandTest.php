@@ -174,19 +174,30 @@ class StudioApplyLayoutCommandTest extends TestCase
     #[Test]
     public function a_section_linking_to_an_unserved_held_page_is_written_inactive_with_the_hint(): void
     {
-        $org = $this->org('school');
-        Page::create(['masjid_id' => $org->id, 'slug' => 'admissions', 'title' => 'Ours', 'is_active' => false, 'order' => 1]);
+        // community.services opens its contact page from a call to action, and
+        // the planned contact page is live, so only the held page can switch it off.
+        $org = $this->org('community');
         $facts = StarterFacts::fromMasjid($org);
 
         $cta = fn ($plan) => collect(collect($plan->pages)->firstWhere('slug', 'home')['sections'])->firstWhere('section_type', 'cta');
 
-        $aware = $cta(StarterSite::plan($org, 'school.essentials', $facts, StarterSite::heldPages($org)));
-        $this->assertNotNull($aware);
-        $this->assertFalse($aware['is_active']);
-        $this->assertContains(StarterSite::LINKED_PAGE_HINT, array_column($aware['placeholders'], 'hint'));
+        $blind = $cta(StarterSite::plan($org, 'community.services', $facts));
+        $this->assertNotNull($blind);
+        $this->assertTrue($blind['is_active'], 'without the held page the contact button is live');
 
-        // Blind to the held page, the plan would have kept the section active.
-        $this->assertTrue($cta(StarterSite::plan($org, 'school.essentials', $facts))['is_active']);
+        foreach (['trashed', 'inactive'] as $state) {
+            $held = Page::create(['masjid_id' => $org->id, 'slug' => 'contact', 'title' => 'Ours', 'is_active' => $state !== 'inactive', 'order' => 1]);
+            if ($state === 'trashed') {
+                $held->delete();
+            }
+
+            $aware = $cta(StarterSite::plan($org, 'community.services', $facts, StarterSite::heldPages($org)));
+            $this->assertNotNull($aware);
+            $this->assertFalse($aware['is_active'], "a {$state} contact page must not be linked from an active section");
+            $this->assertContains(StarterSite::LINKED_PAGE_HINT, array_column($aware['placeholders'], 'hint'));
+
+            Page::withTrashed()->where('id', $held->id)->forceDelete();
+        }
     }
 
     #[Test]
