@@ -91,8 +91,12 @@ final readonly class StarterFacts
      * has just provisioned, so the plan it writes and the preview it showed
      * read the same facts from the same answers.
      */
-    public static function fromMasjid(Masjid $m, string $locale = self::DEFAULT_LOCALE): self
+    public static function fromMasjid(Masjid $m, ?string $locale = null): self
     {
+        // The organisation's own website language (Studio W2 S12) unless the
+        // caller names one; a locale with no label table reads as the default.
+        $locale ??= $m->website_locale;
+
         $m->loadMissing(['masjidAbout', 'donationLink', 'socialMediaLinks']);
 
         $social = [];

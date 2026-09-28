@@ -107,6 +107,9 @@ final class OrganisationSnapshot
             'org_type' => $org->orgType(),
             'slug' => $org->slug,
             'description' => $org->description,
+            // The website's language (W2 S12): null means "not chosen", which
+            // renders `en`. Edited in Studio (PATCH .../website-locale).
+            'website_locale' => $org->website_locale,
             'email' => $org->email,
             'phone' => $org->phone,
             'address' => $org->address,

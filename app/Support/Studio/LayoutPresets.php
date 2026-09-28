@@ -44,6 +44,22 @@ final class LayoutPresets
         return is_array($preset) ? ['key' => $key] + $preset : null;
     }
 
+    /**
+     * The website languages Studio may provision (W2 S12): those of
+     * Masjid::WEBSITE_LOCALES that have a starter label table. Arabic joins only
+     * once its reviewed `labels.ar` ships, so the Step 0 select and Step 3's
+     * rule read one answer.
+     *
+     * @return list<string>
+     */
+    public static function websiteLocales(): array
+    {
+        return array_values(array_filter(
+            Masjid::WEBSITE_LOCALES,
+            fn (string $locale) => is_array(config("studio_layouts.labels.{$locale}")) && config("studio_layouts.labels.{$locale}") !== [],
+        ));
+    }
+
     /** @return list<string> the preset keys one org type may choose, in config order */
     public static function keysFor(string $orgType): array
     {

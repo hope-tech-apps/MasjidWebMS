@@ -1747,6 +1747,9 @@ Route::prefix('admin')->group(function () {
             // (StudioAccessTest).
             Route::get('/organisations/{organisation_id}', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'show'])->whereNumber('organisation_id');
             Route::post('/organisations/{organisation_id}/preview', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'preview'])->whereNumber('organisation_id');
+            // W2 S12: the website language, the one datum Studio itself writes on a
+            // live organisation (it has no other screen). Purges the renderer.
+            Route::patch('/organisations/{organisation_id}/website-locale', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'setWebsiteLocale'])->whereNumber('organisation_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

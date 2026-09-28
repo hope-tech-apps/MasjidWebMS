@@ -70,6 +70,7 @@ class StudioAccessTest extends TestCase
             'POST ' . self::PREFIX . '/drafts/{draft_id}/provision' => ['POST', "{$drafts}/{$f['provisionable']}/provision", []],
             'GET ' . self::PREFIX . '/organisations/{organisation_id}' => ['GET', '/' . self::PREFIX . "/organisations/{$f['organisation']}", []],
             'POST ' . self::PREFIX . '/organisations/{organisation_id}/preview' => ['POST', '/' . self::PREFIX . "/organisations/{$f['organisation']}/preview", ['capabilities' => ['events' => '0']]],
+            'PATCH ' . self::PREFIX . '/organisations/{organisation_id}/website-locale' => ['PATCH', '/' . self::PREFIX . "/organisations/{$f['organisation']}/website-locale", ['locale' => 'en']],
         ];
     }
 

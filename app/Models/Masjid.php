@@ -65,6 +65,8 @@ class Masjid extends Model implements HasMedia
         // host's label and the organisation's public description.
         'slug',
         'description',
+        // The website's language (Studio W2 S12), one of WEBSITE_LOCALES or null.
+        'website_locale',
         'created_by',
         'updated_by',
         'deleted_by'
@@ -171,7 +173,18 @@ class Masjid extends Model implements HasMedia
         // (PublicPayloadKeysUnchangedTest).
         'slug',
         'description',
+        // The website's language (Studio W2 S12). Its one public reader is the
+        // by-host lookup, which emits it as `locale` only when it is set; the
+        // directory and show payloads stay what the installed apps decode.
+        'website_locale',
     ];
+
+    /**
+     * The languages an organisation's website can render in (Studio W2 S12):
+     * the renderer's own closed set (renderer shared/tenant.ts TENANT_LOCALES).
+     * Null on the column means "not chosen", which renders `en`.
+     */
+    public const WEBSITE_LOCALES = ['en', 'ar'];
 
     protected $searchableFields = ['name', 'email', 'address'];
 

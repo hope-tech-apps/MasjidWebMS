@@ -279,7 +279,11 @@ final readonly class PreviewInput
             $facts += array_intersect_key($effective->section($section), array_flip($keys));
         }
 
-        return StarterFacts::fromArray($facts + ['locale' => StarterFacts::DEFAULT_LOCALE]);
+        // The draft's chosen website language (W2 S12); StarterFacts reads a
+        // locale with no label table as the default, as the provision does.
+        $locale = $effective->section('identity')['website_locale'] ?? null;
+
+        return StarterFacts::fromArray($facts + ['locale' => is_string($locale) ? $locale : StarterFacts::DEFAULT_LOCALE]);
     }
 
     /**

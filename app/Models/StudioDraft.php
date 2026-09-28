@@ -64,7 +64,7 @@ class StudioDraft extends Model
     private const PROVISION_KEYS = [
         'identity' => [
             'org_type', 'name', 'email', 'phone', 'address', 'country_id', 'city_id',
-            'latitude', 'longitude', 'timezone', 'user_id', 'admin', 'slug', 'description',
+            'latitude', 'longitude', 'timezone', 'user_id', 'admin', 'slug', 'description', 'website_locale',
             'donation_link', 'donation_title', 'donation_message',
             'facebook_url', 'youtube_url', 'instagram_url', 'whatsapp_url', 'whatsapp_number',
         ],

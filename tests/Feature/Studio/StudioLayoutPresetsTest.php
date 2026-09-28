@@ -113,6 +113,24 @@ class StudioLayoutPresetsTest extends TestCase
     }
 
     #[Test]
+    public function an_arabic_label_table_when_present_has_exactly_the_english_keys(): void
+    {
+        // Studio W2 S12: `labels.ar` ships only once a fluent reader the owner
+        // names has reviewed it; until then it is absent and Arabic is not offered.
+        $ar = config('studio_layouts.labels.ar');
+
+        if ($ar === null) {
+            $this->assertSame(['en'], \App\Support\Studio\LayoutPresets::websiteLocales());
+
+            return;
+        }
+
+        $this->assertIsArray($ar);
+        $this->assertSame(array_keys((array) config('studio_layouts.labels.en')), array_keys($ar));
+        $this->assertSame(array_keys(json_decode(file_get_contents(base_path('tests/fixtures/studio-layout-labels.json')), true)['en']), array_keys($ar));
+    }
+
+    #[Test]
     public function every_block_type_is_a_SectionType_case_the_renderer_draws(): void
     {
         foreach ($this->usedBlocks() as $name => $block) {

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Support\HostName;
 use Illuminate\Http\JsonResponse;
@@ -29,6 +30,9 @@ use Illuminate\Http\Request;
  *   trashed organisation gets the same 404, so the answer says nothing about
  *   which of those it was.
  *
+ * `locale` is the organisation's website language (Studio W2 S12), present
+ * only when one was chosen.
+ *
  * `favicon_url` and `share_image_url` come from the `favicons` and
  * `share_images` collections Studio writes at Step 3 (S8), and are null for an
  * organisation without them. They are never taken from `logos`: every live
@@ -54,17 +58,26 @@ class OrganizationByHostController extends Controller
             ], 404, ['Cache-Control' => 'no-store']);
         }
 
+        $data = [
+            'host' => $domain->host,
+            'masjid_id' => $masjid->id,
+            'name' => $masjid->name,
+            'description' => $masjid->description,
+            'favicon_url' => $masjid->favicon?->original_url,
+            'share_image_url' => $masjid->share_image?->original_url,
+        ];
+
+        // Only when set (Studio W2 S12, the W1 R11 pattern): every organisation
+        // that never chose a website language, which is every live one, keeps
+        // exactly the bytes it had, and the renderer renders it `en`.
+        if (in_array($masjid->website_locale, Masjid::WEBSITE_LOCALES, true)) {
+            $data['locale'] = $masjid->website_locale;
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'OK',
-            'data' => [
-                'host' => $domain->host,
-                'masjid_id' => $masjid->id,
-                'name' => $masjid->name,
-                'description' => $masjid->description,
-                'favicon_url' => $masjid->favicon?->original_url,
-                'share_image_url' => $masjid->share_image?->original_url,
-            ],
+            'data' => $data,
         ], 200, ['Cache-Control' => 'no-store']);
     }
 }

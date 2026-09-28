@@ -85,6 +85,10 @@ class UpdateStudioDraftRequest extends BaseFormRequest
                 'slug' => $text(63),
                 // Public copy, published verbatim (R12); the length S8 provisions.
                 'description' => $text(300),
+                // The website's language (W2 S12). Arabic is refused at Step 3
+                // while the reviewed label table is absent, not here: a draft may
+                // hold a choice the operator cannot provision yet.
+                'website_locale' => ['nullable', 'string', Rule::in(Masjid::WEBSITE_LOCALES)],
                 // Internal only, never published.
                 'vibe' => $text(2000),
                 'donation_link' => $text(2048),
