@@ -365,6 +365,8 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         section_letters: "Letters",
         alphabet_arabic: "Arabic letters",
         alphabet_english: "English letters",
+        letters_set_upper: "Capital letters",
+        letters_set_lower: "Lower-case letters",
         // The qāʿidah's five stages. The server sends the English label with the
         // payload; these exist so an Arabic page does not print "The Letters"
         // under a heading that already reads الحروف العربية. Keyed by the stage
@@ -622,6 +624,8 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         section_letters: "الحروف",
         alphabet_arabic: "الحروف العربية",
         alphabet_english: "الحروف الإنجليزية",
+        letters_set_upper: "الحروف الكبيرة",
+        letters_set_lower: "الحروف الصغيرة",
         stage_letters: "الحروف",
         stage_short_vowels: "الحركات",
         stage_sukun_shadda: "السكون والشدّة",

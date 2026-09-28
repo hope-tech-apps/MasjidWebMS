@@ -13,6 +13,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\Arabic\ArabicCurriculum;
 use App\Support\Letters\CurriculumRegistry;
+use App\Support\Letters\EnglishCurriculum;
 use App\Support\Letters\LetterTracker;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -106,6 +107,21 @@ class ArabicLettersController extends Controller
         // refused here rather than quietly stored where nothing will ever read
         // them.
         if (! $curriculum->isValidDrill($drillId, $stage)) {
+            // A tab left open across the T-004.2 deploy still posts the old bare
+            // letter (`a`) for English. That is not a typo and not the teacher's
+            // fault, and "not part of what this class is working on" would send
+            // her looking for a mistake she did not make. Say what happened and
+            // what to do; `code` lets a client act on it without parsing prose.
+            if ($curriculum->alphabetId() === CurriculumRegistry::ALPHABET_ENGLISH
+                && EnglishCurriculum::isLegacyDrillId($drillId)) {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'stale_page',
+                    'message' => 'This page is out of date: English capitals and lower-case letters are now tracked separately. '
+                        .'Please reload the page and try again. Nothing was changed.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'That drill is not part of what this class is working on ('

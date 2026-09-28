@@ -23,14 +23,23 @@ namespace App\Support\Letters;
  * Arabic denominator. The mark endpoint refuses to set a stage for English for
  * the same reason.
  *
- * ## One drill per letter
- *
- * Arabic's drill ids are compound (`ba`, `ba.fatha`, `ba.madd_alif`) because a
- * letter is practised many ways. An English letter is practised one way, so the
- * drill id IS the letter id: `a`..`z`. Twenty-six drills, twenty-six cells, and
- * nothing to reassemble on the way in or out.
- *
- * ## The phonics cues are the ordinary school words
+ * ## Two drills per letter: `x.upper` and `x.lower`
+
+A child learns the capital and the lower-case form separately (T-004.2,
+2026-09-28: the school wanted them tracked apart), so each letter carries two
+drills and the tracker draws two runs of 26 (Capitals, then Lower case), out of
+52. The ids are `a.upper` / `a.lower`, NEVER `A` / `a`: production's `drill_id`
+column is `utf8mb4_unicode_ci`, which is case-INSENSITIVE, so `A` and `a` are the
+same key to the unique index and the second write would collide with the first.
+The suffix makes the two ids differ in more than case. The same shape as
+Arabic's `ba.fatha`, so `describeDrill()` and the tracker need no special case.
+
+Before 2026-10 the drill id WAS the letter (`a`..`z`, one cell per letter). The
+`split_english_letters_by_case` migration rewrote those rows; `isLegacyDrillId()`
+exists so a browser tab still open from before answers "reload the page" rather
+than a bare refusal.
+
+## The phonics cues are the ordinary school words
  *
  * `a as in apple`, not a cue chosen to be interesting. `x as in fox` is the one
  * that looks wrong and is not: x almost never begins an English word a child
@@ -49,7 +58,7 @@ class EnglishCurriculum implements LetterCurriculum
     public const STAGE_LABELS = [self::STAGE_LETTERS => 'Letters'];
 
     public const STAGE_SUMMARIES = [
-        self::STAGE_LETTERS => 'Recognise and name all 26 letters, upper case and lower case, and the sound each makes.',
+        self::STAGE_LETTERS => 'Recognise and name all 26 capital letters and all 26 lower-case letters, and the sound each makes.',
     ];
 
     /** Position ids, mirroring Arabic's contextual forms: two cases rather than four shapes. */
@@ -57,6 +66,17 @@ class EnglishCurriculum implements LetterCurriculum
     public const POSITION_LOWER = 'lower';
 
     public const POSITIONS = [self::POSITION_UPPER, self::POSITION_LOWER];
+
+    /**
+     * The two SETS a tracker groups its drills into, in the order they are drawn.
+     * A set is a property of a drill (which case), where a stage is a step the
+     * class moves through. The set ids are the position ids on purpose: the
+     * drill `a.upper` is the letter `a` in position `upper`.
+     */
+    public const SETS = [
+        self::POSITION_UPPER => 'Capitals',
+        self::POSITION_LOWER => 'Lower case',
+    ];
 
     /**
      * The 26 letters in alphabetical order: id => [name, phonics word].
@@ -155,6 +175,56 @@ class EnglishCurriculum implements LetterCurriculum
         return [];
     }
 
+    /** @return array<int,array{id:string,label:string}> */
+    public static function sets(): array
+    {
+        return array_map(
+            static fn (string $id): array => ['id' => $id, 'label' => self::SETS[$id]],
+            array_keys(self::SETS)
+        );
+    }
+
+    /** `a.upper` -> `upper`. Null for an id this alphabet does not teach. */
+    public static function set(string $drillId): ?string
+    {
+        return self::parseDrill($drillId)[1] ?? null;
+    }
+
+    /**
+     * The drill id for a letter in a case. The ONE place the id is assembled,
+     * so the migration, the curriculum and the tests cannot spell it two ways.
+     */
+    public static function drillId(string $letter, string $position): string
+    {
+        return $letter.'.'.$position;
+    }
+
+    /**
+     * The pre-split drill id: a bare letter. Not a drill any more; recognised
+     * only so the mark endpoint can tell a stale tab (`a`) from a typo.
+     */
+    public static function isLegacyDrillId(string $drillId): bool
+    {
+        return isset(self::LETTERS[strtolower($drillId)]);
+    }
+
+    /**
+     * @return array{0:string,1:string}|null [letter, position] for a real drill.
+     *
+     * Exact match only: `A.upper`, `a.Upper` and `a.upper ` are not drills, so a
+     * case-insensitive database can never be handed a second spelling of one.
+     */
+    private static function parseDrill(string $drillId): ?array
+    {
+        $parts = explode('.', $drillId, 2);
+
+        if (count($parts) !== 2 || ! isset(self::LETTERS[$parts[0]]) || ! in_array($parts[1], self::POSITIONS, true)) {
+            return null;
+        }
+
+        return [$parts[0], $parts[1]];
+    }
+
     public static function groupDrills(string $group): array
     {
         return [];
@@ -170,42 +240,60 @@ class EnglishCurriculum implements LetterCurriculum
     /** @return array<int,string> */
     public static function syllabus(?string $stage): array
     {
-        return array_keys(self::LETTERS);
+        $drills = [];
+
+        foreach (array_keys(self::LETTERS) as $letter) {
+            foreach (self::POSITIONS as $position) {
+                $drills[] = self::drillId($letter, $position);
+            }
+        }
+
+        return $drills;
     }
 
     /** @return array<int,string> */
     public static function drillsForLetter(string $letter, ?string $stage): array
     {
-        return isset(self::LETTERS[$letter]) ? [$letter] : [];
+        if (! isset(self::LETTERS[$letter])) {
+            return [];
+        }
+
+        return array_map(static fn (string $p): string => self::drillId($letter, $p), self::POSITIONS);
     }
 
     public static function isValidDrill(string $drillId, ?string $stage): bool
     {
-        return isset(self::LETTERS[$drillId]);
+        return self::parseDrill($drillId) !== null;
     }
 
     /**
      * The SAME keys the Arabic description carries, so the card component does
      * not have to know which alphabet it is drawing. `arabic_name` is null
-     * rather than absent, and `text` is the case pair — the two forms are the
-     * thing being learned, so showing one would be showing half the drill.
+     * rather than absent. `text` is the ONE form this drill is about (the
+     * capital for `a.upper`, the small letter for `a.lower`): since the split,
+     * each case is its own drill and its own cell.
      */
     public static function describeDrill(string $drillId): ?array
     {
-        if (! isset(self::LETTERS[$drillId])) {
+        $parsed = self::parseDrill($drillId);
+
+        if ($parsed === null) {
             return null;
         }
 
-        [$name, $word] = self::LETTERS[$drillId];
+        [$letter, $position] = $parsed;
+        [$name, $word] = self::LETTERS[$letter];
+        $upper = $position === self::POSITION_UPPER;
 
         return [
             'id' => $drillId,
-            'letter' => $drillId,
-            'text' => $name.$drillId,
-            'label' => $name,
+            'letter' => $letter,
+            'text' => $upper ? $name : $letter,
+            'label' => ($upper ? 'Capital ' : 'Lower case ').($upper ? $name : $letter),
             'arabic_name' => null,
-            'sound' => "{$drillId} as in {$word}",
+            'sound' => "{$letter} as in {$word}",
             'stage' => self::STAGE_LETTERS,
+            'set' => $position,
         ];
     }
 

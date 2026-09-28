@@ -876,6 +876,39 @@ Proven by `tests/Feature/HifzTrackingTest.php` (endpoint AND listing-query
 halves) + `tests/Feature/HifzTenantIsolationTest.php` +
 `tests/Unit/QuranIndexTest.php`.
 
+## Letters tracker — English capitals and lower case (T-004.2)
+
+`arabic_letter_progress` holds both alphabets (`alphabet` column). English is
+tracked as **52 drills, not 26**: `a.upper` … `z.lower`, in two runs of tiles
+(Capitals, then Lower case) with a count on each and "of 52" overall.
+
+- **Drill ids are `x.upper` / `x.lower`, NEVER `A` / `a`.** Production's
+  `drill_id` is `utf8mb4_unicode_ci`, case-insensitive, so `A` and `a` are one
+  key under the `(group_membership_id, alphabet, drill_id)` unique index. SQLite
+  (the suite) is case-sensitive and cannot show that, so
+  `EnglishCurriculumTest::no_drill_id_is_a_bare_letter…` asserts it on the ids.
+  `EnglishCurriculum::drillId()` is the one place an id is assembled.
+- **`LetterCurriculum::sets()` / `set($drillId)`** describe the runs. Arabic
+  returns `[]` / `null`: its four letter FORMS (`positionsFor`) are a different
+  idea and never become sets or separate denominators. The tracker payload adds
+  `sets`, `set_totals` (`[{id,label,mastered,total}]`, `[]` for Arabic) and a
+  `set` key on every drill (null for Arabic). Clients draw runs through
+  `core/helpers/letterRuns.ts`, never by branching on the alphabet id.
+- **`classOverview()` filters its numerator by the stage's syllabus.** Before,
+  it counted every mastered row in the class against the syllabus denominator,
+  so an Arabic child's letter-GROUP drills (valid at any stage) inflated the
+  count and only the `min()` clamp hid it at 100%.
+- **The migration** `split_english_letters_by_case` copies every existing
+  English mark to BOTH cases keeping status, note, `marked_by` and the original
+  `mastered_at` (owner question B2's default), then removes the bare row. Its
+  `down()` refuses when the two cases differ or one is missing. **It rewrites
+  production rows, so its prod deploy waits for the owner's B2 answer.**
+- **A stale tab** that still posts a bare letter for English gets a 422 with
+  `code: stale_page` and a "reload the page" message, and nothing is written.
+- **The records export** keeps the stored `Drill id` and appends a readable
+  `Letter` column ("Capital A") after `Alphabet`, so positional readers keep
+  their columns.
+
 ## Tenant isolation
 
 Both models use `BelongsToMasjid`; `group_memberships.masjid_id` is

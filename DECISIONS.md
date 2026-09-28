@@ -4209,3 +4209,18 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   inserted in picker order (`core/helpers/behaviorSkills.ts`). Award logs stay newest-first (P1).
   Alternative: sort only in the Vue picker. Rejected: the summaries are read by parents and the
   office, and one server definition cannot drift between the three lists.
+- **T-004.2 English letters by case.** Drill ids become `x.upper` / `x.lower` (52 drills), never
+  `A` / `a`: prod `drill_id` is `utf8mb4_unicode_ci`, which is case-insensitive. `LetterCurriculum`
+  gains `sets()` and `set()` (Arabic: `[]`, `null`); the payload gains `sets`, `set_totals` and a
+  `set` on each drill; the teacher, office and family grids draw two runs (Capitals, Lower case)
+  with a count each and /52 overall (L7). `classOverview` now filters its numerator by the stage's
+  syllabus, which also fixes the latent Arabic over-count from letter-group drills. The data
+  migration `2026_10_01_100000_split_english_letters_by_case` copies each existing mark to BOTH
+  cases, keeping the original mastered date (owner question B2's default). **HELD FOR OWNER B2:
+  this migration rewrites production rows (35 marks, 4 children) and `bin/deploy` runs migrations
+  automatically, so W1 must not go to prod with it until the owner answers; if B2 is still open,
+  ship W1 without this commit.** It also wants a run up, rolled back and up again on staging
+  MySQL (the suite is SQLite and cannot see the collation). A stale tab posting a bare letter gets
+  a "reload the page" 422 (`code: stale_page`). The school records export keeps `Drill id` and
+  appends a readable `Letter` column. Alternative to copying into both cases: start every child
+  fresh. Rejected as the default: it erases recorded progress; it stays the owner's call (B2).

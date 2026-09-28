@@ -697,7 +697,7 @@ class FamilyPortalTest extends TestCase
             'group_id' => $this->group->id,
             'group_membership_id' => $this->childAMembership->id,
             'alphabet' => CurriculumRegistry::ALPHABET_ENGLISH,
-            'drill_id' => 'a',
+            'drill_id' => 'a.upper',
             'status' => ArabicCurriculum::STATUS_MASTERED,
             'mastered_at' => now(),
         ]);
@@ -713,9 +713,15 @@ class FamilyPortalTest extends TestCase
         // through the same field.
         $response->assertJsonPath('data.direction', 'ltr');
 
-        // One drill per letter here, against four per letter on the qāʿidah.
-        $this->assertSame(26, $response->json('data.totals.total'));
+        // Two drills per letter here (a capital and a lower case), against four
+        // per letter on the qāʿidah: the parent reads "1 of 52", and each run
+        // carries its own count.
+        $this->assertSame(52, $response->json('data.totals.total'));
         $this->assertSame(1, $response->json('data.totals.mastered'));
+        $this->assertSame(
+            [['upper', 1, 26], ['lower', 0, 26]],
+            array_map(fn ($s) => [$s['id'], $s['mastered'], $s['total']], $response->json('data.set_totals'))
+        );
 
         // And the same child's Arabic track is untouched by it.
         $arabic = $this->as($this->parentA)

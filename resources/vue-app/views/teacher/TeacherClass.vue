@@ -313,13 +313,24 @@
                              does the opposite, and either laid out the other way
                              reads as a jumble rather than as the alphabet a
                              child is learning. -->
-                        <div class="d-flex flex-wrap gap-2 mb-3" :dir="lettersDir">
-                            <button v-for="l in tracker.letters" :key="l.id" type="button"
-                                    class="letter-tile" :class="`letter-tile--${l.status}`"
-                                    @click="openLetter = openLetter === l.id ? null : l.id">
-                                <span class="letter-tile__glyph">{{ l.glyph }}</span>
-                                <span class="letter-tile__name">{{ l.transliteration }}</span>
-                            </button>
+                        <!-- English is two runs (Capitals, then Lower case), each
+                             with its own count beside the overall total above;
+                             Arabic is one run, unlabelled, exactly as it was.
+                             The server says which, through `tracker.sets`. -->
+                        <div v-for="run in letterRunsOf" :key="run.id" class="mb-3">
+                            <div v-if="run.label" class="d-flex justify-content-between align-items-baseline small mb-1" dir="ltr">
+                                <span class="fw-semibold">{{ run.label }}</span>
+                                <span class="text-muted">{{ run.mastered }} / {{ run.total }}</span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2" :dir="lettersDir">
+                                <button v-for="tile in run.tiles" :key="tile.key" type="button"
+                                        class="letter-tile" :class="`letter-tile--${tile.status}`"
+                                        :title="tile.title"
+                                        @click="openLetter = openLetter === tile.letterId ? null : tile.letterId">
+                                    <span class="letter-tile__glyph">{{ tile.text }}</span>
+                                    <span class="letter-tile__name">{{ tile.name }}</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div v-if="letter" class="card border-0 shadow-sm">
@@ -2095,6 +2106,7 @@ import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { defaultSkillId, inPickerOrder, withSkillInserted } from '@/core/helpers/behaviorSkills';
+import { letterRuns } from '@/core/helpers/letterRuns';
 import {
     canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
     subjectClash, subjectKey, takenSubjectKeys,
@@ -3535,6 +3547,9 @@ const savingStage = ref(false);
 const stageNote = ref('');
 
 const letter = computed(() => tracker.value?.letters?.find((l: any) => l.id === openLetter.value) ?? null);
+
+// The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.
+const letterRunsOf = computed(() => letterRuns(tracker.value));
 
 /**
  * The tracks this tab can show, and which one it is showing.
