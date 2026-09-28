@@ -4360,3 +4360,5 @@ provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
   organisation adds `favicon_url`, `touch_icon_url` and `share_image_url` to its
   `/api/v1/settings` and changes its tab icon and share card (W1 R11). Studio's
   confirm dialog (S9) says so.
+
+- 2026-09-28 (review fix S8-1): the SuperAdmin update route (`POST /api/admin/masjids/{id}`, `MasjidsController::update`) now has its own two tests, because its `BrandAssets::afterLogoUpload` call was pinned by nothing: one where a Studio org's derivatives are replaced from the new logo, one where an org without any stays without any. Test-only; no code changed. Not run locally (no PHP).

@@ -12,6 +12,7 @@ use App\Support\Studio\LogoDerivatives;
 use App\Support\Studio\LogoFiles;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
@@ -133,6 +134,24 @@ class BrandAssetRegenerationTest extends TestCase
         return $this->post("/api/admin/masjids/{$org->id}/details", [
             'name' => $org->name, 'email' => $org->email, 'phone' => '+15550001234',
             'timezone' => 'America/Toronto', 'latitude' => '0', 'longitude' => '0',
+            'logo' => new UploadedFile($png, 'new-logo.png', 'image/png', null, true),
+        ], ['Accept' => 'application/json']);
+    }
+
+    /**
+     * The SuperAdmin update route (MasjidsController::update): its own hook,
+     * its own multipart body, separate from /details.
+     */
+    private function superUpload(Masjid $org, string $png)
+    {
+        // Country and City declare no $fillable, so they go in by query builder.
+        $countryId = DB::table('countries')->insertGetId(['name' => 'Canada', 'code' => 'CA']);
+        $cityId = DB::table('cities')->insertGetId(['name' => 'Burlington', 'country_id' => $countryId]);
+
+        return $this->post("/api/admin/masjids/{$org->id}", [
+            'name' => $org->name, 'email' => $org->email, 'phone' => '+15550001234',
+            'longitude' => '0', 'latitude' => '0', 'address' => '1 Test St',
+            'country_id' => (string) $countryId, 'city_id' => (string) $cityId,
             'logo' => new UploadedFile($png, 'new-logo.png', 'image/png', null, true),
         ], ['Accept' => 'application/json']);
     }
@@ -298,6 +317,42 @@ class BrandAssetRegenerationTest extends TestCase
         $favicon = imagecreatefrompng($this->pathOf($org->favicon));
         $centre = imagecolorsforindex($favicon, imagecolorat($favicon, 24, 24));
         $this->assertSame([10, 30, 200], [$centre['red'], $centre['green'], $centre['blue']]);
+    }
+
+    #[Test]
+    public function the_super_admin_update_route_regenerates_a_studio_orgs_derivatives(): void
+    {
+        $org = $this->org('#FFFFFF', [200, 30, 30]);
+        $super = $this->superAdmin();
+        BrandAssets::regenerate($org, null, (int) $super->id);
+        $before = $this->derivativeIds($org);
+        Sanctum::actingAs($super);
+
+        // This route clears `logos` first, so it cannot tie on created_at, but
+        // the clock is moved anyway so both upload tests read the same way.
+        $this->travel(5)->seconds();
+
+        $this->superUpload($org, $this->png([10, 30, 200]))->assertOk()->assertJsonPath('status', 'success');
+        $org->refresh();
+
+        $after = $this->derivativeIds($org);
+        $this->assertCount(3, $after);
+        $this->assertSame([], array_intersect($before, $after), 'rebuilt, not kept');
+
+        $favicon = imagecreatefrompng($this->pathOf($org->favicon));
+        $centre = imagecolorsforindex($favicon, imagecolorat($favicon, 24, 24));
+        $this->assertSame([10, 30, 200], [$centre['red'], $centre['green'], $centre['blue']], 'made from the new logo');
+    }
+
+    #[Test]
+    public function the_super_admin_update_route_leaves_an_org_without_derivatives_alone(): void
+    {
+        $org = $this->org();
+        Sanctum::actingAs($this->superAdmin());
+
+        $this->superUpload($org, $this->png([10, 200, 10]))->assertOk()->assertJsonPath('status', 'success');
+
+        $this->assertSame([], $this->derivativeIds($org), 'a live organisation gets derivatives only by an explicit regenerate');
     }
 
     #[Test]
