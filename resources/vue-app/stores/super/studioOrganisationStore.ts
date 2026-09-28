@@ -160,6 +160,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         savingFeatures.value = false;
         savingColours.value = false;
         regenerating.value = false;
+        savingLocale.value = false;
     }
 
     /**

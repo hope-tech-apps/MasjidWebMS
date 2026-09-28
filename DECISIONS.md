@@ -4463,3 +4463,12 @@ in (plan R11: per organisation, so the starter labels and the site's chrome agre
   organisation previews in its live language and direction; every other token is
   byte-identical. The cross-language vector is pinned in `PreviewTokenVectorTest` and the
   renderer's `tests/preview-token.test.ts`.
+
+**Review fixes, 2026-09-28 (S12-3, S12-4, S12-5).** The language dialog's title is
+`titleText`, not `title` (SweetAlert renders `title` as HTML and the organisation name is
+tenant-editable); the body already went through `dialogHtml`. A source test pins both.
+`reset()` now clears `savingLocale`, so opening another organisation mid-save cannot leave
+the card locked. Clearing the choice has its own dialog ("Clear X's website language?",
+"reads as English, left to right") and the "not chosen (English)" label is no longer
+spliced into a sentence. The PATCH also flushes the organisation's cached `tv_config`
+(`MobileCache::flushMasjid`), after the write, at the TV track's request.

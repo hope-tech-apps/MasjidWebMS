@@ -7,8 +7,10 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Models\Page;
 use App\Models\StudioDraft;
+use App\Support\MobileCache;
 use App\Support\Studio\LayoutPresets;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -180,5 +182,26 @@ class WebsiteLocaleTest extends TestCase
         $org->update(['website_locale' => 'ar']);
         $this->getJson("/api/admin/studio/organisations/{$org->id}")->assertOk()
             ->assertJsonPath('data.sections.identity.data.website_locale', 'ar');
+    }
+
+    #[Test]
+    public function setting_the_locale_flushes_the_cached_tv_config_and_a_refused_patch_leaves_it(): void
+    {
+        $org = $this->makeOrg();
+        $other = $this->makeOrg();
+        Queue::fake();
+        $key = MobileCache::masjidKey((int) $org->id, MobileCache::TV_CONFIG);
+        $otherKey = MobileCache::masjidKey((int) $other->id, MobileCache::TV_CONFIG);
+        Cache::put($key, 'stale', 60);
+        Cache::put($otherKey, 'theirs', 60);
+
+        $this->patch("/api/admin/studio/organisations/{$org->id}/website-locale", ['locale' => 'fr'], ['Accept' => 'application/json'])
+            ->assertStatus(422);
+        $this->assertSame('stale', Cache::get($key), 'a refused PATCH changed nothing, so the cache stays');
+
+        $this->patch("/api/admin/studio/organisations/{$org->id}/website-locale", ['locale' => 'ar'], ['Accept' => 'application/json'])
+            ->assertOk();
+        $this->assertNull(Cache::get($key), 'the org\'s cached tv-config is gone after the write');
+        $this->assertSame('theirs', Cache::get($otherKey), 'another organisation\'s cache is untouched');
     }
 }
