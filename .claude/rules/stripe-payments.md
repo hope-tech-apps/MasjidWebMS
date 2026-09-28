@@ -7,6 +7,7 @@ paths:
   - "app/Http/Controllers/Mobile/DonationsController.php"
   - "app/Http/Controllers/Api/V1/FormSubmissionsController.php"
   - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
+  - "app/Services/Forms/**"
 ---
 # Stripe payments (CRM donations — Connect Standard + direct charges)
 
@@ -157,6 +158,13 @@ persisted before the call, webhook-only advancement). On top of them:
   (`FormResponse::findByUuidForMasjid`). `FormResponse::markPaid()` is true on the
   unpaid→paid transition only, and that is when the receipt and the coordinator
   email go. **A form row is never emailed while it is unpaid.**
+- **The row is written by `App\Services\Forms\FormResponseWriter`, and it asks no
+  question.** The public submit asks its gates (open, window, capacity, date claim, staff
+  code, replay) under the form's row lock and then calls the writer; the cart calls ONLY
+  the writer, after the shopper has paid, so a payment that lands after a close or at the
+  last place is still recorded. The writer never opens or reads a Stripe session, never
+  emails, and never settles: a card row is written unpaid, and the caller settles it with
+  `markPaid()` and emails only when that returns true. Do not add a gate to it.
 - **Charged from the row's snapshot** (`amount_due_minor`, `fee_covered_minor`,
   `total_minor`), written at submit by `App\Support\FormPayment`, the only
   float-to-cents conversion. Never recomputed at call time, and the lines are
