@@ -29,6 +29,20 @@ use Illuminate\Validation\Rule;
  * of both. The one consequence the frontend must honour is that there can be no
  * per-section autosave; one Save writes the plan.
  *
+ * ## THE ONE FIELD THAT IS `sometimes`: `resource_ids`
+ *
+ * The files listed under Activities (T-004.1, ids of the class's own Files) are
+ * `sometimes|array`, and that is the ONLY exception to the rule above, on
+ * purpose. Everything else here is prose the client re-sends whole; attachments
+ * are LINKS a teacher may never have looked at from the screen that is saving. A
+ * client that predates this field (a tab left open across the deploy, the
+ * by-day PUT an old screen uses) sends no `resource_ids`, and treating that as
+ * "detach everything" would silently drop files from a plan while appearing to
+ * save it. So: ABSENT keeps the plan's files as they are; PRESENT (including
+ * `[]`) is the exact list. The ids are only shaped here. That every one belongs
+ * to THIS class in THIS school is decided by the controller, which is the one
+ * place that knows the class.
+ *
  * `body` (the template's ACTIVITIES) stays required: it is NOT NULL in the
  * database, and a plan with no activities is not a plan.
  *
@@ -81,6 +95,10 @@ class SaveLessonPlanRequest extends BaseFormRequest
 
             'reflection_worked' => ['nullable', 'string', 'max:' . $prose],
             'reflection_improve' => ['nullable', 'string', 'max:' . $prose],
+
+            // See the docblock: `sometimes`, not `nullable`, deliberately.
+            'resource_ids' => ['sometimes', 'array', 'max:' . (int) config('groups.lessons.max_attachments', 10)],
+            'resource_ids.*' => ['integer', 'min:1', 'distinct'],
         ];
     }
 
@@ -90,6 +108,8 @@ class SaveLessonPlanRequest extends BaseFormRequest
             'session_date.before_or_equal' => 'A plan for a day more than a year out is a typo, not foresight.',
             'body.required' => 'A plan needs its activities.',
             'teaching_methods.*.in' => 'That is not a teaching method this form knows.',
+            'resource_ids.max' => 'A lesson plan can list at most :max files.',
+            'resource_ids.*.distinct' => 'The same file is listed twice.',
         ];
     }
 }

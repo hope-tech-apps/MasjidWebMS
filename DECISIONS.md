@@ -4224,3 +4224,17 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   a "reload the page" 422 (`code: stale_page`). The school records export keeps `Drill id` and
   appends a readable `Letter` column. Alternative to copying into both cases: start every child
   fresh. Rejected as the default: it erases recorded progress; it stays the owner's call (B2).
+- **T-004.1 Files under Activities.** A `lesson_plan_resources` join to the class's Files
+  (`group_resources`); a plan owns no bytes and `lesson_plans` is not altered. Uploads reuse
+  `POST /resources` (staff-only by default); attaching rides the plan save as `resource_ids`
+  (`sometimes|array|max:10`, config `groups.lessons.max_attachments`). `sometimes` is the one
+  exception to "every template field is nullable": absent keeps the plan's files (an old tab or
+  the by-day PUT must not silently detach), `[]` clears them. Every id must belong to the plan's
+  class AND school, or the whole request is a 422 before anything is written. `attachments` is in the
+  teacher and office plan payloads and in no family payload; `lesson_plan_count` is staff-only.
+  "Copy to week" copies files with the Activities rule (a day keeps its own activities and files,
+  else takes the source's). No new teacher write verb (L1, L2, L3). Alternative: a `files` column
+  or a per-plan upload endpoint. Rejected: a second copy of the type, size, private-disk and
+  per-class-ceiling rules that Files already enforces, and a new teacher write verb. Known limit
+  (L5): the private file disk has no backup, so a plan's files are one disk failure from gone;
+  a separate backup item is open.

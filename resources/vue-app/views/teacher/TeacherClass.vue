@@ -1275,6 +1275,52 @@
                             <textarea v-model="planForm.body" rows="4" class="form-control form-control-sm"
                                       placeholder="What will this class actually do?"></textarea>
 
+                            <!-- FILES UNDER ACTIVITIES (T-004.1). A plan owns no bytes:
+                                 each file here is one of this class's Files (private,
+                                 staff-only unless shared from the Files tab), and the
+                                 plan saves the list of ids with the rest of the form.
+                                 Uploading goes through the Files upload, staff-only. -->
+                            <div class="mt-2" data-test="plan-files">
+                                <div class="d-flex align-items-baseline gap-2">
+                                    <label class="form-label small text-muted mb-1">Files</label>
+                                    <span class="text-muted small">{{ planForm.attachments.length }} / {{ MAX_PLAN_FILES }}</span>
+                                </div>
+                                <ul v-if="planForm.attachments.length" class="list-unstyled mb-2">
+                                    <li v-for="a in planForm.attachments" :key="a.id"
+                                        class="d-flex align-items-center gap-2 small py-1 border-bottom">
+                                        <i class="bi bi-paperclip text-muted"></i>
+                                        <span class="flex-grow-1 text-truncate">
+                                            {{ a.title || a.original_name }}
+                                            <span class="text-muted">· {{ Math.max(1, Math.round((a.size_bytes || 0) / 1024)) }} KB</span>
+                                        </span>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                title="Download" @click="downloadResource(a)">
+                                            <i class="bi bi-download"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-link text-danger"
+                                                @click="detachPlanFile(a.id)">Remove from plan</button>
+                                    </li>
+                                </ul>
+                                <div class="d-flex flex-wrap gap-2 align-items-center">
+                                    <select v-if="unattachedResources.length" v-model="planFilePick"
+                                            class="form-select form-select-sm" style="max-width:16rem"
+                                            :disabled="planFilesFull" @change="attachPickedFile">
+                                        <option value="">Add from this class’s files…</option>
+                                        <option v-for="r in unattachedResources" :key="r.id" :value="r.id">{{ r.title }}</option>
+                                    </select>
+                                    <label class="btn btn-sm btn-outline-success mb-0"
+                                           :class="{ disabled: planFilesFull || planFileBusy }">
+                                        <i class="bi bi-upload me-1"></i>{{ planFileBusy ? 'Uploading…' : 'Upload a file' }}
+                                        <input type="file" class="d-none" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                               :disabled="planFilesFull || planFileBusy" @change="uploadPlanFile">
+                                    </label>
+                                </div>
+                                <p class="text-muted small mb-0 mt-1">
+                                    Only you and the office can open these. To share a file with families, use Files.
+                                </p>
+                                <p v-if="planFileError" class="text-danger small mb-0">{{ planFileError }}</p>
+                            </div>
+
                             <label class="form-label small text-muted mb-1 mt-2">Formative check</label>
                             <input v-model="planForm.assessment_formative" type="text"
                                    class="form-control form-control-sm"
@@ -1456,7 +1502,13 @@
                                         <td class="small">{{ p ? planLabel(p) : '—' }}</td>
                                         <td v-if="!planHidden.has('standard_code')" class="small">{{ p?.standard_code || '—' }}</td>
                                         <td class="small">{{ p?.objective || '—' }}</td>
-                                        <td class="small">{{ p?.body || '—' }}</td>
+                                        <td class="small">
+                                            {{ p?.body || '—' }}
+                                            <span v-if="p?.attachments?.length" class="text-muted text-nowrap ms-1"
+                                                  :title="`${p.attachments.length} file(s) attached`">
+                                                <i class="bi bi-paperclip"></i>{{ p.attachments.length }}
+                                            </span>
+                                        </td>
                                         <td v-if="!planHidden.has('differentiation_support')" class="small">{{ p?.differentiation_support || '—' }}</td>
                                         <td class="small">{{ p?.assessment_formative || '—' }}</td>
                                     </tr>
@@ -1476,6 +1528,7 @@
                                 <div v-for="p in dayPlansOn(d.iso)" :key="p.id" class="text-muted small">
                                     <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ planLabel(p) }}:</span>
                                     {{ p.body }}
+                                    <span v-if="p.attachments?.length" class="text-nowrap ms-1"><i class="bi bi-paperclip"></i>{{ p.attachments.length }}</span>
                                 </div>
                             </div>
                         </button>
@@ -1766,6 +1819,11 @@
                              file addressed to one child and a file addressed to
                              the whole class must never look alike here. -->
                         <span class="badge" :class="audienceBadgeClass(r)">{{ audienceLabel(r) }}</span>
+                        <!-- Removing a file here also takes it out of every lesson plan
+                             that lists it (T-004.1), so the row says how many do. -->
+                        <span v-if="r.lesson_plan_count" class="badge bg-light text-muted">
+                            In {{ r.lesson_plan_count }} lesson {{ r.lesson_plan_count === 1 ? 'plan' : 'plans' }}
+                        </span>
                         <button class="btn btn-sm btn-outline-secondary" @click="downloadResource(r)">
                             <i class="bi bi-download"></i>
                         </button>
@@ -2108,8 +2166,8 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { defaultSkillId, inPickerOrder, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { letterRuns } from '@/core/helpers/letterRuns';
 import {
-    canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
-    subjectClash, subjectKey, takenSubjectKeys,
+    attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
+    subjectClash, subjectKey, takenSubjectKeys, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -2379,6 +2437,60 @@ const planDirty = () => JSON.stringify(planForm.value) !== planSnapshot;
 const planSaved = ref(false);
 const planError = ref('');
 
+// ---------- files under Activities (T-004.1) ----------
+/** Mirrors `groups.lessons.max_attachments`; the server is the authority. */
+const MAX_PLAN_FILES = 10;
+const planFilePick = ref<string | number>('');
+const planFileBusy = ref(false);
+const planFileError = ref('');
+const planFilesFull = computed(() => planForm.value.attachments.length >= MAX_PLAN_FILES);
+/** This class's files that the open plan does not list yet. */
+const unattachedResources = computed(() => resources.value.filter(
+    (r: any) => !planForm.value.attachments.some((a: any) => Number(a.id) === Number(r.id))));
+
+const attachPickedFile = () => {
+    const picked = resources.value.find((r: any) => Number(r.id) === Number(planFilePick.value));
+    planFilePick.value = '';
+    if (picked) planForm.value.attachments = [...withAttachment(planForm.value.attachments, picked, MAX_PLAN_FILES)];
+};
+
+const detachPlanFile = (id: number) => {
+    planForm.value.attachments = withoutAttachment(planForm.value.attachments, id);
+};
+
+/**
+ * Upload a file for this plan: the class's ordinary Files upload, staff-only (the
+ * default), then listed on the form. It is attached to the PLAN only when the
+ * plan is saved; until then the file is simply in the class's Files, private.
+ */
+const uploadPlanFile = async (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || planFilesFull.value) return;
+
+    planFileBusy.value = true;
+    planFileError.value = '';
+    try {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('title', file.name.replace(/\.[^.]+$/, '').slice(0, 200) || 'Lesson file');
+        form.append('visibility', 'staff');
+        const res = await TeacherApiService.postForm(`${base.value}/resources`, form);
+        const created = res.data?.data;
+        if (created?.id) {
+            planForm.value.attachments = [...withAttachment(planForm.value.attachments, created, MAX_PLAN_FILES)];
+            await loadResources();
+        }
+    } catch (err: any) {
+        planFileError.value = err?.response?.data?.data?.file?.[0]
+            ?? err?.response?.data?.data?.title?.[0]
+            ?? 'That file could not be uploaded.';
+    } finally {
+        planFileBusy.value = false;
+    }
+};
+
 /** The template's teaching-method checkboxes. Values mirror LessonPlan::TEACHING_METHODS. */
 const TEACHING_METHODS = [
     { value: 'modeling', label: 'Modeling' },
@@ -2402,6 +2514,9 @@ const emptyPlan = () => ({
     assessment_formative: '', assessment_exit_ticket: '',
     reflection_worked: '', reflection_improve: '',
     prefill_source: '',
+    // The files listed under Activities: display objects from the plan payload
+    // (id, title, name, size). Saved as `resource_ids`; see savePlan.
+    attachments: [] as any[],
 });
 
 const planForm = ref<any>(emptyPlan());
@@ -3053,6 +3168,7 @@ const syncPlanForm = () => {
     // Arrays must never come back null, or v-model has nothing to bind.
     planForm.value.learning_outcomes = planForm.value.learning_outcomes ?? [];
     planForm.value.teaching_methods = planForm.value.teaching_methods ?? [];
+    planForm.value.attachments = planForm.value.attachments ?? [];
     planSnapshot = JSON.stringify(planForm.value);
 
     // A section that already has content opens itself: seven closed rows on a
@@ -3112,6 +3228,12 @@ const savePlan = async () => {
             subject: planForm.value.subject || null,
             curriculum_week_no: planForm.value.curriculum_week_no || null,
             learning_outcomes: planForm.value.learning_outcomes.filter((o: string) => o && o.trim()),
+            // The files under Activities, as the ids of the class's own Files, in
+            // the order listed. Always sent from this form: the server treats an
+            // ABSENT key as "leave the plan's files alone" (an old screen), and
+            // this screen shows the list, so what it shows is what it saves.
+            resource_ids: attachmentIds(planForm.value),
+            attachments: undefined,
         };
         // An open plan is rewritten by its id; a new one is created, and the
         // server refuses it if the day already has that subject.
@@ -3136,6 +3258,7 @@ const savePlan = async () => {
         planError.value = e?.response?.data?.data?.subject?.[0]
             ?? e?.response?.data?.data?.session_date?.[0]
             ?? e?.response?.data?.data?.body?.[0]
+            ?? e?.response?.data?.data?.resource_ids?.[0]
             ?? 'That plan could not be saved.';
     } finally {
         planSaving.value = false;
@@ -5008,6 +5131,8 @@ watch(activeTab, (tab) => {
     // Back to the tab: refresh the list but keep the plan being written — the
     // form's own "Message their family" link leaves the tab mid-draft.
     if (tab === 'lessons') { loadLessonPlans(!lessonsLoaded); if (!curriculum.value.grades.length) loadCurriculum(); }
+    // The "Add from this class's files" list under Activities (T-004.1).
+    if (tab === 'lessons' && !resources.value.length) loadResources();
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
     if (tab === 'reports' && !reportRows.value.length && !reportsLoading.value) loadReportCards();

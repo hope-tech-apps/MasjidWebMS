@@ -671,6 +671,42 @@ classroom — a one-family fixture cannot express a single property above) plus
 the resource half of `TeacherLessonsGradebookResourcesTest` and
 `AdminSchoolOfficeReadsTest`.
 
+### Files under a lesson plan's Activities (T-004.1, 2026-09-28)
+
+A lesson plan LISTS files from the class's Files; it owns no bytes. The join is
+`lesson_plan_resources` (`lesson_plan_id`, `group_resource_id`, `position`; both
+FKs cascade; `lesson_plans` is never altered). A teacher uploads through the
+existing `POST .../resources` (staff-only by default) and the plan's own save
+carries the list as `resource_ids`.
+
+- **EVERY `resource_id` must belong to the plan's class AND school.**
+  `LessonPlanController::resolveAttachments()` re-reads the ids through
+  `group_id` and `masjid_id`, and refuses the WHOLE request (422, before the plan
+  is written) on any miss. Another class's file and another school's file are
+  tested on create and update. The refusal answers a foreign id and a nonexistent
+  id identically, so it is not an existence oracle.
+- **`resource_ids` is `sometimes|array|max:10`, the one exception to "every field
+  is `nullable`, never `sometimes`".** Prose is re-sent whole; links are not. An
+  absent key keeps the plan's files (an old tab, the by-day PUT), `[]` clears
+  them, a list is exact and ordered. Cap: `groups.lessons.max_attachments`.
+- **Staff information only.** `attachments` is in the teacher's and the office's
+  plan payload (one `plan()` serializer for both) and in NO family payload; no
+  family route mentions a lesson plan. `lesson_plan_count` is in
+  `toStaffArray()` only, never `toAudienceArray()`, which parents read. Attaching
+  a file does not change its `visibility`; a file reaches families only if it is
+  separately shared from Files.
+- **Deleting either side takes the link, never the other side.** Removing a file
+  from Files removes it from every plan (the Files row says "In N lesson plans");
+  removing a plan or detaching keeps the file.
+- **"Copy to week" follows the Activities rule** (`copyRequest`): a day that keeps
+  its own activities keeps its own files, a day that takes the source's
+  activities takes the source's files. Never a mix.
+- **Adds no teacher write verb.** `TeacherRealmTest`'s list is unedited;
+  `LessonPlanAttachmentsTest::attaching_files_adds_no_teacher_write_verb` names
+  the five lesson-plan writes it relies on.
+- Proven by `tests/Feature/LessonPlanAttachmentsTest.php` and
+  `resources/vue-app/tests/lesson-plans.test.ts`.
+
 ## Behaviour / recognition — the Classroom module (T-013)
 
 `behavior_skills` (per-tenant vocabulary) + `behavior_awards` (one skill given

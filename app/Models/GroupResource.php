@@ -128,6 +128,16 @@ class GroupResource extends Model
         return $this->hasMany(GroupResourceRecipient::class, 'group_resource_id');
     }
 
+    /**
+     * The lesson plans that list this file under their Activities (T-004.1).
+     * STAFF information only: it never appears in `toAudienceArray()`, which the
+     * family realm serializes.
+     */
+    public function lessonPlanLinks(): HasMany
+    {
+        return $this->hasMany(LessonPlanResource::class, 'group_resource_id');
+    }
+
     public function isTargeted(): bool
     {
         return $this->visibility === self::VISIBILITY_STUDENTS;
@@ -192,6 +202,13 @@ class GroupResource extends Model
         return $this->toAudienceArray() + [
             'recipient_membership_ids' => $this->isTargeted() ? $ids : [],
             'recipient_count' => $this->isTargeted() ? count($ids) : 0,
+            // How many lesson plans use the file, so the Files tab can say so
+            // before a teacher removes something a plan still lists. Staff only,
+            // and here rather than in toAudienceArray() for the reason above.
+            // `lesson_plan_links_count` is set by withCount() on the list
+            // endpoint; a single-row response falls back to one COUNT.
+            'lesson_plan_count' => (int) ($this->getAttribute('lesson_plan_links_count')
+                ?? $this->lessonPlanLinks()->count()),
         ];
     }
 }

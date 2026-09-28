@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+    attachmentIds,
     canSavePlan,
     copyRequest,
     formTicket,
@@ -20,6 +21,8 @@ import {
     subjectClash,
     subjectKey,
     takenSubjectKeys,
+    withAttachment,
+    withoutAttachment,
 } from '../core/helpers/lessonPlans.ts';
 
 const week = [
@@ -131,6 +134,48 @@ test('copying onto a day without that subject creates a plan beside the others, 
     assert.equal(tuesday.payload.subject, 'Math');
 });
 
+const file = (id: number, title = `File ${id}`) => ({ id, title, original_name: `${title}.pdf`, size_bytes: 1000 });
+
+test('copying to a day follows the Activities rule: a day keeps its own files with its own activities', () => {
+    const plans = [
+        { id: 3, session_date: '2026-09-14', subject: 'Math', body: 'Count to ten.', attachments: [file(1), file(2)] },
+        { id: 4, session_date: '2026-09-15', subject: 'Math', body: 'Tuesday\'s own.', attachments: [file(9)] },
+        { id: 6, session_date: '2026-09-17', subject: 'Math', body: '', attachments: [file(8)] },
+    ];
+
+    // The day with its own activities keeps its own files.
+    const tuesday = copyRequest(base, plans, plans[0], '2026-09-15');
+    assert.deepEqual(tuesday.payload.resource_ids, [9]);
+    assert.equal(tuesday.payload.body, 'Tuesday\'s own.');
+
+    // A day that takes the source's activities takes the source's files, in order.
+    const wednesday = copyRequest(base, plans, plans[0], '2026-09-16');
+    assert.deepEqual(wednesday.payload.resource_ids, [1, 2]);
+    assert.equal(wednesday.method, 'post');
+
+    // A day whose plan has no activities takes the source's activities AND files.
+    const thursday = copyRequest(base, plans, plans[0], '2026-09-17');
+    assert.equal(thursday.payload.body, 'Count to ten.');
+    assert.deepEqual(thursday.payload.resource_ids, [1, 2]);
+
+    // The display objects never go up as a field.
+    assert.equal('attachments' in (tuesday.payload as any), false);
+});
+
+test('a source with no files copies an empty list, so a copy never inherits stale links', () => {
+    const plans = [{ id: 3, session_date: '2026-09-14', subject: 'Math', body: 'Go.' }];
+    assert.deepEqual(copyRequest(base, plans, plans[0], '2026-09-16').payload.resource_ids, []);
+    assert.deepEqual(attachmentIds(null), []);
+});
+
+test('attaching keeps the list distinct and within the cap, detaching removes only that link', () => {
+    const one = [file(1)];
+    assert.deepEqual(withAttachment(one, file(2), 10).map((a) => a.id), [1, 2]);
+    assert.equal(withAttachment(one, file(1), 10), one, 'the same file twice changes nothing');
+    assert.equal(withAttachment([file(1), file(2)], file(3), 2).length, 2, 'the cap is respected');
+    assert.deepEqual(withoutAttachment([file(1), file(2), file(3)], 2).map((a) => a.id), [1, 3]);
+});
+
 test('an answer for a form that has since been replaced is recognised as stale', () => {
     const forms = formTicket();
     const ticket = forms.current();
@@ -163,6 +208,16 @@ test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
     assert.match(view, /:disabled="!canSavePlan\(planSaving, planForm\.body, planClash\)"/);
+});
+
+test('the day view saves the files it shows: resource_ids from the form, never the display objects', () => {
+    const save = fn('savePlan');
+    assert.match(save, /resource_ids: attachmentIds\(planForm\.value\)/);
+    assert.match(save, /attachments: undefined/);
+    // The upload is the class's ordinary Files upload, staff-only.
+    const upload = fn('uploadPlanFile');
+    assert.match(upload, /postForm\(`\$\{base\.value\}\/resources`/);
+    assert.match(upload, /form\.append\('visibility', 'staff'\)/);
 });
 
 test('changing day or reloading the week keeps the open plan when it is still there', () => {
