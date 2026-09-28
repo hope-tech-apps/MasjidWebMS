@@ -46,9 +46,13 @@
 | image, text or grid_cards: each needs facts Studio does not collect, or
 | numbers.
 |
-| Labels are `en` only in W1 (R15): a lookup-resolved tenant renders en/ltr
-| because the host payload carries no locale, so Arabic section labels would
-| sit inside English chrome. Labels are interface nouns with no digits, and
+| Labels are `en` only in W1 (R15). W2 S12 gives an organisation a website
+| locale the by-host lookup carries (and the renderer keeps, S13), so `ar` can
+| be added here, but ONLY once a fluent reader the owner names has reviewed it
+| (draft: docs/manara-studio-w2-arabic-labels.md). Until then `labels.ar` is
+| absent and Studio does not offer Arabic (LayoutPresets::websiteLocales). When
+| it is added, record here who reviewed it and when; it must have exactly the
+| `en` keys. Labels are interface nouns with no digits, and
 | StudioLayoutPresetsTest pins the table to tests/fixtures/studio-layout-labels.json.
 |
 | Hints are admin-facing sentences and are never published.

@@ -38,6 +38,10 @@ class OnboardingController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => [
+                // ---- Website languages Studio can provision (W2 S12) ----
+                // Arabic appears here only once its reviewed starter labels ship
+                // (LayoutPresets::websiteLocales), the same answer Step 3 enforces.
+                'website_locales' => \App\Support\Studio\LayoutPresets::websiteLocales(),
                 // ---- Verticals (the wizard's Organization-type picker) ----
                 // Served straight from config/verticals.php so the SPA renders
                 // what provisioning will actually DO — the default feature

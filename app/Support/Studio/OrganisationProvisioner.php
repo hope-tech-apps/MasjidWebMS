@@ -356,7 +356,7 @@ final class OrganisationProvisioner
     }
 
     /**
-     * `slug` and `description`, only when sent. A key written as null would
+     * `slug`, `description` and `website_locale`, only when sent. A key written as null would
      * still change the wizard's response: a created model serializes exactly
      * the attributes it was given, so an absent key must stay absent.
      *
@@ -366,7 +366,7 @@ final class OrganisationProvisioner
     {
         $out = [];
 
-        foreach (['slug', 'description'] as $key) {
+        foreach (['slug', 'description', 'website_locale'] as $key) {
             if ($request->filled($key)) {
                 $out[$key] = (string) $request->input($key);
             }

@@ -59,6 +59,13 @@ class OrganizationByHostTest extends TestCase
             'favicon_url' => null,
             'share_image_url' => null,
         ], $data);
+
+        // Extended on purpose by Studio W2 S12: a seventh key, `locale`, only for
+        // an organisation that chose a website language, and last.
+        $org->update(['website_locale' => 'ar']);
+        $withLocale = $this->lookup('www.example.org')->assertOk()->json('data');
+        $this->assertSame(['host', 'masjid_id', 'name', 'description', 'favicon_url', 'share_image_url', 'locale'], array_keys($withLocale));
+        $this->assertSame('ar', $withLocale['locale']);
     }
 
     #[Test]

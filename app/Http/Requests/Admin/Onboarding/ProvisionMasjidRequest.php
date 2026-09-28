@@ -282,6 +282,16 @@ class ProvisionMasjidRequest extends BaseFormRequest
             // subtitle and the home page's meta description publish it verbatim.
             'description' => ['nullable', 'string', 'max:300'],
 
+            // The website's language (Studio W2 S12). Absent is exactly today's
+            // provision. Arabic only once the reviewed Arabic starter labels
+            // (config studio_layouts.labels.ar) exist: until then the starter
+            // site would be English labels under a right-to-left site.
+            'website_locale' => ['sometimes', 'nullable', 'string', Rule::in(Masjid::WEBSITE_LOCALES), function (string $attribute, mixed $value, Closure $fail) {
+                if (is_string($value) && in_array($value, Masjid::WEBSITE_LOCALES, true) && ! in_array($value, LayoutPresets::websiteLocales(), true)) {
+                    $fail('An Arabic website cannot be provisioned yet: its starter labels have not been reviewed.');
+                }
+            }],
+
             // Step 1's switch map. Only keys the catalogue serves to this org
             // type (withValidator), and never alongside the wizard's own
             // feature fields: one request, one way of saying what the org has.
