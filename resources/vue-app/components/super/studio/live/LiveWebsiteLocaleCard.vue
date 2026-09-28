@@ -55,28 +55,43 @@ const changed = computed(() => chosen.value !== current.value);
 const failure = ref<string | null>(null);
 const saved = ref<string | null>(null);
 
-const LABELS: Record<StudioWebsiteLocale | '', string> = { '': 'not chosen (English)', en: 'English', ar: 'Arabic' };
+const LABELS: Record<StudioWebsiteLocale, string> = { en: 'English', ar: 'Arabic' };
 
 async function save() {
     if (!changed.value || store.savingLocale) return;
 
     const org = orgName.value;
-    const sentences = chosen.value === 'ar'
-        ? [
+    const visitors = 'Visitors see the change within about five minutes, as the website\'s servers refresh what they hold for it.';
+    const owner = `${org} is a live organisation: go ahead only with the owner's go.`;
+
+    // A cleared choice is not a language: it stores nothing and the website reads
+    // as its default, so it gets its own sentences and states no direction as fact.
+    let title: string;
+    let sentences: string[];
+    if (chosen.value === '') {
+        title = `Clear ${org}'s website language?`;
+        sentences = [
+            'The website goes back to reading as English, left to right.',
+            visitors,
+            owner,
+        ];
+    } else if (chosen.value === 'ar') {
+        title = `Set ${org}'s website language to ${LABELS.ar}?`;
+        sentences = [
             `${org}'s website is then read in Arabic, right to left: its menus, dates and buttons in Arabic, its whole layout mirrored.`,
             'Its own pages keep the words they have; nothing is translated.',
-            'Visitors see the change within about five minutes, as the website\'s servers refresh what they hold for it.',
-            `${org} is a live organisation: go ahead only with the owner's go.`,
-        ]
-        : [
-            `${org}'s website is then read in ${LABELS[chosen.value]}, left to right.`,
-            'Visitors see the change within about five minutes, as the website\'s servers refresh what they hold for it.',
-            `${org} is a live organisation: go ahead only with the owner's go.`,
+            visitors,
+            owner,
         ];
+    } else {
+        title = `Set ${org}'s website language to ${LABELS[chosen.value]}?`;
+        sentences = [`${org}'s website is then read in ${LABELS[chosen.value]}, left to right.`, visitors, owner];
+    }
 
     const answer = await QSwal.fire({
         icon: 'warning',
-        title: `Set ${org}'s website language to ${LABELS[chosen.value]}?`,
+        // titleText, not title: SweetAlert renders `title` as HTML and the name is tenant-editable.
+        titleText: title,
         html: dialogHtml(sentences),
         confirmButtonText: 'The owner agreed: save it',
         cancelButtonText: 'Not now',

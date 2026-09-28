@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Studio\SetWebsiteLocaleRequest;
 use App\Http\Requests\Admin\Studio\StudioOrganisationPreviewRequest;
 use App\Models\Masjid;
+use App\Support\MobileCache;
 use App\Support\Studio\OrganisationSnapshot;
 use App\Support\Studio\PreviewInput;
 use App\Support\Renderer\RendererPurgeScheduler;
@@ -71,6 +72,10 @@ class StudioOrganisationsController extends Controller
         // carry the old lang and dir; the lookup's KV record rewrites itself
         // when its value changes (W1 R5).
         RendererPurgeScheduler::afterSave((int) $masjid->id);
+
+        // The TV config is cached per organisation and follows the website
+        // language (the TV track reads it there), so drop the cached copy.
+        MobileCache::flushMasjid((int) $masjid->id, MobileCache::TV_CONFIG);
 
         // Warning, not info: production runs LOG_LEVEL=warning, and this can
         // change a live site's language and direction.

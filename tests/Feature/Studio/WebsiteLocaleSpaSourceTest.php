@@ -38,4 +38,33 @@ class WebsiteLocaleSpaSourceTest extends TestCase
         $this->assertStringContainsString('right to left', $card);
         $this->assertStringContainsString('<LiveWebsiteLocaleCard', $this->spaCode('views/dashboard/super/studio/StudioOrganisationView.vue'));
     }
+
+    #[Test]
+    public function the_language_dialog_never_renders_the_organisation_name_as_html(): void
+    {
+        $card = $this->spaCode('components/super/studio/live/LiveWebsiteLocaleCard.vue');
+
+        // SweetAlert renders `title`, `html` and `footer` as HTML, and the name is tenant-editable.
+        $this->assertStringContainsString('titleText: title', $card);
+        $this->assertDoesNotMatchRegularExpression('~^\s*(title|footer)\s*:~m', $card, 'a data-bearing title or footer must be titleText or escaped');
+        $this->assertMatchesRegularExpression('~html: dialogHtml\(sentences\)~', $card, 'the body goes through the escaping helper');
+        $this->assertDoesNotMatchRegularExpression('~html:\s*`~', $card, 'no hand-built html template with interpolation');
+    }
+
+    #[Test]
+    public function the_store_reset_clears_the_saving_flag_so_the_language_card_never_locks(): void
+    {
+        $store = $this->spaCode('stores/super/studioOrganisationStore.ts');
+
+        $this->assertMatchesRegularExpression('~function reset\(\) \{.*?savingLocale\.value = false;.*?\n    \}~s', $store);
+    }
+
+    #[Test]
+    public function clearing_the_language_has_its_own_wording_and_claims_no_direction_for_it(): void
+    {
+        $card = $this->spaCode('components/super/studio/live/LiveWebsiteLocaleCard.vue');
+
+        $this->assertStringContainsString("Clear \${org}'s website language?", $card);
+        $this->assertStringNotContainsString('not chosen (English)', $card, 'the cleared label is never spliced into a sentence');
+    }
 }
