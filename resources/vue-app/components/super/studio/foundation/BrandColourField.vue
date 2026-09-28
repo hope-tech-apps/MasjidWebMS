@@ -38,7 +38,7 @@
  * takes both), so `anyThemeForm` accepts those too and shows the stored value
  * as it is; the picker, which only speaks six digits, gets a display copy.
  */
-import { isHex6, isThemeHex } from '@/core/studio/foundationGate';
+import { isCompleteWhileTyping, isHex6, isThemeHex } from '@/core/studio/foundationGate';
 import { computed, ref, watch } from 'vue';
 
 const props = withDefaults(defineProps<{
@@ -84,7 +84,7 @@ function type(event: Event) {
     if (value === '') {
         invalid.value = false;
         emit('update:modelValue', null);
-    } else if (accepts(value)) {
+    } else if (props.anyThemeForm ? isCompleteWhileTyping(value) : isHex6(value)) {
         invalid.value = false;
         emit('update:modelValue', value.toLowerCase());
     } else {
@@ -94,6 +94,12 @@ function type(event: Event) {
 
 /** Leaving an unfinished code shows the error, then the field goes back to the saved colour. */
 function settle() {
+    // A three-digit code is only a choice once the field is left (typing it passes through it on the way to six).
+    if (props.anyThemeForm && /^#[0-9a-fA-F]{3}$/.test(text.value)) {
+        // Blurring an untouched stored #RGB must not rewrite it (its case included).
+        if (text.value.toLowerCase() !== (props.modelValue ?? '').toLowerCase()) emit('update:modelValue', text.value.toLowerCase());
+        return;
+    }
     if (text.value !== '' && !accepts(text.value)) {
         invalid.value = true;
         text.value = props.modelValue ?? '';

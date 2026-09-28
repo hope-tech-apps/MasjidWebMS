@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isHex6, isThemeHex } from '../core/studio/foundationGate.ts';
+import { isCompleteWhileTyping, isHex6, isThemeHex } from '../core/studio/foundationGate.ts';
 import { failingPairLines } from '../core/studio/paletteLabels.ts';
 import type { StudioPaletteReport } from '../core/types/data/Studio.ts';
 
@@ -45,4 +45,11 @@ test('a report still catching up, or none at all, is not a verdict either', () =
     assert.equal(failingPairLines(failing(), { ...idle, queued: true }), null);
     assert.equal(failingPairLines(failing(), { ...idle, loading: true }), null);
     assert.equal(failingPairLines(null, idle), null);
+});
+
+test('typing on the live card emits only a full 6 or 8 digit code, never the #RGB prefix of one', () => {
+    for (const ok of ['#0a3d62', '#0A3D62FF']) assert.equal(isCompleteWhileTyping(ok), true, ok);
+    for (const partial of ['#0a3', '#0A3D', '#0A3D6', '#0A3D62F', '', null]) {
+        assert.equal(isCompleteWhileTyping(partial), false, String(partial));
+    }
 });

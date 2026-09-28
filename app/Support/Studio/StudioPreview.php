@@ -146,12 +146,19 @@ final class StudioPreview
      * A draft's pivot is seeded from its switches (S8), so the switches say what
      * its tabs will be. A live organisation's installed Android build reads its
      * stored rows instead, so `$storedIds` (PreviewInput::fromMasjid) wins.
+     * When none of those rows is available (missing, or all switched off) the
+     * installed app falls back to the bar it shipped with (MenuViewModel and
+     * BottomBar.visibleTabs), so the frame draws that bar, not a bare Home.
      *
      * @param  list<int>|null  $storedIds
      * @return list<string>
      */
     private static function androidTabs(Masjid $org, ?array $storedIds): array
     {
+        if ($storedIds !== null && $storedIds === []) {
+            return ['home', ...array_values(self::ANDROID_TABS)];
+        }
+
         $rows = $storedIds === null
             ? AppFeaturePivot::rowsFor($org)
             : array_fill_keys($storedIds, true);

@@ -217,6 +217,8 @@ final readonly class PreviewInput
      * /features serves them: the organisation's own pivot rows (scoped by
      * masjid_id through the relation) that say available. Until the app-features
      * cutover these, not the switches, decide an existing organisation's tabs.
+     * An empty list is meaningful: the installed app then draws its shipped
+     * default bar (StudioPreview::androidTabs).
      *
      * @return list<int>
      */

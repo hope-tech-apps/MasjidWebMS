@@ -248,8 +248,26 @@ class StudioOrganisationPreviewTest extends TestCase
         $candidate = $this->preview($org, ['capabilities' => ['announcements' => '1']])->assertOk()->json('data');
         $this->assertSame(['home', 'announcements', 'donate'], $candidate['app']['android']['tabs']);
 
-        // An organisation with no rows draws no optional tab, as the installed app would.
-        $this->assertSame(['home'], $this->preview($this->orgWithoutRows(), [])->assertOk()->json('data.app.android.tabs'));
+        // No rows at all: the installed app keeps the bar it shipped with (BottomBar.visibleTabs).
+        $shipped = ['home', 'announcements', 'contact', 'donate'];
+        $this->assertSame($shipped, $this->preview($this->orgWithoutRows(), [])->assertOk()->json('data.app.android.tabs'));
+    }
+
+    #[Test]
+    public function a_live_organisation_with_every_row_unavailable_draws_the_shipped_android_bar(): void
+    {
+        $this->seedAppFeatureCatalogue();
+
+        $org = $this->liveOrg();
+        $org->forceFill(['capability_overrides' => ['announcements' => false]])->save();
+        foreach (range(1, 11) as $featureId) {
+            MasjidMobileAppFeature::create(['masjid_id' => $org->id, 'feature_id' => $featureId, 'is_available' => false]);
+        }
+
+        $this->assertSame(
+            ['home', 'announcements', 'contact', 'donate'],
+            $this->preview($org, [])->assertOk()->json('data.app.android.tabs'),
+        );
     }
 
     private function orgWithoutRows(): Masjid

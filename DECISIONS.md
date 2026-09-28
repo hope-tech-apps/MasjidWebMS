@@ -4419,3 +4419,9 @@ Review fixes (2026-09-28):
   the preview column says installed Android apps follow the stored menu until the cutover.
 - **A failed preview leaves the contrast report stale.** The Save colours dialog then says the
   check failed for these colours (no pair list) and the Brand card marks the report out of date.
+- **2026-09-28: an empty stored menu draws the shipped Android bar.** When a live
+  organisation has no available pivot row (none stored, or all off), installed Android
+  builds fall back to Home, Announcements, Contact and Donate (MenuViewModel,
+  BottomBar.visibleTabs), so the frame draws those four, not a bare Home. On the live card,
+  typing emits a colour only at 6 or 8 digits; a #RGB is taken on blur, since every
+  six-digit code passes through a valid three-digit prefix.
