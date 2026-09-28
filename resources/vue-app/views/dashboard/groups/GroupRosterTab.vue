@@ -1299,7 +1299,7 @@ const confirmOne = async (membership: GroupMembership) => {
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
-            confirmButtonText: `Confirm ${addressLabel(membership.contact)}`
+            confirmButtonText: `Confirm ${escapeHtml(addressLabel(membership.contact))}`
         });
 
         if (!result.isConfirmed) return;

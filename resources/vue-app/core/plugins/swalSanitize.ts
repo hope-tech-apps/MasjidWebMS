@@ -8,10 +8,34 @@
  *
  * Every dialog goes through Swal.fire (a mixin's fire is the same static, inherited), so the
  * one door is cleaned here, once, at start-up: each of those options is passed through
- * DOMPurify, which keeps the markup the app writes on purpose (an icon in a button, a <b>)
- * and drops scripts and event handlers. A dialog written tomorrow is safe without anyone
- * remembering to write `titleText`.
+ * DOMPurify with SWAL_PURIFY_CONFIG, an allowlist of the inline formatting the app's dialogs
+ * actually use (an icon in a button, a <b>, a list) and `class`. Scripts, handlers, links,
+ * images, <style>, style= and form controls are dropped, so data cannot run code in a dialog,
+ * and cannot restyle one or plant a "sign in again" link in it either.
+ *
+ * Not covered, because they take no data today: inputOptions labels, progressSteps entries,
+ * inputPlaceholder and inputLabel for select/checkbox inputs, and showValidationMessage or an
+ * inputValidator's returned message — SweetAlert2 renders those as HTML too. Put data in them
+ * only through escapeHtml() below. Data interpolated into html should still be escaped at the
+ * call site (escapeHtml), so a name with `<` reads as written.
  */
+
+/** DOMPurify settings for dialog HTML: inline formatting and icons only. */
+export const SWAL_PURIFY_CONFIG = {
+    ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 'br', 'p', 'ul', 'ol', 'li', 'span', 'small', 'code', 'div', 'hr', 'sup', 'sub'],
+    ALLOWED_ATTR: ['class'],
+    ALLOW_DATA_ATTR: false,
+};
+
+/** Data into an HTML-rendered dialog option: text, never markup. */
+export function escapeHtml(value: unknown): string {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 /** The SweetAlert2 options it renders as HTML (sweetalert2 11: setInnerHtml / parseHtmlToContainer). */
 export const SWAL_HTML_KEYS = [

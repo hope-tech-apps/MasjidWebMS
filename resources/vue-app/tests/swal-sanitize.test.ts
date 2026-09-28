@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
     SWAL_HTML_KEYS,
+    SWAL_PURIFY_CONFIG,
+    escapeHtml,
     installSwalSanitizer,
     sanitizeSwalArgs,
     sanitizeSwalOptions,
@@ -83,6 +85,31 @@ test('the app installs it with DOMPurify before the app is created, so no dialog
     const main = readFileSync(new URL('../main.ts', import.meta.url), 'utf8');
     const installed = main.indexOf('installSwalSanitizer(Swal, (dirty) => DOMPurify.sanitize(dirty));');
 
-    assert.ok(installed !== -1, 'main.ts installs the sanitizer with DOMPurify');
-    assert.ok(installed < main.indexOf('createApp({'), 'before the app is created');
+    assert.ok(installed === -1, 'the bare default DOMPurify profile is no longer used');
+    assert.ok(main.includes('DOMPurify.sanitize(dirty, SWAL_PURIFY_CONFIG)'), 'main.ts installs the sanitizer with the dialog allowlist');
+    assert.ok(main.indexOf('installSwalSanitizer(') < main.indexOf('createApp({'), 'before the app is created');
+});
+
+test('dialog HTML may carry inline formatting and icons, never links, images, styles or form controls', () => {
+    const tags = SWAL_PURIFY_CONFIG.ALLOWED_TAGS;
+    for (const banned of ['a', 'img', 'svg', 'style', 'form', 'input', 'button', 'iframe', 'script', 'textarea', 'select']) {
+        assert.equal(tags.includes(banned), false, banned);
+    }
+    assert.deepEqual(SWAL_PURIFY_CONFIG.ALLOWED_ATTR, ['class'], 'no style=, href=, src= or handlers');
+    assert.equal(SWAL_PURIFY_CONFIG.ALLOW_DATA_ATTR, false);
+    for (const kept of ['b', 'strong', 'i', 'ul', 'li', 'p', 'br', 'small', 'span']) assert.ok(tags.includes(kept), kept);
+});
+
+test('escapeHtml turns data into text for the call sites that interpolate names into HTML', () => {
+    assert.equal(escapeHtml(`X<a href="https://evil">Sign in</a>&'`), 'X&lt;a href=&quot;https://evil&quot;&gt;Sign in&lt;/a&gt;&amp;&#39;');
+    assert.equal(escapeHtml(null), '');
+    assert.equal(escapeHtml(42), '42');
+});
+
+test('the dialogs that put another organisation\'s or person\'s name into HTML escape it', () => {
+    const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+    assert.match(read('../views/dashboard/super/user/UserDetailsView.vue'), /Make \$\{escapeHtml\(user\.value\.name\)\} \$\{label\} at \$\{escapeHtml\(org\.name\)\}/);
+    assert.match(read('../views/dashboard/super/masjid/MasjidDetailsView.vue'), /forms now go through \$\{escapeHtml\(via\.holder\.name \?\? parentLabel\.value\)\}/);
+    assert.match(read('../views/dashboard/groups/GroupRosterTab.vue'), /confirmButtonText: `Confirm \$\{escapeHtml\(addressLabel\(membership\.contact\)\)\}`/);
+    assert.match(read('../views/dashboard/sections/SectionsLibraryView.vue'), /delete "\$\{escapeHtml\(section\.title \|\| 'Untitled Section'\)\}"/);
 });

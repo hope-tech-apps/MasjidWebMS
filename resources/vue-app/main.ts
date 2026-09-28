@@ -17,11 +17,11 @@ import VueTelInput from 'vue-tel-input';
 import 'vue-tel-input/vue-tel-input.css';
 import Swal from 'sweetalert2';
 import DOMPurify from 'dompurify';
-import { installSwalSanitizer } from '@/core/plugins/swalSanitize';
+import { installSwalSanitizer, SWAL_PURIFY_CONFIG } from '@/core/plugins/swalSanitize';
 
 // Before anything can open a dialog: SweetAlert2 renders a title, a button caption and more as
 // HTML, so every one of them is cleaned at the one door (core/plugins/swalSanitize.ts).
-installSwalSanitizer(Swal, (dirty) => DOMPurify.sanitize(dirty));
+installSwalSanitizer(Swal, (dirty) => String(DOMPurify.sanitize(dirty, SWAL_PURIFY_CONFIG)));
 
 const app = createApp({});
 app.component('admin-dashboard', AdminDashboardApp);
