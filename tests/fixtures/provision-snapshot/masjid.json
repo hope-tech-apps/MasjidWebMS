@@ -172,7 +172,11 @@
                 "onesignal_app_id": null,
                 "onesignal_rest_api_key": null,
                 "development_team": null,
-                "enabled_platforms": "[\"ios\",\"android\",\"tvos\",\"web\"]"
+                "enabled_platforms": "[\"ios\",\"android\",\"tvos\",\"web\"]",
+                "ios_bundle_id": null,
+                "android_application_id": null,
+                "onesignal_provisioned_at": null,
+                "onesignal_platforms": null
             }
         ],
         "masjid_mobile_app_features": [

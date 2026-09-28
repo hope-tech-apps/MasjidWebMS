@@ -68,6 +68,37 @@ class OnesignalInAppMessageService
     }
 
     /**
+     * Where a splash's in-app message lives, and how to authenticate there.
+     *
+     * An organisation with its own OneSignal app (W2 S14) has its devices in THAT
+     * app, so its in-app messages are managed there, with the Organization API key
+     * and the `Key` scheme OneSignal's current API documents. Every other
+     * organisation is on the shared app, exactly as before (same URL, same
+     * `Basic` header). The shared configuration still gates everything
+     * (isConfigured), as it gates every send in OnesignalService.
+     *
+     * An in-app message created on the shared app before the organisation got its
+     * own is not moved; Studio creates the app before the organisation has devices.
+     *
+     * @return array{0:string,1:string}|null [messages URL, Authorization header], null when the dedicated app has no Organization key to use
+     */
+    protected function targetFor(SplashAnnouncement $splash): ?array
+    {
+        $publishing = $splash->masjid?->appPublishing()->first();
+        if ($publishing !== null && $publishing->hasOwnOnesignalApp()) {
+            $orgKey = config('onesignal.user_auth_key');
+            if (empty($orgKey)) {
+                return null;
+            }
+            $base = rtrim(preg_replace('#/[^/]+/?$#', '', (string) config('onesignal.api_url')), '/');
+
+            return ["{$base}/apps/{$publishing->onesignal_app_id}/in_app_messages", 'Key ' . $orgKey];
+        }
+
+        return [$this->api_url, 'Basic ' . $this->auth_key];
+    }
+
+    /**
      * Build the IAM payload from a splash row.
      *
      * OneSignal's IAM schema is large; we use only the subset we need:
@@ -143,18 +174,27 @@ class OnesignalInAppMessageService
             return $splash->onesignal_iam_id;
         }
 
+        $target = $this->targetFor($splash);
+        if ($target === null) {
+            Log::warning('OneSignal IAM sync skipped — the organisation has its own app but no Organization API key is configured', [
+                'splash_id' => $splash->id,
+            ]);
+            return $splash->onesignal_iam_id;
+        }
+        [$url, $authorization] = $target;
+
         try {
             $payload = $this->buildPayload($splash);
 
             $request = Http::withHeaders([
-                'Authorization' => 'Basic ' . $this->auth_key,
+                'Authorization' => $authorization,
                 'Content-Type' => 'application/json',
             ]);
 
             if ($splash->onesignal_iam_id) {
-                $response = $request->put("{$this->api_url}/{$splash->onesignal_iam_id}", $payload);
+                $response = $request->put("{$url}/{$splash->onesignal_iam_id}", $payload);
             } else {
-                $response = $request->post($this->api_url, $payload);
+                $response = $request->post($url, $payload);
             }
 
             if (!$response->successful()) {
@@ -186,11 +226,16 @@ class OnesignalInAppMessageService
         if (!$this->isConfigured() || !$splash->onesignal_iam_id) {
             return;
         }
+        $target = $this->targetFor($splash);
+        if ($target === null) {
+            return;
+        }
+        [$url, $authorization] = $target;
 
         try {
             Http::withHeaders([
-                'Authorization' => 'Basic ' . $this->auth_key,
-            ])->delete("{$this->api_url}/{$splash->onesignal_iam_id}");
+                'Authorization' => $authorization,
+            ])->delete("{$url}/{$splash->onesignal_iam_id}");
         } catch (\Throwable $e) {
             Log::error('OneSignal IAM delete threw', [
                 'splash_id' => $splash->id,

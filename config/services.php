@@ -289,6 +289,17 @@ return [
         // config('onesignal.user_auth_key').
         'user_auth_key' => env('ONESIGNAL_USER_AUTH_KEY'),
 
+        // The OneSignal organisation new apps are created in (`organization_id`,
+        // required by the Create an app API). Studio W2 S14.
+        'org_id' => env('ONESIGNAL_ORG_ID'),
+
+        // Organisations whose live apps are on the SHARED OneSignal app: Burlington
+        // (1), NAFIS (5) and MEC (13), whose shipped builds carry the shared id. An
+        // app of their own would move their sends to an app with no subscribers, so
+        // OneSignalProvisioningService::ensureApp refuses them before any other
+        // check. Moving a live organisation is a separate, planned change.
+        'never_provision' => [1, 5, 13],
+
         // OneSignal Apps API endpoint (create/update apps).
         'apps_api_url' => env('ONESIGNAL_APPS_API_URL', 'https://api.onesignal.com/apps'),
 
@@ -299,7 +310,8 @@ return [
         'apns_key_id' => env('ONESIGNAL_APNS_KEY_ID'),
         'apns_team_id' => env('ONESIGNAL_APNS_TEAM_ID'),
 
-        // APNs environment for created apps: 'production' or 'sandbox'.
+        // APNs environment for created apps: 'production' or 'development'
+        // (OneSignal's names; 'sandbox' is read as 'development').
         'apns_env' => env('ONESIGNAL_APNS_ENV', 'production'),
 
         // Firebase Cloud Messaging v1 service-account JSON (raw JSON string) —

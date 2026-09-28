@@ -47,6 +47,12 @@ class MasjidAppPublishing extends Model
         // the REST key is a secret (encrypted + hidden, see below).
         'onesignal_app_id',
         'onesignal_rest_api_key',
+        // Manara Studio W2 S14: the organisation's app identities, and the state
+        // of the OneSignal app Studio created for it (OneSignalProvisioningService).
+        'ios_bundle_id',
+        'android_application_id',
+        'onesignal_provisioned_at',
+        'onesignal_platforms',
     ];
 
     /**
@@ -62,6 +68,8 @@ class MasjidAppPublishing extends Model
         'asc_issuer_id' => 'encrypted',
         'play_service_account_json' => 'encrypted',
         'onesignal_rest_api_key' => 'encrypted',
+        'onesignal_provisioned_at' => 'datetime',
+        'onesignal_platforms' => 'array',
     ];
 
     /**
@@ -75,6 +83,13 @@ class MasjidAppPublishing extends Model
         'asc_issuer_id',
         'play_service_account_json',
         'onesignal_rest_api_key',
+        // Not secrets. Hidden so the payloads that serialize this row whole (the
+        // provision response) stay exactly as they were; the OneSignal endpoint
+        // returns the ones it needs explicitly.
+        'ios_bundle_id',
+        'android_application_id',
+        'onesignal_provisioned_at',
+        'onesignal_platforms',
     ];
 
     /**

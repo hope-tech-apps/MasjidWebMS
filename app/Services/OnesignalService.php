@@ -106,7 +106,11 @@ class OnesignalService
      * masjid), never client input — a masjid can never route through another's
      * app.
      *
-     * @return array{0:string,1:string,2:bool} [appId, restKey, isDedicated]
+     * The auth scheme travels with the key (W2 S14): the shared app's key is sent
+     * as `Basic`, exactly as before, and a dedicated app's key, minted through
+     * OneSignal's current API, as `Key`, the scheme that API documents.
+     *
+     * @return array{0:string,1:string,2:string,3:bool} [appId, restKey, scheme, isDedicated]
      */
     protected function resolveConfig(?Masjid $masjid): array
     {
@@ -117,11 +121,11 @@ class OnesignalService
 
             if ($config && $config->hasOwnOnesignalApp()) {
                 // onesignal_rest_api_key is transparently decrypted by the cast.
-                return [$config->onesignal_app_id, $config->onesignal_rest_api_key, true];
+                return [$config->onesignal_app_id, $config->onesignal_rest_api_key, 'Key', true];
             }
         }
 
-        return [$this->app_id, $this->app_key, false];
+        return [$this->app_id, $this->app_key, 'Basic', false];
     }
 
     /**
@@ -166,7 +170,7 @@ class OnesignalService
             return $this->notConfiguredResult('notifyAll', null);
         }
 
-        [$appId, $appKey, $isDedicated] = $this->resolveConfig($masjid);
+        [$appId, $appKey, $scheme, $isDedicated] = $this->resolveConfig($masjid);
 
         $payload = [
             'app_id' => $appId,
@@ -190,7 +194,7 @@ class OnesignalService
         }
 
         $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . $appKey,
+            'Authorization' => $scheme . ' ' . $appKey,
             'Content-Type' => 'application/json'
         ])->post($this->api_url, $payload);
 
@@ -216,7 +220,7 @@ class OnesignalService
         }
 
         try {
-            [$appId, $appKey] = $this->resolveConfig($masjid);
+            [$appId, $appKey, $scheme] = $this->resolveConfig($masjid);
 
             $payload = [
                 'app_id' => $appId,
@@ -244,7 +248,7 @@ class OnesignalService
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
+                'Authorization' => $scheme . ' ' . $appKey,
                 'Content-Type' => 'application/json'
             ])->post($this->api_url, $payload);
 
@@ -286,11 +290,11 @@ class OnesignalService
             return $this->notConfiguredResult('sendDataSync', count($subscription_ids));
         }
 
-        [$appId, $appKey] = $this->resolveConfig($masjid);
+        [$appId, $appKey, $scheme] = $this->resolveConfig($masjid);
 
         try {
             $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
+                'Authorization' => $scheme . ' ' . $appKey,
                 'Content-Type' => 'application/json',
             ])->timeout(15)->post($this->api_url, [
                 'app_id' => $appId,
@@ -363,7 +367,7 @@ class OnesignalService
             return $this->notConfiguredResult('sendPrayerAlert', count($subscription_ids));
         }
 
-        [$appId, $appKey] = $this->resolveConfig($masjid);
+        [$appId, $appKey, $scheme] = $this->resolveConfig($masjid);
 
         try {
             $payload = [
@@ -401,7 +405,7 @@ class OnesignalService
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
+                'Authorization' => $scheme . ' ' . $appKey,
                 'Content-Type' => 'application/json',
             ])->timeout(15)->post($this->api_url, $payload);
 
@@ -419,9 +423,11 @@ class OnesignalService
      * Get details of a specific notification by its message ID.
      *
      * @param string $messageId The ID of the notification.
+     * @param Masjid|null $masjid The organisation it was sent for: a notification
+     *        sent through an organisation's own app is looked up in that app.
      * @return array
      */
-    public function getNotificationDetails($messageId)
+    public function getNotificationDetails($messageId, ?Masjid $masjid = null)
     {
         // Not a send, so it does not use the "not sent" shape — but it must
         // still not build a request against a blank api_url, which throws.
@@ -433,11 +439,12 @@ class OnesignalService
         }
 
         // Construct the URL for the View Message API
-        $url = "{$this->api_url}/{$messageId}?app_id={$this->app_id}";
+        [$appId, $appKey, $scheme] = $this->resolveConfig($masjid);
+        $url = "{$this->api_url}/{$messageId}?app_id={$appId}";
 
         // Make the GET request to the OneSignal API
         $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . $this->app_key,
+            'Authorization' => $scheme . ' ' . $appKey,
             'Content-Type' => 'application/json',
         ])->get($url);
 
