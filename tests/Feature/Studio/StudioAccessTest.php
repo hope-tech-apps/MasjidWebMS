@@ -68,8 +68,8 @@ class StudioAccessTest extends TestCase
             'GET ' . self::PREFIX . '/layout-presets' => ['GET', '/' . self::PREFIX . '/layout-presets?org_type=community', []],
             'POST ' . self::PREFIX . '/drafts/{draft_id}/preview' => ['POST', "{$drafts}/{$f['working']}/preview", ['answers' => ['layout' => ['preset' => 'masjid.essentials']]]],
             'POST ' . self::PREFIX . '/drafts/{draft_id}/provision' => ['POST', "{$drafts}/{$f['provisionable']}/provision", []],
-            'GET ' . self::PREFIX . '/organisations/{masjid_id}' => ['GET', '/' . self::PREFIX . "/organisations/{$f['organisation']}", []],
-            'POST ' . self::PREFIX . '/organisations/{masjid_id}/preview' => ['POST', '/' . self::PREFIX . "/organisations/{$f['organisation']}/preview", ['capabilities' => ['events' => '0']]],
+            'GET ' . self::PREFIX . '/organisations/{organisation_id}' => ['GET', '/' . self::PREFIX . "/organisations/{$f['organisation']}", []],
+            'POST ' . self::PREFIX . '/organisations/{organisation_id}/preview' => ['POST', '/' . self::PREFIX . "/organisations/{$f['organisation']}/preview", ['capabilities' => ['events' => '0']]],
         ];
     }
 

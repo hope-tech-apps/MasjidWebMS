@@ -71,7 +71,7 @@ class StudioOrganisationSnapshotTest extends TestCase
         ])));
 
         DB::table('masjid_domains')->insert([
-            'masjid_id' => $org->id, 'host' => 'snapshot.example.test', 'kind' => MasjidDomain::KIND_CUSTOM,
+            'masjid_id' => $org->id, 'host' => 'snapshot.example.test', 'kind' => MasjidDomain::KIND_CUSTOM, 'zone_apex' => 'example.test',
             'status' => MasjidDomain::STATUS_ACTIVE, 'source' => MasjidDomain::SOURCE_STUDIO,
             'cf_zone_id' => self::SECRETS['cf_zone_id'], 'cf_dns_record_id' => self::SECRETS['cf_dns_record_id'],
             'created_at' => now(), 'updated_at' => now(),

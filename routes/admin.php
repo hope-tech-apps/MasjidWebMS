@@ -1739,8 +1739,12 @@ Route::prefix('admin')->group(function () {
             // W2 S9: an organisation that already exists, seen through Studio's
             // sections. Read-only, whatever the verb: its writers are the bulk
             // capability PATCH, the theme save and brand-asset regeneration.
-            Route::get('/organisations/{masjid_id}', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'show'])->whereNumber('masjid_id');
-            Route::post('/organisations/{masjid_id}/preview', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'preview'])->whereNumber('masjid_id');
+            // `{organisation_id}`, not `{masjid_id}`: the `tenant` middleware binds
+            // from a route parameter named masjid_id and would answer a non-member
+            // 403 before `super` answers 401, the contract every Studio route keeps
+            // (StudioAccessTest).
+            Route::get('/organisations/{organisation_id}', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'show'])->whereNumber('organisation_id');
+            Route::post('/organisations/{organisation_id}/preview', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'preview'])->whereNumber('organisation_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

@@ -21,11 +21,11 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class StudioOrganisationsController extends Controller
 {
-    public function show(int $masjid_id)
+    public function show(int $organisation_id)
     {
         return response()->json([
             'status' => 'success',
-            'data' => OrganisationSnapshot::of(Masjid::findOrFail($masjid_id)),
+            'data' => OrganisationSnapshot::of(Masjid::findOrFail($organisation_id)),
         ], Response::HTTP_OK);
     }
 
@@ -34,9 +34,9 @@ class StudioOrganisationsController extends Controller
      * anything: it writes nothing (StudioOrganisationPreviewTest reads the
      * query log).
      */
-    public function preview(StudioOrganisationPreviewRequest $request, int $masjid_id)
+    public function preview(StudioOrganisationPreviewRequest $request, int $organisation_id)
     {
-        $masjid = Masjid::findOrFail($masjid_id);
+        $masjid = Masjid::findOrFail($organisation_id);
 
         return response()->json([
             'status' => 'success',

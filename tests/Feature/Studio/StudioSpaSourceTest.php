@@ -456,7 +456,8 @@ class StudioSpaSourceTest extends TestCase
         // S7's bulk PATCH, form-encoded: one `capabilities[<key>]` per key, as
         // '1'/'0' (.claude/rules/shipping.md), never 'true'/'false' and never JSON.
         $save = $this->functionBody($store, 'saveFeatures');
-        $this->assertSame(1, substr_count($store, 'ApiService.patch('), 'the store should PATCH in exactly one place');
+        // One PATCH to the capabilities; the store has other writers (S12's website language).
+        $this->assertSame(1, preg_match_all('/ApiService\.patch\(`[^`]*\/capabilities`/', $store), 'the store PATCHes the capabilities in exactly one place');
         $this->assertMatchesRegularExpression('/ApiService\.patch\(`\/api\/admin\/masjids\/\$\{[^}`]+\}\/capabilities`, body\)/', $save);
         $this->assertStringContainsString('const body = new URLSearchParams();', $save);
         $this->assertMatchesRegularExpression('/body\.append\(`capabilities\[\$\{entry\.key\}\]`, on \? \'1\' : \'0\'\)/', $save);
