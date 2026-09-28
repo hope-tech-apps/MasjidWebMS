@@ -4135,8 +4135,17 @@ organisations now exits 1 (test pinned), and a Service's photo whose id equals
 a masjid's id is never attributed to that masjid (pinned on ownerMap() with a
 relation that carries no type clause, so it holds whatever Masjid::gallery()
 carries). With `tenant_morphs` emptied, the production symptom comes back
-(control test). Mutation runs: old code fails all four gallery tests; removing
-only the type clause fails exactly the Service-photo test.
+(control test). Mutation runs on the droplet:
+- Against the pre-fix command, the four end-to-end gallery tests fail. MEC's
+  shape reproduces production's exact "NOT TRACED: items" line, and the swap
+  exits 3, not 1.
+- Before Masjid::gallery() carried the type half, removing only the canary's
+  type clause failed exactly the Service-photo test, with a false
+  foreign_rows accusation.
+- On the integrated tree (21e77c81), removing ownerMap()'s type clause fails
+  exactly the_ownership_lookup_adds_the_type_half_itself. The end-to-end
+  Service-photo test still passes there, because the relation now carries the
+  clause itself; that is why the ownerMap() pin exists.
 
 ## 2026-09-27 — Masjid's gallery, header and footer logos read media by the whole key
 Decision: Masjid::gallery(), header_logo() and footer_logo() gain
