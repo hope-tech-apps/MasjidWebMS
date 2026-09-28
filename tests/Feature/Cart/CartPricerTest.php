@@ -111,7 +111,7 @@ class CartPricerTest extends TestCase
     {
         $org = $this->org();
         $cart = $this->cart($org);
-        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($org)->id, 1500, 1, $this->twoTickets());   // $30
+        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($org)->id, 1500, 2, $this->twoTickets());   // $30
         $this->add($cart, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200, 2, ['pickup_at' => now()->addDays(3)->toIso8601String()]); // $24
         $this->add($cart, CartItem::TYPE_DONATION, $this->fund($org)->id, 5000);                                  // $50
 
@@ -187,7 +187,7 @@ class CartPricerTest extends TestCase
         $org = $this->org(['stripe_charges_enabled' => false]);
         $cart = $this->cart($org);
         $this->add($cart, CartItem::TYPE_DONATION, $this->fund($org)->id, 5000);
-        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($org)->id, 1500, 1, $this->twoTickets());
+        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($org)->id, 1500, 2, $this->twoTickets());
 
         $priced = (new CartPricer)->price($cart);
 
@@ -217,7 +217,7 @@ class CartPricerTest extends TestCase
         $this->assertSame($holder->id, (int) $child->forms_card_via_masjid_id, 'premise: the child really is linked');
 
         $cart = $this->cart($child);
-        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($child)->id, 1500, 1, $this->twoTickets());
+        $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($child)->id, 1500, 2, $this->twoTickets());
         $this->add($cart, CartItem::TYPE_DONATION, $this->fund($child)->id, 5000);
 
         $priced = (new CartPricer)->price($cart);

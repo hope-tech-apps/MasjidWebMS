@@ -10,6 +10,11 @@ use App\Models\CartItem;
  *
  * `refusal` is a reason the WHOLE basket cannot be paid, as opposed to one line
  * being gone. When it is set, nothing may be charged, whatever the lines say.
+ *
+ * `destinationIsLinked` is true when that account is a HOLDER's — the organisation
+ * is linked to its parent for form card payments (FormChargeAccount). The page is
+ * then opened on another organisation's account, whose Stripe users read its
+ * metadata, so CartCheckoutService puts only an opaque reference there.
  */
 final readonly class PricedBasket
 {
@@ -22,6 +27,7 @@ final readonly class PricedBasket
         public string $currency,
         public ?string $destinationAccountId,
         public ?string $refusal,
+        public bool $destinationIsLinked = false,
     ) {}
 
     /** Payable only when the basket is not refused, has a payee, and owes something. */
@@ -49,5 +55,65 @@ final readonly class PricedBasket
         }
 
         return $notices;
+    }
+
+    /**
+     * WHAT A PAGE WOULD CHARGE FOR: the payable lines' type, id, quantity, unit price
+     * and answers, plus the currency and the payee. An open page is reused only when
+     * this matches, because the total alone does not identify a basket — a $50 gift
+     * to one fund and a $50 gift to another price the same, and handing the second
+     * basket the first basket's page books the gift to the wrong fund.
+     */
+    public function chargeFingerprint(): string
+    {
+        $lines = [];
+
+        foreach ($this->lines as ['item' => $item, 'outcome' => $outcome]) {
+            if (! $outcome->isPayable()) {
+                continue;
+            }
+
+            $lines[] = [
+                (string) $item->buyable_type,
+                (int) $item->buyable_id,
+                (string) $item->recorded_as,
+                $outcome->quantity,
+                $outcome->unitAmountMinor,
+                self::canonical($item->payload),
+            ];
+        }
+
+        return hash('sha256', json_encode([$this->currency, (string) $this->destinationAccountId, $lines]));
+    }
+
+    /**
+     * WHAT THE SHOPPER WAS SHOWN: every line, gone ones included, with its outcome.
+     * acknowledge() takes this back and applies the changes only if the basket still
+     * prices exactly this way — otherwise a price edited between the notice and the
+     * shopper's "OK" would be adopted without their ever seeing it.
+     */
+    public function viewFingerprint(): string
+    {
+        $lines = [];
+
+        foreach ($this->lines as ['item' => $item, 'outcome' => $outcome]) {
+            $lines[] = [(int) $item->id, $outcome->status, $outcome->quantity, $outcome->unitAmountMinor];
+        }
+
+        return hash('sha256', json_encode([$this->totalMinor, $this->currency, (string) $this->refusal, $lines]));
+    }
+
+    /** A payload with its keys sorted at every level, so key order never changes a hash. */
+    private static function canonical(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map(self::canonical(...), $value);
     }
 }

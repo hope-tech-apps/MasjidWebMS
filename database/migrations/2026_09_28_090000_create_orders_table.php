@@ -65,6 +65,19 @@ return new class extends Migration
             $table->char('currency', 3)->default('usd');
 
             $table->string('charge_account_id', 64);
+
+            // WHAT the page charges for, as a hash of the payable lines (type, id,
+            // quantity, unit price, answers) plus currency and fee. An open page is
+            // handed back only when this matches — a basket changed to a DIFFERENT
+            // $50 (another fund, other attendees) must never be sent to the old page,
+            // whose lines the webhook would then book.
+            $table->char('basket_fingerprint', 64)->nullable();
+
+            // The ONLY routing key when the page is on a holder's account (a linked
+            // organisation): the holder's Stripe users read that metadata, so they get
+            // an opaque reference, never the order's public uuid or the child's id.
+            $table->string('charge_ref', 40)->nullable();
+
             $table->string('idempotency_key', 64)->nullable();
             $table->string('stripe_checkout_session_id', 255)->nullable();
             $table->string('stripe_payment_intent_id', 255)->nullable();
@@ -76,6 +89,7 @@ return new class extends Migration
             $table->unique('uuid', 'orders_uuid_unique');
             $table->unique(['masjid_id', 'order_number'], 'orders_tenant_number_unique');
             $table->unique('stripe_checkout_session_id', 'orders_checkout_session_unique');
+            $table->unique('charge_ref', 'orders_charge_ref_unique');
             $table->index(['masjid_id', 'status'], 'orders_tenant_status_index');
             $table->index(['masjid_id', 'contact_id'], 'orders_tenant_contact_index');
         });

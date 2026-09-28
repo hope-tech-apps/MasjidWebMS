@@ -3,15 +3,19 @@
 namespace App\Services\Cart;
 
 use App\Models\Cart;
-use App\Models\CartItem;
+use App\Models\Masjid;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Services\Stripe\FormChargeAccount;
+use App\Services\Stripe\FormResponseCheckoutService;
+use App\Support\FormPayment;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LogicException;
+use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\InvalidRequestException;
 use Stripe\StripeClient;
+use Throwable;
 
 /**
  * Sends a priced basket to ONE Stripe Checkout page (universal cart, design §11).
@@ -24,18 +28,25 @@ use Stripe\StripeClient;
  *     `stripe_account` request option. assertConnectedAccount() runs before every
  *     Stripe call, copied from the form service: an empty account would send the
  *     call to the PLATFORM, making it merchant of record.
- *   - The idempotency key is minted and SAVED on the order before Stripe is asked,
- *     so a retry re-sends the same key and cannot open a second page.
+ *   - The idempotency key is minted and SAVED on the order before Stripe is asked.
  *   - Nothing here marks anything paid. Only the signature-verified webhook does
  *     (slice 4b), and only on payment_status 'paid'.
  *   - `application_fee_amount` is present only when above zero; Stripe rejects 0.
- *   - The routing key `cart_order_uuid` rides on BOTH the session and the payment
- *     intent, so the webhook finds the order from either event.
+ *   - On the org's OWN account the routing key `cart_order_uuid` rides on both the
+ *     session and the payment intent. On a HOLDER's account (a linked org) only an
+ *     opaque `cart_charge_ref` does — the holder's Stripe users read that metadata,
+ *     and the uuid is the bearer handle for the status read (the form service's rule).
  *
- * And one rule of its own: a basket whose contents changed since the shopper last
- * looked is REFUSED here, with the changes named (CartCheckoutRefused::basketChanged).
- * The shopper confirms them through acknowledge() and tries again. Money is never
- * taken for a basket the shopper has not seen as it now is.
+ * And the basket's own rules, all from the checkout review (design/checkout-review-
+ * 2026-09-28.json):
+ *
+ *   - A basket that changed since the shopper last looked is REFUSED, the changes
+ *     named, with a fingerprint of what they were shown. acknowledge() applies the
+ *     changes only while the basket still prices that way.
+ *   - An open page is handed back only for the SAME basket — same lines, answers,
+ *     prices and payee (PricedBasket::chargeFingerprint), not merely the same total.
+ *     A different $50 must never be sent to the old $50's page.
+ *   - Stripe's charge bounds are checked before anything is written.
  *
  * Reachable from no endpoint until the webhook half (4b) exists.
  */
@@ -44,7 +55,11 @@ class CartCheckoutService
     /** Stripe's minimum is 30 minutes; the 60 s keeps us clear of its clock. */
     public const PAGE_LIFETIME_SECONDS = 30 * 60 + 60;
 
+    /** The routing key on the org's own account. */
     public const METADATA_KEY = 'cart_order_uuid';
+
+    /** The routing key on a holder's account — opaque, and the only one there. */
+    public const CHARGE_REF_KEY = 'cart_charge_ref';
 
     public function __construct(
         private readonly StripeClient $stripe,
@@ -68,17 +83,23 @@ class CartCheckoutService
             }
 
             if ($priced->notices() !== []) {
-                throw CartCheckoutRefused::basketChanged($priced->notices());
+                throw CartCheckoutRefused::basketChanged($priced->notices(), $priced->viewFingerprint());
             }
 
             if (! $priced->isPayable()) {
                 throw new CartCheckoutRefused('Your basket has nothing to pay for.');
             }
 
+            // Before any write and before an old page is closed: a total Stripe would
+            // refuse must be a message, not a raw exception after a stale page was expired.
+            $bound = self::amountRefusal($priced->totalMinor);
+            if ($bound !== null) {
+                throw new CartCheckoutRefused($bound);
+            }
+
             $account = (string) $priced->destinationAccountId;
             self::assertConnectedAccount($account);
 
-            // An open page for this very basket and total is handed back, never doubled.
             $reused = $this->reuseOpenPage($locked, $priced, $account);
             if ($reused !== null) {
                 return $reused;
@@ -93,15 +114,25 @@ class CartCheckoutService
     }
 
     /**
-     * Brings the basket into line with what checkout found — drops what went, and
-     * takes the current price and quantity of what changed — so the shopper's next
-     * press of "pay" goes through. Called once the shopper has SEEN the notices.
+     * Brings the basket into line with what checkout found — drops what went, takes
+     * the current price and quantity of what changed — so the shopper's next press of
+     * "pay" goes through.
+     *
+     * `$seen` is the fingerprint the refusal carried (CartCheckoutRefused::seen()). The
+     * changes are applied ONLY while the basket still prices exactly the way the
+     * shopper was shown; if anything moved again in between — a second price edit, a
+     * lowered cap, another line gone — nothing is written and the shopper is shown the
+     * new state instead. Their "OK" is to what they saw, never to what came after.
      */
-    public function acknowledge(Cart $cart): PricedBasket
+    public function acknowledge(Cart $cart, string $seen): PricedBasket
     {
-        return DB::transaction(function () use ($cart): PricedBasket {
+        return DB::transaction(function () use ($cart, $seen): PricedBasket {
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
             $priced = $this->pricer->price($locked);
+
+            if (! hash_equals($priced->viewFingerprint(), $seen)) {
+                throw CartCheckoutRefused::basketChanged($priced->notices(), $priced->viewFingerprint());
+            }
 
             foreach ($priced->lines as ['item' => $item, 'outcome' => $outcome]) {
                 if ($outcome->status === 'gone') {
@@ -126,6 +157,20 @@ class CartCheckoutService
         return max(0, (int) round($totalMinor * $pct));
     }
 
+    /** Stripe's bounds, as FormResponseCheckoutService::amountRefusal() words them. */
+    private static function amountRefusal(int $totalMinor): ?string
+    {
+        if ($totalMinor < FormPayment::MIN_CHARGE_MINOR) {
+            return 'This basket is below the smallest amount a card can be charged.';
+        }
+
+        if ($totalMinor > FormPayment::MAX_CHARGE_MINOR) {
+            return 'This basket is more than a card can be charged at once. Please split it up or contact the organisers.';
+        }
+
+        return null;
+    }
+
     /** @return array{order: Order, url: string}|null */
     private function reuseOpenPage(Cart $cart, PricedBasket $priced, string $account): ?array
     {
@@ -141,15 +186,28 @@ class CartCheckoutService
             return null;
         }
 
-        // A page opened for a different total, or on an account that has since
-        // changed, is not this basket's page any more: close it and open a new one.
-        if ((int) $open->total_minor !== $priced->totalMinor || ! hash_equals((string) $open->charge_account_id, $account)) {
+        // Past its own expiry, a page is closed on Stripe's side too. Stop selecting it
+        // without asking Stripe — an account that has since become unreachable must not
+        // leave this basket unable to check out ever again.
+        if ($open->checkout_expires_at !== null && $open->checkout_expires_at->isPast()) {
+            $this->markExpired($open);
+
+            return null;
+        }
+
+        // Not this basket's page any more — different lines, answers, prices or payee:
+        // close it and open a new one. The TOTAL alone would not do (see the class doc).
+        $sameBasket = is_string($open->basket_fingerprint)
+            && hash_equals($open->basket_fingerprint, $priced->chargeFingerprint())
+            && hash_equals((string) $open->charge_account_id, $account);
+
+        if (! $sameBasket) {
             $this->closePage($open);
 
             return null;
         }
 
-        $session = $this->retrieveCheckoutSession((string) $open->stripe_checkout_session_id, (string) $open->charge_account_id);
+        $session = $this->readPage($open);
 
         if (($session['status'] ?? null) === 'open' && is_string($session['url'] ?? null)) {
             return ['order' => $open, 'url' => $session['url']];
@@ -161,7 +219,7 @@ class CartCheckoutService
             throw new CartCheckoutRefused('Your payment is being confirmed. Please wait a moment.');
         }
 
-        // Expired: leave this order for the webhook's expiry and open a fresh page.
+        // Expired, or unreachable (readPage marked it): open a fresh page.
         return null;
     }
 
@@ -181,6 +239,8 @@ class CartCheckoutService
             'fee_minor' => self::applicationFee($priced->totalMinor),
             'currency' => $priced->currency,
             'charge_account_id' => $account,
+            'basket_fingerprint' => $priced->chargeFingerprint(),
+            'charge_ref' => $priced->destinationIsLinked ? 'cref_' . Str::random(32) : null,
             // SAVED before Stripe is asked: a retry re-sends this key.
             'idempotency_key' => 'cart_order_' . Str::uuid(),
             'checkout_expires_at' => now()->addSeconds(self::PAGE_LIFETIME_SECONDS),
@@ -227,8 +287,25 @@ class CartCheckoutService
             throw new LogicException("Order {$order->id}: lines sum to {$sum}, the order says {$order->total_minor}.");
         }
 
-        $metadata = [self::METADATA_KEY => (string) $order->uuid, 'masjid_id' => (string) $order->masjid_id];
-        $paymentIntentData = ['metadata' => $metadata];
+        if ($priced->destinationIsLinked) {
+            // On the HOLDER's account: its Stripe users read this metadata. An opaque
+            // reference only — never the uuid (the status read's bearer handle), never
+            // a masjid id, no client_reference_id — and a description naming the
+            // organisation actually selling, as FormResponseCheckoutService does.
+            $metadata = [self::CHARGE_REF_KEY => (string) $order->charge_ref];
+            $org = Masjid::withTrashed()->find($order->masjid_id);
+            $paymentIntentData = [
+                'metadata' => $metadata,
+                'description' => ($org?->name ?? 'Order') . ' — order ' . $order->order_number,
+            ];
+            $suffix = FormResponseCheckoutService::statementSuffix($org?->name);
+            if ($suffix !== null) {
+                $paymentIntentData['statement_descriptor_suffix'] = $suffix;
+            }
+        } else {
+            $metadata = [self::METADATA_KEY => (string) $order->uuid, 'masjid_id' => (string) $order->masjid_id];
+            $paymentIntentData = ['metadata' => $metadata];
+        }
 
         $fee = (int) $order->fee_minor;
         if ($fee > 0) {
@@ -245,11 +322,16 @@ class CartCheckoutService
             'line_items' => $lineItems,
             'payment_intent_data' => $paymentIntentData,
             'metadata' => $metadata,
-            'client_reference_id' => (string) $order->uuid,
             'expires_at' => $order->checkout_expires_at->getTimestamp(),
+            // The uuid rides in the payer's own return URL, as forms' does — never in
+            // metadata a holder's staff can read.
             'success_url' => "{$returnBase}?{$query}&paid=1",
             'cancel_url' => "{$returnBase}?{$query}&cancelled=1",
         ];
+
+        if (! $priced->destinationIsLinked) {
+            $params['client_reference_id'] = (string) $order->uuid;
+        }
 
         $email = self::usableEmail($buyerEmail);
         if ($email !== null) {
@@ -259,14 +341,15 @@ class CartCheckoutService
         try {
             $session = $this->createCheckoutSession($params, $account, (string) $order->idempotency_key);
         } catch (InvalidRequestException $e) {
-            if (! isset($params['customer_email'])) {
+            // Retry ONLY when Stripe named the address. Any other refusal (an amount, a
+            // parameter) would fail the same way again — and the message is never
+            // logged, because Stripe's quotes the address.
+            if (! isset($params['customer_email']) || $e->getStripeParam() !== 'customer_email') {
                 throw $e;
             }
 
-            // Stripe refused the address. Retry once without it, on a NEW key — a
-            // refused key belongs to its parameters. Never log Stripe's message:
-            // it quotes the address.
             unset($params['customer_email']);
+            // A NEW key: a refused key belongs to its parameters.
             $order->forceFill(['idempotency_key' => 'cart_order_' . Str::uuid()])->save();
             $session = $this->createCheckoutSession($params, $account, (string) $order->idempotency_key);
         }
@@ -280,18 +363,90 @@ class CartCheckoutService
         return $session['url'];
     }
 
+    /**
+     * Close a page that is not this basket's any more. If Stripe refuses the expire,
+     * the payer may have just won the race — read it again: paid means "confirming",
+     * never a second page.
+     */
     private function closePage(Order $order): void
     {
-        $id = (string) $order->stripe_checkout_session_id;
-        $account = (string) $order->charge_account_id;
+        $session = $this->readPage($order);
 
-        $session = $this->retrieveCheckoutSession($id, $account);
-
-        if (($session['status'] ?? null) === 'open') {
-            $this->expireCheckoutSession($id, $account);
-        } elseif (($session['status'] ?? null) === 'complete') {
+        if (($session['status'] ?? null) === 'complete') {
             throw new CartCheckoutRefused('Your payment is being confirmed. Please wait a moment.');
         }
+
+        if (($session['status'] ?? null) !== 'open') {
+            $this->markExpired($order);
+
+            return;
+        }
+
+        try {
+            $this->expireCheckoutSession((string) $order->stripe_checkout_session_id, (string) $order->charge_account_id);
+        } catch (Throwable $e) {
+            if (FormResponseCheckoutService::isUnreachable($e)) {
+                $this->markExpired($order);
+
+                return;
+            }
+
+            if (! $e instanceof ApiErrorException) {
+                throw $e;
+            }
+
+            $again = $this->readPage($order);
+
+            if (($again['status'] ?? null) === 'complete') {
+                throw new CartCheckoutRefused('Your payment is being confirmed. Please wait a moment.');
+            }
+
+            if (($again['status'] ?? null) === 'open') {
+                throw new CartCheckoutRefused('The previous payment page could not be closed. Please try again in a moment.');
+            }
+        }
+
+        $this->markExpired($order);
+    }
+
+    /**
+     * Read a page's status. An account the platform can no longer reach (disconnected,
+     * or the pin is stale) cannot be asked, so its page is treated as closed rather than
+     * blocking this basket forever.
+     *
+     * @return array{status: ?string, url: ?string}
+     */
+    private function readPage(Order $order): array
+    {
+        try {
+            $session = $this->retrieveCheckoutSession((string) $order->stripe_checkout_session_id, (string) $order->charge_account_id);
+        } catch (Throwable $e) {
+            if (! FormResponseCheckoutService::isUnreachable($e)) {
+                throw $e;
+            }
+
+            $this->markExpired($order);
+
+            return ['status' => 'expired', 'url' => null];
+        }
+
+        if (($session['status'] ?? null) === 'expired') {
+            $this->markExpired($order);
+        }
+
+        return $session;
+    }
+
+    /**
+     * Stop selecting this order as the basket's open page. Pending → expired only:
+     * a paid order is never touched here — only the webhook ever sets or reads "paid".
+     */
+    private function markExpired(Order $order): void
+    {
+        Order::withoutMasjidScope()
+            ->whereKey($order->id)
+            ->where('status', Order::STATUS_PENDING)
+            ->update(['status' => Order::STATUS_EXPIRED]);
     }
 
     /** A plausible address, or null — an obviously bad one would make Stripe refuse the page. */

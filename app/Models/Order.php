@@ -35,6 +35,8 @@ class Order extends Model
         'fee_minor',
         'currency',
         'charge_account_id',
+        'basket_fingerprint',
+        'charge_ref',
         'idempotency_key',
         'stripe_checkout_session_id',
         'stripe_payment_intent_id',
@@ -51,7 +53,7 @@ class Order extends Model
      * The idempotency key and the pinned account never leave the server: the key
      * would let a caller replay a page, and the account id belongs to the org.
      */
-    protected $hidden = ['idempotency_key', 'charge_account_id'];
+    protected $hidden = ['idempotency_key', 'charge_account_id', 'basket_fingerprint', 'charge_ref'];
 
     protected function casts(): array
     {

@@ -19,13 +19,27 @@ final class CartCheckoutRefused extends RuntimeException
     /** @var list<array{label: string, status: string, reason: string}> */
     private array $notices = [];
 
-    /** @param list<array{label: string, status: string, reason: string}> $notices */
-    public static function basketChanged(array $notices): self
+    private ?string $seen = null;
+
+    /**
+     * @param  list<array{label: string, status: string, reason: string}>  $notices
+     * @param  string  $seen  PricedBasket::viewFingerprint() of the basket these notices
+     *                        describe. The page shows the notices and hands this back to
+     *                        acknowledge(), which applies them only if it still matches.
+     */
+    public static function basketChanged(array $notices, string $seen): self
     {
         $refusal = new self('Some things in your basket changed. Please check them before paying.');
         $refusal->notices = $notices;
+        $refusal->seen = $seen;
 
         return $refusal;
+    }
+
+    /** What the shopper is being shown, to pass back to CartCheckoutService::acknowledge(). */
+    public function seen(): ?string
+    {
+        return $this->seen;
     }
 
     /** @return list<array{label: string, status: string, reason: string}> */

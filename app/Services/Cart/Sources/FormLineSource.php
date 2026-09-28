@@ -33,12 +33,16 @@ final readonly class FormLineSource
 {
     /**
      * @param  array<string,mixed>  $payload  the answers this line will submit
+     * @param  int|null  $quantityShown  how many places the basket showed; null skips the
+     *                                   comparison (only the direct unit tests pass null —
+     *                                   CartPricer always passes the stored quantity)
      */
     public function reprice(
         Form $form,
         array $payload,
         int $unitAmountShownMinor,
         ?CarbonInterface $at = null,
+        ?int $quantityShown = null,
     ): CartLineOutcome {
         // `name`, not `title`: forms have no title column, and reading one gives
         // null, which would quietly label every dropped line with its slug.
@@ -49,6 +53,22 @@ final readonly class FormLineSource
                 $label,
                 $form->closedReason($at) ?? 'This is no longer accepting responses.',
             );
+        }
+
+        // A basket IS a card payment. A form whose card payment is switched off (or
+        // that has no price) is paid another way, and the basket must not become the
+        // one route round that setting — the same reason MealLineSource refuses a
+        // pay-at-pickup menu.
+        if (! $form->takesOnlinePayment()) {
+            return CartLineOutcome::gone($label, 'This one is not paid for online.');
+        }
+
+        // A form that REQUIRES the payer to cover the card fee adds a fee line of its
+        // own (FormPayment). The basket does not compute that yet, and charging such a
+        // form without it would take less than the organisation set. Refused in v1,
+        // so it is paid on its own page, where the coverage is added.
+        if ($form->requiresFeeCoverage()) {
+            return CartLineOutcome::gone($label, 'This one has to be paid on its own page.');
         }
 
         $price = $form->priceFor($payload, $at);
@@ -67,13 +87,22 @@ final readonly class FormLineSource
             return CartLineOutcome::gone($label, 'This no longer has anything to pay for.');
         }
 
+        $reasons = [];
+
         if ($unitMinor !== $unitAmountShownMinor) {
-            return CartLineOutcome::repriced(
-                $unitMinor,
-                $quantity,
-                $label,
-                'The price changed while this was in your basket.',
-            );
+            $reasons[] = 'The price changed while this was in your basket.';
+        }
+
+        // The number of places is recounted from the ANSWERS (so nothing the browser
+        // stored can undercharge) — but a recount that differs from what the basket
+        // showed must be told, not charged silently. An admin switching a flat $15
+        // fee to $15 per attendee would otherwise multiply the charge unseen.
+        if ($quantityShown !== null && $quantity !== $quantityShown) {
+            $reasons[] = "This is now for {$quantity}, not {$quantityShown}.";
+        }
+
+        if ($reasons !== []) {
+            return CartLineOutcome::repriced($unitMinor, $quantity, $label, implode(' ', $reasons));
         }
 
         return CartLineOutcome::available($unitMinor, $quantity, $label);

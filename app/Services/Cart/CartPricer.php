@@ -110,7 +110,12 @@ final class CartPricer
 
         $destination = array_key_first($destinations);
 
-        return new PricedBasket($lines, $total, $currency, $destination === null ? null : (string) $destination, null);
+        // Linked: form card payments land on the parent's account (FormChargeAccount),
+        // and a linked org's food and donations were refused above — so if there is a
+        // payee at all, it is the holder, whose Stripe users read the page's metadata.
+        $linked = $destination !== null && FormChargeAccount::isLinked($org);
+
+        return new PricedBasket($lines, $total, $currency, $destination === null ? null : (string) $destination, null, $linked);
     }
 
     /** @return array{0: CartLineOutcome, 1: ?string} the outcome, and the account it would be paid into */
@@ -130,7 +135,13 @@ final class CartPricer
                 }
 
                 return [
-                    $this->forms->reprice($form, (array) ($item->payload ?? []), (int) $item->unit_amount_shown_minor, $at),
+                    $this->forms->reprice(
+                        $form,
+                        (array) ($item->payload ?? []),
+                        (int) $item->unit_amount_shown_minor,
+                        $at,
+                        (int) $item->quantity,
+                    ),
                     FormChargeAccount::for($org)?->accountId,
                 ];
 

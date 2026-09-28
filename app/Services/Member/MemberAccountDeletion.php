@@ -3,7 +3,9 @@
 namespace App\Services\Member;
 
 use App\Models\AppSignupCode;
+use App\Models\Cart;
 use App\Models\Contact;
+use App\Models\Order;
 use App\Models\ContactLoginCode;
 use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
@@ -144,6 +146,18 @@ class MemberAccountDeletion
      * Tables that hold a contact id but are the LOGIN's plumbing, which this
      * service clears itself. They never keep a contact.
      */
+    /**
+     * Office records that count only in a given state. An order is a sale only once it
+     * is PAID: an abandoned checkout — a page opened and never paid — is not a record
+     * the office keeps, and counting it would make a member who once pressed "pay" and
+     * walked away impossible to erase (checkout review, 2026-09-28).
+     *
+     * @var array<string, array<string, string>>
+     */
+    public const OFFICE_RECORD_CONDITIONS = [
+        'orders' => ['status' => 'paid'],
+    ];
+
     public const LOGIN_RECORDS = [
         // 2026-09-27: an UNPAID basket. Not a sale — nothing in it is reserved,
         // and once paid, the real office records (donations, form responses,
@@ -328,6 +342,24 @@ class MemberAccountDeletion
             $interests = ContactServiceInterest::withoutMasjidScope()
                 ->where('contact_id', $contact->id)
                 ->delete();
+
+            // Baskets are LOGIN plumbing. On the erased path the FK cascade clears them,
+            // but a KEPT contact is never force-deleted, so the cascade never fires and
+            // the unpaid basket — attendee names in its lines — would outlive the request.
+            // Delete them here, on both paths; cart_items go with them by cascade.
+            Cart::withoutMasjidScope()
+                ->where('masjid_id', $contact->masjid_id)
+                ->where('contact_id', $contact->id)
+                ->delete();
+
+            // An abandoned checkout (never paid) is not a sale, so it keeps nothing — but
+            // it still carries the address the shopper typed. Clear it. A PAID order is an
+            // office record and keeps its buyer, as meal_orders keep theirs.
+            Order::withoutMasjidScope()
+                ->where('masjid_id', $contact->masjid_id)
+                ->where('contact_id', $contact->id)
+                ->where('status', '!=', Order::STATUS_PAID)
+                ->update(['buyer_email' => null]);
 
             // App sign-in codes for whichever address could sign straight back in:
             // the proven one, or both when that is unknown.
@@ -546,6 +578,12 @@ class MemberAccountDeletion
                         $query->orWhere($column, $contact->id);
                     }
                 })
+                // Explicit rather than where([]): what an empty array does to a query is
+                // not something to rely on in the code that decides whose data survives.
+                ->when(
+                    isset(self::OFFICE_RECORD_CONDITIONS[$table]),
+                    fn ($query) => $query->where(self::OFFICE_RECORD_CONDITIONS[$table]),
+                )
                 ->exists();
 
             if ($held) {
