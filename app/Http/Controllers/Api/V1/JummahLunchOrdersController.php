@@ -15,6 +15,7 @@ use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOrderMailer;
 use App\Services\Lunch\LunchSmsOptIn;
+use App\Services\Lunch\MealOrderCreator;
 use App\Services\Lunch\MealOrderEditor;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
@@ -24,7 +25,6 @@ use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 /**
  * The PUBLIC Jummah-lunch ordering surface — the unauthenticated `/api/v1` idiom
@@ -161,7 +161,8 @@ class JummahLunchOrdersController extends Controller
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private MealOrderEditor $editor,
-        private LunchOrderMailer $mailer
+        private LunchOrderMailer $mailer,
+        private MealOrderCreator $creator
     ) {
     }
 
@@ -271,46 +272,24 @@ class JummahLunchOrdersController extends Controller
                 $method === MealOrder::METHOD_ONLINE,
             );
 
-            $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation, $feeCovered) {
-                // A pickup number unique within this menu; the count is locked so
-                // two concurrent orders can't claim the same one.
-                $orderNumber = MealOrder::nextOrderNumber($masjidId, $menu->id);
-
-                $order = new MealOrder([
-                    'meal_menu_id' => $menu->id,
-                    'customer_name' => trim((string) $request->input('customer_name')),
-                    'customer_phone' => trim((string) $request->input('customer_phone')),
-                    // Dropped when the masjid turned the field off. Hiding an
-                    // input does not stop a crafted request from carrying one,
-                    // and storing an address the organisation deliberately chose
-                    // not to ask for is the whole thing they were avoiding.
-                    'customer_email' => $menu->collect_customer_email
-                        ? $request->input('customer_email')
-                        : null,
-                    'customer_notes' => $request->input('customer_notes'),
-                    'payment_method' => $method,
-                ]);
-                // /api/v1 runs UNBOUND, so stamp the tenant explicitly.
-                $order->masjid_id = $masjidId;
-                $order->currency = $menu->currency;
-                $order->subtotal_minor = $subtotal;
-                $order->donation_minor = $donation;
-                $order->fee_covered_minor = $feeCovered;
-                $order->total_minor = $subtotal + $donation + $feeCovered;
-                $order->order_number = $orderNumber;
-                $order->placed_at = now();
-                // The site this was placed from, when the allowlist trusts it: the
-                // order email is sent later (from the webhook, for a card order)
-                // and its link must go back to the same site (LunchOrderLink).
-                $order->site_origin = LunchOrderLink::siteOrigin($request);
-                $order->save();
-
-                foreach ($lines as $line) {
-                    $order->items()->create(array_merge($line, ['masjid_id' => $masjidId]));
-                }
-
-                return $order;
-            }, 3); // retried on a deadlock rather than failing the customer
+            // The write is MealOrderCreator's, shared with the kitchen door and the
+            // cart (it numbers the order under the menu lock and retries a
+            // deadlock); everything above is this door's gates and stays here.
+            $order = $this->creator->create(
+                $menu,
+                $masjidId,
+                ['lines' => $lines, 'subtotal_minor' => $subtotal],
+                [
+                    'name' => $request->input('customer_name'),
+                    'phone' => $request->input('customer_phone'),
+                    'email' => $request->input('customer_email'),
+                    'notes' => $request->input('customer_notes'),
+                ],
+                $method,
+                LunchOrderLink::siteOrigin($request),
+                $donation,
+                $feeCovered
+            );
 
             // After the order is safely written, never before, and never in a
             // way that can fail it. See LunchSmsOptIn.
