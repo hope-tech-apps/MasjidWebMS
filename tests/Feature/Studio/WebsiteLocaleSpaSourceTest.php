@@ -56,7 +56,9 @@ class WebsiteLocaleSpaSourceTest extends TestCase
     {
         $store = $this->spaCode('stores/super/studioOrganisationStore.ts');
 
-        $this->assertMatchesRegularExpression('~function reset\(\) \{.*?savingLocale\.value = false;.*?\n    \}~s', $store);
+        // Capture only reset()'s own body; an unbounded lazy match runs on into saveWebsiteLocale's finally block.
+        $this->assertSame(1, preg_match('~function reset\(\) \{((?:(?!\n    \}).)*)\n    \}~s', $store, $m), 'reset() not found');
+        $this->assertStringContainsString('savingLocale.value = false;', $m[1]);
     }
 
     #[Test]
