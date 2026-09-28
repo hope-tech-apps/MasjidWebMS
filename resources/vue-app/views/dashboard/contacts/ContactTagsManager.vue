@@ -126,7 +126,7 @@ async function remove(tag: ContactTag) {
     const count = tag.contacts_count ?? 0;
     const confirmed = await Swal.fire({
         icon: 'warning',
-        title: `Delete "${tag.name}"?`,
+        titleText: `Delete "${tag.name}"?`,
         text: count > 0
             ? `It comes off ${count} ${count === 1 ? 'person' : 'people'}. Nobody is deleted.`
             : 'Nobody carries it. Nobody is deleted.',

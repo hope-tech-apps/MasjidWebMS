@@ -451,7 +451,7 @@ const dismissIssued = async () => {
 
 const revoke = async (code: FormStaffCode) => {
     const confirmed = await Swal.fire({
-        title: `Revoke ${code.holder_name}'s code?`,
+        titleText: `Revoke ${code.holder_name}'s code?`,
         text: 'It stops working at once, on every phone. It stays on this list with the cash it recorded. This cannot be undone: add a new code if they need one again.',
         icon: 'warning',
         showCancelButton: true,
@@ -478,7 +478,7 @@ const revoke = async (code: FormStaffCode) => {
 
 const resetDevice = async (code: FormStaffCode) => {
     const confirmed = await Swal.fire({
-        title: `Let another phone use ${code.holder_name}'s code?`,
+        titleText: `Let another phone use ${code.holder_name}'s code?`,
         text: `Do this when ${code.holder_name} has changed phones. The next phone to enter the code claims it, and the old phone stops working. This is recorded on the code.`,
         icon: 'question',
         showCancelButton: true,

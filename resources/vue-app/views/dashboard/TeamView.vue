@@ -318,7 +318,7 @@ async function switchAccess(p: TeamMember): Promise<void> {
 async function remove(p: TeamMember): Promise<void> {
     const answer = await Swal.fire({
         icon: 'warning',
-        title: `Remove ${p.name}?`,
+        titleText: `Remove ${p.name}?`,
         text: `They'll be signed out and can no longer sign in to ${orgName.value}.`,
         showCancelButton: true,
         confirmButtonText: 'Remove',

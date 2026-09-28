@@ -317,7 +317,7 @@ const revoke = async (org: FormsCardOrg): Promise<void> => {
 
     const confirmed = await Swal.fire({
         icon: 'warning',
-        title: `Stop taking card payments for ${org.name}?`,
+        titleText: `Stop taking card payments for ${org.name}?`,
         text: `New card payments on ${org.name}'s forms will be refused, and families will be sent to pay `
             + `the office where a form offers it. Card payments already made stay in this Stripe account, `
             + `and a card payment page opened in the last half hour can still be paid and recorded. Only `
