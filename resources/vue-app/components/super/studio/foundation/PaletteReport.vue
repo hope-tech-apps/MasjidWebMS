@@ -11,6 +11,10 @@
         </div>
 
         <p v-if="error" class="studio-error">{{ error }}</p>
+        <p v-if="report && stale" class="studio-error" role="status">
+            Out of date. This is the last check that came back, for earlier colours. It does not describe the colours
+            now in the fields.
+        </p>
         <p v-if="!report" class="studio-hint">The check runs once all four colours are chosen.</p>
 
         <template v-else>
@@ -66,7 +70,7 @@
 import { pairLabel } from '@/core/studio/paletteLabels';
 import { StudioPaletteReport, StudioPalettePair } from '@/core/types/data/Studio';
 
-defineProps<{ report: StudioPaletteReport | null; loading?: boolean; error?: string | null }>();
+defineProps<{ report: StudioPaletteReport | null; loading?: boolean; error?: string | null; stale?: boolean }>();
 
 function inkSourceLabel(source: NonNullable<StudioPalettePair['ink_source']>): string {
     switch (source) {

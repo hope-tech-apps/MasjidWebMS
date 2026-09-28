@@ -24,8 +24,10 @@ use App\Support\WcagColor;
  *  - `web_tokens` is DesignTokens::resolve() over the colours plus the tokens
  *    S8 writes (the auto-ink and the preset's header and footer);
  *  - the iOS tabs and sections are AppMenu's, which /menu serves;
- *  - the Android tabs are the legacy pivot rows AppFeaturePivot::rowsFor()
- *    derives, which S8 seeds and /features serves;
+ *  - the Android tabs are the legacy pivot rows: for a draft what
+ *    AppFeaturePivot::rowsFor() derives, which S8 seeds and /features serves;
+ *    for a live organisation its stored rows, which is what installed builds
+ *    read until the app-features cutover;
  *  - the web plan is StarterSite::plan(), which S8 writes;
  *  - the tvOS values are TvConfigController's own constants.
  *
@@ -122,7 +124,7 @@ final class StudioPreview
                     'sections' => AppMenu::sections($org),
                 ],
                 'android' => [
-                    'tabs' => self::androidTabs($org),
+                    'tabs' => self::androidTabs($org, $in->androidFeatureIds),
                 ],
             ],
             'web' => $in->web,
@@ -140,10 +142,19 @@ final class StudioPreview
         ];
     }
 
-    /** @return list<string> */
-    private static function androidTabs(Masjid $org): array
+    /**
+     * A draft's pivot is seeded from its switches (S8), so the switches say what
+     * its tabs will be. A live organisation's installed Android build reads its
+     * stored rows instead, so `$storedIds` (PreviewInput::fromMasjid) wins.
+     *
+     * @param  list<int>|null  $storedIds
+     * @return list<string>
+     */
+    private static function androidTabs(Masjid $org, ?array $storedIds): array
     {
-        $rows = AppFeaturePivot::rowsFor($org);
+        $rows = $storedIds === null
+            ? AppFeaturePivot::rowsFor($org)
+            : array_fill_keys($storedIds, true);
         $tabs = ['home'];
 
         foreach (self::ANDROID_TABS as $id => $tab) {

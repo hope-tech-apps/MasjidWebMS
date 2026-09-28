@@ -176,7 +176,7 @@ async function save() {
 
     const answer = await QSwal.fire({
         icon: 'warning',
-        title: `Apply ${countLabel(keys.length)} to ${orgName.value}?`,
+        titleText: `Apply ${countLabel(keys.length)} to ${orgName.value}?`,
         html: dialogHtml(
             [`${orgName.value} is a live organisation. These apply to it now, as soon as you confirm.`],
             keys.map((key) => `${labelOf(key)}: switch ${sent[key] ? 'on' : 'off'}`),

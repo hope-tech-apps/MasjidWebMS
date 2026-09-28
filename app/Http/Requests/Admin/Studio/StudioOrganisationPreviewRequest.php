@@ -47,7 +47,7 @@ class StudioOrganisationPreviewRequest extends BaseFormRequest
         ];
 
         foreach (self::COLOURS as $colour) {
-            $rules["brand.{$colour}"] = ['required_with:brand', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'];
+            $rules["brand.{$colour}"] = ['required_with:brand', 'string', 'regex:/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/'];
         }
 
         return $rules;

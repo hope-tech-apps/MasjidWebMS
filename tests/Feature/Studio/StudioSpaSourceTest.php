@@ -523,6 +523,39 @@ class StudioSpaSourceTest extends TestCase
         return $match[1];
     }
 
+    #[Test]
+    public function a_live_card_dialog_never_puts_data_in_a_sweetalert_title_or_unescaped_html(): void
+    {
+        // SweetAlert2 parses `title` and `html` as HTML, and the SPA's CSP allows inline script, so an
+        // organisation name such as <img onerror=...> would run in a SuperAdmin's session (S9-3). Data goes
+        // through `titleText`, or through dialogHtml, which escapes every piece.
+        $folder = base_path(self::SPA . '/components/super/studio/live');
+        $this->assertDirectoryExists($folder);
+        $cards = glob($folder . '/*.vue');
+        $this->assertNotEmpty($cards);
+
+        $dialogs = 0;
+
+        foreach ($cards as $card) {
+            $code = $this->withoutComments(file_get_contents($card));
+            $name = basename($card);
+
+            preg_match_all('/(?<![\w.$-])title\s*:\s*(`[^`]*`|[^\n]*)/', $code, $titles);
+            foreach ($titles[1] as $value) {
+                $this->assertStringNotContainsString('${', $value, "{$name} interpolates data into a dialog `title`, which SweetAlert2 renders as HTML; use `titleText`");
+            }
+
+            preg_match_all('/(?<![\w.$-])html\s*:\s*([^\n]*)/', $code, $bodies);
+            foreach ($bodies[1] as $value) {
+                $this->assertStringStartsWith('dialogHtml(', trim($value), "{$name} builds a dialog `html` body without dialogHtml, which escapes every piece");
+            }
+
+            $dialogs += substr_count($code, 'QSwal.fire(');
+        }
+
+        $this->assertGreaterThan(0, $dialogs, 'the guard found no live dialog to check');
+    }
+
     /** @return array<string, string> relative path => code with comments removed */
     private function studioFiles(): array
     {

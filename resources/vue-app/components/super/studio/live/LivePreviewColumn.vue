@@ -57,7 +57,12 @@
                         :logo-missing="!logoUrl" :viewport="viewport" :max-scale="viewport === 'mobile' ? .6 : 1" />
                 </template>
                 <IosFrame v-else-if="activePlatform === 'ios'" :preview="preview" :logo-url="logoUrl" />
-                <AndroidFrame v-else-if="activePlatform === 'android'" :preview="preview" :logo-url="logoUrl" />
+                <template v-else-if="activePlatform === 'android'">
+                    <p class="studio-hint mb-0">
+                        Installed Android apps follow the stored menu, not the switches, until the app-features cutover.
+                    </p>
+                    <AndroidFrame :preview="preview" :logo-url="logoUrl" />
+                </template>
                 <TvFrame v-else-if="activePlatform === 'tvos'" :preview="preview" :answers="tvAnswers" :logo-url="logoUrl" />
             </div>
 

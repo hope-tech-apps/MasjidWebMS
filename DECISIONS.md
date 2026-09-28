@@ -4399,3 +4399,23 @@ over the existing masjids index). No draft (plan R14).
   `featureGroups` rather than making `StudioFeatureStep` dual-mode (W1 pins it); the
   frames (Web/iOS/Android/TV) and `PlatformContrastList` are reused as they are. The
   palette pair names moved into `core/studio/paletteLabels.ts`, shared by two screens.
+
+Review fixes (2026-09-28):
+
+- **Dialog titles are text.** SweetAlert2 parses `title` as HTML, so an organisation name
+  in one ran script in a SuperAdmin's session. The live cards use `titleText` for anything
+  interpolated and `dialogHtml` (which escapes) for every `html` body;
+  `StudioSpaSourceTest` fails on a `${` in a live card's `title:` or an `html:` that is not
+  `dialogHtml(`.
+- **Stored #RGB and #RRGGBBAA colours** are accepted everywhere the theme save accepts
+  them. The preview request takes the three forms; the mockups get a display copy
+  (`WcagColor::normalize`: 3 digits expanded, alpha pair dropped); the Brand card's field
+  and `coloursComplete` use `isThemeHex`, and Save colours sends an untouched colour
+  exactly as stored. Draft Foundation stays six digits.
+- **The Web tab follows the candidate Website switch** (the clone, not the saved row).
+- **A live organisation's Android frame draws its stored pivot rows**, read through the
+  `features()` relation as GET /features serves them, scoped by masjid_id, not the switches
+  (`PreviewInput::$androidFeatureIds`, null for a draft). Saving switches never moves it, so
+  the preview column says installed Android apps follow the stored menu until the cutover.
+- **A failed preview leaves the contrast report stale.** The Save colours dialog then says the
+  check failed for these colours (no pair list) and the Brand card marks the report out of date.

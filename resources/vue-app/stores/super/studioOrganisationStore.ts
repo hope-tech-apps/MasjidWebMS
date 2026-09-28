@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { isAxiosError } from "axios";
 import ApiService from "@/core/services/ApiService";
 import { serverMessage } from "@/core/helpers/serverMessage";
-import { isHex6 } from "@/core/studio/foundationGate";
+import { isThemeHex } from "@/core/studio/foundationGate";
 import { PREVIEW_DEBOUNCE_MS } from "@/stores/super/studioDraftStore";
 import { StudioColourKey, StudioPreview } from "@/core/types/data/Studio";
 import {
@@ -114,8 +114,8 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     const changedColours = computed<StudioColourKey[]>(() =>
         STUDIO_COLOUR_KEYS.filter((key) => !sameColour(colours.value[key], savedColours.value[key])));
 
-    /** All four are a #RRGGBB, the only form the preview and a whole theme take. */
-    const coloursComplete = computed(() => STUDIO_COLOUR_KEYS.every((key) => isHex6(colours.value[key] ?? '')));
+    /** All four are a colour the theme save takes (#RGB, #RRGGBB or #RRGGBBAA), as stored or as typed. */
+    const coloursComplete = computed(() => STUDIO_COLOUR_KEYS.every((key) => isThemeHex(colours.value[key] ?? '')));
 
     /**
      * The switches that would move: capability-writer entries whose pending
@@ -345,7 +345,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     async function saveColours(values: Record<StudioColourKey, string | null>): Promise<Outcome<null>> {
         const current = snapshot.value;
         if (!current) return { ok: false, message: 'No organisation is open.' };
-        if (!STUDIO_COLOUR_KEYS.every((key) => isHex6(values[key] ?? ''))) {
+        if (!STUDIO_COLOUR_KEYS.every((key) => isThemeHex(values[key] ?? ''))) {
             return { ok: false, message: 'All four colours need a value like #0A3D62.' };
         }
 

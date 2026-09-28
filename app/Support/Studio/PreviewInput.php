@@ -9,6 +9,7 @@ use App\Models\StudioDraft;
 use App\Support\CapabilityCatalogue;
 use App\Support\CapabilityWriter;
 use App\Support\HostName;
+use App\Support\WcagColor;
 
 /**
  * What StudioPreview draws, whoever it is drawn for (Studio W2 S9): a draft
@@ -32,6 +33,7 @@ final readonly class PreviewInput
      * @param  bool  $paintsPaletteInks  true for a draft: the inks PaletteContrast picks are what Step 3 writes, so the web is painted with them
      * @param  array<string, mixed>  $web  `web` minus nothing: preset, locale, pages, theme_layout, preset_source, approved
      * @param  list<string>  $platforms
+     * @param  list<int>|null  $androidFeatureIds  a live organisation's stored, available Mobile App Features rows (what GET /features serves installed Android builds); null for a draft, whose pivot is seeded from the switches
      */
     public function __construct(
         public Masjid $org,
@@ -45,6 +47,7 @@ final readonly class PreviewInput
         public array $platforms,
         public ?string $host,
         public string $donationLink,
+        public ?array $androidFeatureIds = null,
     ) {}
 
     /** The draft keys StarterFacts reads; nothing else (not `vibe`, R12) leaves the draft. */
@@ -178,7 +181,9 @@ final readonly class PreviewInput
             ? array_values(array_intersect(self::PLATFORMS, $publishing->enabled_platforms))
             : [];
 
-        if (! in_array('web', $platforms, true) && ! $real->moduleIsOff('website')) {
+        // The clone, not the saved row: the Web tab follows the Website switch
+        // being considered, as every other reader in the preview does.
+        if (! in_array('web', $platforms, true) && ! $org->moduleIsOff('website')) {
             // An organisation with a website shows it, whether or not the
             // publishing row (which predates the web) names it.
             $platforms[] = 'web';
@@ -203,7 +208,25 @@ final readonly class PreviewInput
             platforms: $platforms,
             host: self::liveHost($real),
             donationLink: trim((string) ($real->donationLink()->value('link') ?? '')),
+            androidFeatureIds: self::storedAvailableFeatureIds($real),
         );
+    }
+
+    /**
+     * The feature ids an installed Android build draws, read the way GET
+     * /features serves them: the organisation's own pivot rows (scoped by
+     * masjid_id through the relation) that say available. Until the app-features
+     * cutover these, not the switches, decide an existing organisation's tabs.
+     *
+     * @return list<int>
+     */
+    private static function storedAvailableFeatureIds(Masjid $real): array
+    {
+        return $real->features()->get()
+            ->filter(fn ($feature) => (bool) $feature->pivot->is_available)
+            ->map(fn ($feature) => (int) $feature->id)
+            ->values()
+            ->all();
     }
 
     /**
@@ -281,8 +304,10 @@ final readonly class PreviewInput
     }
 
     /**
-     * The four colours, only when every one is a #RRGGBB (R25: a missing one
-     * would be filled with Burlington's green).
+     * The four colours as #RRGGBB for display, only when every one is a colour
+     * the theme save accepts (#RGB, #RRGGBB, #RRGGBBAA; R25: a missing one
+     * would be filled with Burlington's green). A 3-digit value is expanded and
+     * an alpha pair dropped, for the mockups only: nothing here is saved.
      *
      * @param  array<string, mixed>  $candidate
      * @return array<string, string>|null
@@ -294,11 +319,13 @@ final readonly class PreviewInput
         foreach (self::BRAND_COLOURS as $key) {
             $value = $candidate[$key] ?? null;
 
-            if (! is_string($value) || preg_match('/^#[0-9a-fA-F]{6}$/', $value) !== 1) {
+            $display = is_string($value) ? WcagColor::normalize($value) : null;
+
+            if ($display === null) {
                 return null;
             }
 
-            $colours[$key] = $value;
+            $colours[$key] = $display;
         }
 
         return $colours;

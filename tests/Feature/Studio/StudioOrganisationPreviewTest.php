@@ -4,14 +4,17 @@ namespace Tests\Feature\Studio;
 
 use App\Models\Masjid;
 use App\Models\MasjidCapabilityChange;
+use App\Models\MasjidMobileAppFeature;
 use App\Models\Page;
 use App\Models\Section;
 use App\Models\ThemeSetting;
+use App\Support\AppFeaturePivot;
 use App\Support\AppMenu;
 use App\Support\DesignTokens;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Feature\Studio\Concerns\SeedsAppFeatureCatalogue;
 use Tests\Feature\Studio\Concerns\StudioDraftFixtures;
 use Tests\TestCase;
 
@@ -23,6 +26,7 @@ use Tests\TestCase;
 class StudioOrganisationPreviewTest extends TestCase
 {
     use RefreshDatabase;
+    use SeedsAppFeatureCatalogue;
     use StudioDraftFixtures;
 
     protected function setUp(): void
@@ -160,5 +164,100 @@ class StudioOrganisationPreviewTest extends TestCase
             ->assertOk()->json('data');
         $this->assertNotNull($painted['web_tokens']);
         $this->assertFalse(ThemeSetting::where('masjid_id', $org->id)->exists(), 'still no theme: nothing was written');
+    }
+
+    #[Test]
+    public function the_web_tab_follows_the_website_switch_being_considered_not_the_saved_one(): void
+    {
+        // No publishing row, so the Web tab comes from the Website switch alone.
+        $org = $this->liveOrg();
+        $org->forceFill(['capability_overrides' => ['website' => false]])->save();
+
+        $this->assertNotContains('web', $this->preview($org, [])->assertOk()->json('data.platforms'));
+        $this->assertContains('web', $this->preview($org, ['capabilities' => ['website' => '1']])->assertOk()->json('data.platforms'),
+            'switching Website on in the candidate adds the Web tab, as Save would');
+
+        $org->forceFill(['capability_overrides' => ['website' => true]])->save();
+
+        $this->assertContains('web', $this->preview($org, [])->assertOk()->json('data.platforms'));
+        $this->assertNotContains('web', $this->preview($org, ['capabilities' => ['website' => '0']])->assertOk()->json('data.platforms'),
+            'switching Website off in the candidate drops it');
+    }
+
+    #[Test]
+    public function a_theme_stored_as_rgb_or_rgba_still_previews_and_can_be_sent_back_as_stored(): void
+    {
+        $org = $this->liveOrg();
+        ThemeSetting::where('masjid_id', $org->id)->update(['primary_color' => '#FA0', 'accent_color' => '#0a3d62ff']);
+        $before = $this->footprint($org);
+
+        $data = $this->preview($org, [])->assertOk()->json('data');
+
+        $this->assertNotNull($data['palette'], 'a stored #RGB or #RRGGBBAA does not blank the contrast report');
+        $this->assertNotNull($data['web_tokens']);
+        // Normalised for display only: 3 digits expanded, the alpha pair dropped.
+        $this->assertSame('#FFAA00', $data['platform_contrast'][0]['background']);
+
+        // The SPA sends every colour, the untouched ones exactly as stored; the request takes those forms.
+        $sent = $this->preview($org, ['brand' => [
+            'primary_color' => '#FA0', 'secondary_color' => '#1B1B2E', 'accent_color' => '#0a3d62ff', 'background_color' => '#F3F8FB',
+        ]])->assertOk()->json('data');
+        $this->assertSame($data['palette'], $sent['palette']);
+        $this->assertSame($data['web_tokens'], $sent['web_tokens']);
+
+        $this->preview($org, ['brand' => ['primary_color' => '#FA', 'secondary_color' => '#1B1B2E', 'accent_color' => '#0a3d62ff', 'background_color' => '#F3F8FB']])
+            ->assertStatus(422);
+
+        $this->assertSame($before, $this->footprint($org), 'the stored forms are untouched');
+    }
+
+    #[Test]
+    public function a_live_organisations_android_tabs_are_its_stored_rows_not_its_switches(): void
+    {
+        $this->seedAppFeatureCatalogue();
+
+        $org = $this->liveOrg();
+        // The switches say: Announcements off, Contact on, Donate on (the default).
+        $org->forceFill(['capability_overrides' => ['announcements' => false]])->save();
+
+        // The stored rows, which an installed Android build draws through GET /features, say the opposite
+        // for Announcements and Contact.
+        foreach (range(1, 11) as $featureId) {
+            MasjidMobileAppFeature::create([
+                'masjid_id' => $org->id, 'feature_id' => $featureId, 'is_available' => in_array($featureId, [6, 10], true),
+            ]);
+        }
+
+        // Another organisation's rows must not leak in.
+        $other = Masjid::create([
+            'name' => 'Other Org', 'email' => 'other@example.test', 'phone' => '+15550104002',
+            'country_id' => '1', 'city_id' => '1', 'address' => '2 Other St', 'latitude' => 0.0, 'longitude' => 0.0,
+            'org_type' => 'masjid',
+        ]);
+        MasjidMobileAppFeature::create(['masjid_id' => $other->id, 'feature_id' => 11, 'is_available' => true]);
+
+        $data = $this->preview($org, [])->assertOk()->json('data');
+
+        $this->assertSame(['home', 'announcements', 'donate'], $data['app']['android']['tabs']);
+        // The premise: the switches derive the opposite for both, so the old preview drew the wrong tabs.
+        $derived = AppFeaturePivot::rowsFor($org->fresh());
+        $this->assertFalse($derived[10]);
+        $this->assertTrue($derived[11]);
+
+        // A candidate switch does not move the Android frame: Save writes switches, not rows.
+        $candidate = $this->preview($org, ['capabilities' => ['announcements' => '1']])->assertOk()->json('data');
+        $this->assertSame(['home', 'announcements', 'donate'], $candidate['app']['android']['tabs']);
+
+        // An organisation with no rows draws no optional tab, as the installed app would.
+        $this->assertSame(['home'], $this->preview($this->orgWithoutRows(), [])->assertOk()->json('data.app.android.tabs'));
+    }
+
+    private function orgWithoutRows(): Masjid
+    {
+        return Masjid::create([
+            'name' => 'Rowless Org', 'email' => 'rowless@example.test', 'phone' => '+15550104003',
+            'country_id' => '1', 'city_id' => '1', 'address' => '3 Rowless St', 'latitude' => 0.0, 'longitude' => 0.0,
+            'org_type' => 'masjid',
+        ]);
     }
 }

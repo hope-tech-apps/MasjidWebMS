@@ -24,7 +24,7 @@
 
         <div class="d-flex flex-wrap gap-4">
             <BrandColourField v-for="field in COLOUR_FIELDS" :key="field.key" :id="`live-${field.key}`" :label="field.label"
-                :model-value="store.colours[field.key]" :disabled="store.savingColours" empty-note="Not set."
+                :model-value="store.colours[field.key]" :disabled="store.savingColours" empty-note="Not set." any-theme-form
                 @update:model-value="setColour(field.key, $event)" />
         </div>
 
@@ -36,7 +36,8 @@
             For a live organisation the check below is advisory: nothing is blocked, and Save colours names any pair that
             fails before it saves.
         </p>
-        <PaletteReport :report="store.preview?.palette ?? null" :loading="store.previewQueued || store.previewLoading" :error="store.previewError" />
+        <PaletteReport :report="store.preview?.palette ?? null" :loading="store.previewQueued || store.previewLoading" :error="store.previewError"
+            :stale="!!store.previewError" />
 
         <div class="d-flex flex-wrap align-items-center gap-2">
             <button type="button" class="btn btn-success" :disabled="!canSave" @click="saveColours">
@@ -79,7 +80,7 @@ import PaletteReport from '@/components/super/studio/foundation/PaletteReport.vu
 import StudioPanel from '@/components/super/studio/foundation/StudioPanel.vue';
 import { QSwal } from '@/core/plugins/SweetAlerts2';
 import { dialogHtml } from '@/core/studio/liveOrganisation';
-import { pairLabel } from '@/core/studio/paletteLabels';
+import { failingPairLines } from '@/core/studio/paletteLabels';
 import { StudioColourKey } from '@/core/types/data/Studio';
 import { useStudioOrganisationStore } from '@/stores/super/studioOrganisationStore';
 import { computed, ref } from 'vue';
@@ -126,20 +127,12 @@ function discardColours() {
     store.discardColours();
 }
 
-/**
- * The failing text pairs in the report for the colours being saved. The report
- * is the preview's, which carries the pending colours once all four are set;
- * one still in flight for an older edit is not these colours' report, so the
- * dialog says the check has not caught up rather than listing stale pairs.
- */
+/** The failing pairs for the colours being saved, or null when the preview does not describe them. */
 function failingPairs(): string[] | null {
-    const report = store.preview?.palette ?? null;
-    if (!report || store.previewQueued || store.previewLoading) return null;
-    if (report.valid) return [];
-    return report.blocking_failures.map((key) => {
-        const pair = report.pairs.find((candidate) => candidate.key === key);
-        const ratio = pair?.ratio === null || pair?.ratio === undefined ? '' : ` ${pair.ratio.toFixed(2)}:1, needs ${pair.required}:1`;
-        return `${pairLabel(key)}:${ratio || ' fails'}`;
+    return failingPairLines(store.preview?.palette ?? null, {
+        queued: store.previewQueued,
+        loading: store.previewLoading,
+        error: store.previewError,
     });
 }
 
@@ -154,14 +147,16 @@ async function saveColours() {
     const items = store.changedColours.map((key) => `${labelOf(key)}: ${before[key] ?? 'not set'} → ${values[key]}`);
 
     if (failing === null) {
-        sentences.push('The contrast check has not finished for these colours; look at it before you save.');
+        sentences.push(store.previewError
+            ? 'The contrast check failed for these colours, so it cannot say whether they are readable; look at them before you save.'
+            : 'The contrast check has not finished for these colours; look at it before you save.');
     } else if (failing.length) {
         sentences.push(`${failing.length === 1 ? 'One text pair fails' : `${failing.length} text pairs fail`} the contrast check and will be hard to read: ${failing.join('; ')}. Save anyway?`);
     }
 
     const answer = await QSwal.fire({
         icon: 'warning',
-        title: `Save these colours for ${orgName.value}?`,
+        titleText: `Save these colours for ${orgName.value}?`,
         html: dialogHtml(sentences, items),
         confirmButtonText: failing?.length ? 'Save anyway' : 'Save colours',
         cancelButtonText: 'Not yet',
@@ -199,7 +194,7 @@ async function regenerate() {
 
     const answer = await QSwal.fire({
         icon: 'warning',
-        title: current.has_derivatives ? 'Replace the three images?' : `Add the three images to ${org}?`,
+        titleText: current.has_derivatives ? 'Replace the three images?' : `Add the three images to ${org}?`,
         html: dialogHtml(sentences),
         confirmButtonText: current.has_derivatives ? 'Replace them' : 'The owner agreed: add them',
         cancelButtonText: 'Not now',
