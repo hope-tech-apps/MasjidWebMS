@@ -108,4 +108,38 @@ class BehaviorSkill extends Model
     {
         return $query->where('is_active', true);
     }
+
+    /**
+     * The order a picker (and a summary) reads in: positives first, then
+     * negatives, then anything unrecognised, and by label within each run.
+     *
+     * A CASE rather than `orderBy('polarity')`, which is alphabetical and so put
+     * "negative" ABOVE "positive" — the opposite of what the docblocks and the
+     * teachers asked for (T-003.1, 2026-09-28). The rank is spelled out here once
+     * so the skills list and both `by_skill` summaries cannot drift apart.
+     *
+     * The two columns are parameters because the SAME order is wanted over the
+     * award snapshot (`skill_polarity`, `skill_label`), which is grouped in the
+     * summaries and must keep reading the snapshot, never the live skills table.
+     * Only trusted literals are ever passed in, so the interpolation is safe.
+     */
+    public function scopeInPickerOrder($query, string $polarityColumn = 'polarity', string $labelColumn = 'label')
+    {
+        return self::orderInPickerOrder($query, $polarityColumn, $labelColumn);
+    }
+
+    /**
+     * The same order applied to ANY builder — the award summaries query
+     * `behavior_awards`, which is not a BehaviorSkill and so cannot call the
+     * scope, but must sort its snapshot columns the same way.
+     */
+    public static function orderInPickerOrder($query, string $polarityColumn = 'polarity', string $labelColumn = 'label')
+    {
+        return $query
+            ->orderByRaw(
+                "CASE {$polarityColumn} WHEN '".self::POLARITY_POSITIVE."' THEN 0 "
+                ."WHEN '".self::POLARITY_NEGATIVE."' THEN 1 ELSE 2 END"
+            )
+            ->orderBy($labelColumn);
+    }
 }

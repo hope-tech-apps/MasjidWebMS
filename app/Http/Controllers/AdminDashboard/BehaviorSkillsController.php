@@ -58,8 +58,7 @@ class BehaviorSkillsController extends Controller
                 fn ($query) => $query->where('polarity', $request->query('polarity'))
             )
             ->when($request->boolean('active_only'), fn ($query) => $query->active())
-            ->orderBy('polarity')
-            ->orderBy('label')
+            ->inPickerOrder()
             ->paginate($request->query('per_page', 50));
 
         return response()->json([

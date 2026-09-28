@@ -748,6 +748,15 @@ positioning, not its configuration.
   `forceDelete()`, as it is for threads.
 - **Permissions**: `view contacts` / `manage contacts`, minting nothing.
   `Permission::count() === 8` stays pinned.
+- **A picker (and a summary) reads POSITIVE FIRST** (T-003.1, 2026-09-28):
+  positives, then negatives, then any unrecognised polarity, then by label.
+  `BehaviorSkill::scopeInPickerOrder()` / `orderInPickerOrder()` is the ONE
+  definition, used by the skills list and by both `by_skill` summaries (staff and
+  family, ordered by the SNAPSHOT columns). `ORDER BY polarity` is alphabetical
+  and put "negative" on top; do not reintroduce it. The award LOG stays
+  newest-first. On the teacher's screen `core/helpers/behaviorSkills.ts` keeps a
+  locally added skill in the same order and opens the picker on the first
+  positive skill. Pinned by `BehaviorSkillOrderTest` and `behavior-skills.test.ts`.
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 

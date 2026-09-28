@@ -2094,6 +2094,7 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
+import { defaultSkillId, inPickerOrder, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import {
     canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
     subjectClash, subjectKey, takenSubjectKeys,
@@ -4117,7 +4118,7 @@ const createSkill = async () => {
         );
         const created = res.data?.data;
         if (created?.id) {
-            skills.value = [...skills.value, created];
+            skills.value = withSkillInserted(skills.value, created);
             awardSkillId.value = created.id;
         }
         newSkill.value = { label: '', polarity: 'positive', default_points: 1 };
@@ -4161,8 +4162,8 @@ const loadAwards = async () => {
         // The behaviour vocabulary, if the payload carries it alongside the log.
         const s = res.data?.data?.skills ?? group.value?.behavior_skills ?? [];
         if (Array.isArray(s) && s.length) {
-            skills.value = s;
-            if (!awardSkillId.value) awardSkillId.value = s[0].id;
+            skills.value = inPickerOrder(s);
+            if (!awardSkillId.value) awardSkillId.value = defaultSkillId(s);
         }
     } catch {
         awardError.value = 'The behaviour record could not be loaded.';
@@ -4179,8 +4180,8 @@ const loadSkills = async () => {
         const res = await TeacherApiService.get(`/api/teacher/masjids/${masjidId.value}/behavior-skills`);
         const s = rowsOf(res.data?.data);
         if (s.length) {
-            skills.value = s;
-            if (!awardSkillId.value) awardSkillId.value = s[0].id;
+            skills.value = inPickerOrder(s);
+            if (!awardSkillId.value) awardSkillId.value = defaultSkillId(s);
         }
     } catch {
         // Falls back to whatever the awards payload carried.

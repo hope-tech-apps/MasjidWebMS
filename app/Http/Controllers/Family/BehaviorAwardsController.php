@@ -91,10 +91,11 @@ class BehaviorAwardsController extends FamilyController
         // satisfied and SQLite behaves identically.
         $rows = $base->clone()
             ->selectRaw('skill_label, skill_polarity, COUNT(*) as awards_count, SUM(points) as points_total')
-            ->groupBy('skill_label', 'skill_polarity')
-            ->orderBy('skill_polarity')
-            ->orderBy('skill_label')
-            ->get();
+            ->groupBy('skill_label', 'skill_polarity');
+
+        // Positives first (T-003.1): the polarity column sorts alphabetically, so a
+        // plain orderBy put negatives on top. Ordered by the SNAPSHOT columns.
+        $rows = BehaviorSkill::orderInPickerOrder($rows, 'skill_polarity', 'skill_label')->get();
 
         $bySkill = [];
         $byPolarity = array_fill_keys(BehaviorSkill::POLARITIES, ['awards' => 0, 'points' => 0]);

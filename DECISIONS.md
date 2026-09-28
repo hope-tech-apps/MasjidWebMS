@@ -4199,3 +4199,13 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
   undoing A then deletes the row, because `bounce` is in `PRECAUTION_REASONS`. The end state is
   the same as before the order-hold fix (where B never wrote the bounce and undo A deleted the
   `not_opted_in` row), so it is not a regression. Accepted as is.
+
+## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
+
+- **T-003.1 Positive always on top.** The skills list and both `by_skill` summaries order by
+  `BehaviorSkill::scopeInPickerOrder` (positive, negative, other; then label) instead of
+  `ORDER BY polarity`, which is alphabetical and put negatives first while the docblocks said the
+  opposite. The teacher picker opens on the first positive skill and a skill a teacher adds is
+  inserted in picker order (`core/helpers/behaviorSkills.ts`). Award logs stay newest-first (P1).
+  Alternative: sort only in the Vue picker. Rejected: the summaries are read by parents and the
+  office, and one server definition cannot drift between the three lists.
