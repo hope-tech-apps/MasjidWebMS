@@ -313,12 +313,30 @@ test('fixed times need an until-date between today (where the organisation is) a
     assert.deepEqual(iqamaBlockers(masjid(five), false, now), [], 'a school is never asked');
 });
 
+test('fixed times are refused for a UTC-named timezone, which cannot place them', () => {
+    const masjid = (timezone: string, prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid', timezone }, prayer });
+    const fixed = { iqama: { maghrib: 5, isha: 10 }, iqama_fixed: { fajr: '06:15', dhuhr: '13:45', asr: '17:30' }, iqama_fixed_until: '2026-11-01' };
+    const now = new Date('2026-09-27T16:00:00Z');
+    const refusal = 'Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.';
+
+    assert.deepEqual(iqamaBlockers(masjid('UTC', fixed), true, now), [refusal]);
+    assert.deepEqual(iqamaBlockers(masjid('Etc/UTC', fixed), true, now), [refusal]);
+    assert.deepEqual(iqamaBlockers(masjid('Europe/London', fixed), true, now), []);
+
+    // The tick sends no fixed times, and offsets alone never needed a zone.
+    assert.deepEqual(iqamaBlockers(masjid('UTC', { ...fixed, iqama_given: false }), true, now), []);
+    assert.deepEqual(iqamaBlockers(masjid('UTC', { iqama: { fajr: 1, dhuhr: 1, asr: 1, maghrib: 1, isha: 1 } }), true, now), []);
+    assert.deepEqual(iqamaBlockers(masjid('UTC', fixed), false, now), [], 'a school is never asked');
+});
+
 test('the Jumu\'ah times must all be different', () => {
     const masjid = (prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid' }, prayer });
 
     assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '13:30'] }), true), []);
     assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '12:30'] }), true), ['The Jumu\'ah times must all be different.']);
     assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '12:30'] }), false), []);
+    // Khutbah times are not iqama times: the tick does not excuse a repeat.
+    assert.deepEqual(iqamaBlockers(masjid({ jumaa_times: ['12:30', '12:30'], iqama_given: false }), true), ['The Jumu\'ah times must all be different.']);
 });
 
 test('the credentials are cleared once an organisation exists, and kept for a retry otherwise', () => {

@@ -74,28 +74,28 @@
                     After this date these prayers use minutes after adhan. Update them in Prayer settings before then.
                 </p>
             </div>
-
-            <div class="studio-field jumuah">
-                <span class="studio-label" id="studio-jumuah-label">Jumu'ah iqama</span>
-                <div class="d-flex flex-column gap-2" role="group" aria-labelledby="studio-jumuah-label">
-                    <div v-for="(time, index) in jumuahRows" :key="index" class="d-flex align-items-center gap-2">
-                        <input :id="`studio-jumuah-${index}`" :value="time" type="time" class="dashboard-input"
-                            :aria-label="jumuahRows.length > 1 ? `Jumu'ah time ${index + 1}` : `Jumu'ah time`"
-                            @input="setJumuahTime(index, $event)" />
-                        <button v-if="jumuahRows.length > 1" type="button" class="btn btn-sm btn-outline-secondary"
-                            :aria-label="`Remove Jumu'ah time ${index + 1}`" @click="removeJumuahTime(index)">
-                            Remove
-                        </button>
-                    </div>
-                </div>
-                <button v-if="jumuahRows.length < MAX_JUMUAH_TIMES" type="button" class="btn btn-sm btn-outline-secondary align-self-start"
-                    @click="addJumuahTime">
-                    Add a Jumu'ah time
-                </button>
-                <p class="studio-hint">The earliest is the Jumu'ah iqama; two or more are provisioned as the Jumu'ah shifts.</p>
-                <p v-if="jumuahDuplicate" class="studio-error">The Jumu'ah times must all be different.</p>
-            </div>
         </fieldset>
+
+        <div class="studio-field jumuah">
+            <span class="studio-label" id="studio-jumuah-label">Jumu'ah khutbah times</span>
+            <div class="d-flex flex-column gap-2" role="group" aria-labelledby="studio-jumuah-label">
+                <div v-for="(time, index) in jumuahRows" :key="index" class="d-flex align-items-center gap-2">
+                    <input :id="`studio-jumuah-${index}`" :value="time" type="time" class="dashboard-input"
+                        :aria-label="jumuahRows.length > 1 ? `Khutbah time ${index + 1}` : `Khutbah time`"
+                        @input="setJumuahTime(index, $event)" />
+                    <button v-if="jumuahRows.length > 1" type="button" class="btn btn-sm btn-outline-secondary"
+                        :aria-label="`Remove khutbah time ${index + 1}`" @click="removeJumuahTime(index)">
+                        Remove
+                    </button>
+                </div>
+            </div>
+            <button v-if="jumuahRows.length < MAX_JUMUAH_TIMES" type="button" class="btn btn-sm btn-outline-secondary align-self-start"
+                @click="addJumuahTime">
+                Add a khutbah time
+            </button>
+            <p class="studio-hint">Earliest first. The TV board, the website and the apps show these as the Jumu'ah times.</p>
+            <p v-if="jumuahDuplicate" class="studio-error">The Jumu'ah times must all be different.</p>
+        </div>
 
         <div class="studio-field">
             <span class="studio-label">Today at these coordinates</span>
@@ -113,13 +113,11 @@
                         <td>{{ row.adhan }}</td>
                         <td>{{ row.iqama ?? '' }}</td>
                     </tr>
-                    <template v-if="prayer.iqama_given !== false">
-                        <tr v-for="(time, index) in jumuahTimes" :key="`jumuah-${index}`">
-                            <th scope="row" class="fw-normal">{{ jumuahTimes.length > 1 ? `Jumu'ah ${index + 1}` : `Jumu'ah` }}</th>
-                            <td></td>
-                            <td>{{ time }}</td>
-                        </tr>
-                    </template>
+                    <tr v-for="(time, index) in jumuahTimes" :key="`jumuah-${index}`">
+                        <th scope="row" class="fw-normal">{{ jumuahTimes.length > 1 ? `Jumu'ah ${index + 1}` : `Jumu'ah` }}</th>
+                        <td>{{ time }}</td>
+                        <td></td>
+                    </tr>
                 </tbody>
             </table>
             <p v-else class="studio-hint">
@@ -145,9 +143,11 @@
  * time needs the date it holds until (`iqama_fixed_until`), which the client
  * says; Studio never picks one. After it the prayer is adhan + its minutes,
  * so a fixed prayer keeps its minutes field, blank being 0. Jumu'ah is a list
- * of one to four times (`jumaa_times`), earliest first; an older draft's lone
- * `jumaa_iqama` is shown as its first entry and replaced when the list is
- * edited. The rules are the server's (ProvisionMasjidRequest) and Step 3 says
+ * of one to four khutbah times (`jumaa_times`), earliest first, stored as the
+ * Jumu'ah athans; an older draft's lone `jumaa_iqama` is shown as its first
+ * entry and replaced when the list is edited. The list sits outside the
+ * "not given" tick's fieldset, since khutbah times are not iqama times, and
+ * its rows are drawn in the table's Adhan column. The rules are the server's (ProvisionMasjidRequest) and Step 3 says
  * what they refuse before Provision (core/studio/provision.ts iqamaBlockers).
  */
 import StudioPanel from '@/components/super/studio/foundation/StudioPanel.vue';

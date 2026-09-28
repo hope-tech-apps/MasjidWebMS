@@ -185,29 +185,27 @@ final class OrganisationProvisioner
             }
         }
 
-        // ---- Jumaa settings (fixed iqama time; sensible default) ----
-        // Studio's `jumaa_times`, when sent, takes the place of `jumaa_iqama`:
-        // the first time is the iqama, and two or more are also written as the
-        // admin screen's shifts (JumaaSettingsController::save's canonical
-        // shape, khateeb and khutbah left for the organisation to fill). One
-        // time writes exactly the row a lone `jumaa_iqama` does. With neither,
-        // the 13:30 placeholder is still stored (W1 S8), but flagged, so the TV
-        // board and the phone apps hide a Jumu'ah time nobody gave (W2 S18).
-        $jumaaTimes = array_values(array_filter((array) $request->input('jumaa_times', []), 'filled'));
-        $jumaaIqama = $jumaaTimes[0] ?? ($request->input('jumaa_iqama') ?: null);
+        // ---- Jumaa settings (khutbah times; fixed iqama time; sensible default) ----
+        // Two answers, kept apart as the admin screen keeps them: Studio's
+        // `jumaa_times` are the khutbah times and land in `athans`, the wizard's
+        // `jumaa_iqama` is the iqama. `athans` is what every screen draws (TV
+        // board, website, renderer, both phone apps; owner 2026-09-28), and the
+        // phone apps never fall back to the iqama, so a time stored only as an
+        // iqama is invisible to them. `shifts` is never written: Android
+        // production and the TV read only `athans`, and Studio collects no
+        // khateeb or khutbah title. With neither answer the 13:30 placeholder is
+        // still stored (W1 S8), but flagged, so the TV board and the phone apps
+        // hide a Jumu'ah time nobody gave (W2 S18). Khutbah times alone leave the
+        // iqama NULL rather than inventing one.
+        $khutbahTimes = array_values(array_filter((array) $request->input('jumaa_times', []), 'filled'));
+        sort($khutbahTimes, SORT_STRING);
+        $jumaaIqama = $request->input('jumaa_iqama') ?: null;
+        $supplied = $khutbahTimes !== [] || $jumaaIqama !== null;
         $jumaa = [
-            'iqama' => $jumaaIqama ?? '13:30',
-            'athans' => [],
-            'is_default' => $jumaaIqama === null,
+            'iqama' => $supplied ? $jumaaIqama : '13:30',
+            'athans' => $khutbahTimes,
+            'is_default' => ! $supplied,
         ];
-        if (count($jumaaTimes) > 1) {
-            $jumaa['shifts'] = array_map(fn (string $time) => [
-                'time' => $time,
-                'khateeb_name' => null,
-                'khateeb_title' => null,
-                'khutbah_title' => null,
-            ], $jumaaTimes);
-        }
         $masjid->jumaaSettings()->create($jumaa);
 
         // ---- Donation link (only when a URL was supplied) ----

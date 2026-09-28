@@ -65,9 +65,9 @@ export type StudioPrayer = {
     iqama_fixed?: Partial<Record<StudioSalah, string | null>> | null;
     /** YYYY-MM-DD, the last day the fixed times hold, as the client said it. Required with any fixed time. */
     iqama_fixed_until?: string | null;
-    /** HH:MM. Older drafts; `jumaa_times` takes its place once the list is edited. */
+    /** HH:MM. Older drafts only: shown and sent as the first entry of `jumaa_times`, which replaces it once the list is edited. */
     jumaa_iqama?: string | null;
-    /** HH:MM each, 1 to 4, distinct, earliest first; the first is the Jumu'ah iqama. */
+    /** The Jumu'ah khutbah times, HH:MM each, 1 to 4, distinct, earliest first; stored as the Jumu'ah athans. */
     jumaa_times?: string[] | null;
     /** false is "the client has not given iqama times". */
     iqama_given?: boolean | null;

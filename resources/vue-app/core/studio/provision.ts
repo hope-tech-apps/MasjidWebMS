@@ -234,6 +234,20 @@ export function organisationToday(timezone: string | null | undefined, now: Date
     return `${read('year')}-${read('month')}-${read('day')}`;
 }
 
+/**
+ * IqamaResolver::UTC_NAMES: the zone names it reads as "no zone of its own", so
+ * it never places a fixed time in one. StudioFixedIqamaSourceTest holds the two
+ * lists equal.
+ */
+export const UTC_ZONE_NAMES = [
+    'UTC', 'Etc/UTC', 'Etc/UCT', 'UCT', 'Etc/Universal', 'Universal', 'Etc/Zulu', 'Zulu',
+    'GMT', 'Etc/GMT', 'Etc/GMT0', 'Etc/GMT+0', 'Etc/GMT-0', 'GMT0', 'GMT+0', 'GMT-0',
+    'Etc/Greenwich', 'Greenwich',
+];
+
+/** ProvisionMasjidRequest::UTC_FIXED_REFUSAL, word for word. */
+export const UTC_FIXED_REFUSAL = 'Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.';
+
 /** YYYY-MM-DD, `days` after the YYYY-MM-DD `date`. */
 export function addDays(date: string, days: number): string {
     const [year, month, day] = date.split('-').map(Number);
@@ -244,7 +258,7 @@ export function addDays(date: string, days: number): string {
  * Everything in the Prayer panel that keeps Provision disabled, in the
  * request's words (ProvisionMasjidRequest::iqamaIncomplete and messages()):
  * some iqama times without the rest, fixed times without a valid until-date,
- * and a Jumu'ah time entered twice. Nothing for an organisation not asked, and
+ * fixed times in a UTC-named timezone, and a Jumu'ah time entered twice. Nothing for an organisation not asked, and
  * no fixed-time reason once "Client has not given iqama times" is ticked,
  * because StudioDraft::toProvisionPayload then sends no fixed times.
  */
@@ -266,6 +280,7 @@ export function iqamaBlockers(answers: StudioAnswers, asked: boolean, now: Date 
         } else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(until)) || String(until) < today || String(until) > addDays(today, FIXED_IQAMA_MAX_DAYS)) {
             reasons.push(`The date the fixed iqama times hold until must be between today and ${FIXED_IQAMA_MAX_DAYS} days from today.`);
         }
+        if (UTC_ZONE_NAMES.includes(String(answers.identity.timezone ?? ''))) reasons.push(UTC_FIXED_REFUSAL);
     }
 
     if (asked) {

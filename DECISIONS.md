@@ -4555,3 +4555,31 @@ draft round trip). `StudioJumuahShiftsTest` (two and four times, one, none, the 
 a duplicate or a malformed time refused, a school's leftover list not sent, the draft's limits).
 `StudioFixedIqamaSourceTest` (the SPA's "given" counts a fixed time; the sentences and limits match the
 server's). SPA: `tests/studio-provision.test.ts` and `tests/mock-prayer-times.test.ts` (npm run test:spa).
+
+**Addendum 2026-09-28: the Jumu'ah list is khutbah times, stored as `athans`** (owner's decision; supersedes
+the `jumaa_times` bullets above, and `StudioJumuahShiftsTest` is now `StudioJumuahKhutbahTimesTest`).
+- **Why.** The phone apps show khutbah times only (the Jumu'ah athans or shifts) and never fall back to
+  `jumaa.iqama`, so a time stored only as an iqama with `athans []` was invisible to them. Studio's "up to
+  four Jumu'ah times" are khutbah times.
+- **Athans, not shifts (T4's reader analysis).** The TV board (`PrayerCalculator.jumaaSchedule`), the website
+  (`SettingController::getJumaaSettings`), the renderer and Android production vc13 read only `athans`; iOS
+  reads `shifts` when non-empty, else `athans`. All five live organisations (1, 5, 13, 14, 18) are
+  athans-only, and the admin screen edits the two lists independently. So `jumaa_times` go to `athans` in
+  order (sorted, earliest first) and `shifts` is never written: Studio collects no khateeb or khutbah title.
+- **The iqama is a separate answer.** Khutbah times alone leave `iqama` NULL rather than inventing one. The
+  wizard's `jumaa_iqama` alone writes exactly the row it always did (ProvisionResponseSnapshotTest is
+  unchanged). Both may be sent, and each time must then be before the iqama, as the admin screen's own save
+  requires (`SaveJumaaSettingsRequest`), so the organisation can re-save its Jumu'ah screen.
+- **`is_default`** is false when any khutbah time or a `jumaa_iqama` was supplied; with neither, the 13:30
+  placeholder is stored and flagged, as before (W2 S18).
+- **Older drafts.** Studio's payload never carries `jumaa_iqama`: an older draft's lone one is sent as the
+  first entry of `jumaa_times` (what the panel shows), and only when the draft has no list.
+- **The tick does not touch the list.** "Client has not given iqama times" drops fixed iqama times only.
+  Khutbah times are not iqama times, and the list moved out of the tick's fieldset. The duplicate check is
+  likewise independent of the tick.
+- **Fixed times need a zone that can place them (PRAYER-1, PRAYER-2).** With any fixed iqama time and a
+  UTC-named timezone (`IqamaResolver::UTC_NAMES`) the request refuses on `timezone`: the apps and push
+  resolve every prayer through `iqamaAt()`, which ignores ranges there, so iqama would land on the adhan
+  while the website showed the fixed time. Step 3 says the same sentence (`iqamaBlockers`, with a mirrored
+  `UTC_ZONE_NAMES` list that `StudioFixedIqamaSourceTest` holds equal to the resolver's). Offsets alone need
+  no zone and still provision.

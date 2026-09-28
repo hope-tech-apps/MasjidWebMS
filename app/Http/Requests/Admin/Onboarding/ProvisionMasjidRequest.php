@@ -48,6 +48,9 @@ class ProvisionMasjidRequest extends BaseFormRequest
     /** The iqama offsets, keyed as the request and `iqama_time_settings` name them, with the names an operator reads. */
     public const IQAMA_PRAYERS = ['fajr' => 'Fajr', 'dhuhr' => 'Dhuhr', 'asr' => 'Asr', 'maghrib' => 'Maghrib', 'isha' => 'Isha'];
 
+    /** The refusal for fixed iqama times under a UTC-named timezone. Step 3 says the same sentence (core/studio/provision.ts). */
+    public const UTC_FIXED_REFUSAL = 'Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.';
+
     /** The furthest ahead `iqama_fixed_until` may be, in days from the organisation's today. */
     public const FIXED_IQAMA_MAX_DAYS = 400;
 
@@ -233,9 +236,9 @@ class ProvisionMasjidRequest extends BaseFormRequest
             // ---- Jumaa (optional fixed iqama time HH:MM) ----
             'jumaa_iqama' => 'nullable|date_format:H:i',
 
-            // Several Jumu'ah times (Studio, optional): the first is the jumaa
-            // iqama, and two or more are written as the admin screen's shifts.
-            // Takes the place of `jumaa_iqama` when sent.
+            // Studio's Jumu'ah khutbah times (optional, 1-4), stored as the
+            // Jumu'ah athans. A different answer from `jumaa_iqama`: both may be
+            // sent, and each time must then be before the iqama (withValidator).
             'jumaa_times' => 'nullable|array|max:4',
             'jumaa_times.*' => 'required|date_format:H:i|distinct',
 
@@ -429,6 +432,29 @@ class ProvisionMasjidRequest extends BaseFormRequest
                 if ($missing !== []) {
                     $validator->errors()->add('iqama', self::iqamaIncomplete($missing));
                 }
+            }
+
+            // The admin screen's own save needs every khutbah time before the
+            // iqama (SaveJumaaSettingsRequest), so an organisation provisioned
+            // otherwise could not re-save its Jumu'ah screen. Only checked with
+            // an iqama present: `before:jumaa_iqama` on an absent field would
+            // read the field's name as a date.
+            if ($this->filled('jumaa_iqama') && is_array($this->input('jumaa_times'))) {
+                foreach ($this->input('jumaa_times') as $i => $time) {
+                    if (is_string($time) && preg_match('/^\d{2}:\d{2}$/', $time) && is_string($this->input('jumaa_iqama'))
+                        && strcmp($time, (string) $this->input('jumaa_iqama')) >= 0) {
+                        $validator->errors()->add("jumaa_times.{$i}", 'Each Jumu\'ah khutbah time must be before the Jumu\'ah iqama.');
+                    }
+                }
+            }
+
+            // Fixed times are read only in the organisation's own zone: a
+            // UTC-named one is treated as unset, so the apps and push would
+            // ignore them (iqama on the adhan) while the website showed them.
+            $timezone = $this->input('timezone');
+            $anyFixed = is_array($this->input('iqama_fixed')) && array_filter($this->input('iqama_fixed'), 'filled') !== [];
+            if ($anyFixed && ! IqamaResolver::for(null, is_string($timezone) ? $timezone : null)->placesFixedTimes()) {
+                $validator->errors()->add('timezone', self::UTC_FIXED_REFUSAL);
             }
 
             // A fixed time is for one of the five prayers; any other key would

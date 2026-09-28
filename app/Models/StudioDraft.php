@@ -61,7 +61,8 @@ class StudioDraft extends Model
      * `features`, `layout` and `domain` are renamed on the way out; see
      * toProvisionPayload(). `iqama_fixed`, `iqama_fixed_until` and
      * `jumaa_times` go only while the Prayer panel shows them
-     * (withoutUnaskedPrayerKeys()).
+     * (withoutUnaskedPrayerKeys()). `jumaa_iqama` is read only to be folded
+     * into `jumaa_times` and is never sent: Studio collects khutbah times.
      */
     private const PROVISION_KEYS = [
         'identity' => [
@@ -281,6 +282,15 @@ class StudioDraft extends Model
             }
         }
 
+        // Studio collects khutbah times only. An older draft's lone
+        // `jumaa_iqama` is what the panel shows as the list's first entry, so
+        // it goes out as that. Before withoutUnaskedPrayerKeys(), so a draft
+        // that is not a masjid sends neither.
+        if (($payload['jumaa_times'] ?? []) === [] && filled($payload['jumaa_iqama'] ?? null)) {
+            $payload['jumaa_times'] = [$payload['jumaa_iqama']];
+        }
+        unset($payload['jumaa_iqama']);
+
         $payload = $this->withoutUnaskedPrayerKeys($payload);
 
         $brand = array_intersect_key($this->section('brand'), array_flip(self::BRAND_COLOURS));
@@ -389,18 +399,20 @@ class StudioDraft extends Model
     }
 
     /**
-     * The fixed iqama times and the Jumu'ah list leave the draft only when the
-     * Prayer panel that holds them is in view, so the request can never refuse
-     * the draft over a field the operator cannot see or change:
+     * The fixed iqama times and the Jumu'ah khutbah times leave the draft only
+     * when the Prayer panel that holds them is in view, so the request can never
+     * refuse the draft over a field the operator cannot see or change:
      *
      *  - not a masjid (the type changed after they were entered): none of the
      *    three is sent;
-     *  - "Client has not given iqama times" ticked (the panel's times are then
-     *    disabled): no fixed times, as the tick means none were given;
+     *  - "Client has not given iqama times" ticked (the fixed times are then
+     *    disabled): no fixed times, as the tick means none were given. The
+     *    khutbah times stay: they are not iqama times, and their list sits
+     *    outside the tick's fieldset;
      *  - no fixed time left: no until-date either. The panel hides it then, and
      *    a stale one would still be held to today's window.
      *
-     * Offsets and `jumaa_iqama` are sent as they always were.
+     * Offsets are sent as they always were.
      *
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>

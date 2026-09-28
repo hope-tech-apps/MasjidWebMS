@@ -142,15 +142,18 @@ class JumaaIsDefaultTest extends TestCase
         $this->actAsSuperAdmin();
         $answers = $this->studioAnswers(sections: ['prayer' => [
             'method' => 'NorthAmerica', 'madhab' => 'Shafi', 'high_latitude_rule' => 'MiddleOfTheNight',
-            'jumaa_iqama' => '13:15',
+            'jumaa_times' => ['13:15'],
         ]]);
 
         $id = $this->provisioned($this->draftWith($answers)->id);
 
+        // Studio's list is khutbah times: stored as the athans the phones draw.
         $row = JumaaSetting::where('masjid_id', $id)->sole();
-        $this->assertSame('13:15', substr((string) $row->iqama, 0, 5));
+        $this->assertSame(['13:15'], $row->athans);
         $this->assertFalse($row->is_default);
-        $this->assertArrayNotHasKey('jumaa_is_default', $this->settings($id));
+        $data = $this->settings($id);
+        $this->assertArrayNotHasKey('jumaa_is_default', $data);
+        $this->assertSame(['13:15'], $data['jumaa']['athans']);
     }
 
     /**

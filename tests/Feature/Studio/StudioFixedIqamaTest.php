@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Studio;
 
+use App\Http\Requests\Admin\Onboarding\ProvisionMasjidRequest;
 use App\Models\IqamaTimeRange;
 use App\Models\IqamaTimeSetting;
 use App\Models\JumaaSetting;
@@ -163,7 +164,7 @@ class StudioFixedIqamaTest extends TestCase
 
     /**
      * With no fixed time the rows are exactly today's: the iqama row as the
-     * minutes-only provision writes it, no range, and the jumaa row unchanged.
+     * minutes-only provision writes it, no range, and the Jumu'ah row as the older draft's single time provisions it.
      * A fixed time cleared on the panel (null) and a stale until-date left
      * behind are not sent at all, so an until-date long past refuses nothing.
      */
@@ -192,8 +193,11 @@ class StudioFixedIqamaTest extends TestCase
             ], $setting, $case);
             $this->assertSame(0, IqamaTimeRange::count(), $case);
 
+            // Studio collects khutbah times, so an older draft's lone jumaa_iqama
+            // goes out as the list's first entry: an athan, with no iqama.
             $jumaa = JumaaSetting::where('masjid_id', $id)->firstOrFail();
-            $this->assertSame('13:15', substr((string) $jumaa->iqama, 0, 5), $case);
+            $this->assertSame(['13:15'], $jumaa->athans, $case);
+            $this->assertNull($jumaa->getAttributes()['iqama'], $case);
             $this->assertNull($jumaa->getAttributes()['shifts'] ?? null, $case);
         }
     }
@@ -236,6 +240,48 @@ class StudioFixedIqamaTest extends TestCase
         $this->assertCount(3, $this->ranges($setting));
     }
 
+    /**
+     * The apps and push place a fixed time only in the organisation's own
+     * zone (IqamaResolver::placesFixedTimes), so under a UTC name they would put
+     * iqama on the adhan while the website showed the fixed time (PRAYER-1/2).
+     */
+    #[Test]
+    public function fixed_times_are_refused_for_a_utc_named_timezone(): void
+    {
+        foreach (['UTC', 'Etc/UTC', 'GMT'] as $zone) {
+            $this->provisionPrayer(self::NAFIS, $zone)
+                ->assertStatus(422)
+                ->assertJsonPath('data.timezone.0', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
+        }
+
+        $this->assertSame('Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
+        $this->assertSame(0, Masjid::count());
+        $this->assertSame(0, IqamaTimeRange::count());
+
+        // Through the wizard's endpoint too.
+        $payload = $this->draftWith($this->studioAnswers(sections: ['prayer' => self::PRAYER + self::NAFIS]), logo: false)->toProvisionPayload();
+        unset($payload['layout_preset'], $payload['capabilities'], $payload['slug'], $payload['description']);
+        $payload['timezone'] = 'UTC';
+        $this->postJson('/api/admin/onboarding/provision', $payload)
+            ->assertStatus(422)
+            ->assertJsonPath('data.timezone.0', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
+        $this->assertSame(0, Masjid::count());
+    }
+
+    /** Offsets need no zone: a UTC-named organisation with none fixed still provisions. */
+    #[Test]
+    public function a_utc_named_timezone_with_offsets_only_still_provisions(): void
+    {
+        $given = ['iqama' => ['fajr' => 25, 'dhuhr' => 10, 'asr' => 12, 'maghrib' => 7, 'isha' => 15]];
+
+        foreach (['UTC', 'Etc/UTC'] as $zone) {
+            $this->provisionPrayer($given, $zone)->assertCreated();
+        }
+
+        $this->assertSame(2, Masjid::count());
+        $this->assertSame(0, IqamaTimeRange::count());
+    }
+
     #[Test]
     public function the_draft_holds_fixed_times_and_the_until_date_and_refuses_other_keys(): void
     {
@@ -262,9 +308,14 @@ class StudioFixedIqamaTest extends TestCase
     }
 
     /** Provision a complete masjid draft whose prayer section is PRAYER plus $prayer. */
-    private function provisionPrayer(array $prayer): \Illuminate\Testing\TestResponse
+    private function provisionPrayer(array $prayer, ?string $timezone = null): \Illuminate\Testing\TestResponse
     {
-        return $this->provision($this->draftWith($this->studioAnswers(sections: ['prayer' => self::PRAYER + $prayer]))->id);
+        $answers = $this->studioAnswers(sections: ['prayer' => self::PRAYER + $prayer]);
+        if ($timezone !== null) {
+            $answers['identity']['timezone'] = $timezone;
+        }
+
+        return $this->provision($this->draftWith($answers)->id);
     }
 
     /** @return list<array{0: string, 1: string, 2: string, 3: string}> [salah, start, end, HH:MM] in saved order */

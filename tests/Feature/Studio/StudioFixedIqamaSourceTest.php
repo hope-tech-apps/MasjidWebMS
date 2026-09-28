@@ -60,6 +60,7 @@ class StudioFixedIqamaSourceTest extends TestCase
 
         $this->assertTrue($this->quotes($code, $messages['iqama_fixed_until.required_with']));
         $this->assertTrue($this->quotes($code, $messages['jumaa_times.*.distinct']));
+        $this->assertTrue($this->quotes($code, ProvisionMasjidRequest::UTC_FIXED_REFUSAL), 'the UTC refusal is said as the server says it');
 
         // The window is written with the constant in the SPA; both sides' numbers agree.
         $this->assertSame($messages['iqama_fixed_until.after_or_equal'], $messages['iqama_fixed_until.before_or_equal']);
@@ -69,6 +70,26 @@ class StudioFixedIqamaSourceTest extends TestCase
             '${FIXED_IQAMA_MAX_DAYS}',
             $messages['iqama_fixed_until.after_or_equal'],
         )));
+    }
+
+    /** The SPA cannot ask PHP, so its list of zones the resolver cannot place a fixed time in is read and compared. */
+    #[Test]
+    public function the_spa_and_the_resolver_name_the_same_utc_zones(): void
+    {
+        preg_match('/private const UTC_NAMES = \[(.*?)\];/s', $this->read('app/Support/IqamaResolver.php'), $php);
+        preg_match('/export const UTC_ZONE_NAMES = \[(.*?)\];/s', $this->spaCode(self::PROVISION), $spa);
+        $this->assertNotEmpty($php[1] ?? null, 'IqamaResolver::UTC_NAMES was found');
+        $this->assertNotEmpty($spa[1] ?? null, 'UTC_ZONE_NAMES was found');
+
+        $names = function (string $list): array {
+            preg_match_all('/\'([^\']+)\'/', $list, $found);
+            sort($found[1]);
+
+            return $found[1];
+        };
+
+        $this->assertSame($names($php[1]), $names($spa[1]));
+        $this->assertContains('UTC', $names($php[1]));
     }
 
     #[Test]
@@ -86,6 +107,13 @@ class StudioFixedIqamaSourceTest extends TestCase
         $this->assertMatchesRegularExpression('/<input type="radio" :name="`studio-iqama-mode-\$\{salah\}`"/', $panel);
         $this->assertMatchesRegularExpression('/<input :id="`studio-iqama-fixed-\$\{salah\}`"[^>]*type="time"/s', $panel);
         $this->assertMatchesRegularExpression('/<input :id="`studio-iqama-\$\{salah\}`"[^>]*type="number"/s', $panel);
+
+        // The Jumu'ah khutbah times sit outside the "not given" tick's fieldset: they are not iqama times.
+        $this->assertMatchesRegularExpression('/<\/fieldset>\s*<div class="studio-field jumuah">/', $panel);
+        $this->assertStringNotContainsString('jumaa_times', substr($panel, 0, strpos($panel, '</fieldset>')));
+        $this->assertTrue($this->saysWords($panel, "Jumu'ah khutbah times"));
+        $this->assertTrue($this->saysWords($panel, 'Add a khutbah time'));
+        $this->assertTrue($this->saysWords($panel, 'The Jumu\'ah times must all be different.'));
 
         // The list stops where the request does.
         $rules = (new ProvisionMasjidRequest)->rules();

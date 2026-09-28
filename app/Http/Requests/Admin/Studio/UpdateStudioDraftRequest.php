@@ -120,8 +120,9 @@ class UpdateStudioDraftRequest extends BaseFormRequest
                 'iqama_fixed.isha' => $clock,
                 'iqama_fixed_until' => ['nullable', 'date_format:Y-m-d'],
                 'jumaa_iqama' => $clock,
-                // Several Jumu'ah times, the first being the main one. Older
-                // drafts hold `jumaa_iqama` alone. Duplicates are refused at
+                // The Jumu'ah khutbah times, up to four. Older drafts hold
+                // `jumaa_iqama` alone, which the panel shows as the list's first
+                // entry and provisioning sends as such. Duplicates are refused at
                 // provision only, so a time half-way through being changed
                 // never blocks an autosave; an empty entry is no time at all.
                 'jumaa_times' => ['nullable', 'array', 'max:4'],

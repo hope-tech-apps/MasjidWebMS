@@ -125,7 +125,7 @@ const items = computed(() => {
             { label: 'Prayer method', value: optionLabel(options?.prayer.methods, answers.prayer.method) },
             { label: 'Madhab', value: optionLabel(options?.prayer.madhabs, answers.prayer.madhab) },
             { label: 'Iqama times', value: iqamaReview() },
-            { label: 'Jumu\'ah', value: jumuahReview() },
+            { label: 'Jumu\'ah khutbah', value: jumuahReview() },
         );
     }
 
