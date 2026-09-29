@@ -184,6 +184,30 @@ class User extends Authenticatable implements HasMedia
     }
 
     /**
+     * Whether this login holds a LIVE membership in an organisation other than
+     * $masjidId: the fact that makes it a SHARED person.
+     *
+     * The `users` row (name, phone, password, sessions) is global, so anything
+     * one school does to it lands in every school the person belongs to. A school
+     * office must therefore treat a login that is also somebody else's teacher as
+     * read-only where it is global: it cannot rewrite their name or phone, cannot
+     * mint a set-password link whose completion ends their sessions elsewhere, and
+     * cannot read data the other school entered (phone, sign-in times). Every one
+     * of those guards asks THIS question, so they cannot disagree about who is
+     * shared.
+     *
+     * `whereHas('masjid')` drops an organisation that has been trashed, exactly as
+     * TenantResolver does: a membership in an archived school shares nothing today.
+     */
+    public function belongsOutside(int $masjidId): bool
+    {
+        return $this->memberships()
+            ->where('masjid_id', '!=', $masjidId)
+            ->whereHas('masjid')
+            ->exists();
+    }
+
+    /**
      * True for a school-teacher staff login (users.type = 'Teacher').
      *
      * The one place a teacher-specific code path may branch. `type` stays the

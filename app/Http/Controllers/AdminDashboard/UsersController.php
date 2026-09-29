@@ -106,7 +106,8 @@ class UsersController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => 'An invitation is on its way to '.$user->email.'. It expires in an hour.',
+            'message' => 'An invitation is on its way to '.$user->email.'. The link works for '
+                .\App\Mail\AccountAccessMail::inWords((int) config('auth.passwords.invites.expire', 60 * 24 * 7)).'.',
         ], Response::HTTP_OK);
     }
 

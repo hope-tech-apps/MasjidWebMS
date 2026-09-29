@@ -3,10 +3,15 @@
 namespace App\Http\Requests\Admin\Users;
 
 use App\Http\Requests\BaseFormRequest;
-use Illuminate\Validation\Rule;
 
 /**
- * Create a teacher login and assign the classes they lead, in one step.
+ * Add a teacher to this school and assign the classes they lead, in one step.
+ *
+ * "Add" is create-or-attach (TeachersController::store): an email nobody has
+ * used makes a new login, and an email that already belongs to a Teacher at
+ * another school attaches THIS school to that login. So the email is deliberately
+ * NOT validated as unique on `users` any more. The controller's branch table
+ * replaces the rule, and the database's unique index remains the backstop.
  *
  * Deliberately does NOT accept a `type` and does NOT use the shared
  * `UserTypeRule`: the type is forced to 'Teacher' server-side (TeachersController),
@@ -35,13 +40,27 @@ class TeacherInviteRequest extends BaseFormRequest
         return array_values(array_intersect(\App\Models\GroupStaff::SUBJECTS, $given));
     }
 
+    /**
+     * The address, trimmed and lowercased, BEFORE it is validated or looked up.
+     *
+     * Emails are compared case-insensitively by MySQL and case-sensitively by the
+     * SQLite the suite runs on, and `User` has no mutator. An un-normalised
+     * "Moneeb@HopeTechApps.com" would miss the existing row on one driver and
+     * throw a unique-index 500 on the other, so the controller looks up by the
+     * lowercased form and stores it lowercased.
+     */
+    protected function prepareForValidation(): void
+    {
+        if (is_string($this->input('email'))) {
+            $this->merge(['email' => mb_strtolower(trim($this->input('email')))]);
+        }
+    }
+
     public function rules(): array
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            // Archived users are ignored so a retired address can be reused,
-            // matching InviteUserRequest.
-            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->whereNull('deleted_at')],
+            'email' => ['required', 'email', 'max:255'],
             'phone' => ['nullable', 'string', 'regex:/^\+?[0-9 ]+$/'],
             // At least one class — a teacher with no classes has nothing to sign
             // in for. That the ids name classes IN THE BOUND SCHOOL is verified in

@@ -240,12 +240,24 @@ class TeamController extends Controller
         $masjid = $this->boundMasjid();
         $user = $this->member($masjid, $user_id);
 
+        // Teachers are managed on the Teachers screen, as update() and destroy()
+        // already say — and this is the door that was missed. A teacher can belong
+        // to several schools, and the "account created" link this sends resets the
+        // password and deletes every token when it is used (AccountAccessService::
+        // reset), which would sign them out of every other school; merely minting
+        // it deletes a Forgot-password link they were waiting on. The Teachers
+        // screen's resend has the shared-login guard; this one simply refuses.
+        if ($user->type === 'Teacher') {
+            return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $sent = $access->invite($user, $masjid->name);
 
         return response()->json([
             'status' => $sent ? 'success' : 'failed',
             'message' => $sent
-                ? 'Invitation sent again to ' . $user->email . '. The link works for 60 minutes.'
+                ? 'Invitation sent again to ' . $user->email . '. The link works for '
+                    . \App\Mail\AccountAccessMail::inWords((int) config('auth.passwords.invites.expire', 60 * 24 * 7)) . '.'
                 : 'No invitation could be sent.',
         ], $sent ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
@@ -375,11 +387,17 @@ class TeamController extends Controller
         $isOwner = (int) $user->id === (int) $masjid->user_id;
         $isYou = $viewer !== null && (int) $viewer->id === (int) $user->id;
 
+        // A teacher who also belongs to another school shows this school their
+        // NAME AND EMAIL only. The phone on the `users` row is whatever the other
+        // school entered, and the newest token is a sign-in at ANY school — global
+        // facts about a person this school added, not facts about this school.
+        $shared = $access === self::ACCESS_TEACHER && $user->belongsOutside((int) $masjid->id);
+
         return [
             'user_id' => (int) $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'phone' => $user->phone ?: null,
+            'phone' => $shared ? null : ($user->phone ?: null),
             'access' => $access,
             'is_owner' => $isOwner,
             'is_you' => $isYou,
@@ -390,7 +408,7 @@ class TeamController extends Controller
             // A token is minted at every sign-in, so its newest creation time is
             // the last sign-in — the only reliable "did they get the invite?"
             // (nothing writes users.email_verified_at).
-            'last_sign_in_at' => optional($user->tokens()->max('created_at'), fn ($t) => \Illuminate\Support\Carbon::parse($t)->toIso8601String()),
+            'last_sign_in_at' => $shared ? null : optional($user->tokens()->max('created_at'), fn ($t) => \Illuminate\Support\Carbon::parse($t)->toIso8601String()),
             'removable' => ! $isOwner && ! $isYou && $access !== self::ACCESS_TEACHER,
         ];
     }

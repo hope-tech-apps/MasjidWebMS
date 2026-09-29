@@ -107,7 +107,7 @@
                         <div>
                             <label for="team-email" class="form-label">Email</label>
                             <input id="team-email" v-model="form.email" type="email" class="form-control" maxlength="190" required autocomplete="off" />
-                            <div class="form-text">They'll get a link to set their own password. The link works for 60 minutes; you can resend it.</div>
+                            <div class="form-text">They'll get a link to set their own password. The link works for 7 days; you can resend it.</div>
                         </div>
                         <div>
                             <label for="team-phone" class="form-label">Phone <span class="text-muted">(optional)</span></label>

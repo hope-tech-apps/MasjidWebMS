@@ -295,11 +295,20 @@ class DualMembershipIsolationTest extends TestCase
      * every staff-provisioning path validates the email as `unique` on `users`,
      * so it can only ever mint a brand-new person with exactly one membership.
      *
-     * `MasjidAdminsController` is the one deliberate exception — S4 built it
-     * precisely to give an EXISTING login a second organisation — and it refuses
-     * while the gate is shut. That refusal is asserted end to end in
-     * tests/Feature/TenantApiSurfaceTest.php; here the point is that it is the
-     * ONLY exception.
+     * There are TWO deliberate exceptions, and each is named in the loop below
+     * with what it must keep doing. `MasjidAdminsController` — S4 built it
+     * precisely to give an EXISTING login a second organisation — refuses while
+     * the gate is shut; that refusal is asserted end to end in
+     * tests/Feature/TenantApiSurfaceTest.php. `TeachersController` is the
+     * Phase 1 create-or-attach door: it refuses every login that is not a
+     * Teacher and is gated on the same flag, asserted in
+     * tests/Feature/TeacherAttachTest.php. (`MasjidsController` writes the
+     * OWNER's row and is not an attach door.) Everything else must still be
+     * unable to reach an existing login.
+     *
+     * The recogniser for "writes a membership" is itself pinned below, against
+     * every spelling (`firstOrCreate`, `updateOrCreate`, `->memberships()->create`,
+     * `ensureOwnerMembership`, …), so a door cannot dodge it by phrasing.
      *
      * A new door that attaches an existing login to an organisation fails this
      * test, which is the whole intent: it is a decision that has to be made
@@ -320,6 +329,35 @@ class DualMembershipIsolationTest extends TestCase
                 continue;
             }
 
+            if (str_contains($door, 'AdminDashboard/TeachersController')) {
+                // The SECOND deliberate door (docs/multi-tenant-admin-design.md
+                // §6, Phase 1): create-or-attach for a Teacher. It may only
+                // stand outside the unique-email rule while it (a) refuses any
+                // login that is not a Teacher and (b) is gated on the same flag
+                // as the door above. Both are pinned by BEHAVIOUR in
+                // TeacherAttachTest (the refusal of MasjidAdmin, LunchStaff and
+                // SuperAdmin, trashed or live; the 422 with the gate shut); the
+                // source assertions here are only a tripwire so that deleting
+                // either check cannot pass unnoticed while those tests are being
+                // rewritten.
+                $source = file_get_contents(base_path($door));
+
+                $this->assertStringContainsString("tenancy.multi_membership", $source, "{$door} attaches an existing login and must consult the gate.");
+                $this->assertStringContainsString("\$existing->type !== 'Teacher'", $source, "{$door} attaches an existing login and must refuse every type but Teacher.");
+
+                continue;
+            }
+
+            if (str_contains($door, 'AdminDashboard/MasjidsController')) {
+                // The OWNER door (SuperAdmin-only; `ensureOwnerMembership`). It
+                // names the masjid's owner, and with the gate shut an owner's one
+                // grant IS the masjid they own (TenantResolver::soleOwnedMembership),
+                // so a membership row beside it cannot make them ambiguous. Its own
+                // write paths carry `unique:masjids,user_id`
+                // (.claude/rules/tenant-scoping.md).
+                continue;
+            }
+
             $this->assertTrue(
                 $this->enforcesAUniqueEmail($door),
                 "{$door} writes a masjid_user row without validating the email as unique on `users`, so it can attach an "
@@ -327,6 +365,58 @@ class DualMembershipIsolationTest extends TestCase
                     . "administrator ambiguous, and TenantResolver fails closed on ambiguity — they are 403'd in BOTH "
                     . 'organisations. Route the capability through MasjidAdminsController::grantMembership, which is gated.'
             );
+        }
+    }
+
+    /**
+     * The sweep above is only as good as its idea of "writes a membership".
+     *
+     * It used to look for `MasjidUser::create(` and `table('masjid_user')` and
+     * nothing else, so an attach written with `firstOrCreate`, `updateOrCreate`,
+     * `$user->memberships()->create(...)` or `ensureOwnerMembership` walked past
+     * it — and the whitelist for the deliberate doors then guarded nothing. This
+     * pins the recogniser itself against every spelling the codebase could use.
+     *
+     * @return array<string, array{0: string}>
+     */
+    public static function everyWayToWriteAMembership(): array
+    {
+        return [
+            'create' => ['MasjidUser::create([...]);'],
+            'firstOrCreate' => ['MasjidUser::firstOrCreate(["a" => 1]);'],
+            'updateOrCreate' => ['MasjidUser::updateOrCreate(["a" => 1], []);'],
+            'forceCreate' => ['MasjidUser::forceCreate([]);'],
+            'insert' => ['MasjidUser::insert($rows);'],
+            'upsert' => ['MasjidUser::upsert($rows, ["a"]);'],
+            'the owner helper' => ['MasjidUser::ensureOwnerMembership($id, $owner);'],
+            'relation create' => ['$user->memberships()->create([]);'],
+            'relation firstOrCreate' => ['$user->memberships()->firstOrCreate([]);'],
+            'relation updateOrCreate' => ['$user->memberships()->updateOrCreate([], []);'],
+            'relation save' => ['$user->memberships()->save($row);'],
+            'relation createMany' => ['$user->memberships()->createMany($rows);'],
+            'query builder' => ["DB::table('masjid_user')->insert(\$row);"],
+            'query builder, double quotes' => ['DB::table( "masjid_user" )->insert($row);'],
+            'relation, spaced' => ['$user->memberships() ->create([]);'],
+        ];
+    }
+
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('everyWayToWriteAMembership')]
+    public function the_write_sweep_recognises_every_way_to_write_a_membership(string $source): void
+    {
+        $this->assertTrue($this->writesAMembership($source), "The sweep would miss: {$source}");
+    }
+
+    #[Test]
+    public function the_write_sweep_ignores_reads_of_memberships(): void
+    {
+        foreach ([
+            '$user->memberships()->where("a", 1)->exists();',
+            'MasjidUser::where("user_id", 1)->update(["is_default" => true]);',
+            '$membership->delete();',
+            "DB::table('users')->insert(\$row);",
+        ] as $read) {
+            $this->assertFalse($this->writesAMembership($read), "A read was flagged as a write: {$read}");
         }
     }
 
@@ -382,7 +472,7 @@ class DualMembershipIsolationTest extends TestCase
 
             $source = file_get_contents($file->getPathname());
 
-            if (str_contains($source, 'MasjidUser::create(') || str_contains($source, "table('masjid_user')")) {
+            if ($this->writesAMembership($source)) {
                 $found[] = ltrim(str_replace(base_path(), '', $file->getPathname()), DIRECTORY_SEPARATOR);
             }
         }
@@ -390,6 +480,17 @@ class DualMembershipIsolationTest extends TestCase
         sort($found);
 
         return $found;
+    }
+
+    /** Whether PHP source contains ANY call that writes a `masjid_user` row. */
+    private function writesAMembership(string $source): bool
+    {
+        return (bool) preg_match(
+            '/MasjidUser::(create|firstOrCreate|updateOrCreate|forceCreate|insert|insertOrIgnore|upsert|ensureOwnerMembership)\s*\('
+            . '|memberships\(\)\s*->\s*(create|firstOrCreate|updateOrCreate|forceCreate|save|saveMany|createMany|insert|upsert)\s*\('
+            . '|table\(\s*[\'"]masjid_user[\'"]\s*\)/',
+            $source
+        );
     }
 
     /**
