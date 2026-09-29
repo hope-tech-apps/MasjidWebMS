@@ -8,7 +8,10 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use LogicException;
 
@@ -29,7 +32,8 @@ use LogicException;
  *
  * `reserved` is neither: it holds a host for an organisation (an imported live
  * host the probe could not confirm, R4) so Studio can never give it to another
- * one, and nothing ever advances it.
+ * one, and nothing ever advances it. Nor is a `redirect` row (W2 S5), which
+ * Cloudflare answers with a 301 before the renderer or this API ever sees it.
  *
  * Not tenant-scoped (TenantScopingCoverageTest::DECLINED): the unauthenticated
  * lookup reads it with no tenant, and only SuperAdmin Studio routes write it.
@@ -44,6 +48,14 @@ class MasjidDomain extends Model
     public const STATUS_FAILED = 'failed';
     public const STATUS_RESERVED = 'reserved';
 
+    /**
+     * Studio is removing what it created for the host in Cloudflare (W2 S3).
+     * Not served and not trusted from the moment it is set; the row itself
+     * goes once every object Studio made is gone, and `domains:reconcile`
+     * retries a removal that stopped part-way.
+     */
+    public const STATUS_DETACHING = 'detaching';
+
     public const STATUSES = [
         self::STATUS_PENDING,
         self::STATUS_AWAITING_NAMESERVERS,
@@ -52,9 +64,10 @@ class MasjidDomain extends Model
         self::STATUS_MANUAL,
         self::STATUS_FAILED,
         self::STATUS_RESERVED,
+        self::STATUS_DETACHING,
     ];
 
-    /** What the by-host lookup answers for. Not `failed`, never `reserved`. */
+    /** What the by-host lookup answers for. Not `failed` or `detaching`, never `reserved`. */
     public const SERVED = [
         self::STATUS_PENDING,
         self::STATUS_AWAITING_NAMESERVERS,
@@ -80,6 +93,19 @@ class MasjidDomain extends Model
     public const KIND_CUSTOM = 'custom';
     public const KINDS = [self::KIND_MANAGED_SUBDOMAIN, self::KIND_CUSTOM];
 
+    /**
+     * What a host does (W2 S5). A `serving` host is a Pages custom domain the
+     * renderer answers on. A `redirect` host answers only with Cloudflare's 301
+     * to the serving host it names (`redirect_to_id`), uses no Pages slot, and
+     * is in neither served() nor corsAdmitted().
+     */
+    public const ROLE_SERVING = 'serving';
+    public const ROLE_REDIRECT = 'redirect';
+    public const ROLES = [self::ROLE_SERVING, self::ROLE_REDIRECT];
+
+    /** The `ref` of the redirect rule Studio adds for a row, completed with the row id. */
+    public const REDIRECT_RULE_REF = 'manara-studio-redirect-';
+
     public const SOURCE_STUDIO = 'studio';
     public const SOURCE_IMPORTED = 'imported';
 
@@ -87,7 +113,7 @@ class MasjidDomain extends Model
     public const VERIFIED_BY_PROBE = 'probe';
 
     /** What a row is waiting on (`waiting_on`), set by App\Services\Domains\DomainAttacher. */
-    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity'];
+    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity', 'canonical', 'rule_cleanup'];
 
     /**
      * ONE fixed key for the CORS origin list. Production's cache store is the
@@ -100,17 +126,30 @@ class MasjidDomain extends Model
 
     public const CORS_ORIGINS_TTL = 300;
 
+    /**
+     * Set only inside reclassifyImported() (W2 S6): the one moment a
+     * `reserved` row may change status, or an imported row stop being
+     * imported. Everything else that saves such a row is refused.
+     */
+    private static bool $reclassifying = false;
+
     /** The column defaults, so an unsaved row already reads as the database will store it. */
     protected $attributes = [
         'status' => self::STATUS_PENDING,
+        'role' => self::ROLE_SERVING,
         'source' => self::SOURCE_STUDIO,
         'cf_zone_created' => false,
+        'cf_dns_record_created' => false,
+        'cf_pages_domain_created' => false,
+        'serving_miss_count' => 0,
     ];
 
     protected $fillable = [
         'masjid_id',
         'host',
         'kind',
+        'role',
+        'redirect_to_id',
         'zone_apex',
         'status',
         'waiting_on',
@@ -118,7 +157,11 @@ class MasjidDomain extends Model
         'cf_zone_id',
         'cf_dns_record_id',
         'cf_pages_domain_id',
+        'cf_redirect_rule_id',
         'cf_zone_created',
+        'cf_dns_record_created',
+        'cf_pages_domain_created',
+        'adopted_from_import_at',
         'nameservers',
         'last_error',
         'last_checked_at',
@@ -126,6 +169,9 @@ class MasjidDomain extends Model
         'stage_started_at',
         'verified_at',
         'serving_confirmed_at',
+        'serving_last_seen_at',
+        'serving_missed_since',
+        'serving_miss_count',
         'verified_by',
         'created_by_user_id',
     ];
@@ -134,12 +180,18 @@ class MasjidDomain extends Model
     {
         return [
             'cf_zone_created' => 'boolean',
+            'cf_dns_record_created' => 'boolean',
+            'cf_pages_domain_created' => 'boolean',
+            'adopted_from_import_at' => 'datetime',
             'nameservers' => 'array',
             'last_checked_at' => 'datetime',
             'next_check_at' => 'datetime',
             'stage_started_at' => 'datetime',
             'verified_at' => 'datetime',
             'serving_confirmed_at' => 'datetime',
+            'serving_last_seen_at' => 'datetime',
+            'serving_missed_since' => 'datetime',
+            'serving_miss_count' => 'integer',
         ];
     }
 
@@ -154,6 +206,10 @@ class MasjidDomain extends Model
                 throw new LogicException("Unknown masjid_domains kind [{$domain->kind}].");
             }
 
+            if (! in_array($domain->role, self::ROLES, true)) {
+                throw new LogicException("Unknown masjid_domains role [{$domain->role}].");
+            }
+
             // `reserved` holds a live host for an organisation without trusting
             // it (R4), and nothing advances it. Every reserved row is imported,
             // so Studio cannot delete it either (R28) and its host cannot be
@@ -161,9 +217,22 @@ class MasjidDomain extends Model
             // one (manualSteps() says so).
             if ($domain->exists
                 && $domain->getOriginal('status') === self::STATUS_RESERVED
-                && $domain->isDirty('status')) {
+                && $domain->isDirty('status')
+                && ! self::$reclassifying) {
                 throw new LogicException(
                     "masjid_domains row for {$domain->host} is reserved and cannot become {$domain->status}."
+                );
+            }
+
+            // An imported row stays imported, and no saved row gains or loses
+            // the mark of having been adopted from the import, except through
+            // the reviewed tool (W2 S6, reclassifyImported()).
+            if ($domain->exists
+                && ! self::$reclassifying
+                && (($domain->getOriginal('source') === self::SOURCE_IMPORTED && $domain->isDirty('source'))
+                    || $domain->isDirty('adopted_from_import_at'))) {
+                throw new LogicException(
+                    "masjid_domains row for {$domain->host} came from the live host map; only `domains:imported` may change that."
                 );
             }
 
@@ -214,6 +283,73 @@ class MasjidDomain extends Model
         return $this->belongsTo(Masjid::class);
     }
 
+    /** The serving host a redirect row sends visitors to (W2 S5). */
+    public function redirectTo(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'redirect_to_id');
+    }
+
+    /**
+     * The redirect rows that send visitors here (W2 S5). While any exists this
+     * row is neither deleted nor detached: the alias's rule would go on sending
+     * people to an address that no longer answers.
+     */
+    public function redirectsHere(): HasMany
+    {
+        return $this->hasMany(self::class, 'redirect_to_id');
+    }
+
+    /**
+     * Set only while toAdminArray() builds one payload, so the several
+     * readers of aliasHosts() in it share one query.
+     *
+     * @var list<string>|null
+     */
+    private ?array $aliasHostsForPayload = null;
+
+    /** @return list<string> the hosts that still redirect here */
+    public function aliasHosts(): array
+    {
+        if ($this->aliasHostsForPayload !== null) {
+            return $this->aliasHostsForPayload;
+        }
+
+        return $this->exists
+            ? $this->redirectsHere()->orderBy('host')->pluck('host')->all()
+            : [];
+    }
+
+    public function isRedirect(): bool
+    {
+        return $this->role === self::ROLE_REDIRECT;
+    }
+
+    public function redirectRuleRef(): string
+    {
+        return self::REDIRECT_RULE_REF . $this->id;
+    }
+
+    /**
+     * Whether Studio may write a redirect rule or placeholder record in this
+     * row's zone (W2 S5): a zone Studio itself created FOR THIS ORGANISATION,
+     * recorded on one of its own rows, or one the owner listed in
+     * `cloudflare.redirect_zones`. Everything else, including every zone in the
+     * account before S5 and a zone Studio created for another organisation,
+     * is refused.
+     */
+    public function redirectZoneAllowed(): bool
+    {
+        if (in_array($this->zone_apex, array_map('strtolower', (array) config('cloudflare.redirect_zones', [])), true)) {
+            return true;
+        }
+
+        return self::query()
+            ->where('masjid_id', $this->masjid_id)
+            ->where('zone_apex', $this->zone_apex)
+            ->where('cf_zone_created', true)
+            ->exists();
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
@@ -226,7 +362,9 @@ class MasjidDomain extends Model
      */
     public function scopeServed(Builder $query): Builder
     {
-        return $query->whereIn('status', self::SERVED)->whereHas('masjid');
+        return $query->whereIn('status', self::SERVED)
+            ->where('role', self::ROLE_SERVING)
+            ->whereHas('masjid');
     }
 
     /**
@@ -263,6 +401,18 @@ class MasjidDomain extends Model
                 ->values()
                 ->all();
         });
+    }
+
+    /**
+     * Whether the daily serving re-probe owns this row (W2 S4): an active or
+     * manual host seen serving, or one demoted after a run of misses and
+     * waiting to be seen again. DomainAttacher::reconfirm() probes it.
+     */
+    public function underReconfirmation(): bool
+    {
+        return $this->role === self::ROLE_SERVING
+            && in_array($this->status, self::TRUSTED, true)
+            && ($this->serving_confirmed_at !== null || $this->serving_missed_since !== null);
     }
 
     /**
@@ -310,6 +460,18 @@ class MasjidDomain extends Model
             ];
         }
 
+        if ($this->isRedirect() && $this->status !== self::STATUS_DETACHING) {
+            return $this->redirectSteps();
+        }
+
+        if ($this->status === self::STATUS_DETACHING) {
+            return [
+                "Studio is removing {$this->host} from Cloudflare, and the site no longer answers for this organisation on it.",
+                ($this->last_error ? "The last attempt stopped: {$this->last_error} " : '')
+                    . 'Studio tries again every five minutes; press Detach to try now.',
+            ];
+        }
+
         // Check now is the way forward for every failed row (it starts the
         // row again from pending). Removing it is offered only when Studio
         // would allow it: a row Cloudflare holds records for is refused a
@@ -318,14 +480,34 @@ class MasjidDomain extends Model
         if ($this->status === self::STATUS_FAILED) {
             return [
                 "Setting up {$this->host} failed" . ($this->last_error ? ": {$this->last_error}" : '.'),
-                $this->deletableThroughStudio()
-                    ? "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted."
-                    : "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
+                match (true) {
+                    $this->deletableThroughStudio() => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted.",
+                    $this->ownedByStudio() => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. If it is not wanted, press Detach: Cloudflare holds records Studio made or found for it, and Detach takes off the ones Studio made before it lets the address go.",
+                    default => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
+                },
+            ];
+        }
+
+        // A rule a collapse that did not verify left behind (review
+        // follow-up 4): the host redirects although the row serves.
+        if (! $this->isRedirect() && $this->cf_redirect_rule_id !== null) {
+            return [
+                "A redirect rule from a collapse that did not finish is still in Cloudflare for {$this->host}, so it redirects instead of serving. Studio takes it out every half hour until it is gone"
+                    . ($this->last_error ? " (last try: {$this->last_error})." : '.'),
             ];
         }
 
         if ($this->serving_confirmed_at !== null && in_array($this->status, self::TRUSTED, true)) {
             return [];
+        }
+
+        // Demoted by the daily re-probe (W2 S4): it was serving, then stopped.
+        if ($this->underReconfirmation()) {
+            return [
+                "{$this->host} stopped answering for this organisation ({$this->serving_miss_count} checks in a row since "
+                    . $this->serving_missed_since?->toDateTimeString() . ' UTC), so CORS and card-payment returns no longer trust it.',
+                'Check the site and its DNS. Studio asks again every day and trusts it again as soon as it answers; press Check now to ask now.',
+            ];
         }
 
         $confirm = "Press Check now. The site is confirmed once https://{$this->host} answers for this organisation.";
@@ -402,6 +584,52 @@ class MasjidDomain extends Model
     }
 
     /**
+     * manualSteps() for a redirect row (W2 S5): one Cloudflare Single Redirect
+     * and the proxied record it needs, by hand, for whatever Studio cannot do
+     * itself (no token, the token's missing redirect scope, or a zone Studio
+     * may not write in).
+     *
+     * @return list<string>
+     */
+    private function redirectSteps(): array
+    {
+        $target = $this->redirectTo?->host;
+        $to = $target ?? 'its canonical host';
+
+        if ($this->status === self::STATUS_MANUAL && $this->verified_at !== null) {
+            return [];
+        }
+
+        if ($this->waiting_on === 'canonical') {
+            return ["Waiting for {$to} to be attached first. Studio adds the redirect once it is."];
+        }
+
+        $byHand = [
+            "In Cloudflare, open the {$this->zone_apex} zone, then Rules, then Redirect Rules, and create a Single Redirect: when the hostname equals {$this->host}, redirect dynamically to concat(\"https://{$to}\", http.request.uri.path) with status 301, preserving the query string.",
+            "{$this->host} needs a proxied DNS record for the rule to answer: if it has none, add an A record for {$this->host} pointing to " . config('cloudflare.redirect_placeholder_address') . ', proxied.',
+            "Then press Check now. Studio confirms it once https://{$this->host}/ answers 301 to {$to}.",
+        ];
+
+        if ($this->status === self::STATUS_FAILED) {
+            return array_merge(['Adding the redirect failed' . ($this->last_error ? ": {$this->last_error}" : '.')], $byHand);
+        }
+
+        if (blank(config('cloudflare.studio_token'))) {
+            return array_merge(['Without CLOUDFLARE_STUDIO_TOKEN Studio adds nothing in Cloudflare. By hand:'], $byHand);
+        }
+
+        if ($this->waiting_on === 'token_scope') {
+            return array_merge([
+                'Cloudflare refused CLOUDFLARE_STUDIO_TOKEN for redirect rules. Give the token Zone › Single Redirect: Edit (called Dynamic URL Redirects Write in the API) on this account, and Studio adds the redirect itself within half an hour. Or by hand:',
+            ], $byHand);
+        }
+
+        return [
+            "Nothing to do by hand: Studio is adding the redirect from {$this->host} to {$to} through Cloudflare and checks it every five minutes.",
+        ];
+    }
+
+    /**
      * Whether Studio may delete this row (DELETE .../domains/{id}): only when
      * nothing about it lives anywhere but this table. A row that carries a
      * Cloudflare id, whose zone Studio created, or that was imported from the
@@ -411,49 +639,277 @@ class MasjidDomain extends Model
      */
     public function deletableThroughStudio(): bool
     {
-        return $this->source !== self::SOURCE_IMPORTED
+        // ownedByStudio(), not just "not imported": a row adopted from the
+        // import keeps an imported row's protections for its life (W2 S6).
+        return $this->ownedByStudio()
             && ! $this->cf_zone_created
             && $this->cf_zone_id === null
             && $this->cf_dns_record_id === null
-            && $this->cf_pages_domain_id === null;
+            && $this->cf_pages_domain_id === null
+            && $this->cf_redirect_rule_id === null
+            && $this->aliasHosts() === [];
+    }
+
+    /**
+     * Whether this row is Studio's to detach (W2 S3): it was added through
+     * Studio and never came from the live host map, directly or through S6's
+     * `adopt`. An imported or adopted row is how a live organisation was
+     * reached before Studio (R28), and keeps that protection for its life.
+     */
+    public function ownedByStudio(): bool
+    {
+        return $this->source === self::SOURCE_STUDIO && $this->adopted_from_import_at === null;
+    }
+
+    /**
+     * Whether the screens offer Detach: a row Studio owns that DELETE would
+     * refuse because Cloudflare holds something for it, or one whose detach
+     * stopped part-way. A row with nothing in Cloudflare is simply removed.
+     */
+    public function detachableThroughStudio(): bool
+    {
+        return $this->ownedByStudio()
+            && ($this->status === self::STATUS_DETACHING || ! $this->deletableThroughStudio());
     }
 
     /**
      * What an operator does by hand before this row can go, for the 409 that
-     * refuses its deletion. Studio never removes anything from Cloudflare
-     * (CloudflareService has no delete), so this is the only way it happens.
+     * refuses its deletion. For a row Studio owns, that is only what Studio did
+     * not create itself, then Detach, which removes the rest (W2 S3). An
+     * imported row is not Studio's to remove at all.
      *
      * @return list<string>
      */
     public function removalSteps(): array
     {
-        if ($this->source === self::SOURCE_IMPORTED) {
+        if (! $this->ownedByStudio()) {
             return [
                 "{$this->host} was imported from the live host map: it is how this organisation is reached today, so Studio does not remove it.",
-                'If it really must go, the platform owner removes it with the renderer map and the CORS list in mind; it is not a Studio action in W1.',
+                'If it really must go, the platform owner removes it with the renderer map and the CORS list in mind; it is not a Studio action.',
             ];
         }
 
-        $project = (string) config('cloudflare.pages_project');
         $steps = [];
 
-        if ($this->cf_pages_domain_id !== null) {
-            $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and remove {$this->host}.";
+        foreach ($this->aliasHosts() as $alias) {
+            $steps[] = "Detach {$alias} first: it redirects to {$this->host}, and its rule would go on sending visitors to an address that no longer answers.";
         }
 
-        if ($this->cf_dns_record_id !== null) {
-            $steps[] = "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the CNAME record for {$this->host}.";
+        if ($this->cf_pages_domain_id !== null && ! $this->cf_pages_domain_created) {
+            $steps[] = $this->pagesDomainRemovalStep();
+        }
+
+        if ($this->cf_dns_record_id !== null && ! $this->cf_dns_record_created) {
+            $steps[] = $this->dnsRecordRemovalStep();
         }
 
         if ($this->cf_zone_created) {
-            $steps[] = "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
+            $steps[] = $this->zoneRemovalStep();
         } elseif ($this->cf_zone_id !== null) {
             $steps[] = "Studio found the {$this->zone_apex} zone on Cloudflare and did not create it; leave the zone itself alone.";
         }
 
-        $steps[] = 'Then ask the platform owner to remove this row. Detaching a host is not a Studio action in W1.';
+        $made = array_values(array_filter([
+            $this->cf_redirect_rule_id !== null ? 'the redirect rule' : null,
+            $this->cf_pages_domain_id !== null && $this->cf_pages_domain_created ? 'the Pages custom domain' : null,
+            $this->cf_dns_record_id !== null && $this->cf_dns_record_created ? 'the DNS record' : null,
+        ]));
+
+        $steps[] = $made === []
+            ? 'Then press Detach: Studio stops serving the address and forgets it. Nothing it created is left in Cloudflare.'
+            : 'Then press Detach: Studio removes what it created in Cloudflare (' . implode(' and ', $made) . ') and forgets the address.';
 
         return $steps;
+    }
+
+    /**
+     * What detaching this row would do, from its flags alone and with no
+     * request (W2 S3): the objects Studio created, which it removes if a fresh
+     * read shows them unchanged, and the steps left for a person. The Detach
+     * dialog and `domains:release`'s dry run both show this.
+     *
+     * @return array{would_remove: list<string>, manual_steps: list<string>}
+     */
+    public function detachPlan(): array
+    {
+        $remove = [];
+        $manual = [];
+
+        foreach ($this->aliasHosts() as $alias) {
+            $manual[] = "Detach {$alias} first: it redirects to {$this->host}. Studio refuses to detach {$this->host} until it has gone.";
+        }
+
+        if ($this->cf_redirect_rule_id !== null) {
+            $remove[] = "the redirect rule for {$this->host} in the {$this->zone_apex} zone, if it is still Studio's";
+        }
+
+        if ($this->cf_pages_domain_id !== null && $this->cf_pages_domain_created) {
+            $remove[] = "the {$this->host} custom domain on the " . config('cloudflare.pages_project') . ' Pages project, if unchanged';
+        } elseif ($this->cf_pages_domain_id !== null) {
+            $manual[] = $this->pagesDomainRemovalStep();
+        }
+
+        if ($this->cf_dns_record_id !== null && $this->cf_dns_record_created) {
+            $remove[] = "the {$this->host} DNS record in the {$this->zone_apex} zone, if unchanged";
+        } elseif ($this->cf_dns_record_id !== null) {
+            $manual[] = $this->dnsRecordRemovalStep();
+        }
+
+        if ($this->cf_zone_created) {
+            $manual[] = $this->zoneRemovalStep();
+        }
+
+        return ['would_remove' => $remove, 'manual_steps' => $manual];
+    }
+
+    /** The dashboard step for a Pages custom domain Studio may not delete. */
+    public function pagesDomainRemovalStep(): string
+    {
+        return 'In Cloudflare, open Workers & Pages, then the ' . config('cloudflare.pages_project')
+            . " project, then Custom domains, and remove {$this->host}.";
+    }
+
+    /** The dashboard step for a DNS record Studio may not delete. */
+    public function dnsRecordRemovalStep(): string
+    {
+        $record = $this->isRedirect() ? 'DNS record' : 'CNAME record';
+
+        return "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the {$record} for {$this->host}.";
+    }
+
+    /** A zone is never deleted by Studio, even one it created (W2 S3). */
+    public function zoneRemovalStep(): string
+    {
+        return "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
+    }
+
+    /**
+     * Adopt an imported, reserved row for Studio (W2 S6; `domains:imported
+     * adopt`): it becomes a `studio` row, `pending`, stamped
+     * `adopted_from_import_at`, so the attacher may attach it. That stamp keeps
+     * an imported row's protections for its life: never detached, never
+     * demoted automatically. The ONLY code path that may change an imported or
+     * reserved row this way; it writes one ledger row in the same transaction
+     * and a warning, which production logs.
+     *
+     * A `manual` or `active` row is refused: it is serving, and `pending` is
+     * outside the scope CORS and card-payment returns admit, so adopting it
+     * would withdraw both at once.
+     */
+    public function reclassifyImported(string $to, string $operator, string $reason): void
+    {
+        if ($to !== MasjidDomainChange::ACTION_ADOPT) {
+            throw new InvalidArgumentException("An imported row can only be adopted, not made [{$to}].");
+        }
+
+        if ($this->source !== self::SOURCE_IMPORTED || $this->status !== self::STATUS_RESERVED) {
+            throw new LogicException("Only an imported, reserved row can be adopted; {$this->host} is {$this->source} and {$this->status}.");
+        }
+
+        $this->ledgered(MasjidDomainChange::ACTION_ADOPT, $operator, $reason, function () {
+            self::$reclassifying = true;
+
+            try {
+                $this->forceFill([
+                    'source' => self::SOURCE_STUDIO,
+                    'status' => self::STATUS_PENDING,
+                    'adopted_from_import_at' => now(),
+                    'waiting_on' => null,
+                    'last_error' => null,
+                    'stage_started_at' => null,
+                    'next_check_at' => null,
+                ])->save();
+            } finally {
+                self::$reclassifying = false;
+            }
+        });
+    }
+
+    /**
+     * Release an imported, reserved row (W2 S6; `domains:imported release`):
+     * the row goes, so its host is free to be attached again. The caller has
+     * already probed the host and refused if it serves its organisation.
+     */
+    public function releaseImported(string $operator, string $reason): void
+    {
+        if ($this->source !== self::SOURCE_IMPORTED || $this->status !== self::STATUS_RESERVED) {
+            throw new LogicException("Only an imported, reserved row can be released; {$this->host} is {$this->source} and {$this->status}.");
+        }
+
+        $this->ledgered(MasjidDomainChange::ACTION_RELEASE, $operator, $reason, fn () => $this->delete());
+    }
+
+    /** Run one change with its ledger row, in one transaction, then say so at warning. */
+    private function ledgered(string $action, string $operator, string $reason, callable $change): void
+    {
+        if (blank($operator) || blank($reason)) {
+            throw new InvalidArgumentException('A change to an imported web address needs an operator and a reason.');
+        }
+
+        $before = $this->ledgerShape();
+
+        DB::transaction(function () use ($action, $operator, $reason, $change, $before) {
+            $change();
+
+            MasjidDomainChange::create([
+                'masjid_domain_id' => $this->id,
+                'host' => $this->host,
+                'action' => $action,
+                'before' => $before,
+                'after' => $this->exists ? $this->ledgerShape() : null,
+                'operator' => $operator,
+                'reason' => $reason,
+            ]);
+        });
+
+        Log::warning("An imported web address was changed: {$action}.", [
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'masjid_id' => (int) $this->masjid_id,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+    }
+
+    /**
+     * One ledger row for a change the caller has just made to this row, in the
+     * caller's transaction (W2 S3 detach, S5 collapse), and a warning, which
+     * production logs.
+     *
+     * @param  array<string, mixed>|null  $before  ledgerShape() as it was
+     */
+    public function recordChange(string $action, ?array $before, string $operator, string $reason): void
+    {
+        MasjidDomainChange::create([
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'action' => $action,
+            'before' => $before,
+            'after' => $this->exists ? $this->ledgerShape() : null,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+
+        Log::warning("A web address was changed: {$action}.", [
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'masjid_id' => (int) $this->masjid_id,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+    }
+
+    /** @return array<string, mixed> what the ledger records of a row */
+    public function ledgerShape(): array
+    {
+        return [
+            'masjid_id' => (int) $this->masjid_id,
+            'host' => $this->host,
+            'status' => $this->status,
+            'source' => $this->source,
+            'role' => $this->role,
+            'adopted_from_import_at' => $this->adopted_from_import_at?->toIso8601String(),
+        ];
     }
 
     /**
@@ -465,11 +921,26 @@ class MasjidDomain extends Model
      */
     public function toAdminArray(): array
     {
+        $this->aliasHostsForPayload = null;
+        $this->aliasHostsForPayload = $this->aliasHosts();
+
+        try {
+            return $this->adminArray();
+        } finally {
+            $this->aliasHostsForPayload = null;
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function adminArray(): array
+    {
         return [
             'id' => $this->id,
             'masjid_id' => (int) $this->masjid_id,
             'host' => $this->host,
             'kind' => $this->kind,
+            'role' => $this->role,
+            'redirect_to_id' => $this->redirect_to_id !== null ? (int) $this->redirect_to_id : null,
             'zone_apex' => $this->zone_apex,
             'status' => $this->status,
             'waiting_on' => $this->waiting_on,
@@ -481,9 +952,14 @@ class MasjidDomain extends Model
             'verified_at' => $this->verified_at?->toIso8601String(),
             'verified_by' => $this->verified_by,
             'serving_confirmed_at' => $this->serving_confirmed_at?->toIso8601String(),
+            'serving_last_seen_at' => $this->serving_last_seen_at?->toIso8601String(),
+            'serving_missed_since' => $this->serving_missed_since?->toIso8601String(),
+            'serving_miss_count' => (int) $this->serving_miss_count,
             'live_url' => $this->liveUrl(),
             'manual_steps' => $this->manualSteps(),
             'deletable' => $this->deletableThroughStudio(),
+            'detachable' => $this->detachableThroughStudio(),
+            'detach_plan' => $this->detachableThroughStudio() ? $this->detachPlan() : null,
         ];
     }
 }

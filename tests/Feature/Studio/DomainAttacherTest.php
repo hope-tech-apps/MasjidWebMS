@@ -105,6 +105,48 @@ class DomainAttacherTest extends TestCase
     }
 
     #[Test]
+    public function the_created_flags_are_set_only_for_objects_studio_created(): void
+    {
+        // W2 S3: DomainDetacher may delete only what a flag says Studio made.
+        $this->withStudioToken();
+        $org = $this->makeOrg();
+        $made = $this->managed($org);
+
+        $this->fakeCloudflare([
+            'GET /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records?*' => $this->cfOk([]),
+            'POST /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records' => $this->cfOk($this->dnsRecord(self::MANAGED, 'CNAME', 'manara-renderer.pages.dev', 'rec-new')),
+            self::PAGES . self::MANAGED => $this->cfError(404, 8000007, 'Domain not found.'),
+            'GET /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk([], ['total_count' => 5]),
+            'POST /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk($this->pagesDomainBody(self::MANAGED, 'initializing')),
+        ]);
+        $this->attacher()->advance($made);
+        $made->refresh();
+
+        $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $made->status);
+        $this->assertTrue($made->cf_dns_record_created);
+        $this->assertTrue($made->cf_pages_domain_created);
+
+        // The same steps against objects that were already there: adopted,
+        // stored by id exactly as before, and never flagged.
+        $made->delete();
+        $found = $this->managed($org);
+        $this->fakeCloudflare([
+            'GET /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records?*' => $this->cfOk([$this->dnsRecord(self::MANAGED, 'CNAME', 'manara-renderer.pages.dev', 'rec-old')]),
+            self::PAGES . self::MANAGED => $this->cfOk($this->pagesDomainBody(self::MANAGED, 'pending')),
+        ]);
+        $this->attacher()->advance($found);
+        $found->refresh();
+
+        $this->assertSame('rec-old', $found->cf_dns_record_id);
+        $this->assertSame('pd-' . md5(self::MANAGED), $found->cf_pages_domain_id);
+        $this->assertFalse($found->cf_dns_record_created);
+        $this->assertFalse($found->cf_pages_domain_created);
+        // The first host took five calls (read and post the record; read the
+        // domain, count the project, post the domain). The second was only read.
+        $this->assertSame(['GET', 'GET'], array_slice($this->cloudflareVerbs(), 5));
+    }
+
+    #[Test]
     public function a_pages_domain_still_pending_stays_provisioning(): void
     {
         $this->withStudioToken();

@@ -3169,7 +3169,6 @@ Unknown, needs investigation: what the iOS and Android apps do with an unknown `
 API passes `platforms` through without filtering (`PageSectionResource`); MEC's placement is
 `["web"]`, but whether each app honours that before this goes on a page the apps load is not known.
 
-
 ## 2026-09-25 — `video` section review fixes: `media-src`, the upload NAME, and a tenant-scoped type lookup
 Decision (three calls, each pinned by a test shown to fail without it):
 - **`SecurityHeaders` gains `media-src 'self' blob:`**, plus APP_URL on a second host / proxied page
@@ -3322,7 +3321,6 @@ blocked", "Stage, apply before move", "Import, marked answered", members deferre
   dropped on staging.
 - **SPA**: the tag/untag/list URLs and the composer's payload and push guard moved into pure modules
   (`contactTags.ts`, `broadcastPayload.ts`, `emailOptOut.ts`) so `npm run test:spa` pins them.
-
 
 ## 2026-09-25 — Wix order history: imported as HISTORY, never as money Manara processed
 
@@ -3822,7 +3820,6 @@ Review of 0f932352 + a9148813. What changed from the entry above, and the calls 
   staff cash entry moved to
   `FormQuantityPaymentTest::a_staff_cash_entry_on_a_per_entry_form_snapshots_its_breakdown_too`.
 
-
 ## 2026-09-25 — Review of the renderer half: a level's own questions are required by the level only
 - **A schema `required` on a choice form's quantity or date question is set aside**
   (`FormSchema::levelQuestions()`). The renderer never draws either question for a level that
@@ -3955,7 +3952,6 @@ then mean different things on the two drivers; a unique key on the nullable
 dropping the id-less routes — rejected, a tab open across the deploy would 404.
 Rationale: the smallest change that keeps every existing reader right and makes
 "the same subject twice" a refusal with a sentence rather than an overwrite.
-
 
 ## 2026-09-27 — Responses list: "Checked in" for the door, and status changed from the list
 - **The door's "Collected" reads "Checked in" wherever a person reads it** (the list column,
@@ -4363,6 +4359,126 @@ provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
 
 - 2026-09-28 (review fix S8-1): the SuperAdmin update route (`POST /api/admin/masjids/{id}`, `MasjidsController::update`) now has its own two tests, because its `BrandAssets::afterLogoUpload` call was pinned by nothing: one where a Studio org's derivatives are replaced from the new logo, one where an org without any stays without any. Test-only; no code changed. Not run locally (no PHP).
 
+## 2026-09-27 — Studio W2 S9: Studio opens an organisation that already exists
+
+A SuperAdmin opens any organisation in Studio at
+`/dashboard/super/studio/organisations/:id` (Studio's list gains an Organisations tab
+over the existing masjids index). No draft (plan R14).
+
+- **Snapshot** (`GET /api/admin/studio/organisations/{id}`, `OrganisationSnapshot`):
+  Studio's sections in Studio's order plus `apps` (S17 fills it). Each is
+  `{data, edit_in}`; `edit_in` is `studio` for features and brand, otherwise the SPA
+  route of the screen that already writes it (`/masjid/details#basic-info`,
+  `#prayer-calculation`, `/masjid/about`, `/masjid/pages`, the super organisation
+  screen). A `/masjid/…` link first switches the dashboard's current organisation, as
+  the masjids list does, and asks first when there are unsaved changes. Every value is
+  picked by name: `platforms` carries modes and `has_*` flags only, never a credential
+  or identifier. `features` is `CapabilityCatalogue::forOrgType` with each entry's
+  effective value (`moduleIsOff` / `hasCapability`) and whether it was `decided`.
+- **Preview** (`POST …/preview`, writes nothing): `StudioPreview` now takes a
+  `PreviewInput`. `fromDraft` is W1's derivation moved unchanged (the draft preview
+  tests pass unedited); `fromMasjid` clones the organisation in memory with the
+  candidate switches (only keys `CapabilityWriter::assertWritable` accepts, so the
+  preview can never show a change Studio could not save) and paints the web with the
+  theme's STORED tokens and the candidate colours, which is what the renderer draws
+  once the colours are saved. The web mockup draws the organisation's own pages in the
+  starter plan's shape (`preset_source: live`).
+- **Writers are the existing ones.** Features: S7's bulk PATCH, only changed
+  `writer === capability` keys (never crm or assistant, shown read-only with "Change on
+  the organisation's details screen."). Colours: the theme screen's own endpoint with
+  the four colours only (`tokens` is never sent, so stored tokens survive; the confirm
+  lists failing contrast pairs and asks to save anyway: for a live org the palette is
+  advisory). Brand images: S8's regenerate, whose confirm says in words, for an
+  organisation with none, that it adds a favicon, home-screen icon and share image to
+  its site and settings and needs the owner's go.
+- **Reuse, not a refactor.** The Features card reuses Step 1's `FeatureRow` and
+  `featureGroups` rather than making `StudioFeatureStep` dual-mode (W1 pins it); the
+  frames (Web/iOS/Android/TV) and `PlatformContrastList` are reused as they are. The
+  palette pair names moved into `core/studio/paletteLabels.ts`, shared by two screens.
+
+Review fixes (2026-09-28):
+
+- **Dialog titles are text.** SweetAlert2 parses `title` as HTML, so an organisation name
+  in one ran script in a SuperAdmin's session. The live cards use `titleText` for anything
+  interpolated and `dialogHtml` (which escapes) for every `html` body;
+  `StudioSpaSourceTest` fails on a `${` in a live card's `title:` or an `html:` that is not
+  `dialogHtml(`.
+- **Stored #RGB and #RRGGBBAA colours** are accepted everywhere the theme save accepts
+  them. The preview request takes the three forms; the mockups get a display copy
+  (`WcagColor::normalize`: 3 digits expanded, alpha pair dropped); the Brand card's field
+  and `coloursComplete` use `isThemeHex`, and Save colours sends an untouched colour
+  exactly as stored. Draft Foundation stays six digits.
+- **The Web tab follows the candidate Website switch** (the clone, not the saved row).
+- **A live organisation's Android frame draws its stored pivot rows**, read through the
+  `features()` relation as GET /features serves them, scoped by masjid_id, not the switches
+  (`PreviewInput::$androidFeatureIds`, null for a draft). Saving switches never moves it, so
+  the preview column says installed Android apps follow the stored menu until the cutover.
+- **A failed preview leaves the contrast report stale.** The Save colours dialog then says the
+  check failed for these colours (no pair list) and the Brand card marks the report out of date.
+- **2026-09-28: an empty stored menu draws the shipped Android bar.** When a live
+  organisation has no available pivot row (none stored, or all off), installed Android
+  builds fall back to Home, Announcements, Contact and Donate (MenuViewModel,
+  BottomBar.visibleTabs), so the frame draws those four, not a bare Home. On the live card,
+  typing emits a colour only at 6 or 8 digits; a #RGB is taken on blur, since every
+  six-digit code passes through a valid three-digit prefix.
+
+## 2026-09-27 — Studio W2 S1–S4 (domains lifecycle): the calls made while building
+- **S4 re-probes every confirmed host once a day, token or not, and `DomainsReconcileCommandTest`
+  was edited on purpose.** W1 pinned that production's imported, confirmed rows cause no request
+  without a token (`without_a_token_on_productions_rows_it_selects_nothing_and_sends_nothing`) and
+  that a confirmed row is never selected. S4 changes both: the pin is now
+  `without_a_token_confirmed_rows_are_probed_once_a_day_on_their_own_host_only` (a GET of each
+  host's own `/api/tenant`, twice in two days, never Cloudflare), the selection test lists the
+  three confirmed rows, and the token test's confirmed row carries a future `next_check_at`.
+  Cadence is `next_check_at` plus a per-row `Cache::add` marker (the attacher's existing
+  rate-limit pattern), because a manual row with a token is also selected every six hours for
+  W1's reads. A lost cache can only bring one probe forward.
+- **A miss on a confirmed row does not write `last_error`.** W1's "a miss after a match writes
+  nothing" holds for the row the screens read; the run of misses lives in the new
+  `serving_miss_count` / `serving_missed_since` (now in the admin payload). Demotion, which clears
+  only `serving_confirmed_at`, does write `last_error`, so the screen says why the tick went.
+  With daily probes, "three misses over at least 72 hours" is the fourth miss.
+- **A confirmed row keeps its first `serving_confirmed_at`.** A re-probe match stamps
+  `serving_last_seen_at`; only a demoted row is stamped again, by `DomainProbe::confirm()`.
+- **S3 adds a fifth domain route, so `MasjidDomainsAdminRoutesTest` counts five** (the plan said
+  it passes unedited; its refusal walk now covers detach too). Detach deletes the row even when
+  something Studio did not create is left in Cloudflare: the objects are named in the answer and
+  in a `Log::warning`, because keeping a `detaching` row for an object Studio will never remove
+  would retry forever.
+- **A `detaching` row of a trashed organisation is still finished by reconcile.** S2 keeps the
+  attacher off a trashed organisation's rows; taking hosts off Cloudflare is exactly what a
+  departed organisation needs, so the detach retry ignores the trash.
+
+## 2026-09-27 — Studio W2 S5 (apex↔www redirects): the calls made while building
+- **A pair is written only when `canonical` is sent.** `POST .../domains` and provisioning's
+  `web_domain` accept `canonical` (`www` or `apex`) on a host that is its zone's apex or `www`, and
+  then record both hosts. Without it the request is W1's one host, so every W1 test and the live
+  SPA are unchanged and S5 ships inert. `www` is the owner's default for a screen that offers the
+  choice; no screen sends it yet.
+- **The token's redirect scope is checked by a read before anything is written.** A redirect row
+  reads the zone's redirect entry point first; a refused token waits on `token_scope` before a
+  placeholder A record exists for a rule that cannot follow. A redirect row waits
+  (`waiting_on = canonical`) until its serving sibling has its zone.
+- **`domains:collapse-alias` switches the row to `redirect` only after the 301 is seen.** Rule,
+  then the probe (up to six tries, five seconds apart), then the role, then the Pages domain. If
+  the 301 never shows, the rule it added is removed again and nothing else changes, so a host is
+  never left unserved by the lookup while still reaching the renderer. The host's proxied CNAME
+  stays; detach accepts either that CNAME or the placeholder A for a redirect row.
+- **A verified redirect row is not re-checked.** S4's daily probe is for serving hosts; a redirect
+  host has no admission to lose. It is excluded from S4's selection and from W1's reads.
+
+## 2026-09-27 — Studio W2 S6 (the tool for imported rows): the calls made while building
+- **Two model invariants, both lifted only inside `reclassifyImported()`.** A `reserved` row's
+  status (W1's rule) and, new, an imported row's `source` and any row's `adopted_from_import_at`
+  cannot change on a save anywhere else. W1's writers never touch either column, so nothing live
+  changes; three of this track's own S3–S5 tests that set those columns on a saved row now write
+  past the model, as the tool's result would look.
+- **`list` probes but writes nothing.** "Whether a probe matches now" is a GET of each host's own
+  `/api/tenant` through `DomainProbe::probe()`, which stamps nothing; `release` probes the same
+  way before refusing a host that serves its own organisation.
+- **The ledger keeps a released row's id without a foreign key**, so the record of a release
+  outlives the row it released.
+
 ## 2026-09-29 — group_staff.assigned_by_user_id: recorded by the model, not the caller
 
 - **What was wrong:** every teacher-to-class row written through TeachersController (store and update) stored
@@ -4494,3 +4610,109 @@ Each fix has a test that fails without it (mutation-proved, see the build report
   `DualMembershipIsolationTest`'s write recogniser now also knows `MasjidUser::query()->create`, `withoutGlobalScopes()`
   hops, `firstOrNew`, `new MasjidUser`, and `memberships()->firstOrNew`; the sweep still reads controllers only (a write
   from `app/Services` or `app/Support` is outside it and belongs to its own lane).
+
+
+## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
+
+- **Review fixes (2026-09-28, after the 5-lens review of this branch).** Each has a test that fails without it
+  (mutation-proved on the droplet). Letters migration (`2026_10_01_100000`): the read that decides what to
+  write now sits INSIDE the transaction with `lockForUpdate`, and the two case copies use `insertOrIgnore`,
+  because `bin/deploy` checks out the new code (which accepts `a.upper`) before `migrate --force` with no
+  maintenance mode: a teacher's tap in that gap used to make the plain insert collide and abort the deploy
+  half-way, leaving new code live against an unconverted table. The row lock itself is a no-op on SQLite and
+  is **Unknown, needs investigation** on MySQL until the staging run; the `insertOrIgnore` half is pinned.
+  `down()` also refuses when the two cases differ on WHO marked them (it used to keep the capital's marker and
+  delete the other; the docblock promised it refuses rather than lose data), and the note, mastered-date, bare-row and
+  attribution guards are now each pinned. Plan files (`2026_10_01_110000`): `down()` refuses while any link exists.
+  A bare `migrate:rollback` undoes the WHOLE batch in reverse, so it would have dropped every attachment and then
+  failed on the letters migration above: **back W1 out only with `migrate:rollback --step=N`** (or ship B2's
+  migration in its own deploy). Also pinned: reorder and new-link positions, `resource_ids: null` is a 422,
+  plan-and-files atomicity, the Arabic stale-tab guard scope, the export's legacy label, the family summary's
+  corrupt-polarity bucket. SPA: tapping the other case of the open letter switches the card (it used to close it;
+  the open card is tracked by tile key), the family notes name the set in the portal's language, the plan Files
+  hint no longer claims only staff can open a file the class already shares with families.
+
+- **T-003.1 Positive always on top.** The skills list and both `by_skill` summaries order by
+  `BehaviorSkill::scopeInPickerOrder` (positive, negative, other; then label) instead of
+  `ORDER BY polarity`, which is alphabetical and put negatives first while the docblocks said the
+  opposite. The teacher picker opens on the first positive skill and a skill a teacher adds is
+  inserted in picker order (`core/helpers/behaviorSkills.ts`). Award logs stay newest-first (P1).
+  Alternative: sort only in the Vue picker. Rejected: the summaries are read by parents and the
+  office, and one server definition cannot drift between the three lists.
+- **T-004.2 English letters by case.** Drill ids become `x.upper` / `x.lower` (52 drills), never
+  `A` / `a`: prod `drill_id` is `utf8mb4_unicode_ci`, which is case-insensitive. `LetterCurriculum`
+  gains `sets()` and `set()` (Arabic: `[]`, `null`); the payload gains `sets`, `set_totals` and a
+  `set` on each drill; the teacher, office and family grids draw two runs (Capitals, Lower case)
+  with a count each and /52 overall (L7). `classOverview` now filters its numerator by the stage's
+  syllabus, which also fixes the latent Arabic over-count from letter-group drills. The data
+  migration `2026_10_01_100000_split_english_letters_by_case` copies each existing mark to BOTH
+  cases, keeping the original mastered date (owner question B2's default). **HELD FOR OWNER B2:
+  this migration rewrites production rows (35 marks, 4 children) and `bin/deploy` runs migrations
+  automatically, so W1 must not go to prod with it until the owner answers; if B2 is still open,
+  ship W1 without this commit.** It also wants a run up, rolled back and up again on staging
+  MySQL (the suite is SQLite and cannot see the collation). A stale tab posting a bare letter gets
+  a "reload the page" 422 (`code: stale_page`). The school records export keeps `Drill id` and
+  appends a readable `Letter` column. Alternative to copying into both cases: start every child
+  fresh. Rejected as the default: it erases recorded progress; it stays the owner's call (B2).
+- **T-004.1 Files under Activities.** A `lesson_plan_resources` join to the class's Files
+  (`group_resources`); a plan owns no bytes and `lesson_plans` is not altered. Uploads reuse
+  `POST /resources` (staff-only by default); attaching rides the plan save as `resource_ids`
+  (`sometimes|array|max:10`, config `groups.lessons.max_attachments`). `sometimes` is the one
+  exception to "every template field is nullable": absent keeps the plan's files (an old tab or
+  the by-day PUT must not silently detach), `[]` clears them. Every id must belong to the plan's
+  class AND school, or the whole request is a 422 before anything is written. `attachments` is in the
+  teacher and office plan payloads and in no family payload; `lesson_plan_count` is staff-only.
+  "Copy to week" copies files with the Activities rule (a day keeps its own activities and files,
+  else takes the source's). No new teacher write verb (L1, L2, L3). Alternative: a `files` column
+  or a per-plan upload endpoint. Rejected: a second copy of the type, size, private-disk and
+  per-class-ceiling rules that Files already enforces, and a new teacher write verb. Known limit
+  (L5): the private file disk has no backup, so a plan's files are one disk failure from gone;
+  a separate backup item is open.
+- **HELD FOR OWNER B1: negative behaviours always subtract.** (The owner answered B1 "negatives always
+  subtract" on 2026-09-28, so this commit is approved; it stays the LAST commit and its message is reworded
+  at integration.) Today a teacher-made negative skill ("Talking out of turn", polarity negative, default 1)
+  is stored as +1 and every `SUM(points)` ADDED it while the picker showed "-1" (`TeacherClass.vue:4112`,
+  `BehaviorAwardsController`). Every read aggregate (staff summary incl. `by_skill` and `by_polarity`, family
+  summary, class totals) now uses `BehaviorAward::signedPointsSql()`: `CASE WHEN skill_polarity = 'negative'
+  THEN -ABS(points) ELSE points END`. No stored row changes, and prod has 0 live negative awards, so no
+  total moves today. It settles the two conventions the docblocks disagreed on (`DemoSchool.php` and
+  `BehaviorAwardsController::totals`).
+  **Review fix (2026-09-28):** the first version read every non-negative row as `ABS(points)`. That silently
+  reversed a deliberate deduction: `StoreBehaviorAwardRequest` accepts an override from -max to +max and the
+  controller snapshots it as given, so 'Kindness' given with -3 netted -3 and would have netted +3. Rows of
+  every polarity except `negative` now read exactly as stored, so no positive-skill row moves whatever its
+  sign; the count of such rows in prod is therefore not needed (it stays "Unknown, needs investigation" and
+  does not matter). The award LOG rows now show the same signed figure (teacher, office and family screens),
+  so a negative behaviour reads "-1" beside a total that went down. It must be settled before W4 (the weekly
+  report and the buck ledger read these totals).
+
+- 2026-09-28 (S8 hardening, from Point's review; must be on main before NAFIS, the first org with derivatives, uploads a logo):
+  1. **Pixel and memory cap.** `LogoDerivatives::fromFile`, the one path both upload hooks and the regenerate route share, now reads the size with `getimagesize` and refuses BEFORE any decode. Two limits. The edge: `LogoDerivatives::MAX_EDGE = 8000`, the same constant `StoreStudioDraftLogoRequest`'s `dimensions` rule now reads, so the two cannot drift. And memory, because the edge cap alone does not protect production: GD holds a truecolor image at ~4 bytes a pixel, so 8000×8000 is ~256 MB to decode against `memory_limit = 128M` in `/etc/php/8.3/fpm/php.ini`. The budget compares an estimate with `memory_limit − memory_get_usage(true)` (`-1` is unlimited). **The 5 bytes a pixel first used here, and the 4,300 px worked example, were wrong (too low, so unsafe); see the 2026-09-28 repair below for the measured figure and the corrected budget.** `LogoDerivatives::$headroomBytes` is the test seam. A refusal is a `LogoTooLarge` (a `ValidationException`): the route answers the legacy 422 `{status:'failed', data:{logo:['The logo is too large to make the icons from (W×H). Upload a smaller logo, at most N pixels on each side.']}}` and writes nothing; an upload hook logs ONE warning with the org id, width, height and which limit, skips, and the upload answers exactly as before. The size is never turned into "no logo".
+  2. **403 before 422.** The SuperAdmin check moved from the controller into `RegenerateBrandAssetsRequest::authorize()`, so a non-super never sees validation output (the pattern `SetFormsCardAccountRequest` documents). `failedAuthorization()` throws the same `HttpException(403)` the controller's `abort()` did, so the body is byte-identical in every environment: `{status:'error', message}` with the app's renderer sanitising the message outside debug ("Request failed.").
+  3. **One run per organisation.** `BrandAssets::regenerate` takes `Cache::lock('brand-assets:regenerate:{masjid_id}', 60)` with `block(3)` before it reads the previous rows. The deletion of the old rows was already after the transaction, but not after an OUTER one (`DB::afterCommit` was not used), so it now is: the old rows, the renderer purge, the log line and the lock release all run in one `DB::afterCommit` callback, which runs at once when no transaction is open (a request) and at the outer commit when one is; a `DB::afterRollBack` callback gives the lock back and deletes the files of the rolled-back new rows. A throw before then releases the lock in `regenerate`. Wait timed out: the route answers 409 `{status:'error', message:'The brand images are already being made. Try again in a moment.'}` (built in the controller, not an `HttpException`, whose message the renderer would replace); a hook skips with a warning and the upload succeeds. `BrandAssets::$lockWaitSeconds` is the test seam. The renderer purge failing to schedule is now a warning instead of a throw out of somebody's commit.
+  4. **Lifecycle tests** pin: old rows and files survive inside a caller's transaction and go only at its commit; an outer rollback keeps the old set and leaves no new files and no lock; a failing `$media->delete()` on an old row was already contained (warning, new set stays, 200), now pinned; and `MasjidsController::update`'s hook failure leaves that response unchanged.
+  Not run locally (no PHP): `php -l` on every touched file, and real PHP 8.3 (`getimagesize`, `finfo`) on the crafted 20000×20000 header-only PNG (45 bytes; read as 20000×20000, `image/png`), which the logo rules' mime sniffing accepts. PHPUnit was not run.
+
+- 2026-09-28 (S8 hardening, repair round after Point's verification; supersedes the memory figures above):
+  1. **The memory budget was too low, measured.** Run under real PHP 8.3 with bundled GD, memory_limit 128M, using the actual spatie/image 3.9.5 chain (`loadFile`, `fit`, `resizeCanvas`, `background`, `save`, three times), the peak was **8.19 bytes a pixel for an RGBA PNG, 7.19 for an RGB PNG and 4.19 for a JPEG**, because GD's PNG reader holds a raw row buffer as well as the image. The budget allowed 5, so an 86 KB 4400×4400 RGBA PNG passed (100.3 MB against 106 MB left) and then died in `imagecreatefromstring`. Two costs were also not counted: the whole file, which spatie holds as a string while it decodes (up to 25 MB on the upload rules), and `autoRotate`'s `imagerotate`, a second full-size copy for a JPEG with EXIF Orientation 3 to 8 (not measured; about 8.4 by the same arithmetic). **New budget: `width × height × 10 + filesize + 8 MiB`** against the headroom. One factor for both types, the worst measured case plus a margin, so it does not depend on the exif extension; `the_memory_budget_is_ten_bytes_a_pixel_plus_the_file_plus_eight_megabytes` pins it, and `a_4400_pixel_square_that_the_old_five_byte_budget_took_is_refused_at_128m` pins the case that got through. Checked locally (estimate, not the droplet): with 30 MB in use the largest square the new budget takes is about **3,070 px**, and the real derive chain on that size peaked at 104 MB (RGBA PNG), 95 MB (RGB PNG) and 68 MB (JPEG) of the 128 MB, including the 30 MB. So the honest figure is **about 3,000 px square with ~30 MB in use, not 4,300**, and the memory check, not the 8000 edge, is what binds on production.
+     - Unknown, needs investigation: the droplet. The peaks above are from the local `phptest-gd` image (PHP 8.3, bundled GD), not php-fpm on the droplet, and I did not ssh. Whether production's php8.3-gd uses bundled or system libgd is also unknown: with system libgd, GD's allocations do not count against `memory_limit`, and the risk becomes RSS and the OOM killer rather than a PHP fatal; the pixel budget is still the right guard. (Resolved 2026-09-28: system libgd 2.3.3, read from the droplet; see the third repair round.)
+  2. **Studio provisioning was unguarded.** `LogoDerivatives::generate` (called from `StudioProvisioning`) decoded with no check, and the Studio upload admits 8000×8000 up to 8 MB. The check moved from `fromFile` into `derive()`: after the logo is written to the temporary folder and before anything decodes it, `getimagesize` and `filesize` feed `assertFits`, so `generate` and `fromFile` share it. A refusal costs one copy of the file and no decode, and the folder is deleted. `StudioProvisioning::provision` turns `LogoTooLarge` into a 422 `{status:'failed', data:{logo:[sentence]}}` (the brand gate's shape and key) before the transaction: no organisation, no rows, the draft keeps its logo. Tests in `StudioProvisionLogoTest`.
+  3. **Lock release edge cases.** `regenerate`'s catch now releases the lock only until `run()` has registered the commit callback (a `$handedOver` flag), so a late throw cannot release it while the old rows still wait on an outer commit. Documented, not fixed: Laravel 12.64's transactions manager runs rollback callbacks only along the current transaction's parent chain, so a savepoint that committed and whose parent then rolls back to level 0 loses its rollback callback: the lock lives out its 60 s TTL and the new files are strays. Neither production caller runs inside a transaction (`/details` calls it after `DB::commit`, `update` opens none), so the TTL is the fallback.
+  4. **Which cache store holds the lock?** (Resolved 2026-09-28: `CACHE_STORE=database`, read from the droplet; see the third repair round.) Unknown, needs investigation, when written. `config/cache.php` defaults to `database` and `.env.example` says `database`; phpunit uses `array`, so the tests prove in-process locking only. `array` would lock nothing across php-fpm workers; `database`, `redis` and `file` are fine. With the `database` store and no `DB_CACHE_LOCK_CONNECTION`, a regenerate run inside an outer transaction inserts the lock row inside it, and a competing insert waits on InnoDB's row lock (up to `innodb_lock_wait_timeout`, 50 s), not on `block(3)`. Not a problem for today's callers (none open a transaction). Before merge, on the droplet: `grep '^CACHE_STORE' .env` (read-only). If it is `array`, set it to `database` or `redis`; if `database` and a caller ever wraps regenerate in a transaction, set `DB_CACHE_LOCK_CONNECTION` to a second connection with the same credentials. No config changed here.
+  5. **Not run.** PHPUnit has not run on this commit, on SQLite or MySQL (no PHP locally). What did run, in real PHP 8.3: `php -l` on every touched file, the derive-peak measurements above, and `assertFits` exercised through reflection against crafted header-only PNGs (20000×20000 and 8001×10 refused on the edge, 4400×4400 at 106 MB refused with a 3200 px hint, 3000×3000 at 106 MB accepted, 8000×8000 with the real 128M limit refused). To do on the CI droplet before merging: the full `BrandAssetRegenerationTest`, `StudioProvisionLogoTest`, and the suites that touch `/details` and `MasjidsController::update`, on SQLite and MySQL.
+
+- 2026-09-28 (S8 hardening, second repair round; supersedes the factor of 10 above):
+  1. **The factor of 10 was still not the worst case, measured.** Through the real `LogoDerivatives::fromFile` at `memory_limit` 128M (PHP 8.3, bundled GD, exif extension added in a throwaway container): a 3090×3090 JPEG with EXIF Orientation 6 peaked at **10.67 bytes a pixel** (101.9 MB above base); Orientations 3, 5 and 8 and a progressive JPEG gave 10.64 to 10.67. The check took all of them (needed 104.0 MB, headroom 104.9 MB) and they survived only on the 8 MiB fixed allowance: `memory_get_peak_usage(true)` reached exactly 134217728, the limit, so one more 2 MB Zend chunk would have been the fatal after the upload committed. The earlier "about 8.4, by arithmetic, not measured" for a rotated JPEG was wrong. The per-type figures through the whole chain are also higher than the 8.19 written above: RGBA PNG about 9.36, gray+alpha 9.35, 16-bit RGBA 9.36; palette PNG 2.38; plain JPEG 5.41; noisy RGBA PNG 13.2 counting its own file, which the budget charges separately.
+     **New budget: `width × height × 12 + filesize + 8 MiB`.** 12 is the worst measured case (10.7) plus a margin of about 13 MB at 3090 px, one number for every type, still independent of the exif extension. What it means at 128M: about **3,200 px square with nothing in use, about 2,800 with ~30 MB in use** (was 3,000 in the note above). The 3090 px rotated JPEG that survived by a chunk is now refused (needs 117.3 MB against 104.9 MB). `the_memory_budget_is_twelve_bytes_a_pixel_plus_the_file_plus_eight_megabytes` pins the factor, `a_3090_pixel_square_that_the_ten_byte_budget_took_is_refused_at_128m` pins the measured case, and the hint in the 4400 px test is now 2900 (was 3200). Comments in `LogoDerivatives`, `LogoTooLarge` and `docs/manara-studio-w2.md` carry the measured numbers.
+  2. **Studio upload vs provisioning limits disagree. (Closed in the third repair round below: the upload now runs the same check.)** `StoreStudioDraftLogoRequest` still accepts up to 8000×8000 (its `dimensions` rule reads `LogoDerivatives::MAX_EDGE`), while provisioning refuses a logo over roughly 2,800 to 3,200 px with a 422 keyed `logo` at the final step. Left as it is on purpose: running the memory estimate at upload time would check headroom on a request that does not decode, and the answer would differ from the one at provisioning; a clear 422 at the end beats the old fatal. The request's stale comment (it said the check was in `fromFile`) is fixed and the gap is written into docs/manara-studio-w2.md. If wizard users hit it, the follow-up is to run `assertFits` on the uploaded file in the draft-logo controller.
+  3. **Nested savepoint rollback leaves the lock to its TTL.** Accepted as documented (BrandAssets docblock, item 3 of the repair above): no production caller runs `regenerate` in a transaction. If a nested caller appears, register the rollback callback on every pending level or run the replace outside the caller's transaction.
+  4. **Not run.** PHPUnit has not run on this commit (no PHP locally). The arithmetic in the tests was checked by hand: the hint for 10 MiB left is 418 px (said 400), for 106 MiB 2,926 (2900), for 104.9 MiB 2,909 (2900).
+  Unknown, needs investigation, unchanged: whether production's php8.3-gd is bundled GD or system libgd (with system libgd its allocations bypass `memory_limit`), and production's `CACHE_STORE`. (Both read from the droplet on 2026-09-28; see the third repair round below.)
+
+- 2026-09-28 (S8 hardening, third repair round; supersedes the 8 MiB allowance above):
+  1. **The fixed allowance was too low, measured.** Through the real `LogoDerivatives::fromFile` under bundled GD (`phptest-gd`), the warm derive peak for a logo of any size up to about 1200x630 is about 15.5 MB (measured again here: 14.8 MiB for a 48x48 and for a 1200x630 RGBA PNG), about five 1200x630 truecolor canvases of about 3 MB each plus the 180x180 and 48x48. The 8 MiB counted roughly one canvas and undercounted it, so a small logo could be accepted with too little left. **`FIXED_ALLOWANCE_BYTES` is now 20 MiB**, the measured floor plus margin, and the budget is **`width × height × 12 + file size + 20 MiB`**, everywhere (`LogoDerivatives`, `docs/manara-studio-w2.md`, the tests). The arithmetic lives once, in `LogoDerivatives::estimateBytes`. What it means at 128M: about 3,000 px square with nothing in use, about 2,600 with ~30 MB in use. The hints in the tests moved with it (40 MiB left gives 1300 for 3000x3000, 106 MiB gives 2700, 104.9 MiB gives 2700).
+  2. **Production facts, read from the droplet on 2026-09-28.** The GD is Ubuntu's SYSTEM libgd: `gd_info` 'GD Version' is `2.3.3`, from libgd3 2.3.3-9ubuntu5 and php8.3-gd 8.3.6-0ubuntu0.24.04.11, not PHP's bundled GD. GD's pixel buffers and canvases are therefore malloc'd OUTSIDE `memory_limit` and invisible to `memory_get_usage`. On production the check is a conservative ceiling on real RAM, not a guard against the `memory_limit` fatal: the droplet has 1967 MB total, about 1277 MB available, 12 PHP-FPM children and `memory_limit` 128M, and a logo above roughly 2,900 px square is refused, so one decode stays near 100 MB. Under BUNDLED GD (`phptest-gd`) it is the precise guard against the fatal. The doc comments on `LogoDerivatives::assertFits` and the S8 section of `docs/manara-studio-w2.md` say so. This answers the two "unknown" items above. **`CACHE_STORE` is `database`**, so `Cache::lock` is a database lock (the `cache_locks` table, `database/migrations/0001_01_01_000001_create_cache_table.php`) that spans PHP-FPM workers: the regeneration lock does serialise across workers. The caveat above about a caller that opens a transaction still stands (the lock row would be inserted inside it); no production caller does.
+  3. **A measuring test, not only a formula pin.** `BrandAssetRegenerationTest::the_estimate_is_at_least_what_the_real_derive_chain_peaks_at` runs the real `fromFile` on a 48x48 PNG, a 1200x630 RGBA PNG, a 2000x2000 RGBA PNG and a 2000x2000 JPEG with EXIF Orientation 6 (each made in the test with GD; the JPEG's APP1 segment is built by hand), resets with `memory_reset_peak_usage()` and asserts the peak delta is at most `estimateBytes`. It is skipped, with the reason, unless `gd_info()['GD Version']` contains 'bundled' (under system libgd the assertion would pass whatever the estimate said), and its rotated-JPEG case is skipped unless exif is loaded. Measured, `phptest-gd`, PHP 8.3, delta against estimate: 48x48 14.8 MiB against 20.0; 1200x630 14.8 against 28.7; 2000x2000 RGBA PNG 30.9 against 65.8; 2000x2000 rotated JPEG 31.4 against 65.8 (16.2 without exif, so autoRotate's copy is real); also 3000x3000 RGBA PNG 69.6 against 123.0. The exif case was run in a throwaway container with the extension built in; the standard `phptest-gd` has none, so there it skips.
+  4. **Tests no longer depend on the process's memory.** `StudioDraftFixtures::setUpStudio` (which `ProvisionsStudioDrafts::setUpProvisioning` and the draft tests call) sets `LogoDerivatives::$headroomBytes` to 512 MiB and resets it to null with `beforeApplicationDestroyed`. `StudioProvisionLogoTest::the_real_memory_path_reads_the_ini_limit_minus_what_the_process_holds` keeps the real `memory_limit` minus usage path, with a limit the test sets (10 MiB above what it holds, then 512 MiB) and restores.
+  5. **The draft-logo upload runs the same check** (Point's requirement). `LogoDerivatives::assertFits` is public and `StoreStudioDraftLogoRequest::after()` calls it on the uploaded file once the type and size rules have passed. A `LogoTooLarge` becomes an error on `logo` with its own sentence, so the answer is the legacy 422 `{status:'failed', data:{logo:[sentence]}}` and nothing is stored (the request fails before the controller opens its transaction). Provisioning keeps its own run, since the headroom there can differ. **The upload's `dimensions` rule lost its maximum**: with it, a 20000x20000 logo got Laravel's generic sentence before this check ran, not provisioning's. The maximum edge is `LogoDerivatives::MAX_EDGE`, checked by `assertFits`, and `StudioSpaSourceTest` now reads that constant for the SPA's `LOGO_LARGEST_EDGE` pin. Tests in `StudioDraftLogoTest`: a crafted 20000x20000 header (valid signature, IHDR with its CRC, IEND) gets the sentence and is not stored; a 3000x3000 header under a 40 MiB seam gets the memory sentence, keeps the draft's earlier logo, and is taken once the room is given.
+  6. **Not done, on purpose.** No log line for a refused upload: the user sees the 422, and the hooks log only because they skip silently. Not run: `StudioProvisionLogoTest` and the suites on SQLite versus MySQL on the CI droplet.

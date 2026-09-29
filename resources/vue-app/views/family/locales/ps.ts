@@ -182,6 +182,8 @@ export const PS: Record<string, string> = {
     section_letters: "توري",
     alphabet_arabic: "عربي توري",
     alphabet_english: "انګلیسي توري",
+    letters_set_upper: "لوی توري",
+    letters_set_lower: "وړوکي توري",
     stage_letters: "توري",
     stage_short_vowels: "حرکتونه",
     stage_sukun_shadda: "سکون او شد",

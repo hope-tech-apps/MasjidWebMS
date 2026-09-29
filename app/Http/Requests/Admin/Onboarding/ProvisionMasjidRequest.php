@@ -14,6 +14,7 @@ use App\Models\MobileAppFeature;
 use App\Models\User;
 use App\Support\CapabilityCatalogue;
 use App\Support\HostName;
+use App\Support\Studio\CanonicalPair;
 use App\Support\Studio\LayoutPresets;
 use Closure;
 use Illuminate\Validation\Rule;
@@ -316,6 +317,8 @@ class ProvisionMasjidRequest extends BaseFormRequest
                     }
                 },
             ],
+            // W2 S5: ask for the apex/www pair, the canonical one serving.
+            'web_domain.canonical' => ['nullable', 'string', Rule::in(CanonicalPair::CHOICES)],
             'web_domain.custom_zone_apex' => [
                 'bail',
                 'nullable',
@@ -365,6 +368,21 @@ class ProvisionMasjidRequest extends BaseFormRequest
                     $validator->errors()->add('web_domain.custom_host', 'A web domain needs the web platform selected.');
                 } elseif (! $this->filled('slug')) {
                     $validator->errors()->add('web_domain.custom_host', 'A custom domain needs the managed subdomain (slug) as well.');
+                }
+            }
+
+            if ($this->filled('web_domain.canonical') && $validator->errors()->isEmpty()) {
+                $pair = $this->webDomainPair();
+
+                if (! $this->filled('web_domain.custom_host') || $pair === null) {
+                    $validator->errors()->add('web_domain.canonical', 'A canonical host applies only to a custom domain that is its zone\'s apex or www.');
+                } else {
+                    $other = $pair['serving'] === HostName::normalize((string) $this->input('web_domain.custom_host')) ? $pair['redirect'] : $pair['serving'];
+                    $holder = MasjidDomain::query()->where('host', $other)->value('masjid_id');
+
+                    if ($holder !== null) {
+                        $validator->errors()->add('web_domain.canonical', "{$other} is already recorded for organisation #{$holder}.");
+                    }
                 }
             }
 
@@ -438,5 +456,24 @@ class ProvisionMasjidRequest extends BaseFormRequest
             'apps.ios.asc_issuer_id' => 'App Store Connect issuer ID',
             'apps.android.play_service_account_json' => 'Google Play service-account JSON',
         ];
+    }
+
+    /**
+     * The apex/www pair `web_domain.canonical` asks for (W2 S5), or null when
+     * none was asked for or the custom host is not its zone's apex or www.
+     *
+     * @return array{serving: string, redirect: string}|null
+     */
+    public function webDomainPair(): ?array
+    {
+        $host = $this->input('web_domain.custom_host');
+        $apex = $this->input('web_domain.custom_zone_apex');
+        $canonical = $this->input('web_domain.canonical');
+
+        if (! is_string($host) || ! is_string($apex) || ! is_string($canonical) || $canonical === '') {
+            return null;
+        }
+
+        return CanonicalPair::for((string) HostName::normalize($host), (string) HostName::normalize($apex), $canonical);
     }
 }

@@ -250,7 +250,8 @@ export type BackendApiRoute =
     | `/api/admin/masjids/${string}/contacts?${string}`
     // What an organisation has, grouped, with its recent changes — the
     // SuperAdmin's switch panel (MasjidsController::capabilities). The PATCH
-    // that flips one entry is `capabilities/${key}`.
+    // that flips one entry is `capabilities/${key}`; the bulk PATCH (Studio W2
+    // S7, `capabilities[<key>]=1|0`) is this same shape.
     | `/api/admin/masjids/${string}/capabilities`
     | `/api/admin/masjids/${string}/capabilities/${string}`
     // The attendance log (the school office's read of the register) and one
@@ -290,3 +291,12 @@ export type BackendApiRoute =
     // Step 3 (S8): the draft becomes an organisation, once.
     | `/api/admin/studio/drafts/${number}/provision`
     | `/api/admin/studio/layout-presets?org_type=${string}`
+    // Studio W2 S9: an organisation that already exists, seen through Studio's
+    // sections, and its preview with the changes being considered (a POST that
+    // writes nothing). Its writers are the bulk capability PATCH (W2 S7), which
+    // shares the `capabilities` shape above with the switch panel's GET, the
+    // theme save (`theme` above), and S8's regeneration of the favicon, touch
+    // icon and share image, below. All SuperAdmin-only.
+    | `/api/admin/studio/organisations/${number}`
+    | `/api/admin/studio/organisations/${number}/preview`
+    | `/api/admin/masjids/${string}/brand-assets/regenerate`

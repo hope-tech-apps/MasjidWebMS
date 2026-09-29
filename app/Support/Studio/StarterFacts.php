@@ -33,7 +33,7 @@ final readonly class StarterFacts
     ];
 
     /** Social fact => masjid_social_media_links.type, as OrganisationProvisioner writes it. */
-    private const SOCIAL_TYPES = [
+    public const SOCIAL_TYPES = [
         'facebook_url' => 'Facebook',
         'instagram_url' => 'Instagram',
         'youtube_url' => 'YouTube',

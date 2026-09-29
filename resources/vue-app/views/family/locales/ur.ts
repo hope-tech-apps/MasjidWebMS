@@ -182,6 +182,8 @@ export const UR: Record<string, string> = {
     section_letters: "حروف",
     alphabet_arabic: "عربی حروف",
     alphabet_english: "انگریزی حروف",
+    letters_set_upper: "بڑے حروف",
+    letters_set_lower: "چھوٹے حروف",
     stage_letters: "حروف",
     stage_short_vowels: "حرکات",
     stage_sukun_shadda: "سکون اور شد",

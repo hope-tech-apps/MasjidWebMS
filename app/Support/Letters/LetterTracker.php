@@ -88,6 +88,9 @@ class LetterTracker
         $letters = [];
         $mastered = 0;
         $total = 0;
+        // Per-set counts (English: Capitals, Lower case). Empty for a track with
+        // no sets, so Arabic's payload only gains the empty `sets`/`set_totals`.
+        $setCounts = [];
 
         foreach ($this->curriculum->letters() as $id) {
             $letter = $this->curriculum->letter($id);
@@ -98,7 +101,12 @@ class LetterTracker
                 $described = $this->curriculum->describeDrill($drillId);
                 $status = $rows[$drillId]->status ?? ArabicCurriculum::STATUS_NOT_STARTED;
 
+                $set = $this->curriculum->set($drillId);
+
                 $drills[] = $described + [
+                    // Which run of tiles the drill belongs to (English: `upper`
+                    // or `lower`); null on a track with no sets.
+                    'set' => $set,
                     'status' => $status,
                     'mastered_at' => optional($rows[$drillId]->mastered_at ?? null)->toIso8601String(),
                     // The teacher's note about THIS drill, read back by every
@@ -121,9 +129,18 @@ class LetterTracker
 
                 $total++;
 
+                if ($set !== null) {
+                    $setCounts[$set] ??= ['mastered' => 0, 'total' => 0];
+                    $setCounts[$set]['total']++;
+                }
+
                 if ($status === ArabicCurriculum::STATUS_MASTERED) {
                     $mastered++;
                     $letterMastered++;
+
+                    if ($set !== null) {
+                        $setCounts[$set]['mastered']++;
+                    }
                 }
             }
 
@@ -160,6 +177,13 @@ class LetterTracker
             // numbers must never be added together by a client that assumed
             // one bar.
             'groups' => $this->groupsFor($rows),
+            // The two runs of tiles the English tracker draws, each with its OWN
+            // count beside the overall `totals` (which stays the sum: 52 for
+            // English). Same warning as `groups`: a set's "13 of 26" is about 26
+            // drills, never the denominator of the whole bar. Both are empty for
+            // Arabic, whose four letter forms are not separate drills.
+            'sets' => $this->curriculum->sets(),
+            'set_totals' => $this->setTotals($setCounts),
             'student' => [
                 'membership_id' => (int) $membership->id,
                 'contact' => $membership->contact ? [
@@ -172,6 +196,18 @@ class LetterTracker
             'letters' => $letters,
             'totals' => ['mastered' => $mastered, 'total' => $total],
         ];
+    }
+
+    /**
+     * @param  array<string,array{mastered:int,total:int}>  $counts
+     * @return array<int,array{id:string,label:string,mastered:int,total:int}>
+     */
+    private function setTotals(array $counts): array
+    {
+        return array_map(
+            fn (array $set): array => $set + ($counts[$set['id']] ?? ['mastered' => 0, 'total' => 0]),
+            $this->curriculum->sets()
+        );
     }
 
     /**
@@ -257,7 +293,8 @@ class LetterTracker
     public function classOverview(Group $group, Collection $students): array
     {
         $stage = $this->stageFor($group);
-        $total = count($this->curriculum->syllabus($stage));
+        $syllabus = $this->curriculum->syllabus($stage);
+        $total = count($syllabus);
 
         $masteredByStudent = ArabicLetterProgress::query()
             ->where('group_id', $group->id)
@@ -265,6 +302,16 @@ class LetterTracker
             // this alphabet's percentage, and the clamp below hides it at 100%.
             // See the class docblock.
             ->where('alphabet', $this->curriculum->alphabetId())
+            // Only drills that are IN this stage's denominator. Before T-004.2 the
+            // clamp below was the only thing standing between a drill mastered
+            // outside the syllabus and a percentage over 100: an Arabic child's
+            // letter-GROUP drills (`group_halq`…), or drills from a later stage,
+            // were counted against a denominator that does not contain them, so a
+            // class on stage 1 could read a child as further along than the bar.
+            // Filtering the numerator by the denominator's own membership makes
+            // the two agree by construction. (English's pre-split bare-letter rows
+            // are excluded the same way, should any survive.)
+            ->whereIn('drill_id', $syllabus)
             ->where('status', ArabicCurriculum::STATUS_MASTERED)
             ->whereIn('group_membership_id', $students->pluck('id'))
             ->selectRaw('group_membership_id, COUNT(*) as mastered')
@@ -278,9 +325,9 @@ class LetterTracker
             'stages' => $this->stages(),
             'total' => $total,
             'students' => $students->map(function (GroupMembership $m) use ($masteredByStudent, $total): array {
-                // A drill mastered at a LATER stage still counts as mastered,
-                // but it is not part of this stage's denominator — so the count
-                // is clamped rather than allowed to read 110%.
+                // The numerator is already limited to this stage's syllabus, so
+                // this clamp can no longer bite; it stays as a backstop so a
+                // future change to the query cannot put a bar over 100%.
                 $mastered = min((int) ($masteredByStudent[$m->id] ?? 0), $total);
 
                 return [

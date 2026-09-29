@@ -553,9 +553,14 @@ exactly what it created in Cloudflare and nothing else.
     a held lock. `DELETE` keeps its exact behaviour, so a row with no
     Cloudflare state still deletes with 204.
   - Imported and adopted rows are never detachable here. S6 is their tool.
-- **Command `domains:release {masjid_id} {--execute}`.** It detaches every
-  Studio row of one organisation. It is a dry run unless `--execute` is given.
-  S2's force-delete guard names it.
+- **Command `domains:release {masjid_id} {--execute} {--operator=} {--reason=} {--force}`.**
+  It detaches every Studio row of one organisation. It is a dry run unless
+  `--execute` is given. As built (2026-09-28, after point's security review):
+  `--execute` needs `--operator` and `--reason`, which go into the
+  `masjid_domain_changes` ledger with each detach, and a live (untrashed)
+  organisation also needs `--force`. It takes redirect rows first, because a
+  serving host an alias still redirects to is refused, and it exits non-zero
+  when any detach does not finish. S2's force-delete guard names it.
 - **SPA.** `StudioDomainAttachPanel.vue` shows "Detach" on Studio rows that
   carry Cloudflare state, with a confirm dialog listing what will be removed:
   the Pages domain, the DNS record, and the redirect rule if any. For a zone
@@ -737,8 +742,11 @@ host uses a Pages slot (R9).
      match sets `verified_at` and `verified_by = probe`.
 - **Refusals.** An **allowlist**, not a denylist:
   - S5 writes a redirect rule or placeholder record only in a zone Studio
-    created (`cf_zone_created`), or in a zone the owner has added to
-    `config('cloudflare.redirect_zones')`, which ships empty.
+    created for the same organisation (`cf_zone_created` on one of its own
+    rows), or in a zone the owner has listed in `CLOUDFLARE_REDIRECT_ZONES`
+    (comma-separated, read into `config('cloudflare.redirect_zones')`), which
+    ships blank. As built: the list lives in production's `.env`, never in this
+    public repository.
   - Every zone already in the account when S5 ships is therefore refused
     unless the owner lists it. That includes `burlingtonmasjid.com`,
     `alrazischool.org` and the owner's other product zones
@@ -749,17 +757,25 @@ host uses a Pages slot (R9).
 - **The placeholder record's id** is stored in `cf_dns_record_id`, with
   `cf_dns_record_created` set only when S5's own POST made it. So S3's
   `removeDnsRecord` removes it by its expected shape (`A`, `192.0.2.1`).
-- **Command `domains:collapse-alias {domain_id} {--execute}`** converts an
-  existing Studio `serving` row whose sibling is its canonical into a
-  `redirect` row. It adds the rule, verifies the 301, then removes the Pages
-  domain through `CloudflareRemover::removePagesDomain`. It is a dry run by
-  default. S1's runbook step 1 is this command.
+- **Command `domains:collapse-alias {domain_id} {--execute} {--operator=} {--reason=}`**
+  converts an existing Studio `serving` row whose sibling is its canonical
+  into a `redirect` row. It adds the rule, verifies the 301, then removes the
+  Pages domain through `CloudflareRemover::removePagesDomain`. It is a dry run
+  by default. S1's runbook step 1 is this command. As built: `--execute`
+  needs `--operator` and `--reason` (ledgered); the row becomes a redirect
+  only after the 301 is seen and its sibling, re-read under its own lock, is
+  still serving; otherwise the rule is taken out again, and a rule that cannot
+  be is parked (`waiting_on = rule_cleanup`) for `domains:reconcile` to
+  remove.
 - `CloudflareRemover::removeRedirectRule` deletes the rule by id only when its
   `ref` equals `manara-studio-redirect-{row id}`.
 
-**Owner action (not a slice).** Add "Zone › Dynamic URL Redirects: Edit" to the
-Studio token, limited to this account. Until then S5 ships inert: rows wait on
-`token_scope` and show the manual steps.
+**Owner action (not a slice).** Add "Zone › Single Redirect › Edit" (called
+"Dynamic URL Redirects Write" in the API) to the Studio token, limited to this
+account, and list each zone Studio may write redirects in (other than zones it
+created for that organisation) in `CLOUDFLARE_REDIRECT_ZONES` in production's
+`.env`. Until then S5 ships inert: rows wait on `token_scope` or are refused,
+and show the manual steps.
 
 **Tests.**
 
@@ -782,7 +798,8 @@ Studio token, limited to this account. Until then S5 ships inert: rows wait on
 allowlist, and Studio did not create them.
 
 **Verify in production.** With the owner's go, on a **dedicated, empty test
-zone** the owner adds to the account and to `redirect_zones` for the purpose.
+zone** the owner adds to the account and to `CLOUDFLARE_REDIRECT_ZONES` in
+production's `.env` for the purpose.
 Never use a live client's zone or one of the owner's product zones.
 
 1. Attach `www.<zone>` as serving and `<zone>` as redirect.
@@ -823,9 +840,12 @@ owner's go.
 
 **Contract.**
 
-- **Command `domains:imported {action} {--id=*} {--operator=} {--reason=} {--execute}`.**
+- **Command `domains:imported {action} {--id=*} {--operator=} {--reason=} {--i-checked} {--execute}`.**
   It is a dry run unless `--execute` is given. `--execute` requires both
-  `--operator` and `--reason`.
+  `--operator` and `--reason`; as built, `release --execute` also requires
+  `--i-checked`, a person's word that each host no longer serves its
+  organisation, since the one-shot probe is the check reserved rows already
+  failed.
   - **`list`**: every imported row with its host, organisation, status, last
     probe, and whether a probe matches now.
   - **`release`**: deletes an imported `reserved` row, so the host is free to
@@ -1047,8 +1067,37 @@ the old favicon.
     renderer drops the old head. The lookup's KV record rewrites itself on
     change (W1 R5).
 - **Route.** `POST /api/admin/masjids/{masjid_id}/brand-assets/regenerate`
-  (super, in-controller 403). Body `{background_color?}`. 200 returns the four
-  URLs.
+  (super; the 403 is `RegenerateBrandAssetsRequest::authorize()`, so it comes
+  before any 422). Body `{background_color?}`. 200 returns the four URLs.
+  - **422** `{status:'failed', data:{logo:[...]}}` also when the logo is too
+    large to decode: over `LogoDerivatives::MAX_EDGE` (8000, the Studio logo
+    upload's cap, one constant) on an edge, or over the memory the request has
+    left (`width × height × 12 + file size + 20 MiB` against `memory_limit`
+    minus current use; the 12 is measured, the worst case 10.7 bytes a pixel for
+    an EXIF-rotated JPEG and about 9.4 for an RGBA PNG, and the 20 MiB is the
+    measured floor of about 15.5 MB the chain holds for any logo up to about
+    1200x630, with margin; so about 3,000 px square at 128M with nothing in
+    use and about 2,600 with ~30 MB in use). The arithmetic is `LogoDerivatives::estimateBytes`,
+    and `LogoDerivatives::assertFits` is the one check: Studio provisioning
+    runs it on the draft's logo (422 keyed `logo`), and the **Studio draft-logo
+    upload runs the same call** (`StoreStudioDraftLogoRequest::after()`), so a
+    logo provisioning would refuse is refused when it is chosen, with the same
+    sentence, in the legacy 422 envelope keyed `logo`, and is not stored.
+    Provisioning keeps its own run because the headroom it has can differ from
+    the upload's. Because the upload now answers the edge cap itself, its
+    `dimensions` rule carries only the minimum. What the check guards depends
+    on the GD in use. Production's is Ubuntu's SYSTEM libgd (2.3.3, read from
+    the droplet on 2026-09-28), whose pixel buffers are malloc'd outside
+    `memory_limit`, so there it is a conservative ceiling on real RAM (the
+    droplet has 1967 MB, about 1277 MB available, 12 PHP-FPM children; a logo
+    above roughly 2,900 px square is refused, one decode stays near 100 MB); under
+    bundled GD (the local `phptest-gd` image) it is the precise guard against
+    the `memory_limit` fatal. Read from the header, before any decode; nothing is written.
+  - **409** `{status:'error', message:'The brand images are already being made. Try again in a moment.'}`
+    when another regeneration for the organisation holds its lock
+    (`brand-assets:regenerate:{masjid_id}`, waited on for 3 seconds). The lock
+    is held until the old rows are deleted, or the caller's transaction has
+    rolled back.
 - **Logo upload keeps derivatives in step.** After either admin logo upload
   commits, if the organisation **already has** a row in any of the three
   collections, `BrandAssets::regenerate` runs. An organisation with none, which
@@ -1056,7 +1105,8 @@ the old favicon.
   - The hook runs after the upload has committed and **never changes the
     upload's response.** A failure, such as a logo GD cannot read, is caught
     and logged at `warning` (production's level), and the previous
-    derivatives stay.
+    derivatives stay. A logo too large to decode, or a lock still held, is
+    the same: one warning (with the width and height for the former), skipped.
 
 **Tests** (`BrandAssetRegenerationTest`):
 
@@ -1068,6 +1118,17 @@ the old favicon.
 - `a_studio_orgs_logo_upload_regenerates_its_derivatives`
 - `a_failed_regeneration_after_an_upload_leaves_the_upload_response_unchanged`
 - `a_non_super_gets_403`
+- S8 hardening (2026-09-28): the edge and memory cap (route 422, both upload
+  hooks skip), the shared 8000 constant (`the_studio_logo_upload_leaves_the_edge_cap_to_the_shared_check`),
+  the measuring test (`the_estimate_is_at_least_what_the_real_derive_chain_peaks_at`,
+  four cases through the real `fromFile`, skipped unless GD is bundled, and the
+  rotated-JPEG case unless exif is loaded), the draft-logo upload's refusal
+  (`StudioDraftLogoTest`: a crafted 20000x20000 header, and the memory seam,
+  both 422 with provisioning's sentence and nothing stored), the real
+  `memory_limit` path (`StudioProvisionLogoTest`), `a_non_super_with_an_invalid_body_gets_403_not_422`,
+  the lock (409, hook skip, release), and the lifecycle pins (old rows survive
+  until the outer commit, an outer rollback, a failing delete, the
+  `MasjidsController::update` hook failure).
 
 Passing **unedited**: `StudioProvisionLogoTest`,
 `LiveSettingsPayloadUnchangedTest` (its premise holds: a live org gets
@@ -1499,10 +1560,10 @@ Studio-generated app.
 **Contract.**
 
 - **Config** (`config/services.php`, the `onesignal` block at `:286-308`):
-  - **the organisation key is the existing `user_auth_key`**
-    (`ONESIGNAL_USER_AUTH_KEY`), which the code already describes as the
-    "Organization REST API Key" (`app/Services/OnesignalInAppMessageService.php:40-42`).
-    No second env name is added for the same credential;
+  - **the organisation key is a NEW `ONESIGNAL_ORG_API_KEY`** (as built, S14). The
+    existing `ONESIGNAL_USER_AUTH_KEY` stays what the shared app's requests
+    authenticate with (Basic), so shared-app sends stay byte-identical; `Key`
+    auth with the organisation key is used only for rows Studio provisioned;
   - `org_id` from a new `ONESIGNAL_ORG_ID`;
   - the existing APNs keys (`ONESIGNAL_APNS_P8`, `_KEY_ID`, `_TEAM_ID`, `_ENV`)
     and `ONESIGNAL_FCM_V1_SERVICE_ACCOUNT_JSON`;
@@ -1588,8 +1649,9 @@ Studio-generated app.
 
 **Owner actions (not a slice).**
 
-- Confirm that `ONESIGNAL_USER_AUTH_KEY` on production holds the Organization
-  API key (presence only; §4). If it does not, create one in OneSignal.
+- Create an Organization API key in OneSignal (Organization › Keys & IDs) and set
+  it as `ONESIGNAL_ORG_API_KEY` (as built, S14). Leave `ONESIGNAL_USER_AUTH_KEY`
+  alone: the shared app's in-app messages authenticate with it.
 - Set `ONESIGNAL_ORG_ID` with `scripts/set-server-secret.sh`. It takes effect
   after the next production ship (W1 §3.1).
 - Supply the APNs key of the Apple team that is Hope Tech's managed account

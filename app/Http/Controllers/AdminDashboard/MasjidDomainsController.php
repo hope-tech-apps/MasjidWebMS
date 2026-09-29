@@ -9,7 +9,9 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Services\Cloudflare\CloudflareResult;
 use App\Services\Cloudflare\CloudflareService;
+use App\Services\Domains\DetachResult;
 use App\Services\Domains\DomainAttacher;
+use App\Services\Domains\DomainDetacher;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +19,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * An organisation's web addresses, for SuperAdmins (Manara Studio W1, S7):
- * list them, add one, "Check now", and remove one that Studio never took past
- * this table.
+ * list them, add one, "Check now", remove one that Studio never took past this
+ * table, and (W2 S3) detach one Studio attached, taking what Studio created
+ * for it off Cloudflare.
  *
  * `super` only, and the organisation always comes from the route. Adding a host
  * to a live organisation is a deliberate SuperAdmin act that no W1 flow takes
@@ -69,28 +72,41 @@ class MasjidDomainsController extends Controller
     /**
      * Record the host and queue its first step. The job is dispatched inside
      * the transaction and marked afterCommit, so no Cloudflare call is ever
-     * made for a row that was not stored.
+     * made for a row that was not stored. With `canonical` (W2 S5) both hosts
+     * of a pair are recorded: the canonical one serving, the other redirecting.
      */
     public function store(StoreMasjidDomainRequest $request, $masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $kind = $request->validated('kind');
 
+        $pair = $request->canonicalPair();
+
         try {
-            $domain = DB::transaction(function () use ($request, $masjid, $kind) {
-                $domain = MasjidDomain::create([
+            $rows = DB::transaction(function () use ($request, $masjid, $kind, $pair) {
+                $make = fn (string $host, array $extra = []) => MasjidDomain::create([
                     'masjid_id' => $masjid->id,
-                    'host' => $request->domainHost(),
+                    'host' => $host,
                     'kind' => $kind,
                     'zone_apex' => $request->zoneApex(),
                     'status' => MasjidDomain::STATUS_PENDING,
                     'source' => MasjidDomain::SOURCE_STUDIO,
                     'created_by_user_id' => Auth::id(),
-                ]);
+                ] + $extra);
 
-                AttachMasjidDomain::dispatch($domain->id);
+                // W2 S5: the canonical host serves; the other redirects to it.
+                $rows = $pair === null
+                    ? [$make($request->domainHost())]
+                    : [$serving = $make($pair['serving']), $make($pair['redirect'], [
+                        'role' => MasjidDomain::ROLE_REDIRECT,
+                        'redirect_to_id' => $serving->id,
+                    ])];
 
-                return $domain;
+                foreach ($rows as $row) {
+                    AttachMasjidDomain::dispatch($row->id);
+                }
+
+                return $rows;
             });
         } catch (UniqueConstraintViolationException) {
             // Two SuperAdmins adding the same host at once: the unique index
@@ -103,9 +119,14 @@ class MasjidDomainsController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $typed = collect($rows)->firstWhere('host', $request->domainHost()) ?? $rows[0];
+
         return response()->json([
             'status' => 'success',
-            'data' => ['domain' => ($domain->fresh() ?? $domain)->toAdminArray()],
+            'data' => [
+                'domain' => ($typed->fresh() ?? $typed)->toAdminArray(),
+                'domains' => array_map(fn (MasjidDomain $row) => ($row->fresh() ?? $row)->toAdminArray(), $rows),
+            ],
         ], Response::HTTP_CREATED);
     }
 
@@ -140,8 +161,9 @@ class MasjidDomainsController extends Controller
     /**
      * Remove a row only when nothing about it exists outside this table (R28):
      * no Cloudflare id, no zone Studio created, not imported. Otherwise 409
-     * with what to remove by hand, because Studio never deletes anything in
-     * Cloudflare.
+     * with what to remove by hand; for a row Studio owns, Detach (below) is
+     * the way to take what Studio made off Cloudflare. DELETE itself never
+     * sends anything to Cloudflare.
      *
      * Judged under the attacher's own lock, on the row re-read inside it: a
      * step in flight holds what it made in Cloudflare only in memory until its
@@ -168,9 +190,13 @@ class MasjidDomainsController extends Controller
             if (! $domain->deletableThroughStudio()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => $domain->source === MasjidDomain::SOURCE_IMPORTED
-                        ? "{$domain->host} was imported from the live host map and cannot be removed through Studio."
-                        : "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
+                    'message' => match (true) {
+                        ! $domain->ownedByStudio() => "{$domain->host} was imported from the live host map and cannot be removed through Studio.",
+                        $domain->aliasHosts() !== [] && $domain->cf_zone_id === null && $domain->cf_dns_record_id === null
+                            && $domain->cf_pages_domain_id === null && $domain->cf_redirect_rule_id === null && ! $domain->cf_zone_created
+                            => 'Detach ' . implode(' and ', $domain->aliasHosts()) . " first: it redirects to {$domain->host}.",
+                        default => "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
+                    },
                     'manual_steps' => $domain->removalSteps(),
                 ], Response::HTTP_CONFLICT);
             }
@@ -181,6 +207,46 @@ class MasjidDomainsController extends Controller
         }
 
         return response()->noContent();
+    }
+
+    /**
+     * Detach a host Studio attached (W2 S3): stop serving it at once, remove
+     * from Cloudflare the objects Studio's own POSTs created, and forget the
+     * row. What Studio did not create is left and listed in `manual_steps`.
+     *
+     * 202 with the result, whether it finished (`detached`) or stopped
+     * part-way (`pending`: the row stays `detaching`, unserved, and
+     * `domains:reconcile` finishes it). 409 for a row that came from the live
+     * host map (imported or adopted: R28 holds, and S6 is their tool) and for
+     * a row another writer holds.
+     */
+    public function detach($masjid_id, $domain_id, DomainDetacher $detacher)
+    {
+        $domain = $this->domain($masjid_id, $domain_id);
+        $user = Auth::user();
+        // The ledger records who pressed Detach (review follow-up 10).
+        $result = $detacher->detach(
+            $domain,
+            Auth::id(),
+            $user ? "user #{$user->id} {$user->email}" : null,
+            'Detached from the Studio domain panel.',
+        );
+
+        if ($result->outcome === DetachResult::REFUSED || $result->outcome === DetachResult::BUSY) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $result->error,
+                'manual_steps' => $result->manualSteps,
+            ], Response::HTTP_CONFLICT);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'result' => $result->toArray(),
+                'domain' => MasjidDomain::find($domain->id)?->toAdminArray(),
+            ],
+        ], Response::HTTP_ACCEPTED);
     }
 
     private function domain($masjidId, $domainId): MasjidDomain

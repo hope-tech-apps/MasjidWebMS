@@ -671,6 +671,42 @@ classroom — a one-family fixture cannot express a single property above) plus
 the resource half of `TeacherLessonsGradebookResourcesTest` and
 `AdminSchoolOfficeReadsTest`.
 
+### Files under a lesson plan's Activities (T-004.1, 2026-09-28)
+
+A lesson plan LISTS files from the class's Files; it owns no bytes. The join is
+`lesson_plan_resources` (`lesson_plan_id`, `group_resource_id`, `position`; both
+FKs cascade; `lesson_plans` is never altered). A teacher uploads through the
+existing `POST .../resources` (staff-only by default) and the plan's own save
+carries the list as `resource_ids`.
+
+- **EVERY `resource_id` must belong to the plan's class AND school.**
+  `LessonPlanController::resolveAttachments()` re-reads the ids through
+  `group_id` and `masjid_id`, and refuses the WHOLE request (422, before the plan
+  is written) on any miss. Another class's file and another school's file are
+  tested on create and update. The refusal answers a foreign id and a nonexistent
+  id identically, so it is not an existence oracle.
+- **`resource_ids` is `sometimes|array|max:10`, the one exception to "every field
+  is `nullable`, never `sometimes`".** Prose is re-sent whole; links are not. An
+  absent key keeps the plan's files (an old tab, the by-day PUT), `[]` clears
+  them, a list is exact and ordered. Cap: `groups.lessons.max_attachments`.
+- **Staff information only.** `attachments` is in the teacher's and the office's
+  plan payload (one `plan()` serializer for both) and in NO family payload; no
+  family route mentions a lesson plan. `lesson_plan_count` is in
+  `toStaffArray()` only, never `toAudienceArray()`, which parents read. Attaching
+  a file does not change its `visibility`; a file reaches families only if it is
+  separately shared from Files.
+- **Deleting either side takes the link, never the other side.** Removing a file
+  from Files removes it from every plan (the Files row says "In N lesson plans");
+  removing a plan or detaching keeps the file.
+- **"Copy to week" follows the Activities rule** (`copyRequest`): a day that keeps
+  its own activities keeps its own files, a day that takes the source's
+  activities takes the source's files. Never a mix.
+- **Adds no teacher write verb.** `TeacherRealmTest`'s list is unedited;
+  `LessonPlanAttachmentsTest::attaching_files_adds_no_teacher_write_verb` names
+  the five lesson-plan writes it relies on.
+- Proven by `tests/Feature/LessonPlanAttachmentsTest.php` and
+  `resources/vue-app/tests/lesson-plans.test.ts`.
+
 ## Behaviour / recognition — the Classroom module (T-013)
 
 `behavior_skills` (per-tenant vocabulary) + `behavior_awards` (one skill given
@@ -748,6 +784,28 @@ positioning, not its configuration.
   `forceDelete()`, as it is for threads.
 - **Permissions**: `view contacts` / `manage contacts`, minting nothing.
   `Permission::count() === 8` stays pinned.
+- **A negative skill always SUBTRACTS in every total** (B1, 2026-09-28, owner
+  approved). The vocabulary and the award snapshot store a MAGNITUDE
+  (`points = 1` for "Talking out of turn"); direction comes from
+  `skill_polarity` at READ time through `BehaviorAward::signedPointsSql()`
+  (`CASE WHEN negative THEN -ABS(points) ELSE points END`), in the staff
+  summary, the family summary and the class totals. No stored row changes.
+  Before this, every `SUM(points)` ADDED a correction while the picker showed
+  "-1". Only negative-polarity rows move: every other row reads as stored, so a
+  positive-polarity award typed with a negative override (a teacher docking a
+  child) keeps netting what it always did, and an award row already stored signed
+  is not double-negated. The award LOG shows the same signed figure
+  (`signedAwardPoints`, `core/helpers/behaviorSkills.ts`) on the teacher, office
+  and family screens. Pinned by `BehaviorSignTest` and `behavior-skills.test.ts`.
+- **A picker (and a summary) reads POSITIVE FIRST** (T-003.1, 2026-09-28):
+  positives, then negatives, then any unrecognised polarity, then by label.
+  `BehaviorSkill::scopeInPickerOrder()` / `orderInPickerOrder()` is the ONE
+  definition, used by the skills list and by both `by_skill` summaries (staff and
+  family, ordered by the SNAPSHOT columns). `ORDER BY polarity` is alphabetical
+  and put "negative" on top; do not reintroduce it. The award LOG stays
+  newest-first. On the teacher's screen `core/helpers/behaviorSkills.ts` keeps a
+  locally added skill in the same order and opens the picker on the first
+  positive skill. Pinned by `BehaviorSkillOrderTest` and `behavior-skills.test.ts`.
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 
@@ -866,6 +924,47 @@ would quietly rewrite what a teacher said they heard.
 Proven by `tests/Feature/HifzTrackingTest.php` (endpoint AND listing-query
 halves) + `tests/Feature/HifzTenantIsolationTest.php` +
 `tests/Unit/QuranIndexTest.php`.
+
+## Letters tracker — English capitals and lower case (T-004.2)
+
+`arabic_letter_progress` holds both alphabets (`alphabet` column). English is
+tracked as **52 drills, not 26**: `a.upper` … `z.lower`, in two runs of tiles
+(Capitals, then Lower case) with a count on each and "of 52" overall.
+
+- **Drill ids are `x.upper` / `x.lower`, NEVER `A` / `a`.** Production's
+  `drill_id` is `utf8mb4_unicode_ci`, case-insensitive, so `A` and `a` are one
+  key under the `(group_membership_id, alphabet, drill_id)` unique index. SQLite
+  (the suite) is case-sensitive and cannot show that, so
+  `EnglishCurriculumTest::no_drill_id_is_a_bare_letter…` asserts it on the ids.
+  `EnglishCurriculum::drillId()` is the one place an id is assembled.
+- **`LetterCurriculum::sets()` / `set($drillId)`** describe the runs. Arabic
+  returns `[]` / `null`: its four letter FORMS (`positionsFor`) are a different
+  idea and never become sets or separate denominators. The tracker payload adds
+  `sets`, `set_totals` (`[{id,label,mastered,total}]`, `[]` for Arabic) and a
+  `set` key on every drill (null for Arabic). Clients draw runs through
+  `core/helpers/letterRuns.ts`, never by branching on the alphabet id.
+- **`classOverview()` filters its numerator by the stage's syllabus.** Before,
+  it counted every mastered row in the class against the syllabus denominator,
+  so an Arabic child's letter-GROUP drills (valid at any stage) inflated the
+  count and only the `min()` clamp hid it at 100%.
+- **The migration** `split_english_letters_by_case` copies every existing
+  English mark to BOTH cases keeping status, note, `marked_by`, the original
+  `mastered_at` and both timestamps (owner question B2: copy to both, answered
+  2026-09-28), then removes the bare row. It reads inside its transaction (row
+  lock on MySQL) and copies with `insertOrIgnore`, because `bin/deploy` runs the
+  new code before `migrate --force` with no maintenance mode: a case written in
+  that gap wins instead of aborting the deploy. Its `down()` refuses when the two
+  cases differ on status, note, mastered date or who marked them, when one is
+  missing, or when a bare row sits beside the pair. **It rewrites production
+  rows: deploy after 18:00 ET, when teachers are not marking letters.** The
+  sibling `create_lesson_plan_resources_table` `down()` refuses while any link
+  exists, so back W1 out with `migrate:rollback --step=N`, never a bare rollback
+  of the whole batch.
+- **A stale tab** that still posts a bare letter for English gets a 422 with
+  `code: stale_page` and a "reload the page" message, and nothing is written.
+- **The records export** keeps the stored `Drill id` and appends a readable
+  `Letter` column ("Capital A") after `Alphabet`, so positional readers keep
+  their columns.
 
 ## Tenant isolation
 

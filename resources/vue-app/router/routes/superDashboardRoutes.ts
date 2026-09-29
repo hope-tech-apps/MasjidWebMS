@@ -135,6 +135,20 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/super/studio/StudioView.vue")
             },
+            // An organisation that already exists, opened in Studio
+            // (docs/manara-studio-w2.md S9). No draft: its snapshot, a preview,
+            // and the writers that already exist.
+            {
+                path: 'studio/organisations/:id(\\d+)',
+                name: 'studio.organisation',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin'],
+                    pageTitle: 'Manara Studio',
+                    dashboardType: 'super'
+                },
+                component: () => import("@/views/dashboard/super/studio/StudioOrganisationView.vue")
+            },
             {
                 path: 'app-config',
                 name: 'appConfig',

@@ -28,6 +28,7 @@
         </div>
 
         <div v-if="loadError" class="alert alert-warning py-2 small">{{ loadError }}</div>
+        <div v-if="downloadError" class="alert alert-warning py-2 small">{{ downloadError }}</div>
 
         <div v-if="loading" class="text-muted small">Loading…</div>
 
@@ -81,6 +82,21 @@
                         <p v-if="entry.plan.body" class="small mb-2" style="white-space:pre-wrap">
                             {{ entry.plan.body }}
                         </p>
+
+                        <!-- Files under Activities (T-004.1), read-only like the rest
+                             of this screen. Served with the plan to STAFF; the bytes
+                             come from the class's Files download route. -->
+                        <ul v-if="entry.plan.attachments?.length" class="list-unstyled small mb-2">
+                            <li v-for="a in entry.plan.attachments" :key="a.id" class="d-flex align-items-center gap-2 py-1">
+                                <i class="bi bi-paperclip text-muted"></i>
+                                <span class="flex-grow-1 text-truncate">{{ a.title || a.original_name }}</span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        :disabled="downloadingId === a.id" @click="download(a)">
+                                    <i class="bi bi-download"></i>
+                                    <span class="visually-hidden">Download {{ a.title || a.original_name }}</span>
+                                </button>
+                            </li>
+                        </ul>
 
                         <dl v-if="entry.rows.length" class="row small mb-0">
                             <template v-for="row in entry.rows" :key="row.key">
@@ -355,6 +371,37 @@ const daysOnScreen = computed(() => {
 });
 
 /** `updated_at` is a timestamp, not a school day, so it is read as one. */
+const downloadingId = ref<number | null>(null);
+const downloadError = ref('');
+
+/**
+ * Save an attached file, through the office's read-only Files download route.
+ * Bearer-authenticated, so a blob rather than an `<a href>`; saved under the
+ * teacher's filename and never rendered inline (see GroupFilesTab).
+ */
+const download = async (file: any) => {
+    downloadingId.value = file.id;
+    downloadError.value = '';
+    try {
+        const res: any = await ApiService.VueApp.axios.get(
+            `${base.value}/resources/${file.id}/download`,
+            { responseType: 'blob' }
+        );
+        const objectUrl = URL.createObjectURL(res.data as Blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = file.original_name;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(objectUrl);
+    } catch {
+        downloadError.value = `"${file.title}" could not be downloaded.`;
+    } finally {
+        downloadingId.value = null;
+    }
+};
+
 const when = (iso: string | null): string => {
     if (!iso) return '';
     const d = new Date(iso);

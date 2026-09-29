@@ -86,6 +86,21 @@ interface LetterCurriculum
      */
     public static function groupDrills(string $group): array;
 
+    /**
+     * The SETS a track's drills fall into, in the order they are drawn: English
+     * has Capitals and Lower case (T-004.2). A set is a property of a drill, as a
+     * group is a property of a letter; it never changes what `syllabus()` is, it
+     * only says how the tracker lays the same drills out and counts them.
+     * A track with no such split (Arabic) returns an empty list and every
+     * surface draws one run, exactly as before.
+     *
+     * @return array<int,array{id:string,label:string}>
+     */
+    public static function sets(): array;
+
+    /** Which set a drill belongs to. Null for a track with no sets, or an id it does not teach. */
+    public static function set(string $drillId): ?string;
+
     /** An unset or unrecognised stage is the FIRST stage, never an error. */
     public static function normaliseStage(?string $stage): string;
 

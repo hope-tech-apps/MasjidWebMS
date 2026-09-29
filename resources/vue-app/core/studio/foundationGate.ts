@@ -38,6 +38,27 @@ export function isHex6(value: unknown): boolean {
     return typeof value === 'string' && HEX6.test(value);
 }
 
+const THEME_HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * The forms the theme save (SaveThemeSettingsRequest) accepts: #RGB, #RRGGBB
+ * and #RRGGBBAA. A live organisation may already store any of them.
+ */
+export function isThemeHex(value: unknown): boolean {
+    return typeof value === 'string' && THEME_HEX.test(value);
+}
+
+const COMPLETE_THEME_HEX = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * A value to emit while the operator is still typing on the live card. Every
+ * six-digit colour starts with a valid #RGB, so a three-digit prefix is not a
+ * choice yet: only a full 6 or 8 digit code counts until the field is left.
+ */
+export function isCompleteWhileTyping(value: unknown): boolean {
+    return typeof value === 'string' && COMPLETE_THEME_HEX.test(value);
+}
+
 /** True when the draft's platforms include the website. */
 export function webSelected(answers: StudioAnswers): boolean {
     return (answers.platforms.platforms ?? []).includes('web');

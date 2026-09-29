@@ -108,14 +108,17 @@ class GroupStaff extends Pivot
     ];
 
     /**
-     * Who made the assignment: whoever is signed in when the row is created. A row
-     * written with nobody signed in (a console command, a seeder) keeps NULL rather
-     * than a guess. Set here, not at call sites, because attach() drops it there.
+     * Who made the assignment: the staff User signed in when the row is created. A
+     * row written with nobody signed in (a console command, a seeder), or while the
+     * signed-in principal is not a User (a family login is a Contact, and its id is
+     * not a users.id), keeps NULL rather than a guess or a foreign id. Set here, not
+     * at call sites, because attach() drops it there.
      */
     protected static function booted(): void
     {
         static::creating(function (self $row): void {
-            $row->assigned_by_user_id = Auth::id();
+            $actor = Auth::user();
+            $row->assigned_by_user_id = $actor instanceof User ? $actor->getKey() : null;
         });
     }
 

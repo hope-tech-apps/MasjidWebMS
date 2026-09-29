@@ -488,6 +488,16 @@ return [
          */
         'max_section_length' => (int) env('GROUP_LESSON_MAX_SECTION_LENGTH', 2000),
 
+        /*
+         * How many of the class's files one lesson plan may list under its
+         * Activities (T-004.1). A plan links to files already in the class's
+         * Files, so this bounds the LINKS, not the bytes; the bytes are bounded
+         * by `resources.max_per_class` and the upload limits above. Validated at
+         * the request boundary, so a request over the cap is a 422 before any
+         * link is written.
+         */
+        'max_attachments' => (int) env('GROUP_LESSON_MAX_ATTACHMENTS', 10),
+
     ],
 
     'gradebook' => [

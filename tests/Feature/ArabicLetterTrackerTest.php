@@ -225,7 +225,7 @@ class ArabicLetterTrackerTest extends TestCase
     // ------------------------------------------------------ the English track
 
     #[Test]
-    public function the_english_track_lists_twenty_six_letters_with_both_cases(): void
+    public function the_english_track_lists_twenty_six_letters_and_fifty_two_case_drills(): void
     {
         $response = $this->getJson($this->url("/members/{$this->student->id}/letters?alphabet=english"))
             ->assertOk();
@@ -238,7 +238,16 @@ class ArabicLetterTrackerTest extends TestCase
         // The class sits at short vowels, which is a qāʿidah stage and means
         // nothing here: English has ONE stage and every letter is in it.
         $response->assertJsonPath('data.stage.id', 'letters');
-        $this->assertSame(26, $response->json('data.totals.total'));
+        // 26 capitals + 26 lower case: the overall figure a parent reads is /52.
+        $this->assertSame(52, $response->json('data.totals.total'));
+        $this->assertSame(0, $response->json('data.totals.mastered'));
+
+        // The two runs, each counted on its own; their sum is the overall one.
+        $this->assertSame([
+            ['id' => 'upper', 'label' => 'Capitals', 'mastered' => 0, 'total' => 26],
+            ['id' => 'lower', 'label' => 'Lower case', 'mastered' => 0, 'total' => 26],
+        ], $response->json('data.set_totals'));
+        $this->assertSame(['upper', 'lower'], array_column($response->json('data.sets'), 'id'));
 
         $a = collect($response->json('data.letters'))->firstWhere('id', 'a');
         $this->assertSame([
@@ -246,10 +255,108 @@ class ArabicLetterTrackerTest extends TestCase
             ['id' => 'lower', 'text' => 'a'],
         ], $a['positions']);
 
-        // One drill per letter, and the phonics cue a teacher reads off the card.
-        $this->assertSame(['a'], array_column($a['drills'], 'id'));
+        // Two drills per letter, one per case, and the phonics cue a teacher reads
+        // off the card. The ids are `a.upper` / `a.lower`, never `A` / `a`.
+        $this->assertSame(['a.upper', 'a.lower'], array_column($a['drills'], 'id'));
+        $this->assertSame(['upper', 'lower'], array_column($a['drills'], 'set'));
         $this->assertSame('a as in apple', $a['drills'][0]['sound']);
         $this->assertNull($a['drills'][0]['arabic_name']);
+    }
+
+    #[Test]
+    public function the_arabic_track_has_no_sets_and_no_set_totals(): void
+    {
+        // T-004.2 must not turn the qāʿidah's four letter FORMS into sets.
+        $response = $this->getJson($this->url("/members/{$this->student->id}/letters"))->assertOk();
+
+        $this->assertSame([], $response->json('data.sets'));
+        $this->assertSame([], $response->json('data.set_totals'));
+        $this->assertSame(28 * 4, $response->json('data.totals.total'));
+
+        $drill = $response->json('data.letters.0.drills.0');
+        $this->assertArrayHasKey('set', $drill);
+        $this->assertNull($drill['set']);
+    }
+
+    #[Test]
+    public function marking_one_case_moves_only_that_sets_count_and_leaves_the_other_case_alone(): void
+    {
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'b.upper', 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+        ])->assertOk();
+
+        $tracker = $this->getJson($this->url("/members/{$this->student->id}/letters?alphabet=english"))
+            ->assertOk();
+
+        $this->assertSame(1, $tracker->json('data.totals.mastered'));
+        $this->assertSame(1, $tracker->json('data.set_totals.0.mastered'));
+        $this->assertSame(0, $tracker->json('data.set_totals.1.mastered'));
+
+        $b = collect($tracker->json('data.letters'))->firstWhere('id', 'b');
+        $this->assertSame(['mastered', 'not_started'], array_column($b['drills'], 'status'));
+        // Half the letter is done, which is "learning" for the tile of the LETTER.
+        $this->assertSame('learning', $b['status']);
+    }
+
+    #[Test]
+    public function a_stale_tab_posting_the_old_bare_letter_is_told_to_reload_not_shown_a_bare_422(): void
+    {
+        // A teacher's tab left open across the deploy still sends `a`. It must be
+        // refused (nothing may be written under an id the tracker never reads)
+        // but with a message that says what happened and what to do.
+        $response = $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'a', 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+        ])->assertStatus(422);
+
+        $this->assertSame('stale_page', $response->json('code'));
+        $this->assertStringContainsString('reload the page', strtolower($response->json('message')));
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
+
+        // A genuinely unknown id keeps the ordinary refusal, not the reload prompt.
+        $typo = $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'aa', 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+        ])->assertStatus(422);
+        $this->assertNull($typo->json('code'));
+    }
+
+    #[Test]
+    public function a_single_latin_letter_posted_to_the_arabic_track_gets_the_ordinary_refusal_not_the_reload_prompt(): void
+    {
+        // `a` is the retired ENGLISH id. On the Arabic track it is just an invalid drill: telling that teacher
+        // "English capitals and lower case are now tracked separately, reload" would send her looking for a change
+        // that has nothing to do with what she tapped.
+        foreach ([[], ['alphabet' => 'arabic']] as $extra) {
+            $response = $this->putJson($this->url("/members/{$this->student->id}/letters"), $extra + [
+                'drill_id' => 'a', 'status' => C::STATUS_MASTERED,
+            ])->assertStatus(422);
+
+            $this->assertNull($response->json('code'));
+            $this->assertStringNotContainsString('reload', strtolower((string) $response->json('message')));
+            $this->assertStringContainsString('not part of what this class is working on', $response->json('message'));
+        }
+
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function an_arabic_class_overview_counts_only_drills_inside_the_stage_it_divides_by(): void
+    {
+        // THE LATENT ARABIC OVER-COUNT. The overview's numerator was every
+        // mastered Arabic row in the class; its denominator was the stage's
+        // syllabus. A letter-GROUP drill (valid at any stage, never part of the
+        // syllabus) or a drill from a later stage was counted on top, and the
+        // min($count,$total) clamp only hid it once the bar hit 100%.
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'ba', 'status' => C::STATUS_MASTERED,
+        ])->assertOk();
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => C::groupDrills(C::GROUP_HALQ)[0], 'status' => C::STATUS_MASTERED,
+        ])->assertOk();
+
+        $overview = $this->getJson($this->url('/letters'))->assertOk()->json('data.students.0');
+
+        // Only `ba` is in the syllabus at this stage, so the child has ONE.
+        $this->assertSame(1, $overview['mastered']);
     }
 
     #[Test]
@@ -278,9 +385,11 @@ class ArabicLetterTrackerTest extends TestCase
         $this->assertSame(1, $before['mastered']);
 
         foreach (range('a', 'z') as $letter) {
-            $this->putJson($this->url("/members/{$this->student->id}/letters"), [
-                'drill_id' => $letter, 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
-            ])->assertOk();
+            foreach (['upper', 'lower'] as $case) {
+                $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+                    'drill_id' => "{$letter}.{$case}", 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+                ])->assertOk();
+            }
         }
 
         $arabic = $this->getJson($this->url("/members/{$this->student->id}/letters"))->assertOk();
@@ -294,8 +403,8 @@ class ArabicLetterTrackerTest extends TestCase
         // And the English side is genuinely full, so the numbers above are not
         // simply a mark that never landed.
         $english = $this->getJson($this->url('/letters?alphabet=english'))->assertOk();
-        $this->assertSame(26, $english->json('data.total'));
-        $this->assertSame(26, $english->json('data.students.0.mastered'));
+        $this->assertSame(52, $english->json('data.total'));
+        $this->assertSame(52, $english->json('data.students.0.mastered'));
         $this->assertEquals(1.0, $english->json('data.students.0.completion'));
     }
 

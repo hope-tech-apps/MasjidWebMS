@@ -353,7 +353,7 @@
                         <ul v-else class="list-unstyled mb-3">
                             <li v-for="a in records[child.membership_id].awards" :key="a.id" class="d-flex gap-2 align-items-baseline">
                                 <span class="badge" :class="a.polarity === 'negative' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-success-subtle text-success-emphasis'">
-                                    {{ a.points > 0 ? '+' : '' }}{{ a.points }}
+                                    {{ awardPointsLabel(a) }}
                                 </span>
                                 <span class="small" dir="auto">
                                     {{ txAwardSkill(a) }}
@@ -405,14 +405,27 @@
                                      hijāʾī order runs right to left whichever way
                                      the chrome is pointing, and A–Z runs the other
                                      way in an Arabic portal just the same. -->
-                                <div class="d-flex flex-wrap gap-1 mt-2" :dir="track.direction"
-                                     :lang="track.alphabet === 'arabic' ? 'ar' : 'en'">
-                                    <span v-for="l in track.letters" :key="l.id"
-                                          class="letter-chip"
-                                          :class="[`letter-chip--${l.status}`, { 'letter-chip--pair': l.glyph?.length > 1 }]"
-                                          :title="letterTitle(l)">
-                                        {{ l.glyph }}
-                                    </span>
+                                <!-- English is TWO runs, Capitals and then Lower
+                                     case, each with its own count (the bar above
+                                     stays the overall one, of 52); Arabic is one
+                                     run with no heading. The server says which
+                                     through `track.sets`. The two counts are not
+                                     added by this page: the overall figure is the
+                                     server's. -->
+                                <div v-for="run in letterRunsOf(track)" :key="run.id" class="mt-2">
+                                    <div v-if="run.label" class="d-flex justify-content-between align-items-baseline">
+                                        <span class="small fw-semibold">{{ setLabel(run) }}</span>
+                                        <span class="small text-muted">{{ run.mastered }} {{ t('count_of') }} {{ run.total }}</span>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-1 mt-1" :dir="track.direction"
+                                         :lang="track.alphabet === 'arabic' ? 'ar' : 'en'">
+                                        <span v-for="tile in run.tiles" :key="tile.key"
+                                              class="letter-chip"
+                                              :class="[`letter-chip--${tile.status}`, { 'letter-chip--pair': tile.text?.length > 1 }]"
+                                              :title="tileTitle(run, tile)">
+                                            {{ tile.text }}
+                                        </span>
+                                    </div>
                                 </div>
 
                                 <!-- What the teacher wrote about particular
@@ -424,8 +437,8 @@
                                     <div class="small fw-semibold mt-2">{{ t('arabic_letter_notes') }}</div>
                                     <ul class="list-unstyled small mb-0">
                                         <li v-for="n in drillNotes(track)" :key="n.drill.id" class="mt-1">
-                                            <span :dir="track.direction" :lang="track.alphabet === 'arabic' ? 'ar' : 'en'" class="fw-semibold">{{ n.letter.glyph }}</span>
-                                            <span class="text-muted" dir="ltr"> {{ n.drill.label }}</span>
+                                            <span :dir="track.direction" :lang="track.alphabet === 'arabic' ? 'ar' : 'en'" class="fw-semibold">{{ n.drill.set ? n.drill.text : n.letter.glyph }}</span>
+                                            <span class="text-muted" dir="auto"> {{ noteCaption(n.drill) }}</span>
                                             <div class="fst-italic" dir="auto">
                                                 {{ txDrillNote(child, track, n.drill) }}
                                             </div>
@@ -887,6 +900,8 @@
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
+import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
@@ -1017,15 +1032,34 @@ const trackPercent = (track: any) => {
     return totals && totals.total ? Math.round((totals.mastered / totals.total) * 100) : 0;
 };
 
+/** The runs of tiles for one track: two for English (Capitals, Lower case), one for Arabic. */
+const letterRunsOf = (track: any) => letterRuns(track);
+
 /**
- * The chip's tooltip: what the letter is called, then how far along it is.
- *
- * `transliteration` is the Arabic letter's Latin name and the English letter's
- * capital, so it reads on both tracks — but it is nullable in the contract, and
- * a tooltip opening with " — mastered" would tell a parent nothing. The glyph is
- * the fallback because it is the thing they are pointing at.
+ * A run's heading in the portal's language. The server names the sets in
+ * English (`Capitals`); the portal has its own words for them, and falls back to
+ * the server's when a set arrives that the table has not heard of.
  */
-const letterTitle = (l: any) => `${l.transliteration || l.glyph} — ${t(`letter_${l.status}`)}`;
+const setLabel = (run: any): string => {
+    const key = `letters_set_${run.id}`;
+    const translated = t(key);
+
+    return translated === key ? (run.label ?? '') : translated;
+};
+
+/** The caption beside a drill note, in the portal's language (a set's name comes from the same table as the run headings). */
+const noteCaption = (drill: any): string => drillCaption(drill, (id) => setLabel({ id, label: drill.label }));
+
+/**
+ * A tile's tooltip: what the letter is called, then how far along it is.
+ * `tile.title` is the Arabic letter's Latin name, with the glyph as the fallback
+ * because a tooltip opening with " — mastered" tells a parent nothing. On a
+ * split track it names the case as well, since "A" and "a" are different tiles.
+ */
+const tileTitle = (run: any, tile: any): string =>
+    run.label
+        ? `${tile.text} (${setLabel(run)}) — ${t(`letter_${tile.status}`)}`
+        : `${tile.title} — ${t(`letter_${tile.status}`)}`;
 
 /**
  * Hand the device to the child: ask the server for a session scoped to THIS

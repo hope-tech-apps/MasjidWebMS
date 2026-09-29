@@ -163,6 +163,16 @@ Schedule::command('studio:purge-drafts')->dailyAt('03:53')->withoutOverlapping()
 // 15 s timeout) and expires two ticks later.
 Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(10);
 
+// How full the renderer's Pages project is (App\Console\Commands\DomainsCapacity,
+// W2 S1): one line a day on the `monitors` channel, an email at 50/70/85/95
+// percent of the custom-domain ceiling (once each), and an email on every run
+// while a host waits for a slot. One Cloudflare GET a day with the token, none
+// without. 07:17, on reconcile's offset-minute convention: clear of the
+// quarter-hourly reaper, the :47 canary and media:verify's 00/06/12/18:17.
+// withoutOverlapping(10) for the reason reconcile gives: the bare form would
+// hold a killed run's lock for a day, and this runs only once a day.
+Schedule::command('domains:capacity')->dailyAt('07:17')->withoutOverlapping(10);
+
 /*
 |--------------------------------------------------------------------------
 | Cross-tenant canary

@@ -182,6 +182,8 @@ export const FA_AF: Record<string, string> = {
     section_letters: "حروف",
     alphabet_arabic: "حروف عربی",
     alphabet_english: "حروف انگلیسی",
+    letters_set_upper: "حروف بزرگ",
+    letters_set_lower: "حروف کوچک",
     stage_letters: "حروف",
     stage_short_vowels: "حرکات",
     stage_sukun_shadda: "سکون و تشدید",
