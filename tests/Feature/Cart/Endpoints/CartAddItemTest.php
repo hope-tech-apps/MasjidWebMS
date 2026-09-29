@@ -209,6 +209,55 @@ class CartAddItemTest extends TestCase
     }
 
     #[Test]
+    public function a_form_line_that_reserves_a_date_is_refused_and_the_date_is_left_to_the_forms_own_page(): void
+    {
+        // The form door claims a reserved date under the form's lock; a basket settles with no hold,
+        // so two shoppers could pay for the same evening. The add endpoint refuses the line because
+        // it prices as gone, and says where to book the date.
+        $org = $this->org();
+        $form = $this->iftarForm($org);
+        $token = $this->startBasket($org);
+
+        $this->addLine($org, $token, [
+            'type' => 'form',
+            'form_id' => $form->id,
+            'answers' => $this->quarterIftar('2027-02-10'),
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', FormLineSource::RESERVES_A_DATE);
+
+        $this->assertSame(0, $this->lineCount(), 'a line that would come back gone is never kept');
+    }
+
+    #[Test]
+    public function a_line_on_the_same_form_that_reserves_no_date_is_still_payable(): void
+    {
+        // "Individual Iftar" reserves nothing: the door drops a date named beside it, so the
+        // line is kept without one and is priced $18 a person like any other.
+        $org = $this->org();
+        $form = $this->iftarForm($org);
+        $token = $this->startBasket($org);
+
+        $this->addLine($org, $token, [
+            'type' => 'form',
+            'form_id' => $form->id,
+            'answers' => $this->individualIftar(3) + ['iftar_date' => '2027-02-10'],
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.total_minor', 5400)
+            ->assertJsonPath('data.lines.0.status', 'available')
+            ->assertJsonPath('data.lines.0.quantity', 3)
+            ->assertJsonPath('data.lines.0.unit_minor', 1800);
+
+        $line = CartItem::withoutMasjidScope()->sole();
+
+        $this->assertNull($line->payload['iftar_date'] ?? null, 'the unused date is not kept, so nothing on the line reserves one');
+        $this->assertSame(1, $this->lineCount());
+    }
+
+    #[Test]
     public function a_form_of_another_organisation_is_not_available(): void
     {
         $org = $this->org();

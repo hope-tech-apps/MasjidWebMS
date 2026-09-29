@@ -70,6 +70,45 @@ class FormLineSourceTest extends TestCase
         return ['tickets' => [['attendeeName' => 'A'], ['attendeeName' => 'B']]];
     }
 
+    /**
+     * Iftar sponsorship levels: "Individual Iftar" is $18 a person and reserves nothing;
+     * "Quarter Iftar" is $450 and reserves one of the form's listed dates.
+     */
+    private function iftarForm(): Form
+    {
+        return Form::factory()->create([
+            'masjid_id' => $this->makeOrg()->id,
+            'name' => 'Iftar Sponsorship',
+            'is_active' => true,
+            'opens_at' => null,
+            'closes_at' => null,
+            'capacity' => null,
+            'schema' => ['sections' => [['id' => 'sponsor', 'title' => 'Sponsor', 'fields' => [
+                ['name' => 'fullName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                ['name' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true],
+                ['name' => 'sponsorship', 'label' => 'Sponsorship', 'type' => 'radio', 'required' => true, 'options' => [
+                    ['value' => 'individual', 'label' => 'Individual Iftar'],
+                    ['value' => 'quarter', 'label' => 'Quarter Iftar'],
+                ]],
+                ['name' => 'people', 'label' => 'Number of people', 'type' => 'number', 'min' => 1, 'max' => 50],
+                ['name' => 'iftar_date', 'label' => 'Date', 'type' => 'select', 'optionsSource' => 'reservable_dates'],
+            ]]]],
+            'settings' => [
+                'identity' => ['name' => 'fullName', 'email' => 'email'],
+                'fee' => [
+                    'currency' => 'USD',
+                    'perQuantityOf' => 'people',
+                    'byChoice' => ['field' => 'sponsorship', 'prices' => [
+                        ['value' => 'individual', 'amount' => 18, 'perQuantity' => true],
+                        ['value' => 'quarter', 'amount' => 450, 'reservesDate' => true],
+                    ]],
+                ],
+                'reservation' => ['field' => 'iftar_date', 'dates' => ['2027-02-10', '2027-02-11']],
+                'payment' => ['online' => true, 'officePayment' => false],
+            ],
+        ]);
+    }
+
     #[Test]
     public function an_open_form_at_the_expected_price_is_payable(): void
     {
@@ -144,6 +183,36 @@ class FormLineSourceTest extends TestCase
 
         $this->assertSame(3, $outcome->quantity);
         $this->assertSame(4500, $outcome->totalMinor());
+    }
+
+    #[Test]
+    public function a_line_that_reserves_a_date_is_dropped_and_sent_to_the_forms_own_page(): void
+    {
+        // The form door claims the date under the form's lock; a basket settles with no hold, so
+        // two shoppers could pay for one evening. Refused whoever asks first, and at checkout too.
+        $answers = ['fullName' => 'Amal Sponsor', 'email' => 'amal@example.test', 'sponsorship' => 'quarter', 'iftar_date' => '2027-02-10'];
+
+        $outcome = (new FormLineSource)->reprice($this->iftarForm(), $answers, 45000);
+
+        $this->assertSame('gone', $outcome->status);
+        $this->assertFalse($outcome->isPayable());
+        $this->assertSame(0, $outcome->totalMinor());
+        $this->assertSame(FormLineSource::RESERVES_A_DATE, $outcome->reason);
+        $this->assertStringContainsString('own page', (string) $outcome->reason);
+    }
+
+    #[Test]
+    public function a_line_on_a_date_form_that_reserves_nothing_is_still_payable(): void
+    {
+        $answers = ['fullName' => 'Amal Sponsor', 'email' => 'amal@example.test', 'sponsorship' => 'individual', 'people' => '3'];
+
+        $outcome = (new FormLineSource)->reprice($this->iftarForm(), $answers, 1800, null, 3);
+
+        $this->assertSame('available', $outcome->status);
+        $this->assertSame(1800, $outcome->unitAmountMinor);
+        $this->assertSame(3, $outcome->quantity);
+        $this->assertSame(5400, $outcome->totalMinor());
+        $this->assertTrue($outcome->isPayable());
     }
 
     #[Test]

@@ -324,10 +324,17 @@ class CartSettlementService
 
     /**
      * Take from the basket the lines THIS order paid for, and close it only when nothing is
-     * left. A line is the order's when its buyable_type, buyable_id and the canonical hash of
-     * its payload (`cart_payload_hash`, stamped at checkout) match a line still in the basket;
-     * one order line removes one basket line. The order's own lines are the snapshot, so
-     * a paid line is dropped rather than left to invite a second "Pay".
+     * left. A line is the order's when its buyable_type, buyable_id, the canonical hash of
+     * its payload (`cart_payload_hash`, stamped at checkout) and its quantity match a line still
+     * in the basket; one order line removes one basket line. The order's own lines are the
+     * snapshot, so a paid line is dropped rather than left to invite a second "Pay".
+     *
+     * The quantity is part of the match because `POST /cart/acknowledge` edits a line's
+     * quantity in place (CartCheckoutService::acknowledge()) and the payload hash does not
+     * see it: page A paid for two, the shopper then acknowledged three and opened page B, and
+     * A's late payment must not take the line that now asks for three (ASSUMPTIONS #36). The
+     * match is exact because a checkout refuses a basket whose quantities differ from what it
+     * priced, so a page's order lines carry exactly the quantities the basket held when it opened.
      *
      * Not "every line": page A (lines X) can be paid just as it expires, after the shopper
      * added Y and opened page B (X + Y). A's late webhook must not silently drop Y, which was
@@ -350,9 +357,10 @@ class CartSettlementService
             ->get();
 
         foreach ($paidLines as $paid) {
-            // A line with no stored hash (none is written without one) matches on type and id alone.
+            // A line with no stored hash (none is written without one) matches on type, id and quantity alone.
             $key = $inBasket->search(fn (CartItem $line): bool => $line->buyable_type === $paid->buyable_type
                 && (int) $line->buyable_id === (int) $paid->buyable_id
+                && (int) $line->quantity === (int) $paid->quantity
                 && ($paid->cart_payload_hash === null
                     || hash_equals((string) $paid->cart_payload_hash, PricedBasket::payloadHash($line->payload))));
 

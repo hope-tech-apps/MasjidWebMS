@@ -34,8 +34,9 @@ use Throwable;
  *     events that arrive together mail one receipt;
  *  B. a refund or dispute on a BASKET's charge flags the ORDER (never a line), the cart's
  *     registrations are left out of the form arm, and the flag records the latest amount;
- *  C. settling an order removes only the lines it paid for, closes the basket only when nothing
- *     is left, and expires the basket's other pending Stripe pages.
+ *  C. settling an order removes only the lines it paid for (matched by type, id, payload and
+ *     quantity), closes the basket only when nothing is left, and expires the basket's other
+ *     pending Stripe pages.
  */
 class CartSettlementRound2Test extends TestCase
 {
@@ -436,6 +437,50 @@ class CartSettlementRound2Test extends TestCase
         $this->assertCount(1, $left, 'the first child was paid for; the second was not');
         $this->assertSame($this->oneTicket('Second Child'), $left->first()->payload);
         $this->assertSame(Cart::STATUS_OPEN, Cart::withoutMasjidScope()->findOrFail($cart->id)->status);
+    }
+
+    #[Test]
+    public function a_line_the_shopper_re_quantified_is_not_what_the_earlier_page_paid_for(): void
+    {
+        // ASSUMPTIONS #36: page A is paid for TWO after the shopper acknowledged THREE of the same
+        // line and opened page B. The payload hash cannot tell the two apart (a dish's quantity is
+        // not in its payload), so the quantity has to be part of the match.
+        $org = $this->org();
+        $cart = $this->cart($org);
+        $line = $this->add($cart, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200, 2);
+
+        $svc = $this->recordingCheckout();
+
+        // Page A is opened for two and is about to lapse.
+        $a = $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org')['order']->fresh();
+        Order::withoutMasjidScope()->whereKey($a->id)->update(['checkout_expires_at' => now()->subMinute()]);
+
+        // The shopper acknowledges a change to three (CartCheckoutService::acknowledge() writes the
+        // line's quantity in place, exactly so) and opens page B for the three.
+        CartItem::withoutMasjidScope()->whereKey($line->id)->update(['quantity' => 3]);
+        $b = $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org')['order']->fresh();
+
+        $this->assertNotSame($a->id, $b->id);
+        $this->assertSame(2400, (int) $a->total_minor, 'premise: A was priced for two dishes');
+        $this->assertSame(3600, (int) $b->total_minor, 'premise: B was priced for three');
+        $this->assertSame(Order::STATUS_EXPIRED, $a->fresh()->status, 'premise: A was expired locally without asking Stripe');
+        $this->assertSame([], $svc->expired);
+
+        // ...and A's payment lands after all.
+        $this->postWebhook($this->sessionEvent($a))->assertOk();
+
+        $this->assertSame(Order::STATUS_PAID, $a->fresh()->status);
+
+        // Two dishes were paid for; the line now asks for three, so it is NOT what A paid for and stays.
+        $left = CartItem::withoutMasjidScope()->where('cart_id', $cart->id)->get();
+        $this->assertCount(1, $left, 'the basket still holds the line: what it asks for is not what A paid for');
+        $this->assertSame((int) $line->id, (int) $left->first()->id);
+        $this->assertSame(3, (int) $left->first()->quantity);
+        $this->assertSame(Cart::STATUS_OPEN, Cart::withoutMasjidScope()->findOrFail($cart->id)->status);
+
+        // Page B, the one that can still be paid, is expired as it always was.
+        $this->assertSame([$b->stripe_checkout_session_id], $svc->expired);
+        $this->assertSame(Order::STATUS_EXPIRED, $b->fresh()->status);
     }
 
     #[Test]

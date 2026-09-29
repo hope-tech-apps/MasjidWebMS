@@ -5552,3 +5552,25 @@ response, the door's own validation, and money never opened for what a door woul
 has a test in `tests/Feature/Cart/Endpoints/`; no existing test changed. ASSUMPTIONS #25 (closed),
 #35-#44 (open ones name what the owner must check before `CART_ENABLED`: MEC's return origin and its
 capabilities).
+
+## 2026-09-29 — Universal cart, slice 5 fix round 1: a basket never takes a reserved date, and closeCart matches on quantity
+Decision: (1) `FormLineSource::reprice()` returns `gone` (`FormLineSource::RESERVES_A_DATE`, "book that date on
+the form's own page") for a line whose answers reserve a date, `Form::reservedDateIn($payload) !== null`.
+The form door claims that date with `FormReservations::claim()` under the form lock and refuses the second
+payer (`FormDateTaken`); a basket line is settled with no `reserveOn` (`CartSettlementService::settleForm()`),
+so nothing held the date and two shoppers could pay for one Ramadan evening. The add endpoint needed no
+change: it already refuses a line that prices as `gone`, so the shopper gets the sentence as a 422, and a
+line already in a basket (or on a form that gained a date list later) is dropped and named at checkout. A
+line on the same form that reserves nothing, the choice-priced "Individual Iftar", stays payable; the door
+drops a date named beside it, so the stored answers hold none. (2) `closeCart()` also matches on quantity
+(`(int) $line->quantity === (int) $paid->quantity`), because `POST /cart/acknowledge` edits a line's
+quantity in place and the payload hash of a dish does not see it: page A paid for two after the shopper
+acknowledged three and opened page B must leave the line in the basket, and B is expired as before.
+Alternatives: taking a hold on the date from the basket (rejected: a hold needs an expiry that nothing in the
+payment path has, the same reason capacity is not held); refusing only when the date is already held
+(rejected: a date free at add and taken by checkout is the same race, and the answer would differ by luck);
+folding the quantity into `PricedBasket::payloadHash()` (rejected: it would change the `cart_payload_hash`
+already stamped on open orders, and the quantity is not part of the payload).
+Rationale: a date sold twice is not a count to put right afterwards, and a quantity edit must not delete
+what was never paid for. ASSUMPTIONS #36 closed. Tests: `FormLineSourceTest` (both date cases),
+`CartAddItemTest` (the refusal and the payable line), `CartSettlementRound2Test` (the quantity race).

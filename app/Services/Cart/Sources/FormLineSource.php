@@ -24,11 +24,21 @@ use Carbon\CarbonInterface;
  *     $15 x the number of ticket rows) and count tiers. The basket's stored
  *     amount is never trusted.
  *
- * The one thing this does NOT re-check is capacity as a reservation. A form with
+ * Capacity is the one thing this does NOT hold as a reservation. A form with
  * one place left and two shoppers holding it in their baskets will sell to
  * whoever pays first; the other is told at checkout. Reserving places from a
  * basket would need a hold with an expiry, which nothing in the payment path has
  * today, and quietly overselling would be worse than telling the second shopper.
+ *
+ * A DATE is different, and is refused outright: a line whose answers reserve a date from
+ * the form's list (`Form::reservedDateIn()`; Ramadan iftar sponsorships) is `gone`. The form
+ * door claims that date under the form's lock (FormSubmissionsController::store() calls
+ * FormReservations::claim(), and FormDateTaken refuses the second payer), and a basket line is
+ * settled with no `reserveOn` (CartSettlementService::settleForm(), so FormResponseWriter takes
+ * no hold), so two shoppers could pay for the same evening. An oversold place is a count to
+ * put right; a date sold twice is two payers for one evening. The shopper is sent to the
+ * form's own page to book it. A line on the same form that reserves nothing (the
+ * choice-priced "Individual Iftar", where `reservedDateIn()` is null) stays payable.
  *
  * A form that asks for a FILE is refused too (brief 5, section 2). A basket line carries
  * answers, and an upload travels in its own multipart bag and is written to a private disk
@@ -41,6 +51,9 @@ final readonly class FormLineSource
 {
     /** The reason a form that asks for a file cannot be bought through a basket. */
     public const FILE_FORM = 'This form asks for a file, so it has to be filled in on its own page.';
+
+    /** The reason a line that reserves a date cannot be bought through a basket. */
+    public const RESERVES_A_DATE = 'This reserves a date, so that date has to be booked on the form\'s own page.';
 
     /**
      * @param  array<string,mixed>  $payload  the answers this line will submit
@@ -84,6 +97,12 @@ final readonly class FormLineSource
         // so it is paid on its own page, where the coverage is added.
         if ($form->requiresFeeCoverage()) {
             return CartLineOutcome::gone($label, 'This one has to be paid on its own page.');
+        }
+
+        // A date is claimed under the form's lock at the form door and never from a basket
+        // (see the class docblock), so a line that reserves one is booked on the form's page.
+        if ($form->reservedDateIn($payload) !== null) {
+            return CartLineOutcome::gone($label, self::RESERVES_A_DATE);
         }
 
         $price = $form->priceFor($payload, $at);
