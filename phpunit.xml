@@ -29,6 +29,7 @@
              A test that wants the token-present paths sets one in config and
              fakes every request (Http::preventStrayRequests). -->
         <env name="CLOUDFLARE_STUDIO_TOKEN" value="" force="true"/>
+        <env name="CLOUDFLARE_REDIRECT_ZONES" value="" force="true"/>
         <!-- No outbound HTTP from the suite: Password::uncompromised() would
              call Have I Been Pwned. A test that reaches the public internet is
              a test that fails on a train. See config/family.php. -->

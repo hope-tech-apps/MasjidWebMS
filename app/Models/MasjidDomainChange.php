@@ -51,8 +51,18 @@ class MasjidDomainChange extends Model
         ];
     }
 
+    /** The width of `operator` (the migration's string(191)). */
+    public const OPERATOR_MAX = 191;
+
     protected static function booted(): void
     {
+        // Cut to the column here, once, for every writer: on MySQL an
+        // oversized value would fail the insert AFTER the Cloudflare change it
+        // records was made, losing the record of it.
+        static::creating(function (MasjidDomainChange $change) {
+            $change->operator = mb_substr((string) $change->operator, 0, self::OPERATOR_MAX);
+        });
+
         static::updating(function () {
             throw new RuntimeException('Web address changes are append-only and cannot be modified.');
         });

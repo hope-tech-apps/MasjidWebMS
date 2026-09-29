@@ -99,7 +99,8 @@ class ReconcileDomains extends Command
             // Re-probes are spread across runs: at most `reconfirm.per_run` a
             // run, so a first deploy (every confirmed host due at once) is not
             // one burst of requests. The rest stay due and go on the next run.
-            if ($row->underReconfirmation() && $row->cf_redirect_rule_id === null) {
+            // Not for rows an operator named with --id: those were asked for.
+            if ($ids === [] && $row->underReconfirmation() && $row->cf_redirect_rule_id === null) {
                 if ($reprobes >= $reprobeCap) {
                     $deferred++;
 
@@ -111,9 +112,22 @@ class ReconcileDomains extends Command
 
             try {
                 // A rule a failed collapse left on a serving host (review
-                // follow-up 4) goes first; the row then advances as usual.
-                if (! $row->isRedirect() && $row->cf_redirect_rule_id !== null) {
-                    $detacher->removeStrayRedirectRule($row);
+                // follow-up 4) goes first. Until it is gone the row stays
+                // parked on its half-hour retry: advancing it would re-probe a
+                // host that answers 301, count the redirect as a miss, and
+                // push the next removal out by a day.
+                if (! $row->isRedirect() && $row->cf_redirect_rule_id !== null
+                    && ! $detacher->removeStrayRedirectRule($row)) {
+                    $results[] = [
+                        'id' => $row->id,
+                        'host' => $row->host,
+                        'status_before' => $before,
+                        'status' => $row->status,
+                        'waiting_on' => 'rule_cleanup',
+                        'serving_confirmed' => $row->serving_confirmed_at !== null,
+                    ];
+
+                    continue;
                 }
 
                 if ($row->status === MasjidDomain::STATUS_DETACHING) {

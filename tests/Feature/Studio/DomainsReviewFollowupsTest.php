@@ -394,4 +394,165 @@ class DomainsReviewFollowupsTest extends TestCase
             $this->assertStringNotContainsString($tool, $scheduled, "{$tool} changes live hosts and runs only by hand");
         }
     }
+
+    // Fixes from the three-lens review of the follow-ups ---------------------
+
+    #[Test]
+    public function a_parked_stray_rule_keeps_its_half_hour_retry_and_is_not_re_probed(): void
+    {
+        $this->withStudioToken();
+        $org = $this->makeOrg();
+        $www = $this->canonicalRow($org, [
+            'cf_redirect_rule_id' => 'rule-stray', 'waiting_on' => 'rule_cleanup', 'next_check_at' => now()->subMinute(),
+        ]);
+        $this->fakeCloudflare([
+            'GET ' . self::ENTRYPOINT => $this->cfOk($this->ruleset([['id' => 'rule-stray', 'ref' => MasjidDomain::REDIRECT_RULE_REF . $www->id, 'expression' => 'x']])),
+            'DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-stray' => $this->cfError(503, 0, 'Service unavailable'),
+        ]);
+
+        $this->artisan('domains:reconcile')->assertExitCode(0);
+        $www->refresh();
+
+        $this->assertSame('rule-stray', $www->cf_redirect_rule_id);
+        $this->assertSame('rule_cleanup', $www->waiting_on);
+        $this->assertTrue($www->next_check_at->between(now()->addMinutes(29), now()->addMinutes(31)), 'still on the half-hour retry');
+        $this->assertSame([], array_values(array_filter($this->sent(), fn (string $l) => str_ends_with($l, '/api/tenant'))), 'not re-probed while it redirects');
+        $this->assertStringContainsString('still in Cloudflare', $www->manualSteps()[0]);
+    }
+
+    #[Test]
+    public function the_delete_refusal_names_the_alias_when_that_is_the_only_blocker(): void
+    {
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550000004'])->fresh());
+        $org = $this->makeOrg();
+        $www = $this->makeDomain($org, self::WWW, MasjidDomain::STATUS_PENDING, ['zone_apex' => self::APEX]);
+        $this->redirectRow($org, $www);
+        $this->fakeCloudflare([]);
+
+        $this->deleteJson("/api/admin/masjids/{$org->id}/domains/{$www->id}")
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Detach ' . self::APEX . ' first: it redirects to ' . self::WWW . '.');
+        $this->assertNotNull($www->fresh());
+    }
+
+    #[Test]
+    public function one_payload_asks_for_its_aliases_once(): void
+    {
+        $org = $this->makeOrg();
+        $www = $this->canonicalRow($org);
+        $this->redirectRow($org, $www);
+        $www = $www->fresh();
+
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        $payload = $www->toAdminArray();
+        $aliasQueries = array_filter(\Illuminate\Support\Facades\DB::getQueryLog(), fn (array $q) => str_contains($q['query'], 'redirect_to_id'));
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
+        $this->assertCount(1, $aliasQueries);
+        $this->assertFalse($payload['deletable']);
+        $this->assertStringContainsString('Detach ' . self::APEX . ' first', implode(' ', $payload['detach_plan']['manual_steps']));
+    }
+
+    #[Test]
+    public function an_oversized_operator_is_cut_to_the_column_not_lost(): void
+    {
+        $row = $this->makeDomain($this->makeOrg(), 'ledger.example.org');
+
+        $row->recordChange(MasjidDomainChange::ACTION_DETACH, $row->ledgerShape(), str_repeat('x', 300), 'test');
+
+        $this->assertSame(MasjidDomainChange::OPERATOR_MAX, mb_strlen(MasjidDomainChange::query()->sole()->operator));
+    }
+
+    #[Test]
+    public function the_probe_never_goes_through_an_environment_proxy_and_refuses_local_nat64_and_siit(): void
+    {
+        $org = $this->makeOrg();
+        $row = $this->makeDomain($org, 'www.proxy-test.org');
+        $seen = [];
+        Http::fake(function ($request, $options) use (&$seen, $org) {
+            $seen[] = $options;
+
+            return Http::response('{}', 200, ['x-manara-tenant' => (string) $org->id]);
+        });
+
+        $this->app->make(DomainProbe::class)->probe($row);
+
+        $this->assertSame('', $seen[0]['proxy']);
+
+        foreach (['64:ff9b:1::5db8:d822', '64:ff9b:1:ffff::1', '::ffff:0:a00:1', '::ffff:0:7f00:1'] as $refused) {
+            $this->assertFalse(DomainProbe::isPublicAddress($refused), $refused);
+        }
+        $this->assertTrue(DomainProbe::isPublicAddress('::ffff:0:5db8:d822'), 'SIIT form of a public address');
+    }
+
+    #[Test]
+    public function a_detach_under_way_waits_for_an_alias_pointed_at_it_meanwhile(): void
+    {
+        $this->withStudioToken();
+        $org = $this->makeOrg();
+        $www = $this->canonicalRow($org, ['status' => MasjidDomain::STATUS_DETACHING]);
+        $this->redirectRow($org, $www);
+        $this->fakeCloudflare([]);
+
+        $result = $this->app->make(DomainDetacher::class)->detach($www);
+
+        $this->assertSame(DetachResult::PENDING, $result->outcome);
+        $this->assertNotNull($www->fresh(), 'kept until the alias has gone');
+        $this->assertStringContainsString('Detach ' . self::APEX . ' first', (string) $www->fresh()->last_error);
+        $this->assertSame([], $this->sent(), 'nothing removed while the alias points here');
+    }
+
+    #[Test]
+    public function a_collapse_whose_sibling_is_busy_takes_its_rule_out_and_changes_nothing(): void
+    {
+        $this->withStudioToken();
+        config(['cloudflare.redirect_zones' => [self::APEX]]);
+        $org = $this->makeOrg();
+        $www = $this->canonicalRow($org);
+        $apex = $this->canonicalRow($org, ['host' => self::APEX, 'cf_dns_record_id' => 'rec-apex', 'cf_pages_domain_id' => 'pd-' . md5(self::APEX)]);
+        $this->fakeCloudflare([
+            'GET ' . self::ENTRYPOINT => Http::sequence()
+                ->push(['success' => true, 'errors' => [], 'result' => $this->ruleset([])])
+                ->push(['success' => true, 'errors' => [], 'result' => $this->ruleset([$this->studioRule($apex)])]),
+            'POST /zones/zone-pair/rulesets/rs-1/rules' => $this->cfOk($this->ruleset([$this->studioRule($apex)])),
+            'DELETE /zones/zone-pair/rulesets/rs-1/rules/rule-studio' => $this->cfOk($this->ruleset([])),
+        ] + $this->apexAnswers());
+        $held = DomainAttacher::lockFor($www->id);
+        $this->assertTrue($held->get());
+
+        $this->assertSame(1, Artisan::call('domains:collapse-alias', [
+            'domain_id' => $apex->id, '--execute' => true, '--operator' => 'owner', '--reason' => 'test', '--json' => true,
+        ]));
+        $out = json_decode(Artisan::output(), true);
+        $held->release();
+        $apex->refresh();
+
+        $this->assertSame('failed', $out['outcome']);
+        $this->assertSame(MasjidDomain::ROLE_SERVING, $apex->role);
+        $this->assertNull($apex->cf_redirect_rule_id);
+        $this->assertNotNull($apex->cf_pages_domain_id, 'its Pages domain was never touched');
+        $this->assertSame(0, MasjidDomainChange::count());
+    }
+
+    #[Test]
+    public function rows_named_with_id_are_not_capped_and_each_host_keeps_its_own_minute(): void
+    {
+        config(['cloudflare.reconfirm.per_run' => 1, 'cloudflare.studio_token' => null]);
+        $org = $this->makeOrg();
+        $rows = collect(range(1, 3))->map(fn ($n) => $this->makeDomain($org, "id{$n}.example.org", MasjidDomain::STATUS_MANUAL, [
+            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE, 'verified_at' => now(), 'serving_confirmed_at' => now(),
+        ]));
+        $this->fakeCloudflare(['GET https://*/api/tenant' => Http::response('{}', 200, ['x-manara-tenant' => (string) $org->id])]);
+
+        $this->assertSame(0, Artisan::call('domains:reconcile', ['--id' => $rows->pluck('id')->all()]));
+        $this->assertCount(3, $this->sent(), 'an operator asked for these three');
+
+        foreach ($rows as $row) {
+            $next = $row->fresh()->next_check_at;
+            $this->assertSame(crc32($row->host) % 60, $next->minute, $row->host);
+            $this->assertSame(0, $next->second);
+            $this->assertTrue($next->between(now()->addHours(23), now()->addHours(25)), $row->host);
+        }
+    }
 }

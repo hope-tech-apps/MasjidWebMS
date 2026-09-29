@@ -134,7 +134,10 @@ class DomainProbe
         $resolve = $host . ':443:' . (str_contains($pinned, ':') ? "[{$pinned}]" : $pinned);
 
         try {
-            $response = Http::withOptions(['curl' => [
+            // 'proxy' => '' so neither Guzzle nor curl sends the probe through
+            // an HTTP(S)_PROXY from the environment: a proxy resolves the host
+            // itself, and the pin below would not apply to it.
+            $response = Http::withOptions(['proxy' => '', 'curl' => [
                 CURLOPT_RESOLVE => [$resolve],
                 // Refused up front when the length is declared, and cut off
                 // mid-transfer when it is not.
@@ -208,7 +211,16 @@ class DomainProbe
             return null;
         }
 
+        // Local-use NAT64 (RFC 8215, 64:ff9b:1::/48) translates to whatever
+        // IPv4 network the operator chose, and never names a public site:
+        // refused outright, by answering with an address that is not public.
+        if (str_starts_with($bytes, "\x00\x64\xff\x9b\x00\x01")) {
+            return '0.0.0.0';
+        }
+
         $v4 = match (true) {
+            // SIIT IPv4-translated ::ffff:0:0:0/96.
+            str_starts_with($bytes, str_repeat("\0", 8) . "\xff\xff\0\0") => substr($bytes, 12, 4),
             // ::/96 (IPv4-compatible) and ::ffff:0:0/96 (IPv4-mapped); not ::
             // or ::1, which filter_var already refuses as reserved.
             str_starts_with($bytes, str_repeat("\0", 10) . "\xff\xff") => substr($bytes, 12, 4),

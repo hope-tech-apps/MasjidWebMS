@@ -190,9 +190,13 @@ class MasjidDomainsController extends Controller
             if (! $domain->deletableThroughStudio()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => ! $domain->ownedByStudio()
-                        ? "{$domain->host} was imported from the live host map and cannot be removed through Studio."
-                        : "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
+                    'message' => match (true) {
+                        ! $domain->ownedByStudio() => "{$domain->host} was imported from the live host map and cannot be removed through Studio.",
+                        $domain->aliasHosts() !== [] && $domain->cf_zone_id === null && $domain->cf_dns_record_id === null
+                            && $domain->cf_pages_domain_id === null && $domain->cf_redirect_rule_id === null && ! $domain->cf_zone_created
+                            => 'Detach ' . implode(' and ', $domain->aliasHosts()) . " first: it redirects to {$domain->host}.",
+                        default => "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
+                    },
                     'manual_steps' => $domain->removalSteps(),
                 ], Response::HTTP_CONFLICT);
             }

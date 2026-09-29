@@ -168,6 +168,49 @@ class CollapseAlias extends Command
             ], self::FAILURE);
         }
 
+        // The sibling was judged before this command took any lock, and a
+        // detach of it may have started since (review of the follow-ups). Held
+        // under its own lock and judged again before this row points at it;
+        // otherwise the rule comes out again and nothing else changes.
+        $siblingLock = DomainAttacher::lockFor($sibling->id);
+        $siblingHeld = $siblingLock->get();
+
+        try {
+            $sibling = $siblingHeld ? MasjidDomain::find($sibling->id) : null;
+
+            if ($sibling === null || $sibling->isRedirect()
+                || ! in_array($sibling->status, MasjidDomain::TRUSTED, true) || $sibling->serving_confirmed_at === null) {
+                $undo = $remover->removeRedirectRule($row);
+
+                if ($undo->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
+                    $row->forceFill(['cf_redirect_rule_id' => null])->save();
+                } else {
+                    $row->forceFill([
+                        'waiting_on' => 'rule_cleanup',
+                        'last_error' => 'A redirect rule from a collapse that did not finish is still in Cloudflare: ' . $undo->error,
+                        'next_check_at' => now()->addMinutes(30),
+                    ])->save();
+                }
+
+                return $this->finish($plan + [
+                    'outcome' => 'failed',
+                    'reason' => $siblingHeld
+                        ? 'The host it would redirect to is no longer serving (it may be being detached). The rule was taken out again' . ($undo->ok ? '' : ' (not yet: domains:reconcile will)') . ' and nothing else changed.'
+                        : 'Studio is working on the host it would redirect to. The rule was taken out again' . ($undo->ok ? '' : ' (not yet: domains:reconcile will)') . '; try again in a minute or two.',
+                ], self::FAILURE);
+            }
+
+            return $this->commitCollapse($row, $sibling, $plan, $remover, $operator, $reason);
+        } finally {
+            if ($siblingHeld) {
+                $siblingLock->release();
+            }
+        }
+    }
+
+    /** @param  array<string, mixed>  $plan */
+    private function commitCollapse(MasjidDomain $row, MasjidDomain $sibling, array $plan, CloudflareRemover $remover, string $operator, string $reason): int
+    {
         $before = $row->ledgerShape();
 
         DB::transaction(function () use ($row, $sibling, $before, $operator, $reason) {

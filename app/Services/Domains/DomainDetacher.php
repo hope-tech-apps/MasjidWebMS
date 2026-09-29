@@ -79,11 +79,25 @@ class DomainDetacher
             // A serving host an alias still redirects to: detaching it would
             // leave the alias's rule sending visitors to an address that no
             // longer answers. The alias goes first (domains:release orders them
-            // so).
-            if ($row->status !== MasjidDomain::STATUS_DETACHING && ($aliases = $row->aliasHosts()) !== []) {
-                return new DetachResult(DetachResult::REFUSED, $host,
-                    manualSteps: array_map(fn (string $alias) => "Detach {$alias} first: it redirects to {$host}.", $aliases),
-                    error: 'Detach ' . implode(' and ', $aliases) . " first: it redirects to {$host}, and its rule would go on sending visitors to an address that no longer answers. Nothing was changed.");
+            // so). Checked on a retry too: an alias can be pointed here while a
+            // detach is under way (a collapse racing it), and then the row
+            // waits for the alias instead of going.
+            if (($aliases = $row->aliasHosts()) !== []) {
+                $why = 'Detach ' . implode(' and ', $aliases) . " first: it redirects to {$host}, and its rule would go on sending visitors to an address that no longer answers.";
+
+                if ($row->status !== MasjidDomain::STATUS_DETACHING) {
+                    return new DetachResult(DetachResult::REFUSED, $host,
+                        manualSteps: array_map(fn (string $alias) => "Detach {$alias} first: it redirects to {$host}.", $aliases),
+                        error: $why . ' Nothing was changed.');
+                }
+
+                if ($row->last_error !== $why) {
+                    Log::warning('A detach is waiting for an alias that redirects to it.', ['masjid_domain_id' => $row->id, 'host' => $host, 'aliases' => $aliases]);
+                }
+
+                $row->forceFill(['last_error' => $why, 'next_check_at' => now()->addMinutes(30)])->save();
+
+                return new DetachResult(DetachResult::PENDING, $host, error: $why);
             }
 
             // Without the token Studio could stop serving the host but never

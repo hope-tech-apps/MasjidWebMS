@@ -20,7 +20,7 @@ export type MasjidDomainStatus =
     | 'detaching';
 
 /** MasjidDomain::WAITING_ON */
-export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity' | 'canonical';
+export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity' | 'canonical' | 'rule_cleanup';
 
 export type MasjidDomainKind = 'managed_subdomain' | 'custom';
 

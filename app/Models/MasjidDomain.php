@@ -299,9 +299,21 @@ class MasjidDomain extends Model
         return $this->hasMany(self::class, 'redirect_to_id');
     }
 
+    /**
+     * Set only while toAdminArray() builds one payload, so the several
+     * readers of aliasHosts() in it share one query.
+     *
+     * @var list<string>|null
+     */
+    private ?array $aliasHostsForPayload = null;
+
     /** @return list<string> the hosts that still redirect here */
     public function aliasHosts(): array
     {
+        if ($this->aliasHostsForPayload !== null) {
+            return $this->aliasHostsForPayload;
+        }
+
         return $this->exists
             ? $this->redirectsHere()->orderBy('host')->pluck('host')->all()
             : [];
@@ -473,6 +485,15 @@ class MasjidDomain extends Model
                     $this->ownedByStudio() => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. If it is not wanted, press Detach: Cloudflare holds records Studio made or found for it, and Detach takes off the ones Studio made before it lets the address go.",
                     default => "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
                 },
+            ];
+        }
+
+        // A rule a collapse that did not verify left behind (review
+        // follow-up 4): the host redirects although the row serves.
+        if (! $this->isRedirect() && $this->cf_redirect_rule_id !== null) {
+            return [
+                "A redirect rule from a collapse that did not finish is still in Cloudflare for {$this->host}, so it redirects instead of serving. Studio takes it out every half hour until it is gone"
+                    . ($this->last_error ? " (last try: {$this->last_error})." : '.'),
             ];
         }
 
@@ -899,6 +920,19 @@ class MasjidDomain extends Model
      * @return array<string, mixed>
      */
     public function toAdminArray(): array
+    {
+        $this->aliasHostsForPayload = null;
+        $this->aliasHostsForPayload = $this->aliasHosts();
+
+        try {
+            return $this->adminArray();
+        } finally {
+            $this->aliasHostsForPayload = null;
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function adminArray(): array
     {
         return [
             'id' => $this->id,
