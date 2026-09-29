@@ -661,6 +661,9 @@ class TeacherMultiSchoolTest extends TestCase
             ],
             'DELETE /groups/{group_id}/awards/{award_id}' => [],
 
+            // -- how the class's points read (T-003.2): a view choice on the class, no row of a child
+            'PUT /groups/{group_id}/points-period' => ['body' => fn () => ['points_period' => 'weekly']],
+
             // -- attendance
             'PUT /groups/{group_id}/attendance' => [
                 'body' => fn (TeacherRealmWorld $w) => ['session_date' => $today, 'marks' => [['membership_id' => $w->student->id, 'status' => 'present']]],

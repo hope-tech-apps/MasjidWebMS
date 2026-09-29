@@ -236,6 +236,9 @@ class GroupsController extends FamilyController
             'kind' => $group->kind(),
             'description' => $group->description,
             'is_active' => (bool) $group->is_active,
+            // How this class's points read: 'running' or 'weekly' (T-003.2). The
+            // portal leads with the week for a weekly class and keeps the history.
+            'points_period' => $group->pointsPeriod(),
             'starts_on' => optional($group->starts_on)->toDateString(),
             'ends_on' => optional($group->ends_on)->toDateString(),
 

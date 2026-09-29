@@ -361,10 +361,37 @@
                         </div>
 
                         <h3 class="text-uppercase text-muted small">{{ t('section_behaviour') }}</h3>
+
+                        <!-- THIS WEEK (T-003.2). The figure and the week are the
+                             server's, on the SCHOOL's clock; nothing is summed
+                             here. A weekly class leads with the week and keeps
+                             every earlier week under History; every other class
+                             shows the week as a second line under its running
+                             record. A failed read hides the figure rather than
+                             printing a 0 that says the child did nothing. -->
+                        <div v-if="points[child.membership_id]?.week" class="mb-3">
+                            <div class="d-flex justify-content-between align-items-baseline">
+                                <span class="small fw-semibold">
+                                    {{ t('points_this_week') }}
+                                    <span class="text-muted fw-normal">· {{ pointsWeekLabel(points[child.membership_id].week) }}</span>
+                                </span>
+                                <span class="fw-semibold" dir="ltr">{{ signedPoints(points[child.membership_id].week.totals?.points) }}</span>
+                            </div>
+                            <div v-if="group.points_period === 'weekly' && points[child.membership_id]?.all"
+                                 class="d-flex justify-content-between align-items-baseline small text-muted">
+                                <span>{{ t('points_all_weeks') }}</span>
+                                <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
+                            </div>
+                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                                {{ t('weekly_report_open') }}
+                            </router-link>
+                        </div>
+
                         <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">
                             {{ t('nothing_recorded') }}
                         </p>
                         <ul v-else class="list-unstyled mb-3">
+                            <li v-if="group.points_period === 'weekly'" class="text-uppercase text-muted small">{{ t('points_history') }}</li>
                             <li v-for="a in records[child.membership_id].awards" :key="a.id" class="d-flex gap-2 align-items-baseline">
                                 <span class="badge" :class="a.polarity === 'negative' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-success-subtle text-success-emphasis'">
                                     {{ awardPointsLabel(a) }}
@@ -990,6 +1017,7 @@
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
+import { signedPoints, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
 import { percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
@@ -1047,6 +1075,15 @@ const handingOver = ref<number | null>(null);
 const letters = ref<Record<string, any[]>>({});
 
 const letterTracks = (child: any): any[] => letters.value[child.membership_id] ?? [];
+
+/**
+ * A child's points totals, keyed by membership: `week` is the week in progress on
+ * the school's clock and `all` the whole record (T-003.2). Absent while loading,
+ * and `null` when the read failed, which the card treats as "hide", never as 0.
+ */
+const points = ref<Record<string, { week: any; all: any } | null>>({});
+const pointsWeekLabel = (summary: any): string =>
+    summary?.week ? weekRangeLabel(summary.week.start, summary.week.end, locale.value) : '';
 
 /**
  * What the teacher wrote about the child's Arabic, per child: `undefined` while
@@ -1529,6 +1566,7 @@ const loadChildRecords = (run = beginRun()) => loadChildRecordsFor(run, group.va
     setRecords: (id, value) => { records.value[id] = value; },
     setLetters: (id, tracks) => { letters.value[id] = tracks; },
     setArabicNotes: (id, notes) => { arabicDayNotes.value[id] = notes; },
+    setPoints: (id, value) => { points.value[id] = value; },
 });
 
 // ---------- report cards ----------

@@ -5002,3 +5002,104 @@ answers; each carries its alternative.
   few seconds (a gradebook save in that window would fail on an unknown column): deploy after school hours.
   New unique indexes are hand-named under 64 characters; `GradebookSchemaTest` asserts it. The migrations
   have not been run on MySQL by this wave.
+
+- **2026-09-29 (school side quest W4, T-003.2): the weekly points reset is a teacher-opt-in VIEW; nothing is deleted.**
+  Owner: "Points need to have a reset option at the end of week that Teachers can opt into." Decision: `groups.points_period`
+  (`running` | `weekly`, null reads as `running`) says how a class's points are SHOWN; a teacher of the class flips it
+  (`PUT .../points-period`, the teacher realm's +1 write verb, pinned in `TeacherRealmTest`) or the office through the group
+  form. It is on the CLASS, not the teacher (a family sees one number for their child), and the screen and the response say it
+  applies to every teacher. A weekly class leads with the week and keeps the running history beside it; nothing in the table
+  moves (`PointsWeekTest` snapshots every award row, revoked ones included, before and after a toggle), so no backup and no data
+  migration are needed and switching it off gives the running total straight back.
+  Week rule: Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock (`App\Support\PointsWeek`, start day passed explicitly), ends built as
+  local midnights then converted, so the daylight-saving weeks are 167 and 169 hours (pinned for 2026-11-01 and 2027-03-14).
+  Awards are placed by instant (`BehaviorAward::scopeAwardedWithin`, half-open), NEVER `whereDate`, which reads the UTC date and moves a
+  Saturday-evening Eastern award into the next week (the test shows the row the old range loses). `?week=` (any day of the week, or
+  `current`) narrows the same audience-constrained query on the staff and family listings and summaries; a non-date is a 422, never a
+  silent fall back to this week under last week's label. `totals` carries `week_points`/`week_awards` beside the running figures, and
+  negatives subtract in both (`signedPointsSql`). Alternative: a stored "week start" per class or a snapshot table of weekly totals.
+  Rejected: a second copy of every total that can disagree with the award rows, and a reset that has to be undone. No leaderboard
+  anywhere: the weekly list is roster order with no rank (test). The family portal gets a "This week" line under Behaviour and the
+  printable report page (T-003.3). Non-English copy for the new portal words is machine-drafted like the rest of those files (es, ur,
+  ps, fa-AF), flagged in each file's own banner. Unknown, needs investigation: Al-Razi's dismissal time and whether a Monday-start week
+  is wanted (the start day is one argument).
+
+- **2026-09-29 (school side quest W4, T-003.3): the Friday points report is a notice and a link, OFF by default, claimed once per class and week.**
+  Owner (2026-09-28): the weekly report goes to parents (their own child's week) and to the teacher (the class summary), Friday
+  afternoon in the school's time zone, BISS (Sundays only) Sunday evening. Owner B5 (2026-09-29): "your child's weekly report is ready"
+  with a link to the printable portal report, nothing about the child in the email. Built as `points:weekly-report` (hourly,
+  `withoutOverlapping`, one line per run on the `monitors` channel because production's LOG_LEVEL=warning drops an info line on the
+  default one), behind a new `points_weekly_report` grant that is OFF for every organisation, Al-Razi included: turning it on for
+  Al-Razi on production is the owner's call at ship (B4).
+  - **When.** Each school's moment is `PointsReportSchedule`: Friday 15:00 on the school's own clock unless `masjid_points_settings`
+    says otherwise (a SuperAdmin-only `PUT /api/admin/masjids/{id}/points-report-schedule`; GET shows what is set and what is default).
+    BISS is Sunday 18:00, given by a guarded, idempotent, inert data migration (org 18, a school whose name says "Sunday School", the
+    same guard as 2026_09_21_120000; it only says WHEN, the grant stays off). Deliberately NOT derived from the school calendar: a year
+    models one weekly meeting day, so an Al-Razi that later entered a calendar would have had its report silently move. A run sends only
+    inside CATCH_UP_HOURS (12) after the moment, so a missed hour still goes and a report is never days late because the grant was
+    switched on afterwards. Al-Razi's dismissal time is Unknown, needs investigation, which is why the time is settable.
+  - **Which week.** The points week containing the SCHEDULED instant, up to that instant (not the moment the run started, so a catch-up at
+    16:10 decides as 15:00 would have). A child is in the report only with a live award in that span, so an award after the send shows in
+    the portal only and never makes a second email (test). BISS's Sunday 18:00 falls in the week that STARTED that Sunday, and BISS meets
+    on Sundays, so the report covers that day's points; the recon note that it would be "usually nothing" assumed a Monday-to-Friday
+    school. Pinned by DST tests for both schools on both change weekends (2026-11-01 and 2027-03-14, and the Fridays 2026-11-06 and
+    2027-03-19). A week the school calendar marks closed (a closure on any day of it) is skipped; no calendar reads as never closed.
+  - **Who.** Families: a current ward, a confirmed, current guardian edge holding feed consent, a live family login
+    (`GroupNotificationRecipientResolver::weeklyReportGuardians`, which checks the ward's and the guardian's `left_on` itself rather than
+    trusting the model hook that ends a guardian edge with the child; tests write the rows around the hook). Consent is required although
+    groups.md says consent gates broadcasts and not a parent's own child's record: this is an email to an address the school holds, so the
+    cautious direction was taken, and the portal report itself is readable without consent (unchanged). One notice per address, so a parent
+    with two children in the class gets one whose link shows both. Teachers: the class's `group_staff` logins only, when a current child
+    has a week to summarise; a legacy Contact leader reached through a family login is excluded because the link is the teacher's sign-in.
+    No staff push: the staff app is parked, so there is no seam to call (the resolver already names the right people when it returns).
+  - **At most once.** `behavior_weeks` holds the claim: insert-or-ignore then `UPDATE ... WHERE report_sent_at IS NULL`; only the process
+    that changed the row sends (unique `(group_id, week_start)`). A crash between the claim and the mail loses that class's notice for
+    that week rather than repeating it (the portal report is there either way). A run that finds nobody to tell claims nothing, so a
+    guardian whose login comes back that afternoon is picked up by the next hourly run inside the window.
+  - **What is in the email.** School, class, a link. No child's name, figure, skill, note or count (tests use distinctive values and search
+    the rendered HTML and subject); a generic subject identical for every family. `WeeklyPointsReportMail` is its own mailable and the
+    sweep its own path: SendGroupNotificationJob is untouched (W2 fixes its URL for User recipients). The family link is
+    `/family/{school}/sign-in?next=/family/{school}/classes/{class}/report`; sign-in follows `next` only for that one path shape for THIS
+    school (`familyNextPath`, allowlist, tested against open-redirect shapes), and a signed-out parent opening the report directly is sent
+    to sign in and back. The teacher's link is `/teacher/classes/{class}?tab=points`.
+  - **The portal page.** `FamilyWeeklyReport.vue` (route `classes/:groupId/report`, family guard): each of the parent's own children for the
+    week (positives first, then the awards with dates and notes), week navigation by the server's own neighbours (never the browser's
+    clock), a Print button with a print sheet, and a sentence when a read fails (never a zero). It calls the existing ward-edge-gated
+    `/awards` and `/awards/summary` with `?week=`: no new family endpoint, so the family write list is unchanged (the teacher realm has only
+    the +1 verb of T-003.2). No leaderboard or ranking anywhere.
+  - **Capability files.** `points_weekly_report` is in group `school`, which already exists, so `config/capability_groups.php` needs no
+    edit. `Capability.ts`, `OrganisationModulesTest`, `CapabilityCatalogueEndpointTest` SCHOOL_KEYS, the three provision-snapshot fixtures and
+    `set-capability-responses.json` (which records the whole capabilities object byte for byte) gain the key. The Studio session is paused,
+    so there is no collision; the integrator should expect the same five files to conflict with any other wave that adds a grant.
+  - **Not done, on purpose.** The child's week inside the email (a template-only follow-up if the owner reverses B5). Reach is limited: only
+    guardians with a live family login are reachable, about 10 at Al-Razi and 0 at BISS on 2026-09-28 (to tell the owner at ship).
+
+- **2026-09-29 (school side quest W4, review fixes to T-003.3): the report's links name the week; a total send failure gives the claim back.**
+  From the seven-lens review of 7c30697a. Each fix has a test that fails without it.
+  - **Both links carry the reported week.** `/family/{school}/sign-in?next=/family/{school}/classes/{class}/report?week=YYYY-MM-DD` and
+    `/teacher/classes/{class}?tab=points&week=YYYY-MM-DD`, where the date is the points week the sweep reported (its first day, the same value
+    as `behavior_weeks.week_start`), not the week holding "now". Before, both opened the week in progress, so Al-Razi's Friday 15:00 email read
+    on Sunday or Monday landed on a new, empty week (`weekly_report_none`). `familyNextPath` now admits exactly one query shape after the
+    report path, `?week=` plus a REAL calendar date (open-redirect cases still tested); the family route hands the week through sign-in
+    (`familyReturnTarget`, which drops every other query); `FamilyWeeklyReport.vue` and the teacher's Points tab read it through
+    `weekFromQuery` and fall back to the current week when it is absent or invalid. Found while wiring the teacher side: landing on the Points
+    tab from `?tab=points` is not a tab change, so the `watch(activeTab)` that loads the totals never fired and the tab opened with no totals at
+    all; a mount hook now loads them (on the linked week). Not changed: the teacher's sign-in does not carry `next` for the teacher realm
+    (unchanged from before; an already signed-in teacher lands on the week, a signed-out one signs in and opens the class).
+  - **A class whose every email failed is not left "sent".** After the deliveries, if no mail went out at all (the transport was down),
+    `BehaviorWeek::release()` clears `report_sent_at` and `recipients_count` so the next hourly run, inside the 12-hour catch-up window, tries
+    again; the class is counted as `classes_undelivered` (and is on the monitors line and in the command output), not as `classes_sent`. Only on
+    TOTAL failure: after a partial send the claim stays, because a retry would tell the families who already have it a second time. The window
+    still bounds a long outage (a test brings the transport back after 12 hours and nothing goes). The earlier "a crash between the claim and
+    the mail loses that notice" stands: a process that dies cannot release.
+  - **A closure on any day of the week skips the whole report.** This was already the behaviour (`closureWithin(start, last)`); now it is
+    decided and tested: first day, a middle day, the send day, the last day skip the week, the day before and the day after do not.
+    Whether a Monday holiday SHOULD skip a whole Friday report is the owner's to say; Unknown, needs investigation, and it is one call to change.
+  - **Tests added for behaviour that was already right, so a regression fails:** the guardian query is scoped to the class (a guardian of the
+    same child in another class only, and an unconsented edge here beside a consented one there, are not told); the catch-up window is exactly
+    12 hours in both branches (11:59:59 sends, 12:00:00 does not); a retired (`is_active = false`) class is not reported; a weekly class still
+    serves a parent the whole record with no `?week=` (summary and list); `24:00`, `24:30` and `23:60` are refused as a report time; the BISS seed
+    migration refuses a non-school and a soft-deleted org 18 even with the right name.
+  - **Left as they were.** The resolver's own `->current()` on the ward query is redundant with the command's (defence in depth; the
+    review marked the mutant equivalent). The `familyLoginIsActive` and `PointsWeek::containing` time-zone mutants that survived the command
+    test file alone are covered elsewhere or unconfirmed; not re-litigated here.

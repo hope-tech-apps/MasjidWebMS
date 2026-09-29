@@ -248,8 +248,58 @@ export function familyRouteRedirect(
     slots: FamilySlots,
     masjidId: string | number,
     requiresFamily: boolean,
+    intended?: string,
 ): true | string {
     if (!requiresFamily) return true;
 
-    return slots[String(masjidId)] ? true : `/family/${masjidId}/sign-in`;
+    if (slots[String(masjidId)]) return true;
+
+    // A parent who opened a link to one specific page (the weekly report) and has no
+    // session is sent to sign in and then back to it. Only the pages FAMILY_NEXT_PAGES
+    // names are carried; anything else is dropped, never echoed into the query.
+    const next = intended !== undefined && familyNextPath(masjidId, intended) === intended ? intended : null;
+
+    return next ? `/family/${masjidId}/sign-in?next=${encodeURIComponent(next)}` : `/family/${masjidId}/sign-in`;
+}
+
+/** 'YYYY-MM-DD' that is a real calendar day. (Helpers import nothing, so `node --test` can load each alone.) */
+function isRealIsoDay(iso: string): boolean {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!m) return false;
+
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+
+    return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
+
+/**
+ * The path a signed-out visitor to the weekly report is to be sent back to after sign-in: the
+ * report's own path plus the ONE query it may carry, `?week=YYYY-MM-DD` (the week the Friday
+ * email reported), when that is a real date. Any other query is dropped, never carried.
+ */
+export function familyReturnTarget(path: string, week: unknown): string {
+    return typeof week === 'string' && isRealIsoDay(week) ? `${path}?week=${week}` : path;
+}
+
+/**
+ * The pages a sign-in may hand a parent on to. ONE: the printable weekly report the Friday
+ * email links to (T-003.3), optionally with `?week=YYYY-MM-DD` naming the week the email
+ * reported (a link opened on the Sunday after must still show that week, not the new one).
+ * It is an allowlist of PATH SHAPES for THIS school on purpose: `?next=` is user-controlled
+ * input, and a redirect target read straight from a query is an open redirect and a way to
+ * land a parent on another school's screen with this one's session. The single query shape
+ * allowed is a real calendar date; nothing else is ever accepted, so nothing else needs to
+ * be checked.
+ */
+export function familyNextPath(masjidId: string | number, next: unknown): string {
+    const home = `/family/${masjidId}`;
+
+    if (typeof next !== 'string') return home;
+
+    const m = /^\/family\/(\d+)\/classes\/(\d+)\/report(?:\?week=(\d{4}-\d{2}-\d{2}))?$/.exec(next);
+
+    if (!m || m[1] !== String(masjidId)) return home;
+    if (m[3] !== undefined && !isRealIsoDay(m[3])) return home;
+
+    return next;
 }

@@ -154,6 +154,11 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/behavior-skills',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards/{award_id}',
+            // The weekly points reset (T-003.2, 2026-09-29): +1 verb. A teacher
+            // choosing how THEIR OWN class's points read ('running' or 'weekly').
+            // A view choice on the class: it changes no award, and it applies to
+            // every teacher of the class. Not roster mutation.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/points-period',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',

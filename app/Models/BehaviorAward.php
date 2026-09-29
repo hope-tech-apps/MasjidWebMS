@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -203,6 +205,32 @@ class BehaviorAward extends Model
         return $query
             ->when($from, fn (Builder $q) => $q->whereDate('awarded_at', '>=', $from))
             ->when($to, fn (Builder $q) => $q->whereDate('awarded_at', '<=', $to));
+    }
+
+    /**
+     * Narrow a query to awards that HAPPENED inside a half-open instant range
+     * `[$from, $to)` (T-003.2, the weekly view).
+     *
+     * By INSTANT, never `whereDate`: `DATE(awarded_at)` is the date in the
+     * column's zone (the app's, UTC), so a Friday-evening Eastern award (after
+     * 20:00 EDT / 19:00 EST) is already Saturday there and `whereDate` would put
+     * it in the wrong week. The bounds arrive as the school's LOCAL midnights
+     * (App\Support\PointsWeek) and are converted into the app timezone here, so
+     * the comparison is between two datetimes in one zone. Half-open, so an award
+     * stamped exactly at midnight belongs to exactly one week.
+     *
+     * `$to` may be null for "and everything after": the week view passes both, the
+     * Friday report passes its own send instant as the end.
+     */
+    public function scopeAwardedWithin(Builder $query, CarbonInterface $from, ?CarbonInterface $to = null): Builder
+    {
+        $zone = (string) config('app.timezone', 'UTC');
+
+        return $query
+            ->where('awarded_at', '>=', CarbonImmutable::instance($from)->setTimezone($zone)->format('Y-m-d H:i:s'))
+            ->when($to !== null, fn (Builder $q) => $q->where(
+                'awarded_at', '<', CarbonImmutable::instance($to)->setTimezone($zone)->format('Y-m-d H:i:s')
+            ));
     }
 
     /**

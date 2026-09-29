@@ -36,6 +36,15 @@ paths:
   - "database/migrations/*_create_group_thread_reads_table.php"
   - "app/Models/BehaviorSkill.php"
   - "app/Models/BehaviorAward.php"
+  - "app/Support/PointsWeek.php"
+  - "app/Support/SchoolPointsWeek.php"
+  - "app/Http/Controllers/Teacher/PointsPeriodController.php"
+  - "app/Console/Commands/SendWeeklyPointsReports.php"
+  - "app/Mail/WeeklyPointsReportMail.php"
+  - "app/Models/BehaviorWeek.php"
+  - "app/Models/MasjidPointsSetting.php"
+  - "app/Support/PointsReportSchedule.php"
+  - "app/Services/Groups/GroupNotificationRecipientResolver.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorSkillsController.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
   - "database/migrations/*_create_behavior_skills_table.php"
@@ -851,9 +860,12 @@ group; never to the whole tenant; never as a class-wide ranking.
   constraint are both required — the 403 is honest to a parent who mistyped an
   id, and the constraint is what makes the honesty safe.
 - Every aggregate is **per student**. There is deliberately no class-wide
-  endpoint, no rank column, and no comparison payload. If a future slice wants
-  a teacher's overview, it is a list of per-student rows a leader is already
-  entitled to — not a ranking, and not something a guardian can reach.
+  RANKING, no rank column, and no comparison payload. The one class-wide read is
+  the teacher's overview, `GET .../awards/totals` (BISS, 2026-09-21): a list of
+  per-student rows a leader is already entitled to, in roster order, leaders
+  only, and not something a guardian can reach. (An earlier version of this
+  bullet said "no class-wide endpoint" and was already false the day `totals`
+  shipped.)
 - **Consent gates broadcasts, not a parent's view of their own child** — the
   same call T-005c made for participant threads. A guardian with no consent
   record still reads their own ward's awards; requiring feed consent there
@@ -922,6 +934,60 @@ positioning, not its configuration.
   newest-first. On the teacher's screen `core/helpers/behaviorSkills.ts` keeps a
   locally added skill in the same order and opens the picker on the first
   positive skill. Pinned by `BehaviorSkillOrderTest` and `behavior-skills.test.ts`.
+- **The weekly view is a VIEW, and nothing is deleted (T-003.2, 2026-09-29;
+  owner: "points need a reset option at the end of the week that teachers can opt
+  into").** `groups.points_period` (`running` | `weekly`; null reads as `running`,
+  `Group::pointsPeriod()`) decides only how a class's points are SHOWN. A teacher of
+  the class sets it (`PUT .../points-period`, the realm's +1 write verb) or the office
+  does through the group form; it belongs to the CLASS, not the teacher, because a
+  family sees one figure for their child, and the screen and the response both say it
+  applies to every teacher. Turning it on or off changes no `behavior_awards` row, so
+  it needs no backup and switching it off gives the running total straight back
+  (`PointsWeekTest` snapshots every row before and after).
+  - **A week is Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock**
+    (`App\Support\PointsWeek`, start day named explicitly). Its two ends are built as
+    local midnights and converted, so the week that holds a daylight-saving change is
+    167 or 169 hours, not 168; `start + 7 x 24h` would drop a Saturday-night award into
+    the wrong report.
+  - **Awards are placed by INSTANT, never `whereDate`**
+    (`BehaviorAward::scopeAwardedWithin`, half-open `[start, end)`). `DATE(awarded_at)`
+    is the UTC date, so a Saturday-evening Eastern award is already Sunday in the column.
+    The older `awardedBetween(from, to)` is left exactly as it was for its callers.
+  - **`?week=`** (any day of a week names it, or the word `current` for the school's
+    week in progress) narrows the SAME audience-constrained query, so a week can never
+    include anything the caller could not already read. A value that is not a date is a
+    422, never a silent fall back to this week under last week's label. It is on the
+    staff and family listings and summaries; `totals` always carries the week beside the
+    running figures (`week_points`, `week_awards`, and the class's).
+  - **The figure a class leads with follows `points_period`; both are always served.**
+    Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
+- **The Friday report is a notice and a link, off by default, once per class and week
+  (T-003.3, 2026-09-29; owner B5).** `points:weekly-report` runs hourly and, for a school
+  holding the `points_weekly_report` grant (OFF for every organisation until a SuperAdmin
+  decides), emails each family "your child's weekly report is ready" and each class's teachers
+  their summary. **Nothing about a child is in the email** (`WeeklyPointsReportMail`): the numbers
+  live behind the portal's ward-edge gate, where consent and identity are checked, not in an inbox
+  that forwards and previews on a lock screen.
+  - **Recipients are the strictest of the four notifier shapes**
+    (`GroupNotificationRecipientResolver::weeklyReportGuardians`): a CURRENT ward, and a
+    confirmed, CURRENT, feed-consented guardian edge with a live family login. The resolver checks
+    both `left_on` columns itself; the model hook that ends a guardian edge with the child is not
+    relied on. Consent is required here although a parent may always READ their child's record,
+    because this is a mail to an address the school holds. Teachers are `group_staff` logins only.
+  - **The week is the one holding the SCHEDULED instant, up to that instant.** A later award shows in
+    the portal and never makes a second email. The moment is the school's (Friday 15:00 unless
+    `masjid_points_settings` says otherwise, SuperAdmin-only), never derived from the calendar; a
+    week with a calendar closure is skipped.
+  - **`behavior_weeks` is the atomic claim** (insert-or-ignore, then `UPDATE ... WHERE report_sent_at
+    IS NULL`): at most once by design, and a run with nobody to tell claims nothing. It holds no child
+    data, so it has no retention, erasure or RESTRICT (cascades to the school and class).
+  - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
+    with `?week=`, for the parent's own children only, printable, and says so when a read fails.
+    Sign-in follows `?next=` only for that one path shape for the same school
+    (`familyNextPath`), optionally with `?week=YYYY-MM-DD` (a real date): both emailed links NAME the
+    week that was reported, so a link opened on the Sunday after still shows that week, not the new one.
+  - **A send in which every email failed is given back** (`BehaviorWeek::release`), so the next run
+    inside the 12-hour window retries; a partial send keeps its claim (a retry would double-send).
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 

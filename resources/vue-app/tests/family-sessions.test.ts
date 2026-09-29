@@ -7,11 +7,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
     FAMILY_SESSIONS_KEY,
     LEGACY_FAMILY_KEYS,
     authFailureMasjidId,
     dropSlot,
+    familyNextPath,
+    familyReturnTarget,
     familyRouteRedirect,
     masjidIdOfUrl,
     putSlot,
@@ -288,4 +291,106 @@ test('a session without a token, contact or school id is refused, not stored', (
     assert.throws(() => putSlot(s, 7, { token: 't', contact: null as any }));
     assert.throws(() => putSlot(s, 'seven', slot(7)));
     assert.deepEqual(s.keys(), []);
+});
+
+test('sign-in hands a parent on to the weekly report of THIS school and nothing else', () => {
+    assert.equal(familyNextPath('7', '/family/7/classes/3/report'), '/family/7/classes/3/report');
+    assert.equal(familyNextPath(7, '/family/7/classes/31/report'), '/family/7/classes/31/report');
+
+    // Everything else lands on the home screen: another school's screen, another page, a query
+    // string, an off-site or protocol-relative target, a traversal, a non-string.
+    const home = '/family/7';
+    for (const bad of [
+        '/family/9/classes/3/report',
+        '/family/7/classes/3',
+        '/family/7/classes/3/report?x=1',
+        '/family/7/classes/3/report/../../..',
+        '/family/7/classes/x/report',
+        '//evil.example/family/7/classes/3/report',
+        'https://evil.example/family/7/classes/3/report',
+        'javascript:alert(1)',
+        '/family/7/classes/3/report\n',
+        '',
+        null,
+        undefined,
+        ['/family/7/classes/3/report'],
+        42,
+    ]) {
+        assert.equal(familyNextPath('7', bad), home, JSON.stringify(bad));
+    }
+});
+
+test('a signed-out parent opening the report is sent to sign in and back to it; nothing else is carried', () => {
+    const report = '/family/7/classes/3/report';
+
+    assert.equal(
+        familyRouteRedirect({}, '7', true, report),
+        `/family/7/sign-in?next=${encodeURIComponent(report)}`,
+    );
+    // A session for THIS school stays put, and one for another school does not open it.
+    assert.equal(familyRouteRedirect({ '7': slot(7) }, '7', true, report), true);
+    assert.equal(familyRouteRedirect({ '9': slot(9) }, '7', true, report), `/family/7/sign-in?next=${encodeURIComponent(report)}`);
+    // An intended path that is not on the allowlist is dropped rather than echoed into the query.
+    assert.equal(familyRouteRedirect({}, '7', true, '/family/7/classes/3'), '/family/7/sign-in');
+    assert.equal(familyRouteRedirect({}, '7', true, '/family/9/classes/3/report'), '/family/7/sign-in');
+    assert.equal(familyRouteRedirect({}, '7', true, 'https://evil.example/'), '/family/7/sign-in');
+    // Without an intended path, as before.
+    assert.equal(familyRouteRedirect({}, '7', true), '/family/7/sign-in');
+});
+
+test('the report link may name the week it reported, and only as a real calendar date', () => {
+    const report = '/family/7/classes/3/report';
+
+    assert.equal(familyNextPath('7', `${report}?week=2026-10-04`), `${report}?week=2026-10-04`);
+    assert.equal(familyNextPath(7, '/family/7/classes/31/report?week=2027-02-28'), '/family/7/classes/31/report?week=2027-02-28');
+
+    // Anything else in that position lands on the home screen, as before: not a date, not a real date,
+    // more query, a fragment, another school, a newline, an off-site target dressed as a week.
+    const home = '/family/7';
+    for (const bad of [
+        `${report}?week=2026-02-30`,
+        `${report}?week=2026-13-01`,
+        `${report}?week=2026-10-4`,
+        `${report}?week=`,
+        `${report}?week=next`,
+        `${report}?week=2026-10-04&x=1`,
+        `${report}?x=1&week=2026-10-04`,
+        `${report}?week=2026-10-04#top`,
+        `${report}?week=2026-10-04\n`,
+        `${report}?week=//evil.example`,
+        '/family/9/classes/3/report?week=2026-10-04',
+        '/family/7/classes/3?week=2026-10-04',
+    ]) {
+        assert.equal(familyNextPath('7', bad), home, JSON.stringify(bad));
+    }
+});
+
+test('a signed-out parent opening Friday\'s report on Sunday is sent back to the SAME week, and nothing else in the query travels', () => {
+    const report = '/family/7/classes/3/report';
+
+    assert.equal(familyReturnTarget(report, '2026-10-04'), `${report}?week=2026-10-04`);
+    // No week, an invalid one, a repeated key (an array) or a non-string: the bare path.
+    for (const noWeek of [undefined, null, '', '2026-02-30', 'current', ['2026-10-04', '2026-10-11'], 4]) {
+        assert.equal(familyReturnTarget(report, noWeek), report, JSON.stringify(noWeek));
+    }
+
+    const withWeek = `${report}?week=2026-10-04`;
+    assert.equal(
+        familyRouteRedirect({}, '7', true, withWeek),
+        `/family/7/sign-in?next=${encodeURIComponent(withWeek)}`,
+    );
+    assert.equal(familyRouteRedirect({ '7': slot(7) }, '7', true, withWeek), true);
+    // An invalid week is not echoed into the sign-in query.
+    assert.equal(familyRouteRedirect({}, '7', true, `${report}?week=2026-02-30`), '/family/7/sign-in');
+});
+
+test('the report page and the family route hand the emailed week on, and the page falls back to the current week', () => {
+    const view = readFileSync(new URL('../views/family/FamilyWeeklyReport.vue', import.meta.url), 'utf8');
+    const routes = readFileSync(new URL('../router/routes/familyRoutes.ts', import.meta.url), 'utf8');
+
+    // The initial read asks for the week the link named, not always 'current'.
+    assert.match(view, /loadWeek\(run, weekFromQuery\(route\.query\.week\) \?\? 'current'\)/);
+    assert.doesNotMatch(view, /loadWeek\(run, 'current'\)/);
+    // The route guard carries the week through sign-in.
+    assert.match(routes, /familyReturnTarget\(to\.path, to\.query\.week\)/);
 });

@@ -101,6 +101,62 @@ class GroupNotificationRecipientResolver
     }
 
     /**
+     * The guardians to tell that their child's WEEKLY POINTS REPORT is ready
+     * (T-003.3, the Friday report).
+     *
+     * A fourth shape, and the strictest of the four, because the sweep that calls it
+     * mails a family with nobody watching. A recipient must satisfy ALL of:
+     *
+     *   - the WARD is still on the roster: a PARTICIPANT membership in this class with
+     *     `left_on IS NULL`. A withdrawn child's family is not told about a week the
+     *     school has recorded them as gone from;
+     *   - the GUARDIAN EDGE is confirmed, still current (`left_on IS NULL`), and holds
+     *     feed consent. Consent is required here even though a parent may always READ
+     *     their own child's record (groups.md: consent gates broadcasts, not the
+     *     record), because this is an email to an address the school chose to hold, and
+     *     a notice nobody agreed to receive is the mistake to make in the cautious
+     *     direction;
+     *   - the guardian has a LIVE family login (`resolveAddressable`), which is also the
+     *     address the notice goes to. A guardian with no login is correctly unreachable.
+     *
+     * `$wardContactIds` are the contacts of children who have a reportable week; the
+     * roster check happens here regardless, so a caller cannot widen the audience by
+     * passing a departed child's id. Deduped by address, so a parent with two children
+     * in the class gets ONE notice, whose link opens all their children in it.
+     *
+     * @param  array<int,int>  $wardContactIds
+     * @return Collection<int,NudgeRecipient>
+     */
+    public function weeklyReportGuardians(Group $group, array $wardContactIds): Collection
+    {
+        if ($wardContactIds === []) {
+            return collect();
+        }
+
+        $currentWards = $group->memberships()
+            ->participants()
+            ->current()
+            ->whereIn('contact_id', $wardContactIds)
+            ->pluck('contact_id')
+            ->all();
+
+        if ($currentWards === []) {
+            return collect();
+        }
+
+        $contacts = $group->memberships()
+            ->consented()
+            ->current()
+            ->whereIn('guardian_of_contact_id', $currentWards)
+            ->with('contact')
+            ->get()
+            ->map(fn (GroupMembership $m) => $m->contact)
+            ->filter();
+
+        return $this->resolveAddressable($contacts, null);
+    }
+
+    /**
      * The teachers of the class — a parent's reply. Teachers are Users named in
      * `group_staff`, PLUS any confirmed legacy Contact `leader` on the roster.
      *

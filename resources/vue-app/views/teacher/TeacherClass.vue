@@ -639,6 +639,26 @@
             <!-- ==================================================== POINTS -->
             <section v-else-if="activeTab === 'points'">
                 <p class="text-muted small">Behaviour points for one student at a time.</p>
+
+                <!-- THE WEEKLY RESET (T-003.2, teachers can opt in). A VIEW
+                     choice: nothing is deleted or revoked either way, the
+                     running history stays, and switching it off gives the
+                     running total straight back. It belongs to the CLASS, not to
+                     this teacher (a family sees one number for their child), and
+                     the screen says so here instead of letting a teacher find out
+                     from a colleague. -->
+                <div class="form-check form-switch mb-1">
+                    <input class="form-check-input" type="checkbox" role="switch" id="points-weekly"
+                           :checked="pointsWeekly" :disabled="savingPeriod" @change="setPointsPeriod($event.target as HTMLInputElement)">
+                    <label class="form-check-label small fw-semibold" for="points-weekly">Start each week fresh</label>
+                </div>
+                <p class="text-muted small mb-3">
+                    Points show one week at a time (Sunday to Saturday), with every earlier week kept in the history.
+                    Nothing is deleted, and you can switch this off at any time.
+                    This applies to every teacher of this class.
+                </p>
+                <p v-if="periodError" class="text-danger small">{{ periodError }}</p>
+
                 <label class="form-label small text-muted">Student</label>
                 <select class="form-select form-select-sm mb-3" style="max-width: 22rem"
                         v-model="pointsMembership" @change="loadAwards">
@@ -655,16 +675,33 @@
                      (.claude/rules/groups.md). -->
                 <div v-if="pointsTotals" class="card border-0 bg-light mb-3">
                     <div class="card-body py-2">
+                        <!-- The week in view, with its neighbours. The class's
+                             own choice decides which figure leads (a weekly class
+                             leads with the week), but both are always shown. -->
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" aria-label="Previous week"
+                                    @click="loadPointsTotals(pointsTotals.week?.previous)"><i class="bi bi-chevron-left"></i></button>
+                            <span class="small fw-semibold">
+                                {{ pointsTotals.week?.is_current ? 'This week' : 'Week' }}
+                                <span class="text-muted fw-normal">· {{ pointsWeekLabel }}</span>
+                            </span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" aria-label="Next week"
+                                    :disabled="pointsTotals.week?.is_current" @click="loadPointsTotals(pointsTotals.week?.next)"><i class="bi bi-chevron-right"></i></button>
+                        </div>
                         <div v-if="pointsMembership && selectedPointsTotal" class="d-flex justify-content-between align-items-baseline">
-                            <span class="small fw-semibold">{{ name(selectedPointsTotal.contact) }}’s total</span>
-                            <span class="fw-semibold">{{ signedPoints(selectedPointsTotal.points) }}</span>
+                            <span class="small fw-semibold">{{ name(selectedPointsTotal.contact) }}’s {{ pointsWeekly ? 'week' : 'total' }}</span>
+                            <span class="fw-semibold">{{ signedPoints(selectedHeadline.points) }}</span>
+                        </div>
+                        <div v-if="pointsMembership && selectedPointsTotal" class="d-flex justify-content-between align-items-baseline small text-muted">
+                            <span>{{ pointsWeekly ? 'All weeks' : 'This week' }}</span>
+                            <span>{{ signedPoints(selectedHeadline.other.points) }}</span>
                         </div>
                         <div class="d-flex justify-content-between align-items-baseline small text-muted">
                             <span>Whole class</span>
-                            <span>{{ signedPoints(pointsTotals.class?.points ?? 0) }}</span>
+                            <span>{{ signedPoints(classHeadline.points) }}</span>
                         </div>
                         <details class="mt-1">
-                            <summary class="small text-primary" style="cursor:pointer">Each student’s total</summary>
+                            <summary class="small text-primary" style="cursor:pointer">Each student’s {{ pointsWeekly ? 'week' : 'total' }}</summary>
                             <ul class="list-unstyled mb-0 mt-1">
                                 <li v-for="t in pointsTotals.students" :key="t.membership_id"
                                     class="d-flex justify-content-between small py-1 border-bottom">
@@ -672,7 +709,7 @@
                                             @click="pointsMembership = t.membership_id; loadAwards()">
                                         {{ name(t.contact) }}
                                     </button>
-                                    <span>{{ signedPoints(t.points) }}</span>
+                                    <span>{{ signedPoints(pointsHeadline(pointsPeriod, t).points) }}</span>
                                 </li>
                             </ul>
                         </details>
@@ -2392,6 +2429,7 @@ import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
+import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
     averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
@@ -2422,7 +2460,12 @@ const base = computed(() => `/api/teacher/masjids/${masjidId.value}/groups/${gro
 const group = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
-const activeTab = ref<TabKey>('roster');
+// `?tab=points` is what the weekly class-summary email links to (T-003.3). The one tab a
+// link may open, so an arbitrary query value can never select a tab the screen hides.
+const activeTab = ref<TabKey>(route.query.tab === 'points' ? 'points' : 'roster');
+// `?week=` (with `?tab=points`) names the week the email reported, so the Points tab opens on
+// that week and not on the one in progress; null (or an invalid value) is the current week.
+const linkedPointsWeek = route.query.tab === 'points' ? weekFromQuery(route.query.week) : null;
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },
@@ -4693,20 +4736,66 @@ const createSkill = async () => {
 // one page of one child, and a total built from a page is a wrong number.
 const pointsTotals = ref<any>(null);
 const pointsTotalsFailed = ref(false);
-const loadPointsTotals = async () => {
+// The week the totals are showing, as the server's first-day date; null = the
+// week in progress. Stepping is by the server's own `previous` / `next`, never by
+// arithmetic on the browser's clock (the browser's zone is not the school's).
+const loadPointsTotals = async (week: string | null = null) => {
     pointsTotalsFailed.value = false;
     try {
-        const res = await TeacherApiService.get(`${base.value}/awards/totals`);
+        const res = await TeacherApiService.get(
+            `${base.value}/awards/totals${week ? `?week=${encodeURIComponent(week)}` : ''}`
+        );
         pointsTotals.value = res.data?.data ?? null;
+        // The server's word on how this class reads (another teacher of the class
+        // may have changed it since this screen loaded).
+        if (group.value && pointsTotals.value?.points_period) group.value.points_period = pointsTotals.value.points_period;
     } catch {
         // Hidden rather than shown as zeros: a failed read is not "no points".
         pointsTotals.value = null;
         pointsTotalsFailed.value = true;
     }
 };
+// Landing on the Points tab from the email link (?tab=points) is not a tab CHANGE, so the watch on
+// `activeTab` below never fires for it: load what the tab shows here, on the reported week.
+onMounted(() => {
+    if (activeTab.value !== 'points') return;
+    loadSkills();
+    loadPointsTotals(linkedPointsWeek);
+});
 const selectedPointsTotal = computed(() => pointsTotals.value?.students
     ?.find((t: any) => String(t.membership_id) === String(pointsMembership.value)) ?? null);
-const signedPoints = (n: number) => `${n > 0 ? '+' : ''}${n}`;
+
+// The weekly reset (T-003.2). The class's own choice, saved on the class so every
+// teacher of it reads the same thing; `group` carries it from the class payload.
+const pointsPeriod = computed<string>(() => group.value?.points_period ?? pointsTotals.value?.points_period ?? 'running');
+const pointsWeekly = computed(() => isWeekly(pointsPeriod.value));
+const selectedHeadline = computed(() => pointsHeadline(pointsPeriod.value, selectedPointsTotal.value));
+const classHeadline = computed(() => pointsHeadline(pointsPeriod.value, pointsTotals.value?.class));
+const pointsWeekLabel = computed(() => pointsTotals.value?.week
+    ? weekRangeLabel(pointsTotals.value.week.start, pointsTotals.value.week.end)
+    : '');
+const savingPeriod = ref(false);
+const periodError = ref('');
+const setPointsPeriod = async (input: HTMLInputElement) => {
+    const weekly = input.checked;
+    savingPeriod.value = true;
+    periodError.value = '';
+    try {
+        const res = await TeacherApiService.put(`${base.value}/points-period`, {
+            points_period: weekly ? 'weekly' : 'running',
+        });
+        // The server's word, not the checkbox's: what is stored is what is shown.
+        const stored = res.data?.data?.points_period ?? (weekly ? 'weekly' : 'running');
+        if (group.value) group.value.points_period = stored;
+        await loadPointsTotals(pointsTotals.value?.week?.is_current === false ? pointsTotals.value.week.start : null);
+    } catch (e: any) {
+        periodError.value = apiErrorText(e, 'That could not be saved.');
+        // The switch shows what is actually stored, not what was tapped.
+        input.checked = !weekly;
+    } finally {
+        savingPeriod.value = false;
+    }
+};
 
 const loadAwards = async () => {
     awards.value = [];

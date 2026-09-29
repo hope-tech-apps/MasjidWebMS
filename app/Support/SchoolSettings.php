@@ -8,7 +8,9 @@ use App\Models\Masjid;
 /**
  * THE ONE READER of the per-organisation school settings.
  *
- * Three grants in config/capabilities.php, all OFF for every organisation until
+ * Grants in config/capabilities.php (the first three are the weekly-school settings;
+ * `points_weekly_report`, T-003.3, is the Friday points report and is for any school),
+ * all OFF for every organisation until
  * a SuperAdmin switches one on (PATCH .../capabilities/{key}, SuperAdmin only,
  * audited in masjid_capability_changes). Off is exactly what every school did
  * before these settings existed, so Al-Razi (org 14) is unchanged. They were
@@ -38,6 +40,8 @@ final class SchoolSettings
     public const REPORT_CARD_CORE_SUBJECTS = 'report_card_core_subjects';
     public const SHORT_LESSON_PLAN = 'short_lesson_plan';
     public const SIMPLE_MARKING = 'simple_marking';
+    /** The weekly points report (T-003.3): families and teachers are emailed. Off for everyone until a SuperAdmin decides. */
+    public const POINTS_WEEKLY_REPORT = 'points_weekly_report';
 
     /**
      * What the shorter lesson plan leaves out (owner, 2026-09-21: "Differentiation
@@ -100,6 +104,16 @@ final class SchoolSettings
     public static function simpleMarking(?Masjid $masjid): bool
     {
         return (bool) $masjid?->hasCapability(self::SIMPLE_MARKING);
+    }
+
+    /**
+     * Does this organisation send the weekly points report? Fails closed like every
+     * other grant: an unknown organisation, or a stale config cache during a deploy,
+     * reads as OFF, which sends nothing.
+     */
+    public static function pointsWeeklyReport(?Masjid $masjid): bool
+    {
+        return (bool) $masjid?->hasCapability(self::POINTS_WEEKLY_REPORT);
     }
 
     /**

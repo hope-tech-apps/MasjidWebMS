@@ -26,7 +26,9 @@ import { OrgType } from "@/core/types/data/Vertical";
 // shows them what the organisation has and lists the rest as switched off.
 export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'form_editing'
     // The weekly-school settings (App\Support\SchoolSettings), SuperAdmin-only like every grant.
-    | 'report_card_core_subjects' | 'short_lesson_plan' | 'simple_marking';
+    | 'report_card_core_subjects' | 'short_lesson_plan' | 'simple_marking'
+    // The Friday points report (T-003.3): families and teachers are emailed. A grant, off for everyone.
+    | 'points_weekly_report';
 
 /** The modules, in catalogue order (Masjid::MODULE_KEYS). CapabilityTsMirrorTest pins it. */
 export const MODULE_KEYS = [
@@ -167,6 +169,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     report_card_core_subjects: "Report card: Qur'an, Islamic Studies and Arabic only",
     short_lesson_plan: 'Shorter lesson plan',
     simple_marking: 'Mark work Excellent, Good or Needs work',
+    points_weekly_report: 'Weekly points report',
 };
 
 /** One organisation a login belongs to, as the SuperAdmin's user screens see it. */
