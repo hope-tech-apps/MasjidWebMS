@@ -26,7 +26,7 @@ class RequestMemberCodeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'ascii', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email:rfc', 'ascii', 'max:255'],
         ];
     }
 

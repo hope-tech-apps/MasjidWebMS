@@ -43,7 +43,7 @@ class RequestLoginCodeRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email', 'ascii', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email', 'ascii', 'max:255'],
         ];
     }
 

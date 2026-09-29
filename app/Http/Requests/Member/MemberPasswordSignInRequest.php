@@ -35,7 +35,7 @@ class MemberPasswordSignInRequest extends MemberSignInFormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'ascii', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email:rfc', 'ascii', 'max:255'],
             'password' => ['required', 'string', 'max:255'],
         ];
     }

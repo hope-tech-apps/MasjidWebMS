@@ -56,7 +56,7 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             // scoped to the bound tenant, so it lives in FamilyAccessService
             // beside the normalisation that makes it hold — one door, not a
             // validator and a service that agree today.
-            'login_email' => ['required', 'string', 'email', 'ascii', 'max:255'],
+            'login_email' => ['bail', 'required', 'string', 'email', 'ascii', 'max:255'],
 
             // The operator has read the refusal and confirmed taking the address
             // off a member whose portal access has already ended. NOT a force

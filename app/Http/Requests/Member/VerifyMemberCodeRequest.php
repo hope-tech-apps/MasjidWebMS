@@ -52,7 +52,7 @@ class VerifyMemberCodeRequest extends MemberSignInFormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'ascii', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email:rfc', 'ascii', 'max:255'],
             'code' => ['required', 'string', 'max:16'],
             'first_name' => ['nullable', 'string', 'max:100'],
             'last_name' => ['nullable', 'string', 'max:100'],
