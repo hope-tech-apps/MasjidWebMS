@@ -13,8 +13,12 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Mockery;
+use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\Test;
+use Psr\Log\LoggerInterface;
 use Tests\Support\ForeignTokenable;
+use Tests\Support\LogsLikeProduction;
 use Tests\TestCase;
 
 /**
@@ -29,6 +33,7 @@ use Tests\TestCase;
  */
 class PruneExpiredTokensTest extends TestCase
 {
+    use LogsLikeProduction;
     use RefreshDatabase;
 
     private const STAFF_MINUTES = 480;
@@ -111,6 +116,15 @@ class PruneExpiredTokensTest extends TestCase
         Artisan::call('tokens:prune-expired', $options);
 
         return Artisan::output();
+    }
+
+    private function spyMonitorsChannel(): MockInterface
+    {
+        Log::spy();
+        $channel = Mockery::spy(LoggerInterface::class);
+        Log::shouldReceive('channel')->with('monitors')->andReturn($channel);
+
+        return $channel;
     }
 
     private function familyToken(int $ageMinutes): int
@@ -362,7 +376,7 @@ class PruneExpiredTokensTest extends TestCase
     #[Test]
     public function it_deletes_in_bounded_chunks_and_reports_counts_per_kind(): void
     {
-        Log::spy();
+        $channel = $this->spyMonitorsChannel();
 
         for ($i = 0; $i < 7; $i++) {
             $this->familyToken(40 * 24 * 60);
@@ -381,7 +395,7 @@ class PruneExpiredTokensTest extends TestCase
         $this->assertMatchesRegularExpression('/staff\s+\|?\s*3/', $output);
         $this->assertMatchesRegularExpression('/family\s+\|?\s*7/', $output);
 
-        Log::shouldHaveReceived('info')->withArgs(function ($message, $context = []) {
+        $channel->shouldHaveReceived('info')->withArgs(function ($message, $context = []) {
             return $message === 'tokens:prune-expired'
                 && $context['total'] === 10
                 && $context['deleted_by_kind']['family'] === 7
@@ -393,16 +407,74 @@ class PruneExpiredTokensTest extends TestCase
     #[Test]
     public function a_zero_deletion_run_is_normal_and_still_reports(): void
     {
-        Log::spy();
+        $channel = $this->spyMonitorsChannel();
         $id = $this->familyToken(60);
 
         $output = $this->prune();
 
         $this->assertTrue($this->exists($id));
         $this->assertStringContainsString('pruned 0 token(s)', $output);
-        Log::shouldHaveReceived('info')->withArgs(
+        $channel->shouldHaveReceived('info')->withArgs(
             fn ($message, $context = []) => $message === 'tokens:prune-expired' && $context['total'] === 0
         )->once();
+    }
+
+    #[Test]
+    public function the_run_is_logged_on_the_monitors_channel_not_the_default_one(): void
+    {
+        // Production runs LOG_LEVEL=warning: an info line on the default channel
+        // is dropped. Only the `monitors` stack (monitors-file, pinned at info)
+        // leaves a record of a clean scheduled run.
+        Log::spy();
+        $channel = Mockery::spy(LoggerInterface::class);
+        Log::shouldReceive('channel')->with('monitors')->once()->andReturn($channel);
+
+        $this->prune();
+
+        Log::shouldNotHaveReceived('info');
+        $channel->shouldHaveReceived('info')->once();
+    }
+
+    #[Test]
+    public function the_line_survives_production_log_level_in_monitors_log_and_never_pages(): void
+    {
+        // Production runs LOG_LEVEL=warning. This uses the real config/logging.php
+        // under that environment, so a channel that follows LOG_LEVEL would drop
+        // the line here exactly as it does there (a Log spy cannot show that).
+        $this->logLikeProduction();
+
+        try {
+            $this->familyToken(40 * 24 * 60);
+
+            $this->prune();
+
+            $this->assertSame([], $this->loggedLines('laravel.log', 'tokens:prune-expired'),
+                'the application log kept an info line, so this test is not at production\'s LOG_LEVEL');
+
+            $kept = $this->loggedLines('monitors.log', 'tokens:prune-expired');
+            $this->assertCount(1, $kept, 'a scheduled prune run left no record at LOG_LEVEL=warning');
+            $this->assertStringContainsString('"total":1', $kept[0]);
+            $this->assertSame([], $this->alertSubjects(), 'an info-level prune run emailed the operator');
+        } finally {
+            $this->forgetProductionLogs();
+        }
+    }
+
+    #[Test]
+    public function an_oversized_chunk_is_clamped_and_still_deletes_everything(): void
+    {
+        $ids = [];
+        for ($i = 0; $i < 3; $i++) {
+            $ids[] = $this->familyToken(40 * 24 * 60);
+        }
+        $keep = $this->familyToken(60);
+
+        $this->prune(['--chunk' => 70000]);
+
+        foreach ($ids as $id) {
+            $this->assertFalse($this->exists($id));
+        }
+        $this->assertTrue($this->exists($keep));
     }
 
     #[Test]

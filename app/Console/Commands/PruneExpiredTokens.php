@@ -78,10 +78,14 @@ use Laravel\Sanctum\Sanctum;
  *  (b) per kind, a token whose `created_at` is older than now - (that kind's
  *      lifetime + grace).
  *
- * Deletion is by id in bounded chunks (`--chunk`, default 500), keyed on id so a
- * dry run and a real run walk the same rows. Counts per kind are printed AND
- * logged at info: `schedule:run` discards stdout, so the log line is the only
- * evidence a scheduled run leaves. A run that deletes nothing is normal.
+ * Deletion is by id in bounded chunks (`--chunk`, default 500, at most
+ * MAX_CHUNK so the id list stays under MySQL's 65,535-placeholder limit), keyed
+ * on id so a dry run and a real run walk the same rows. Counts per kind are
+ * printed AND logged at info on the `monitors` channel: `schedule:run` discards
+ * stdout, and production runs LOG_LEVEL=warning, which drops an info line on the
+ * default channel. `monitors-file` is pinned at info (storage/logs/monitors.log),
+ * so it is the line that proves a scheduled run happened and what it deleted.
+ * A run that deletes nothing is normal.
  */
 class PruneExpiredTokens extends Command
 {
@@ -92,6 +96,9 @@ class PruneExpiredTokens extends Command
 
     protected $description = 'Prune API tokens that their own guard already refuses (staff, parent, member, hand-off), plus a grace period.';
 
+    /** Ceiling for --chunk: one bound placeholder per id, MySQL allows 65,535. */
+    private const MAX_CHUNK = 5000;
+
     private const KINDS = ['staff', 'family', 'member', 'student-handoff', 'contact-other', 'unrecognised'];
 
     public function handle(): int
@@ -99,7 +106,7 @@ class PruneExpiredTokens extends Command
         // At least an hour of grace: a negative value would delete tokens a guard
         // still accepts, and this command's one promise is that it never does.
         $graceMinutes = max(1, (int) $this->option('hours')) * 60;
-        $chunk = max(1, (int) $this->option('chunk'));
+        $chunk = min(self::MAX_CHUNK, max(1, (int) $this->option('chunk')));
         $dryRun = (bool) $this->option('dry-run');
 
         // One instant for the whole sweep, so a long run applies one cutoff.
@@ -175,7 +182,8 @@ class PruneExpiredTokens extends Command
         ));
         $this->info("tokens:prune-expired {$verb} {$total} token(s); grace {$graceMinutes} minutes.");
 
-        Log::info('tokens:prune-expired', [
+        // `monitors`, not the default channel: see the class docblock.
+        Log::channel('monitors')->info('tokens:prune-expired', [
             'dry_run' => $dryRun,
             'grace_minutes' => $graceMinutes,
             'total' => $total,
