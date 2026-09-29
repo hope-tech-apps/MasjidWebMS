@@ -109,6 +109,47 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Scheduled class stories and new conversations (T-002.4, owner 2026-09-29)
+    |--------------------------------------------------------------------------
+    |
+    | A teacher or the office may write a class story, or open a NEW conversation,
+    | to go out later. `groups:publish-due` (every minute) is what releases them.
+    | Replies are never scheduled.
+    |
+    */
+
+    'scheduling' => [
+
+        /*
+         * How far ahead something may be scheduled (S12: 30 days). A ceiling, not
+         * a suggestion: a message queued for next term would be sent on the word of
+         * somebody whose class, roster and consents will all have moved.
+         */
+        'max_days_ahead' => (int) env('GROUP_SCHEDULE_MAX_DAYS_AHEAD', 30),
+
+        /*
+         * How far BEFORE a story's time the sweep already asks "may it still go
+         * out?". Visibility follows the clock, not the sweep, so a story whose
+         * author left the class must be refused BEFORE its time arrives or it would
+         * be on screen for up to a minute first. Two sweeps' worth.
+         */
+        'lookahead_seconds' => (int) env('GROUP_SCHEDULE_LOOKAHEAD_SECONDS', 120),
+
+        /*
+         * A scheduled conversation is CLAIMED (status `sending`) before it is
+         * written, and the write and the `sent` stamp are one transaction, so a run
+         * that dies between them left NOTHING written. A claim this old is therefore
+         * safe to hand back to the queue.
+         */
+        'stale_claim_minutes' => (int) env('GROUP_SCHEDULE_STALE_CLAIM_MINUTES', 10),
+
+        /* Most items one sweep releases, so a long outage cannot become one very long run. */
+        'batch' => (int) env('GROUP_SCHEDULE_BATCH', 200),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Group messaging threads (T-005c)
     |--------------------------------------------------------------------------
     |

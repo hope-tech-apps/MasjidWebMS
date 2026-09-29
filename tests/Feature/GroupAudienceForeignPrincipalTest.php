@@ -100,6 +100,11 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // false here for exactly the reason it gets them above.
         'readableResourcesQuery',
         'mayReceiveResource',
+        // The twentieth, added for scheduled class stories and conversations (T-002.4):
+        // whether a principal may see one BEFORE its time. It takes a principal and
+        // answers false for anything that is not a staff `User` (a parent, null, an
+        // unrecognized principal), for exactly the reason the others do.
+        'mayReadUnpublished',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -311,7 +316,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(19, $seen);
+        $this->assertCount(20, $seen);
     }
 
     #[Test]

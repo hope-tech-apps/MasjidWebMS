@@ -12,6 +12,8 @@ use App\Models\Group;
 use App\Models\GroupPost;
 use App\Models\Masjid;
 use App\Models\User;
+use App\Services\Groups\GroupStoryPublisher;
+use App\Support\ScheduledTime;
 use App\Support\Errors;
 use App\Support\GroupAudience;
 use App\Support\GroupMedia;
@@ -51,7 +53,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class GroupPostsController extends Controller
 {
-    public function __construct(private GroupAudience $audience)
+    /** The school's zone, resolved once per request (a Masjid lookup). */
+    private ?string $zone = null;
+
+    public function __construct(private GroupAudience $audience, private GroupStoryPublisher $publisher)
     {
     }
 
@@ -67,6 +72,42 @@ class GroupPostsController extends Controller
     {
         $group = Group::findOrFail($group_id);
 
+        // THE SCHEDULED LIST is a separate view of the same table: the stories that are
+        // not out yet (waiting, or refused at release), soonest first. Only the staff
+        // who may see a scheduled story may ask for it (a teacher of the class, the
+        // office), and that is the WHOLE gate: the office edits and cancels a teacher's
+        // scheduled story (S14) without being on the roster, and a story that has not
+        // gone out is not yet a disclosure to anybody. The FEED below is unchanged, and an
+        // administrator who is not on the roster still cannot read it back. The default
+        // feed shows what families see, for staff too, so a story does not appear in it
+        // the moment it is scheduled.
+        if ($request->boolean('scheduled')) {
+            if (! $this->audience->mayReadUnpublished($request->user(), $group)) {
+                abort(403, 'You are not entitled to the scheduled stories of this group.');
+            }
+
+            $mayReceiveMedia = $this->audience->mayReceive(
+                $request->user(), $group, GroupAudience::DISCLOSURE_MEDIA
+            );
+
+            $posts = $group->posts()
+                ->unpublished()
+                ->with(['author:id,name', 'attachments'])
+                ->orderBy('published_at')
+                ->orderBy('id')
+                ->paginate($request->query('per_page', 15));
+
+            $posts = $posts->through(fn (GroupPost $post) => $this->serialize(
+                $post, $masjid_id, $group_id, $mayReceiveMedia, null
+            ));
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $posts,
+                'meta' => $this->meta($mayReceiveMedia, $group),
+            ], Response::HTTP_OK);
+        }
+
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
 
         $mayReceiveMedia = $this->audience->mayReceive(
@@ -74,9 +115,9 @@ class GroupPostsController extends Controller
         );
 
         $posts = $group->posts()
+            ->published()
             ->with(['author:id,name', 'attachments'])
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
+            ->newestPublishedFirst()
             ->paginate($request->query('per_page', 15));
 
         // One query each for the page's reactions and receipts, as THIS viewer
@@ -99,9 +140,19 @@ class GroupPostsController extends Controller
     {
         $group = Group::findOrFail($group_id);
 
-        $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
+        // A story that is not out yet is read by the staff who manage it (a teacher of
+        // the class, the office) without the feed gate, exactly as the Scheduled list
+        // is: it is not yet a disclosure to anybody. Everything else, including a
+        // missing id, asks the feed gate first as it always has.
+        $candidate = $this->postsFor($group, $request->user())
+            ->with(['author:id,name', 'attachments'])
+            ->find($post_id);
 
-        $post = $group->posts()->with(['author:id,name', 'attachments'])->findOrFail($post_id);
+        if ($candidate === null || $candidate->isPublished()) {
+            $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
+        }
+
+        $post = $candidate ?? $this->postsFor($group, $request->user())->with(['author:id,name', 'attachments'])->findOrFail($post_id);
 
         $mayReceiveMedia = $this->audience->mayReceive(
             $request->user(), $group, GroupAudience::DISCLOSURE_MEDIA
@@ -133,8 +184,12 @@ class GroupPostsController extends Controller
     {
         $group = Group::findOrFail($group_id);
 
+        // "Send later": the school's own wall clock, already checked to be in the
+        // future and within 30 days by the request. Null means out now.
+        $sendAt = $request->sendAt();
+
         try {
-            $post = DB::transaction(function () use ($request, $group) {
+            $post = DB::transaction(function () use ($request, $group, $sendAt) {
                 $post = GroupPost::create([
                     'group_id' => $group->id,
                     // The AUTHENTICATED account, never a client-supplied author.
@@ -142,6 +197,9 @@ class GroupPostsController extends Controller
                     'title' => $request->input('title'),
                     'body' => $request->input('body'),
                     'retained_until' => $request->input('retained_until'),
+                    // Null lets the model stamp "now"; a time keeps the story back from
+                    // every family read until then (GroupPost::scopePublished).
+                    'published_at' => $sendAt,
                 ]);
 
                 GroupPostAttachments::store($post, $this->uploads($request));
@@ -152,14 +210,19 @@ class GroupPostsController extends Controller
             // Off-request nudge to the class's feed-consented guardians. Dispatched
             // AFTER the transaction (afterCommit) so a queued worker never sees the
             // post before it is committed; fail-soft so it can never break this write.
-            SendGroupNotificationJob::dispatch(
-                (int) $group->masjid_id,
-                (int) $group->id,
-                GroupNotificationEvent::CLASS_STORY,
-                aboutContactId: null,
-                authorUserId: $post->author_user_id,
-                authorContactId: null,
-            )->afterCommit();
+            //
+            // NOT for a scheduled story: nobody may hear of it before they can read
+            // it. `groups:publish-due` sends this same email when its time comes.
+            if ($sendAt === null) {
+                SendGroupNotificationJob::dispatch(
+                    (int) $group->masjid_id,
+                    (int) $group->id,
+                    GroupNotificationEvent::CLASS_STORY,
+                    aboutContactId: null,
+                    authorUserId: $post->author_user_id,
+                    authorContactId: null,
+                )->afterCommit();
+            }
 
             $post->load(['author:id,name', 'attachments']);
 
@@ -190,11 +253,37 @@ class GroupPostsController extends Controller
     public function update(UpdateGroupPostRequest $request, $masjid_id, $group_id, $post_id)
     {
         $group = Group::findOrFail($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
+
+        $this->authorizeScheduledWrite($request->user(), $post);
+
+        // Moving a story's time. Only a story that has NOT gone out: once families
+        // have read one, "reschedule" would mean pulling it back, which is a
+        // deletion and not an edit.
+        $sendNow = $request->boolean('send_now');
+        $sendAt = $request->sendAt();
+        $moves = $sendNow || $sendAt !== null;
+
+        if ($moves && $post->isPublished()) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['send_at' => ['This story has already gone out, so its time can no longer be changed.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         try {
-            DB::transaction(function () use ($request, $post) {
+            DB::transaction(function () use ($request, $post, $moves, $sendNow, $sendAt) {
                 $fields = $request->safe()->only(['title', 'body', 'retained_until']);
+
+                if ($moves) {
+                    $goesOutAt = $sendNow ? now() : $sendAt;
+                    $fields += $this->retentionFollowing($post, $goesOutAt, $fields);
+                    // A new time is a new chance: a story that had been refused at
+                    // release is scheduled afresh, and re-asked at its new time.
+                    $fields['published_at'] = $goesOutAt;
+                    $fields['publish_failed_at'] = null;
+                    $fields['publish_failure'] = null;
+                }
 
                 if ($fields !== []) {
                     $post->update($fields);
@@ -204,6 +293,12 @@ class GroupPostsController extends Controller
             });
 
             $fresh = $post->fresh()->load(['author:id,name', 'attachments']);
+
+            // "Send now" is out this instant, so it is announced this instant, by the
+            // same claim the sweep makes: at most one email whoever gets there first.
+            if ($sendNow) {
+                $this->publisher->announce($fresh);
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -219,6 +314,70 @@ class GroupPostsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * The retention window follows the day a story goes OUT, not the day it was typed.
+     * Only a window the system stamped is moved: one the author chose (or this request
+     * sets) is theirs.
+     *
+     * @param array<string,mixed> $fields the fields this request already sets
+     * @return array<string,mixed>
+     */
+    private function retentionFollowing(GroupPost $post, $goesOutAt, array $fields): array
+    {
+        $days = (int) config('groups.feed.retention_days', 0);
+
+        if ($days <= 0 || array_key_exists('retained_until', $fields)) {
+            return [];
+        }
+
+        $stamped = $post->published_at?->copy()->addDays($days)->toDateString();
+
+        if ($post->retained_until !== null && $post->retained_until->toDateString() !== $stamped) {
+            return [];
+        }
+
+        return ['retained_until' => $goesOutAt->copy()->addDays($days)->toDateString()];
+    }
+
+    /**
+     * Who may change or cancel a story that is NOT out yet: its author and the office
+     * (S14). A co-teacher may SEE it in the Scheduled list and may not touch it.
+     *
+     * Deliberately not asked of a story that is out: those were already editable and
+     * deletable by any teacher of the class, and this slice does not change that.
+     */
+    private function authorizeScheduledWrite(?User $user, GroupPost $post): void
+    {
+        if ($post->isPublished()) {
+            return;
+        }
+
+        if ($this->maySchedule($user, $post)) {
+            return;
+        }
+
+        abort(403, 'Only the author or the office can change a story that has not gone out.');
+    }
+
+    private function maySchedule(?User $user, GroupPost $post): bool
+    {
+        return $user !== null
+            && ((int) $post->author_user_id === (int) $user->id || $user->can('manage contacts'));
+    }
+
+    /**
+     * The group's stories AS THIS CALLER MAY SEE THEM. Staff who may see a scheduled
+     * story (a teacher of the class, the office) address every story; anybody else
+     * this controller serves (an administrator who is on the roster only as a parent,
+     * say) addresses the stories that are out, exactly as a family does.
+     */
+    private function postsFor(Group $group, ?User $user): \Illuminate\Database\Eloquent\Relations\HasMany|\Illuminate\Database\Eloquent\Builder
+    {
+        $posts = $group->posts();
+
+        return $this->audience->mayReadUnpublished($user, $group) ? $posts : $posts->published();
     }
 
     /**
@@ -257,7 +416,10 @@ class GroupPostsController extends Controller
 
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
 
-        $post = $group->posts()->findOrFail($post_id);
+        // published(): nobody reacts to a story before its time, staff included. A tap
+        // on a scheduled story would be a reaction the digest could announce to its
+        // author before any family had read a word of it.
+        $post = $group->posts()->published()->findOrFail($post_id);
 
         if (! Reactions::isAllowed($reaction)) {
             return response()->json([
@@ -301,7 +463,12 @@ class GroupPostsController extends Controller
     public function destroy($masjid_id, $group_id, $post_id)
     {
         $group = Group::findOrFail($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $this->postsFor($group, request()->user())->findOrFail($post_id);
+
+        // Deleting a story that has not gone out IS cancelling it: the author or the
+        // office only. A soft delete, like every story: a mis-click is recoverable and
+        // the bytes go with retention.
+        $this->authorizeScheduledWrite(request()->user(), $post);
 
         $post->delete();
 
@@ -333,7 +500,7 @@ class GroupPostsController extends Controller
         // explicit and 404s an id that names no organization at all.
         Masjid::findOrFail($masjid_id);
         $group = Group::findOrFail($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_MEDIA);
@@ -381,7 +548,7 @@ class GroupPostsController extends Controller
     {
         Masjid::findOrFail($masjid_id);
         $group = Group::findOrFail($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_MEDIA);
@@ -479,6 +646,16 @@ class GroupPostsController extends Controller
             'retained_until' => optional($post->retained_until)->toDateString(),
             'created_at' => optional($post->created_at)->toIso8601String(),
             'updated_at' => optional($post->updated_at)->toIso8601String(),
+            // When it goes (or went) OUT to families, and where it stands. `published_at_
+            // local` is the school's own clock in the form the Send-later field takes, so
+            // the edit form shows what was chosen and not a UTC instant.
+            'published_at' => optional($post->published_at ?? $post->created_at)->toIso8601String(),
+            'published_at_local' => ScheduledTime::local($post->published_at ?? $post->created_at, $this->zone()),
+            'status' => $post->hasFailedToPublish() ? 'failed' : ($post->isScheduled() ? 'scheduled' : 'published'),
+            'publish_failure' => $post->publish_failure,
+            // Author and office only: a co-teacher sees a scheduled story and is not
+            // offered the buttons that would be refused.
+            'can_change_schedule' => $post->isPublished() || $this->maySchedule(request()->user(), $post),
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a reader who
             // simply has no photos this week is not confused with one who is not
@@ -545,6 +722,11 @@ class GroupPostsController extends Controller
         ];
     }
 
+    private function zone(): string
+    {
+        return $this->zone ??= ScheduledTime::schoolTimezone();
+    }
+
     /** The school's own time zone, so "Not tracked before <date>" names the school's day. */
     private function schoolTimezone(): string
     {
@@ -587,6 +769,12 @@ class GroupPostsController extends Controller
             'max_images_per_post' => (int) config('groups.media.max_per_post', 0),
             // The four reaction buttons, from the one shared list.
             'reactions' => Reactions::catalogue(),
+            // "Send later": the clock the field is read on (the SCHOOL's, never the
+            // browser's) and how far ahead it may go.
+            'scheduling' => [
+                'timezone' => $this->zone(),
+                'max_days_ahead' => ScheduledTime::maxDaysAhead(),
+            ],
             // Read receipts: whether they are being collected, and — only then —
             // how many consented, current parents hold no portal login and so
             // cannot be counted (the footnote under "Seen by 4 of 7").

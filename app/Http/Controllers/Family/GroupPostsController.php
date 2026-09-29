@@ -58,10 +58,12 @@ class GroupPostsController extends FamilyController
             $this->contact(), $group, GroupAudience::DISCLOSURE_MEDIA
         );
 
+        // published(): a story scheduled for later, or one the sweep refused to
+        // release, is not in the feed. Every read below says the same.
         $posts = $group->posts()
+            ->published()
             ->with(['author:id,name', 'attachments'])
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
+            ->newestPublishedFirst()
             ->paginate($this->perPage($request, 15));
 
         // One query for the page's reactions, named as a PARENT may see them:
@@ -99,7 +101,7 @@ class GroupPostsController extends FamilyController
 
         $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
 
-        $post = $group->posts()->with(['author:id,name', 'attachments'])->findOrFail($post_id);
+        $post = $group->posts()->published()->with(['author:id,name', 'attachments'])->findOrFail($post_id);
 
         $mayReceiveMedia = $this->audience->mayReceive(
             $this->contact(), $group, GroupAudience::DISCLOSURE_MEDIA
@@ -173,6 +175,7 @@ class GroupPostsController extends FamilyController
         }
 
         $postIds = $group->posts()
+            ->published()
             ->whereIn('id', array_map('intval', $request->validated('post_ids')))
             ->pluck('id');
 
@@ -228,7 +231,7 @@ class GroupPostsController extends FamilyController
 
         $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
 
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $group->posts()->published()->findOrFail($post_id);
 
         if (! Reactions::isAllowed($reaction)) {
             return response()->json([
@@ -277,7 +280,7 @@ class GroupPostsController extends FamilyController
         Masjid::findOrFail($masjid_id);
 
         $group = $this->group($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $group->posts()->published()->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_MEDIA);
@@ -318,7 +321,7 @@ class GroupPostsController extends FamilyController
         Masjid::findOrFail($masjid_id);
 
         $group = $this->group($group_id);
-        $post = $group->posts()->findOrFail($post_id);
+        $post = $group->posts()->published()->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_MEDIA);
@@ -379,6 +382,9 @@ class GroupPostsController extends FamilyController
             'body' => $post->body,
             'author' => $post->author ? ['name' => $post->author->name] : null,
             'created_at' => optional($post->created_at)->toIso8601String(),
+            // When it went OUT to families: the date the portal shows. It is not
+            // `created_at`, which is when the teacher typed a story she scheduled.
+            'published_at' => optional($post->published_at ?? $post->created_at)->toIso8601String(),
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a parent with
             // no photos this week is not confused with one who is not allowed to

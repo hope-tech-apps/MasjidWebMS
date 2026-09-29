@@ -86,12 +86,23 @@ class GroupMediaPlaybackController extends Controller
         $masjid = $this->bindTenant($masjid_id);
 
         $group = Group::findOrFail($group_id);
-        // No withTrashed(), matching downloadAttachment exactly: a post an
-        // admin hid this morning stops playing this morning.
-        $post = $group->posts()->findOrFail($post_id);
-        $attachment = $post->attachments()->findOrFail($attachment_id);
-
         $viewer = $this->viewer($request, $masjid);
+
+        // No withTrashed(), matching downloadAttachment exactly: a post an
+        // admin hid this morning stops playing this morning. And a story that is
+        // not OUT yet (scheduled, or refused at release) plays only for the staff
+        // who may see a scheduled story: the author previewing the video she
+        // attached. A family viewer, or a ticket for a guessed post id, gets a 404
+        // exactly as the feed gives one. The stream re-asks this per range, for
+        // the viewer the ticket names, like every other question here.
+        $posts = $group->posts();
+
+        if (! $this->audience->mayReadUnpublished($viewer, $group)) {
+            $posts = $posts->published();
+        }
+
+        $post = $posts->findOrFail($post_id);
+        $attachment = $post->attachments()->findOrFail($attachment_id);
 
         // The SAME question GroupPostsController::downloadAttachment asks, put
         // again here rather than trusted from when the ticket was minted.

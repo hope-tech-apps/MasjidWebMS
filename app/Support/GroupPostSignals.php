@@ -177,10 +177,14 @@ final class GroupPostSignals
                 ];
             }
 
+            // When the story went OUT, not when it was typed: a story scheduled before
+            // recording began and released after it could be read under recording.
+            $wentOut = $post->published_at ?? $post->created_at;
+
             $untracked = $since !== null
                 && $seenBy === []
-                && $post->created_at !== null
-                && $post->created_at->lt($since);
+                && $wentOut !== null
+                && $wentOut->lt($since);
 
             $out[(int) $post->id] = [
                 'seen_by' => $seenBy,

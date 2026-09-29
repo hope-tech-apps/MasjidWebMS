@@ -165,7 +165,9 @@ class GroupPostReadsTest extends TestCase
         $a = $this->makePost(body: 'One');
         $b = $this->makePost(body: 'Two');
 
-        $this->travelTo(now()->startOfMinute());
+        // Forward to a minute boundary, never back: a story is out from the moment it
+        // was written, and going back before that would make both of them scheduled.
+        $this->travelTo(now()->addMinute()->startOfMinute());
         $this->seen([$a->id, $b->id], $this->parentA)
             ->assertOk()
             ->assertJsonPath('data.recorded', 2)
@@ -460,7 +462,8 @@ class GroupPostReadsTest extends TestCase
     private function makeOldPost(int $days, string $body): GroupPost
     {
         $post = $this->makePost(body: $body);
-        GroupPost::withoutMasjidScope()->whereKey($post->id)->update(['created_at' => now()->subDays($days), 'updated_at' => now()->subDays($days)]);
+        // published_at too: a story's age, for the receipt line, is when it went OUT (T-002.4).
+        GroupPost::withoutMasjidScope()->whereKey($post->id)->update(['created_at' => now()->subDays($days), 'updated_at' => now()->subDays($days), 'published_at' => now()->subDays($days)]);
 
         return $post->refresh();
     }

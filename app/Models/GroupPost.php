@@ -40,12 +40,20 @@ class GroupPost extends Model
         'title',
         'body',
         'retained_until',
+        // Scheduling (T-002.4). See the add_scheduling_to_group_posts migration.
+        'published_at',
+        'announced_at',
+        'publish_failed_at',
+        'publish_failure',
     ];
 
     protected function casts(): array
     {
         return [
             'retained_until' => 'date',
+            'published_at' => 'datetime',
+            'announced_at' => 'datetime',
+            'publish_failed_at' => 'datetime',
         ];
     }
 
@@ -59,6 +67,25 @@ class GroupPost extends Model
         // somebody decides", which leaves the column null and the row outside
         // the purge sweep entirely.
         static::creating(function (self $post): void {
+            // WHEN FAMILIES MAY SEE IT. An ordinary post is out the moment it is
+            // written (its own `created_at` when a caller supplies one, so an
+            // import keeps its order); a scheduled one carries a future time.
+            // Stamped here so no writer can forget it, and `scopePublished()` is
+            // the only door a family read uses.
+            if ($post->published_at === null) {
+                $post->published_at = $post->created_at ?? now();
+            }
+
+            // A story that is already out when it is written was announced by
+            // whoever wrote it (the controller dispatches the email itself), so
+            // the sweep must not announce it a second time. Only a story
+            // scheduled for LATER is left unannounced, for the sweep to claim.
+            if ($post->announced_at === null
+                && $post->publish_failed_at === null
+                && $post->published_at->lte(now())) {
+                $post->announced_at = $post->published_at;
+            }
+
             if ($post->retained_until !== null) {
                 return;
             }
@@ -66,7 +93,9 @@ class GroupPost extends Model
             $days = (int) config('groups.feed.retention_days', 0);
 
             if ($days > 0) {
-                $post->retained_until = now()->addDays($days)->toDateString();
+                // Counted from the day it goes OUT, not the day it was typed: a
+                // story scheduled a month ahead must not lose a month of its life.
+                $post->retained_until = $post->published_at->copy()->addDays($days)->toDateString();
             }
         });
 
@@ -113,6 +142,86 @@ class GroupPost extends Model
     public function reactions(): HasMany
     {
         return $this->hasMany(GroupPostReaction::class);
+    }
+
+    /**
+     * THE ONE DOOR EVERY FAMILY READ GOES THROUGH: stories that are out.
+     *
+     * A story is out when its `published_at` has come and it was not refused at
+     * release (`publish_failed_at`). A NULL `published_at` is read as out: only a
+     * row written by code that predates the column (the deploy seconds, an import
+     * with raw SQL) can carry one, and before scheduling existed such a row was
+     * visible. Everything else in the system stamps the column.
+     *
+     * Chained on `$group->posts()` at every parent-facing site (the feed, one
+     * story, the seen POST, a reaction, an attachment, a playback ticket and the
+     * playback stream). A family site that forgets it would serve tomorrow's
+     * story today, and the only thing that would notice is a test that asks each
+     * site for a future post (ScheduledClassStoryTest).
+     */
+    public function scopePublished(Builder $query, $asOf = null): Builder
+    {
+        $now = $asOf ?? now();
+
+        return $query
+            ->whereNull($query->getModel()->qualifyColumn('publish_failed_at'))
+            ->where(function (Builder $when) use ($query, $now): void {
+                $column = $query->getModel()->qualifyColumn('published_at');
+
+                $when->whereNull($column)->orWhere($column, '<=', $now);
+            });
+    }
+
+    /** Stories waiting for their time: in the future and not refused. */
+    public function scopeScheduled(Builder $query, $asOf = null): Builder
+    {
+        return $query
+            ->whereNull($query->getModel()->qualifyColumn('publish_failed_at'))
+            ->where($query->getModel()->qualifyColumn('published_at'), '>', $asOf ?? now());
+    }
+
+    /** Stories NOT out: waiting for their time, or refused at release. The Scheduled list. */
+    public function scopeUnpublished(Builder $query, $asOf = null): Builder
+    {
+        $now = $asOf ?? now();
+        $failed = $query->getModel()->qualifyColumn('publish_failed_at');
+        $at = $query->getModel()->qualifyColumn('published_at');
+
+        return $query->where(function (Builder $q) use ($failed, $at, $now): void {
+            $q->whereNotNull($failed)->orWhere($at, '>', $now);
+        });
+    }
+
+    /** Stories the sweep refused to release. */
+    public function scopeFailedToPublish(Builder $query): Builder
+    {
+        return $query->whereNotNull($query->getModel()->qualifyColumn('publish_failed_at'));
+    }
+
+    /** The feed's order: when each story went OUT, newest first (id breaks a tie). */
+    public function scopeNewestPublishedFirst(Builder $query): Builder
+    {
+        return $query
+            ->orderByRaw('COALESCE(group_posts.published_at, group_posts.created_at) DESC')
+            ->orderByDesc('group_posts.id');
+    }
+
+    public function isPublished($asOf = null): bool
+    {
+        return $this->publish_failed_at === null
+            && ($this->published_at === null || $this->published_at->lte($asOf ?? now()));
+    }
+
+    public function isScheduled($asOf = null): bool
+    {
+        return $this->publish_failed_at === null
+            && $this->published_at !== null
+            && $this->published_at->gt($asOf ?? now());
+    }
+
+    public function hasFailedToPublish(): bool
+    {
+        return $this->publish_failed_at !== null;
     }
 
     /**

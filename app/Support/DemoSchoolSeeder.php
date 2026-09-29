@@ -583,7 +583,9 @@ class DemoSchoolSeeder
                 'body' => $blueprint['body'],
             ]);
 
-            $post->forceFill(['created_at' => $at, 'updated_at' => $at])->saveQuietly();
+            // published_at and announced_at follow the back-dated day too: the feed orders by
+            // when a story went OUT, and a seeded story is not news for the sweep.
+            $post->forceFill(['created_at' => $at, 'updated_at' => $at, 'published_at' => $at, 'announced_at' => $at])->saveQuietly();
 
             $created['posts'] = ($created['posts'] ?? 0) + 1;
 

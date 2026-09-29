@@ -307,6 +307,29 @@ class GroupAudience
     }
 
     /**
+     * May this principal see a class story that is NOT OUT yet — one scheduled for
+     * later, or one the sweep refused to release (T-002.4)?
+     *
+     * Deliberately NARROWER than reading the feed. Reading the feed reaches a
+     * consented guardian and a participant, and an office administrator who is also a
+     * parent of the class reads it through the email bridge as that parent; none of
+     * them may see a story before its time. The two doors in are the ones S14 names:
+     * a teacher of the class (`group_staff`, "co-teachers see") and the office, which
+     * is `manage contacts` (the permission the admin realm's write routes carry, and
+     * the only one that edits or cancels somebody else's scheduled item).
+     *
+     * A Contact is never in: a parent has no way to a story before its time.
+     */
+    public function mayReadUnpublished(?Authenticatable $principal, Group $group): bool
+    {
+        if (! $principal instanceof User) {
+            return false;
+        }
+
+        return $this->isLeaderOf($principal, $group) || $principal->can('manage contacts');
+    }
+
+    /**
      * May this user receive `$disclosure` about `$group`?
      *
      * Three ways in, and no fourth:

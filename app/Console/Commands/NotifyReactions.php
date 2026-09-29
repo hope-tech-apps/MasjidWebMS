@@ -173,8 +173,14 @@ class NotifyReactions extends Command
                 'live' => $live,
                 'author_user_id' => $post?->author_user_id !== null ? (int) $post->author_user_id : null,
                 'author_contact_id' => null,
+                // A story that is not OUT yet (scheduled, or refused at release) has no
+                // reader, so a reaction on it must not be announced to its author. Such a
+                // row cannot normally exist (the reaction endpoints refuse an unpublished
+                // story), and if one does it is left UNCLAIMED, not forgotten: once the
+                // story is out the next sweep tells its author, exactly once.
+                'deferred' => $live && ! $post->isPublished(),
             ];
-        })->all();
+        })->reject(fn (array $item): bool => $item['deferred'])->values()->all();
     }
 
     /** @return list<array<string,mixed>> */
