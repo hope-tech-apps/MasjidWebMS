@@ -93,7 +93,7 @@ class StudioProvisionLogoTest extends TestCase
         LogoDerivatives::$headroomBytes = 1024 * 1024;
 
         $response = $this->provision($draft->id)->assertStatus(422)->assertJsonPath('status', 'failed');
-        $this->assertStringContainsString('The logo is too large to make the icons from (400×200)', $response->json('data.logo.0'));
+        $this->assertStringContainsString('This logo is 400 × 200 pixels', $response->json('data.logo.0'));
 
         $this->assertSame($masjidsBefore, Masjid::count(), 'no organisation');
         $this->assertSame(0, Media::count(), 'no media rows');
@@ -124,10 +124,25 @@ class StudioProvisionLogoTest extends TestCase
             $this->assertLessThanOrEqual(10 * 1024 * 1024, $left, 'the limit less what is held, and nothing else');
             $this->assertGreaterThan(0, $left);
 
-            $response = $this->provision($draft->id)->assertStatus(422)->assertJsonPath('status', 'failed');
-            $this->assertStringContainsString('The logo is too large to make the icons from (400×200)', $response->json('data.logo.0'));
+            // The check itself, not a whole provision request: 10 MiB is room
+            // for getimagesize and the arithmetic, and a request that allocated
+            // more under this limit would take the whole run down with it.
+            $path = Storage::disk((string) config('studio.logo.disk'))->path($draft->logo_path);
 
-            // With a limit 512 MiB above what it holds, the same logo is derived.
+            try {
+                LogoDerivatives::assertFits($path);
+                $this->fail('A logo that needs the 20 MiB allowance fitted in 10 MiB');
+            } catch (\App\Support\Studio\LogoTooLarge $refused) {
+                $this->assertSame(\App\Support\Studio\LogoTooLarge::MEMORY, $refused->limit);
+                $this->assertStringContainsString('This logo is 400 × 200 pixels', $refused->errors()['logo'][0]);
+            }
+        } finally {
+            ini_set('memory_limit', (string) $limit);
+        }
+
+        // With a limit 512 MiB above what it holds, the same logo is derived
+        // through the whole provision request.
+        try {
             ini_set('memory_limit', (string) (memory_get_usage(true) + 512 * 1024 * 1024));
             $this->provision($draft->id)->assertCreated();
         } finally {
@@ -148,7 +163,7 @@ class StudioProvisionLogoTest extends TestCase
 
         $this->provision($draft->id)
             ->assertStatus(422)
-            ->assertJsonPath('data.logo.0', 'The logo is too large to make the icons from (20000×20000). Upload a smaller logo, at most ' . LogoDerivatives::MAX_EDGE . ' pixels on each side.');
+            ->assertJsonPath('data.logo.0', 'This logo is 20,000 × 20,000 pixels. Upload one no larger than 6,500 × 6,500 (a PNG or JPEG).');
 
         $this->assertSame(0, Media::count());
         $this->assertSame([], $this->derivativeDirectories($draft->id));

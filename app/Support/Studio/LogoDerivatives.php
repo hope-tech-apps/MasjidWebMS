@@ -38,8 +38,9 @@ class LogoDerivatives
 {
     /**
      * The longest edge, in pixels, of a logo any path here will decode. The
-     * Studio logo upload's `dimensions` rule reads this same constant, so the
-     * two cannot drift.
+     * Studio logo upload enforces it through assertFits (its `dimensions` rule
+     * keeps only the minimum), and the SPA's LOGO_LARGEST_EDGE is held equal to
+     * it by StudioSpaSourceTest.
      */
     public const MAX_EDGE = 8000;
 
@@ -223,22 +224,33 @@ class LogoDerivatives
         }
 
         [$width, $height] = [(int) $info[0], (int) $info[1]];
-
-        if ($width > self::MAX_EDGE || $height > self::MAX_EDGE) {
-            throw new LogoTooLarge($width, $height, LogoTooLarge::EDGE, self::MAX_EDGE);
-        }
-
         $fileBytes = (int) @filesize($path);
         $headroom = self::headroomBytes();
 
-        if ($headroom !== null && self::estimateBytes($width, $height, $fileBytes) > $headroom) {
-            // The longest square side the headroom would take, to the nearest
-            // hundred down: a number the SuperAdmin can act on.
-            $fixed = self::FIXED_ALLOWANCE_BYTES + $fileBytes;
-            $side = (int) floor(sqrt(max(0, $headroom - $fixed) / self::BYTES_PER_PIXEL));
-
-            throw new LogoTooLarge($width, $height, LogoTooLarge::MEMORY, min(self::MAX_EDGE, intdiv($side, 100) * 100));
+        if ($width > self::MAX_EDGE || $height > self::MAX_EDGE) {
+            throw new LogoTooLarge($width, $height, LogoTooLarge::EDGE, self::largestSide($headroom, $fileBytes));
         }
+
+        if ($headroom !== null && self::estimateBytes($width, $height, $fileBytes) > $headroom) {
+            throw new LogoTooLarge($width, $height, LogoTooLarge::MEMORY, self::largestSide($headroom, $fileBytes));
+        }
+    }
+
+    /**
+     * The largest square, in pixels a side, the check would take now, to the
+     * nearest hundred down: the edge cap, or less when the memory left is the
+     * tighter limit. An edge refusal says this too, so it never suggests a size
+     * the memory check would then refuse (8,000 is far over what 128M takes).
+     */
+    private static function largestSide(?int $headroom, int $fileBytes): int
+    {
+        if ($headroom === null) {
+            return self::MAX_EDGE;
+        }
+
+        $side = (int) floor(sqrt(max(0, $headroom - self::FIXED_ALLOWANCE_BYTES - $fileBytes) / self::BYTES_PER_PIXEL));
+
+        return min(self::MAX_EDGE, intdiv($side, 100) * 100);
     }
 
     /**

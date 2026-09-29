@@ -27,7 +27,8 @@ final class LogoTooLarge extends ValidationException
 
     /**
      * @param  string  $limit  EDGE or MEMORY: which limit the logo went over
-     * @param  int  $maxSide  the longest side, in pixels, that would have been accepted
+     * @param  int  $maxSide  the largest square, in pixels a side, that would be taken now:
+     *                        the edge cap or what the memory left allows, whichever is less
      */
     public function __construct(
         public readonly int $width,
@@ -35,9 +36,12 @@ final class LogoTooLarge extends ValidationException
         public readonly string $limit,
         int $maxSide,
     ) {
+        // Said so an admin can act on it alone (the owner, provisioning a
+        // client): the logo's size, and the size to upload instead.
+        $size = number_format($width) . ' × ' . number_format($height);
         $sentence = $maxSide >= 100
-            ? "The logo is too large to make the icons from ({$width}×{$height}). Upload a smaller logo, at most {$maxSide} pixels on each side."
-            : "The logo is too large to make the icons from ({$width}×{$height}) just now. Try again in a moment, or upload a much smaller logo.";
+            ? "This logo is {$size} pixels. Upload one no larger than " . number_format($maxSide) . ' × ' . number_format($maxSide) . ' (a PNG or JPEG).'
+            : "This logo is {$size} pixels, and there is not enough memory free to make its icons just now. Try again in a moment.";
 
         $validator = Validator::make([], []);
         $validator->errors()->add('logo', $sentence);

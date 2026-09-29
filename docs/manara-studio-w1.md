@@ -450,7 +450,9 @@ The logo `url` is relative, and the SPA fetches it as a bearer blob.
 - `StoreStudioDraftLogoRequest`:
   - `mimetypes:image/png,image/jpeg`, sniffed;
   - `max:8192`;
-  - `dimensions:min_width=96,min_height=96,max_width=8000,max_height=8000`;
+  - `dimensions:min_width=96,min_height=96`, and at most `LogoDerivatives::MAX_EDGE` (8000) a side
+    plus the memory check, through `LogoDerivatives::assertFits` in the request's `after()` (W2 S8
+    hardening, 2026-09-28);
   - SVG is refused.
   - Why: GD cannot rasterise SVG, and the private-uploads rule refuses it as
     script-bearing (`.claude/rules/private-uploads.md:82-89`).

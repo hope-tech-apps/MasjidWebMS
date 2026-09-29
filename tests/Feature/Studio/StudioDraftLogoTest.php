@@ -153,7 +153,8 @@ class StudioDraftLogoTest extends TestCase
         $this->uploadLogo($id, $this->realUpload('huge.png', $this->headerOnlyPngBytes(20000, 20000)))
             ->assertStatus(422)
             ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [
-                'The logo is too large to make the icons from (20000×20000). Upload a smaller logo, at most ' . LogoDerivatives::MAX_EDGE . ' pixels on each side.',
+                // The smaller limit is suggested: the roomy 512 MiB seam takes a 6,556 px square.
+                'This logo is 20,000 × 20,000 pixels. Upload one no larger than 6,500 × 6,500 (a PNG or JPEG).',
             ]]]);
 
         $this->assertSame([], $this->storedLogos(), 'nothing was written');
@@ -174,7 +175,7 @@ class StudioDraftLogoTest extends TestCase
         $this->uploadLogo($id, $this->realUpload('big.png', $this->headerOnlyPngBytes(3000, 3000)))
             ->assertStatus(422)
             ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [
-                'The logo is too large to make the icons from (3000×3000). Upload a smaller logo, at most 1300 pixels on each side.',
+                'This logo is 3,000 × 3,000 pixels. Upload one no larger than 1,300 × 1,300 (a PNG or JPEG).',
             ]]]);
 
         $this->assertSame([$kept], $this->storedLogos(), 'the draft keeps the logo it had, and the refused one was not stored');

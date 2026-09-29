@@ -224,7 +224,8 @@ class BrandAssetRegenerationTest extends TestCase
 
     private function tooLargeSentence(int $width, int $height, int $maxSide): string
     {
-        return "The logo is too large to make the icons from ({$width}×{$height}). Upload a smaller logo, at most {$maxSide} pixels on each side.";
+        return 'This logo is ' . number_format($width) . ' × ' . number_format($height) . ' pixels. Upload one no larger than '
+            . number_format($maxSide) . ' × ' . number_format($maxSide) . ' (a PNG or JPEG).';
     }
 
     #[Test]
@@ -507,7 +508,9 @@ class BrandAssetRegenerationTest extends TestCase
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(20000, 20000, LogoDerivatives::MAX_EDGE)]]]);
+            // The suggestion is the smaller limit: at the roomy 512 MiB seam the
+            // memory takes a 6,556 px square, under the 8,000 edge cap.
+            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(20000, 20000, 6500)]]]);
 
         $this->assertSame(0, $this->derivativeCount($org));
         $this->assertSame($filesBefore, $this->publicFiles());
@@ -523,7 +526,7 @@ class BrandAssetRegenerationTest extends TestCase
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(LogoDerivatives::MAX_EDGE + 1, 10, LogoDerivatives::MAX_EDGE));
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(LogoDerivatives::MAX_EDGE + 1, 10, 6500));
     }
 
     #[Test]
