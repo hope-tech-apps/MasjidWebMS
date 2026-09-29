@@ -142,6 +142,14 @@
                 <div v-else-if="!posts.length" class="text-muted small">{{ t('story_empty') }}</div>
 
                 <div v-else class="d-flex flex-column gap-3">
+                    <!-- The disclosure that the school can see who has opened a story.
+                         Drawn from the SAME server value that lets the portal record
+                         a read (`meta.story_reads.enabled`), so the notice and the recording
+                         go live together and never one without the other. -->
+                    <p v-if="storyReadsEnabled" class="text-muted small mb-0" dir="auto" data-test="story-seen-notice">
+                        <i class="bi bi-eye me-1" aria-hidden="true"></i>{{ t('story_seen_notice') }}
+                    </p>
+                    <p v-if="storyReactionError" class="text-danger small mb-0" role="alert">{{ tMessage(storyReactionError) }}</p>
                     <article v-for="post in posts" :key="post.id" class="card border-0 shadow-sm">
                         <div class="card-body">
                             <h2 v-if="post.title" class="h6 mb-1" dir="auto">{{ txPost(post, 'title') }}</h2>
@@ -161,6 +169,12 @@
                             <p v-if="post.media_withheld" class="text-muted small fst-italic mb-0 mt-2">
                                 {{ t('media_withheld') }}
                             </p>
+
+                            <!-- 🤲 👍 💯 ❓. The server sends staff names only: another
+                                 family's reaction is counted, never named. -->
+                            <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
+                                            :labels="signalLabels"
+                                            :send="(key: string, on: boolean) => reactToPost(post, key, on)" />
                         </div>
                     </article>
                 </div>
@@ -910,7 +924,7 @@ import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
-import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor } from '@/views/family/familyClassRun';
+import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, watchStoriesSeen } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -1363,6 +1377,52 @@ const reactTo = async (m: any, key: string, on: boolean) => {
         return null;
     }
 };
+
+// A reaction on a class story post. Same two idempotent verbs as a message
+// reaction. The URL is built from the RUN's base (school and class fixed when
+// the screen began), so a school switched mid-tap cannot aim it at the other
+// school's post; a run that went stale answers null and changes nothing.
+const reactToPost = async (post: any, key: string, on: boolean) => {
+    const run = beginRun();
+    const url = `${run.base}/posts/${post.id}/reactions/${key}`;
+    try {
+        const res = on ? await FamilyApiService.put(url) : await FamilyApiService.delete(url);
+        if (run.stale()) return null;
+        return res.data?.data?.reactions ?? null;
+    } catch (e: any) {
+        if (run.stale()) return null;
+        if (fail(e)) return null;
+        const served = e?.response?.data?.message;
+        storyReactionError.value = served ? { text: served } : { key: 'reaction_failed' };
+        return null;
+    }
+};
+const storyReactionError = ref<FamilyMessage | null>(null);
+
+// ---------- story read receipts ("Seen by 4 of 7 parents", staff-side) ----------
+// The school's `groups.story_reads` switch, as the server reports it. It gates
+// the notice above AND the recording below, so the two go live together.
+const storyReadsEnabled = ref(false);
+/**
+ * The decision (Story tab open, switch on, page visible, load finished without
+ * failing, the notice drawn) lives in `watchStoriesSeen`, where SPA tests drive it.
+ * It is never called from the fetch that loads the posts, which runs on page load
+ * whatever tab is open and returns the newest 15.
+ */
+const reportStoriesSeen = watchStoriesSeen({
+    tab,
+    posts,
+    enabled: storyReadsEnabled,
+    loading,
+    error,
+    mayReceiveFeed: () => !!group.value?.may_receive_feed,
+    visible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+    begin: () => beginRun(),
+});
+// A tab that was in the background when the stories loaded reports them the
+// moment it is looked at.
+onMounted(() => document.addEventListener('visibilitychange', reportStoriesSeen));
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', reportStoriesSeen));
 
 const signalLabels = computed(() => ({
     you: t('msg_you'),
@@ -1938,6 +1998,7 @@ onMounted(async () => {
             const p = await FamilyApiService.get(`${run.base}/posts`);
             if (run.stale()) return;
             posts.value = rowsOf(p.data?.data);
+            storyReadsEnabled.value = p.data?.meta?.story_reads?.enabled === true;
         }
 
         const refreshed = await FamilyApiService.get(`${run.base}/threads`);

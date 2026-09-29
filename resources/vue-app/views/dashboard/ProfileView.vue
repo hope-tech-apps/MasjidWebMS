@@ -31,8 +31,11 @@
             <div class="d-flex flex-column gap-4 flex-md-row justify-content-md-between w-100">
                 <!-- Email Input -->
                 <ColumnInputContainer label="Email" name="email_input" :show_error="true" class="w-100">
+                    <!-- Read-only: the sign-in address is an identity, and only an administrator changes it
+                         (UpdateProfileRequest refuses any other value). -->
                     <Field name="email_input" type="text" v-model="email" class="dashboard-input"
-                        placeholder="user email goes here"></Field>
+                        placeholder="user email goes here" readonly
+                        title="To change your sign-in email, ask your organisation's administrator."></Field>
                 </ColumnInputContainer>
 
                 <!-- Phone Input -->

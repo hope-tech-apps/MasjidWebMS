@@ -74,6 +74,20 @@ Schedule::command('prayers:daily-resync')->dailyAt('07:00');
 // have two processes force-deleting the same rows.
 Schedule::command('groups:purge-feed')->dailyAt('03:10')->withoutOverlapping();
 
+// The reaction digest (2026-09-29): tells the AUTHOR of a class story or a message,
+// once, in a content-free email, that there are new reactions. A tap itself
+// notifies nobody; this sweep is the only thing that speaks about a reaction, and
+// it waits out a settle window (config groups.reactions.settle_minutes) so a tap
+// taken back is never announced and a burst is one email. Hourly, at :20 — clear
+// of the quarter-hourly reaper (:00/:15/:30/:45) and the :47 canary.
+// withoutOverlapping() because each row is claimed by an UPDATE and two concurrent
+// sweeps would only contend for the same rows. The mutex expires after 55 minutes,
+// not the 24 hours of the default: a run that is killed (a deploy, an OOM) never
+// releases it, and with the default that one dead run would silence every digest for
+// a day. 55 lapses before the next :20, so a killed run costs only its own hour.
+// Logs one line per run. See App\Console\Commands\NotifyReactions.
+Schedule::command('groups:notify-reactions')->hourlyAt(20)->withoutOverlapping(55);
+
 // The parent portal's translation cache. Same policy as the sweep above, over a
 // derived copy of the same content: every row is the Arabic of something a
 // teacher wrote about a child, so it is bounded for the reason the post it came

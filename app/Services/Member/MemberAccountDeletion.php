@@ -9,6 +9,7 @@ use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
+use App\Support\ContactIdentity;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -113,6 +114,16 @@ class MemberAccountDeletion
         // Only a guardian can write one, and a guardian's edge already keeps
         // the contact, so this changes no outcome.
         'group_message_reactions' => ['contact_id'],
+        // The same, on a class STORY post (2026-09-29): a parent's 🤲/👍/💯/❓ on
+        // a post their teacher wrote. Only a guardian can write one, and a
+        // guardian's edge already keeps the contact, so this changes no outcome.
+        'group_post_reactions' => ['contact_id'],
+        // Which class stories a guardian opened (2026-09-29, read receipts; off by
+        // default). Recorded only for a consented guardian with a live login, so
+        // their guardian edge already keeps the contact: no outcome changes. It
+        // is the school's record of what it published to whom, like the thread
+        // read bookmark above.
+        'group_post_reads' => ['contact_id'],
         'group_thread_reads' => ['contact_id'],
         'group_threads' => ['created_by_contact_id'],
         // An order the person placed on the organisation's old Wix site,
@@ -424,6 +435,14 @@ class MemberAccountDeletion
      * misses holds a token from before that change; it expires within the family
      * guard's 30 days, and Delete account in the app still works for them.
      *
+     * THE ADDRESS MUST BE THE ONE THAT WAS PROVED, EXACTLY. The code that
+     * authorised this call was mailed to the TYPED address, and `login_email` is
+     * utf8mb4_unicode_ci on production, where `victim@gmaíl.com` = `victim@gmail.com`.
+     * Trusting the query would let somebody who owns the look-alike domain prove
+     * THAT mailbox and delete the victim's account. The query only narrows; the
+     * candidates are filtered to the exact address (ContactIdentity) before they
+     * are counted, so a look-alike deletes nobody.
+     *
      * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int}|null
      */
     public function deleteByAddress(string $submittedEmail, string $via, ?string $ip = null): ?array
@@ -434,17 +453,20 @@ class MemberAccountDeletion
             return null;
         }
 
-        $email = mb_strtolower(trim($submittedEmail));
+        $email = ContactIdentity::submittedAddress($submittedEmail);
 
-        if ($email === '') {
+        if ($email === null) {
             return null;
         }
 
-        $matches = Contact::query()
-            ->whereNotNull('login_email')
-            ->whereRaw('LOWER(login_email) = ?', [$email])
-            ->limit(2)
-            ->get();
+        $matches = ContactIdentity::keepExactMatches(
+            Contact::query()
+                ->whereNotNull('login_email')
+                ->whereRaw('LOWER(login_email) = ?', [$email])
+                ->get(),
+            'login_email',
+            $email,
+        );
 
         // Two contacts on one address is ambiguous, and an identity service must
         // not guess which person to delete.

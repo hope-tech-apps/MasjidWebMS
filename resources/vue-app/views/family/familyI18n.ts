@@ -352,6 +352,11 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reaction_hundred: "100",
         reaction_question: "Question",
         reaction_failed: "That reaction could not be saved.",
+        // Shown ONLY while the school has read receipts switched on
+        // (meta.story_reads.enabled), the same value that lets the portal record a
+        // read. It says PARENTS and WHEN because that is what staff see: each
+        // guardian by name (not the household), with the time of their first look.
+        story_seen_notice: "Your school can see which parents have opened each class story, and when. Other parents cannot.",
         choose_avatar: "Choose an avatar",
         handover_starting: "Starting…",
         handover_let: "Let {x} choose",
@@ -618,6 +623,9 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reaction_hundred: "مئة بالمئة",
         reaction_question: "سؤال",
         reaction_failed: "تعذّر حفظ التفاعل.",
+        // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts
+        // are switched on (the language's `reviewed` flag does not cover it).
+        story_seen_notice: "تستطيع المدرسة أن ترى أولياء الأمور الذين فتحوا كل خبر من يوميات الصف، ومتى فتحوه، ولا يستطيع أولياء الأمور الآخرون رؤية ذلك.",
         choose_avatar: "اختر صورة رمزية",
         handover_starting: "جارٍ البدء…",
         handover_let: "دع {x} يختار",

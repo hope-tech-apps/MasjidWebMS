@@ -183,7 +183,8 @@ class GroupMessageReactionsTest extends TestCase
 
         $this->assertSame(0, GroupMessageReaction::withoutMasjidScope()->count());
 
-        // A reaction is an acknowledgement, not a message: nobody is notified.
+        // A reaction is an acknowledgement, not a message: nobody is notified AT THE TAP
+        // (the author hears once, in the hourly digest: ReactionDigestTest).
         Bus::assertNotDispatched(SendGroupNotificationJob::class);
     }
 

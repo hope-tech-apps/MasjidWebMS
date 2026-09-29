@@ -99,54 +99,15 @@ final class GroupMessageSignals
     }
 
     /**
+     * The naming rule is Reactions::summarize(), shared with the class story's
+     * reactions (GroupPostSignals) so the two surfaces cannot drift.
+     *
      * @param \Illuminate\Support\Collection<int, GroupMessageReaction> $rows
      * @return list<array<string,mixed>>
      */
     private static function reactionSummary($rows, bool $viewerIsParent, ?int $viewerUserId, ?int $viewerContactId): array
     {
-        $summary = [];
-
-        foreach (GroupMessageReaction::REACTIONS as $key => $emoji) {
-            $mine = false;
-            $by = [];
-            $count = 0;
-
-            foreach ($rows as $row) {
-                if ($row->reaction !== $key) {
-                    continue;
-                }
-
-                $count++;
-
-                $isViewer = ($viewerUserId !== null && (int) $row->user_id === $viewerUserId)
-                    || ($viewerContactId !== null && (int) $row->contact_id === $viewerContactId);
-
-                if ($isViewer) {
-                    $mine = true;
-
-                    continue;
-                }
-
-                $isParent = $row->contact_id !== null;
-
-                // Counted, not named, for a parent looking at another parent.
-                if ($viewerIsParent && $isParent) {
-                    continue;
-                }
-
-                $by[] = ['name' => self::nameOf($row->user, $row->contact, $isParent), 'is_parent' => $isParent];
-            }
-
-            $summary[] = [
-                'key' => $key,
-                'emoji' => $emoji,
-                'count' => $count,
-                'mine' => $mine,
-                'by' => $by,
-            ];
-        }
-
-        return $summary;
+        return Reactions::summarize($rows, $viewerIsParent, $viewerUserId, $viewerContactId);
     }
 
     /**
@@ -181,10 +142,6 @@ final class GroupMessageSignals
     /** A name, never an id; a blank record still reads as a person rather than vanishing. */
     private static function nameOf(?User $user, ?Contact $contact, bool $isParent): string
     {
-        $name = $isParent
-            ? trim(($contact?->first_name ?? '').' '.($contact?->last_name ?? ''))
-            : trim((string) ($user?->name ?? ''));
-
-        return $name !== '' ? $name : ($isParent ? 'A parent' : 'Staff');
+        return Reactions::nameOf($user, $contact, $isParent);
     }
 }

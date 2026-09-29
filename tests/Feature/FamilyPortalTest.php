@@ -1690,6 +1690,25 @@ class FamilyPortalTest extends TestCase
         // Each is gated by the same media disclosure the download beside it
         // asks, and the URL it returns is re-checked again, in full, on every
         // range — see App\Http\Controllers\GroupMediaPlaybackController.
+        //
+        // 2026-09-29 (owner): the list grows by TWO — a parent's reaction on a
+        // CLASS STORY post (🤲 👍 💯 ❓) and its removal (T-002.1). They are the
+        // message reactions' twin and are admitted on the same terms: the FEED
+        // read gate (`GroupAudience::DISCLOSURE_FEED`), the post resolved
+        // THROUGH the group, the contact from the token, no payload, and no
+        // notification at the tap (the author hears once, in a content-free
+        // digest). Two verbs, not a toggle, so a double-tap cannot flip the
+        // answer. See GroupPostReactionsTest.
+        //
+        // 2026-09-29 (owner): ONE more — `POST .../posts/seen`, "I have the Story
+        // tab open on these stories" (T-002.3). The only write that records a
+        // read. It is admitted narrowly: fired by the portal when the tab shows
+        // the posts and never from a GET; the FEED read gate; the contact from
+        // the token; the ids name stories of the URL's class and nothing else;
+        // and it writes NOTHING while `groups.story_reads.enabled` is off (the
+        // default), because the parent-facing notice ships on the same switch. A
+        // parent's reading is never shown to another parent (the seen_* fields
+        // exist only in the staff serializer). See GroupPostReadsTest.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1709,6 +1728,7 @@ class FamilyPortalTest extends TestCase
         sort($writes);
 
         $this->assertSame([
+            'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/password',
             'POST /api/family/masjids/{masjid_id}/auth/invite',
@@ -1716,6 +1736,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/posts/seen',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
@@ -1723,6 +1744,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/translations',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'PUT /api/family/masjids/{masjid_id}/password',
         ], $writes);

@@ -586,13 +586,129 @@ members/guardians channel. What a follow-on slice must not re-decide:
   `.../threads/{id}/messages/{id}/reactions/{key}` in all three realms. The
   gate is REPLYING's, in the same order: the realm's write gate, then
   `mayReceiveThread()`, then "not closed", with the message found THROUGH
-  the thread. No notification. A new realm that shows messages must serialize
-  through `GroupMessageSignals`, not re-derive names.
+  the thread. A tap notifies nobody; the AUTHOR hears once, in the hourly
+  content-free digest (see "Class story engagement" below — this reverses the
+  2026-09-21 "no notification" rule, 2026-09-29). A new realm that shows
+  messages must serialize through `GroupMessageSignals`, not re-derive names.
 
 Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php` +
 `tests/Feature/GroupMessagePhotosTest.php` +
 `tests/Feature/GroupMessageReactionsTest.php`.
+
+## Class story engagement — reactions, read receipts, the reaction digest (2026-09-29)
+
+Three owner requests on the class story (T-002.1, T-002.3, T-002.2), built on the
+messaging arrangement above. Proven by `GroupPostReactionsTest`,
+`GroupPostReadsTest` and `ReactionDigestTest`.
+
+**Reactions on a story post** (`group_post_reactions`, `GroupPostReaction`).
+
+- The four keys and the NAMING RULE are one class, `App\Support\Reactions`, shared by
+  message reactions and story reactions so the two cannot drift. A realm that draws
+  reactions serializes through `GroupMessageSignals` (messages) or
+  `GroupPostSignals` (stories), never re-derives names: staff see every name; a
+  parent sees staff names, their own reaction as `mine`, and other families as a
+  COUNT only.
+- **A guardian's reaction is drawn only while that guardian is in the room.**
+  `GroupPostSignals::forPosts()` counts and names a guardian's reaction only if their
+  contact is in the CURRENT `GroupAudience::storyGuardianContacts()` of the post's
+  class (the set `seenFor()` reads); a family that withdrew consent, left the class or
+  lost its login is refused the reaction endpoints, so without this its taps would sit
+  on the story with nobody able to take them back. Staff reactions are never asked.
+  The row is kept, not deleted: a family that is re-admitted finds its reaction again.
+- **The gate is the FEED READ gate** (`GroupAudience::DISCLOSURE_FEED`), after the
+  realm's write gate (`permission:manage contacts` / `teacher.leads` / the family
+  guard): a person may react only to what they may read. A guardian with no consent,
+  withdrawn consent, or a family that has left the class is refused with nothing
+  written; media consent is not asked. The post is found THROUGH the group, so a
+  foreign, other-class or soft-deleted post is a 404. Routes: PUT and DELETE
+  `.../posts/{id}/reactions/{key}` in admin, teacher and family (TeacherRealmTest +2
+  verbs; the family write list +2).
+
+**Read receipts — "Seen by 4 of 7 parents"** (`group_post_reads`, `GroupPostRead`),
+OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`).
+
+- **A read is recorded ONLY by a client POST** (`POST .../posts/seen`, family realm),
+  which the portal fires when the Story tab is actually showing the posts. NEVER
+  from the `/posts` GET: the portal fetches it on page load whatever tab is open and
+  it returns the 15 newest stories, so a GET-side write would mark them all "seen"
+  when a parent only opened Grades. A test pins that no GET records anything.
+- **The switch gates three things together and they must go live together:**
+  recording, the parent-facing notice ("your school can see which parents have opened
+  each class story, and when") and the staff "Seen by" line. The portal draws the notice
+  from `meta.story_reads.enabled`, which is the same config value (the family payload
+  and the staff payloads share ONE shape: an object with `enabled`), so no read is
+  recorded before the notice is on screen. The portal reports a read only once the
+  Story section has been DRAWN: `watchStoriesSeen` (`familyClassRun.ts`) waits for the
+  load chain to finish without failing and for the next render, and a parent still
+  looking at a spinner, or at the error alert, has had nothing recorded. **Do not switch it on until the ar / ur / ps / fa-AF (and
+  es) `story_seen_notice` strings have had a human review**: they are machine-drafted
+  (owner, 2026-09-29). While off, the staff payload OMITS the seen fields rather than
+  showing "0 of 7" for a receipt nobody keeps.
+- **The audience (the denominator) is `GroupAudience::storyGuardianContacts()`**:
+  consented, still in the class (`current()`), with a live family login. A read row
+  counts only while its reader is in that audience, so `seen_count` never exceeds
+  `audience_count`. `meta.story_reads.unreachable_count` says how many consented,
+  current parents hold no portal login (the footnote); a guardian with several
+  children in the class is one parent in both numbers. The email fan-out for a story
+  (`GroupNotificationRecipientResolver::feedGuardians`) reads the same method.
+- **Nothing is recorded before the switch goes on**, so a story older than that with no
+  read on it is `seen_tracked: false` with `seen_since` (a school-local `Y-m-d`), and its
+  three seen fields are omitted: the staff line says "Not tracked before <date>", never
+  "Seen by 0 of 7". The day is `groups.story_reads.since` (`GROUP_STORY_READS_SINCE`) if
+  set, else the school's earliest recorded read (`GroupPostSignals::trackingSince`);
+  until either exists no story is marked. A read that WAS recorded on an old story is
+  shown as a read.
+- **`seen_by`, `seen_count`, `audience_count`, `unreachable_count`, `seen_tracked` and
+  `seen_since` exist ONLY in the staff serializers** (`AdminDashboard\GroupPostsController`, which the teacher realm
+  also mounts). The family serializer never builds them; `GroupPostReadsTest` walks
+  the family JSON on every surface (list, show, seen, react, class) for those keys and
+  for another family's name.
+- The write is `insertOrIgnore` on the (post, contact) unique key: idempotent, first
+  time kept, `masjid_id` taken from the group resolved through the bound tenant. The
+  family write list +1 (`POST .../posts/seen`); the request carries story ids only and
+  ids that are not stories of this class are ignored silently (not an oracle).
+- The portal side (`familyClassRun.ts::recordStoriesSeenFor`) is a stale-run-guarded
+  helper: the school and class are read once when the run begins, the request is signed
+  with that school's token by its URL, and a run that went stale sends nothing.
+
+**The reaction digest** (`groups:notify-reactions`, hourly at :20, `withoutOverlapping(55)`: a killed run must not hold the mutex for the 24 h default).
+
+- **A tap dispatches nothing** (`GroupMessageReactionsTest`, `GroupPostReactionsTest`).
+  The sweep emails the AUTHOR of the story or message, once, "You have new reactions":
+  no names, no emoji, no counts, no content (`GroupUpdateNudgeMail` kind `reaction`). No
+  staff push: the staff app is parked.
+- **Author only; never for the author's own reaction.** A reaction must have stood for
+  `groups.reactions.settle_minutes` (default 10, an ESTIMATE: production had 0
+  reactions) so a tap taken back is never announced and a burst is one email per author
+  per class.
+- **Consent is re-checked at SEND time on both ends**: the command skips a reactor who no
+  longer may read the subject; the job (`GroupNotificationRecipientResolver::
+  reactionRecipient`) re-checks that the recipient may still read it (a teacher taken off
+  the class, an administrator who cannot read the story back, a guardian who left or lost
+  their login gets nothing). Both run `GroupAudience` with the tenant bound to the
+  group's organisation, because a job starts unbound and that reads as "no standing"
+  (and restore whatever was bound before, in a `finally`). An ARCHIVED (soft-deleted)
+  staff member is nobody, as a trashed guardian is: their `group_staff` rows survive the
+  archive, so `principal()` must not resolve them, or the digest would mail them and count
+  their taps. Digests are grouped per author AND per class, so a teacher of two classes gets
+  two emails, each naming its own class.
+- **At most once**: each row is CLAIMED by an UPDATE guarded by `notified_at IS NULL`
+  before it is sent; skipped rows are claimed too. A crash between claim and send loses
+  that digest rather than repeating it.
+- **A reaction that predates the column is not news.** The migration that adds
+  `notified_at` stamps every existing row `notified_at = created_at`, so the first
+  sweep after the deploy does not announce every reaction ever made (`ReactionDigestTest`
+  seeds one before `up()` and asserts the stamp and a silent first run).
+- **`SendGroupNotificationJob` picks the sign-in address by realm**: a staff recipient
+  (`NudgeRecipient::realm === 'staff'`) gets `/auth/sign-in`, a guardian the family portal.
+  It used to build the family URL for everybody, so a teacher told "a parent replied" was
+  sent to a page with no login for them.
+- Account deletion: `group_post_reactions.contact_id` and `group_post_reads.contact_id` are
+  OFFICE records in `MemberAccountDeletion::OFFICE_RECORDS` (only a guardian writes one,
+  and their guardian edge already keeps the contact). Neither table holds free text, so the
+  staging scrub needed no new entry (the coverage test passes unchanged).
 
 ## Class files — a handout is ADDRESSED (2026-09-24)
 

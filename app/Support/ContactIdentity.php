@@ -3,7 +3,7 @@
 namespace App\Support;
 
 use App\Models\Contact;
-use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 
 /**
  * ===========================================================================
@@ -56,11 +56,11 @@ use Illuminate\Support\Str;
  * lives in a paragraph is a rule the next writer can contradict without
  * noticing. So the rule is enforced by the SHAPE of this type instead:
  *
- *  - the address never leaves the object. There is no getter, no
+ *  - the address never leaves an identity object. There is no getter, no
  *    `__toString()`, no `label()` — nothing that hands back a scalar which
  *    could be compared with `===`, and therefore nothing that can make two
  *    absences equal;
- *  - the ONLY comparison is `isTheSamePersonAs()`, which is `false` unless BOTH
+ *  - the ONLY comparison of two identities is `isTheSamePersonAs()`, which is `false` unless BOTH
  *    sides resolve to something. Two unresolvable identities are not equal —
  *    not to each other, and not to themselves;
  *  - a reader who ignores all of that and writes `ContactIdentity::of($a) !== ContactIdentity::of($b)`
@@ -94,6 +94,28 @@ use Illuminate\Support\Str;
  *     changed nothing a read path can see. Every access decision above the
  *     caller is unchanged.
  *
+ * ---------------------------------------------------------------------------
+ * A SUBMITTED ADDRESS IS NOT A STORED ADDRESS, EVEN WHEN THE DATABASE SAYS SO
+ * ---------------------------------------------------------------------------
+ *
+ * The second half of this class answers a different question from the first:
+ * not "are these two rows the same person?" but "did this typed address name
+ * this row?" — see `sameAddress()`, `keepExactMatches()` and
+ * `submittedAddress()`.
+ *
+ * Production's `contacts.login_email`, `contacts.email` and
+ * `app_signup_codes.email` are `utf8mb4_unicode_ci` (read from production
+ * 2026-09-29), and under that collation `'victim@gmail.com' = 'victim@gmaíl.com'`
+ * is TRUE, as is `ß` = `ss`. `WHERE LOWER(login_email) = ?` therefore returns a
+ * row for a look-alike address. Sign-in mails its code to the address that was
+ * TYPED, so whoever owns the look-alike domain received a code and was then
+ * linked to the victim's contact, with their password and their sessions. A
+ * query can narrow the candidates (the index still earns its keep); only a
+ * comparison in PHP can decide whether one of them is the address that was
+ * typed. Other comments in this codebase call production `utf8mb4_bin`; for
+ * these columns that is not what was measured, and no rule here may depend on
+ * it.
+ *
  * `PHONE IS NOT AN IDENTITY EITHER`, deliberately. A roster SCREEN falls back to
  * a phone number when there is no email, because a phone number is something an
  * operator can act on; but nothing in this application mints a credential
@@ -115,10 +137,13 @@ final class ContactIdentity
      * The identity a contact is read through, or an unresolvable one.
      *
      * Normalised as `LOWER(TRIM(email))`, matching `GroupAudience::identitiesFor()`
-     * and `OfferingRegistrationsController::normaliseEmail()` — production is
-     * utf8mb4_bin (case-SENSITIVE) and the suite runs SQLite, and whether a
-     * de-duplication keeps somebody's authority must not depend on which one it
-     * is talking to.
+     * and `OfferingRegistrationsController::normaliseEmail()`: the suite runs
+     * SQLite and production compares these columns under utf8mb4_unicode_ci, and
+     * whether a de-duplication keeps somebody's authority must not depend on which
+     * one it is talking to. The comparison is made here in PHP, byte for byte after
+     * `foldCase()` (as `sameAddress()` does), so a non-ASCII letter such as U+212A
+     * KELVIN SIGN is never read as its ASCII look-alike: here that would carry a
+     * confirmed guardianship onto another person's contact.
      *
      * A null contact, a null email and an empty-or-whitespace email are ONE
      * state here on purpose. The database allows `''` as well as NULL — an
@@ -132,7 +157,7 @@ final class ContactIdentity
             return new self(null);
         }
 
-        $address = Str::lower(trim((string) $contact->email));
+        $address = self::foldCase(trim((string) $contact->email));
 
         return new self($address === '' ? null : $address);
     }
@@ -178,5 +203,155 @@ final class ContactIdentity
     public static function changed(?Contact $from, ?Contact $to): bool
     {
         return ! self::of($from)->isTheSamePersonAs(self::of($to));
+    }
+
+    /**
+     * Is `$submitted` the address that is STORED, byte for byte, apart from case
+     * and surrounding whitespace?
+     *
+     * This is the check that must follow every lookup by a typed address on a
+     * `utf8mb4_unicode_ci` column. That collation compares accents and expansions
+     * as equal (`é` = `e`, `ß` = `ss`), so the query alone cannot tell the
+     * address a person typed from a look-alike registered on a domain somebody
+     * else owns. Lower-casing both sides (`foldCase()`) and a strict `===` after
+     * `trim()` can: two different byte strings are two different mailboxes.
+     *
+     * NOT plain `mb_strtolower()`. Multibyte lower-casing maps a few non-ASCII
+     * characters onto ASCII ones (U+212A KELVIN SIGN becomes `k`), so a Kelvin
+     * sign in `vicKtim@example.com` would equal `victim@example.com`, and a
+     * character that merely looks like a letter would stand in for it. `foldCase()`
+     * lower-cases the ASCII capitals and lets a non-ASCII letter change only into
+     * another non-ASCII one, so nothing non-ASCII ever folds into ASCII here.
+     *
+     * An absent address is never a match, for the reason the class opens with:
+     * null, `''` and whitespace on either side answer false, including against
+     * each other.
+     */
+    public static function sameAddress(?string $stored, string $submitted): bool
+    {
+        if ($stored === null) {
+            return false;
+        }
+
+        $stored = self::foldCase(trim($stored));
+        $submitted = self::foldCase(trim($submitted));
+
+        if ($stored === '' || $submitted === '') {
+            return false;
+        }
+
+        return $stored === $submitted;
+    }
+
+    /**
+     * The rows, of the candidates a query returned, whose `$column` is exactly
+     * the address that was typed (see `sameAddress()`).
+     *
+     * Apply it BEFORE any rule counts the candidates. "Two rows is no row" is a
+     * rule about two people who hold one address, and a candidate that matched
+     * only through the collation is nobody's copy of it: counting it would let a
+     * look-alike make a real address ambiguous, and skipping the count would let
+     * it stand in for the real one.
+     *
+     * The query in front of this must not `limit()` the candidates. A limit taken
+     * before this filter can cut the exact match off behind look-alikes, or
+     * leave one exact row standing where there were two.
+     *
+     * @param  iterable<int, \Illuminate\Database\Eloquent\Model>  $rows
+     * @return Collection<int, \Illuminate\Database\Eloquent\Model>
+     */
+    public static function keepExactMatches(iterable $rows, string $column, string $submitted): Collection
+    {
+        return Collection::make($rows)
+            ->filter(fn ($row) => self::sameAddress($row->getAttribute($column), $submitted))
+            ->values();
+    }
+
+    /**
+     * The typed address in the one form sign-in looks it up in: trimmed,
+     * lower-cased, and with a non-ASCII domain converted to its punycode form.
+     * Null when it cannot be made into one, and for a blank address.
+     *
+     * DEFENCE IN DEPTH behind `sameAddress()`, at the door rather than at the
+     * comparison. `gmaíl.com` becomes `xn--…`, which can never equal a stored
+     * `gmail.com` however a collation folds it, and the mail goes to the mailbox
+     * that was actually typed. A non-ASCII LOCAL part has no such conversion and
+     * is refused: production stores no non-ASCII address, so nothing legitimate
+     * is turned away, and an accent in front of the `@` can only be a look-alike.
+     *
+     * An address that is already plain ASCII is returned exactly as
+     * `strtolower(trim())` would, so every address that signs in today
+     * signs in as before. Nothing is done to an ASCII domain: no `idn_to_ascii`
+     * rules are applied to it, so an old, unusual-looking but real address is not
+     * newly refused.
+     *
+     * `idn_to_ascii()` comes from ext-intl or, without it,
+     * symfony/polyfill-intl-idn (composer.lock, non-dev). Neither present means
+     * null: sign-in refuses rather than guessing.
+     */
+    public static function submittedAddress(string $typed): ?string
+    {
+        // `foldCase()`, not `mb_strtolower()` (see `sameAddress()`): a non-ASCII
+        // letter that would fold onto an ASCII one, such as U+212A KELVIN SIGN,
+        // must stay non-ASCII here and be refused in a local part like any other
+        // accent. A non-ASCII domain is case-folded by IDNA itself.
+        $address = self::foldCase(trim($typed));
+
+        if ($address === '') {
+            return null;
+        }
+
+        if (preg_match('/[^\x00-\x7F]/', $address) !== 1) {
+            return $address;
+        }
+
+        $at = strrpos($address, '@');
+
+        if ($at === false || $at === 0) {
+            return null;
+        }
+
+        $local = substr($address, 0, $at);
+        $domain = substr($address, $at + 1);
+
+        if ($domain === '' || preg_match('/[^\x00-\x7F]/', $local) === 1 || ! function_exists('idn_to_ascii')) {
+            return null;
+        }
+
+        $ascii = idn_to_ascii(
+            $domain,
+            IDNA_DEFAULT | IDNA_USE_STD3_RULES | IDNA_CHECK_BIDI | IDNA_NONTRANSITIONAL_TO_ASCII,
+            INTL_IDNA_VARIANT_UTS46,
+        );
+
+        return is_string($ascii) && $ascii !== '' ? $local . '@' . $ascii : null;
+    }
+
+    /**
+     * Lower-case for comparison, without letting anything non-ASCII become ASCII.
+     *
+     * The ASCII capitals are lower-cased by `strtr()` (byte for byte, unaffected
+     * by the process locale that `strtolower()` follows before PHP 8.2). Every
+     * other character is lower-cased with `mb_strtolower()` ONLY when the result
+     * is still non-ASCII: `É` becomes `é`, so `GMAÍL` and `gmaíl` are one
+     * spelling, but a character whose lower case is an ASCII letter (U+212A
+     * KELVIN SIGN, whose lower case is `k`) is left as it is. Text that is not
+     * valid UTF-8 keeps its non-ASCII bytes untouched.
+     */
+    private static function foldCase(string $value): string
+    {
+        $value = strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+
+        if (preg_match('/[^\x00-\x7F]/', $value) !== 1) {
+            return $value;
+        }
+
+        $folded = preg_replace_callback('/[^\x00-\x7F]/u', function (array $match): string {
+            $lower = mb_strtolower($match[0]);
+
+            return preg_match('/[\x00-\x7F]/', $lower) === 1 ? $match[0] : $lower;
+        }, $value);
+
+        return $folded ?? $value;
     }
 }

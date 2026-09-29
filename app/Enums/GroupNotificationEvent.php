@@ -3,7 +3,7 @@
 namespace App\Enums;
 
 /**
- * The three moments a class generates a notification. One discriminator the
+ * The moments a class generates a notification. One discriminator the
  * fan-out job branches on; it mirrors GroupMessage::authorIsParent() — who wrote
  * the thing decides who hears about it.
  */
@@ -36,4 +36,17 @@ enum GroupNotificationEvent: string
      * five families.
      */
     case GRADE_POSTED = 'grade_posted';
+
+    /**
+     * Somebody REACTED to a class story or a message -> its AUTHOR only
+     * (owner, 2026-09-29; `groups:notify-reactions`, the hourly digest).
+     *
+     * Never fired by the tap itself — a push per 👍 would bury the replies. One
+     * content-free email per author per class per run ("You have new
+     * reactions"): no names, no emoji, no counts. It reaches the author alone, so
+     * the job is told WHO (recipientUserId / recipientContactId) rather than
+     * resolving an audience, and re-checks at send time that they may still read
+     * what was reacted to.
+     */
+    case REACTION = 'reaction';
 }

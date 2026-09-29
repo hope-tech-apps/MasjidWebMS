@@ -10,6 +10,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Groups\GroupNotificationRecipientResolver;
 use App\Services\Groups\GroupPushChannel;
+use App\Support\NudgeRecipient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -60,6 +61,14 @@ class SendGroupNotificationJob implements ShouldQueue
         /** The author, captured at dispatch so a since-deleted author still skips. */
         public ?int $authorUserId = null,
         public ?int $authorContactId = null,
+        /**
+         * REACTION only: the ONE person the digest is for (the story's or
+         * message's author). A staff user or a guardian contact, never both.
+         */
+        public ?int $recipientUserId = null,
+        public ?int $recipientContactId = null,
+        /** REACTION only: what the digest covers — 'story', 'thread:{id}'. */
+        public array $subjects = [],
     ) {
     }
 
@@ -126,6 +135,17 @@ class SendGroupNotificationJob implements ShouldQueue
                             : collect(),
                         'update',
                     ],
+
+                // The reaction digest reaches the AUTHOR alone, and the resolver
+                // re-checks NOW — at send time, not when the reaction was made —
+                // that they may still read what was reacted to.
+                GroupNotificationEvent::REACTION =>
+                    [
+                        $resolver->reactionRecipient(
+                            $group, $this->recipientUserId, $this->recipientContactId, $this->subjects
+                        ),
+                        'reaction',
+                    ],
             };
 
             if ($recipients->isEmpty()) {
@@ -134,7 +154,6 @@ class SendGroupNotificationJob implements ShouldQueue
 
             $orgName = (string) $group->masjid?->name ?: (string) $masjid->name;
             $orgEmail = $masjid->email ?? null;
-            $signInUrl = rtrim((string) config('app.url'), '/').'/family/'.$masjid->id.'/sign-in';
             $groupLabel = (string) $group->name;
 
             foreach ($recipients as $recipient) {
@@ -143,7 +162,13 @@ class SendGroupNotificationJob implements ShouldQueue
                         orgName: $orgName,
                         groupLabel: $groupLabel,
                         kind: $kind,
-                        signInUrl: $signInUrl,
+                        // WHERE they sign in depends on WHO they are. A teacher
+                        // (or an administrator) is a `users` row and signs in on
+                        // the staff door; only a guardian signs in to the family
+                        // portal. This was one family URL for everybody, so a
+                        // teacher told "a parent replied" was sent to a sign-in
+                        // page that has no login for them.
+                        signInUrl: $this->signInUrlFor($recipient, $masjid),
                         recipientName: $recipient->name,
                         orgEmail: $orgEmail,
                     ));
@@ -159,6 +184,16 @@ class SendGroupNotificationJob implements ShouldQueue
             // succeeded and must stay successful.
             Log::error('SendGroupNotificationJob failed: '.$e->getMessage());
         }
+    }
+
+    /** The sign-in page for THIS recipient's realm. */
+    private function signInUrlFor(NudgeRecipient $recipient, Masjid $masjid): string
+    {
+        $base = rtrim((string) config('app.url'), '/');
+
+        return $recipient->realm === 'staff'
+            ? $base.'/auth/sign-in'
+            : $base.'/family/'.$masjid->id.'/sign-in';
     }
 
     public function failed(?Throwable $e): void

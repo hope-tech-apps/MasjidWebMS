@@ -3,10 +3,16 @@
 namespace App\Http\Controllers\Family;
 
 use App\Models\GroupPost;
+use App\Http\Requests\Family\MarkStoriesSeenRequest;
+use App\Models\GroupPostRead;
+use App\Models\GroupPostReaction;
 use App\Models\Masjid;
 use App\Support\GroupAudience;
 use App\Support\GroupMedia;
+use App\Support\GroupPostSignals;
+use App\Support\Reactions;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -56,13 +62,31 @@ class GroupPostsController extends FamilyController
             ->with(['author:id,name', 'attachments'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate($this->perPage($request, 15))
-            ->through(fn (GroupPost $post) => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia));
+            ->paginate($this->perPage($request, 15));
+
+        // One query for the page's reactions, named as a PARENT may see them:
+        // staff names, their own as `mine`, other families as a count.
+        $signals = GroupPostSignals::forPosts($posts->getCollection(), $this->contact());
+
+        $posts = $posts->through(fn (GroupPost $post) => $this->serialize(
+            $post, $masjid_id, $group_id, $mayReceiveMedia, $signals[(int) $post->id] ?? null
+        ));
 
         return response()->json([
             'status' => 'success',
             'data' => $posts,
-            'meta' => $this->meta(['may_receive_media' => $mayReceiveMedia]),
+            'meta' => $this->meta([
+                'may_receive_media' => $mayReceiveMedia,
+                'reactions' => Reactions::catalogue(),
+                // ONE value gates the notice AND the recording: the portal draws
+                // "your school can see who has opened a story" and fires the seen
+                // POST only when `enabled` is true, so no read is recorded before
+                // the notice is on screen. The SAME shape as the staff payloads'
+                // `meta.story_reads` (an object with `enabled`), minus their
+                // staff-only fields, so a shared reader never gets a bare bool.
+                // See config('groups.story_reads').
+                'story_reads' => ['enabled' => (bool) config('groups.story_reads.enabled', false)],
+            ]),
         ], Response::HTTP_OK);
     }
 
@@ -83,8 +107,154 @@ class GroupPostsController extends FamilyController
 
         return response()->json([
             'status' => 'success',
-            'data' => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia),
-            'meta' => $this->meta(['may_receive_media' => $mayReceiveMedia]),
+            'data' => $this->serialize(
+                $post, $masjid_id, $group_id, $mayReceiveMedia,
+                GroupPostSignals::forPosts([$post], $this->contact())[(int) $post->id] ?? null
+            ),
+            'meta' => $this->meta([
+                'may_receive_media' => $mayReceiveMedia,
+                'reactions' => Reactions::catalogue(),
+                // ONE value gates the notice AND the recording: the portal draws
+                // "your school can see who has opened a story" and fires the seen
+                // POST only when `enabled` is true, so no read is recorded before
+                // the notice is on screen. The SAME shape as the staff payloads'
+                // `meta.story_reads` (an object with `enabled`), minus their
+                // staff-only fields, so a shared reader never gets a bare bool.
+                // See config('groups.story_reads').
+                'story_reads' => ['enabled' => (bool) config('groups.story_reads.enabled', false)],
+            ]),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * POST .../posts/seen   { post_ids: [int, ...] }
+     *
+     * "I have the Story tab open on these stories" — the ONLY thing that records
+     * a read (T-002.3, owner 2026-09-29). The portal fires it when the tab is
+     * showing the posts, never from the /posts GET (which it fetches on page load
+     * whatever tab is open, and which returns the 15 newest stories).
+     *
+     * OFF BY DEFAULT: while `groups.story_reads.enabled` is false this writes
+     * NOTHING and says so. The parent-facing notice that reads are recorded is
+     * translated into five languages by machine and needs a human review first,
+     * so recording and the notice go live together, on one switch.
+     *
+     * THE GATE IS THE FEED READ GATE, so it records only somebody the story was
+     * actually shown to: a consented guardian who is still in the class. The
+     * token's contact must also hold a live family login (the same test the
+     * `family.active` door applies) — a receipt for a login that is switched off
+     * would be a receipt for nobody. Ids that are not stories of THIS class
+     * (another class, another school, soft-deleted, or invented) are ignored
+     * without a word, so this cannot be used to probe for them.
+     *
+     * insertOrIgnore on the (post, contact) unique key: idempotent, two tabs race
+     * to one row, and the FIRST time is kept. masjid_id comes from the group just
+     * resolved through the bound tenant, never from the request. A parent's read
+     * is never shown to another parent: the seen_* fields exist only in the staff
+     * serializer.
+     */
+    public function markSeen(MarkStoriesSeenRequest $request, $masjid_id, $group_id)
+    {
+        $group = $this->group($group_id);
+
+        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
+
+        $contact = $this->contact();
+
+        if (! $contact->familyLoginIsActive()) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to read this group\'s feed.');
+        }
+
+        if (! config('groups.story_reads.enabled', false)) {
+            return response()->json([
+                'status' => 'success',
+                'data' => ['recorded' => 0, 'enabled' => false],
+            ], Response::HTTP_OK);
+        }
+
+        $postIds = $group->posts()
+            ->whereIn('id', array_map('intval', $request->validated('post_ids')))
+            ->pluck('id');
+
+        $now = now();
+
+        $recorded = $postIds->isEmpty() ? 0 : (int) GroupPostRead::query()->insertOrIgnore(
+            $postIds->map(fn ($postId): array => [
+                'masjid_id' => (int) $group->masjid_id,
+                'group_post_id' => (int) $postId,
+                'contact_id' => (int) $contact->id,
+                'first_seen_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ])->all()
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['recorded' => $recorded, 'enabled' => true],
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * PUT .../posts/{post_id}/reactions/{reaction}
+     *
+     * A parent's 🤲 / 👍 / 💯 / ❓ on a class story post (owner, 2026-09-29).
+     *
+     * AUTHORISED EXACTLY AS READING THE STORY IS: DISCLOSURE_FEED through
+     * GroupAudience, so a guardian with no recorded consent, one whose consent
+     * was withdrawn, and one whose family has left the class are all refused (403)
+     * with nothing written. Media consent is not asked: a reaction is to the
+     * words. The post is resolved THROUGH the group, so another school's post,
+     * another class's and a soft-deleted one are a 404. The reacting contact is
+     * the TOKEN's, never the payload's; there is no payload.
+     *
+     * Idempotent: a second PUT leaves one row. Nothing is dispatched — the author
+     * hears about reactions once, in a content-free digest (`groups:notify-reactions`).
+     */
+    public function react($masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($group_id, $post_id, $reaction, true);
+    }
+
+    /** DELETE .../reactions/{reaction} — take it back. Same gate, equally idempotent. */
+    public function unreact($masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($group_id, $post_id, $reaction, false);
+    }
+
+    private function setReaction($group_id, $post_id, $reaction, bool $on)
+    {
+        $group = $this->group($group_id);
+
+        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
+
+        $post = $group->posts()->findOrFail($post_id);
+
+        if (! Reactions::isAllowed($reaction)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['reaction' => ['A reaction must be one of: '.implode(' ', Reactions::REACTIONS).'.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $key = [
+            'group_post_id' => $post->id,
+            'reaction' => $reaction,
+            'contact_id' => $this->contact()->id,
+        ];
+
+        if ($on) {
+            GroupPostReaction::createOrFirst($key);
+        } else {
+            GroupPostReaction::query()->where($key)->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'post_id' => (int) $post->id,
+                'reactions' => GroupPostSignals::reactionsFor($post, $this->contact()),
+            ],
         ], Response::HTTP_OK);
     }
 
@@ -177,7 +347,7 @@ class GroupPostsController extends FamilyController
      *
      * @return array<string,mixed>
      */
-    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia): array
+    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia, ?array $signals = null): array
     {
         $attachments = $mayReceiveMedia
             ? $post->attachments->map(fn ($attachment) => $attachment->toAudienceArray() + [
@@ -214,6 +384,10 @@ class GroupPostsController extends FamilyController
             // no photos this week is not confused with one who is not allowed to
             // see them.
             'media_withheld' => ! $mayReceiveMedia && $post->attachments->isNotEmpty(),
+            // All four reactions with counts; names are STAFF-only for a parent
+            // (App\Support\GroupPostSignals). Nothing else about who reacted or
+            // who read this post is built for the family payload.
+            'reactions' => $signals['reactions'] ?? Reactions::summarize(collect(), true, null, null),
         ];
     }
 }

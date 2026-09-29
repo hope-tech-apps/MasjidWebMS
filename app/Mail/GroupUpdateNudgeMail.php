@@ -29,7 +29,7 @@ class GroupUpdateNudgeMail extends Mailable
     public function __construct(
         public string $orgName,
         public string $groupLabel,
-        /** 'update' (a class-story post) or 'message' (a thread). */
+        /** 'update' (a class-story post), 'message' (a thread) or 'reaction' (the digest: new reactions on something you wrote). */
         public string $kind,
         public string $signInUrl,
         public ?string $recipientName = null,
@@ -50,9 +50,11 @@ class GroupUpdateNudgeMail extends Mailable
     {
         // Generic and identical for every tenant/recipient — a subject shows up
         // on a lock screen and in a shared inbox list.
-        $subject = $this->kind === 'message'
-            ? 'You have a new message'
-            : 'You have a new update';
+        $subject = match ($this->kind) {
+            'message' => 'You have a new message',
+            'reaction' => 'You have new reactions',
+            default => 'You have a new update',
+        };
 
         $fromAddress = config('mail.from.address');
 

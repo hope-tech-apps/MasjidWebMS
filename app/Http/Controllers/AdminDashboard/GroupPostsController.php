@@ -16,6 +16,9 @@ use App\Support\Errors;
 use App\Support\GroupAudience;
 use App\Support\GroupMedia;
 use App\Support\GroupPostAttachments;
+use App\Support\GroupPostSignals;
+use App\Support\Reactions;
+use App\Models\GroupPostReaction;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -74,13 +77,20 @@ class GroupPostsController extends Controller
             ->with(['author:id,name', 'attachments'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate($request->query('per_page', 15))
-            ->through(fn (GroupPost $post) => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia));
+            ->paginate($request->query('per_page', 15));
+
+        // One query each for the page's reactions and receipts, as THIS viewer
+        // may see them.
+        $signals = $this->signals($group, $posts->getCollection(), $request->user());
+
+        $posts = $posts->through(fn (GroupPost $post) => $this->serialize(
+            $post, $masjid_id, $group_id, $mayReceiveMedia, $signals[(int) $post->id] ?? null
+        ));
 
         return response()->json([
             'status' => 'success',
             'data' => $posts,
-            'meta' => $this->meta($mayReceiveMedia),
+            'meta' => $this->meta($mayReceiveMedia, $group),
         ], Response::HTTP_OK);
     }
 
@@ -99,8 +109,11 @@ class GroupPostsController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia),
-            'meta' => $this->meta($mayReceiveMedia),
+            'data' => $this->serialize(
+                $post, $masjid_id, $group_id, $mayReceiveMedia,
+                $this->signals($group, [$post], $request->user())[(int) $post->id] ?? null
+            ),
+            'meta' => $this->meta($mayReceiveMedia, $group),
         ], Response::HTTP_OK);
     }
 
@@ -148,12 +161,17 @@ class GroupPostsController extends Controller
                 authorContactId: null,
             )->afterCommit();
 
+            $post->load(['author:id,name', 'attachments']);
+
             return response()->json([
                 'status' => 'success',
                 // The writer sees what they just wrote, images included: they
                 // supplied the bytes a moment ago.
-                'data' => $this->serialize($post->load(['author:id,name', 'attachments']), $masjid_id, $group_id, true),
-                'meta' => $this->meta(true),
+                'data' => $this->serialize(
+                    $post, $masjid_id, $group_id, true,
+                    $this->signals($group, [$post], $request->user())[(int) $post->id] ?? null
+                ),
+                'meta' => $this->meta(true, $group),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -185,12 +203,15 @@ class GroupPostsController extends Controller
                 GroupPostAttachments::store($post, $this->uploads($request));
             });
 
+            $fresh = $post->fresh()->load(['author:id,name', 'attachments']);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serialize(
-                    $post->fresh()->load(['author:id,name', 'attachments']), $masjid_id, $group_id, true
+                    $fresh, $masjid_id, $group_id, true,
+                    $this->signals($group, [$fresh], $request->user())[(int) $fresh->id] ?? null
                 ),
-                'meta' => $this->meta(true),
+                'meta' => $this->meta(true, $group),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -198,6 +219,75 @@ class GroupPostsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * PUT .../groups/{group_id}/posts/{post_id}/reactions/{reaction}
+     *
+     * Add this caller's 🤲 / 👍 / 💯 / ❓ to a class story post (owner,
+     * 2026-09-29). Idempotent — a second tap, or two tabs, leave one row — which
+     * is why adding and removing are two verbs rather than one "toggle" that a
+     * double-tap would undo.
+     *
+     * THE GATE IS THE FEED READ GATE: the route's write gate
+     * (`permission:manage contacts` / `teacher.leads`), then
+     * GroupAudience::DISCLOSURE_FEED. A person may only react to what they may
+     * read. The post is found THROUGH the group, so another school's post, another
+     * class's post and a soft-deleted post are all a 404.
+     *
+     * The principal is the AUTHENTICATED account, never a client claim, and
+     * nothing is dispatched: the author hears about reactions once, in the
+     * content-free digest (`groups:notify-reactions`).
+     */
+    public function react(Request $request, $masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $post_id, $reaction, true);
+    }
+
+    /** DELETE .../reactions/{reaction} — take it back. Idempotent the same way. */
+    public function unreact(Request $request, $masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $post_id, $reaction, false);
+    }
+
+    /** Shared body of react/unreact. */
+    private function setReaction(Request $request, $group_id, $post_id, $reaction, bool $on)
+    {
+        $group = Group::findOrFail($group_id);
+
+        $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
+
+        $post = $group->posts()->findOrFail($post_id);
+
+        if (! Reactions::isAllowed($reaction)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['reaction' => ['A reaction must be one of: '.implode(' ', Reactions::REACTIONS).'.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $key = [
+            'group_post_id' => $post->id,
+            'reaction' => $reaction,
+            // The AUTHENTICATED account, never a client claim.
+            'user_id' => $request->user()->id,
+        ];
+
+        if ($on) {
+            // createOrFirst: the unique key settles a race between two taps
+            // instead of the second one 500ing.
+            GroupPostReaction::createOrFirst($key);
+        } else {
+            GroupPostReaction::query()->where($key)->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'post_id' => (int) $post->id,
+                'reactions' => GroupPostSignals::reactionsFor($post, $request->user()),
+            ],
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -348,7 +438,7 @@ class GroupPostsController extends Controller
      *
      * @return array<string,mixed>
      */
-    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia): array
+    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia, ?array $signals = null): array
     {
         $attachments = $mayReceiveMedia
             ? $post->attachments->map(fn ($attachment) => $attachment->toAudienceArray() + [
@@ -394,7 +484,86 @@ class GroupPostsController extends Controller
             // simply has no photos this week is not confused with one who is not
             // allowed to see them.
             'media_withheld' => ! $mayReceiveMedia && $post->attachments->isNotEmpty(),
+            // All four reactions with counts, named as THIS viewer may see them
+            // (App\Support\GroupPostSignals). A post just created has none, and
+            // the four empty buttons are still what the screen draws from.
+            'reactions' => $signals['reactions'] ?? Reactions::summarize(collect(), false, null, null),
+        ] + $this->seenFields($signals);
+    }
+
+    /**
+     * Reactions for the posts, and — while `groups.story_reads.enabled` is on —
+     * their read receipts. STAFF payloads only: this controller serves the office
+     * and the teacher, both of whom are shown every name. The family controller
+     * builds neither `seen_*` field.
+     *
+     * @param iterable<GroupPost> $posts
+     * @return array<int, array<string,mixed>> keyed by post id
+     */
+    private function signals(Group $group, iterable $posts, ?User $viewer): array
+    {
+        $posts = collect($posts);
+        $signals = GroupPostSignals::forPosts($posts, $viewer);
+
+        if (! $this->readsEnabled()) {
+            return $signals;
+        }
+
+        $timezone = $this->schoolTimezone();
+        $seen = GroupPostSignals::seenFor(
+            $posts,
+            $this->audience->storyGuardianContacts($group),
+            GroupPostSignals::trackingSince($timezone),
+            $timezone,
+        );
+
+        foreach ($signals as $id => $row) {
+            $signals[$id] = $row + ['seen' => $seen[$id] ?? null];
+        }
+
+        return $signals;
+    }
+
+    /** The receipt fields for one post — absent (not zero) while receipts are switched off. */
+    private function seenFields(?array $signals): array
+    {
+        $seen = $signals['seen'] ?? null;
+
+        if (! $this->readsEnabled() || $seen === null) {
+            return [];
+        }
+
+        // Predates recording and has no read: say so, rather than "0 of N".
+        if (($seen['tracked'] ?? true) === false) {
+            return ['seen_tracked' => false, 'seen_since' => $seen['since']];
+        }
+
+        return [
+            'seen_by' => $seen['seen_by'],
+            'seen_count' => $seen['seen_count'],
+            'audience_count' => $seen['audience_count'],
         ];
+    }
+
+    /** The school's own time zone, so "Not tracked before <date>" names the school's day. */
+    private function schoolTimezone(): string
+    {
+        $masjidId = app(TenantContext::class)->get();
+        $timezone = $masjidId ? Masjid::find($masjidId)?->timezone : null;
+
+        return is_string($timezone) && in_array($timezone, \DateTimeZone::listIdentifiers(), true)
+            ? $timezone
+            : (string) config('app.timezone');
+    }
+
+    /**
+     * Whether receipts are being collected at all. While off, "Seen by 0 of 7"
+     * would describe a receipt nobody has been keeping, so the fields are
+     * omitted rather than zeroed.
+     */
+    private function readsEnabled(): bool
+    {
+        return (bool) config('groups.story_reads.enabled', false);
     }
 
     /**
@@ -404,7 +573,7 @@ class GroupPostsController extends Controller
      *
      * @return array<string,mixed>
      */
-    private function meta(bool $mayReceiveMedia): array
+    private function meta(bool $mayReceiveMedia, ?Group $group = null): array
     {
         $masjidId = app(TenantContext::class)->get();
         $masjid = $masjidId ? Masjid::find($masjidId) : null;
@@ -416,6 +585,16 @@ class GroupPostsController extends Controller
             'accepted_image_types' => (array) config('groups.media.mime_types', []),
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_post' => (int) config('groups.media.max_per_post', 0),
+            // The four reaction buttons, from the one shared list.
+            'reactions' => Reactions::catalogue(),
+            // Read receipts: whether they are being collected, and — only then —
+            // how many consented, current parents hold no portal login and so
+            // cannot be counted (the footnote under "Seen by 4 of 7").
+            'story_reads' => [
+                'enabled' => $this->readsEnabled(),
+            ] + ($this->readsEnabled() && $group !== null
+                ? ['unreachable_count' => $this->audience->storyGuardiansWithoutLogin($group)]
+                : []),
             // ADDITIVE. The four keys above are the wire contract the admin SPA
             // builds its `accept` attribute from; video gets its own five rather
             // than a widening of theirs, for the same reason the config block

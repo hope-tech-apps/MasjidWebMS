@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Member;
 
+use App\Http\Requests\Concerns\NormalisesSubmittedAddress;
 use App\Http\Requests\Family\SetFamilyPasswordRequest;
 use Illuminate\Validation\Rule;
 
@@ -41,10 +42,17 @@ use Illuminate\Validation\Rule;
  */
 class VerifyMemberCodeRequest extends MemberSignInFormRequest
 {
+    use NormalisesSubmittedAddress;
+
+    protected function prepareForValidation(): void
+    {
+        $this->normaliseSubmittedAddress();
+    }
+
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email:rfc', 'ascii', 'max:255'],
             'code' => ['required', 'string', 'max:16'],
             'first_name' => ['nullable', 'string', 'max:100'],
             'last_name' => ['nullable', 'string', 'max:100'],
@@ -67,6 +75,9 @@ class VerifyMemberCodeRequest extends MemberSignInFormRequest
 
         // Only a present, blank-looking password reaches `required`, and to the
         // person typing it that is a password too short to use.
-        return $messages + ['password.required' => $messages['password.min']];
+        return $messages + [
+            'password.required' => $messages['password.min'],
+            'email.ascii' => self::asciiAddressMessage(),
+        ];
     }
 }

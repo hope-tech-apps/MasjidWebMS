@@ -860,7 +860,10 @@ class TeacherAttachTest extends TestCase
         // derived from rows older than the commit waited for.
         $source = file_get_contents(app_path('Http/Controllers/AdminDashboard/TeachersController.php'));
 
-        $lookup = strpos($source, "whereEmailIs(\$email)->value('id')");
+        // The lookup reads CANDIDATES and re-checks them exactly (ContactIdentity::sameAddress),
+        // because users.email is utf8mb4_unicode_ci in production: still no lock, still before
+        // the transaction.
+        $lookup = strpos($source, "whereEmailIs(\$email)->get(['id', 'email'])");
         $this->assertNotFalse($lookup, 'the email lookup must take no lock');
         $this->assertDoesNotMatchRegularExpression('/whereEmailIs\([^;]*lockForUpdate/s', $source);
         $this->assertLessThan(strpos($source, 'return DB::transaction(function () use ($request, $masjidId, $classes, $email, $foundId)'), $lookup, 'the lookup must run BEFORE the transaction opens');

@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Admin\Contacts;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Http\Requests\Concerns\NormalisesSubmittedAddress;
+use Closure;
 
 /**
  * Opening family sign-in for one contact (T-015d, admin half).
@@ -34,6 +36,31 @@ use App\Http\Requests\BaseFormRequest;
  */
 class EnableFamilyLoginRequest extends BaseFormRequest
 {
+    use NormalisesSubmittedAddress;
+
+    /**
+     * What the office is told when the part before the `@` has an accent.
+     *
+     * This form is used by staff, who can act on the reason, so it says what to
+     * do instead of the generic "not an email address" the public sign-in doors
+     * give (those say nothing about whose address a refusal resembles). A domain
+     * is converted to punycode for the parent; a local part has no such
+     * conversion, and production stores no accented one.
+     */
+    public const ACCENTED_LOCAL_PART = 'The part before the @ cannot have accents or other non-English letters. '
+        . 'Remove the accents before the @, or use another address for this parent.';
+
+    /**
+     * The address the parent will TYPE at the portal is the one stored, so it is
+     * put in the form the sign-in doors look it up in (a non-ASCII domain as
+     * punycode) and a non-ASCII local part is refused here, before a grant is
+     * written that no parent could ever sign in to.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->normaliseSubmittedAddress('login_email');
+    }
+
     public function rules(): array
     {
         return [
@@ -42,7 +69,25 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             // scoped to the bound tenant, so it lives in FamilyAccessService
             // beside the normalisation that makes it hold — one door, not a
             // validator and a service that agree today.
-            'login_email' => ['required', 'string', 'email', 'max:255'],
+            //
+            // The accent check runs BEFORE `email`: that rule refuses a non-ASCII
+            // local part too, with its own generic sentence, and `bail` would stop
+            // there and never reach the office-facing one.
+            'login_email' => [
+                'bail',
+                'required',
+                'string',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    $at = is_string($value) ? strrpos($value, '@') : false;
+
+                    if ($at !== false && preg_match('/[^\x00-\x7F]/', substr($value, 0, $at)) === 1) {
+                        $fail(self::ACCENTED_LOCAL_PART);
+                    }
+                },
+                'email',
+                'ascii',
+                'max:255',
+            ],
 
             // The operator has read the refusal and confirmed taking the address
             // off a member whose portal access has already ended. NOT a force
@@ -64,6 +109,7 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             'login_email.required' => 'Enter the sign-in email address for this parent or guardian. '
                 . 'It is a credential and is deliberately separate from the contact email on their record.',
             'login_email.email' => 'That does not look like an email address.',
+            'login_email.ascii' => 'That does not look like an email address.',
         ];
     }
 }

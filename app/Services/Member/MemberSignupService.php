@@ -7,7 +7,9 @@ use App\Models\AppSignupCode;
 use App\Models\Contact;
 use App\Models\Masjid;
 use App\Services\Family\FamilyPasswordService;
+use App\Support\ContactIdentity;
 use App\Support\TenantContext;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -89,6 +91,30 @@ use Throwable;
  * An address matching two contacts is ambiguous and refused outright, exactly
  * as FamilyLoginService refuses it — guessing which person a credential belongs
  * to is the one thing an identity service must never do.
+ *
+ * ---------------------------------------------------------------------------
+ * "MATCHES" MEANS THE ADDRESS THAT WAS TYPED, NOT WHAT THE COLLATION CALLS EQUAL
+ * ---------------------------------------------------------------------------
+ * Production's `contacts.login_email`, `contacts.email` and
+ * `app_signup_codes.email` are utf8mb4_unicode_ci (read from production
+ * 2026-09-29), so the database says `victim@gmail.com` = `victim@gmaíl.com`.
+ * A code is mailed to the address that was TYPED, so somebody who owned the
+ * look-alike domain received one and was linked to the victim's contact, with
+ * the victim's password replaced and their sessions ended. The same hole ran
+ * the other way: a code issued to the look-alike matched, through the same
+ * collation, when the VICTIM's address was typed at redeem. So every lookup here
+ * keeps its SQL (the index still narrows the search) and then filters the
+ * candidates through ContactIdentity::keepExactMatches() BEFORE anything counts
+ * them: an address, a contact or a code row that matched only through the
+ * collation is not a match. And the address is normalised at the door
+ * (ContactIdentity::submittedAddress()): a non-ASCII domain becomes punycode, a
+ * non-ASCII local part is refused.
+ *
+ * A look-alike therefore resolves to no contact, and a redeem for it would try
+ * to CREATE one, which the `(masjid_id, login_email)` unique index refuses just
+ * as it would the victim's own address. That refusal is answered like every
+ * other refused redeem (null, the code spent, one warning with no address in it)
+ * rather than a 500, and says nothing about whose address it collided with.
  *
  * ---------------------------------------------------------------------------
  * TENANT BINDING IS A PRECONDITION, NOT A DETAIL
@@ -311,11 +337,20 @@ class MemberSignupService
     {
         // Newest first: somebody who requested twice types the code from the
         // most recent mail. A second request does not kill the first.
-        $live = AppSignupCode::query()
-            ->where('email', $email)
-            ->redeemable()
-            ->orderByDesc('id')
-            ->get();
+        //
+        // Only rows issued to THIS address, byte for byte. `app_signup_codes.email`
+        // is utf8mb4_unicode_ci too, so `where('email', ...)` also returns a code
+        // that was mailed to a look-alike (`victim@gmaíl.com`), and redeeming that
+        // code at `victim@gmail.com` would have linked its holder to the victim.
+        $live = ContactIdentity::keepExactMatches(
+            AppSignupCode::query()
+                ->where('email', $email)
+                ->redeemable()
+                ->orderByDesc('id')
+                ->get(),
+            'email',
+            $email,
+        );
 
         foreach ($live as $row) {
             if (hash_equals((string) $row->code_hash, $candidate)) {
@@ -401,7 +436,12 @@ class MemberSignupService
                 ]);
                 // masjid_id is stamped by the BelongsToMasjid creating hook from
                 // the bound tenant, never from the request.
-                $contact->save();
+                try {
+                    $contact->save();
+                } catch (UniqueConstraintViolationException) {
+                    return $this->refuseCollidingAddress();
+                }
+
                 $created = true;
             } else {
                 if (! $this->mayHoldMemberAccess($contact)) {
@@ -424,7 +464,16 @@ class MemberSignupService
                     $updates['login_email'] = $email;
                 }
 
-                $contact->forceFill($updates)->save();
+                // Adopting the address writes `login_email`, and the
+                // `(masjid_id, login_email)` unique index can refuse it exactly as
+                // it refuses a new contact: a look-alike spelling, or a soft-deleted
+                // contact, may hold it (see `refuseCollidingAddress()`). It answers
+                // the same way, as the refused redeem it is, and never as a 500.
+                try {
+                    $contact->forceFill($updates)->save();
+                } catch (UniqueConstraintViolationException) {
+                    return $this->refuseCollidingAddress();
+                }
 
                 // A password on a contact with no login address was chosen
                 // under an address it no longer has (FamilyAccessService
@@ -479,14 +528,26 @@ class MemberSignupService
      * treated like any unmatched one, so a new member gives their name and gets a
      * contact of their own. The invariant this buys: a member token's contact
      * always has the redeemed address as its `login_email`.
+     *
+     * The SQL only NARROWS: under utf8mb4_unicode_ci it also returns a contact
+     * whose address differs by an accent (`é` = `e`) or an expansion (`ß` =
+     * `ss`), which would link a look-alike address to somebody else's contact.
+     * Only the candidates whose address is the typed one, byte for byte, count.
      */
     private function resolveContact(string $email): ?Contact
     {
-        $byLogin = Contact::query()
-            ->whereNotNull('login_email')
-            ->whereRaw('LOWER(login_email) = ?', [$email])
-            ->limit(2)
-            ->get();
+        // No `limit()` on either query: the candidates are filtered to the exact
+        // address before they are counted, and a limit taken first could cut the
+        // exact row off behind look-alikes (or leave one exact row standing where
+        // two hold the address).
+        $byLogin = ContactIdentity::keepExactMatches(
+            Contact::query()
+                ->whereNotNull('login_email')
+                ->whereRaw('LOWER(login_email) = ?', [$email])
+                ->get(),
+            'login_email',
+            $email,
+        );
 
         if ($byLogin->count() === 1) {
             return $byLogin->first();
@@ -496,14 +557,43 @@ class MemberSignupService
             return null;
         }
 
-        $byEmail = Contact::query()
-            ->whereNotNull('email')
-            ->whereNull('login_email')
-            ->whereRaw('LOWER(email) = ?', [$email])
-            ->limit(2)
-            ->get();
+        $byEmail = ContactIdentity::keepExactMatches(
+            Contact::query()
+                ->whereNotNull('email')
+                ->whereNull('login_email')
+                ->whereRaw('LOWER(email) = ?', [$email])
+                ->get(),
+            'email',
+            $email,
+        );
 
         return $byEmail->count() === 1 ? $byEmail->first() : null;
+    }
+
+    /**
+     * The `(masjid_id, login_email)` unique index refused the write this redeem
+     * was about to make (creating a contact at the address, or adopting it as an
+     * existing contact's `login_email`): somebody already holds an address the
+     * index calls the same as this one. Under utf8mb4_unicode_ci that includes a look-alike of it
+     * (`victim@gmaíl.com` against `victim@gmail.com`), which resolveContact()
+     * rightly does not return; it also includes a soft-deleted contact, which the
+     * index still pins and resolveContact() never sees.
+     *
+     * Answered exactly as any other refused redeem: null (the controller's one
+     * 410), nothing created or adopted and no password set. The code is SPENT, because this
+     * returns instead of throwing and the transaction commits the `consumed_at`
+     * that opened it: whoever proved a mailbox they cannot use gets no second try
+     * with the same code. Nothing says whose address collided, and the log line
+     * names the organisation only, because an address in a log is a disclosure
+     * and the exception's own message quotes the bound values.
+     */
+    private function refuseCollidingAddress(): ?array
+    {
+        Log::warning('member sign-up refused: the address collides with an existing contact', [
+            'masjid_id' => $this->tenant->get(),
+        ]);
+
+        return null;
     }
 
     /**
@@ -534,8 +624,7 @@ class MemberSignupService
         return $this->mayHoldMemberAccess($contact)
             && $contact->verified_at !== null
             && $contact->hasFamilyPassword()
-            && $contact->login_email !== null
-            && $this->normalise($contact->login_email) === $email;
+            && ContactIdentity::sameAddress($contact->login_email, $email);
     }
 
     /**
@@ -549,9 +638,16 @@ class MemberSignupService
         return $contact->login_revoked_at === null && ! $contact->trashed();
     }
 
+    /**
+     * The address in the one form this service looks up and stores: trimmed,
+     * lower-cased, a non-ASCII domain in punycode. `''` means "not an address we
+     * can use" and every caller already treats `''` as a refusal, so a
+     * non-ASCII local part, which ContactIdentity::submittedAddress() refuses,
+     * is refused the same silent way as a blank one.
+     */
     private function normalise(string $email): string
     {
-        return mb_strtolower(trim($email));
+        return ContactIdentity::submittedAddress($email) ?? '';
     }
 
     private function generateCode(): string

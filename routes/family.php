@@ -101,9 +101,25 @@ use Illuminate\Support\Facades\Route;
 | verbs rather than rows, and a POST in this realm should always have had to be
 | argued for.
 |
+| Two more (2026-09-29) are a parent's reaction on a CLASS STORY post and its
+| removal, on the FEED read gate exactly (the story's twin of the message
+| reaction above): consent withdrawn or a family that has left the class is
+| refused, the post is found through the group, the contact comes from the
+| token. Neither notifies at the tap; the author hears once, in a content-free
+| digest.
+|
+| One more (2026-09-29) is the STORY-SEEN POST: "I have the Story tab open on
+| these stories", the only write that records a read. It is fired by the portal
+| when the tab is showing the posts and never from a GET, it takes the FEED read
+| gate and the token's contact, and it writes nothing at all while
+| `groups.story_reads.enabled` is off (the default) — the parent-facing notice
+| that reads are recorded ships on the same switch. A parent's reading is never
+| shown to another parent.
+|
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them (sixteen routes since 2026-09-24: the portal invite, and one
-| playback ticket for each of the two media surfaces) and fails on any other. Adding a route here without
+| every one of them (nineteen routes since 2026-09-29: the portal invite, one
+| playback ticket for each of the two media surfaces, the story reaction pair
+| and the story-seen POST) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -263,6 +279,28 @@ Route::prefix('family')
                     // parked in a history entry, and it is on the counted-writes
                     // list below because the list counts VERBS, not rows.
                     Route::post('/{post_id}/attachments/{attachment_id}/playback', 'playbackTicket');
+
+                    // A parent's 🤲 / 👍 / 💯 / ❓ on a story post, and taking it
+                    // back (2026-09-29) — two more counted writes. The FEED read
+                    // gate exactly (`GroupAudience::DISCLOSURE_FEED`): consent
+                    // withdrawn, or a family that has left the class, is refused
+                    // and nothing is written. The post is found THROUGH the
+                    // group and the contact comes from the token; there is no
+                    // payload and nothing is dispatched at the tap (the author
+                    // hears once, in the hourly digest `groups:notify-reactions`).
+                    Route::put('/{post_id}/reactions/{reaction}', 'react');
+                    Route::delete('/{post_id}/reactions/{reaction}', 'unreact');
+
+                    // "I have the Story tab open on these stories" (2026-09-29):
+                    // the ONLY thing that records a read, and one more counted
+                    // write. Fired by the portal when the tab is showing the
+                    // posts — never from the /posts GET above. The FEED read gate
+                    // again; the contact is the token's; the ids name stories and
+                    // nothing else. It writes NOTHING while
+                    // `groups.story_reads.enabled` is off (the default), because
+                    // the parent-facing notice ships on the same switch. (No
+                    // POST /{post_id} exists, so nothing shadows this path.)
+                    Route::post('/seen', 'markSeen');
                 });
 
             // Handouts the class has chosen to share. BOTH are GETs — nothing
@@ -312,9 +350,10 @@ Route::prefix('family')
                     // back (2026-09-21) — two more counted writes. The
                     // reply's gate exactly: `mayReceiveThread()`, then "not
                     // closed", with the message found THROUGH the thread and the
-                    // contact from the token. Nothing else: no payload, no
-                    // notification, and only the four keys in
-                    // GroupMessageReaction::REACTIONS.
+                    // contact from the token. Nothing else: no payload, and only
+                    // the four keys in GroupMessageReaction::REACTIONS. A tap
+                    // dispatches nothing; the message's author hears once, in the
+                    // hourly content-free digest (groups:notify-reactions).
                     //
                     // Marking a thread READ is deliberately NOT a route. It stays
                     // what it always was — opening the thread (the GET above),

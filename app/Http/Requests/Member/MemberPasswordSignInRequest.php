@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Member;
 
+use App\Http\Requests\Concerns\NormalisesSubmittedAddress;
+
 /**
  * POST /api/mobile/masjids/{masjid_id}/auth/password.
  *
@@ -20,14 +22,29 @@ namespace App\Http\Requests\Member;
  */
 class MemberPasswordSignInRequest extends MemberSignInFormRequest
 {
+    use NormalisesSubmittedAddress;
+
+    protected function prepareForValidation(): void
+    {
+        $this->normaliseSubmittedAddress();
+    }
+
     /**
      * @return array<string, mixed>
      */
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'max:255'],
+            'email' => ['bail', 'required', 'string', 'email:rfc', 'ascii', 'max:255'],
             'password' => ['required', 'string', 'max:255'],
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return ['email.ascii' => self::asciiAddressMessage()];
     }
 }

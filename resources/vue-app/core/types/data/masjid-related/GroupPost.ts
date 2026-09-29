@@ -40,6 +40,20 @@ export type GroupPostAttachment = {
     retained_until?: string | null;
 };
 
+/**
+ * One of the four reactions on a post, as `App\Support\GroupPostSignals` serves
+ * it: always all four, in order. The server has already decided whose names THIS
+ * viewer may see (a parent is shown staff names only), so a screen renders
+ * `by` and never filters it.
+ */
+export type GroupPostReaction = {
+    key: string;
+    emoji: string;
+    count: number;
+    mine: boolean;
+    by: { name: string; is_parent: boolean }[];
+};
+
 /** The account that published a post — never a client-supplied author. */
 export type GroupPostAuthor = {
     id: number;
@@ -65,6 +79,24 @@ export type GroupPost = {
      * this week" is never confused with "not allowed to see them".
      */
     media_withheld: boolean;
+    /** 🤲 👍 💯 ❓ on this post — all four, in order, with counts and `mine`. */
+    reactions?: GroupPostReaction[];
+    /**
+     * Read receipts — STAFF payloads only, and ABSENT (not zero) while the school
+     * has receipts switched off (`meta.story_reads.enabled`). `audience_count` is
+     * the consented, current parents with a live portal login; `seen_count` never
+     * exceeds it.
+     */
+    seen_by?: { name: string; seen_at: string | null }[];
+    seen_count?: number;
+    audience_count?: number;
+    /**
+     * `false` (with `seen_since`, a school-local `Y-m-d`) on a story that predates
+     * recording and has no read on it: it was not tracked, which is not the same
+     * as nobody opening it. The three fields above are omitted for it.
+     */
+    seen_tracked?: boolean;
+    seen_since?: string | null;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */
@@ -91,4 +123,6 @@ export type GroupFeedMeta = {
     max_video_size_kb?: number;
     max_videos_per_post?: number;
     video_retention_days?: number;
+    /** Read receipts: are they being collected, and how many parents cannot be counted. */
+    story_reads?: { enabled: boolean; unreachable_count?: number };
 };

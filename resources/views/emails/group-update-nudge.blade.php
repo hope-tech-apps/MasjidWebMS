@@ -1,4 +1,5 @@
 @php($isMessage = $kind === 'message')
+@php($isReaction = $kind === 'reaction')
 <!doctype html>
 <html lang="en">
 <body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;">
@@ -9,7 +10,9 @@
           <tr>
             <td>
               <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3;">
-                @if($isMessage)
+                @if($isReaction)
+                  You have new reactions
+                @elseif($isMessage)
                   You have a new message
                 @else
                   A new update in {{ $groupLabel }}
@@ -19,7 +22,10 @@
               <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">{{ $greeting }}</p>
 
               <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">
-                @if($isMessage)
+                @if($isReaction)
+                  There are new reactions to something you shared in <strong>{{ $groupLabel }}</strong> at
+                  {{ $orgName }}. Sign in to see them.
+                @elseif($isMessage)
                   There is a new message for you in <strong>{{ $groupLabel }}</strong> at
                   {{ $orgName }}. Sign in to read it and reply.
                 @else
@@ -33,7 +39,7 @@
                   <td style="background:#286c56;border-radius:8px;">
                     <a href="{{ $signInUrl }}"
                        style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
-                      {{ $isMessage ? 'Read the message' : 'Read the update' }}
+                      {{ $isReaction ? 'See the reactions' : ($isMessage ? 'Read the message' : 'Read the update') }}
                     </a>
                   </td>
                 </tr>

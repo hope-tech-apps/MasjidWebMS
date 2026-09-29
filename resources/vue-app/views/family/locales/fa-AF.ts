@@ -251,6 +251,8 @@ export const FA_AF: Record<string, string> = {
     reaction_hundred: "100",
     reaction_question: "سوال",
     reaction_failed: "این واکنش ذخیره نشد.",
+    // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts are switched on.
+    story_seen_notice: "مکتب می‌تواند ببیند که کدام والدین هر خبر صنف را باز کرده‌اند و چه وقت. والدین دیگر این را نمی‌بینند.",
     // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
     marks_section_simple: "عالی / خوب / نیاز به تلاش بیشتر",
     simple_mark_3: "عالی",

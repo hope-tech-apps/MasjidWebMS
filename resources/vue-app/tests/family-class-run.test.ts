@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -39,6 +40,8 @@ let FamilyApiService: any;
 let run: any;
 let computed: any;
 let ref: any;
+let nextTick: any;
+let watch: any;
 
 const sent: { url: string; auth: string | null }[] = [];
 /** What the fake network answers for a URL; default 200 with an empty body. */
@@ -49,7 +52,7 @@ let onRequest: (n: number) => void = () => {};
 before(async () => {
     ({ default: FamilyApiService } = await import('@/core/services/FamilyApiService' as string));
     run = await import('@/views/family/familyClassRun' as string);
-    ({ computed, ref } = await import('vue'));
+    ({ computed, ref, nextTick, watch } = await import('vue'));
 
     FamilyApiService.init('https://manara.example.test');
     FamilyApiService.client.defaults.adapter = async (config: any) => {
@@ -404,4 +407,237 @@ test('a run remembers the class it began at, not only its base path', async () =
 
     assert.equal(started.school, '7');
     assert.equal(started.group, '3');
+});
+
+// ---------------------------------------------------------------- story receipts
+
+test('story seen: the ids go to the class the run began at, signed with that school\'s token', async () => {
+    const s = screen();
+
+    const ok = await run.recordStoriesSeenFor(s.begin(), [11, 12]);
+
+    assert.equal(ok, true);
+    assert.deepEqual(sent.map((r) => r.url), ['/api/family/masjids/7/groups/3/posts/seen']);
+    assert.equal(sent[0].auth, 'Bearer tok-7');
+});
+
+test('story seen: nothing to say sends nothing', async () => {
+    const s = screen();
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), []), false);
+    assert.equal(sent.length, 0);
+});
+
+test('story seen: a run that is already stale sends nothing', async () => {
+    const s = screen();
+    const started = s.begin();
+    s.route.value = { masjidId: '9', groupId: '5' };
+
+    assert.equal(await run.recordStoriesSeenFor(started, [11]), false);
+    assert.equal(sent.length, 0, 'school B is asked for nothing');
+});
+
+test('story seen: a school switch while the POST is out reports nothing and asks school B for nothing', async () => {
+    const s = screen();
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, '/api/family/masjids/7/groups/3/posts/seen');
+    assert.equal(toSchool9().length, 0);
+});
+
+test('story seen: a long list is sent in server-sized chunks, and a switch between chunks stops the rest', async () => {
+    const s = screen();
+    const ids = Array.from({ length: 120 }, (_, i) => i + 1);
+    const bodies: number[] = [];
+    respond = () => ({ status: 200, data: { data: { recorded: 0 } } });
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), ids), true);
+    assert.equal(sent.length, 3, '50 + 50 + 20');
+
+    sent.length = 0;
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), ids), false);
+    assert.equal(sent.length, 1, 'the second chunk is never sent');
+    void bodies;
+});
+
+test('story seen: an expired session goes to the screen\'s handler; any other failure is silent', async () => {
+    const s = screen();
+
+    respond = () => ({ status: 401, data: { message: 'Unauthenticated.' } });
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(s.state.failed.length, 1, 'the handler was asked about the 401');
+
+    respond = () => ({ status: 500, data: {} });
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(s.state.failed.length, 2, 'the handler decides; the helper shows nothing itself');
+});
+
+// ------------------------------------------------- story reads: WHEN the screen may report
+// These drive `watchStoriesSeen`, the decision FamilyClass.vue wires to its refs.
+// The rule: a read is recorded only once the Story section has been DRAWN. The
+// posts arrive mid-way through the screen's load chain, while it still shows a
+// spinner, so "the posts are here" is not "the parent has seen them".
+
+/** The class screen's state for the reporter, over the same movable route. */
+function storyScreen(over: Record<string, any> = {}) {
+    const s = screen();
+    const state = {
+        tab: ref('story'),
+        posts: ref([] as { id: number }[]),
+        enabled: ref(true),
+        loading: ref(true),
+        error: ref(null as any),
+        mayReceive: true,
+        visible: true,
+        begun: [] as string[],
+        ...over,
+    };
+    const report = run.watchStoriesSeen({
+        tab: state.tab,
+        posts: state.posts,
+        enabled: state.enabled,
+        loading: state.loading,
+        error: state.error,
+        mayReceiveFeed: () => state.mayReceive,
+        visible: () => state.visible,
+        begin: () => { state.begun.push('begin'); return s.begin(); },
+    });
+
+    return Object.assign(state, { report, route: s.route });
+}
+
+const storySettle = async () => {
+    for (let i = 0; i < 6; i++) await nextTick();
+    await new Promise((r) => setTimeout(r, 0));
+};
+
+test('story reads: nothing is sent while the screen is still loading, however early the posts arrive', async () => {
+    const v = storyScreen();
+
+    // What onMounted does mid-chain: the posts and the switch land, /threads and
+    // the per-child records are still to come, the spinner is still on screen.
+    v.posts.value = [{ id: 11 }, { id: 12 }];
+    await storySettle();
+    assert.equal(sent.length, 0, 'the spinner is not a story on screen');
+
+    // The visibilitychange trigger must not slip past either.
+    await v.report();
+    assert.equal(sent.length, 0);
+
+    v.loading.value = false;
+    await storySettle();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, '/api/family/masjids/7/groups/3/posts/seen');
+});
+
+test('story reads: a load that fails records nothing at all', async () => {
+    const v = storyScreen();
+
+    v.posts.value = [{ id: 11 }, { id: 12 }];
+    // /threads returns 500: the screen sets its error alert, then `finally` ends loading.
+    v.error.value = { key: 'class_load_error' };
+    v.loading.value = false;
+    await storySettle();
+    await v.report();
+
+    assert.equal(sent.length, 0, 'the parent saw an error alert, not the stories or the notice');
+});
+
+test('story reads: the request goes only after the render that draws the notice', async () => {
+    const order: string[] = [];
+    // `begin` is the first thing the report does once it has decided to send.
+    const v = storyScreen({ begun: { push: () => order.push('report') } });
+    // A post-flush watcher stands in for the DOM patch that draws the notice and the articles.
+    watch(v.loading, () => order.push('rendered'), { flush: 'post' });
+    v.posts.value = [{ id: 11 }];
+    await storySettle();
+
+    v.loading.value = false;
+    await storySettle();
+
+    assert.deepEqual(order, ['rendered', 'report']);
+});
+
+test('story reads: only the Story tab reports, and coming back to it reports', async () => {
+    const v = storyScreen();
+    v.loading.value = false;
+    v.tab.value = 'grades';
+    v.posts.value = [{ id: 11 }];
+    await storySettle();
+    assert.equal(sent.length, 0, 'a parent who only opened Grades has not seen the stories');
+
+    v.tab.value = 'story';
+    await storySettle();
+    assert.equal(sent.length, 1);
+});
+
+test('story reads: the switch off, a class without the feed, and a hidden page each send nothing', async () => {
+    const off = storyScreen({ enabled: ref(false) });
+    off.loading.value = false;
+    off.posts.value = [{ id: 11 }];
+    await storySettle();
+    assert.equal(sent.length, 0, 'switch off');
+
+    const noFeed = storyScreen({ mayReceive: false });
+    noFeed.loading.value = false;
+    noFeed.posts.value = [{ id: 11 }];
+    await storySettle();
+    assert.equal(sent.length, 0, 'no consent, no feed');
+
+    const hidden = storyScreen({ visible: false });
+    hidden.loading.value = false;
+    hidden.posts.value = [{ id: 11 }];
+    await storySettle();
+    assert.equal(sent.length, 0, 'a background tab');
+
+    hidden.visible = true;
+    await hidden.report();
+    assert.equal(sent.length, 1, 'the moment it is looked at');
+});
+
+test('story reads: a story already reported is not reported again; a new one is', async () => {
+    const v = storyScreen();
+    v.loading.value = false;
+    v.posts.value = [{ id: 11 }];
+    await storySettle();
+    await v.report();
+    assert.equal(sent.length, 1);
+
+    v.posts.value = [{ id: 11 }, { id: 12 }];
+    await storySettle();
+    assert.equal(sent.length, 2, 'only the new one');
+});
+
+test('story reads: two triggers in the same tick send once, and a failed send is tried again', async () => {
+    const v = storyScreen();
+    v.loading.value = false;
+    v.posts.value = [{ id: 11 }];
+    await Promise.all([v.report(), v.report()]);
+    await storySettle();
+    assert.equal(sent.length, 1);
+
+    const w = storyScreen();
+    respond = () => ({ status: 500, data: {} });
+    w.loading.value = false;
+    w.posts.value = [{ id: 21 }];
+    await storySettle();
+    const afterFailure = sent.length;
+    respond = () => ({ status: 200, data: { data: { recorded: 1 } } });
+    await w.report();
+    assert.equal(sent.length, afterFailure + 1, 'given back on failure');
+});
+
+test('story reads: FamilyClass.vue wires the reporter to the load state and never posts from the load chain', () => {
+    const src = readFileSync(path.join(appRoot, 'views/family/FamilyClass.vue'), 'utf8');
+
+    assert.match(src, /watchStoriesSeen\(\{[\s\S]*?\n\}\);/, 'the screen goes through the reporter');
+    const wiring = src.match(/watchStoriesSeen\(\{[\s\S]*?\n\}\);/)![0];
+    for (const key of ['tab,', 'posts,', 'loading,', 'error,', 'enabled: storyReadsEnabled']) {
+        assert.ok(wiring.includes(key), `the reporter is given ${key}`);
+    }
+    assert.ok(!/recordStoriesSeenFor/.test(src), 'no call to the recorder from the screen: the load chain cannot report');
+    assert.match(src, /<p v-if="storyReadsEnabled"[^>]*data-test="story-seen-notice"/, 'the notice shares the switch that lets the screen record');
 });

@@ -285,25 +285,41 @@ class GroupAudience
             return [];
         }
 
-        $email = Str::lower(trim((string) $principal->email));
+        $typed = trim((string) $principal->email);
+        $email = Str::lower($typed);
 
         if ($email === '') {
             return [];
         }
 
         // Contact is BelongsToMasjid + SoftDeletes, so this reads only the bound
-        // tenant's live contacts. LOWER() on both sides rather than relying on
-        // the column collation: production is utf8mb4_bin (case-SENSITIVE) while
-        // the test suite runs SQLite, and an identity check must not depend on
-        // which one it is talking to.
-        $matches = Contact::query()
+        // tenant's live contacts.
+        //
+        // THE QUERY IS A SHORTLIST, and this bridge is an AUTHORIZATION: whoever
+        // it resolves a staff login to reads that contact's wards. `contacts.email`
+        // and `users.email` are utf8mb4_unicode_ci on production (read 2026-09-29),
+        // where `parent@gmail.com` = `parent@gmaíl.com`, and `/profile` used to let
+        // any admin-realm user rewrite their own `users.email` unverified. A staff
+        // login at a look-alike spelling therefore resolved to a real parent's
+        // contact and read their children's group standing. Only a byte-exact
+        // address (case and surrounding spaces aside) is the same person, so the
+        // candidates are filtered with `ContactIdentity::keepExactMatches()` before
+        // anything is counted. No `limit()` ahead of it: a limit taken first can
+        // cut the exact row off behind look-alikes, or leave one exact row where
+        // two hold the address.
+        //
+        // The exact comparison is against what the user's own row holds, NOT the
+        // multibyte-lower-cased copy the shortlist uses: `Str::lower()` folds a
+        // Kelvin sign into an ASCII `k`, and the comparison must not.
+        $candidates = Contact::query()
             ->whereNotNull('email')
             ->whereRaw('LOWER(email) = ?', [$email])
-            ->limit(2)
-            ->pluck('id');
+            ->get(['id', 'email']);
+
+        $matches = ContactIdentity::keepExactMatches($candidates, 'email', $typed);
 
         // Ambiguous identity is no identity.
-        return $matches->count() === 1 ? [(int) $matches->first()] : [];
+        return $matches->count() === 1 ? [(int) $matches->first()->id] : [];
     }
 
     /**
@@ -967,6 +983,61 @@ class GroupAudience
         return $memberships
             ->filter(fn (GroupMembership $membership): bool => $membership->isGuardian()
                 && $membership->guardian_of_contact_id !== null)
+            ->values();
+    }
+
+    /**
+     * The guardians a CLASS STORY actually reaches: consented, still in the class,
+     * and holding a LIVE family login (owner, 2026-09-29).
+     *
+     * The denominator of "Seen by 4 of 7 parents", and the one definition of
+     * "who is in the room for a story" that the reaction and receipt code reads,
+     * so a receipt can never count somebody who could not have seen the story.
+     * It is the story audience's guardian half exactly:
+     *
+     *   - CONSENTED — `consented()`, any scope: media consent covers the feed, the
+     *     same rule `mayReceive(DISCLOSURE_FEED)` applies row by row;
+     *   - CURRENT — `current()`: a family that has left the class receives
+     *     nothing from the day it left, and so is not counted;
+     *   - a LIVE LOGIN — `familyLoginIsActive()`: a guardian with no portal login
+     *     cannot open a story, so counting them would make every story look
+     *     unread. They are counted separately (storyGuardiansWithoutLogin) so the
+     *     school can be told how many parents this receipt cannot reach.
+     *
+     * Staff and participants are not in it: this is the parents' half.
+     *
+     * @return Collection<int,Contact> keyed by contact id
+     */
+    public function storyGuardianContacts(Group $group): Collection
+    {
+        return $this->consentedCurrentGuardians($group)
+            ->filter(fn (Contact $contact): bool => $contact->familyLoginIsActive())
+            ->keyBy('id');
+    }
+
+    /**
+     * How many consented, current guardians hold NO live family login — the
+     * parents a story reaches on paper and a receipt cannot. The footnote under
+     * "Seen by 4 of 7".
+     */
+    public function storyGuardiansWithoutLogin(Group $group): int
+    {
+        return $this->consentedCurrentGuardians($group)
+            ->reject(fn (Contact $contact): bool => $contact->familyLoginIsActive())
+            ->count();
+    }
+
+    /** @return Collection<int,Contact> distinct guardians, consented and still in the class */
+    private function consentedCurrentGuardians(Group $group): Collection
+    {
+        return $group->memberships()
+            ->consented()
+            ->current()
+            ->with('contact')
+            ->get()
+            ->map(fn (GroupMembership $membership) => $membership->contact)
+            ->filter()
+            ->unique('id')
             ->values();
     }
 

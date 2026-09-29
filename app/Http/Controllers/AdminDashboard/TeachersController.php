@@ -12,6 +12,7 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
+use App\Support\ContactIdentity;
 use App\Support\MembershipSeen;
 use App\Support\TenantContext;
 use Illuminate\Database\DeadlockException;
@@ -222,7 +223,25 @@ class TeachersController extends Controller
         // would afterwards derive is_default from rows that predate the commit it
         // waited for. Outside, it takes no snapshot; the first statement inside is
         // the lock, and the reads after it see everything committed before it.
-        $foundId = User::withTrashed()->whereEmailIs($email)->value('id');
+        //
+        // `whereEmailIs()` returns CANDIDATES. `users.email` is utf8mb4_unicode_ci,
+        // so on MySQL it also returns a login whose address differs only by an
+        // accent or an expansion (`sara@gmaíl.com` for `sara@gmail.com`), and
+        // attaching that one would hand this school somebody else's account under
+        // an address the inviter never typed. Only the row whose address IS the
+        // typed one, byte for byte after lower-casing, is the teacher being
+        // added. A candidate that matched only through the collation is refused
+        // like any other login this flow cannot add: creating a new user at that
+        // address would collide with it on the unique index, and a 500 there
+        // would answer "somebody holds a near-identical address".
+        $candidates = User::withTrashed()->whereEmailIs($email)->get(['id', 'email']);
+        $foundId = $candidates
+            ->first(fn (User $candidate) => ContactIdentity::sameAddress($candidate->email, $email))
+            ?->id;
+
+        if ($foundId === null && $candidates->isNotEmpty()) {
+            return ['refusal' => self::CANNOT_ADD];
+        }
 
         return DB::transaction(function () use ($request, $masjidId, $classes, $email, $foundId) {
             // The ONE row found, locked by key (nothing to lock for a new address).

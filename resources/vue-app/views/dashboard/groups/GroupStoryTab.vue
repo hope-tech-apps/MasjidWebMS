@@ -135,6 +135,16 @@
                         <i class="bi bi-eye-slash me-1"></i>
                         This post has photos that are not shared with you.
                     </div>
+
+                    <!-- 🤲 👍 💯 ❓. The server has already decided whose names this viewer sees. -->
+                    <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
+                                    :send="(key: string, on: boolean) => reactTo(post, key, on)" />
+                    <!-- "Seen by 4 of 7 parents" — only while the school has receipts on. -->
+                    <StorySeenLine :enabled="feedStore.feedMeta?.story_reads?.enabled"
+                                   :seen-by="post.seen_by" :seen-count="post.seen_count"
+                                   :audience-count="post.audience_count"
+                                   :tracked="post.seen_tracked" :since="post.seen_since"
+                                   :unreachable="feedStore.feedMeta?.story_reads?.unreachable_count" />
                 </div>
             </div>
 
@@ -149,6 +159,10 @@
 import { ref, computed, onBeforeMount, onBeforeUnmount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
+// 🤲 👍 💯 ❓ under each story card — the conversation tab's component, so the
+// two surfaces cannot drift.
+import MessageSignals from '@/components/common/MessageSignals.vue';
+import StorySeenLine from '@/components/common/StorySeenLine.vue';
 // The same tile the conversation tab uses for a video: one renderer for the
 // ticket-and-<video> arrangement rather than a second copy of it here.
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
@@ -272,6 +286,16 @@ const loadPosts = async (page: number) => {
         }
     } finally {
         loading.value = false;
+    }
+};
+
+/** 🤲 👍 💯 ❓ — refused (403) for an admin who may not read this class's feed. */
+const reactTo = async (post: GroupPost, key: string, on: boolean) => {
+    try {
+        return await feedStore.setReaction(props.groupId, post.id, key, on);
+    } catch (error) {
+        Swal.fire({ icon: 'error', title: 'Not saved', text: apiErrorText(error, 'That reaction could not be saved.') });
+        return null;
     }
 };
 

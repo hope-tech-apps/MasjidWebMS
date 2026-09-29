@@ -216,6 +216,13 @@ class User extends Authenticatable implements HasMedia
      * whole table, and under a locking read that means locking every row it scans.
      * SQLite (the suite) compares case-sensitively, so it needs the LOWER().
      *
+     * THIS RETURNS CANDIDATES, NOT AN IDENTITY. That same collation compares accents
+     * and expansions as equal too (`é` = `e`, `ß` = `ss`), so on MySQL the plain
+     * equality also returns `sara@gmaíl.com` for `sara@gmail.com`. A caller that
+     * acts on the row it finds (attaches it, restores it, trusts it) must confirm
+     * it with ContactIdentity::sameAddress($user->email, $email) first, as
+     * TeachersController::createOrAttach does.
+     *
      * @param  \Illuminate\Database\Eloquent\Builder<User>  $query
      */
     public function scopeWhereEmailIs($query, string $email, ?string $driver = null)

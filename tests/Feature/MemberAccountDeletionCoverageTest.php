@@ -101,6 +101,12 @@ class MemberAccountDeletionCoverageTest extends TestCase
             // record, like the read bookmark below; only a guardian can write
             // one, and their guardian edge already keeps the contact.
             'group_message_reactions' => ['contact_id'],
+            // 2026-09-29: the same on a class STORY post. Office record for the
+            // same reason; only a guardian writes one.
+            'group_post_reactions' => ['contact_id'],
+            // 2026-09-29: which class stories a guardian opened (receipts, off by
+            // default). The school's record of what it published to whom.
+            'group_post_reads' => ['contact_id'],
             'group_thread_reads' => ['contact_id'],
             'group_threads' => ['created_by_contact_id'],
             // 2026-09-25: an order from the organisation's old Wix site,
