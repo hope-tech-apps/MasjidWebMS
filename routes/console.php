@@ -88,6 +88,20 @@ Schedule::command('groups:purge-feed')->dailyAt('03:10')->withoutOverlapping();
 // Logs one line per run. See App\Console\Commands\NotifyReactions.
 Schedule::command('groups:notify-reactions')->hourlyAt(20)->withoutOverlapping(55);
 
+// Scheduled class stories and new conversations (T-002.4, 2026-09-29): "Send later".
+// Every minute, because a teacher who says 07:30 means 07:30. A STORY is visible to
+// families by the clock alone (GroupPost::scopePublished); this sweep refuses one whose
+// author left the class BEFORE its time and sends the class-story email once it is out.
+// A CONVERSATION exists only because this sweep writes it, at its time, through the same
+// writer a live one uses, after asking its gates again. Both are claimed by an UPDATE, so
+// an overlapping run sends nothing twice. withoutOverlapping(5), not the bare call: a run
+// that is killed (a deploy, an OOM) never releases the mutex, and with the 24-hour default
+// that one dead run would silence every scheduled item for a day; five minutes costs at
+// most five, and a claim left in `sending` is handed back after
+// groups.scheduling.stale_claim_minutes. One WARNING line per run is the proof it ran
+// (production's LOG_LEVEL=warning drops an info line). See PublishDueGroupItems.
+Schedule::command('groups:publish-due')->everyMinute()->withoutOverlapping(5);
+
 // The parent portal's translation cache. Same policy as the sweep above, over a
 // derived copy of the same content: every row is the Arabic of something a
 // teacher wrote about a child, so it is bounded for the reason the post it came
