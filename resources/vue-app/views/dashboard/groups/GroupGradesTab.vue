@@ -70,7 +70,7 @@
                             <div class="text-muted small text-uppercase" style="letter-spacing:.04em">Points work</div>
                             <div class="fs-4 fw-semibold">
                                 {{ student.summary.points_earned }} / {{ student.summary.points_possible }}
-                                <span v-if="pointsPct !== null" class="fs-6 text-muted">({{ pointsPct }}%)</span>
+                                <span v-if="pointsPct !== null" class="fs-6 text-muted">({{ pointsPct }})</span>
                             </div>
                             <div class="text-muted small">
                                 over {{ student.summary.points_counted }}
@@ -218,7 +218,7 @@
 <script setup lang="ts">
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
-import { averageLines, subjectLine, weightNote } from '@/core/helpers/gradebook';
+import { averageLines, pointsPercentText, subjectLine, weightNote } from '@/core/helpers/gradebook';
 import { computed, onMounted, ref } from 'vue';
 
 /**
@@ -295,13 +295,12 @@ const markClass = (status: string | null) => {
 };
 
 // Points work only, and only when there is a denominator: a percentage over an
-// empty total is a division by zero rendered as "NaN%" on a child's record.
-const pointsPct = computed<number | null>(() => {
-    const possible = Number(student.value?.summary?.points_possible ?? 0);
-    if (!possible) return null;
-
-    return Math.round((Number(student.value?.summary?.points_earned ?? 0) / possible) * 100);
-});
+// empty total is a division by zero rendered as "NaN%" on a child's record. The
+// same helper, and so the same rounding, as the "Points" line in the figures card below
+// (`averageLines`): this block used to round to a whole number and that one to a decimal,
+// so one child read 85% in one and 84.7% in the other.
+const pointsPct = computed<string | null>(() =>
+    pointsPercentText(student.value?.summary?.points_earned, student.value?.summary?.points_possible));
 
 const studentLines = computed(() => averageLines(student.value?.summary));
 

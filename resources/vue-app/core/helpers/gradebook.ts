@@ -194,6 +194,21 @@ export function percentText(n: number | null | undefined): string {
     return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}%`;
 }
 
+/**
+ * A child's plain points as a percentage: "85%", "84.7%", or null when there is no denominator
+ * (a percentage over an empty total is a division by zero on a child's record). THE one
+ * place a points percentage is worked out in the browser, with `percentText`'s one rounding
+ * (one decimal, whole numbers lose it), so two screens showing the same child's points
+ * cannot say 85% and 84.7% beside each other (review F7). The server sends the plain figure only
+ * as earned and possible; the weighted, per-type and per-subject percentages are its own.
+ */
+export function pointsPercentText(earned: number | string | null | undefined, possible: number | string | null | undefined): string | null {
+    const out = Number(possible ?? 0);
+    if (!out || Number.isNaN(out)) return null;
+
+    return percentText((100 * Number(earned ?? 0)) / out);
+}
+
 /** "1 piece of work has no type" / "3 pieces of work have no type"; '' for none. */
 export function untypedNote(n: number): string {
     if (!n || n < 1) return '';
@@ -250,7 +265,7 @@ function averageLinesUnfenced(summary: any): AverageLine[] {
         lines.push({
             label: w?.enabled ? 'Total points' : 'Points',
             value: `${summary.points_earned} of ${summary.points_possible}`,
-            note: percentText((100 * Number(summary.points_earned)) / Number(summary.points_possible)),
+            note: pointsPercentText(summary.points_earned, summary.points_possible) ?? '',
         });
     }
 

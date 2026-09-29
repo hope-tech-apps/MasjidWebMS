@@ -19,6 +19,7 @@ import {
     NOT_AVERAGED,
     NOT_AVERAGED_WHY,
     percentText,
+    pointsPercentText,
     subjectLine,
     untypedNote,
     weightNote,
@@ -346,4 +347,42 @@ test('the work list and the blank weight box word simple-scale work the same way
     assert.match(source, /assignments\.value\.filter\(\(a\) => a\.scale !== SIMPLE_SCALE && !a\.type/);
     // The blank weight box on a simple-scale form says so instead of "Type sets it".
     assert.match(source, /if \(assignmentForm\.value\.scale === SIMPLE_SCALE\) return NOT_AVERAGED/);
+});
+
+// ---------------------------------------------------------------- review F7: one points percentage, one rounding
+
+test('one child\'s plain points read the same string in the office block and in the figures card', () => {
+    // 68 of 80 is the review's own example: "85%" in one place and "84.7%" in the other, for a child at 84.7 too.
+    for (const [earned, possible] of [[68, 80], [61, 72], [1, 3], [2, 3], [0, 10], [10, 10], [7, 8], [0.5, 3], ['68', '80'], [33, 39]] as const) {
+        const card = averageLines({ points_counted: 1, points_earned: earned, points_possible: possible, weighting: { enabled: false } })[0];
+        const block = pointsPercentText(earned, possible);
+
+        assert.equal(card.label, 'Points');
+        assert.equal(card.note, block, `${earned}/${possible}: the card and the block say the same`);
+        assert.equal(block, percentText((100 * Number(earned)) / Number(possible)), 'and it is the one rounding');
+    }
+
+    // Spelled out, so a change of rounding is a decision and not an accident.
+    assert.equal(pointsPercentText(68, 80), '85%');
+    assert.equal(pointsPercentText(61, 72), '84.7%');
+    assert.equal(pointsPercentText(2, 3), '66.7%');
+    assert.equal(pointsPercentText(1, 3), '33.3%');
+});
+
+test('no denominator is no percentage, never NaN', () => {
+    for (const possible of [0, '0', null, undefined, '', 'x']) {
+        assert.equal(pointsPercentText(5, possible as any), null, String(possible));
+    }
+    assert.equal(pointsPercentText(null, 10), '0%');
+    assert.deepEqual(averageLines({ points_counted: 0, points_earned: 0, points_possible: 0, weighting: { enabled: false } }), []);
+});
+
+test('the office Grades tab takes its points percentage from the helper and rounds nothing itself', () => {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+
+    assert.match(view, /import \{ averageLines, pointsPercentText, subjectLine, weightNote \} from '@\/core\/helpers\/gradebook'/);
+    assert.match(view, /pointsPercentText\(student\.value\?\.summary\?\.points_earned, student\.value\?\.summary\?\.points_possible\)/);
+    assert.match(view, /\(\{\{ pointsPct \}\}\)/, 'the helper\'s string already carries its % sign');
+    assert.doesNotMatch(view, /Math\.round/, 'no second rounding in the tab');
+    assert.doesNotMatch(view, /\}\}%\)/, 'and no % appended to a string that has one');
 });

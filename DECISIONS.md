@@ -5205,3 +5205,11 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   a weighted class is "not averaged" (and no weight), the blank weight box on a simple form says so, the "no type" warning no longer counts
   work a type could not help, and `averageLines()` adds one explanatory line where a weighted class has simple marks and nothing else to
   average. Teacher and office screens only; the family screen still shows the three words and no figure. No family copy.
+
+- **2026-09-29 (W3/W4 folds, F7): one helper, one rounding, for a child's plain points percentage.** The server sends the plain figure only as
+  earned and possible, and the browser worked the percentage out in two places: the office Grades tab's "Points work" block rounded to a whole
+  number (`Math.round`, "85%") while the new figures card beside it used `percentText` (one decimal, "84.7%"), so one child read two
+  different figures side by side. `pointsPercentText(earned, possible)` in `core/helpers/gradebook.ts` is now the only place, with
+  `percentText`'s rounding (one decimal, whole numbers lose it), and both places call it. Chosen: one decimal, because the weighted, per-type
+  and per-subject percentages the server sends are already to one decimal and this way the plain and weighted figures are comparable.
+  Alternative: whole numbers everywhere. Rejected: it would hide a real difference between two children at 84.7 and 85.3.
