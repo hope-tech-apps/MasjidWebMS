@@ -4202,6 +4202,24 @@ and the member record badged the hold as "Emails: unsubscribed", which is untrue
 
 ## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
 
+- **Review fixes (2026-09-28, after the 5-lens review of this branch).** Each has a test that fails without it
+  (mutation-proved on the droplet). Letters migration (`2026_10_01_100000`): the read that decides what to
+  write now sits INSIDE the transaction with `lockForUpdate`, and the two case copies use `insertOrIgnore`,
+  because `bin/deploy` checks out the new code (which accepts `a.upper`) before `migrate --force` with no
+  maintenance mode: a teacher's tap in that gap used to make the plain insert collide and abort the deploy
+  half-way, leaving new code live against an unconverted table. The row lock itself is a no-op on SQLite and
+  is **Unknown, needs investigation** on MySQL until the staging run; the `insertOrIgnore` half is pinned.
+  `down()` also refuses when the two cases differ on WHO marked them (it used to keep the capital's marker and
+  delete the other; the docblock promised it refuses rather than lose data), and the note, mastered-date, bare-row and
+  attribution guards are now each pinned. Plan files (`2026_10_01_110000`): `down()` refuses while any link exists.
+  A bare `migrate:rollback` undoes the WHOLE batch in reverse, so it would have dropped every attachment and then
+  failed on the letters migration above: **back W1 out only with `migrate:rollback --step=N`** (or ship B2's
+  migration in its own deploy). Also pinned: reorder and new-link positions, `resource_ids: null` is a 422,
+  plan-and-files atomicity, the Arabic stale-tab guard scope, the export's legacy label, the family summary's
+  corrupt-polarity bucket. SPA: tapping the other case of the open letter switches the card (it used to close it;
+  the open card is tracked by tile key), the family notes name the set in the portal's language, the plan Files
+  hint no longer claims only staff can open a file the class already shares with families.
+
 - **T-003.1 Positive always on top.** The skills list and both `by_skill` summaries order by
   `BehaviorSkill::scopeInPickerOrder` (positive, negative, other; then label) instead of
   `ORDER BY polarity`, which is alphabetical and put negatives first while the docblocks said the

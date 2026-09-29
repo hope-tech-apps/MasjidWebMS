@@ -935,10 +935,18 @@ tracked as **52 drills, not 26**: `a.upper` … `z.lower`, in two runs of tiles
   so an Arabic child's letter-GROUP drills (valid at any stage) inflated the
   count and only the `min()` clamp hid it at 100%.
 - **The migration** `split_english_letters_by_case` copies every existing
-  English mark to BOTH cases keeping status, note, `marked_by` and the original
-  `mastered_at` (owner question B2's default), then removes the bare row. Its
-  `down()` refuses when the two cases differ or one is missing. **It rewrites
-  production rows, so its prod deploy waits for the owner's B2 answer.**
+  English mark to BOTH cases keeping status, note, `marked_by`, the original
+  `mastered_at` and both timestamps (owner question B2: copy to both, answered
+  2026-09-28), then removes the bare row. It reads inside its transaction (row
+  lock on MySQL) and copies with `insertOrIgnore`, because `bin/deploy` runs the
+  new code before `migrate --force` with no maintenance mode: a case written in
+  that gap wins instead of aborting the deploy. Its `down()` refuses when the two
+  cases differ on status, note, mastered date or who marked them, when one is
+  missing, or when a bare row sits beside the pair. **It rewrites production
+  rows: deploy after 18:00 ET, when teachers are not marking letters.** The
+  sibling `create_lesson_plan_resources_table` `down()` refuses while any link
+  exists, so back W1 out with `migrate:rollback --step=N`, never a bare rollback
+  of the whole batch.
 - **A stale tab** that still posts a bare letter for English gets a 422 with
   `code: stale_page` and a "reload the page" message, and nothing is written.
 - **The records export** keeps the stored `Drill id` and appends a readable

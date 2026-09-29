@@ -243,6 +243,33 @@ class BehaviorSkillOrderTest extends TestCase
     }
 
     #[Test]
+    public function the_family_summary_puts_an_unreadable_polarity_in_the_positive_bucket_like_the_staff_one(): void
+    {
+        // A polarity the app does not know (a corrupt or hand-edited row) must land in a REAL bucket, and in
+        // the same one the staff summary uses, or a parent and the office would read two different reports.
+        $this->seedAwardFor('Odd', 'sideways', 4);
+        $this->seedAwardFor('Late', BehaviorSkill::POLARITY_NEGATIVE, -1);
+
+        $family = $this->familyAs($this->parent)->getJson(
+            '/api/family/masjids/'.$this->masjid->id.'/groups/'.$this->group->id
+            .'/members/'.$this->child->id.'/awards/summary'
+        )->assertOk();
+
+        $this->assertSame(['positive', 'negative'], array_keys($family->json('data.by_polarity')), 'no invented third bucket');
+        $this->assertSame(['awards' => 1, 'points' => 4], $family->json('data.by_polarity.positive'));
+        $this->assertSame(['awards' => 1, 'points' => -1], $family->json('data.by_polarity.negative'));
+        $this->assertSame('positive', collect($family->json('data.by_skill'))->firstWhere('skill_label', 'Odd')['polarity']);
+
+        Sanctum::actingAs($this->admin);
+        $staff = $this->getJson(
+            '/api/admin/masjids/'.$this->masjid->id.'/groups/'.$this->group->id
+            .'/members/'.$this->child->id.'/awards/summary'
+        )->assertOk();
+
+        $this->assertSame($staff->json('data.by_polarity'), $family->json('data.by_polarity'));
+    }
+
+    #[Test]
     public function the_award_log_stays_newest_first_whatever_the_polarity(): void
     {
         // A negative award is the NEWEST: if the log took the picker order it would sink.

@@ -320,6 +320,25 @@ class ArabicLetterTrackerTest extends TestCase
     }
 
     #[Test]
+    public function a_single_latin_letter_posted_to_the_arabic_track_gets_the_ordinary_refusal_not_the_reload_prompt(): void
+    {
+        // `a` is the retired ENGLISH id. On the Arabic track it is just an invalid drill: telling that teacher
+        // "English capitals and lower case are now tracked separately, reload" would send her looking for a change
+        // that has nothing to do with what she tapped.
+        foreach ([[], ['alphabet' => 'arabic']] as $extra) {
+            $response = $this->putJson($this->url("/members/{$this->student->id}/letters"), $extra + [
+                'drill_id' => 'a', 'status' => C::STATUS_MASTERED,
+            ])->assertStatus(422);
+
+            $this->assertNull($response->json('code'));
+            $this->assertStringNotContainsString('reload', strtolower((string) $response->json('message')));
+            $this->assertStringContainsString('not part of what this class is working on', $response->json('message'));
+        }
+
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
+    }
+
+    #[Test]
     public function an_arabic_class_overview_counts_only_drills_inside_the_stage_it_divides_by(): void
     {
         // THE LATENT ARABIC OVER-COUNT. The overview's numerator was every

@@ -16,6 +16,7 @@ use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -44,6 +45,14 @@ use Tests\TestCase;
  *     unedited and this file names the plan routes it must equal).
  *  6. The new table's index names fit MySQL's 64 characters (its tenant isolation is
  *     `LessonPlanResourceTenantIsolationTest`).
+ *  7. The order is kept exactly: a reorder rewrites every link's `position` (checked in
+ *     the stored column, not only in the payload's order) and a link added by a later
+ *     save lands at its place in the list.
+ *  8. `resource_ids: null` is refused (422), never read as "clear the files".
+ *  9. The plan and its files are ONE write: a failure while linking the files leaves the
+ *     plan's text and links exactly as they were, on create and on update.
+ * 10. The migration's `down()` refuses while any link exists (a bare batch rollback
+ *     would otherwise destroy every attachment, then fail on the letters migration).
  */
 class LessonPlanAttachmentsTest extends TestCase
 {
@@ -475,6 +484,147 @@ class LessonPlanAttachmentsTest extends TestCase
 
         $this->assertSame($expected, $lessonWrites);
         $this->assertSame([], $attachRoutes);
+    }
+
+    // ------------------------------------------------------ 7. the order is exact
+
+    /** @return array<int,int> the stored `position` of each link, keyed by file id */
+    private function positions(int $planId): array
+    {
+        return LessonPlanResource::withoutMasjidScope()->where('lesson_plan_id', $planId)
+            ->orderBy('group_resource_id')->pluck('position', 'group_resource_id')
+            ->map(fn ($p): int => (int) $p)->all();
+    }
+
+    private function resave(int $planId, array $ids, string $body = 'Again.'): \Illuminate\Testing\TestResponse
+    {
+        return $this->putJson($this->url()."/lesson-plans/{$planId}", [
+            'session_date' => $this->day(), 'subject' => 'Math', 'body' => $body, 'resource_ids' => $ids,
+        ]);
+    }
+
+    #[Test]
+    public function reordering_the_same_files_rewrites_every_position(): void
+    {
+        [$a, $b] = [$this->fileIn($this->mine, 'A'), $this->fileIn($this->mine, 'B')];
+        $planId = $this->savePlan(['resource_ids' => [$a, $b]])->assertOk()->json('data.id');
+        $this->assertSame([$a => 0, $b => 1], $this->positions($planId));
+
+        // Nothing is added or removed, so only the reposition can produce this.
+        $response = $this->resave($planId, [$b, $a])->assertOk();
+
+        $this->assertSame([$b, $a], array_column($response->json('data.attachments'), 'id'));
+        $this->assertSame([$a => 1, $b => 0], $this->positions($planId), 'the stored positions moved, not just the payload order');
+        $this->assertSame([$b, $a], array_column($this->week()[0]['attachments'], 'id'), 'and a later read agrees');
+    }
+
+    #[Test]
+    public function a_file_added_by_a_later_save_lands_at_its_place_in_the_list(): void
+    {
+        [$a, $b, $c] = [$this->fileIn($this->mine, 'A'), $this->fileIn($this->mine, 'B'), $this->fileIn($this->mine, 'C')];
+        $planId = $this->savePlan(['resource_ids' => [$a, $b]])->assertOk()->json('data.id');
+
+        // b and a swap AND a new file joins last: the new link's position must be its place in the list.
+        $response = $this->resave($planId, [$b, $a, $c])->assertOk();
+
+        $this->assertSame([$b, $a, $c], array_column($response->json('data.attachments'), 'id'));
+        $this->assertSame([$a => 1, $b => 0, $c => 2], $this->positions($planId));
+
+        // And a new file in the FIRST slot pushes the existing ones down.
+        $d = $this->fileIn($this->mine, 'D');
+        $response = $this->resave($planId, [$d, $b, $a, $c])->assertOk();
+        $this->assertSame([$d, $b, $a, $c], array_column($response->json('data.attachments'), 'id'));
+        $this->assertSame([$a => 2, $b => 1, $c => 3, $d => 0], $this->positions($planId));
+    }
+
+    // ------------------------------------------------------ 8. null is not "clear"
+
+    #[Test]
+    public function a_null_resource_ids_is_refused_and_the_files_stay(): void
+    {
+        $file = $this->fileIn($this->mine);
+        $planId = $this->savePlan(['resource_ids' => [$file]])->assertOk()->json('data.id');
+
+        $this->putJson($this->url()."/lesson-plans/{$planId}", [
+            'session_date' => $this->day(), 'subject' => 'Math', 'body' => 'Sent null.', 'resource_ids' => null,
+        ])->assertStatus(422)->assertJsonStructure(['data' => ['resource_ids']]);
+
+        $this->postJson($this->url().'/lesson-plans', [
+            'session_date' => $this->day(2), 'subject' => 'Science', 'body' => 'Sent null.', 'resource_ids' => null,
+        ])->assertStatus(422);
+
+        $this->assertSame([$file => 0], $this->positions($planId), 'null did not clear the plan\'s files');
+        $this->assertSame('Count to ten.', LessonPlan::withoutMasjidScope()->findOrFail($planId)->body, 'and did not save the text');
+    }
+
+    // ------------------------------------------------------ 9. plan and files are one write
+
+    /** Make the Nth insert into the links table throw, on this connection only. */
+    private function failOnLinkInsert(int $nth): void
+    {
+        $seen = 0;
+        DB::beforeExecuting(function (string $query) use ($nth, &$seen): void {
+            if (str_contains($query, 'lesson_plan_resources') && str_starts_with(strtolower(ltrim($query)), 'insert') && ++$seen === $nth) {
+                throw new \RuntimeException('injected failure linking file #'.$nth);
+            }
+        });
+    }
+
+    #[Test]
+    public function a_failure_while_linking_files_leaves_the_plan_unsaved_on_create(): void
+    {
+        [$a, $b] = [$this->fileIn($this->mine, 'A'), $this->fileIn($this->mine, 'B')];
+        $plans = LessonPlan::withoutMasjidScope()->count();
+
+        $this->failOnLinkInsert(2);
+        $this->savePlan(['resource_ids' => [$a, $b]])->assertStatus(500);
+
+        $this->assertSame($plans, LessonPlan::withoutMasjidScope()->count(), 'a plan the teacher was told failed must not exist');
+        $this->assertSame(0, LessonPlanResource::withoutMasjidScope()->count(), 'nor the first link');
+    }
+
+    #[Test]
+    public function a_failure_while_linking_files_leaves_an_existing_plan_exactly_as_it_was(): void
+    {
+        [$a, $b, $c] = [$this->fileIn($this->mine, 'A'), $this->fileIn($this->mine, 'B'), $this->fileIn($this->mine, 'C')];
+        $planId = $this->savePlan(['resource_ids' => [$a]])->assertOk()->json('data.id');
+
+        $this->failOnLinkInsert(2);
+        $this->resave($planId, [$a, $b, $c], 'Rewritten activities.')->assertStatus(500);
+
+        $this->assertSame('Count to ten.', LessonPlan::withoutMasjidScope()->findOrFail($planId)->body, 'the text was not half-saved');
+        $this->assertSame([$a => 0], $this->positions($planId), 'the link written before the failure was rolled back');
+    }
+
+    // ------------------------------------------------------ 10. the migration's rollback
+
+    #[Test]
+    public function rolling_the_migration_back_refuses_while_a_link_exists(): void
+    {
+        $file = $this->fileIn($this->mine);
+        $planId = $this->savePlan(['resource_ids' => [$file]])->assertOk()->json('data.id');
+        $migration = require database_path('migrations/2026_10_01_110000_create_lesson_plan_resources_table.php');
+
+        try {
+            $migration->down();
+            $this->fail('down() must refuse rather than drop a teacher\'s attachments');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('1 file link(s)', $e->getMessage());
+            $this->assertStringContainsString('--step', $e->getMessage());
+        }
+
+        $this->assertTrue(Schema::hasTable('lesson_plan_resources'));
+        $this->assertSame([$file => 0], $this->positions($planId));
+    }
+
+    #[Test]
+    public function rolling_the_migration_back_drops_an_empty_table(): void
+    {
+        $migration = require database_path('migrations/2026_10_01_110000_create_lesson_plan_resources_table.php');
+
+        $migration->down();
+
+        $this->assertFalse(Schema::hasTable('lesson_plan_resources'));
     }
 
     // ------------------------------------------------------ 6. the table itself

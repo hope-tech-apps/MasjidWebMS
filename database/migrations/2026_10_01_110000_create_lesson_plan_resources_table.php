@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -36,6 +37,18 @@ use Illuminate\Support\Facades\Schema;
  * name that passes the suite can abort a migration on production. Both names
  * here are short; `LessonPlanAttachmentsTest::the_table_has_the_shape_the_migration_documents_and_short_index_names` asserts it.
  *
+ * ## Rolling back refuses rather than lose the links
+ *
+ * `down()` drops the table, and every file a teacher attached goes with it (MySQL
+ * DDL is not transactional, so there is no undoing that half-way). It therefore
+ * throws while any link exists, naming the count, and changes nothing. This
+ * matters because `migrate:rollback` without `--step` undoes the WHOLE batch, in
+ * reverse order, and this file sorts AFTER `2026_10_01_100000_split_english_letters_by_case`
+ * in the same deploy: this `down()` would run first, destroy the links, and then
+ * the letters `down()` would refuse a diverged pair, leaving a half-reverted
+ * batch. To back the W1 release out, roll back with `--step` (one migration at a
+ * time), or delete the links deliberately first.
+ *
  * Blueprint only, no raw SQL, so there is no driver guard to write. Additive: a
  * new table, nothing existing touched.
  */
@@ -66,6 +79,19 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (Schema::hasTable('lesson_plan_resources')) {
+            $links = DB::table('lesson_plan_resources')->count();
+
+            if ($links > 0) {
+                throw new RuntimeException(
+                    "create_lesson_plan_resources_table cannot be rolled back without losing data: {$links} file link(s) "
+                    .'under lesson plans would be deleted (the files stay in Files, the plans lose their attachments). '
+                    .'Nothing was changed. Delete the links deliberately first if that is intended, and roll the W1 '
+                    .'release back with `migrate:rollback --step=N`, never a bare rollback of the whole batch.'
+                );
+            }
+        }
+
         Schema::dropIfExists('lesson_plan_resources');
     }
 };

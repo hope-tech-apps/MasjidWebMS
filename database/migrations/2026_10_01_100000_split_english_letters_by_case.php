@@ -45,11 +45,19 @@ use Illuminate\Support\Facades\DB;
  *    second run finds no legacy row to convert;
  *  - pre-flight: an English row whose id is neither a bare letter nor a `x.case`
  *    pair aborts BEFORE anything is written, naming the ids;
- *  - one transaction, so a failure part-way leaves the table as it was;
+ *  - one transaction, and the read that decides what to write is INSIDE it (with a
+ *    row lock on MySQL): `bin/deploy` checks out the new code, which already
+ *    accepts `a.upper`, before it runs `migrate --force`, with no maintenance mode
+ *    between. A teacher's tap in that gap writes `a.upper` for a child who still
+ *    has a bare `a`; the copies use `insertOrIgnore`, so that newer mark wins and
+ *    the migration finishes instead of aborting on the unique index and leaving
+ *    the new code live against an unconverted table;
  *  - `down()` refuses rather than lose data. It can merge the two cases back into
- *    one only where they agree on everything that matters; a child marked
- *    differently on the two cases (which the split exists to allow) cannot be
- *    folded into one mark without discarding one of them, so it throws.
+ *    one only where they agree on everything a person recorded (status, note,
+ *    mastered date, and who marked it); a child marked differently on the two
+ *    cases (which the split exists to allow) cannot be folded into one mark
+ *    without discarding one of them, so it throws. Row timestamps are not
+ *    compared: the folded row keeps the capital's.
  *
  * Only English rows are read or written; the Arabic qāʿidah rows are untouched.
  */
@@ -61,31 +69,34 @@ return new class extends Migration
 
     public function up(): void
     {
-        $rows = DB::table(self::TABLE)->where('alphabet', self::ALPHABET)->get();
+        // The read is inside the transaction so the rows it decides on are the rows
+        // it writes against (see the docblock). `lockForUpdate` is a no-op on SQLite.
+        DB::transaction(function (): void {
+            $rows = DB::table(self::TABLE)->where('alphabet', self::ALPHABET)->lockForUpdate()->get();
 
-        $unrecognised = $rows
-            ->filter(fn ($r) => ! $this->isLegacy($r->drill_id) && ! $this->isSplit($r->drill_id))
-            ->pluck('drill_id')->unique()->values()->all();
+            $unrecognised = $rows
+                ->filter(fn ($r) => ! $this->isLegacy($r->drill_id) && ! $this->isSplit($r->drill_id))
+                ->pluck('drill_id')->unique()->values()->all();
 
-        if ($unrecognised !== []) {
-            throw new RuntimeException(
-                'split_english_letters_by_case: English rows with drill ids that are neither a letter nor letter.upper/lower: '
-                .implode(', ', array_slice($unrecognised, 0, 20))
-                .'. Nothing was changed; correct or remove those rows, then migrate again.'
-            );
-        }
+            if ($unrecognised !== []) {
+                throw new RuntimeException(
+                    'split_english_letters_by_case: English rows with drill ids that are neither a letter nor letter.upper/lower: '
+                    .implode(', ', array_slice($unrecognised, 0, 20))
+                    .'. Nothing was changed; correct or remove those rows, then migrate again.'
+                );
+            }
 
-        // Keyed lower-case: production compares drill ids case-insensitively, so
-        // the existence check must too or it would miss a row the index would
-        // reject.
-        $present = [];
-        foreach ($rows as $r) {
-            $present[$r->group_membership_id.'|'.strtolower($r->drill_id)] = true;
-        }
+            // Keyed lower-case: production compares drill ids case-insensitively, so
+            // the existence check must too or it would miss a row the index would
+            // reject.
+            $present = [];
+            foreach ($rows as $r) {
+                $present[$r->group_membership_id.'|'.strtolower($r->drill_id)] = true;
+            }
 
-        DB::transaction(function () use ($rows, &$present): void {
             foreach ($rows->filter(fn ($r) => $this->isLegacy($r->drill_id)) as $legacy) {
                 $letter = strtolower($legacy->drill_id);
+                $copies = [];
 
                 foreach (self::CASES as $case) {
                     $id = $letter.'.'.$case;
@@ -99,8 +110,14 @@ return new class extends Migration
                     unset($copy['id']);
                     $copy['drill_id'] = $id;
 
-                    DB::table(self::TABLE)->insert($copy);
+                    $copies[] = $copy;
                     $present[$key] = true;
+                }
+
+                // insertOrIgnore, not insert: a case written by the new code between
+                // deploy and this run is newer than the bare row and must win.
+                if ($copies !== []) {
+                    DB::table(self::TABLE)->insertOrIgnore($copies);
                 }
 
                 DB::table(self::TABLE)->where('id', $legacy->id)->delete();
@@ -132,6 +149,7 @@ return new class extends Migration
                 || $upper->status !== $lower->status
                 || $upper->note !== $lower->note
                 || $upper->mastered_at !== $lower->mastered_at
+                || $upper->marked_by_user_id !== $lower->marked_by_user_id
                 || isset($legacyPresent[$key])) {
                 $diverged[] = $key;
             }

@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\Masjid;
+use App\Models\User;
 use App\Support\Letters\EnglishCurriculum;
 use App\Support\Letters\LetterTracker;
 use App\Support\TenantContext;
@@ -28,12 +29,20 @@ use Tests\TestCase;
  *    teacher has since marked differently;
  *  - pre-flight: an English row with a foreign id aborts BEFORE any write;
  *  - down(): folds each pair back into one bare row when (and only when) the two
- *    cases agree, and REFUSES, changing nothing, when they differ or one is
- *    missing;
+ *    cases agree, and REFUSES, changing nothing, when they differ on ANY of
+ *    status, note, mastered date or who marked it, when one case is missing, or
+ *    when a bare row still sits beside the pair;
+ *  - who marked each case (`marked_by_user_id`) and the row timestamps survive
+ *    up() onto both cases and down() onto the folded row;
+ *  - both directions are ONE transaction: a failure part-way leaves the table as
+ *    it was (proved by making a later statement throw);
+ *  - a case the new code wrote between the migration's read and its first insert
+ *    (the deploy has no maintenance mode) wins, and the migration still finishes;
  *  - the tracker reads the migrated data as the child's real progress.
  *
  * NOT PINNED HERE, and only checkable on MySQL: the case-insensitive collation
- * that is the reason the ids carry a suffix. SQLite compares case-sensitively;
+ * that is the reason the ids carry a suffix, and the `lockForUpdate` row lock
+ * (a no-op on SQLite; the `insertOrIgnore` above is what the race test pins). SQLite compares case-sensitively;
  * `EnglishCurriculumTest::no_drill_id_is_a_bare_letter...` asserts the property
  * on the ids themselves, and DECISIONS.md lists the staging-MySQL run this
  * migration still needs before production.
@@ -273,6 +282,188 @@ class SplitEnglishLettersByCaseMigrationTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->migrate('down');
+    }
+
+    private function teacher(): int
+    {
+        return User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)])->id;
+    }
+
+    /** Make the Nth statement whose SQL starts with $verb throw, to prove a transaction rolls the rest back. */
+    private function failOnStatement(string $verb, int $nth): void
+    {
+        $seen = 0;
+        DB::beforeExecuting(function (string $query) use ($verb, $nth, &$seen): void {
+            if (str_starts_with(strtolower(ltrim($query)), $verb) && ++$seen === $nth) {
+                throw new \RuntimeException('injected failure on '.$verb.' #'.$nth);
+            }
+        });
+    }
+
+    #[Test]
+    public function up_keeps_who_marked_each_case_and_both_timestamps(): void
+    {
+        $teacher = $this->teacher();
+        $this->row($this->amal, 'a', 'mastered', [
+            'marked_by_user_id' => $teacher, 'created_at' => '2026-09-10 08:00:00', 'updated_at' => '2026-09-12 09:30:00',
+        ]);
+
+        $this->migrate();
+
+        $rows = $this->english();
+        foreach (['a.upper', 'a.lower'] as $id) {
+            $r = $rows[$this->amal->id.'|'.$id];
+            $this->assertSame($teacher, (int) $r->marked_by_user_id, "$id keeps the teacher who recorded the mark");
+            $this->assertSame('2026-09-10 08:00:00', $r->created_at);
+            $this->assertSame('2026-09-12 09:30:00', $r->updated_at);
+        }
+    }
+
+    #[Test]
+    public function down_keeps_who_marked_and_the_timestamps_on_the_folded_row(): void
+    {
+        $teacher = $this->teacher();
+        $this->row($this->amal, 'a', 'mastered', [
+            'marked_by_user_id' => $teacher, 'created_at' => '2026-09-10 08:00:00', 'updated_at' => '2026-09-12 09:30:00',
+        ]);
+        $this->migrate();
+
+        $this->migrate('down');
+
+        $r = $this->english()[$this->amal->id.'|a'];
+        $this->assertSame($teacher, (int) $r->marked_by_user_id);
+        $this->assertSame('2026-09-10 08:00:00', $r->created_at);
+        $this->assertSame('2026-09-12 09:30:00', $r->updated_at);
+    }
+
+    /** Run down() and assert it refuses and leaves every English row exactly as it was. */
+    private function assertDownRefusesAndChangesNothing(): void
+    {
+        $before = $this->english();
+
+        try {
+            $this->migrate('down');
+            $this->fail('down() must refuse rather than discard a mark');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('without losing data', $e->getMessage());
+        }
+
+        $this->assertEquals($before, $this->english());
+    }
+
+    #[Test]
+    public function down_refuses_when_only_the_note_differs(): void
+    {
+        $this->row($this->amal, 'a', 'mastered', ['mastered_at' => '2026-09-14 13:22:00']);
+        $this->migrate();
+        // Same status, same date: a teacher wrote a note on the lower case alone.
+        DB::table('arabic_letter_progress')->where('drill_id', 'a.lower')->update(['note' => 'Confuses it with o.']);
+
+        $this->assertDownRefusesAndChangesNothing();
+    }
+
+    #[Test]
+    public function down_refuses_when_only_the_mastered_date_differs(): void
+    {
+        $this->row($this->amal, 'a', 'mastered', ['mastered_at' => '2026-09-14 13:22:00']);
+        $this->migrate();
+        // Unticked and re-ticked: same status again, a different first-mastered date.
+        DB::table('arabic_letter_progress')->where('drill_id', 'a.lower')->update(['mastered_at' => '2026-09-21 10:00:00']);
+
+        $this->assertDownRefusesAndChangesNothing();
+    }
+
+    #[Test]
+    public function down_refuses_when_only_who_marked_it_differs(): void
+    {
+        $t1 = $this->teacher();
+        $t2 = $this->teacher();
+        $this->row($this->amal, 'a', 'mastered', ['mastered_at' => '2026-09-14 13:22:00', 'marked_by_user_id' => $t1]);
+        $this->migrate();
+        // Two teachers each ticked their own case the same day, with the same date and no note.
+        DB::table('arabic_letter_progress')->where('drill_id', 'a.lower')->update(['marked_by_user_id' => $t2]);
+
+        $this->assertDownRefusesAndChangesNothing();
+    }
+
+    #[Test]
+    public function down_refuses_when_a_bare_row_sits_beside_an_agreeing_pair(): void
+    {
+        $this->row($this->amal, 'a', 'mastered');
+        $this->migrate();
+        // An old tab wrote a bare row after the split. The pair agrees; folding would collide with it.
+        $this->row($this->amal, 'a', 'learning');
+
+        $this->assertDownRefusesAndChangesNothing();
+    }
+
+    #[Test]
+    public function up_is_all_or_nothing(): void
+    {
+        $this->row($this->amal, 'a', 'mastered');
+        $this->row($this->amal, 'b', 'learning');
+        $before = $this->english();
+
+        // Legacy row `a` is fully converted, then the delete of `b` fails.
+        $this->failOnStatement('delete', 2);
+
+        try {
+            $this->migrate();
+            $this->fail('the injected failure should have surfaced');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('injected failure', $e->getMessage());
+        }
+
+        $this->assertEquals($before, $this->english(), 'no copy of `a` may survive a failure on `b`');
+    }
+
+    #[Test]
+    public function down_is_all_or_nothing(): void
+    {
+        $this->row($this->amal, 'a', 'mastered');
+        $this->row($this->amal, 'b', 'learning');
+        $this->migrate();
+        $before = $this->english();
+
+        // The first pair is folded, then the delete of the second pair fails.
+        $this->failOnStatement('delete', 2);
+
+        try {
+            $this->migrate('down');
+            $this->fail('the injected failure should have surfaced');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('injected failure', $e->getMessage());
+        }
+
+        $this->assertEquals($before, $this->english(), 'no folded row may survive a failure on the second pair');
+    }
+
+    #[Test]
+    public function a_case_the_new_code_wrote_after_the_migration_read_wins_and_the_migration_still_finishes(): void
+    {
+        $this->row($this->amal, 'a', 'mastered', ['note' => 'from the bare row', 'mastered_at' => '2026-09-14 13:22:00']);
+
+        // bin/deploy runs the new code before `migrate --force`: a teacher taps capital A in the gap
+        // between the migration's read and its first write. The unique index would reject a plain insert.
+        $raced = false;
+        DB::beforeExecuting(function (string $query) use (&$raced): void {
+            if ($raced || ! str_starts_with(strtolower(ltrim($query)), 'insert')) {
+                return;
+            }
+            $raced = true;
+            $this->row($this->amal, 'a.upper', 'learning', ['note' => 'tapped during the deploy']);
+        });
+
+        $this->migrate();
+
+        $this->assertTrue($raced, 'the hook must have fired before the migration wrote');
+        $rows = $this->english();
+        $this->assertCount(2, $rows);
+        $this->assertArrayNotHasKey($this->amal->id.'|a', $rows);
+        $this->assertSame('learning', $rows[$this->amal->id.'|a.upper']->status, 'the newer mark wins');
+        $this->assertSame('tapped during the deploy', $rows[$this->amal->id.'|a.upper']->note);
+        $this->assertSame('mastered', $rows[$this->amal->id.'|a.lower']->status, 'the other case still comes from the bare row');
+        $this->assertSame('from the bare row', $rows[$this->amal->id.'|a.lower']->note);
     }
 
     #[Test]

@@ -240,6 +240,23 @@ class SchoolRecordsExportTest extends TestCase
         $this->assertSame('', $byDrill['ba'][8], 'Arabic rows keep a blank Letter column');
     }
 
+    /** A row written before the split, and one the migration has not reached yet, must not export a blank Letter. */
+    #[Test]
+    public function the_letters_file_explains_a_pre_split_bare_english_row_instead_of_leaving_it_blank(): void
+    {
+        \App\Models\ArabicLetterProgress::withoutMasjidScope()->create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+            'group_membership_id' => $this->student->id, 'alphabet' => 'english',
+            'drill_id' => 'a', 'status' => 'mastered',
+        ]);
+
+        $lines = array_values(array_filter(explode("\n", str_replace("\r", '', $this->body('arabic_progress')))));
+        $cells = str_getcsv($lines[1]);
+
+        $this->assertSame('a', $cells[4], 'the stored id is unchanged');
+        $this->assertSame('Letter a (recorded before capitals and lower case were tracked separately)', $cells[8]);
+    }
+
     // --------------------------------------------- 4. the traps that corrupt quietly
 
     /**
