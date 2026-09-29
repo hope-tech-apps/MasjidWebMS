@@ -6,15 +6,18 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 /**
- * A logo LogoDerivatives refused to decode (fromFile and generate both): too
- * many pixels on an edge, or too many for the memory this process has left. GD
- * holds a whole image in memory at ~4 bytes a pixel and the derive chain costs
- * up to about 11 in all (measured), and a memory fatal cannot be caught, so the size is read from
+ * A logo LogoDerivatives refused to decode (fromFile and generate both) or the
+ * Studio draft-logo upload refused to take: too many pixels on an edge, or too
+ * many for the memory this process has left. GD holds a whole image in memory
+ * at ~4 bytes a pixel and the derive chain costs up to about 11 in all
+ * (measured), and a memory fatal cannot be caught, so the size is read from
  * the header and refused BEFORE anything is decoded.
  *
  * A ValidationException so the regenerate route answers the legacy 422
  * ({status:'failed', data:{logo:[...]}}) with no extra code, and its own type
- * so BrandAssets::afterLogoUpload can log the dimensions and skip.
+ * so BrandAssets::afterLogoUpload can log the dimensions and skip. The sentence
+ * is built here once, so the upload, the regenerate route and provisioning say
+ * the same words.
  */
 final class LogoTooLarge extends ValidationException
 {

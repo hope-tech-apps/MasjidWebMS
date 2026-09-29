@@ -5,6 +5,7 @@ namespace Tests\Feature\Studio\Concerns;
 use App\Models\Masjid;
 use App\Models\StudioDraft;
 use App\Models\User;
+use App\Support\Studio\LogoDerivatives;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
@@ -23,6 +24,13 @@ trait StudioDraftFixtures
 {
     protected const DRAFTS = '/api/admin/studio/drafts';
 
+    /**
+     * The memory a Studio test that is not about the memory check gives the logo
+     * decode: room for anything these tests make, whatever the PHPUnit process
+     * has built up by then.
+     */
+    protected const ROOMY_HEADROOM_BYTES = 512 * 1024 * 1024;
+
     protected function setUpStudio(): void
     {
         config(['database.default' => 'sqlite']);
@@ -35,6 +43,13 @@ trait StudioDraftFixtures
 
         Storage::fake((string) config('studio.logo.disk'));
         Storage::fake('public');
+
+        // LogoDerivatives' memory check reads memory_limit minus what this
+        // process holds, which grows over a long run and is not what these tests
+        // are about. The seam is static, so it is put back when the app is torn
+        // down; a test of the real path sets it to null itself.
+        LogoDerivatives::$headroomBytes = self::ROOMY_HEADROOM_BYTES;
+        $this->beforeApplicationDestroyed(fn () => LogoDerivatives::$headroomBytes = null);
     }
 
     protected function actAsSuperAdmin(): User
@@ -89,6 +104,21 @@ trait StudioDraftFixtures
         imagepng($image);
 
         return (string) ob_get_clean();
+    }
+
+    /**
+     * A PNG whose header declares $width x $height and which has no pixel data:
+     * the signature, an IHDR with a correct CRC and an empty IEND, 45 bytes.
+     * getimagesize and the sniffed type accept it, and nothing can decode it, so
+     * a refusal proves the size was read from the header alone.
+     */
+    protected function headerOnlyPngBytes(int $width, int $height): string
+    {
+        $chunk = fn (string $type, string $data) => pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+
+        return "\x89PNG\r\n\x1a\n"
+            . $chunk('IHDR', pack('NN', $width, $height) . "\x08\x02\x00\x00\x00")
+            . $chunk('IEND', '');
     }
 
     protected function realUpload(string $name, string $bytes): UploadedFile

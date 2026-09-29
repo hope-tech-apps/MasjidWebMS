@@ -32,14 +32,6 @@ class StudioProvisionLogoTest extends TestCase
         $this->actAsSuperAdmin();
     }
 
-    protected function tearDown(): void
-    {
-        // The memory seam is static: put it back for the next test.
-        LogoDerivatives::$headroomBytes = null;
-
-        parent::tearDown();
-    }
-
     #[Test]
     public function the_logo_and_its_three_derivatives_are_stored_served_and_the_private_bytes_are_gone(): void
     {
@@ -97,7 +89,7 @@ class StudioProvisionLogoTest extends TestCase
         $draft = $this->draftWith($this->studioAnswers());
         $masjidsBefore = Masjid::count();
 
-        // Under the 8 MiB the derive chain needs besides the logo itself.
+        // Under the 20 MiB the derive chain needs besides the logo itself.
         LogoDerivatives::$headroomBytes = 1024 * 1024;
 
         $response = $this->provision($draft->id)->assertStatus(422)->assertJsonPath('status', 'failed');
@@ -110,8 +102,37 @@ class StudioProvisionLogoTest extends TestCase
         $this->assertSame(StudioDraft::STATUS_DRAFT, $fresh->status);
         $this->assertTrue($fresh->logoExists(), 'the draft keeps its logo');
 
-        LogoDerivatives::$headroomBytes = null;
+        LogoDerivatives::$headroomBytes = self::ROOMY_HEADROOM_BYTES;
         $this->provision($draft->id)->assertCreated();
+    }
+
+    #[Test]
+    public function the_real_memory_path_reads_the_ini_limit_minus_what_the_process_holds(): void
+    {
+        $draft = $this->draftWith($this->studioAnswers());
+        LogoDerivatives::$headroomBytes = null;
+        $limit = ini_get('memory_limit');
+
+        try {
+            // A limit this test sets, 10 MiB above what the process holds now:
+            // the 400x200 logo needs the 20 MiB allowance and more.
+            $held = memory_get_usage(true);
+            ini_set('memory_limit', (string) ($held + 10 * 1024 * 1024));
+
+            $left = LogoDerivatives::headroomBytes();
+            $this->assertNotNull($left);
+            $this->assertLessThanOrEqual(10 * 1024 * 1024, $left, 'the limit less what is held, and nothing else');
+            $this->assertGreaterThan(0, $left);
+
+            $response = $this->provision($draft->id)->assertStatus(422)->assertJsonPath('status', 'failed');
+            $this->assertStringContainsString('The logo is too large to make the icons from (400×200)', $response->json('data.logo.0'));
+
+            // With a limit 512 MiB above what it holds, the same logo is derived.
+            ini_set('memory_limit', (string) (memory_get_usage(true) + 512 * 1024 * 1024));
+            $this->provision($draft->id)->assertCreated();
+        } finally {
+            ini_set('memory_limit', (string) $limit);
+        }
     }
 
     #[Test]

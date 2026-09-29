@@ -1052,14 +1052,27 @@ the old favicon.
   - **422** `{status:'failed', data:{logo:[...]}}` also when the logo is too
     large to decode: over `LogoDerivatives::MAX_EDGE` (8000, the Studio logo
     upload's cap, one constant) on an edge, or over the memory the request has
-    left (`width × height × 10 + file size + 8 MiB` against `memory_limit`
-    minus current use; 12 is measured, the worst case 10.7 bytes a pixel for
-    an EXIF-rotated JPEG and about 9.4 for an RGBA PNG, so about 2,800 px
-    square with ~30 MB in use at 128M, 3,200 with none). Studio provisioning
-    applies the same check to the draft's logo (422 keyed `logo`). The Studio
-    logo upload itself only enforces the 8000 px edge, so a logo between about
-    3,000 and 8000 px is accepted there and refused at provisioning: a known
-    gap, better than the out-of-memory fatal it replaced. Read from the header, before any decode; nothing is written.
+    left (`width × height × 12 + file size + 20 MiB` against `memory_limit`
+    minus current use; the 12 is measured, the worst case 10.7 bytes a pixel for
+    an EXIF-rotated JPEG and about 9.4 for an RGBA PNG, and the 20 MiB is the
+    measured floor of about 15.5 MB the chain holds for any logo up to about
+    1200x630, with margin; so about 3,000 px square at 128M with nothing in
+    use and about 2,600 with ~30 MB in use). The arithmetic is `LogoDerivatives::estimateBytes`,
+    and `LogoDerivatives::assertFits` is the one check: Studio provisioning
+    runs it on the draft's logo (422 keyed `logo`), and the **Studio draft-logo
+    upload runs the same call** (`StoreStudioDraftLogoRequest::after()`), so a
+    logo provisioning would refuse is refused when it is chosen, with the same
+    sentence, in the legacy 422 envelope keyed `logo`, and is not stored.
+    Provisioning keeps its own run because the headroom it has can differ from
+    the upload's. Because the upload now answers the edge cap itself, its
+    `dimensions` rule carries only the minimum. What the check guards depends
+    on the GD in use. Production's is Ubuntu's SYSTEM libgd (2.3.3, read from
+    the droplet on 2026-09-28), whose pixel buffers are malloc'd outside
+    `memory_limit`, so there it is a conservative ceiling on real RAM (the
+    droplet has 1967 MB, about 1277 MB available, 12 PHP-FPM children; a logo
+    above roughly 2,900 px square is refused, one decode stays near 100 MB); under
+    bundled GD (the local `phptest-gd` image) it is the precise guard against
+    the `memory_limit` fatal. Read from the header, before any decode; nothing is written.
   - **409** `{status:'error', message:'The brand images are already being made. Try again in a moment.'}`
     when another regeneration for the organisation holds its lock
     (`brand-assets:regenerate:{masjid_id}`, waited on for 3 seconds). The lock
@@ -1086,7 +1099,13 @@ the old favicon.
 - `a_failed_regeneration_after_an_upload_leaves_the_upload_response_unchanged`
 - `a_non_super_gets_403`
 - S8 hardening (2026-09-28): the edge and memory cap (route 422, both upload
-  hooks skip), the shared 8000 constant, `a_non_super_with_an_invalid_body_gets_403_not_422`,
+  hooks skip), the shared 8000 constant (`the_studio_logo_upload_leaves_the_edge_cap_to_the_shared_check`),
+  the measuring test (`the_estimate_is_at_least_what_the_real_derive_chain_peaks_at`,
+  four cases through the real `fromFile`, skipped unless GD is bundled, and the
+  rotated-JPEG case unless exif is loaded), the draft-logo upload's refusal
+  (`StudioDraftLogoTest`: a crafted 20000x20000 header, and the memory seam,
+  both 422 with provisioning's sentence and nothing stored), the real
+  `memory_limit` path (`StudioProvisionLogoTest`), `a_non_super_with_an_invalid_body_gets_403_not_422`,
   the lock (409, hook skip, release), and the lifecycle pins (old rows survive
   until the outer commit, an outer rollback, a failing delete, the
   `MasjidsController::update` hook failure).

@@ -62,19 +62,28 @@ class LogoDerivatives
     private const BYTES_PER_PIXEL = 12;
 
     /**
-     * On top of that: the 1200x630 and 180x180 canvases, which are alive at the
-     * same time as the source (about 3 MB and 0.1 MB at 4 bytes a pixel, each
-     * copied once by the resize), and the encoder's buffers. The file's own
-     * size is added per logo as well (assertFits): spatie keeps the whole file
-     * as a string while it decodes.
+     * On top of that, whatever the derive chain holds that does not scale with
+     * the source: MEASURED through the real fromFile under bundled GD, the warm
+     * peak above the source's own cost is about 15.5 MB for any logo up to about
+     * 1200x630. That is roughly five 1200x630 truecolor canvases alive at once,
+     * about 3 MB each (1200 x 630 x 4 bytes, GD's truecolor size), plus the
+     * 180x180 and 48x48 ones. The earlier description here counted one canvas
+     * of that size and the 180x180, which undercounted it. 20 MiB is that
+     * floor with margin; the 8 MiB first used here was below it, so a small
+     * logo could be accepted with too little left. The file's own size is added
+     * per logo as well (assertFits): spatie keeps the whole file as a string
+     * while it decodes.
      */
-    private const FIXED_ALLOWANCE_BYTES = 8 * 1024 * 1024;
+    private const FIXED_ALLOWANCE_BYTES = 20 * 1024 * 1024;
 
     /**
      * TEST SEAM. When set, this many bytes is the memory left, instead of the
      * ini `memory_limit` minus what this process holds. A test sets it to make a
      * small logo not fit without touching the real limit, and must reset it to
-     * null (BrandAssetRegenerationTest does, in setUp and tearDown).
+     * null. The Studio tests set it roomy in setUpStudio and reset it when the
+     * app is torn down, and BrandAssetRegenerationTest does the same in its own
+     * setUp and tearDown, so a test that only wants a logo derived does not
+     * depend on how much memory the PHPUnit process has built up.
      */
     public static ?int $headroomBytes = null;
 
@@ -165,15 +174,47 @@ class LogoDerivatives
     }
 
     /**
+     * What deriving from a logo of this size is budgeted to peak at, in bytes:
+     * width x height x 12, plus the file, plus 20 MiB. The one place the
+     * arithmetic lives; assertFits compares it with the memory left, and the
+     * measuring test in BrandAssetRegenerationTest compares it with what the
+     * real chain used.
+     */
+    public static function estimateBytes(int $width, int $height, int $fileBytes): int
+    {
+        return $width * $height * self::BYTES_PER_PIXEL + self::FIXED_ALLOWANCE_BYTES + $fileBytes;
+    }
+
+    /**
      * Refuse a logo the edge cap or the memory left cannot take, from its
      * header and its size on disk, before anything decodes it. The edge cap
      * alone is not enough: 8000x8000 needs over 700 MB (12 bytes a pixel) and
-     * production PHP-FPM has 128M.
+     * production PHP-FPM has 128M. This is the ONE size and memory check:
+     * derive() runs it on the copy of the logo it is about to decode, and the
+     * Studio draft-logo upload (StoreStudioDraftLogoRequest) runs it on the
+     * uploaded file, so a logo provisioning would refuse is refused when it is
+     * chosen, in the same words. Provisioning keeps its own run, because the
+     * headroom it has can differ from the upload's.
+     *
+     * What the check guards depends on which GD is loaded. Read from the
+     * droplet on 2026-09-28, production's GD is Ubuntu's SYSTEM libgd
+     * (gd_info 'GD Version' 2.3.3, libgd3 2.3.3-9ubuntu5 under php8.3-gd
+     * 8.3.6-0ubuntu0.24.04.11), not PHP's bundled GD. System libgd mallocs its
+     * pixel buffers and canvases OUTSIDE memory_limit, so memory_get_usage cannot
+     * see them and they cannot cause a memory_limit fatal; the risk there is
+     * real RAM and the OOM killer. The droplet has 1967 MB (about 1277 MB
+     * available), 12 PHP-FPM children and memory_limit 128M, so the same
+     * arithmetic is a conservative ceiling on real RAM: a logo above roughly
+     * 2,900 px square is refused and one decode stays near 100 MB. Under
+     * BUNDLED GD (the local phptest-gd image) the allocations do count against
+     * memory_limit and this is the precise guard against the fatal. The
+     * measuring test in BrandAssetRegenerationTest runs only under bundled GD
+     * for that reason.
      *
      * @throws RuntimeException when the file is not a PNG or JPEG
      * @throws LogoTooLarge
      */
-    private static function assertFits(string $path): void
+    public static function assertFits(string $path): void
     {
         $info = @getimagesize($path);
 
@@ -187,12 +228,13 @@ class LogoDerivatives
             throw new LogoTooLarge($width, $height, LogoTooLarge::EDGE, self::MAX_EDGE);
         }
 
-        $fixed = self::FIXED_ALLOWANCE_BYTES + (int) @filesize($path);
+        $fileBytes = (int) @filesize($path);
         $headroom = self::headroomBytes();
 
-        if ($headroom !== null && $width * $height * self::BYTES_PER_PIXEL + $fixed > $headroom) {
+        if ($headroom !== null && self::estimateBytes($width, $height, $fileBytes) > $headroom) {
             // The longest square side the headroom would take, to the nearest
             // hundred down: a number the SuperAdmin can act on.
+            $fixed = self::FIXED_ALLOWANCE_BYTES + $fileBytes;
             $side = (int) floor(sqrt(max(0, $headroom - $fixed) / self::BYTES_PER_PIXEL));
 
             throw new LogoTooLarge($width, $height, LogoTooLarge::MEMORY, min(self::MAX_EDGE, intdiv($side, 100) * 100));

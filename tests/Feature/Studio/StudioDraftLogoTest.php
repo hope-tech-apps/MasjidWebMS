@@ -3,6 +3,7 @@
 namespace Tests\Feature\Studio;
 
 use App\Models\StudioDraft;
+use App\Support\Studio\LogoDerivatives;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -139,6 +140,50 @@ class StudioDraftLogoTest extends TestCase
         $this->uploadLogo($id, $this->realUpload('wide.png', $this->pngBytes(1000, 250)))
             ->assertOk()
             ->assertJsonPath('data.palette.aspect_warning', true);
+    }
+
+    #[Test]
+    public function a_logo_provisioning_would_refuse_for_its_edge_is_refused_at_upload_and_not_stored(): void
+    {
+        $id = $this->newDraft()['id'];
+
+        // A 45-byte PNG that claims 20000 x 20000: a valid signature, IHDR with
+        // its CRC, IEND. The sentence is provisioning's own (LogoTooLarge), in the
+        // legacy envelope, keyed on the upload field.
+        $this->uploadLogo($id, $this->realUpload('huge.png', $this->headerOnlyPngBytes(20000, 20000)))
+            ->assertStatus(422)
+            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [
+                'The logo is too large to make the icons from (20000×20000). Upload a smaller logo, at most ' . LogoDerivatives::MAX_EDGE . ' pixels on each side.',
+            ]]]);
+
+        $this->assertSame([], $this->storedLogos(), 'nothing was written');
+        $this->assertFalse(StudioDraft::findOrFail($id)->hasLogo());
+    }
+
+    #[Test]
+    public function a_logo_over_the_memory_left_is_refused_at_upload_with_the_same_sentence_and_keeps_the_old_logo(): void
+    {
+        $id = $this->newDraft()['id'];
+        $this->uploadLogo($id, $this->realUpload('ok.png', $this->pngBytes(300, 300)))->assertOk();
+        $kept = StudioDraft::findOrFail($id)->logo_path;
+
+        // The test seam for the memory left: 40 MiB, 3000 x 3000 needs 108 MB and
+        // the 20 MiB allowance. What would fit is a 1,321 px square, said as 1300.
+        LogoDerivatives::$headroomBytes = 40 * 1024 * 1024;
+
+        $this->uploadLogo($id, $this->realUpload('big.png', $this->headerOnlyPngBytes(3000, 3000)))
+            ->assertStatus(422)
+            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [
+                'The logo is too large to make the icons from (3000×3000). Upload a smaller logo, at most 1300 pixels on each side.',
+            ]]]);
+
+        $this->assertSame([$kept], $this->storedLogos(), 'the draft keeps the logo it had, and the refused one was not stored');
+        $this->assertSame($kept, StudioDraft::findOrFail($id)->logo_path);
+
+        // The same logo with the room it needs is taken (a header-only file is
+        // not a decodable PNG, but the upload never decodes: it reads the header).
+        LogoDerivatives::$headroomBytes = self::ROOMY_HEADROOM_BYTES;
+        $this->uploadLogo($id, $this->realUpload('big.png', $this->headerOnlyPngBytes(3000, 3000)))->assertOk();
     }
 
     #[Test]

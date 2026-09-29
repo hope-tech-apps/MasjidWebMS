@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\TestCase;
@@ -531,31 +532,33 @@ class BrandAssetRegenerationTest extends TestCase
         $org = $this->orgWithLogoFile($this->headerOnlyPng(3000, 3000));
         Sanctum::actingAs($this->superAdmin());
 
-        // 3000 x 3000 x 12 is 108 MB and the fixed allowance is 8 MB, against 10
-        // MB left. What would have fitted: (10 - 8) MB / 12 bytes is a 418 px
-        // square (less the 45-byte file), said to the hundred below.
-        LogoDerivatives::$headroomBytes = 10 * 1024 * 1024;
+        // 3000 x 3000 x 12 is 108 MB and the fixed allowance is 20 MiB, against
+        // 40 MiB left. What would have fitted: (40 - 20) MiB / 12 bytes is a
+        // 1,321 px square (less the 45-byte file), said to the hundred below.
+        LogoDerivatives::$headroomBytes = 40 * 1024 * 1024;
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(3000, 3000, 400)]]]);
+            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(3000, 3000, 1300)]]]);
 
         $this->assertSame(0, $this->derivativeCount($org));
         $this->assertTrue($this->lockIsFree($org));
     }
 
     #[Test]
-    public function the_memory_budget_is_twelve_bytes_a_pixel_plus_the_file_plus_eight_megabytes(): void
+    public function the_memory_budget_is_twelve_bytes_a_pixel_plus_the_file_plus_twenty_mebibytes(): void
     {
         $org = $this->org();
         Sanctum::actingAs($this->superAdmin());
 
         // The 200 x 100 logo: 20,000 pixels x 12 = 240,000 bytes, plus the
-        // file as it is on disk, plus 8 MiB. The 12 is measured (10.7 bytes a
+        // file as it is on disk, plus 20 MiB. The 12 is measured (10.7 bytes a
         // pixel for an EXIF-rotated JPEG, 9.4 for an RGBA PNG; a budget of 5
-        // let a 4400 px one through 128M and then died decoding it), so a
-        // change to it fails here on purpose.
-        $needed = 240000 + filesize($org->logo->getPath()) + 8 * 1024 * 1024;
+        // let a 4400 px one through 128M and then died decoding it) and so is
+        // the 20 MiB (the warm derive peak is about 15.5 MB for any logo up to
+        // 1200x630; the 8 MiB first used was below it), so a change to either
+        // fails here on purpose.
+        $needed = 240000 + filesize($org->logo->getPath()) + 20 * 1024 * 1024;
 
         LogoDerivatives::$headroomBytes = $needed - 1;
         $this->regenerate($org)->assertStatus(422);
@@ -574,12 +577,12 @@ class BrandAssetRegenerationTest extends TestCase
 
         // 128M with about 22 MB in use: the case that used to pass (100.3 MB
         // against 106 MB) and then exhaust memory in the decoder. The hint is
-        // (106 MiB - 8 MiB - the file) / 12 bytes, a 2,926 px square, said as 2900.
+        // (106 MiB - 20 MiB - the file) / 12 bytes, a 2,741 px square, said as 2700.
         LogoDerivatives::$headroomBytes = 106 * 1024 * 1024;
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(4400, 4400, 2900));
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(4400, 4400, 2700));
 
         $this->assertSame(0, $this->derivativeCount($org));
     }
@@ -592,15 +595,117 @@ class BrandAssetRegenerationTest extends TestCase
 
         // The measured case: an EXIF-rotated 3090 px JPEG peaked at 10.7 bytes a
         // pixel, 101.9 MB, with 104.9 MB left at 128M, and the budget of 10 took
-        // it (104.0 MB needed) with the 8 MiB allowance its only slack; the real
+        // it (104.0 MB needed) with the fixed allowance its only slack; the real
         // peak reached the limit itself. At 12 it needs 117.3 MB and is refused.
         LogoDerivatives::$headroomBytes = (int) (104.9 * 1024 * 1024);
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(3090, 3090, 2900));
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(3090, 3090, 2700));
 
         $this->assertSame(0, $this->derivativeCount($org));
+    }
+
+    /**
+     * The estimate against what the real chain used. Not a pin of the formula
+     * (the tests above do that) but a measurement: the peak above what this
+     * process held, through the real fromFile, must not exceed what assertFits
+     * would have reserved for that logo.
+     *
+     * Only under PHP's BUNDLED GD. System libgd (the CI droplet, production)
+     * mallocs its canvases outside memory_limit, so memory_get_peak_usage does not
+     * see them and the assertion would pass whatever the estimate said.
+     */
+    #[Test]
+    #[DataProvider('measuredLogos')]
+    public function the_estimate_is_at_least_what_the_real_derive_chain_peaks_at(int $width, int $height, bool $rotatedJpeg = false): void
+    {
+        $gd = (string) (gd_info()['GD Version'] ?? '');
+
+        if (! str_contains($gd, 'bundled')) {
+            $this->markTestSkipped("GD is '{$gd}', not bundled: its allocations are outside memory_get_peak_usage, so a peak measured here would pass vacuously.");
+        }
+
+        if ($rotatedJpeg && ! extension_loaded('exif')) {
+            $this->markTestSkipped('The exif extension is not loaded, so autoRotate (the second full-size copy) does not run and there is nothing to measure.');
+        }
+
+        $path = $this->measuredLogoFile($width, $height, $rotatedJpeg);
+        $fileBytes = (int) filesize($path);
+        $estimate = LogoDerivatives::estimateBytes($width, $height, $fileBytes);
+
+        // One throwaway derive so autoloading and the first-use allocations are
+        // not charged to the logo being measured.
+        File::deleteDirectory((new LogoDerivatives())->fromFile($this->measuredLogoFile(48, 48, false), '#123456')->directory);
+
+        $before = memory_get_usage();
+        memory_reset_peak_usage();
+        $files = (new LogoDerivatives())->fromFile($path, '#123456');
+        $delta = memory_get_peak_usage() - $before;
+        File::deleteDirectory($files->directory);
+
+        $this->assertLessThanOrEqual(
+            $estimate,
+            $delta,
+            "{$this->dataName()}: the derive chain peaked at {$delta} bytes above what the process held, over the {$estimate} the check reserves.",
+        );
+    }
+
+    /** @return array<string, array<int, mixed>> width, height and whether it is the EXIF-rotated JPEG */
+    public static function measuredLogos(): array
+    {
+        return [
+            'a 48x48 PNG' => [48, 48],
+            'a 1200x630 RGBA PNG' => [1200, 630],
+            'a 2000x2000 RGBA PNG' => [2000, 2000],
+            'a 2000x2000 JPEG with EXIF Orientation 6' => [2000, 2000, true],
+        ];
+    }
+
+    /**
+     * A logo made with GD on disk: an RGBA PNG (a translucent flat colour, so
+     * the alpha channel is really there), or, for $rotatedJpeg, a JPEG with an
+     * EXIF APP1 segment saying Orientation 6, which makes spatie's autoRotate
+     * take a second full-size copy. A 48x48 is an opaque truecolor PNG.
+     */
+    private function measuredLogoFile(int $width, int $height, bool $rotatedJpeg): string
+    {
+        $image = imagecreatetruecolor($width, $height);
+
+        if ($rotatedJpeg) {
+            imagefill($image, 0, 0, imagecolorallocate($image, 1, 177, 81));
+            ob_start();
+            imagejpeg($image, null, 85);
+            $jpeg = (string) ob_get_clean();
+
+            // TIFF, big-endian: header, offset 8, one IFD entry (tag 0x0112
+            // Orientation, type SHORT, count 1, value 6), no next IFD.
+            $tiff = "MM\x00\x2a\x00\x00\x00\x08" . pack('n', 1) . pack('nnNnn', 0x0112, 3, 1, 6, 0) . pack('N', 0);
+            $exif = "Exif\x00\x00" . $tiff;
+            // Right after the SOI marker; the JFIF segment that follows is still valid.
+            $bytes = substr($jpeg, 0, 2) . "\xff\xe1" . pack('n', strlen($exif) + 2) . $exif . substr($jpeg, 2);
+            $extension = '.jpg';
+        } else {
+            if ($width > 48) {
+                imagealphablending($image, false);
+                imagesavealpha($image, true);
+                imagefill($image, 0, 0, imagecolorallocatealpha($image, 1, 177, 81, 60));
+            } else {
+                imagefill($image, 0, 0, imagecolorallocate($image, 1, 177, 81));
+            }
+            ob_start();
+            imagepng($image);
+            $bytes = (string) ob_get_clean();
+            $extension = '.png';
+        }
+
+        unset($image);
+
+        $path = tempnam(sys_get_temp_dir(), 'brand') . $extension;
+        file_put_contents($path, $bytes);
+        $this->temp[] = $path;
+
+        return $path;
     }
 
     #[Test]
@@ -616,14 +721,20 @@ class BrandAssetRegenerationTest extends TestCase
     }
 
     #[Test]
-    public function the_studio_logo_upload_and_the_derivatives_share_one_edge_cap(): void
+    public function the_studio_logo_upload_leaves_the_edge_cap_to_the_shared_check(): void
     {
         $this->assertSame(8000, LogoDerivatives::MAX_EDGE);
 
+        // The upload's rules carry only the minimum: its maximum edge is
+        // LogoDerivatives::assertFits's, the same code and the same sentence
+        // provisioning gives (StudioDraftLogoTest pins the upload's answer), so
+        // Laravel's own `dimensions` maximum must not sit in front of it.
         $rules = (new StoreStudioDraftLogoRequest())->rules()['logo'];
-        $max = LogoDerivatives::MAX_EDGE;
 
-        $this->assertContains("dimensions:min_width=96,min_height=96,max_width={$max},max_height={$max}", $rules);
+        $this->assertContains('dimensions:min_width=96,min_height=96', $rules);
+        foreach ($rules as $rule) {
+            $this->assertStringNotContainsString('max_width', (string) $rule);
+        }
     }
 
     #[Test]
@@ -662,7 +773,7 @@ class BrandAssetRegenerationTest extends TestCase
         Log::spy();
         Sanctum::actingAs($super);
         $this->travel(5)->seconds();
-        LogoDerivatives::$headroomBytes = 10 * 1024 * 1024;
+        LogoDerivatives::$headroomBytes = 40 * 1024 * 1024;
 
         $this->superUpload($org, $this->headerOnlyPng(3000, 3000))->assertOk()->assertJsonPath('status', 'success');
 
