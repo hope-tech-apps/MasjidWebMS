@@ -423,6 +423,27 @@ class MemberOrdersTest extends TestCase
     }
 
     #[Test]
+    public function every_source_dates_an_evening_purchase_at_the_organisations_calendar_day(): void
+    {
+        $form = $this->form($this->a);
+
+        // 03:30 UTC on the 6th is 23:30 on the 5th in New York (the fixture organisation). An
+        // afternoon timestamp, where UTC and New York agree, would not tell the two apart.
+        $this->formResponse($this->a, $form, 'amina@example.test', ['paid_at' => '2026-09-06 03:30:00']);
+        $this->mealOrder($this->a, 'amina@example.test', ['paid_at' => '2026-09-06 03:30:00']);
+        $this->wixOrder($this->a, $this->me, ['ordered_at' => '2026-09-06 03:30:00']);
+
+        $rows = collect($this->orders()->assertOk()->json('data.data'))->keyBy('source');
+
+        $this->assertCount(3, $rows);
+
+        foreach (['form', 'meal', 'wix'] as $source) {
+            $this->assertSame('2026-09-05', $rows[$source]['date'], "the {$source} row");
+            $this->assertSame('2026-09-05', $this->detail($rows[$source])->assertOk()->json('data.date'), "the {$source} detail");
+        }
+    }
+
+    #[Test]
     public function the_detail_lists_the_lines_then_the_totals_and_says_there_is_no_receipt_for_a_purchase(): void
     {
         $portfolio = $this->portfolio();
@@ -504,6 +525,64 @@ class MemberOrdersTest extends TestCase
             [['label' => 'Sisters Retreat', 'quantity' => 1, 'unit_minor' => 3000, 'line_minor' => 3000]],
             $detail['lines']
         );
+    }
+
+    #[Test]
+    public function a_lunch_total_is_what_was_paid_not_what_the_order_is_now(): void
+    {
+        // Paid at 21.60, then edited up to 30.00: the first edit recorded what the money settled
+        // at, and the lines are the current ones (they are not versioned).
+        $this->mealOrder($this->a, 'amina@example.test', [
+            'paid_at' => '2026-09-03 12:00:00',
+            'subtotal_minor' => 3000,
+            'total_minor' => 3000,
+            'settled_total_minor' => 2160,
+        ], [['Chicken Biryani', 3, 1000]]);
+
+        $row = $this->orders()->assertOk()->json('data.data.0');
+        $detail = $this->detail($row)->assertOk()->json('data');
+
+        $this->assertSame(2160, $row['total_minor']);
+        $this->assertSame(2160, $detail['totals']['total_minor']);
+        $this->assertSame(3000, $detail['totals']['subtotal_minor'], 'the two figures disagree on purpose');
+    }
+
+    #[Test]
+    public function a_form_row_written_before_the_cents_columns_falls_back_to_its_decimal_amount_and_to_due_plus_fee(): void
+    {
+        $form = $this->form($this->a, 'Sisters Retreat');
+
+        // Only the legacy decimal `amount_due`: 30.29 * 100 is 3028.9999999999995, so a cast in
+        // place of the round shows 30.28, and a missing fallback shows 0.
+        $decimalOnly = $this->formResponse($this->a, $form, 'amina@example.test', [
+            'amount_due_minor' => null,
+            'total_minor' => 3029,
+            'fee_covered_minor' => 0,
+            'unit_price_minor' => null,
+            'price_quantity' => null,
+            'price_label' => null,
+            'paid_at' => '2026-09-02 12:00:00',
+        ], ['amount_due' => 30.29]);
+
+        // No total: what was due plus the fee the payer covered.
+        $noTotal = $this->formResponse($this->a, $form, 'amina@example.test', [
+            'amount_due_minor' => 3000,
+            'total_minor' => null,
+            'fee_covered_minor' => 120,
+            'paid_at' => '2026-09-01 12:00:00',
+        ]);
+
+        $rows = collect($this->orders()->assertOk()->json('data.data'))->keyBy('id');
+
+        $legacyDetail = $this->detail(['source' => 'form', 'id' => (string) $decimalOnly->id])->assertOk()->json('data');
+        $this->assertSame(
+            [['label' => 'Sisters Retreat', 'quantity' => 1, 'unit_minor' => 3029, 'line_minor' => 3029]],
+            $legacyDetail['lines']
+        );
+        $this->assertSame(3029, $rows[(string) $decimalOnly->id]['total_minor']);
+
+        $this->assertSame(3120, $rows[(string) $noTotal->id]['total_minor']);
+        $this->assertSame(3120, $this->detail(['source' => 'form', 'id' => (string) $noTotal->id])->assertOk()->json('data.totals.total_minor'));
     }
 
     // =================================================================== status
