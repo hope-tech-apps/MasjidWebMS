@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { AxiosInstance, AxiosResponse } from "axios";
 import { originOf, tokenForUrl } from "@/core/helpers/familySessions";
+import { stripInheritedAuthorization } from "@/core/services/stripInheritedAuthorization";
 
 /**
  * The parent portal's own HTTP client — deliberately NOT ApiService.
@@ -58,7 +59,7 @@ class FamilyApiService {
         // credential. Strip it from the copy, in every bucket axios keeps
         // headers in. The copy is deep, so the global — which the admin screens
         // still need — is untouched.
-        FamilyApiService.stripInheritedAuthorization(FamilyApiService.client);
+        stripInheritedAuthorization(FamilyApiService.client);
 
         // Read the token per-request rather than pinning it at init: the portal
         // signs in and out inside one page life, and possibly in a second tab.
@@ -91,24 +92,6 @@ class FamilyApiService {
             }
             return config;
         });
-    }
-
-    /**
-     * axios keeps default headers in `common` and one bucket per method (and
-     * accepts a bare top-level key), so the inherited Authorization is removed
-     * from all of them. Deleting a key from the instance's own copy never
-     * touches `axios.defaults`.
-     */
-    private static stripInheritedAuthorization(client: AxiosInstance): void {
-        const headers: any = client.defaults.headers;
-        if (!headers) return;
-
-        for (const bucket of [headers, headers.common, headers.get, headers.post, headers.put, headers.patch, headers.delete, headers.head]) {
-            if (bucket && typeof bucket === 'object') {
-                delete bucket.Authorization;
-                delete bucket.authorization;
-            }
-        }
     }
 
     private static instance(): AxiosInstance {
