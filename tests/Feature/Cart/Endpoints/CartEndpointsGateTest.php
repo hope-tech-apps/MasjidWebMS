@@ -2,10 +2,15 @@
 
 namespace Tests\Feature\Cart\Endpoints;
 
+use App\Http\Middleware\EnsureCartEnabled;
 use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Order;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Routing\Middleware\ThrottleRequests;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Cart\BuildsBaskets;
@@ -89,14 +94,20 @@ class CartEndpointsGateTest extends TestCase
     public function every_cart_route_is_registered_behind_the_gate_and_its_own_named_limiter(): void
     {
         $expected = [
-            'POST api/v1/carts' => 'throttle:cart-create',
-            'GET api/v1/cart' => 'throttle:cart-read',
-            'POST api/v1/cart/items' => 'throttle:cart-write',
-            'DELETE api/v1/cart/items/{id}' => 'throttle:cart-write',
-            'POST api/v1/cart/acknowledge' => 'throttle:cart-write',
-            'POST api/v1/cart/checkout' => 'throttle:cart-checkout',
-            'GET api/v1/cart-orders/{uuid}' => 'throttle:cart-order-status',
+            'POST api/v1/carts' => 'cart-create',
+            'GET api/v1/cart' => 'cart-read',
+            'POST api/v1/cart/items' => 'cart-write',
+            'DELETE api/v1/cart/items/{id}' => 'cart-write',
+            'POST api/v1/cart/acknowledge' => 'cart-write',
+            'POST api/v1/cart/checkout' => 'cart-checkout',
+            'GET api/v1/cart-orders/{uuid}' => 'cart-order-status',
         ];
+
+        // The middleware aliases, groups and priority list reach the router when the HTTP
+        // kernel is built, which the first request does. Without it the names below would
+        // stay unresolved and unsorted.
+        $this->app->make(HttpKernel::class);
+        $router = app('router');
 
         $found = [];
 
@@ -106,19 +117,85 @@ class CartEndpointsGateTest extends TestCase
             }
 
             $method = $route->methods()[0];
-            $found["{$method} {$route->uri()}"] = $route->gatherMiddleware();
+            // The SORTED, resolved stack: the order a request runs it in. `$route->gatherMiddleware()`
+            // is the order the route LISTS it in, and Laravel re-sorts that by its priority list:
+            // ThrottleRequests ranks above the `api` group's SubstituteBindings, so an unranked
+            // gate was moved behind the throttles while the listed order still looked right.
+            $found["{$method} {$route->uri()}"] = $router->gatherRouteMiddleware($route);
         }
 
         $this->assertEqualsCanonicalizing(array_keys($expected), array_keys($found), 'the cart route table');
 
         foreach ($expected as $route => $limiter) {
-            $gate = array_search('cart.enabled', $found[$route], true);
-            $throttle = array_search($limiter, $found[$route], true);
+            $stack = $found[$route];
+            $gate = array_search(EnsureCartEnabled::class, $stack, true);
+            $throttles = array_keys(array_filter(
+                $stack,
+                static fn ($middleware): bool => is_string($middleware) && str_starts_with($middleware, ThrottleRequests::class . ':')
+            ));
 
             $this->assertNotFalse($gate, "{$route} is behind the cart gate");
-            $this->assertNotFalse($throttle, "{$route} carries its own named limiter, {$limiter}");
-            $this->assertLessThan($throttle, $gate, "{$route}: the gate runs before the throttle, so an off cart costs no query");
+            $this->assertContains(ThrottleRequests::class . ':' . $limiter, $stack, "{$route} carries its own named limiter, {$limiter}");
+            $this->assertNotSame([], $throttles, "{$route} is throttled");
+
+            foreach ($throttles as $throttle) {
+                $this->assertLessThan($throttle, $gate, "{$route}: the gate runs before every throttle, so an off cart costs no query and no rate-limit row");
+            }
         }
+    }
+
+    #[Test]
+    public function with_the_cart_off_the_limiters_never_run_and_the_404_carries_no_rate_limit_header(): void
+    {
+        $this->armWebhooks();
+        config(['app.debug' => false, 'cart.throttle.create_per_hour' => 20]);
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9']);
+
+        $org = $this->org();
+        $this->assertFalse(config('cart.enabled'), 'premise: off is the shipped default');
+
+        // A limiter's closure reads the database (a basket's token, an order's uuid), so a
+        // closure that runs on a dark route is a query the route was meant never to make.
+        $ran = [];
+        foreach (['cart-create', 'cart-read', 'cart-write', 'cart-checkout', 'cart-order-status'] as $name) {
+            RateLimiter::for($name, function () use (&$ran, $name) {
+                $ran[] = $name;
+
+                return Limit::none();
+            });
+        }
+
+        foreach ($this->everyCartRoute($this->fund($org)->id) as [$method, $uri, $body]) {
+            $this->cartApi($method, $uri, $org, str_repeat('a', 64), $body, self::ORIGIN)->assertNotFound();
+        }
+
+        $this->assertSame([], $ran, 'no limiter closure ran');
+    }
+
+    #[Test]
+    public function with_the_cart_off_a_flood_of_new_baskets_is_still_a_bare_404_with_no_rate_limit_header(): void
+    {
+        $this->armWebhooks();
+        config(['app.debug' => false, 'cart.throttle.create_per_hour' => 20]);
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9']);
+
+        $org = $this->org();
+        $this->assertFalse(config('cart.enabled'), 'premise: off is the shipped default');
+
+        $unknown = $this->getJson('/api/v1/no-such-route', $this->cartHeaders($org))->assertNotFound();
+
+        // One past the hour's allowance and then some: were the throttle ahead of the gate, the
+        // 21st would be the limiter's 429 and every answer before it would carry its headers.
+        for ($attempt = 1; $attempt <= 22; $attempt++) {
+            $response = $this->cartApi('POST', '/api/v1/carts', $org)->assertNotFound();
+
+            $response->assertHeaderMissing('X-RateLimit-Limit');
+            $response->assertHeaderMissing('X-RateLimit-Remaining');
+            $response->assertHeaderMissing('Retry-After');
+            $this->assertSame($unknown->getContent(), $response->getContent(), "attempt {$attempt} is the same 404 as a route that does not exist");
+        }
+
+        $this->assertSame(0, $this->rowCounts()['carts']);
     }
 
     #[Test]

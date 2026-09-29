@@ -200,6 +200,19 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
+
+        // The order a route's middleware RUNS in is not the order it lists them: Laravel
+        // re-sorts every route's stack by its priority list, and ThrottleRequests ranks above
+        // the `api` group's SubstituteBindings, so `cart.enabled` (unranked) was pushed BEHIND
+        // `throttle:cart-*`. A dark cart then still ran the limiter closures (database reads),
+        // wrote rate-limit rows, carried X-RateLimit headers on its 404 and, from the 21st
+        // POST /carts of an hour, answered 429 instead of the 404: "switched off" was
+        // distinguishable from "never built". Ranking the gate ahead of the throttles puts it
+        // first on every cart route. See EnsureCartEnabled and CartEndpointsGateTest.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            prepend: \App\Http\Middleware\EnsureCartEnabled::class,
+        );
     })
     ->withExceptions(function (Exceptions $exceptions) {
 
