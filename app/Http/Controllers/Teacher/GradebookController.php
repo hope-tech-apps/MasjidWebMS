@@ -636,22 +636,22 @@ class GradebookController extends TeacherController
     }
 
     /**
-     * One piece of work of this class, by id, or a refusal.
+     * One piece of work of this class, by id, or a 404.
      *
-     * Work in a subject the teacher does not teach is a 403 in the words the
-     * `teacher.teaches:` fence uses. Work with NO subject is invisible to a
-     * limited teacher (a 404), since it is not any subject's to refuse.
+     * To a limited teacher, work in a subject they do not teach and work with NO
+     * subject are the same thing: not there. Both answer the one plain 404 (status
+     * and body alike), so the refusal neither names a subject nor confirms that
+     * work exists behind the id (review F4, 2026-09-29). It used to be a 403 that
+     * said "You do not teach Arabic Language in this class", which told a Qur'an
+     * teacher walking ids that Arabic work was there. The 403 stays for a subject
+     * the teacher TYPES (`refuseWork`), which reveals nothing they did not write.
      */
     private function work(Group $group, $assignmentId, ?array $limits): ClassAssignment
     {
         $assignment = $group->assignments()->findOrFail($assignmentId);
 
         if (! SubjectFence::allows($limits, $assignment->subject_key)) {
-            if ($assignment->subject_key === '') {
-                abort(Response::HTTP_NOT_FOUND);
-            }
-
-            SubjectFence::refuse($assignment->subject);
+            abort(Response::HTTP_NOT_FOUND);
         }
 
         return $assignment;

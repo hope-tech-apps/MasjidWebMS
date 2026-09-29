@@ -5166,3 +5166,17 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   100300 in that order; and a box built as the old 100200 left it (table without the column, 100250 and 100300 not yet run) gains the
   column and then the seed runs, marking its rows. Rule restated: an applied migration is never edited, a new column is a new migration.
   The staging check the review asked for (does `migrations` hold `2026_10_03_100200`?) is no longer needed for this: either answer is safe.
+
+- **2026-09-29 (W3/W4 folds, F4): another subject's work is not there for a limited teacher, and their by-day save makes their own plan.**
+  Two defects with one cause. (1) `PUT /lesson-plans` (the by-day address) falls back to "the day's only plan" for an older screen; on
+  a day whose only plan was another subject's, that fallback landed on it, `write()` fenced it and a Qur'an-only teacher got a 403 naming
+  Arabic Language instead of a plan of their own. (2) Work and plans that existed in another subject answered a 403 that said so, which
+  tells a teacher walking ids that the work is there (untagged work already answered 404). Decision: to a limited teacher another
+  subject's work or plan does not exist. By id it is the one plain 404 untagged work gets (gradebook: `abort(404)`, byte for byte the
+  same body; lesson plans: the same `ModelNotFoundException` a missing id raises, so the body cannot tell them apart). By day, "the
+  day's plans" are only those the teacher may touch: their save creates their own plan when none of the plans they may touch is the
+  one meant (an Arabic plan is never renamed under their label), their delete removes only their plan (a hidden plan no longer makes it
+  a 409) and a day with nothing of theirs is a 404, EMPTY OR NOT, so 404 versus 200 cannot reveal a hidden plan; an unrestricted
+  teacher's empty-day delete is still a harmless 200. The 403 stays for a subject the teacher TYPES and does not teach, in the words
+  they typed, before anything about the day is read, so it is the same sentence whether or not that subject has a plan. Alternative:
+  keep the 403s and only stop naming the subject. Rejected: a status that differs from "no such thing" still confirms the thing.

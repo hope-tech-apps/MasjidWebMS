@@ -222,12 +222,13 @@ class TeacherSubjectAccessTest extends TestCase
         $arabic = $this->plan($day, 'Arabic Language');
         $mine = $this->plan($day, "Qur'an");
 
-        // By id: rewrite and remove.
+        // By id: rewrite and remove. Another subject's plan is not there for them: a 404, not a
+        // refusal that names Arabic Language (review F4).
         $this->putJson($this->url("/lesson-plans/{$arabic->id}"), ['session_date' => $day, 'subject' => 'Arabic Language', 'body' => 'Hijacked.'])
-            ->assertForbidden();
-        $this->deleteJson($this->url("/lesson-plans/{$arabic->id}"))->assertForbidden();
+            ->assertNotFound();
+        $this->deleteJson($this->url("/lesson-plans/{$arabic->id}"))->assertNotFound();
 
-        // Moving their own plan INTO Arabic is the same refusal.
+        // Moving their own plan INTO Arabic is a refusal: the subject is theirs to name, and it is named back.
         $this->putJson($this->url("/lesson-plans/{$mine->id}"), ['session_date' => $day, 'subject' => 'Arabic Language', 'body' => 'Moved.'])
             ->assertForbidden();
 
@@ -242,14 +243,182 @@ class TeacherSubjectAccessTest extends TestCase
         $day = now()->addDay()->toDateString();
         $arabic = $this->plan($day, 'Arabic Language');
 
-        // The old address falls back to "the day's only plan", which is Arabic's:
-        // it must be refused rather than silently rewritten under a Qur'an label.
-        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Overwritten.'])
-            ->assertForbidden();
-        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertForbidden();
+        // The old address used to fall back to "the day's only plan", which is Arabic's. It must
+        // never be rewritten under a Qur'an label (and, review F4, must not 403 either: see next test).
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Mine.'])->assertOk();
+
+        // Delete-by-day on a day whose only plan is Arabic's: nothing of theirs is there.
+        LessonPlan::query()->where('subject', "Qur'an")->delete();
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertNotFound();
 
         $this->assertSame('Body.', $arabic->fresh()->body);
+        $this->assertSame('Arabic Language', $arabic->fresh()->subject);
         $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    // ---- review F4 (2026-09-29): the by-day save creates the teacher's own plan; refusals name nothing
+
+    #[Test]
+    public function a_limited_teachers_by_day_save_on_a_day_holding_only_another_subjects_plan_creates_their_own(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $before = $arabic->fresh()->only(['subject', 'body', 'title', 'author_user_id', 'updated_at']);
+
+        $created = $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Fatiha.'])
+            ->assertOk()->assertJsonPath('data.subject', "Qur'an")->assertJsonPath('data.body', 'Fatiha.');
+
+        $this->assertNotSame($arabic->id, $created->json('data.id'), 'a new plan, not the Arabic one renamed');
+        $this->assertSame(2, LessonPlan::query()->count());
+        $this->assertEquals($before, $arabic->fresh()->only(['subject', 'body', 'title', 'author_user_id', 'updated_at']), "Arabic's plan is untouched");
+
+        // Saving again corrects THEIR plan; it does not add a third.
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Fatiha, corrected.'])
+            ->assertOk()->assertJsonPath('data.id', $created->json('data.id'));
+        $this->assertSame(2, LessonPlan::query()->count());
+        $this->assertSame('Body.', $arabic->fresh()->body);
+
+        // The teacher's own view shows theirs alone.
+        $this->assertSame(
+            ["Qur'an"],
+            collect($this->getJson($this->url('/lesson-plans?from='.$day.'&to='.$day))->assertOk()->json('data.plans'))->pluck('subject')->all()
+        );
+    }
+
+    #[Test]
+    public function a_limited_teachers_by_day_save_ignores_every_plan_they_may_not_touch_however_many_there_are(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $maths = $this->plan($day, 'Mathematics');
+
+        // Two plans they may not touch, none of theirs: still a plan of their own, never a 403.
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Mine.'])->assertOk();
+        $this->assertSame(3, LessonPlan::query()->count());
+        $this->assertSame('Body.', $arabic->fresh()->body);
+        $this->assertSame('Body.', $maths->fresh()->body);
+
+        // The day's general plan is open to every teacher, and it is the only plan THEY see on this day
+        // besides their own, so it is theirs to rename the way the old screen meant it. Arabic is still not.
+        $other = now()->addDays(2)->toDateString();
+        $hidden = $this->plan($other, 'Arabic Language');
+        $general = $this->plan($other, null);
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $other, 'subject' => "Qur'an", 'body' => 'Renamed.'])
+            ->assertOk()->assertJsonPath('data.id', $general->id);
+        $this->assertSame('Arabic Language', $hidden->fresh()->subject);
+        $this->assertSame('Body.', $hidden->fresh()->body);
+    }
+
+    #[Test]
+    public function a_limited_teacher_still_cannot_save_a_plan_in_a_subject_they_do_not_teach_by_day_either(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+
+        // With no Arabic plan that day, and then with one: the refusal is the same sentence, in the words the
+        // teacher typed (lower case here), so it says nothing about what the day holds.
+        $none = $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => 'arabic language', 'body' => 'x'])
+            ->assertForbidden();
+        $this->plan($day, 'Arabic Language');
+        $some = $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => 'arabic language', 'body' => 'x'])
+            ->assertForbidden();
+
+        $this->assertSame($none->getContent(), $some->getContent());
+        $this->assertSame('You do not teach arabic language in this class.', $some->json('message'));
+        $this->assertSame(1, LessonPlan::query()->count());
+    }
+
+    #[Test]
+    public function another_subjects_plan_by_id_answers_exactly_what_an_id_that_names_no_plan_answers(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $missing = $arabic->id + 1000;
+        // What production sends: the sanitised message. (Debug mode echoes the model and the id.)
+        config(['app.debug' => false]);
+
+        $put = ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'x'];
+
+        $hiddenPut = $this->putJson($this->url("/lesson-plans/{$arabic->id}"), $put);
+        $missingPut = $this->putJson($this->url("/lesson-plans/{$missing}"), $put);
+        $hiddenDelete = $this->deleteJson($this->url("/lesson-plans/{$arabic->id}"));
+        $missingDelete = $this->deleteJson($this->url("/lesson-plans/{$missing}"));
+
+        foreach ([[$hiddenPut, $missingPut], [$hiddenDelete, $missingDelete]] as [$hidden, $absent]) {
+            $this->assertSame(404, $hidden->getStatusCode());
+            $this->assertSame($absent->getStatusCode(), $hidden->getStatusCode());
+            $this->assertSame($absent->getContent(), $hidden->getContent(), 'byte for byte');
+            $this->assertStringNotContainsString('Arabic', $hidden->getContent());
+        }
+
+        // Debug mode adds the model and the id the caller sent, and nothing else: the same words for both.
+        config(['app.debug' => true]);
+        $a = $this->deleteJson($this->url("/lesson-plans/{$arabic->id}"))->json('message');
+        $b = $this->deleteJson($this->url("/lesson-plans/{$missing}"))->json('message');
+        $this->assertSame(str_replace((string) $missing, '#', $b), str_replace((string) $arabic->id, '#', $a));
+
+        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    #[Test]
+    public function the_by_day_delete_removes_only_a_plan_the_teacher_may_touch_and_never_counts_a_hidden_one(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $maths = $this->plan($day, 'Mathematics');
+        $mine = $this->plan($day, "Qur'an");
+
+        // Three plans in the table, one of them theirs: that is "the day's plan", it goes, the others stay
+        // (this used to 409, telling them the day held more than one subject).
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertOk();
+        $this->assertNull(LessonPlan::query()->find($mine->id));
+        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+        $this->assertNotNull(LessonPlan::query()->find($maths->id));
+
+        // Two plans of THEIRS is a real 409, and deletes nothing.
+        $one = $this->plan($day, "Qur'an");
+        $two = $this->plan($day, null);
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertStatus(409);
+        $this->assertNotNull(LessonPlan::query()->find($one->id));
+        $this->assertNotNull(LessonPlan::query()->find($two->id));
+        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    #[Test]
+    public function a_by_day_delete_with_nothing_of_the_teachers_on_the_day_is_the_same_404_whether_the_day_is_empty_or_holds_another_subjects_plan(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $empty = now()->addDay()->toDateString();
+        $held = now()->addDays(2)->toDateString();
+        $arabic = $this->plan($held, 'Arabic Language');
+
+        $nothing = $this->deleteJson($this->url('/lesson-plans?date='.$empty))->assertNotFound();
+        $hidden = $this->deleteJson($this->url('/lesson-plans?date='.$held))->assertNotFound();
+
+        $this->assertSame($nothing->getContent(), $hidden->getContent(), 'byte for byte: the two cannot be told apart');
+        $this->assertStringNotContainsString('Arabic', $hidden->getContent());
+        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    #[Test]
+    public function an_unrestricted_teachers_by_day_delete_is_unchanged(): void
+    {
+        $this->assign(null);
+        $empty = now()->addDay()->toDateString();
+        $day = now()->addDays(2)->toDateString();
+
+        // An empty day is still a harmless 200; two plans still 409; one plan goes.
+        $this->deleteJson($this->url('/lesson-plans?date='.$empty))->assertOk();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $mine = $this->plan($day, "Qur'an");
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertStatus(409);
+        $this->deleteJson($this->url("/lesson-plans/{$mine->id}"))->assertOk();
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertOk();
+        $this->assertNull(LessonPlan::query()->find($arabic->id));
     }
 
     #[Test]
@@ -336,12 +505,12 @@ class TeacherSubjectAccessTest extends TestCase
         $arabic = $this->work('Arabic quiz', 'Arabic Language');
         $scoresUrl = $this->url("/assignments/{$arabic->id}/scores");
 
-        $this->getJson($this->url("/assignments/{$arabic->id}"))
-            ->assertForbidden()->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
-        $this->putJson($this->url("/assignments/{$arabic->id}"), $this->body(['title' => 'Hijacked', 'subject' => 'Arabic Language']))->assertForbidden();
-        $this->deleteJson($this->url("/assignments/{$arabic->id}"))->assertForbidden();
+        // Not there for them (review F4): the same 404 untagged work gets, never a sentence naming Arabic.
+        $this->getJson($this->url("/assignments/{$arabic->id}"))->assertNotFound();
+        $this->putJson($this->url("/assignments/{$arabic->id}"), $this->body(['title' => 'Hijacked', 'subject' => 'Arabic Language']))->assertNotFound();
+        $this->deleteJson($this->url("/assignments/{$arabic->id}"))->assertNotFound();
         $this->putJson($scoresUrl, ['scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 9]]])
-            ->assertForbidden();
+            ->assertNotFound();
 
         $this->assertSame('Arabic quiz', $arabic->fresh()->title);
         $this->assertNull(ClassAssignment::query()->find($arabic->id)?->deleted_at);
@@ -359,6 +528,42 @@ class TeacherSubjectAccessTest extends TestCase
             'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 5]],
         ])->assertNotFound();
         $this->deleteJson($this->url("/assignments/{$old->id}"))->assertNotFound();
+    }
+
+    #[Test]
+    public function another_subjects_work_is_refused_exactly_as_untagged_work_is_status_and_body(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $arabic = $this->work('Arabic quiz', 'Arabic Language');
+        $untagged = $this->work('Old work', null);
+
+        $scores = ['scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 9]]];
+        $edit = $this->body(['title' => 'Hijacked', 'subject' => "Qur'an"]);
+
+        $calls = [
+            'show' => fn (ClassAssignment $w) => $this->getJson($this->url("/assignments/{$w->id}")),
+            'update' => fn (ClassAssignment $w) => $this->putJson($this->url("/assignments/{$w->id}"), $edit),
+            'scores' => fn (ClassAssignment $w) => $this->putJson($this->url("/assignments/{$w->id}/scores"), $scores),
+            'destroy' => fn (ClassAssignment $w) => $this->deleteJson($this->url("/assignments/{$w->id}")),
+        ];
+
+        // Both with debug on (the test default: the message is the exception's own) and off (production's).
+        foreach ([true, false] as $debug) {
+            config(['app.debug' => $debug]);
+
+            foreach ($calls as $verb => $call) {
+                $other = $call($arabic);
+                $none = $call($untagged);
+
+                $this->assertSame(404, $other->getStatusCode(), "{$verb}: another subject's work");
+                $this->assertSame($none->getStatusCode(), $other->getStatusCode(), $verb);
+                $this->assertSame($none->getContent(), $other->getContent(), "{$verb}: byte for byte, debug ".json_encode($debug));
+                $this->assertStringNotContainsString('Arabic', $other->getContent(), $verb);
+            }
+        }
+
+        $this->assertSame('Arabic quiz', $arabic->fresh()->title);
+        $this->assertSame(0, AssignmentScore::query()->count());
     }
 
     #[Test]
@@ -546,10 +751,9 @@ class TeacherSubjectAccessTest extends TestCase
         // The subject it is BECOMING is one they teach, so the only thing between
         // them and Arabic's work is the fence on the work AS IT IS.
         $this->putJson($url, $this->body(['title' => 'Hijacked', 'subject' => "Qur'an", 'points_possible' => 99]))
-            ->assertForbidden()
-            ->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
+            ->assertNotFound();
         // Naming no subject keeps the existing one, which is Arabic.
-        $this->putJson($url, $this->body(['title' => 'Hijacked', 'points_possible' => 99]))->assertForbidden();
+        $this->putJson($url, $this->body(['title' => 'Hijacked', 'points_possible' => 99]))->assertNotFound();
 
         $arabic->refresh();
         $this->assertSame('Arabic quiz', $arabic->title);

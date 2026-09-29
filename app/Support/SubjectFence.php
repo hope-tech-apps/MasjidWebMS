@@ -101,8 +101,15 @@ final class SubjectFence
     }
 
     /**
-     * Refuse, in the words the `teacher.teaches:` middleware uses so a teacher
-     * hears one sentence for one rule.
+     * Refuse a subject the teacher TYPED and does not teach, in the words the
+     * `teacher.teaches:` middleware uses so a teacher hears one sentence for one rule.
+     *
+     * Only ever for a subject the caller wrote (a new piece of work, a plan being
+     * saved, work being moved): the sentence repeats their own words and reveals
+     * nothing. Work or a plan that ALREADY EXISTS in another subject is never
+     * refused with this, because naming its subject would confirm it is there: the
+     * controllers answer the plain 404 that work with no subject, or an id that
+     * names nothing, gets.
      */
     public static function refuse(?string $subjectName): never
     {

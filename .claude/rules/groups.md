@@ -1206,12 +1206,19 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   work into another subject. `SubjectKey::staffKeys()` is the map: the combined
   "Qur'an & Islamic Studies" column belongs to BOTH `quran` and `islamic_studies`;
   Mathematics belongs to none, so a limited teacher does not teach it. Work with NO subject
-  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse).
+  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse), and so is
+  ANOTHER subject's work or lesson plan (review F4, 2026-09-29): by id it answers the one plain
+  404 that untagged work (or a plan id that names nothing) answers, status and body alike, so a
+  refusal never names a subject and never confirms that something is there. The by-day lesson plan
+  address counts and touches only the plans the teacher may touch: their save on a day holding
+  only another subject's plan creates their own beside it, their delete never reaches the others,
+  and a day with nothing of theirs is a 404 whether it is empty or not. Only a subject the
+  teacher TYPES and does not teach is refused with a 403 in the words of `teacher.teaches:`
+  ("You do not teach X in this class.", X being what they wrote).
   A lesson plan with no subject (the day's general plan) stays open to every teacher of the
   class, because fencing it would strand every plan BISS has. Only a signed-in TEACHER is
   limited: the office reads the same controllers through the admin realm and is never
-  fenced, and the family endpoint has no fence at all. Refusals use the words of
-  `teacher.teaches:` ("You do not teach X in this class.").
+  fenced, and the family endpoint has no fence at all.
 - **Migrations.** `add_curriculum_fields_to_class_assignments_table` (one migration for all
   three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
   hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
