@@ -11,7 +11,6 @@ use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
 use App\Support\TenantContext;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -122,19 +121,16 @@ class TeachersController extends Controller
                 'is_default' => true,
             ]);
 
-            // The classes they lead. masjid_id MUST be explicit — attach() bypasses
-            // the BelongsToMasjid creating hook (see GroupStaff).
+            // The classes they lead. masjid_id is explicit (see GroupStaff). Who
+            // assigned them is recorded by GroupStaff's creating hook: attach()
+            // runs the extras through the pivot's fill(), which drops that column.
             foreach ($classes as $group) {
                 $subjects = $request->subjectsFor((int) $group->id);
 
                 $group->staff()->attach($user->id, [
                     'masjid_id' => $group->masjid_id,
                     'role' => GroupStaff::ROLE_TEACHER,
-                    // Encoded by hand: attach() writes through the query builder,
-                    // so the model's `array` cast never runs (the same reason
-                    // masjid_id is passed explicitly — see GroupStaff).
                     'subjects' => $subjects,
-                    'assigned_by_user_id' => Auth::id(),
                     'assigned_at' => now(),
                 ]);
             }
@@ -225,7 +221,6 @@ class TeachersController extends Controller
                     'masjid_id' => $group->masjid_id,
                     'role' => GroupStaff::ROLE_TEACHER,
                     'subjects' => $subjects,
-                    'assigned_by_user_id' => Auth::id(),
                     'assigned_at' => now(),
                 ]);
             }

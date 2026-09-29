@@ -203,8 +203,9 @@ class User extends Authenticatable implements HasMedia
      * This — NOT the legacy Contact `leader` membership — is the authoritative
      * teacher↔class link for a login. `GroupAudience` reads it to decide teacher
      * standing, and `Group::scopeLedBy()` filters "only my classes" through it.
-     * A group_staff row is written with an EXPLICIT masjid_id (attach() bypasses
-     * the BelongsToMasjid creating hook); see GroupStaff and TeachersController.
+     * A group_staff row is written with an EXPLICIT masjid_id, and its
+     * assigned_by_user_id comes from GroupStaff's creating hook, never the caller
+     * (attach() drops non-fillable extras); see GroupStaff and TeachersController.
      */
     public function groupsLed(): BelongsToMany
     {

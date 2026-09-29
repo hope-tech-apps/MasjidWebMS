@@ -4362,3 +4362,23 @@ provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
   confirm dialog (S9) says so.
 
 - 2026-09-28 (review fix S8-1): the SuperAdmin update route (`POST /api/admin/masjids/{id}`, `MasjidsController::update`) now has its own two tests, because its `BrandAssets::afterLogoUpload` call was pinned by nothing: one where a Studio org's derivatives are replaced from the new logo, one where an org without any stays without any. Test-only; no code changed. Not run locally (no PHP).
+
+## 2026-09-29 — group_staff.assigned_by_user_id: recorded by the model, not the caller
+
+- **What was wrong:** every teacher-to-class row written through TeachersController (store and update) stored
+  `assigned_by_user_id` NULL. `Group::staff()` is `->using(GroupStaff::class)`, and in Laravel 12 attach() passes its extra
+  attributes through `(new GroupStaff)->fill()` (InteractsWithPivotTable::castAttributes). `fill()` honours `$fillable`,
+  and the column is deliberately not fillable, so the value passed at the call site was silently dropped. Production on
+  2026-09-29: rows 7-10 (org 14) and 16 (org 17) are NULL; rows 3, 4, 11, 12 (org 14, user 10, 2026-09-08) carry it, so they
+  were written by some path other than attach(), origin unknown (the custom pivot dates from 2026-08-29, before all of
+  them). The old docblocks also said attach() never
+  instantiates the model; with a `using` class it does, so model casts and creating hooks run.
+- **Decision:** GroupStaff's `creating` hook sets `assigned_by_user_id = Auth::id()`. It stays out of `$fillable`, and
+  callers no longer pass it, so no payload and no caller can choose the actor. With nobody signed in (console, seeder) it
+  stays NULL rather than a guess. `masjid_id` is still passed explicitly on every attach.
+- **Rejected:** adding the column to `$fillable` (it would become mass-assignable from any future fill of request data);
+  a second query after attach() to write it (two writes, and every future caller must remember it).
+- **Not done without the owner's yes:** backfilling the NULL rows on production (who assigned them is not recorded anywhere).
+- Pinned by `TeacherProvisioningTest`: creating_a_teacher_records_the_signed_in_admin_as_who_assigned_each_class,
+  a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner,
+  a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess.
