@@ -19,7 +19,12 @@ class StoreStudioDraftLogoRequest extends BaseFormRequest
     public function rules(): array
     {
         $min = (int) config('studio.logo.min_px', 96);
-        // The same cap LogoDerivatives::fromFile enforces before it decodes.
+        // The same edge cap LogoDerivatives enforces before it decodes. It is the
+        // ceiling, not what production takes: at memory_limit 128M the memory
+        // check in LogoDerivatives::derive refuses a logo over roughly 2,800 to 3,200 px
+        // square when provisioning derives the brand images, with a 422 keyed
+        // `logo` (docs/manara-studio-w2.md S8). The upload does not run that
+        // check, so a large logo is refused at the last step, not here.
         $max = LogoDerivatives::MAX_EDGE;
 
         return [

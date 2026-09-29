@@ -1053,9 +1053,13 @@ the old favicon.
     large to decode: over `LogoDerivatives::MAX_EDGE` (8000, the Studio logo
     upload's cap, one constant) on an edge, or over the memory the request has
     left (`width × height × 10 + file size + 8 MiB` against `memory_limit`
-    minus current use; 10 is measured, 8.2 bytes a pixel for an RGBA PNG, so
-    about 3,000 px square with ~30 MB in use at 128M). Studio provisioning
-    applies the same check to the draft's logo (422 keyed `logo`). Read from the header, before any decode; nothing is written.
+    minus current use; 12 is measured, the worst case 10.7 bytes a pixel for
+    an EXIF-rotated JPEG and about 9.4 for an RGBA PNG, so about 2,800 px
+    square with ~30 MB in use at 128M, 3,200 with none). Studio provisioning
+    applies the same check to the draft's logo (422 keyed `logo`). The Studio
+    logo upload itself only enforces the 8000 px edge, so a logo between about
+    3,000 and 8000 px is accepted there and refused at provisioning: a known
+    gap, better than the out-of-memory fatal it replaced. Read from the header, before any decode; nothing is written.
   - **409** `{status:'error', message:'The brand images are already being made. Try again in a moment.'}`
     when another regeneration for the organisation holds its lock
     (`brand-assets:regenerate:{masjid_id}`, waited on for 3 seconds). The lock

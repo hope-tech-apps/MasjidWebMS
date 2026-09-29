@@ -45,18 +45,21 @@ class LogoDerivatives
 
     /**
      * What one pixel of the source costs to derive from, in bytes. MEASURED, not
-     * derived from GD's 4 bytes a pixel: the whole derive chain (spatie/image
-     * 3.9.5 loadFile, fit, resizeCanvas, background, save, for all three
-     * images) peaked at 8.19 bytes a pixel for an RGBA PNG, 7.19 for an RGB PNG
-     * and 4.19 for a JPEG, on PHP 8.3 with bundled GD, because GD's PNG reader
-     * holds a raw row buffer as well as the image. An EXIF-rotated JPEG
-     * (Orientation 3-8) is rotated into a second full-size copy, which is not
-     * measured but about 8.4 by the same arithmetic. So 10: the worst measured
-     * case with a margin, one number for both types, no dependence on the exif
-     * extension being loaded. A budget of 5 accepted a 4400 px RGBA PNG at
-     * 128M and then died in imagecreatefromstring.
+     * derived from GD's 4 bytes a pixel: the whole chain through fromFile
+     * (spatie/image 3.9.5 loadFile, fit, resizeCanvas, background, save, for all
+     * three images) peaked, on PHP 8.3 with bundled GD at memory_limit 128M, at
+     * about 9.4 bytes a pixel for an RGBA, gray+alpha or 16-bit PNG, 2.4 for a
+     * palette PNG, 5.4 for a plain JPEG, and 10.7 for a JPEG with EXIF
+     * Orientation 3 to 8 (measured at 3090 px, also progressive), because
+     * autoRotate makes a second full-size copy. GD's PNG reader holds a raw row
+     * buffer as well as the image. So 12: the worst measured case (10.7) with a
+     * margin, one number for both types, no dependence on the exif extension
+     * being loaded. A budget of 5 accepted a 4400 px RGBA PNG and died in
+     * imagecreatefromstring; a budget of 10 accepted the rotated JPEG with the
+     * fixed allowance below as its only slack, its peak reaching the limit
+     * itself.
      */
-    private const BYTES_PER_PIXEL = 10;
+    private const BYTES_PER_PIXEL = 12;
 
     /**
      * On top of that: the 1200x630 and 180x180 canvases, which are alive at the
@@ -164,7 +167,7 @@ class LogoDerivatives
     /**
      * Refuse a logo the edge cap or the memory left cannot take, from its
      * header and its size on disk, before anything decodes it. The edge cap
-     * alone is not enough: 8000x8000 needs over 500 MB (8.2 bytes a pixel measured) and
+     * alone is not enough: 8000x8000 needs over 700 MB (12 bytes a pixel) and
      * production PHP-FPM has 128M.
      *
      * @throws RuntimeException when the file is not a PNG or JPEG

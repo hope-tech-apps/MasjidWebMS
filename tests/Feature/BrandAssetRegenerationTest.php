@@ -531,8 +531,8 @@ class BrandAssetRegenerationTest extends TestCase
         $org = $this->orgWithLogoFile($this->headerOnlyPng(3000, 3000));
         Sanctum::actingAs($this->superAdmin());
 
-        // 3000 x 3000 x 10 is 90 MB and the fixed allowance is 8 MB, against 10
-        // MB left. What would have fitted: (10 - 8) MB / 10 bytes is a 457 px
+        // 3000 x 3000 x 12 is 108 MB and the fixed allowance is 8 MB, against 10
+        // MB left. What would have fitted: (10 - 8) MB / 12 bytes is a 418 px
         // square (less the 45-byte file), said to the hundred below.
         LogoDerivatives::$headroomBytes = 10 * 1024 * 1024;
 
@@ -545,16 +545,17 @@ class BrandAssetRegenerationTest extends TestCase
     }
 
     #[Test]
-    public function the_memory_budget_is_ten_bytes_a_pixel_plus_the_file_plus_eight_megabytes(): void
+    public function the_memory_budget_is_twelve_bytes_a_pixel_plus_the_file_plus_eight_megabytes(): void
     {
         $org = $this->org();
         Sanctum::actingAs($this->superAdmin());
 
-        // The 200 x 100 logo: 20,000 pixels x 10 = 200,000 bytes, plus the
-        // file as it is on disk, plus 8 MiB. The 10 is measured (8.2 bytes a
-        // pixel for an RGBA PNG; a budget of 5 let a 4400 px one through 128M
-        // and then died decoding it), so a change to it fails here on purpose.
-        $needed = 200000 + filesize($org->logo->getPath()) + 8 * 1024 * 1024;
+        // The 200 x 100 logo: 20,000 pixels x 12 = 240,000 bytes, plus the
+        // file as it is on disk, plus 8 MiB. The 12 is measured (10.7 bytes a
+        // pixel for an EXIF-rotated JPEG, 9.4 for an RGBA PNG; a budget of 5
+        // let a 4400 px one through 128M and then died decoding it), so a
+        // change to it fails here on purpose.
+        $needed = 240000 + filesize($org->logo->getPath()) + 8 * 1024 * 1024;
 
         LogoDerivatives::$headroomBytes = $needed - 1;
         $this->regenerate($org)->assertStatus(422);
@@ -572,12 +573,32 @@ class BrandAssetRegenerationTest extends TestCase
         Sanctum::actingAs($this->superAdmin());
 
         // 128M with about 22 MB in use: the case that used to pass (100.3 MB
-        // against 106 MB) and then exhaust memory in the decoder.
+        // against 106 MB) and then exhaust memory in the decoder. The hint is
+        // (106 MiB - 8 MiB - the file) / 12 bytes, a 2,926 px square, said as 2900.
         LogoDerivatives::$headroomBytes = 106 * 1024 * 1024;
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(4400, 4400, 3200));
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(4400, 4400, 2900));
+
+        $this->assertSame(0, $this->derivativeCount($org));
+    }
+
+    #[Test]
+    public function a_3090_pixel_square_that_the_ten_byte_budget_took_is_refused_at_128m(): void
+    {
+        $org = $this->orgWithLogoFile($this->headerOnlyPng(3090, 3090));
+        Sanctum::actingAs($this->superAdmin());
+
+        // The measured case: an EXIF-rotated 3090 px JPEG peaked at 10.7 bytes a
+        // pixel, 101.9 MB, with 104.9 MB left at 128M, and the budget of 10 took
+        // it (104.0 MB needed) with the 8 MiB allowance its only slack; the real
+        // peak reached the limit itself. At 12 it needs 117.3 MB and is refused.
+        LogoDerivatives::$headroomBytes = (int) (104.9 * 1024 * 1024);
+
+        $this->regenerate($org)
+            ->assertStatus(422)
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(3090, 3090, 2900));
 
         $this->assertSame(0, $this->derivativeCount($org));
     }
