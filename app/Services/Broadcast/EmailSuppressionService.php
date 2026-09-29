@@ -4,12 +4,16 @@ namespace App\Services\Broadcast;
 
 use App\Models\Contact;
 use App\Models\EmailSuppression;
+use App\Support\ContactIdentity;
 use App\Support\SiteUrl;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Every read and write of the broadcast-email opt-out goes through here
@@ -344,10 +348,12 @@ class EmailSuppressionService
             return null;
         }
 
-        $suppression = EmailSuppression::withoutMasjidScope()
-            ->where('masjid_id', $masjidId)
-            ->where('email_normalized', $address)
-            ->first();
+        $suppression = $this->rowForExactly(
+            $address,
+            EmailSuppression::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('email_normalized', $address),
+        );
 
         $attributes = [
             'reason' => $reason,
@@ -382,12 +388,27 @@ class EmailSuppressionService
             // bound code, and a suppression written into the wrong organisation
             // is an unhonoured opt-out in one place and a silenced congregant in
             // another. The documented bypass makes the explicit id always win.
-            $suppression = app(TenantContext::class)->runWithout(
-                fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
+            try {
+                $suppression = app(TenantContext::class)->runWithout(
+                    fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
+                        'masjid_id' => $masjidId,
+                        'email_normalized' => $address,
+                    ])),
+                );
+            } catch (UniqueConstraintViolationException) {
+                // The `(masjid_id, email_normalized)` unique index is
+                // utf8mb4_unicode_ci too, so it refuses this address when a row
+                // for a look-alike spelling of it exists (see `rowForExactly()`).
+                // That row belongs to another address and is left exactly as it
+                // is; this address cannot be given a row of its own beside it,
+                // and nothing is written. The log names the organisation only:
+                // an address in a log is a disclosure.
+                Log::warning('email suppression not recorded: another spelling of the address holds the row', [
                     'masjid_id' => $masjidId,
-                    'email_normalized' => $address,
-                ])),
-            );
+                ]);
+
+                return null;
+            }
         }
 
         // The mirror carries the row's OWN date, not "now": a badge that says
@@ -431,10 +452,19 @@ class EmailSuppressionService
             return null;
         }
 
-        $suppression = EmailSuppression::withoutMasjidScope()
+        $candidates = EmailSuppression::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
             ->where('email_normalized', $address)
-            ->first();
+            ->get();
+
+        $suppression = ContactIdentity::keepExactMatches($candidates, 'email_normalized', $address)->first();
+
+        // A row found ONLY through the collation is another address's opt-out. A
+        // resubscribe link minted for a look-alike spelling must not lift it, so
+        // nothing is released and the mirror is not touched.
+        if ($suppression === null && $candidates->isNotEmpty()) {
+            return null;
+        }
 
         $suppression?->forceFill(['released_at' => Carbon::now()])->save();
 
@@ -476,12 +506,14 @@ class EmailSuppressionService
             return null;
         }
 
-        $suppression = EmailSuppression::withoutMasjidScope()
-            ->where('masjid_id', $masjidId)
-            ->where('email_normalized', $address)
-            ->whereNull('released_at')
-            ->whereIn('reason', EmailSuppression::STAFF_LIFTABLE_REASONS)
-            ->first();
+        $suppression = $this->rowForExactly(
+            $address,
+            EmailSuppression::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('email_normalized', $address)
+                ->whereNull('released_at')
+                ->whereIn('reason', EmailSuppression::STAFF_LIFTABLE_REASONS),
+        );
 
         if ($suppression === null) {
             return null;
@@ -643,6 +675,26 @@ class EmailSuppressionService
         // durable list already says, and re-dating it here would make the
         // directory disagree with the evidence for no reason.
         $target->forceFill(['email_opted_out_at' => $at])->save();
+    }
+
+    /**
+     * The row for EXACTLY this address, or null. The query only shortlists.
+     *
+     * `email_normalized` is utf8mb4_unicode_ci on production (read 2026-09-29),
+     * where `victim@gmail.com` = `victim@gmaíl.com`. A lookup by the address a
+     * link or an import names therefore also returns the row of a look-alike
+     * spelling, and acting on it would rewrite, re-date or RELEASE another
+     * mailbox's opt-out: a resubscribe link minted for the look-alike would lift
+     * the real person's unsubscribe. The row is used only when its key is the
+     * address, byte for byte (`normalize()` already lower-cased and trimmed both).
+     *
+     * `$normalizedAddress` is the output of `normalize()`.
+     *
+     * @param  Builder<EmailSuppression>  $shortlist
+     */
+    private function rowForExactly(string $normalizedAddress, Builder $shortlist): ?EmailSuppression
+    {
+        return ContactIdentity::keepExactMatches($shortlist->get(), 'email_normalized', $normalizedAddress)->first();
     }
 
     /**
