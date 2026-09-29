@@ -4382,3 +4382,74 @@ provision. `POST /api/admin/masjids/{id}/brand-assets/regenerate`
 - Pinned by `TeacherProvisioningTest`: creating_a_teacher_records_the_signed_in_admin_as_who_assigned_each_class,
   a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner,
   a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess.
+
+## 2026-09-29 — Multi-org users, Phase 1: one teacher login, several schools
+Decision: a Teacher can belong to several schools with ONE login and ONE password. The school
+office's "add a teacher" door (`TeachersController::store`) is now create-or-attach: an email that
+belongs to a live Teacher elsewhere attaches this school (a `masjid_user` row with `is_default`
+derived under a lock on the user row, plus the classes and their per-class subjects) and touches
+nothing on `users`; the teacher is sent a "you were added to {school}" notice
+(`StaffAddedToOrganisation`, no token, no password link) instead of the set-password invite. The
+teacher shell gets a school picker (rendered only with two or more memberships), its header is
+read from the new tenant-bound `GET /api/teacher/masjids/{id}/school` (the school the server
+bound, not `/teacher/user`'s default membership), the teacher tenant group is wrapped in
+`EchoResolvedTenant`, and `TeacherApiService` takes part in the request epoch, compares the
+`X-Tenant-Id` echo with the selection, and answers a 403 "outside memberships" by refetching
+`/teacher/user`, rehydrating and reloading. No resolver behaviour changed: only its stale
+comments (`ResolveMasjidTenant`, `TenantResolver::grantsFor`, `AuthController`). Design and
+critic: `~/Developer/multi-org-users/DESIGN.md` (outside this repo); the owner's answers and the
+critic fixes adopted are in that folder's `DECISIONS.md`.
+Alternatives: consent-first attach (a pending `staff_membership_invites` row the teacher accepts) —
+declined by the owner, "added straight away"; a second pivot or teacher-specific tenancy —
+rejected, the resolver already binds a teacher by the route's `{masjid_id}`; making mixed roles
+(teacher here, admin there) part of this slice — that is Phase 2, a separate project.
+Rationale and the calls made while building:
+- **The claim that a two-school teacher works with the gate shut is now a test, not a reading**
+  (`TeacherMultiSchoolTest`, gate open and shut). So closing `tenancy.multi_membership` does not
+  lock a teacher out the way it does a two-org admin; it only stops NEW attaches. The attach branch
+  is gated on the flag only when the teacher already belongs somewhere (attaching a live login that
+  belongs nowhere makes no cross-organisation grant). Removal never asks the flag: the rollback is
+  "delete the extra memberships first", so that door must work with the gate shut.
+- **What another school may see of a shared teacher (owner: added straight away).** For a Teacher
+  with a live membership elsewhere (`User::belongsOutside`), every school's Teachers and Team
+  screens show name and email only: no stored phone and no last-sign-in (a sign-in at ANY school).
+  It is symmetric on purpose: `users` carries no provenance, so the school that first entered the
+  phone loses sight of it too. The reply to "add" carries what the inviter typed, and its message
+  and data shape are identical whether the address was new or existing, so it cannot say. The
+  refusals (gate shut, another type, already here) still reveal that the address has a login; that
+  is the accepted residual, equal to today's `unique` rule.
+- **A shared teacher's name and phone are read-only from any school** (update refuses a different
+  name and ANY phone; it does not compare phones, which would let an office guess the hidden one).
+  Classes stay editable. Resending the set-password link is refused for a shared teacher
+  (`TeachersController::invite`) and for every Teacher via Team & Access (`TeamController::invite`,
+  critic M1): completing that link deletes every token, ending the person's sessions at every school.
+- **A trashed Teacher is restored only when they hold no `masjid_user` row** (critic H1): a row means
+  a SuperAdmin trashed them on purpose (`UsersController::moveToTrash` leaves the rows). On restore
+  the password is rotated, tokens deleted, name/phone overwritten and the set-password invite sent.
+- **Email is trimmed and lowercased** for lookup (`LOWER(email)`, so a legacy mixed-case row is found on
+  SQLite too) and on create (M2).
+- **The switch is epoch abort + store reset, then a FULL RELOAD**, not the admin's in-place remount
+  (design §5): `TeacherClass.vue` is ~4,000 lines of local state plus a `groupId` in its route, and
+  none of it may survive into another school. The picker logic is pure (`core/helpers/teacherSchools.ts`)
+  so `npm run test:spa` covers it; the component and layout wiring are pinned by source assertions
+  because the suite has no Vue mount harness. Not exercised in a browser here.
+- **The notice mail is sent synchronously, like `AccountAccessMail`** (the design said "queued";
+  neither implements `ShouldQueue` and the suite asserts with `Mail::fake`), and a transport failure
+  after commit is reported, not thrown: a completed attach must not turn into a 500 the office retries.
+- The teacher header now shows the teacher's name on wider screens: it read `first_name`/`last_name`,
+  columns `users` does not have, so it had always been blank. Falls back to those if ever present.
+- **Not done here, on purpose:** lunch staff (Phase 1b: same branch table, `EchoResolvedTenant` on the
+  lunch group, its picker); `OrganisationProvisioner`'s existing-admin attach (Studio's lane);
+  `LunchStaffController`/`AdministratorsController` still hardcode `is_default = true`; whether Sanctum
+  rejects a soft-deleted user's tokens is Unknown, needs investigation, so `destroy` deletes them itself.
+- **Guard test:** `DualMembershipIsolationTest` whitelists `TeachersController` by name and pins that it
+  checks the gate and the type (behaviour in `TeacherAttachTest`, plus a source tripwire). Its write
+  sweep now recognises `firstOrCreate`, `updateOrCreate`, `->memberships()->create`,
+  `ensureOwnerMembership` and the rest (critic M3), and that recogniser is itself pinned.
+- Copy fixed: invite links last 7 days (`config/auth.php` `invites`), not "an hour" / "60 minutes".
+- **A correction found by measuring:** `EchoResolvedTenant`'s comments (and `routes/admin.php`) said a
+  refused request "unwinds past it and is rendered unstamped". It is not: Laravel's routing Pipeline
+  renders the exception where it is thrown, so the 403 passes back through the echo and is stamped
+  with the literal `unbound` (which the SPA already reads as "no echo"). Measured on the teacher
+  group; the comments are corrected and the test asserts what matters, that a refusal never names a
+  school. Nothing about the header's behaviour changed.
