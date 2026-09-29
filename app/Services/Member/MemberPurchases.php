@@ -52,7 +52,10 @@ use Illuminate\Support\Facades\DB;
  *     the caller;
  *   - a form response or meal order that an `order_items` row records is LEFT OUT: the
  *     cart order already lists it, and listing both would count one purchase twice;
- *   - donations: `contact_id` is the caller and the gift succeeded.
+ *   - donations: `contact_id` is the caller and the gift succeeded. That link was made at
+ *     settlement from the address the giver TYPED, which `donations` does not keep, so a gift
+ *     cannot be held to the verified address the way an order is (ASSUMPTIONS #61, an owner
+ *     question).
  *
  * ---------------------------------------------------------------------------
  * WHY THE ADDRESS IS DECIDED IN PHP, AND THE SQL ONLY SHORTLISTS
@@ -234,7 +237,10 @@ class MemberPurchases
         );
     }
 
-    /** The caller's succeeded gifts: Stripe, offline and imported Wix history alike. */
+    /**
+     * The caller's succeeded gifts: Stripe, offline and imported Wix history alike. Theirs by
+     * `contact_id` alone (ASSUMPTIONS #61: the schema keeps no payer address to hold a gift to).
+     */
     public function gifts(Contact $contact): Builder
     {
         $query = Donation::query()

@@ -44,10 +44,12 @@ use Symfony\Component\HttpFoundation\Response;
  * ---------------------------------------------------------------------------
  * GIFTS AND THEIR RECEIPTS
  * ---------------------------------------------------------------------------
- * A gift is theirs by `contact_id` alone, and only a succeeded one. Its receipt document
- * has no owner column of its own: ownership is receipt, then donation, then
- * `donations.contact_id`, which is what MemberPurchases::findGift() asks, so the PDF is
- * reachable for exactly the gifts the list shows and no others. The admin download
+ * A gift is theirs by `contact_id` alone, and only a succeeded one. That link was made at
+ * settlement from the address the giver typed, which `donations` does not keep, so a gift
+ * is not held to the verified address the way an order is (ASSUMPTIONS #61, an owner
+ * question). Its receipt document has no owner column of its own: ownership is receipt,
+ * then donation, then `donations.contact_id`, which is what MemberPurchases::findGift()
+ * asks, so the PDF is reachable for exactly the gifts the list shows and no others. The admin download
  * (DonationsController::receiptPdf) renders the same stored row through the same service;
  * the ownership check and the headers are the family report card's (routes/family.php,
  * ReportCardsController::pdf), with the admin download's `no-store` added because this is

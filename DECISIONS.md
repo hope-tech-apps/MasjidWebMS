@@ -5752,3 +5752,12 @@ Wix orders still showed. Both now move to the survivor inside the merge's transa
 like the moves beside them. Live registrations' payers are still not moved (unchanged, DECISIONS 2026-09-25).
 Tests: `tests/Feature/Member/MemberPurchasesSurviveAMergeTest.php`: a basket and a lunch keyed to the absorbed contact
 under a work address are the survivor's after the merge (and were not before), a neighbour's basket does not move.
+(3) GIFTS STAY LISTED BY `contact_id` ALONE, AND THAT IS AN OWNER QUESTION (m2). The review found that `donations.contact_id`
+is set at settlement from the address the giver typed, matched against the office's `contacts.email`, so the portal can
+show (and serve a receipt PDF for) a gift confirmed to a mailbox the member never proved. The fix the brief allows needs
+the payer's address on the donation, and `donations` has none: no `email` or payer column exists in its create migration
+or in any migration that alters it. So the rule was NOT changed and nothing was added to the schema (a migration on a
+money table, with a Stripe backfill, is not a fix-round item); the gap is ASSUMPTIONS #61, an owner question with the
+migration that would close it spelled out. The docblocks that say a gift is theirs by `contact_id` now point at it.
+Tests: none, because no behaviour changed; `MemberGiftsAndReceiptsTest` already pins "by their donation, never by an
+address".
