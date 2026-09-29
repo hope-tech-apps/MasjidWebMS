@@ -1560,10 +1560,10 @@ Studio-generated app.
 **Contract.**
 
 - **Config** (`config/services.php`, the `onesignal` block at `:286-308`):
-  - **the organisation key is the existing `user_auth_key`**
-    (`ONESIGNAL_USER_AUTH_KEY`), which the code already describes as the
-    "Organization REST API Key" (`app/Services/OnesignalInAppMessageService.php:40-42`).
-    No second env name is added for the same credential;
+  - **the organisation key is a NEW `ONESIGNAL_ORG_API_KEY`** (as built, S14). The
+    existing `ONESIGNAL_USER_AUTH_KEY` stays what the shared app's requests
+    authenticate with (Basic), so shared-app sends stay byte-identical; `Key`
+    auth with the organisation key is used only for rows Studio provisioned;
   - `org_id` from a new `ONESIGNAL_ORG_ID`;
   - the existing APNs keys (`ONESIGNAL_APNS_P8`, `_KEY_ID`, `_TEAM_ID`, `_ENV`)
     and `ONESIGNAL_FCM_V1_SERVICE_ACCOUNT_JSON`;
@@ -1649,8 +1649,9 @@ Studio-generated app.
 
 **Owner actions (not a slice).**
 
-- Confirm that `ONESIGNAL_USER_AUTH_KEY` on production holds the Organization
-  API key (presence only; §4). If it does not, create one in OneSignal.
+- Create an Organization API key in OneSignal (Organization › Keys & IDs) and set
+  it as `ONESIGNAL_ORG_API_KEY` (as built, S14). Leave `ONESIGNAL_USER_AUTH_KEY`
+  alone: the shared app's in-app messages authenticate with it.
 - Set `ONESIGNAL_ORG_ID` with `scripts/set-server-secret.sh`. It takes effect
   after the next production ship (W1 §3.1).
 - Supply the APNs key of the Apple team that is Hope Tech's managed account
