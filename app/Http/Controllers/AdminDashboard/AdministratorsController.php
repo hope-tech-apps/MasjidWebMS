@@ -185,13 +185,45 @@ class AdministratorsController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
-        // Their live sessions die with the grant. Leaving a token alive after
-        // removing the membership it authorised would be a removal in name only
-        // — the same reasoning AccountAccessService::reset() records.
+        // This screen lists and removes ADMINISTRATORS only (index() filters to
+        // MasjidAdmin). A Teacher or LunchStaff also holds a masjid_user row here,
+        // but their sessions are global (a token names no organisation), so
+        // deleting them below would sign the person out of every OTHER school,
+        // while their classes here stayed behind. Their own screens remove them
+        // properly: TeamController::destroy says the same for Teachers.
         $user = User::find((int) $user_id);
-        $user?->tokens()->delete();
 
-        $membership->delete();
+        if ($user !== null && $user->type !== 'MasjidAdmin') {
+            $screen = $user->type === 'Teacher' ? 'Teachers' : 'Team & Access';
+
+            return response()->json([
+                'status' => 'failed',
+                'message' => "Only administrators are removed here. Remove them on the {$screen} screen.",
+                'data' => ['user_id' => ["Only administrators are removed here. Remove them on the {$screen} screen."]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        DB::transaction(function () use ($user, $membership) {
+            $wasDefault = (bool) $membership->is_default;
+
+            // Their live sessions die with the grant. Leaving a token alive after
+            // removing the membership it authorised would be a removal in name
+            // only — the same reasoning AccountAccessService::reset() records.
+            $user?->tokens()->delete();
+
+            $membership->delete();
+
+            // A person who still belongs somewhere must keep a default (the
+            // switcher opens on it): same lowest-live-id tie-break as
+            // MasjidAdminsController::revokeMembership and the resolver.
+            if ($wasDefault) {
+                MasjidUser::where('user_id', $membership->user_id)
+                    ->whereHas('masjid')
+                    ->orderBy('masjid_id')
+                    ->first()
+                    ?->update(['is_default' => true]);
+            }
+        });
 
         return response()->json([
             'status' => 'success',

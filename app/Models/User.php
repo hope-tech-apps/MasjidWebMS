@@ -208,6 +208,28 @@ class User extends Authenticatable implements HasMedia
     }
 
     /**
+     * Match a login by email, however the address was capitalised when it was stored.
+     *
+     * On MySQL and MariaDB `users.email` is utf8mb4_unicode_ci, which already compares
+     * case-insensitively, so a plain equality is right AND is what lets the unique index
+     * answer it. Wrapping the column in LOWER() there would make the server scan the
+     * whole table, and under a locking read that means locking every row it scans.
+     * SQLite (the suite) compares case-sensitively, so it needs the LOWER().
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<User>  $query
+     */
+    public function scopeWhereEmailIs($query, string $email, ?string $driver = null)
+    {
+        $driver ??= $query->getConnection()->getDriverName();
+
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            return $query->where('email', $email);
+        }
+
+        return $query->whereRaw('LOWER(email) = ?', [strtolower($email)]);
+    }
+
+    /**
      * True for a school-teacher staff login (users.type = 'Teacher').
      *
      * The one place a teacher-specific code path may branch. `type` stays the

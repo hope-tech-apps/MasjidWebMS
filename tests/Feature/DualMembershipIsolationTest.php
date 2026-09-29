@@ -307,8 +307,12 @@ class DualMembershipIsolationTest extends TestCase
      * unable to reach an existing login.
      *
      * The recogniser for "writes a membership" is itself pinned below, against
-     * every spelling (`firstOrCreate`, `updateOrCreate`, `->memberships()->create`,
-     * `ensureOwnerMembership`, …), so a door cannot dodge it by phrasing.
+     * the spellings the codebase could use (`firstOrCreate`, `updateOrCreate`,
+     * `->memberships()->create`, `MasjidUser::query()->create`, `firstOrNew`,
+     * `new MasjidUser` + save, `ensureOwnerMembership`, …), so a door cannot dodge
+     * it by phrasing. It reads app/Http/Controllers ONLY: a write from app/Services
+     * or app/Support (the Studio provisioner's owner-membership call, for one) is
+     * outside this sweep and is reviewed with its own lane.
      *
      * A new door that attaches an existing login to an organisation fails this
      * test, which is the whole intent: it is a decision that has to be made
@@ -397,6 +401,15 @@ class DualMembershipIsolationTest extends TestCase
             'query builder' => ["DB::table('masjid_user')->insert(\$row);"],
             'query builder, double quotes' => ['DB::table( "masjid_user" )->insert($row);'],
             'relation, spaced' => ['$user->memberships() ->create([]);'],
+            'query() create' => ['MasjidUser::query()->create([]);'],
+            'withoutGlobalScopes create' => ['MasjidUser::withoutGlobalScopes()->create([]);'],
+            'query() insert' => ['MasjidUser::query()->insert($rows);'],
+            'query() upsert' => ['MasjidUser::query()->upsert($rows, ["a"]);'],
+            'firstOrNew' => ['MasjidUser::firstOrNew(["a" => 1]);'],
+            'new instance, forceFill and save' => ['(new MasjidUser)->forceFill($row)->save();'],
+            'new instance, fully qualified' => ['$row = new \\App\\Models\\MasjidUser();'],
+            'relation firstOrNew' => ['$user->memberships()->firstOrNew([]);'],
+            'fully qualified static' => ['\\App\\Models\\MasjidUser::firstOrCreate([]);'],
         ];
     }
 
@@ -415,6 +428,9 @@ class DualMembershipIsolationTest extends TestCase
             'MasjidUser::where("user_id", 1)->update(["is_default" => true]);',
             '$membership->delete();',
             "DB::table('users')->insert(\$row);",
+            'MasjidUser::query()->where("user_id", 1)->update(["is_default" => true]);',
+            'MasjidUser::withoutGlobalScopes()->get();',
+            'MasjidUser::query()->find(1)?->delete();',
         ] as $read) {
             $this->assertFalse($this->writesAMembership($read), "A read was flagged as a write: {$read}");
         }
@@ -486,8 +502,12 @@ class DualMembershipIsolationTest extends TestCase
     private function writesAMembership(string $source): bool
     {
         return (bool) preg_match(
-            '/MasjidUser::(create|firstOrCreate|updateOrCreate|forceCreate|insert|insertOrIgnore|upsert|ensureOwnerMembership)\s*\('
-            . '|memberships\(\)\s*->\s*(create|firstOrCreate|updateOrCreate|forceCreate|save|saveMany|createMany|insert|upsert)\s*\('
+            // A static call, optionally through builder hops with no interesting
+            // arguments (`MasjidUser::query()->create(`, `::withoutGlobalScopes()->insert(`).
+            '/MasjidUser::(?:\w+\([^()]*\)\s*->\s*)*(create|firstOrCreate|firstOrNew|updateOrCreate|forceCreate|insert|insertOrIgnore|insertGetId|insertUsing|upsert|ensureOwnerMembership)\s*\('
+            // Building an instance is the start of a write (`(new MasjidUser)->forceFill(...)->save()`).
+            . '|new\s+\\\\?(?:App\\\\Models\\\\)?MasjidUser\b'
+            . '|memberships\(\)\s*->\s*(create|firstOrCreate|firstOrNew|updateOrCreate|forceCreate|save|saveMany|createMany|insert|upsert)\s*\('
             . '|table\(\s*[\'"]masjid_user[\'"]\s*\)/',
             $source
         );

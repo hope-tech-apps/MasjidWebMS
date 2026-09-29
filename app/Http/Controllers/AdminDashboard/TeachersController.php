@@ -13,6 +13,8 @@ use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
 use App\Support\TenantContext;
+use Illuminate\Database\DeadlockException;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -134,10 +136,17 @@ class TeachersController extends Controller
         // Two requests adding the same brand-new address at once both find no
         // user and both insert; the unique index throws for the loser. Trying the
         // whole decision once more lets it see the winner's row and take the
-        // attach branch instead of returning a 500.
+        // attach branch instead of returning a 500. The same second try covers
+        // InnoDB picking this request as the victim of a deadlock between two
+        // concurrent inserts (SQLSTATE 40001): the transaction rolled back whole,
+        // so nothing was written and running it again is safe.
         try {
             $outcome = $this->createOrAttach($request, $masjidId, $classes);
-        } catch (UniqueConstraintViolationException) {
+        } catch (QueryException|DeadlockException $e) {
+            if (! ($e instanceof UniqueConstraintViolationException) && ! self::isDeadlock($e)) {
+                throw $e;
+            }
+
             $outcome = $this->createOrAttach($request, $masjidId, $classes);
         }
 
@@ -186,16 +195,29 @@ class TeachersController extends Controller
     {
         $email = (string) $request->validated('email');
 
-        return DB::transaction(function () use ($request, $masjidId, $classes, $email) {
-            // Trashed rows INCLUDED: the unique index on users.email covers them,
-            // so validation that ignored them (the old Rule::unique) let an
-            // archived address through to a 500. LOWER() because the suite's
-            // SQLite compares case-sensitively and legacy rows are not all
-            // lowercased; `email` itself is already normalised by the request.
-            $existing = User::withTrashed()
-                ->whereRaw('LOWER(email) = ?', [$email])
-                ->lockForUpdate()
-                ->first();
+        // Trashed rows INCLUDED: the unique index on users.email covers them, so
+        // validation that ignored them (the old Rule::unique) let an archived
+        // address through to a 500. Case-insensitive because legacy rows are not
+        // all lowercased (User::scopeWhereEmailIs picks the form the driver can
+        // answer from the unique index); `email` itself is already normalised by
+        // the request.
+        //
+        // Looked up WITHOUT a lock and OUTSIDE the transaction. A locking read on a
+        // predicate that matches nothing takes gap locks on InnoDB, so two schools
+        // adding two different new addresses would hold overlapping gaps and
+        // deadlock at their INSERTs. And it must not be a plain read INSIDE the
+        // transaction either: under REPEATABLE READ the first plain read fixes the
+        // snapshot, and a request that then waits for another school's row lock
+        // would afterwards derive is_default from rows that predate the commit it
+        // waited for. Outside, it takes no snapshot; the first statement inside is
+        // the lock, and the reads after it see everything committed before it.
+        $foundId = User::withTrashed()->whereEmailIs($email)->value('id');
+
+        return DB::transaction(function () use ($request, $masjidId, $classes, $email, $foundId) {
+            // The ONE row found, locked by key (nothing to lock for a new address).
+            $existing = $foundId === null
+                ? null
+                : User::withTrashed()->whereKey($foundId)->lockForUpdate()->first();
 
             if ($existing === null) {
                 $user = User::create([
@@ -321,6 +343,18 @@ class TeachersController extends Controller
         } catch (\Throwable $e) {
             report($e);
         }
+    }
+
+    /**
+     * InnoDB's "you were the deadlock victim": SQLSTATE 40001, error 1213. Laravel
+     * re-throws one raised inside a NESTED transaction as its own DeadlockException
+     * (the outer transaction is dead too), so both spellings are the same fact here.
+     */
+    private static function isDeadlock(\Throwable $e): bool
+    {
+        return $e instanceof DeadlockException
+            || (string) $e->getCode() === '40001'
+            || str_contains($e->getMessage(), 'Deadlock found');
     }
 
     private function refuseAdd(string $message)

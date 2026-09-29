@@ -10,6 +10,7 @@ use App\Models\GroupStaff;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -651,6 +652,261 @@ class TeacherAttachTest extends TestCase
             strpos($source, '->lockForUpdate()'),
             'the lock must be taken before is_default is derived'
         );
+    }
+
+
+    #[Test]
+    public function gap_v1_a_second_admin_of_this_school_is_not_editable_removable_or_invitable_as_a_teacher(): void
+    {
+        $other = User::factory()->create(['type' => 'MasjidAdmin', 'name' => 'Second Admin', 'phone' => '+15551230000']);
+        MasjidUser::create(['masjid_id' => $this->biss->id, 'user_id' => $other->id, 'role' => 'masjid-admin', 'is_default' => true]);
+
+        $this->putJson($this->bissBase()."/teachers/{$other->id}", ['name' => 'Renamed', 'phone' => '+15559999999', 'class_ids' => [$this->seventh->id]])->assertNotFound();
+        $this->postJson($this->bissBase()."/teachers/{$other->id}/invite")->assertNotFound();
+        $this->deleteJson($this->bissBase()."/teachers/{$other->id}")->assertNotFound();
+        $this->getJson($this->bissBase()."/teachers/{$other->id}")->assertNotFound();
+
+        $this->assertSame('Second Admin', $other->fresh()->name);
+        $this->assertNull(User::withTrashed()->find($other->id)->deleted_at);
+        $this->assertSame(1, MasjidUser::where('user_id', $other->id)->count());
+    }
+
+    #[Test]
+    public function gap_d6_removing_a_non_default_school_with_three_schools_keeps_exactly_one_default(): void
+    {
+        [$gamma, $gammaAdmin] = $this->makeSchoolWithAdmin('Gamma');
+        $gammaClass = $this->makeClass($gamma, 'G1');
+        $teacher = $this->teacherAt($gamma, [$gammaClass]);          // default = gamma (highest id)
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+        Sanctum::actingAs($this->alraziAdmin, ['staff']);
+        $this->postJson($this->alraziBase().'/teachers', $this->payload($teacher->email, [$this->alraziClass]))->assertCreated();
+
+        Sanctum::actingAs($this->bissAdmin, ['staff']);
+        $this->deleteJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk();
+
+        $this->assertSame(1, MasjidUser::where('user_id', $teacher->id)->where('is_default', true)->count());
+        $this->assertTrue((bool) MasjidUser::where('user_id', $teacher->id)->where('masjid_id', $gamma->id)->value('is_default'));
+    }
+
+    #[Test]
+    public function gap_d5_removing_the_default_promotes_the_LOWEST_remaining_school(): void
+    {
+        [$gamma] = $this->makeSchoolWithAdmin('Gamma');
+        $gammaClass = $this->makeClass($gamma, 'G1');
+        $teacher = $this->teacherAt($this->biss, [$this->seventh]);   // default = biss
+        Sanctum::actingAs($this->alraziAdmin, ['staff']);
+        $this->postJson($this->alraziBase().'/teachers', $this->payload($teacher->email, [$this->alraziClass]))->assertCreated();
+        Sanctum::actingAs(User::find($gamma->user_id), ['staff']);
+        $this->postJson("/api/admin/masjids/{$gamma->id}/teachers", $this->payload($teacher->email, [$gammaClass]))->assertCreated();
+
+        Sanctum::actingAs($this->bissAdmin, ['staff']);
+        $this->deleteJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk();
+
+        $this->assertSame([$this->alrazi->id], MasjidUser::where('user_id', $teacher->id)->where('is_default', true)->pluck('masjid_id')->map(fn ($i): int => (int) $i)->all());
+    }
+
+    #[Test]
+    public function gap_d4_the_promoted_default_is_never_an_archived_school(): void
+    {
+        [$gamma] = $this->makeSchoolWithAdmin('Gamma');
+        $gammaClass = $this->makeClass($gamma, 'G1');
+        $teacher = $this->teacherAt($this->biss, [$this->seventh]);
+        Sanctum::actingAs($this->alraziAdmin, ['staff']);
+        $this->postJson($this->alraziBase().'/teachers', $this->payload($teacher->email, [$this->alraziClass]))->assertCreated();
+        Sanctum::actingAs(User::find($gamma->user_id), ['staff']);
+        $this->postJson("/api/admin/masjids/{$gamma->id}/teachers", $this->payload($teacher->email, [$gammaClass]))->assertCreated();
+        $this->alrazi->delete(); // archived, lowest id
+
+        Sanctum::actingAs($this->bissAdmin, ['staff']);
+        $this->deleteJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk();
+
+        $this->assertTrue((bool) MasjidUser::where('user_id', $teacher->id)->where('masjid_id', $gamma->id)->value('is_default'));
+    }
+
+    #[Test]
+    public function gap_a1_adding_a_teacher_who_is_already_a_member_here_with_no_classes_is_a_422_not_a_500(): void
+    {
+        $teacher = $this->teacherAt($this->biss, []);   // membership here, no group_staff
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertStatus(422);
+        $this->assertSame(1, MasjidUser::where('user_id', $teacher->id)->count());
+    }
+
+    #[Test]
+    public function gap_a2_a_legacy_teacher_with_classes_here_but_no_membership_row_is_already_here(): void
+    {
+        $teacher = User::factory()->create(['type' => 'Teacher', 'phone' => '+15550004444']);
+        $this->seventh->staff()->attach($teacher->id, ['masjid_id' => $this->biss->id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now()]);
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->eighth]))->assertStatus(422);
+        $this->assertSame(0, MasjidUser::where('user_id', $teacher->id)->count());
+    }
+
+    #[Test]
+    public function gap_g1_a_person_with_memberships_but_no_default_gets_a_default_on_attach(): void
+    {
+        $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass]);
+        MasjidUser::where('user_id', $teacher->id)->update(['is_default' => false]);
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+
+        $this->assertSame(1, MasjidUser::where('user_id', $teacher->id)->where('is_default', true)->count());
+    }
+
+    #[Test]
+    public function gap_e3_a_malformed_email_is_refused(): void
+    {
+        $this->postJson($this->bissBase().'/teachers', $this->payload('not-an-email', [$this->seventh]))->assertStatus(422);
+        $this->assertSame(0, User::where('email', 'not-an-email')->count());
+    }
+
+    #[Test]
+    public function gap_s3_a_failing_mail_transport_after_the_commit_does_not_turn_an_attach_into_a_500(): void
+    {
+        $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass]);
+        Mail::shouldReceive('to')->andThrow(new \RuntimeException('smtp down'));
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+        $this->assertSame(2, MasjidUser::where('user_id', $teacher->id)->count());
+    }
+
+    #[Test]
+    public function gap_s4_a_unique_index_loss_on_create_is_retried_once(): void
+    {
+        $fired = 0;
+        User::creating(function (User $u) use (&$fired) {
+            if ($u->email === 'race@example.test' && $fired++ === 0) {
+                DB::table('users')->insert(['name' => 'Winner', 'email' => 'race@example.test', 'phone' => '', 'type' => 'Teacher', 'password' => 'x', 'created_at' => now(), 'updated_at' => now()]);
+            }
+        });
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload('race@example.test', [$this->seventh]))->assertCreated();
+        $this->assertSame(1, User::where('email', 'race@example.test')->count());
+    }
+
+    #[Test]
+    public function gap_b2_an_archived_other_school_does_not_make_a_teacher_shared(): void
+    {
+        $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass], ['phone' => '+15550001111']);
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+        $this->alrazi->delete();
+
+        $this->getJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk()->assertJsonPath('data.shared', false)->assertJsonPath('data.phone', '+15550001111');
+    }
+
+    #[Test]
+    public function gap_u4_a_stored_name_with_stray_spaces_can_still_have_its_classes_edited(): void
+    {
+        $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass], ['name' => 'Padded Name ']);
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+
+        $this->putJson($this->bissBase()."/teachers/{$teacher->id}", ['name' => 'Padded Name', 'class_ids' => [$this->seventh->id, $this->eighth->id]])->assertOk();
+    }
+
+    // ------------------------------------------------- lens fixes: locking and email match
+
+    #[Test]
+    public function the_email_match_uses_the_unique_index_on_mysql_and_lower_on_sqlite(): void
+    {
+        // LOWER(email) on MySQL cannot use users_email_unique, so a locking read
+        // on it scans, and locks, the whole users table. utf8mb4_unicode_ci already
+        // compares case-insensitively there.
+        $mysql = User::query()->whereEmailIs('A@B.test', 'mysql')->toSql();
+        $this->assertStringNotContainsStringIgnoringCase('lower(', $mysql);
+        $this->assertStringContainsString('"email" = ?', str_replace('`', '"', $mysql));
+
+        $sqlite = User::query()->whereEmailIs('A@B.test', 'sqlite');
+        $this->assertStringContainsStringIgnoringCase('lower(email) = ?', $sqlite->toSql());
+        $this->assertSame(['a@b.test'], $sqlite->getBindings());
+    }
+
+    #[Test]
+    public function the_lookup_takes_no_lock_runs_outside_the_transaction_and_only_the_found_row_is_locked(): void
+    {
+        // SQLite ignores row locks and snapshots, so this is a source pin, labelled as
+        // one. (1) A locking read that matches NOTHING (a brand-new address) takes gap
+        // locks on InnoDB, and two schools adding two different new people deadlock at
+        // INSERT. (2) A plain read INSIDE the transaction would fix the REPEATABLE READ
+        // snapshot before the wait for another school's row lock, so is_default would be
+        // derived from rows older than the commit waited for.
+        $source = file_get_contents(app_path('Http/Controllers/AdminDashboard/TeachersController.php'));
+
+        $lookup = strpos($source, "whereEmailIs(\$email)->value('id')");
+        $this->assertNotFalse($lookup, 'the email lookup must take no lock');
+        $this->assertDoesNotMatchRegularExpression('/whereEmailIs\([^;]*lockForUpdate/s', $source);
+        $this->assertLessThan(strpos($source, 'return DB::transaction(function () use ($request, $masjidId, $classes, $email, $foundId)'), $lookup, 'the lookup must run BEFORE the transaction opens');
+        $this->assertMatchesRegularExpression('/whereKey\(\$foundId\)->lockForUpdate\(\)/', $source, 'the found row is locked by key');
+    }
+
+    #[Test]
+    public function a_deadlock_victim_on_create_is_retried_once_not_a_500(): void
+    {
+        $fired = 0;
+        User::creating(function (User $u) use (&$fired) {
+            if ($u->email === 'deadlock@example.test' && $fired++ === 0) {
+                throw new QueryException(
+                    'mysql',
+                    'insert into `users` (`email`) values (?)',
+                    ['deadlock@example.test'],
+                    new \PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock; try restarting transaction')
+                );
+            }
+        });
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload('deadlock@example.test', [$this->seventh]))->assertCreated();
+
+        $this->assertSame(1, User::where('email', 'deadlock@example.test')->count());
+        $this->assertSame(2, $fired, 'exactly one retry');
+    }
+
+    #[Test]
+    public function any_other_database_error_on_create_is_not_swallowed_by_the_retry(): void
+    {
+        User::creating(function (User $u) {
+            if ($u->email === 'broken@example.test') {
+                throw new QueryException('mysql', 'insert', [], new \PDOException('SQLSTATE[HY000]: General error: 1 disk I/O error'));
+            }
+        });
+
+        $this->withoutExceptionHandling();
+        $this->expectException(QueryException::class);
+
+        $this->postJson($this->bissBase().'/teachers', $this->payload('broken@example.test', [$this->seventh]));
+    }
+
+    // ------------------------------------------------- lens fixes: Team & Access payload
+
+    #[Test]
+    public function team_and_access_says_a_shared_teachers_sign_in_is_withheld_not_absent(): void
+    {
+        $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass]);
+        $teacher->createToken('phone');
+        $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->seventh]))->assertCreated();
+        $solo = $this->teacherAt($this->biss, [$this->eighth]);
+
+        $team = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->keyBy('user_id');
+
+        $this->assertTrue($team[$teacher->id]['shared']);
+        $this->assertNull($team[$teacher->id]['last_sign_in_at']);
+        $this->assertFalse($team[$solo->id]['shared'], 'a one-school teacher who never signed in is genuinely "not signed in yet"');
+        $this->assertNull($team[$solo->id]['last_sign_in_at']);
+    }
+
+    #[Test]
+    public function gap_b5_a_second_school_does_not_hide_an_administrators_phone_or_sign_in(): void
+    {
+        // Only a TEACHER's global fields are withheld: an administrator of two
+        // offices is the offices' own colleague, and hiding their phone from the
+        // second office would be a behaviour change for the multi-org admins.
+        $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+15550005555']);
+        MasjidUser::create(['masjid_id' => $this->biss->id, 'user_id' => $admin->id, 'role' => 'masjid-admin', 'is_default' => true]);
+        MasjidUser::create(['masjid_id' => $this->alrazi->id, 'user_id' => $admin->id, 'role' => 'masjid-admin', 'is_default' => false]);
+        $admin->createToken('laptop');
+
+        $row = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->firstWhere('user_id', $admin->id);
+
+        $this->assertSame('+15550005555', $row['phone']);
+        $this->assertNotNull($row['last_sign_in_at']);
+        $this->assertFalse($row['shared']);
     }
 
     // ---------------------------------------------------------------- helpers

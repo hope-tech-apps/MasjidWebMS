@@ -408,6 +408,10 @@ class TeamController extends Controller
             // A token is minted at every sign-in, so its newest creation time is
             // the last sign-in — the only reliable "did they get the invite?"
             // (nothing writes users.email_verified_at).
+            //
+            // `shared` says WHY the sign-in is null for a teacher of two schools, so the
+            // screen can say "shared login" instead of the false "Not signed in yet".
+            'shared' => $shared,
             'last_sign_in_at' => $shared ? null : optional($user->tokens()->max('created_at'), fn ($t) => \Illuminate\Support\Carbon::parse($t)->toIso8601String()),
             'removable' => ! $isOwner && ! $isYou && $access !== self::ACCESS_TEACHER,
         ];
