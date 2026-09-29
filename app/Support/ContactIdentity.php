@@ -4,7 +4,6 @@ namespace App\Support;
 
 use App\Models\Contact;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 
 /**
  * ===========================================================================
@@ -138,10 +137,13 @@ final class ContactIdentity
      * The identity a contact is read through, or an unresolvable one.
      *
      * Normalised as `LOWER(TRIM(email))`, matching `GroupAudience::identitiesFor()`
-     * and `OfferingRegistrationsController::normaliseEmail()` — production is
-     * utf8mb4_bin (case-SENSITIVE) and the suite runs SQLite, and whether a
-     * de-duplication keeps somebody's authority must not depend on which one it
-     * is talking to.
+     * and `OfferingRegistrationsController::normaliseEmail()`: the suite runs
+     * SQLite and production compares these columns under utf8mb4_unicode_ci, and
+     * whether a de-duplication keeps somebody's authority must not depend on which
+     * one it is talking to. The comparison is made here in PHP, byte for byte after
+     * `foldCase()` (as `sameAddress()` does), so a non-ASCII letter such as U+212A
+     * KELVIN SIGN is never read as its ASCII look-alike: here that would carry a
+     * confirmed guardianship onto another person's contact.
      *
      * A null contact, a null email and an empty-or-whitespace email are ONE
      * state here on purpose. The database allows `''` as well as NULL — an
@@ -155,7 +157,7 @@ final class ContactIdentity
             return new self(null);
         }
 
-        $address = Str::lower(trim((string) $contact->email));
+        $address = self::foldCase(trim((string) $contact->email));
 
         return new self($address === '' ? null : $address);
     }
