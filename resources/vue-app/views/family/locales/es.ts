@@ -107,6 +107,7 @@ export const ES: Record<string, string> = {
     layout_portal: "Portal familiar",
     layout_sign_out: "Cerrar sesión",
     layout_calendar: "Calendario escolar",
+    layout_your_schools: "Tus escuelas",
 
     // ---------------------------------------------- FamilyCalendar
     cal_title: "Calendario escolar",

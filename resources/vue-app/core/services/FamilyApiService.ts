@@ -1,4 +1,6 @@
-import axios, { AxiosInstance, AxiosResponse } from "axios";
+import axios from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
+import { tokenForUrl } from "@/core/helpers/familySessions";
 
 /**
  * The parent portal's own HTTP client — deliberately NOT ApiService.
@@ -13,12 +15,12 @@ import axios, { AxiosInstance, AxiosResponse } from "axios";
  *
  * So the portal gets its own instance, its own storage key, and no access to
  * the admin token at all.
+ *
+ * One parent can be signed in to several schools at once (see
+ * core/helpers/familySessions.ts), so there is no single "the family token"
+ * either. The request interceptor below signs each request with the token of
+ * the school its URL names.
  */
-export const FAMILY_STORAGE_KEYS = {
-    token: 'MANARA_FAMILY_TOKEN',
-    contact: 'MANARA_FAMILY_CONTACT',
-    masjid: 'MANARA_FAMILY_MASJID_ID',
-};
 
 class FamilyApiService {
     private static client: AxiosInstance;
@@ -46,9 +48,19 @@ class FamilyApiService {
         });
 
         // Read the token per-request rather than pinning it at init: the portal
-        // signs in and out inside one page life.
+        // signs in and out inside one page life, and possibly in a second tab.
+        //
+        // WHICH token is decided by the request's own URL. `/api/family/
+        // masjids/7/...` carries school 7's session and nothing else; a public
+        // directory read, or a school the parent has not signed in to, carries
+        // none. The API refuses a token from the wrong school anyway
+        // (`family.tenant`), but the client should not author the attempt, and a
+        // family token should not travel to an address that is not a family route.
         FamilyApiService.client.interceptors.request.use((config) => {
-            const token = localStorage.getItem(FAMILY_STORAGE_KEYS.token);
+            const url = config.url ?? '';
+            const foreign = /^https?:\/\//i.test(url) && !!baseUrl && !url.startsWith(baseUrl);
+            const token = foreign ? null : tokenForUrl(localStorage, url);
+
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;
             }

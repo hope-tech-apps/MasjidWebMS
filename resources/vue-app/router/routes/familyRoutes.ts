@@ -1,5 +1,6 @@
 import { RouteRecordRaw } from "vue-router";
 import { useFamilyStore } from "@/stores/familyStore";
+import { familyRouteRedirect } from "@/core/helpers/familySessions";
 
 /**
  * The parent portal.
@@ -74,20 +75,21 @@ const familyRoutes: RouteRecordRaw[] = [
             },
         ],
         beforeEnter: (to) => {
-            if (!to.meta?.family) {
-                return true;
-            }
-
             const familyStore = useFamilyStore();
 
-            // A token minted for a DIFFERENT organisation must not be used to
-            // address this one. The API would refuse it anyway — `family.tenant`
-            // binds from the token and 403s on a mismatch — but sending the
-            // request at all is a realm confusion the client should not author.
-            const signedInHere = familyStore.isSignedIn
-                && String(familyStore.masjidId) === String(to.params.masjidId);
+            // Storage's word, not this tab's memory: the parent may have signed
+            // in to this school in another tab since this page loaded.
+            familyStore.syncFromStorage();
 
-            return signedInHere ? true : `/family/${to.params.masjidId}/sign-in`;
+            // The session must be for the school in THIS URL. A parent can hold
+            // several (one slot per school), and a session for school A must not
+            // be used to address school B: the API would refuse it anyway —
+            // `family.tenant` binds from the token and 403s on a mismatch — but
+            // sending the request at all is a realm confusion the client should
+            // not author. FamilyLayout re-runs the same check when the parent
+            // moves between schools without leaving this route record, which
+            // `beforeEnter` does not see.
+            return familyRouteRedirect(familyStore.slots, to.params.masjidId as string, !!to.meta?.family);
         },
     },
 ];

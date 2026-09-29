@@ -1203,7 +1203,7 @@ const messagePlaybackUrl = (message: any, attachmentId: number) =>
     `${messagePhotoUrl(message, attachmentId)}/playback`;
 
 const fail = (e: any) => {
-    if (familyStore.handleAuthFailure(e?.response?.status)) {
+    if (familyStore.handleAuthFailure(e, masjidId.value)) {
         router.replace(`/family/${masjidId.value}/sign-in`);
         return true;
     }

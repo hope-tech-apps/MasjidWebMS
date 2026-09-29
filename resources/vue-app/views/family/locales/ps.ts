@@ -107,6 +107,7 @@ export const PS: Record<string, string> = {
     layout_portal: "د کورنۍ پورټل",
     layout_sign_out: "وتل",
     layout_calendar: "د ښوونځي جنتري",
+    layout_your_schools: "ستاسو ښوونځي",
 
     // ---------------------------------------------- FamilyCalendar
     cal_title: "د ښوونځي جنتري",
