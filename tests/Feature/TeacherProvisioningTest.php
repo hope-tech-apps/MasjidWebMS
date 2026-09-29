@@ -284,6 +284,23 @@ class TeacherProvisioningTest extends TestCase
         $this->assertSame([$this->classOne->id => null], $this->assignedByPerClass($teacher));
     }
 
+    #[Test]
+    public function a_row_written_while_a_family_login_is_signed_in_records_no_assigner_not_the_contacts_id(): void
+    {
+        // A family login is a Contact, also Authenticatable: Auth::id() would be a contacts.id,
+        // which the users FK refuses (GroupMessageReactionsTest hit exactly this).
+        $parent = \App\Models\Contact::factory()->create(['masjid_id' => $this->school->id]);
+        $teacher = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($parent);
+
+        $this->classOne->staff()->attach($teacher->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
+        ]);
+
+        $this->assertSame([$this->classOne->id => null], $this->assignedByPerClass($teacher));
+    }
+
     // ------------------------------------------------------------- helpers
 
     private function base(): string
