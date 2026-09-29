@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Requests\Admin\Contacts\EnableFamilyLoginRequest;
 use App\Mail\FamilyLoginCodeMail;
 use App\Models\AppSignupCode;
 use App\Models\Contact;
@@ -250,7 +251,7 @@ class SignInAddressAtTheDoorTest extends TestCase
         $refused = $this->postJson($this->enableUrl($guardian), ['login_email' => self::ACCENTED_LOCAL]);
 
         $refused->assertStatus(422);
-        $this->assertSame('That does not look like an email address.', $refused->json('data.login_email.0'));
+        $this->assertSame(EnableFamilyLoginRequest::ACCENTED_LOCAL_PART, $refused->json('data.login_email.0'));
         $this->assertNull(Contact::withoutMasjidScope()->findOrFail($guardian->id)->login_email);
 
         // The Unicode spelling is stored as the address a parent's sign-in will
@@ -259,6 +260,34 @@ class SignInAddressAtTheDoorTest extends TestCase
         $this->postJson($this->enableUrl($guardian), ['login_email' => self::UNICODE])->assertOk();
 
         $this->assertSame($this->puny, Contact::withoutMasjidScope()->findOrFail($guardian->id)->login_email);
+    }
+
+    #[Test]
+    public function the_office_is_told_to_remove_the_accents_before_the_at_sign(): void
+    {
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+        $admin = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+        $this->masjid->user_id = $admin->id;
+        $this->masjid->save();
+
+        $guardian = $this->guardian();
+
+        $this->asAdmin($admin);
+        $refused = $this->postJson($this->enableUrl($guardian), ['login_email' => self::ACCENTED_LOCAL]);
+
+        $refused->assertStatus(422);
+        $this->assertStringContainsString('Remove the accents before the @', (string) $refused->json('data.login_email.0'));
+
+        // A plainly malformed address keeps the ordinary sentence: the accent
+        // advice is for the accent, not for every refusal.
+        $this->asAdmin($admin);
+        $malformed = $this->postJson($this->enableUrl($guardian), ['login_email' => 'not-an-address']);
+
+        $malformed->assertStatus(422);
+        $this->assertSame('That does not look like an email address.', $malformed->json('data.login_email.0'));
     }
 
     // ------------------------------------------------ the public deletion page
