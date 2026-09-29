@@ -14,6 +14,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\FoldsAccentsLikeUnicodeCi;
@@ -244,6 +245,34 @@ class EmailSuppressionLookAlikeAddressTest extends TestCase
         $this->expectException(UniqueConstraintViolationException::class);
 
         $this->service()->suppress($this->masjid->id, self::TYPED);
+    }
+
+    #[Test]
+    public function a_second_click_racing_the_first_is_the_same_opt_out_and_not_a_server_error(): void
+    {
+        // The race: this request read "no row", then the other click's insert landed
+        // first. Stood in for by writing that row the moment Eloquent is about to insert.
+        // A raw insert fires no model events, so the stand-in cannot re-enter itself.
+        EmailSuppression::creating(function (EmailSuppression $model): void {
+            if ($model->email_normalized === self::TYPED
+                && DB::table('email_suppressions')->where('email_normalized', self::TYPED)->doesntExist()) {
+                DB::table('email_suppressions')->insert([
+                    'masjid_id' => $this->masjid->id,
+                    'email_normalized' => self::TYPED,
+                    'reason' => EmailSuppression::REASON_UNSUBSCRIBE_LINK,
+                    'suppressed_at' => Carbon::now()->subMinute(),
+                    'created_at' => Carbon::now(),
+                    'updated_at' => Carbon::now(),
+                ]);
+            }
+        });
+
+        $written = $this->service()->suppress($this->masjid->id, self::TYPED);
+
+        $this->assertNotNull($written, 'the winner\'s row is this opt-out');
+        $this->assertSame(self::TYPED, $written->email_normalized);
+        $this->assertSame(1, EmailSuppression::withoutMasjidScope()->where('email_normalized', self::TYPED)->count());
+        $this->assertTrue($written->isActive(), 'and it is in force, so the person is not mailed');
     }
 
     private function service(): EmailSuppressionService

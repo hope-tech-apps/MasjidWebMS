@@ -9,6 +9,7 @@ use App\Support\SiteUrl;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Crypt;
@@ -406,12 +407,26 @@ class EmailSuppressionService
             // bound code, and a suppression written into the wrong organisation
             // is an unhonoured opt-out in one place and a silenced congregant in
             // another. The documented bypass makes the explicit id always win.
-            $suppression = app(TenantContext::class)->runWithout(
-                fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
-                    'masjid_id' => $masjidId,
-                    'email_normalized' => $address,
-                ])),
-            );
+            try {
+                $suppression = app(TenantContext::class)->runWithout(
+                    fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
+                        'masjid_id' => $masjidId,
+                        'email_normalized' => $address,
+                    ])),
+                );
+            } catch (UniqueConstraintViolationException $e) {
+                // A second click on the same link, racing the first: the row the
+                // winner wrote IS this opt-out, so it is honoured, not a 500. Only
+                // the exact address counts; a look-alike's row (possible only on a
+                // column the byte-exact migration has not reached) still throws, so
+                // an opt-out that could not be stored never reads as done.
+                $suppression = $this->rowForExactly(
+                    $address,
+                    EmailSuppression::withoutMasjidScope()
+                        ->where('masjid_id', $masjidId)
+                        ->where('email_normalized', $address),
+                ) ?? throw $e;
+            }
         }
 
         // The mirror carries the row's OWN date, not "now": a badge that says
