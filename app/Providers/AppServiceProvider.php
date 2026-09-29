@@ -145,7 +145,8 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Named rate limiters. Routes apply them via the `throttle:<name>` middleware.
      *
-     *  - "login"   — 5 attempts per minute per email+IP (slow brute-force defense)
+     *  - "login"   — 5 attempts per minute per email+IP (slow brute-force defense),
+     *                and per IP alone: 60 a minute, 600 an hour
      *  - "contact" — 10 messages per hour per IP (spam control on the public contact form)
      *  - "family"  — 60 requests per minute per authenticated CONTACT (T-015c)
      *  - "mobile"  — every /api/mobile route: per PHONE 60/min (only when the
@@ -248,14 +249,41 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('curriculum-standards', fn (Request $request) => Limit::perMinute(240)
             ->by('curriculum-standards:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
 
+        // Staff account access: /admin/login, /admin/forgot-password and
+        // /admin/reset-password all use this one limiter, so they draw on one
+        // allowance. Three limits, because each stops something the others cannot:
+        //
+        //  - per ADDRESS + IP, 5 a minute. The address is keyed in the form the
+        //    door uses (`bucketAddress()`), not the raw string, so the
+        //    UTS46-equivalent spellings of one address share the bucket.
+        //  - per IP, per minute and per hour. `users.email` is utf8mb4_unicode_ci,
+        //    so `admin@x.com` and an accented spelling of it are the SAME user to
+        //    the database while each is a different key to a limiter; the
+        //    per-address bucket alone gave every such spelling five more password
+        //    guesses. No spelling changes the IP. The numbers are in
+        //    config('auth.admin_throttle') and the reasoning in DECISIONS.md
+        //    2026-09-29 (follow-ups): generous enough that an office behind one
+        //    NAT never trips them, tight enough that one address cannot walk a
+        //    list of staff or their spellings.
         RateLimiter::for('login', function (Request $request) {
-            $key = strtolower((string) $request->input('email')) . '|' . $request->ip();
-            return Limit::perMinute(5)->by($key)->response(function () {
+            $refusal = function () {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Too many login attempts. Try again in a minute.',
                 ], 429);
-            });
+            };
+
+            return [
+                Limit::perMinute(5)
+                    ->by($this->bucketAddress($request->input('email')) . '|' . $request->ip())
+                    ->response($refusal),
+                Limit::perMinute(max(1, (int) config('auth.admin_throttle.per_ip_per_minute', 60)))
+                    ->by('admin-login-ip-minute:' . $request->ip())
+                    ->response($refusal),
+                Limit::perHour(max(1, (int) config('auth.admin_throttle.per_ip_per_hour', 600)))
+                    ->by('admin-login-ip-hour:' . $request->ip())
+                    ->response($refusal),
+            ];
         });
 
         RateLimiter::for('contact', function (Request $request) {

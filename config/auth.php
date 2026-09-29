@@ -260,4 +260,30 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Staff sign-in: the per-IP ceiling
+    |--------------------------------------------------------------------------
+    |
+    | The `login` limiter (AppServiceProvider) also counts by IP ALONE, across
+    | /admin/login, /admin/forgot-password and /admin/reset-password together.
+    | Its per-address bucket is 5 a minute, but `users.email` is
+    | utf8mb4_unicode_ci: an accented spelling of an address is the same user to
+    | the database and a different key to a limiter, so the address bucket alone
+    | did not bound the guesses at one account. No spelling changes the IP.
+    |
+    | Generous on purpose. One shared address can be a whole office or a school
+    | behind one NAT, and a Monday morning is thirty people signing in inside a
+    | minute, some of them twice. 60 a minute and 600 an hour are several times
+    | that, and still stop one host from walking a list of staff addresses or of
+    | one address's spellings. Both are config so an operator can move them
+    | without a deploy.
+    |
+    */
+
+    'admin_throttle' => [
+        'per_ip_per_minute' => (int) env('ADMIN_LOGIN_PER_IP_PER_MINUTE', 60),
+        'per_ip_per_hour' => (int) env('ADMIN_LOGIN_PER_IP_PER_HOUR', 600),
+    ],
+
 ];
