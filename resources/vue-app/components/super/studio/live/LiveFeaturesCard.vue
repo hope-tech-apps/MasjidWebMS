@@ -174,7 +174,11 @@ async function save() {
     const keys = Object.keys(sent);
     if (!keys.length || store.savingFeatures) return;
 
-    const answer = await QSwal.fire({
+    failure.value = null;
+    outcome.value = null;
+
+    // The store asks before it sends anything, so the confirm cannot be skipped from here.
+    const result = await store.saveFeatures(sent, async () => (await QSwal.fire({
         icon: 'warning',
         titleText: `Apply ${countLabel(keys.length)} to ${orgName.value}?`,
         html: dialogHtml(
@@ -183,15 +187,9 @@ async function save() {
         ),
         confirmButtonText: 'Apply now',
         cancelButtonText: 'Not yet',
-    });
-    if (!answer.isConfirmed) return;
-
-    failure.value = null;
-    outcome.value = null;
-
-    const result = await store.saveFeatures(sent);
+    })).isConfirmed);
     if (!result.ok) {
-        failure.value = result.message;
+        if (!result.cancelled) failure.value = result.message;
         return;
     }
     outcome.value = describe(result.data, sent);

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Studio;
 
+use App\Models\AppMenuSetting;
 use App\Models\Masjid;
 use App\Models\MasjidCapabilityChange;
 use App\Models\MasjidMobileAppFeature;
@@ -147,7 +148,7 @@ class StudioOrganisationPreviewTest extends TestCase
     }
 
     #[Test]
-    public function an_organisation_without_a_theme_previews_in_greys_until_four_colours_are_sent(): void
+    public function an_organisation_without_a_theme_previews_the_palette_the_site_draws_with_none(): void
     {
         $org = Masjid::create([
             'name' => 'Bare Org', 'email' => 'bare@example.test', 'phone' => '+15550104001',
@@ -155,15 +156,47 @@ class StudioOrganisationPreviewTest extends TestCase
             'org_type' => 'community',
         ]);
 
+        // No theme row: the settings carry `theme: null`, so the renderer publishes no variables and the
+        // stylesheet's :root defaults show (burlington-masjid-site index.css). Never greys.
         $bare = $this->preview($org, [])->assertOk()->json('data');
-        $this->assertNull($bare['palette']);
-        $this->assertNull($bare['web_tokens']);
+        $this->assertNotNull($bare['palette']);
+        $this->assertSame(
+            ['primary' => '#01B151', 'secondary' => '#1B1B2E', 'accent' => '#FFBA63', 'background' => '#F3F8FB'],
+            array_intersect_key($bare['web_tokens'], array_flip(['primary', 'secondary', 'accent', 'background'])),
+        );
         $this->assertSame([], $bare['web']['pages']);
 
         $painted = $this->preview($org, ['brand' => ['primary_color' => '#1B4D3E', 'secondary_color' => '#1B1B2E', 'accent_color' => '#7A3E00', 'background_color' => '#FFFFFF']])
             ->assertOk()->json('data');
-        $this->assertNotNull($painted['web_tokens']);
+        $this->assertSame('#1B4D3E', $painted['web_tokens']['primary']);
         $this->assertFalse(ThemeSetting::where('masjid_id', $org->id)->exists(), 'still no theme: nothing was written');
+    }
+
+    #[Test]
+    public function a_live_organisation_with_a_missing_or_invalid_colour_previews_what_the_site_draws_now(): void
+    {
+        $org = $this->liveOrg();
+        // A row that lacks its secondary and holds a value the theme save would refuse for the accent.
+        ThemeSetting::where('masjid_id', $org->id)->update(['secondary_color' => null, 'accent_color' => 'green']);
+
+        $data = $this->preview($org, [])->assertOk()->json('data');
+
+        // What the renderer is served for this row today (ThemeSettingResource -> resolvedTokens), filled by
+        // DesignTokens::DEFAULTS: not greys, and not another colour of our own.
+        $served = DesignTokens::resolve(ThemeSetting::where('masjid_id', $org->id)->first())['color'];
+        $this->assertSame($served, $data['web_tokens']);
+        $this->assertSame(DesignTokens::DEFAULTS['secondary'], $data['web_tokens']['secondary']);
+        $this->assertSame(DesignTokens::DEFAULTS['accent'], $data['web_tokens']['accent']);
+        $this->assertSame('#01B151', $data['web_tokens']['primary'], 'the stored colours stay as stored');
+        $this->assertNotNull($data['palette'], 'a live organisation always has a palette to check');
+        $this->assertSame('#01B151', $data['platform_contrast'][0]['background']);
+
+        // A colour being considered still wins over the fill.
+        $candidate = $this->preview($org, ['brand' => [
+            'primary_color' => '#1B4D3E', 'secondary_color' => '#1B1B2E', 'accent_color' => '#7A3E00', 'background_color' => '#FFFFFF',
+        ]])->assertOk()->json('data');
+        $this->assertSame('#1B1B2E', $candidate['web_tokens']['secondary']);
+        $this->assertSame('#7A3E00', $candidate['web_tokens']['accent']);
     }
 
     #[Test]
@@ -212,7 +245,7 @@ class StudioOrganisationPreviewTest extends TestCase
     }
 
     #[Test]
-    public function a_live_organisations_android_tabs_are_its_stored_rows_not_its_switches(): void
+    public function a_live_organisations_android_frame_is_the_production_bar_whatever_its_switches_or_rows(): void
     {
         $this->seedAppFeatureCatalogue();
 
@@ -220,37 +253,100 @@ class StudioOrganisationPreviewTest extends TestCase
         // The switches say: Announcements off, Contact on, Donate on (the default).
         $org->forceFill(['capability_overrides' => ['announcements' => false]])->save();
 
-        // The stored rows, which an installed Android build draws through GET /features, say the opposite
-        // for Announcements and Contact.
+        // The stored rows say the opposite for Announcements and Contact.
         foreach (range(1, 11) as $featureId) {
             MasjidMobileAppFeature::create([
                 'masjid_id' => $org->id, 'feature_id' => $featureId, 'is_available' => in_array($featureId, [6, 10], true),
             ]);
         }
 
-        // Another organisation's rows must not leak in.
-        $other = Masjid::create([
-            'name' => 'Other Org', 'email' => 'other@example.test', 'phone' => '+15550104002',
-            'country_id' => '1', 'city_id' => '1', 'address' => '2 Other St', 'latitude' => 0.0, 'longitude' => 0.0,
-            'org_type' => 'masjid',
-        ]);
-        MasjidMobileAppFeature::create(['masjid_id' => $other->id, 'feature_id' => 11, 'is_available' => true]);
-
+        // The Play production build is versionCode 13, whose BottomBar lists the four tabs without reading
+        // /features (burlington-masjid-Android 8579eee, BottomBar.kt:28-33): neither source moves the bar.
+        $shipped = ['home', 'announcements', 'contact', 'donate'];
         $data = $this->preview($org, [])->assertOk()->json('data');
+        $this->assertSame($shipped, $data['app']['android']['tabs']);
 
-        $this->assertSame(['home', 'announcements', 'donate'], $data['app']['android']['tabs']);
-        // The premise: the switches derive the opposite for both, so the old preview drew the wrong tabs.
+        // The premise: the switches and the rows each say something else, so a bar derived from either would differ.
         $derived = AppFeaturePivot::rowsFor($org->fresh());
         $this->assertFalse($derived[10]);
         $this->assertTrue($derived[11]);
 
-        // A candidate switch does not move the Android frame: Save writes switches, not rows.
-        $candidate = $this->preview($org, ['capabilities' => ['announcements' => '1']])->assertOk()->json('data');
-        $this->assertSame(['home', 'announcements', 'donate'], $candidate['app']['android']['tabs']);
+        $candidate = $this->preview($org, ['capabilities' => ['events' => '0', 'announcements' => '0']])->assertOk()->json('data');
+        $this->assertSame($shipped, $candidate['app']['android']['tabs']);
 
-        // No rows at all: the installed app keeps the bar it shipped with (BottomBar.visibleTabs).
-        $shipped = ['home', 'announcements', 'contact', 'donate'];
         $this->assertSame($shipped, $this->preview($this->orgWithoutRows(), [])->assertOk()->json('data.app.android.tabs'));
+    }
+
+    #[Test]
+    public function the_ios_frame_draws_what_the_phone_builds_from_features_while_the_menu_is_killed(): void
+    {
+        $this->seedAppFeatureCatalogue();
+
+        $org = $this->liveOrg();
+        // Stored rows: Qur'an, Services, Donate and Announcements on; Contact and the rest off.
+        foreach (range(1, 11) as $featureId) {
+            MasjidMobileAppFeature::create([
+                'masjid_id' => $org->id, 'feature_id' => $featureId, 'is_available' => in_array($featureId, [1, 6, 9, 10], true),
+            ]);
+        }
+
+        $live = $this->preview($org, [])->assertOk()->json('data.app.ios');
+        $this->assertSame(AppMenu::tabs($org->fresh()), $live['tabs']);
+        $this->assertContains('contact', $live['tabs'], 'the premise: the switches say Contact is on, the stored rows say off');
+        $this->assertArrayNotHasKey('source', $live);
+
+        AppMenuSetting::create(['menu_disabled' => true, 'reason' => 'test', 'updated_by' => 'test']);
+
+        $killed = $this->preview($org, [])->assertOk()->json('data.app.ios');
+
+        // LegacyMenuAdapter: Home, then the tab entries whose row is available, in bar order.
+        $this->assertSame(['home', 'announcements', 'donate'], $killed['tabs']);
+        $this->assertSame('features', $killed['source']);
+        $this->assertSame([
+            ['key' => 'main', 'items' => [
+                ['key' => 'home', 'legacy_feature_id' => null],
+                ['key' => 'announcements', 'legacy_feature_id' => 10],
+                ['key' => 'services', 'legacy_feature_id' => 9],
+                ['key' => 'donate', 'legacy_feature_id' => 6],
+            ]],
+            ['key' => 'worship', 'items' => [['key' => 'quran', 'legacy_feature_id' => 1]]],
+        ], $killed['sections'], 'no About section: none of its rows is on, and the fallback carries no parts');
+
+        // A candidate switch does not move it: the phone reads rows, and Save writes switches.
+        $candidate = $this->preview($org, ['capabilities' => ['announcements' => '0']])->assertOk()->json('data.app.ios');
+        $this->assertSame(['home', 'announcements', 'donate'], $candidate['tabs']);
+
+        // Restored: the switches again, and the preview wrote nothing to get there.
+        AppMenuSetting::query()->update(['menu_disabled' => false]);
+        $restored = $this->preview($org, [])->assertOk()->json('data.app.ios');
+        $this->assertSame($live['tabs'], $restored['tabs']);
+        $this->assertArrayNotHasKey('source', $restored);
+
+        // No available row at all, killed: Home alone (the fallback has no shipped bar).
+        AppMenuSetting::query()->update(['menu_disabled' => true]);
+        $rowless = $this->preview($this->orgWithoutRows(), [])->assertOk()->json('data.app.ios');
+        $this->assertSame(['home'], $rowless['tabs']);
+        $this->assertSame([['key' => 'main', 'items' => [['key' => 'home', 'legacy_feature_id' => null]]]], $rowless['sections']);
+    }
+
+    #[Test]
+    public function the_web_frame_is_told_the_active_home_page_and_never_an_inactive_one(): void
+    {
+        $org = $this->liveOrg();
+        // Listed first (order 0) but switched off: the site does not serve it.
+        Page::create(['masjid_id' => $org->id, 'slug' => 'promo', 'title' => 'Promo', 'is_active' => false, 'order' => 0, 'show_in_menu' => true]);
+
+        $data = $this->preview($org, [])->assertOk()->json('data.web');
+        $this->assertSame(['promo', 'home'], array_column($data['pages'], 'slug'), 'the premise: an inactive page leads the list');
+        $this->assertSame('home', $data['home_slug']);
+
+        // The renderer draws the page whose slug is `home`, and only an active one is served.
+        Page::where('masjid_id', $org->id)->where('slug', 'home')->update(['is_active' => false]);
+        $this->assertNull($this->preview($org, [])->assertOk()->json('data.web.home_slug'));
+
+        // Another active page does not stand in for it.
+        Page::where('masjid_id', $org->id)->where('slug', 'promo')->update(['is_active' => true]);
+        $this->assertNull($this->preview($org, [])->assertOk()->json('data.web.home_slug'));
     }
 
     #[Test]

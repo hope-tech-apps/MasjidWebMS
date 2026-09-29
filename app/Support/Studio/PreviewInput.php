@@ -6,10 +6,14 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Models\Page;
 use App\Models\StudioDraft;
+use App\Support\AppMenu;
 use App\Support\CapabilityCatalogue;
 use App\Support\CapabilityWriter;
+use App\Support\DesignTokens;
 use App\Support\HostName;
 use App\Support\WcagColor;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * What StudioPreview draws, whoever it is drawn for (Studio W2 S9): a draft
@@ -33,7 +37,8 @@ final readonly class PreviewInput
      * @param  bool  $paintsPaletteInks  true for a draft: the inks PaletteContrast picks are what Step 3 writes, so the web is painted with them
      * @param  array<string, mixed>  $web  `web` minus nothing: preset, locale, pages, theme_layout, preset_source, approved
      * @param  list<string>  $platforms
-     * @param  list<int>|null  $androidFeatureIds  a live organisation's stored, available Mobile App Features rows (what GET /features serves installed Android builds); null for a draft, whose pivot is seeded from the switches
+     * @param  list<int>|null  $storedFeatureIds  a live organisation's stored, available Mobile App Features rows (what GET /features serves; the iOS frame draws them while /menu is killed); null for a draft, whose Android tabs come from its switches
+     * @param  bool  $menuKilled  a live organisation only: the /menu kill row is set, so phones build their menu from those same rows (StudioPreview::iosTabs)
      */
     public function __construct(
         public Masjid $org,
@@ -47,7 +52,8 @@ final readonly class PreviewInput
         public array $platforms,
         public ?string $host,
         public string $donationLink,
-        public ?array $androidFeatureIds = null,
+        public ?array $storedFeatureIds = null,
+        public bool $menuKilled = false,
     ) {}
 
     /** The draft keys StarterFacts reads; nothing else (not `vibe`, R12) leaves the draft. */
@@ -61,6 +67,22 @@ final readonly class PreviewInput
 
     /** The live platform set an organisation's publishing row may hold (D15). */
     private const PLATFORMS = ['ios', 'android', 'tvos', 'web'];
+
+    /**
+     * What the site draws, by colour, when the organisation has NO theme row at
+     * all: the served settings then carry `theme: null` (SettingController), the
+     * renderer publishes no variables (tenantThemeVars returns []), and the
+     * stylesheet's own :root defaults show: --brand, --is-titles-navbar (the
+     * secondary slot), --is-color-card-prayer-time and --is-color-body
+     * (burlington-masjid-site, main: app/assets/css/index.css and
+     * app/utils/tenantTheme.ts).
+     */
+    private const SITE_STYLESHEET_COLOURS = [
+        'primary_color' => '#01B151',
+        'secondary_color' => '#1B1B2E',
+        'accent_color' => '#FFBA63',
+        'background_color' => '#F3F8FB',
+    ];
 
     /**
      * A draft's preview: exactly W1's derivation (StudioPreviewTest,
@@ -139,7 +161,8 @@ final readonly class PreviewInput
      * The web pages are the organisation's own (active or not, in menu order),
      * in the starter plan's shape, painted with the theme's stored tokens and
      * the colours being considered: what the renderer will draw once the
-     * colours are saved through the theme screen.
+     * colours are saved through the theme screen. A colour the theme lacks is
+     * drawn as the renderer draws it now (liveColours), never left grey.
      *
      * @param  array{brand?: array<string, string>, capabilities?: array<string, bool>}  $overrides
      *
@@ -169,7 +192,7 @@ final readonly class PreviewInput
             'accent_color' => $theme?->accent_color,
             'background_color' => $theme?->background_color,
         ];
-        $colours = self::fourColours(($overrides['brand'] ?? []) + $stored);
+        $colours = self::liveColours(($overrides['brand'] ?? []) + $stored, $theme !== null);
 
         $tokens = is_array($theme?->tokens) ? $theme->tokens : [];
         $color = is_array($tokens['color'] ?? null) ? $tokens['color'] : [];
@@ -189,6 +212,8 @@ final readonly class PreviewInput
             $platforms[] = 'web';
         }
 
+        $pages = self::livePages($real);
+
         return new self(
             org: $org,
             orgType: $real->orgType(),
@@ -200,7 +225,10 @@ final readonly class PreviewInput
             web: [
                 'preset' => null,
                 'locale' => StarterFacts::DEFAULT_LOCALE,
-                'pages' => self::livePages($real),
+                'pages' => $pages,
+                // Live only: the front page is the one the renderer serves at /,
+                // not whichever page is listed first (a draft's key set is unchanged).
+                'home_slug' => self::liveHomeSlug($pages),
                 'theme_layout' => $themeLayout,
                 'preset_source' => 'live',
                 'approved' => true,
@@ -208,17 +236,36 @@ final readonly class PreviewInput
             platforms: $platforms,
             host: self::liveHost($real),
             donationLink: trim((string) ($real->donationLink()->value('link') ?? '')),
-            androidFeatureIds: self::storedAvailableFeatureIds($real),
+            storedFeatureIds: self::storedAvailableFeatureIds($real),
+            menuKilled: self::readMenuKilled(),
         );
     }
 
     /**
-     * The feature ids an installed Android build draws, read the way GET
-     * /features serves them: the organisation's own pivot rows (scoped by
-     * masjid_id through the relation) that say available. Until the app-features
-     * cutover these, not the switches, decide an existing organisation's tabs.
-     * An empty list is meaningful: the installed app then draws its shipped
-     * default bar (StudioPreview::androidTabs).
+     * Has an operator taken /menu away from every phone? The kill row's own
+     * query (AppMenu::killSwitchRow), read without AppMenu::killed()'s cache: a
+     * cached read writes to the cache store, and a preview writes nothing. Fails
+     * open like killed(): an unreadable table reads as live.
+     */
+    private static function readMenuKilled(): bool
+    {
+        try {
+            return (bool) AppMenu::killSwitchRow()?->menu_disabled;
+        } catch (Throwable $e) {
+            Log::warning('studio preview could not read the app menu kill switch; drawing the menu as live', [
+                'exception' => $e::class,
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * The feature ids the phones read from GET /features: the organisation's own
+     * pivot rows (scoped by masjid_id through the relation) that say available.
+     * While /menu is killed they, not the switches, decide the iOS tabs and
+     * drawer (StudioPreview::iosTabs). An empty list is meaningful: nothing is
+     * switched on, so that fallback is Home alone.
      *
      * @return list<int>
      */
@@ -306,15 +353,20 @@ final readonly class PreviewInput
     }
 
     /**
-     * The four colours as #RRGGBB for display, only when every one is a colour
-     * the theme save accepts (#RGB, #RRGGBB, #RRGGBBAA; R25: a missing one
-     * would be filled with Burlington's green). A 3-digit value is expanded and
-     * an alpha pair dropped, for the mockups only: nothing here is saved.
+     * The four colours as #RRGGBB for display (a 3-digit value expanded, an alpha
+     * pair dropped, for the mockups only: nothing here is saved).
+     *
+     * A colour that is missing or that the theme save would not accept is filled
+     * the way the renderer fills it today, so the mockup shows the live site and
+     * not a grey stand-in (R25 is the DRAFT's rule: a draft with a colour missing
+     * has no palette yet). With a theme row the renderer is served
+     * DesignTokens::resolve(), so DesignTokens::DEFAULTS is the one source for
+     * the fill; with no row it draws the stylesheet's defaults (above).
      *
      * @param  array<string, mixed>  $candidate
-     * @return array<string, string>|null
+     * @return array<string, string>
      */
-    private static function fourColours(array $candidate): ?array
+    private static function liveColours(array $candidate, bool $hasTheme): array
     {
         $colours = [];
 
@@ -323,11 +375,9 @@ final readonly class PreviewInput
 
             $display = is_string($value) ? WcagColor::normalize($value) : null;
 
-            if ($display === null) {
-                return null;
-            }
-
-            $colours[$key] = $display;
+            $colours[$key] = $display ?? ($hasTheme
+                ? strtoupper(DesignTokens::DEFAULTS[str_replace('_color', '', $key)])
+                : self::SITE_STYLESHEET_COLOURS[$key]);
         }
 
         return $colours;
@@ -357,6 +407,26 @@ final readonly class PreviewInput
             ->first();
 
         return $row?->host;
+    }
+
+    /**
+     * The page the renderer draws at `/`: the ACTIVE page whose slug is `home`
+     * (burlington-masjid-site, main: app/pages/index.vue reads
+     * getPageBySlug('home'), over the pages GET /pages serves, which are the
+     * active ones only). Null when there is none: the site's front page is then
+     * blank, whatever else is listed first and whatever is inactive.
+     *
+     * @param  list<array<string, mixed>>  $pages
+     */
+    private static function liveHomeSlug(array $pages): ?string
+    {
+        foreach ($pages as $page) {
+            if ($page['slug'] === 'home' && $page['is_active']) {
+                return 'home';
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -7,7 +7,10 @@
             </span>
         </div>
 
-        <p class="studio-hint mb-0">{{ CAPTION }}</p>
+        <p class="studio-hint mb-0">{{ store.previewColoursIncomplete ? CAPTION_SAVED : CAPTION }}</p>
+        <p v-if="store.previewColoursIncomplete" class="studio-hint mb-0" role="status">
+            The colours you are typing are not complete yet, so this still shows the saved colours.
+        </p>
 
         <div v-if="store.previewError" class="alert alert-danger py-2 px-3 mb-0 small d-flex flex-wrap align-items-center gap-2" role="alert">
             <span class="flex-grow-1">{{ store.previewError }}</span>
@@ -39,8 +42,6 @@
 
             <div :id="`live-preview-pane-${activePlatform}`" role="tabpanel"
                 :aria-labelledby="`live-preview-tab-${activePlatform}`" class="d-flex flex-column gap-2">
-                <p v-if="!preview.web_tokens" class="studio-hint mb-0">Drawn in greys until all four colours are set.</p>
-
                 <template v-if="activePlatform === 'web'">
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                         <div class="btn-group btn-group-sm" role="group" aria-label="Screen size">
@@ -53,13 +54,18 @@
                         <span class="small text-muted">Its pages as they are now</span>
                     </div>
                     <WebFrame :pages="preview.web.pages" :theme-layout="preview.web.theme_layout" :tokens="preview.web_tokens"
-                        :name="preview.org.name" :host="preview.org.host" :logo-url="logoUrl"
+                        :home-slug="preview.web.home_slug" :name="preview.org.name" :host="preview.org.host" :logo-url="logoUrl"
                         :logo-missing="!logoUrl" :viewport="viewport" :max-scale="viewport === 'mobile' ? .6 : 1" />
                 </template>
-                <IosFrame v-else-if="activePlatform === 'ios'" :preview="preview" :logo-url="logoUrl" />
+                <template v-else-if="activePlatform === 'ios'">
+                    <p v-if="preview.app.ios.source === 'features'" class="studio-hint mb-0">
+                        The app menu is switched off for every phone, so iPhones draw the menu from the stored feature list, not the switches.
+                    </p>
+                    <IosFrame :preview="preview" :logo-url="logoUrl" />
+                </template>
                 <template v-else-if="activePlatform === 'android'">
                     <p class="studio-hint mb-0">
-                        Installed Android apps follow the stored menu, not the switches, until the app-features cutover.
+                        The Android app now in production (version 13) always draws these four tabs, whatever the switches or the stored menu say.
                     </p>
                     <AndroidFrame :preview="preview" :logo-url="logoUrl" />
                 </template>
@@ -83,6 +89,9 @@
  * the publishing row's, plus the web whenever the website is on. The website
  * frame draws the organisation's own pages. The logo is the one on file.
  *
+ * While a colour is half typed the server is not sent the colours, so the
+ * caption says the mockup shows the saved ones (store.previewColoursIncomplete).
+ *
  * The TV board computes its prayer times from the organisation's coordinates,
  * timezone and calculation settings. It is told no iqama was given: an iqama
  * time drawn here would be invented, whatever the organisation has on record.
@@ -103,6 +112,8 @@ import { useStudioOrganisationStore } from '@/stores/super/studioOrganisationSto
 import { computed, nextTick, ref } from 'vue';
 
 const CAPTION = 'A themed mockup of this live organisation with your unsaved changes; nothing is saved until you press Save.';
+/** While a colour edit is incomplete the mockup is drawn without it, so it must not claim to show it. */
+const CAPTION_SAVED = 'A themed mockup of this live organisation as it is saved now, with your unsaved switch changes; nothing is saved until you press Save.';
 
 const VIEWPORTS: { value: 'desktop' | 'mobile'; label: string }[] = [
     { value: 'desktop', label: 'Desktop' },

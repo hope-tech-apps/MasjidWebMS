@@ -29,7 +29,9 @@
                 </header>
 
                 <main class="web-main">
-                    <p v-if="!shownPage" class="empty">This layout writes no pages.</p>
+                    <p v-if="!shownPage" class="empty">
+                        {{ homeSlug === null ? 'The site has no active page with the slug home, so its front page is blank.' : 'This layout writes no pages.' }}
+                    </p>
                     <template v-else>
                         <template v-for="(section, index) in shownPage.sections" :key="section.slot">
                             <div v-if="!section.has_renderer" class="no-renderer">
@@ -93,7 +95,7 @@
  */
 import DeviceStage from '@/components/super/studio/preview/DeviceStage.vue';
 import { styleFromTokens } from '@/core/helpers/themeTokens';
-import { buttonPages as siteButtonPages, menuPages as siteMenuPages } from '@/core/studio/sitePages';
+import { buttonPages as siteButtonPages, menuPages as siteMenuPages, openingPage } from '@/core/studio/sitePages';
 import { StudioPlanPage, StudioPlanPlaceholder, StudioPlanSection } from '@/core/types/data/Studio';
 import { computed, ref, watch } from 'vue';
 
@@ -101,6 +103,12 @@ const props = withDefaults(defineProps<{
     pages: StudioPlanPage[];
     themeLayout: Record<string, unknown> | null;
     tokens: Record<string, string> | null;
+    /**
+     * The page the site opens on. Undefined for a draft, which opens on its first page.
+     * A live organisation names it (`web.home_slug`), or null when the site serves none:
+     * it opens on its active page with the slug `home`, not on whichever is listed first.
+     */
+    homeSlug?: string | null;
     name: string;
     host: string | null;
     logoUrl: string | null;
@@ -156,10 +164,10 @@ const menuPages = computed(() => siteMenuPages(props.pages));
 const buttonPages = computed(() => siteButtonPages(props.pages));
 
 const shownSlug = ref<string | null>(null);
-const shownPage = computed(() => props.pages.find((page) => page.slug === shownSlug.value) ?? props.pages[0] ?? null);
+const shownPage = computed(() => props.pages.find((page) => page.slug === shownSlug.value) ?? openingPage(props.pages, props.homeSlug));
 
-// A new plan (another preset, another client) opens on its first page again.
-watch(() => props.pages.map((page) => page.slug).join('|'), () => { shownSlug.value = null; });
+// A new plan (another preset, another client) opens on its home page again.
+watch(() => [props.homeSlug, ...props.pages.map((page) => page.slug)].join('|'), () => { shownSlug.value = null; });
 
 function show(slug: string) {
     if (props.interactive) shownSlug.value = slug;

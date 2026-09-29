@@ -23,11 +23,12 @@ use App\Support\WcagColor;
  *  - the palette is PaletteContrast::report(), the gate Step 3 enforces;
  *  - `web_tokens` is DesignTokens::resolve() over the colours plus the tokens
  *    S8 writes (the auto-ink and the preset's header and footer);
- *  - the iOS tabs and sections are AppMenu's, which /menu serves;
- *  - the Android tabs are the legacy pivot rows: for a draft what
- *    AppFeaturePivot::rowsFor() derives, which S8 seeds and /features serves;
- *    for a live organisation its stored rows, which is what installed builds
- *    read until the app-features cutover;
+ *  - the iOS tabs and sections are AppMenu's, which /menu serves; while the
+ *    /menu kill row is set they are what the phone builds from /features
+ *    instead (iosTabs, iosSections);
+ *  - the Android tabs: for a draft what AppFeaturePivot::rowsFor() derives,
+ *    which S8 seeds and /features serves; for a live organisation the bar the
+ *    Play production build draws (androidTabs);
  *  - the web plan is StarterSite::plan(), which S8 writes;
  *  - the tvOS values are TvConfigController's own constants.
  *
@@ -46,7 +47,9 @@ use App\Support\WcagColor;
  * Until all four brand colours are chosen, `palette`, `web_tokens` and
  * `platform_contrast` are null: DesignTokens fills a missing colour with
  * Burlington's green (R25), and grading or painting that would show a live
- * client's brand, not this one's.
+ * client's brand, not this one's. That is a draft's rule. A live organisation
+ * already draws in some palette, so its missing colour is filled the way the
+ * renderer fills it (PreviewInput::liveColours) and its report is never null.
  */
 final class StudioPreview
 {
@@ -120,11 +123,11 @@ final class StudioPreview
             'platform_contrast' => $in->colours === null ? null : self::platformContrast($in->colours['primary_color'], $webTokens),
             'app' => [
                 'ios' => [
-                    'tabs' => AppMenu::tabs($org),
-                    'sections' => AppMenu::sections($org),
-                ],
+                    'tabs' => self::iosTabs($org, $in),
+                    'sections' => self::iosSections($org, $in),
+                ] + ($in->menuKilled ? ['source' => 'features'] : []),
                 'android' => [
-                    'tabs' => self::androidTabs($org, $in->androidFeatureIds),
+                    'tabs' => self::androidTabs($org, $in->storedFeatureIds !== null),
                 ],
             ],
             'web' => $in->web,
@@ -144,24 +147,28 @@ final class StudioPreview
 
     /**
      * A draft's pivot is seeded from its switches (S8), so the switches say what
-     * its tabs will be. A live organisation's installed Android build reads its
-     * stored rows instead, so `$storedIds` (PreviewInput::fromMasjid) wins.
-     * When none of those rows is available (missing, or all switched off) the
-     * installed app falls back to the bar it shipped with (MenuViewModel and
-     * BottomBar.visibleTabs), so the frame draws that bar, not a bare Home.
+     * its tabs will be.
      *
-     * @param  list<int>|null  $storedIds
+     * A live organisation is drawn as the Play PRODUCTION build draws it. That
+     * is versionCode 13 (2.8.1, burlington-masjid-Android commit 8579eee,
+     * HANDOFF.md "vc13 shipped"), whose BottomBar composable lists Home,
+     * Announcement, ContactUs and Donate unconditionally
+     * (app/src/main/java/com/app/masajid/ui/views/bottomBar/BottomBar.kt:28-33):
+     * it reads no feature, so neither the switches nor the stored rows move it.
+     * Later builds do read them (vc14, tag play-vc14-2.9.0, BottomBar.kt:121-138,
+     * gates on the available ids and draws the four when none is available; vc15,
+     * ui/shell/BottomTabs.kt:41-46, draws Home alone then) but neither is on
+     * production; when one is, this is what changes.
+     *
      * @return list<string>
      */
-    private static function androidTabs(Masjid $org, ?array $storedIds): array
+    private static function androidTabs(Masjid $org, bool $live): array
     {
-        if ($storedIds !== null && $storedIds === []) {
+        if ($live) {
             return ['home', ...array_values(self::ANDROID_TABS)];
         }
 
-        $rows = $storedIds === null
-            ? AppFeaturePivot::rowsFor($org)
-            : array_fill_keys($storedIds, true);
+        $rows = AppFeaturePivot::rowsFor($org);
         $tabs = ['home'];
 
         foreach (self::ANDROID_TABS as $id => $tab) {
@@ -171,6 +178,86 @@ final class StudioPreview
         }
 
         return $tabs;
+    }
+
+    /**
+     * The iOS tab bar. While /menu answers 404 (the kill row) the phone builds
+     * its menu from the organisation's stored /features rows instead
+     * (LegacyMenuAdapter.menu: Home, then the registry's tabs whose legacy id
+     * is available, in bar order, no fallback bar: none available is Home
+     * alone). Otherwise it is /menu's, AppMenu::tabs.
+     *
+     * @return list<string>
+     */
+    private static function iosTabs(Masjid $org, PreviewInput $in): array
+    {
+        if (! $in->menuKilled || $in->storedFeatureIds === null) {
+            return AppMenu::tabs($org);
+        }
+
+        $enabled = self::legacyEnabledKeys($in->storedFeatureIds);
+
+        return array_values(array_filter(
+            AppMenu::registry()['tabs'],
+            fn (string $key) => in_array($key, $enabled, true)
+        ));
+    }
+
+    /**
+     * The iOS drawer, from the same source as iosTabs: /menu's sections, or,
+     * while it is killed, the registry's sections holding the entries the stored
+     * /features rows switch on (no `parts`, which the fallback cannot know).
+     *
+     * @return array<int, array{key: string, items: array<int, array<string, mixed>>}>
+     */
+    private static function iosSections(Masjid $org, PreviewInput $in): array
+    {
+        if (! $in->menuKilled || $in->storedFeatureIds === null) {
+            return AppMenu::sections($org);
+        }
+
+        $registry = AppMenu::registry();
+        $enabled = self::legacyEnabledKeys($in->storedFeatureIds);
+        $out = [];
+
+        foreach ($registry['sections'] as $section => $keys) {
+            $items = [];
+
+            foreach ($keys as $key) {
+                if (in_array($key, $enabled, true)) {
+                    $items[] = ['key' => $key, 'legacy_feature_id' => $registry['items'][$key]['legacy_feature_id']];
+                }
+            }
+
+            if ($items !== []) {
+                $out[] = ['key' => $section, 'items' => $items];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The registry entries the legacy /features list switches on: `home`, which
+     * that list never had a row for, and every entry whose legacy id is an
+     * available row (LegacyMenuAdapter.enabledKeys).
+     *
+     * @param  list<int>  $availableIds
+     * @return list<string>
+     */
+    private static function legacyEnabledKeys(array $availableIds): array
+    {
+        $enabled = [];
+
+        foreach (AppMenu::registry()['items'] as $key => $item) {
+            $legacyId = $item['legacy_feature_id'];
+
+            if ($legacyId === null ? $key === 'home' : in_array($legacyId, $availableIds, true)) {
+                $enabled[] = $key;
+            }
+        }
+
+        return $enabled;
     }
 
     /**

@@ -16,8 +16,12 @@ use App\Models\ThemeSetting;
  */
 class DesignTokens
 {
-    /** App-wide fallbacks when a masjid hasn't set a given color (historical Burlington green). */
-    private const DEFAULTS = [
+    /**
+     * App-wide fallbacks when a masjid hasn't set a given color (historical Burlington green).
+     * Public because Studio's live preview fills a missing colour from THIS list, so the mockup
+     * draws what the renderer is served (PreviewInput::liveColours).
+     */
+    public const DEFAULTS = [
         'primary' => '#01B151',
         'secondary' => '#0B7A3B',
         'accent' => '#F2B705',

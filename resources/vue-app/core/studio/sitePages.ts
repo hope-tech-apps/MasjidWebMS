@@ -22,3 +22,14 @@ export function menuPages(pages: readonly StudioPlanPage[]): StudioPlanPage[] {
 export function buttonPages(pages: readonly StudioPlanPage[]): StudioPlanPage[] {
     return pages.filter((page) => page.is_active && page.show_as_button);
 }
+
+/**
+ * The page the frame opens on. A draft names none (`homeSlug` undefined) and opens
+ * on the first page it plans. A live organisation names the slug the site serves at
+ * `/` (`web.home_slug`), or null when it serves none: the frame then opens on
+ * nothing, and never on an inactive page just because it is listed first.
+ */
+export function openingPage(pages: readonly StudioPlanPage[], homeSlug?: string | null): StudioPlanPage | null {
+    if (homeSlug === undefined) return pages[0] ?? null;
+    return pages.find((page) => page.slug === homeSlug && page.is_active) ?? null;
+}

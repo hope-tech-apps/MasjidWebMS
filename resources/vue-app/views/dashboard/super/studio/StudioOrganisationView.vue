@@ -31,6 +31,12 @@
                     <button type="button" class="btn btn-sm btn-warning" @click="load">Retry</button>
                 </div>
 
+                <div v-if="store.refreshNotice" class="alert alert-warning d-flex flex-wrap align-items-center gap-2" role="alert">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <span class="flex-grow-1">{{ store.refreshNotice }}</span>
+                    <button type="button" class="btn btn-sm btn-warning" @click="load">Reload</button>
+                </div>
+
                 <p v-if="draftStore.optionsError" class="alert alert-danger small">
                     {{ draftStore.optionsError }}
                     <button type="button" class="btn btn-sm btn-outline-danger ms-2" @click="draftStore.fetchOptions()">Retry</button>

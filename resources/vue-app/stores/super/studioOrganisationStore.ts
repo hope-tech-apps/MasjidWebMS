@@ -13,7 +13,16 @@ import {
     StudioOrganisationSnapshot,
 } from "@/core/types/data/StudioOrganisation";
 
-type Outcome<T> = { ok: true; data: T } | { ok: false; message: string };
+/** `cancelled`: the operator declined the confirm (or the organisation changed under it); nothing was sent. */
+type Outcome<T> = { ok: true; data: T } | { ok: false; message: string; cancelled?: boolean };
+
+/** Asked before a writer sends anything; resolves true only when the operator said yes. */
+export type Confirm = () => Promise<boolean>;
+
+const CANCELLED = { ok: false, message: '', cancelled: true } as const;
+
+/** Shown when a save went through but the organisation could not be read again. */
+export const SAVED_BUT_STALE = "Saved, but couldn't refresh. Reload to see the latest.";
 
 /** The theme's four colours, in the Brand panel's order. */
 export const STUDIO_COLOUR_KEYS: StudioColourKey[] = ['primary_color', 'secondary_color', 'accent_color', 'background_color'];
@@ -53,6 +62,10 @@ function sameColour(a: string | null | undefined, b: string | null | undefined):
  *  takes the brand whole or not at all.
  *
  * THE WRITERS (each returns an Outcome and re-reads the snapshot on success)
+ *  Every writer takes a `confirm` and sends nothing unless it resolves true,
+ *  so no caller can save without asking, and a confirm answered after another
+ *  organisation was opened writes nothing either. If the re-read after a save
+ *  fails, the saved values are put on screen and `refreshNotice` says so.
  *  - saveFeatures(): S7's bulk PATCH, form-encoded, `capabilities[<key>]=1|0`,
  *    booleans as '1'/'0' (.claude/rules/shipping.md). Only keys whose writer is
  *    `capability` and whose value moves: every key sent writes a ledger row,
@@ -72,6 +85,8 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     const previewQueued = ref(false);
     const previewLoading = ref(false);
     const previewError = ref<string | null>(null);
+    /** A save went through and the re-read failed: what is shown is what was saved, not a fresh read. */
+    const refreshNotice = ref<string | null>(null);
 
     /** Catalogue key => the value this tab wants, only where it differs from the live value. */
     const pendingCapabilities = ref<Record<string, boolean>>({});
@@ -85,6 +100,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     let generation = 0;
     let previewTimer: ReturnType<typeof setTimeout> | null = null;
     let previewSeq = 0;
+    let snapshotSeq = 0;
 
     /** Every served feature entry, in the order served. */
     const featureEntries = computed<StudioOrganisationFeatureEntry[]>(() =>
@@ -116,6 +132,12 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
 
     /** All four are a colour the theme save takes (#RGB, #RRGGBB or #RRGGBBAA), as stored or as typed. */
     const coloursComplete = computed(() => STUDIO_COLOUR_KEYS.every((key) => isThemeHex(colours.value[key] ?? '')));
+
+    /**
+     * The preview does not describe the colours being typed: they changed but are not all a
+     * colour yet, so the server was not sent them and drew the saved ones.
+     */
+    const previewColoursIncomplete = computed(() => changedColours.value.length > 0 && !coloursComplete.value);
 
     /**
      * The switches that would move: capability-writer entries whose pending
@@ -154,6 +176,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         preview.value = null;
         previewLoading.value = false;
         previewError.value = null;
+        refreshNotice.value = null;
         pendingCapabilities.value = {};
         pendingColours.value = {};
         savingFeatures.value = false;
@@ -165,30 +188,77 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
      * Read the organisation. Another organisation than the one held starts
      * clean; the same one is re-read with its pending changes kept, minus any
      * the organisation now already has.
+     *
+     * Each read has its own sequence number, so a late answer from an older read
+     * can never overwrite a newer one (the generation only separates
+     * organisations). `afterSave` is the re-read a writer makes: when it fails,
+     * the values just saved stay on screen (`applySaved`) with `refreshNotice`,
+     * instead of an error that reads as if the save failed.
      */
-    async function fetchSnapshot(id: number): Promise<boolean> {
+    async function fetchSnapshot(id: number, afterSave?: () => void): Promise<boolean> {
         if (snapshot.value?.org.id !== id) reset();
 
         const gen = generation;
+        const seq = ++snapshotSeq;
         loading.value = true;
         error.value = null;
 
         try {
             const res = await ApiService.get(`/api/admin/studio/organisations/${id}`);
-            if (gen !== generation) return false;
+            if (gen !== generation || seq !== snapshotSeq) return false;
             snapshot.value = res.data.data as StudioOrganisationSnapshot;
+            refreshNotice.value = null;
             prunePending();
             refreshPreview();
             return true;
         } catch (failure) {
-            if (gen !== generation) return false;
+            if (gen !== generation || seq !== snapshotSeq) return false;
+            if (afterSave) {
+                afterSave();
+                refreshNotice.value = SAVED_BUT_STALE;
+                refreshPreview();
+                return false;
+            }
             error.value = statusOf(failure) === 404
                 ? 'This organisation does not exist.'
                 : serverMessage(failure, 'The organisation could not be loaded.');
             return false;
         } finally {
-            if (gen === generation) loading.value = false;
+            if (gen === generation && seq === snapshotSeq) loading.value = false;
         }
+    }
+
+    /** After a saved switch change whose re-read failed: show the values that were saved. */
+    function applySavedCapabilities(saved: Record<string, boolean>) {
+        for (const group of snapshot.value?.sections.features.data ?? []) {
+            for (const entry of group.entries) {
+                if (typeof saved[entry.key] === 'boolean') {
+                    entry.enabled = saved[entry.key];
+                    entry.decided = true;
+                }
+            }
+        }
+        pendingCapabilities.value = {};
+    }
+
+    /** After regenerated images whose re-read failed: show the new images. */
+    function applySavedAssets(assets: StudioBrandAssets) {
+        const brand = snapshot.value?.sections.brand.data;
+        if (!brand) return;
+        brand.favicon_url = assets.favicon_url;
+        brand.touch_icon_url = assets.touch_icon_url;
+        brand.share_image_url = assets.share_image_url;
+        brand.has_derivatives = !!(assets.favicon_url || assets.touch_icon_url || assets.share_image_url);
+    }
+
+    /** After saved colours whose re-read failed: show the colours that were saved, exactly as sent. */
+    function applySavedColours(saved: Record<StudioColourKey, string | null>) {
+        const brand = snapshot.value?.sections.brand.data;
+        if (brand) {
+            brand.colours = { ...saved };
+            brand.has_theme = true;
+        }
+        pendingColours.value = {};
     }
 
     /** Drop pending values the organisation now has, and switches it no longer serves. */
@@ -300,32 +370,49 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
     }
 
     /**
-     * Apply feature changes to the live organisation (S7's bulk PATCH).
+     * Ask, and only go on when the answer is a yes given while the same organisation is
+     * still open. A confirm that throws is a no.
+     */
+    async function confirmed(confirm: Confirm, gen: number): Promise<boolean> {
+        let yes = false;
+        try {
+            yes = (await confirm()) === true;
+        } catch {
+            yes = false;
+        }
+        return yes && gen === generation;
+    }
+
+    /**
+     * Apply feature changes to the live organisation (S7's bulk PATCH), after `confirm`.
      * `changes` is re-checked against the snapshot: a key is sent only when its
      * writer is `capability` and its value moves.
      */
-    async function saveFeatures(changes: Record<string, boolean>): Promise<Outcome<StudioCapabilitiesOutcome>> {
+    async function saveFeatures(changes: Record<string, boolean>, confirm: Confirm): Promise<Outcome<StudioCapabilitiesOutcome>> {
         const current = snapshot.value;
         if (!current) return { ok: false, message: 'No organisation is open.' };
         if (savingFeatures.value) return { ok: false, message: 'A save is already in progress.' };
 
         const body = new URLSearchParams();
+        const sent: Record<string, boolean> = {};
         for (const entry of featureEntries.value) {
             const on = changes[entry.key];
             if (entry.writer !== 'capability' || typeof on !== 'boolean' || on === entry.enabled) continue;
             body.append(`capabilities[${entry.key}]`, on ? '1' : '0');
+            sent[entry.key] = on;
         }
         if (body.toString() === '') return { ok: false, message: 'Nothing has changed.' };
 
         const gen = generation;
+        if (!await confirmed(confirm, gen)) return CANCELLED;
+
         savingFeatures.value = true;
 
         try {
             const res = await ApiService.patch(`/api/admin/masjids/${current.org.id}/capabilities`, body);
             const meta = res.data?.meta as StudioCapabilitiesOutcome | undefined;
             if (gen === generation) {
-                pendingCapabilities.value = {};
-                await fetchSnapshot(current.org.id);
+                await fetchSnapshot(current.org.id, () => applySavedCapabilities(sent));
             }
             return { ok: true, data: { changed: meta?.changed ?? [], unchanged: meta?.unchanged ?? [] } };
         } catch (failure) {
@@ -339,10 +426,11 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
 
     /**
      * Save the four colours through the theme screen's own endpoint, which
-     * purges the renderer. Only the four fields: `tokens` is never sent, so the
-     * stored design tokens survive.
+     * purges the renderer, after `confirm`. Only the four fields: `tokens` is
+     * never sent, so the stored design tokens survive. Each colour goes exactly
+     * as it was stored or typed.
      */
-    async function saveColours(values: Record<StudioColourKey, string | null>): Promise<Outcome<null>> {
+    async function saveColours(values: Record<StudioColourKey, string | null>, confirm: Confirm): Promise<Outcome<null>> {
         const current = snapshot.value;
         if (!current) return { ok: false, message: 'No organisation is open.' };
         if (!STUDIO_COLOUR_KEYS.every((key) => isThemeHex(values[key] ?? ''))) {
@@ -355,13 +443,14 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         }
 
         const gen = generation;
+        if (!await confirmed(confirm, gen)) return CANCELLED;
+
         savingColours.value = true;
 
         try {
             await ApiService.post(`/api/admin/masjids/${current.org.id}/theme`, body);
             if (gen === generation) {
-                pendingColours.value = {};
-                await fetchSnapshot(current.org.id);
+                await fetchSnapshot(current.org.id, () => applySavedColours(values));
             }
             return { ok: true, data: null };
         } catch (failure) {
@@ -373,9 +462,10 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
 
     /**
      * Rebuild the favicon, touch icon and share image from the current logo
-     * (S8). Without `background`, the server takes the saved theme's.
+     * (S8), after `confirm`. Without `background`, the server takes the saved
+     * theme's.
      */
-    async function regenerateBrandAssets(background?: string): Promise<Outcome<StudioBrandAssets>> {
+    async function regenerateBrandAssets(confirm: Confirm, background?: string): Promise<Outcome<StudioBrandAssets>> {
         const current = snapshot.value;
         if (!current) return { ok: false, message: 'No organisation is open.' };
 
@@ -383,12 +473,15 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         if (background) body.append('background_color', background);
 
         const gen = generation;
+        if (!await confirmed(confirm, gen)) return CANCELLED;
+
         regenerating.value = true;
 
         try {
             const res = await ApiService.post(`/api/admin/masjids/${current.org.id}/brand-assets/regenerate`, body);
-            if (gen === generation) await fetchSnapshot(current.org.id);
-            return { ok: true, data: res.data.data as StudioBrandAssets };
+            const assets = res.data.data as StudioBrandAssets;
+            if (gen === generation) await fetchSnapshot(current.org.id, () => applySavedAssets(assets));
+            return { ok: true, data: assets };
         } catch (failure) {
             return { ok: false, message: serverMessage(failure, 'The images could not be regenerated.') };
         } finally {
@@ -401,7 +494,7 @@ export const useStudioOrganisationStore = defineStore("studioOrganisationStore",
         featureEntries, pendingCapabilities, capabilityChanges, setCapability, discardCapabilities,
         savedColours, pendingColours, colours, changedColours, coloursComplete, setColour, discardColours,
         hasUnsavedChanges, discardAll,
-        preview, previewQueued, previewLoading, previewError, refreshPreview,
+        preview, previewQueued, previewLoading, previewError, previewColoursIncomplete, refreshNotice, refreshPreview,
         savingFeatures, saveFeatures,
         savingColours, saveColours,
         regenerating, regenerateBrandAssets,

@@ -316,6 +316,8 @@ export type StudioPreview = {
             tabs: string[];
             /** `parts`: which of an item's modules are on (AppMenu::sections, `parts: array<string, bool>`). */
             sections: { key: string; items: { key: string; legacy_feature_id: number | null; parts?: Record<string, boolean> }[] }[];
+            /** Live organisations only, and only while /menu is killed: the phone builds its menu from /features. */
+            source?: 'features';
         };
         android: { tabs: string[] };
     };
@@ -323,6 +325,8 @@ export type StudioPreview = {
         preset: string | null;
         locale: string;
         pages: StudioPlanPage[];
+        /** Live organisations only: the slug of the page the site serves at `/`, null when it serves none. Absent for a draft, whose first page is home. */
+        home_slug?: string | null;
         theme_layout: Record<string, unknown> | null;
         preset_source: 'draft' | 'default' | 'live';
         approved: boolean;

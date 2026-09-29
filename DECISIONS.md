@@ -4478,3 +4478,71 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+Point's review follow-ups (2026-09-28). Every change is on the live-organisation path
+(`PreviewInput::fromMasjid`, the live cards and store); the draft preview's output is unchanged.
+
+1. **A live organisation's missing or invalid colour is drawn as the site draws it now, not in
+   greys.** With a theme row the renderer is served `DesignTokens::resolve()` (SettingController ->
+   ThemeSettingResource `tokens`), so `DesignTokens::DEFAULTS` (now public) is the one source for the
+   fill: primary `#01B151`, secondary `#0B7A3B`, accent `#F2B705`, background `#FFFFFF`. With no theme
+   row at all the settings carry `theme: null`, `tenantThemeVars` returns `[]`, and the stylesheet's
+   `:root` defaults show (burlington-masjid-site main, `app/assets/css/index.css` and
+   `app/utils/tenantTheme.ts`): `#01b151`, `#1b1b2e`, `#ffba63`, `#f3f8fb`, held in
+   `PreviewInput::SITE_STYLESHEET_COLOURS`. R25 (a colour missing from a DRAFT gives no palette) is
+   unchanged for drafts. A live organisation's `palette`, `web_tokens` and `platform_contrast` are
+   therefore never null. Tests: a live org missing one colour and holding an invalid one; an org with
+   no theme row.
+2. **(a) The iOS frame follows the `/menu` kill switch.** While the kill row is set `/menu` answers 404
+   and the phone builds its menu from the stored `/features` rows (iOS `LegacyMenuAdapter.menu`,
+   NewMasjidSystem `Masjid/Models/Menu/LegacyMenuAdapter.swift`, read at 27ab75e on
+   feat/studio-s16-generation-pr; the shipped build's tab gate, `MainTabView.swift` on main, is the same
+   ids 10, 11, 6 with `isAvailable == 1`). The frame then draws Home plus the registry tabs whose row is
+   available, in bar order, with NO fallback bar (nothing available is Home alone), and the drawer from
+   the same rows without `parts`. `app.ios.source: "features"` marks it (present only then, live only)
+   and the preview column says so. The kill row is read through `AppMenu::killSwitchRow()`, not
+   `killed()`, because `killed()` writes to the cache store and a preview writes nothing; it fails open
+   the same way. Candidate switches do not move it: the phone reads rows and Save writes switches.
+   **(b) The web frame opens on the page the site serves at `/`.** The renderer's rule
+   (`app/pages/index.vue` reads `getPageBySlug('home')` over `GET /pages`, which serves active pages
+   only) is the page whose slug is `home` AND is active; there is no "first page" rule. `web.home_slug`
+   (live only) names it or is null, and the frame opens on it, never on an inactive page listed first,
+   and says the front page is blank when there is none. A draft has no `home_slug` and still opens on
+   its first page. Tests: PHP for both; `openingPage` in `studio-site-pages.test.ts`.
+3. **A half-typed colour is not previewed as the unsaved changes.** The preview is sent the colours only
+   when all four are a colour the theme takes, so a partial edit drew the saved ones under the "with
+   your unsaved changes" caption. The store now exposes `previewColoursIncomplete`; the caption then says
+   the mockup is the saved colours (the switch changes still apply), and the Brand card marks the contrast
+   report out of date through S9-5's `stale`. Tested on the real store.
+4. **`fetchSnapshot` has its own sequence guard** (`snapshotSeq`), so a late answer from an older read
+   cannot overwrite a newer one of the same organisation (the generation only separates organisations).
+   A save whose re-read fails now says "Saved, but couldn't refresh. Reload to see the latest." with a
+   Reload button (`refreshNotice`, not the load error) and shows the saved values: the switches, the
+   colours and the images are applied to the snapshot from what was sent, instead of clearing the pending
+   values and reverting the screen. Tested on the real store.
+5. **Android: the Play production build does not build its tabs from `/features` at all.** Production is
+   Play versionCode 13 (2.8.1; T4's note, and `HANDOFF.md` "vc13 shipped, sole production release" in
+   burlington-masjid-Android), built from commit `8579eee` (`app/build.gradle:17-18` versionCode 13; no
+   `app/` change between it and the handoff commit `5f1aa80`). Its `BottomBar` lists Home, Announcement,
+   ContactUs and Donate unconditionally
+   (`app/src/main/java/com/app/masajid/ui/views/bottomBar/BottomBar.kt:28-33`); only the drawer reads
+   the available rows (`MenuViewModel.kt:36-38`). So a live organisation's Android frame now draws those
+   four whatever its switches or stored rows say (`StudioPreview::androidTabs`), and the column says so.
+   The earlier "eligible ids, fallback when none is available" behaviour belongs to later builds that are
+   not on production: vc14 (tag `play-vc14-2.9.0`, `BottomBar.kt:121-138`) gates the three tabs on the
+   available ids 10, 11, 6 and draws the four when NO row of any id is available, and vc15 (tag
+   `play-vc15-2.9.1`, `ui/shell/BottomTabs.kt:41-46`) draws Home alone when none is known. When
+   production moves to one of them this is the one function to change. The draft's Android tabs are
+   unchanged (a new organisation's app is a new build).
+6. **The confirm gate is now the store's, so it can be tested.** Each writer (`saveFeatures`,
+   `saveColours`, `regenerateBrandAssets`) takes a `confirm` and sends nothing unless it resolves `true`
+   (a thrown or non-`true` answer is a no, and an answer given after another organisation was opened
+   writes nothing). Approach per part: (a) real store tests in `studio-organisation-store.test.ts` (the
+   store is bundled with esbuild under node by `tests/helpers/organisationStoreHarness.ts`, with
+   only ApiService and the draft store's constant swapped), plus anchored source assertions in
+   `StudioSpaSourceTest` for what node cannot run, the card that supplies the dialog (each call is
+   pinned at both ends, so deleting the dialog or answering `async () => true` fails, and each writer
+   has one call site); (b) real tests: the older preview answer and a preview for the previous
+   organisation are dropped; (c) real tests: the untouched colours are shown, previewed and saved
+   exactly as stored (`#fa0`, `#0A3D62FF`). Each of these was checked by deleting its target from the store
+   and seeing a test fail. The PHP tests written here have not been run (no PHP on this machine).

@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buttonPages, menuPages } from '../core/studio/sitePages.ts';
+import { buttonPages, menuPages, openingPage } from '../core/studio/sitePages.ts';
 
 const page = (slug: string, extra: Record<string, unknown> = {}) => ({
     slug,
@@ -32,4 +32,16 @@ test('menu pages keep the planned order, leave out hidden pages, and leave the b
 
 test('an inactive page is never a button either', () => {
     assert.deepEqual(buttonPages([page('cta', { show_as_button: true, is_active: false })]), []);
+});
+
+test('a draft opens on the first page it plans', () => {
+    assert.equal(openingPage([page('welcome'), page('about')])?.slug, 'welcome');
+    assert.equal(openingPage([]), null);
+});
+
+test('a live organisation opens on the home page the site serves, never an inactive one listed first', () => {
+    const pages = [page('promo', { is_active: false }), page('about'), page('home')];
+    assert.equal(openingPage(pages, 'home')?.slug, 'home');
+    assert.equal(openingPage(pages, null), null, 'the site serves no home page, so nothing opens');
+    assert.equal(openingPage([page('home', { is_active: false })], 'home'), null, 'a home page switched off is not served');
 });

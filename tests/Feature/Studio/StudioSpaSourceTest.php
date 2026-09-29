@@ -476,7 +476,7 @@ class StudioSpaSourceTest extends TestCase
             '/const changes = computed<Record<string, boolean>>\(\(\) => \{.*?if \(entry\.writer === \'capability\' && typeof pending === \'boolean\' && pending !== entry\.enabled\) \{\s*out\[entry\.key\] = pending;/s',
             $card
         );
-        $this->assertMatchesRegularExpression('/const sent = \{ \.\.\.changes\.value \};.*?await store\.saveFeatures\(sent\)/s', $card);
+        $this->assertMatchesRegularExpression('/const sent = \{ \.\.\.changes\.value \};.*?await store\.saveFeatures\(sent,/s', $card);
         $this->assertStringNotContainsString('ApiService', $card, 'the card saves through the store');
 
         // Column-backed entries are read-only, in the switch panel's words, and
@@ -490,6 +490,50 @@ class StudioSpaSourceTest extends TestCase
         // Step 1's row and layout, reused rather than copied.
         $this->assertStringContainsString("import FeatureRow from '@/components/super/studio/steps/FeatureRow.vue';", $card);
         $this->assertStringContainsString('featureGroups(', $card);
+    }
+
+    #[Test]
+    public function the_three_live_writers_are_reached_only_through_a_confirm_that_asks_the_operator(): void
+    {
+        // The store's own behaviour (no writer sends before its confirm is accepted, a stale answer is dropped,
+        // colours go back as stored) is run for real in resources/vue-app/tests/studio-organisation-store.test.ts.
+        // What a node test cannot run is the card that supplies the confirm, so these assertions pin it. Each is
+        // anchored at both ends (the call, and `.isConfirmed)` closing it), so deleting the dialog, or answering
+        // `async () => true`, fails them; a lazy pattern between two loose anchors would not.
+        $files = $this->studioFiles();
+        $store = $files['stores/super/studioOrganisationStore.ts'];
+
+        $callers = [
+            'saveFeatures' => ['components/super/studio/live/LiveFeaturesCard.vue', 'sent'],
+            'saveColours' => ['components/super/studio/live/LiveBrandCard.vue', 'values'],
+            'regenerateBrandAssets' => ['components/super/studio/live/LiveBrandCard.vue', null],
+        ];
+
+        foreach ($callers as $writer => [$card, $first]) {
+            $this->assertArrayHasKey($card, $files);
+
+            $arguments = $first === null ? '' : preg_quote($first, '/') . ', ';
+            $this->assertMatchesRegularExpression(
+                '/await store\.' . $writer . '\(' . $arguments . 'async \(\) => \(await QSwal\.fire\(\{\s*icon: \'warning\',.*?\}\)\)\.isConfirmed\);/s',
+                $files[$card],
+                "{$card} must call store.{$writer}() with a confirm that fires the dialog and returns whether it was accepted"
+            );
+
+            // No other file reaches the writer.
+            $callSites = 0;
+            foreach ($files as $relative => $code) {
+                $callSites += preg_match_all('/\bstore\.' . $writer . '\(/', $code);
+            }
+            $this->assertSame(1, $callSites, "store.{$writer}() is called from one place, the card that asks first");
+
+            // In the store, the confirm comes before anything is sent.
+            $body = $this->functionBody($store, $writer);
+            $this->assertMatchesRegularExpression('/if \(!await confirmed\(confirm, gen\)\) return CANCELLED;.*ApiService\.(?:patch|post)\(/s', $body, "{$writer}() must ask before it sends");
+            $this->assertSame(1, preg_match_all('/ApiService\.(?:patch|post)\(/', $body), "{$writer}() sends in one place");
+        }
+
+        // The confirm accepts only a strict true, given for the organisation still open.
+        $this->assertMatchesRegularExpression('/yes = \(await confirm\(\)\) === true;.*return yes && gen === generation;/s', $store);
     }
 
     /** The body of `async function NAME(` … up to the next function at the same indent. */

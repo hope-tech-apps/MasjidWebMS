@@ -37,7 +37,7 @@
             fails before it saves.
         </p>
         <PaletteReport :report="store.preview?.palette ?? null" :loading="store.previewQueued || store.previewLoading" :error="store.previewError"
-            :stale="!!store.previewError" />
+            :stale="!!store.previewError || store.previewColoursIncomplete" />
 
         <div class="d-flex flex-wrap align-items-center gap-2">
             <button type="button" class="btn btn-success" :disabled="!canSave" @click="saveColours">
@@ -154,21 +154,19 @@ async function saveColours() {
         sentences.push(`${failing.length === 1 ? 'One text pair fails' : `${failing.length} text pairs fail`} the contrast check and will be hard to read: ${failing.join('; ')}. Save anyway?`);
     }
 
-    const answer = await QSwal.fire({
+    colourFailure.value = null;
+    coloursSaved.value = null;
+
+    // The store asks before it sends anything, so the confirm cannot be skipped from here.
+    const result = await store.saveColours(values, async () => (await QSwal.fire({
         icon: 'warning',
         titleText: `Save these colours for ${orgName.value}?`,
         html: dialogHtml(sentences, items),
         confirmButtonText: failing?.length ? 'Save anyway' : 'Save colours',
         cancelButtonText: 'Not yet',
-    });
-    if (!answer.isConfirmed) return;
-
-    colourFailure.value = null;
-    coloursSaved.value = null;
-
-    const result = await store.saveColours(values);
+    })).isConfirmed);
     if (!result.ok) {
-        colourFailure.value = result.message;
+        if (!result.cancelled) colourFailure.value = result.message;
         return;
     }
     coloursSaved.value = 'Colours saved. The live website and apps now use them.';
@@ -192,21 +190,18 @@ async function regenerate() {
         sentences.push('They are made with the saved background colour, not the unsaved one on this screen.');
     }
 
-    const answer = await QSwal.fire({
+    regenerateFailure.value = null;
+    regenerated.value = null;
+
+    const result = await store.regenerateBrandAssets(async () => (await QSwal.fire({
         icon: 'warning',
         titleText: current.has_derivatives ? 'Replace the three images?' : `Add the three images to ${org}?`,
         html: dialogHtml(sentences),
         confirmButtonText: current.has_derivatives ? 'Replace them' : 'The owner agreed: add them',
         cancelButtonText: 'Not now',
-    });
-    if (!answer.isConfirmed) return;
-
-    regenerateFailure.value = null;
-    regenerated.value = null;
-
-    const result = await store.regenerateBrandAssets();
+    })).isConfirmed);
     if (!result.ok) {
-        regenerateFailure.value = result.message;
+        if (!result.cancelled) regenerateFailure.value = result.message;
         return;
     }
     regenerated.value = 'Regenerated. The new images are shown above.';
