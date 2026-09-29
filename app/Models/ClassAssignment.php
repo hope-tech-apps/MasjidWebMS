@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use App\Support\SubjectKey;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -58,21 +59,76 @@ class ClassAssignment extends Model
         self::SCALE_SIMPLE,
     ];
 
+    /*
+     * What KIND of work it is (T-001.2), for the class's weights. PHP constants,
+     * never a DB enum: a sixth type is a write, not an ALTER TABLE. NULL is
+     * "no type", which is every piece of work set before types existed.
+     */
+    public const TYPE_QUIZ = 'quiz';
+    public const TYPE_HOMEWORK = 'homework';
+    public const TYPE_TEST = 'test';
+    public const TYPE_CLASSWORK = 'classwork';
+    public const TYPE_OTHER = 'other';
+
+    public const TYPES = [
+        self::TYPE_TEST,
+        self::TYPE_QUIZ,
+        self::TYPE_HOMEWORK,
+        self::TYPE_CLASSWORK,
+        self::TYPE_OTHER,
+    ];
+
+    /** The words a screen prints; served with the payload so no client re-spells them. */
+    public const TYPE_LABELS = [
+        self::TYPE_TEST => 'Test',
+        self::TYPE_QUIZ => 'Quiz',
+        self::TYPE_HOMEWORK => 'Homework',
+        self::TYPE_CLASSWORK => 'Classwork',
+        self::TYPE_OTHER => 'Other',
+    ];
+
     protected $fillable = [
         'masjid_id',
         'group_id',
         'created_by_user_id',
         'title',
+        'subject',
+        'type',
+        'weight',
+        'standard_code',
+        'curriculum_focus',
+        'curriculum_week_no',
         'points_possible',
         'scale',
         'assigned_on',
     ];
+
+    /**
+     * `subject_key` is plumbing derived from `subject` on every save, and is not
+     * something a screen reads or a client sends.
+     */
+    protected $hidden = [
+        'subject_key',
+    ];
+
+    protected static function booted(): void
+    {
+        // Here, not in the controller, so every writer (the teacher API, a
+        // console session, a seeder) lands on the same key. A subject that is
+        // only whitespace is no subject: it becomes NULL and keys as ''.
+        static::saving(function (ClassAssignment $work): void {
+            $work->subject = SubjectKey::clean($work->subject);
+            $work->subject_key = SubjectKey::for($work->subject);
+        });
+    }
 
     protected function casts(): array
     {
         return [
             'assigned_on' => 'date',
             'points_possible' => 'integer',
+            'weight' => 'integer',
+            'curriculum_week_no' => 'integer',
         ];
     }
 
