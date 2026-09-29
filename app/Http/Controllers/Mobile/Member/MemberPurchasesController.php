@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Mobile\Member;
 
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
+use App\Models\Donation;
 use App\Services\Member\MemberPurchaseProjector;
 use App\Services\Member\MemberPurchases;
+use App\Services\Receipts\DonationReceiptPdfService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -39,10 +41,28 @@ use Symfony\Component\HttpFoundation\Response;
  * someone else, which is a disclosure about a named person's spending. The routes carry no
  * `where` constraints for the same reason: a router 404 has a different body from this one.
  *
+ * ---------------------------------------------------------------------------
+ * GIFTS AND THEIR RECEIPTS
+ * ---------------------------------------------------------------------------
+ * A gift is theirs by `contact_id` alone, and only a succeeded one. Its receipt document
+ * has no owner column of its own: ownership is receipt, then donation, then
+ * `donations.contact_id`, which is what MemberPurchases::findGift() asks, so the PDF is
+ * reachable for exactly the gifts the list shows and no others. The admin download
+ * (DonationsController::receiptPdf) renders the same stored row through the same service;
+ * the ownership check and the headers are the family report card's (routes/family.php,
+ * ReportCardsController::pdf), with the admin download's `no-store` added because this is
+ * a tax document naming a donor. A bearer token cannot ride a link, so a client fetches it
+ * as a blob, as the family portal does.
+ *
+ * Meal, form and cart purchases have no receipt document at all, and an imported Wix gift
+ * is never given one (ReceiptService); the payloads say so in one field rather than showing
+ * an empty space where a document should be.
+ *
  * Nothing here writes. The portal does not offer to delete an order or a gift; erasing a
  * record the office keeps is an office act (MemberAccountDeletion).
  *
- * Pinned by tests/Feature/Member/MemberOrdersTest.php.
+ * Pinned by tests/Feature/Member/MemberOrdersTest.php and
+ * tests/Feature/Member/MemberGiftsAndReceiptsTest.php.
  */
 class MemberPurchasesController extends Controller
 {
@@ -53,6 +73,7 @@ class MemberPurchasesController extends Controller
     public function __construct(
         private MemberPurchases $purchases,
         private MemberPurchaseProjector $projector,
+        private DonationReceiptPdfService $receiptPdfs,
     ) {
     }
 
@@ -104,6 +125,57 @@ class MemberPurchasesController extends Controller
             $model,
             $this->purchases->timezoneFor($contact)
         ));
+    }
+
+    /**
+     * GET me/gifts — this member's succeeded donations, newest first, one page at a time.
+     *
+     * Every kind of gift is here: Stripe, offline and imported Wix history. The order is the
+     * admin ledger's (the gift's own date, else when it was entered), with the id as the
+     * tie-break: donated_at is a DATE, so an imported batch shares one sort key, and under
+     * LIMIT/OFFSET an unordered tie shows a gift on two pages or on none.
+     */
+    public function gifts(Request $request): JsonResponse
+    {
+        $contact = $this->contact($request);
+        $timezone = $this->purchases->timezoneFor($contact);
+
+        $page = $this->purchases->gifts($contact)
+            ->with(['fund', 'receipt'])
+            ->orderByRaw('COALESCE(donations.donated_at, donations.created_at) DESC, donations.id DESC')
+            ->paginate($this->perPage($request))
+            ->through(fn (Donation $gift) => $this->projector->gift($gift, $timezone));
+
+        return $this->ok($page);
+    }
+
+    /**
+     * GET me/receipts/{id}/pdf — the donation receipt as a file to keep.
+     *
+     * `id` is the gift's uuid, which is what `receipt.id` on the list carries. It is resolved
+     * through the caller's own succeeded gifts, so someone else's gift, another
+     * organisation's, a gift that never succeeded, one with no receipt, an imported Wix gift
+     * and a junk handle are all the same 404. Nothing is issued or recomputed: the PDF is
+     * rendered from the stored receipt row, as the admin download renders it.
+     */
+    public function receiptPdf(Request $request, $masjid_id, string $id): Response
+    {
+        $gift = $this->purchases->findGift($this->contact($request), $id);
+
+        // An imported Wix gift never has a Manara receipt, whatever a stray row says.
+        $receipt = $gift === null || $gift->isHistorical() ? null : $gift->receipt;
+
+        if ($receipt === null) {
+            return $this->notFound('receipt');
+        }
+
+        return response($this->receiptPdfs->pdfFor($receipt), Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $this->receiptPdfs->filename($receipt) . '"',
+            // A tax document naming a donor: never cached by a proxy, never written to disk
+            // by the browser.
+            'Cache-Control' => 'private, no-store',
+        ]);
     }
 
     // ------------------------------------------------------------------ guts

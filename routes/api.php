@@ -312,13 +312,25 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                 | No `where` constraint on {source} or {id}: MemberPurchasesController turns
                 | a junk handle, an unknown source, a miss and someone else's order into ONE
                 | 404, and a router 404 would be a second, different one.
+                |
+                | The gifts and the receipt PDF are in the same group: a gift is the member's
+                | by `contact_id`, and its receipt by the gift it belongs to.
                 */
                 Route::prefix('/me')
                     ->controller(MemberPurchasesController::class)
-                    ->middleware('throttle:30,1,member-portal')
                     ->group(function () {
-                        Route::get('/orders', 'orders');
-                        Route::get('/orders/{source}/{id}', 'order');
+                        Route::middleware('throttle:30,1,member-portal')->group(function () {
+                            Route::get('/orders', 'orders');
+                            Route::get('/orders/{source}/{id}', 'order');
+                            Route::get('/gifts', 'gifts');
+                        });
+
+                        // The receipt PDF is the heavy read (dompdf renders it on every
+                        // call), so it is on the budget of the money verbs beside it, and on
+                        // a bucket of its own: fetching a few receipts must not lock the
+                        // screens that list them.
+                        Route::middleware('throttle:20,1,member-receipt')
+                            ->get('/receipts/{id}/pdf', 'receiptPdf');
                     });
             });
 
