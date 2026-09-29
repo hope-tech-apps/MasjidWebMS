@@ -9,6 +9,8 @@ use App\Models\LessonPlan;
 use App\Models\LessonPlanResource;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
+use App\Support\SubjectFence;
+use App\Support\SubjectKey;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -38,6 +40,13 @@ use Symfony\Component\HttpFoundation\Response;
  *     screen still open saves where they expect to (see save()). The day view
  *     does not use it: "copy to the rest of this week" writes each day's plan
  *     by id, or creates one.
+ *
+ * THE SUBJECT FENCE (2026-09-29). A teacher whose assignment to the class lists
+ * subjects sees and writes only the plans in subjects they teach
+ * (App\Support\SubjectFence). A plan with NO subject is the day's general plan and
+ * stays open to every teacher of the class: it has been first-class since the
+ * feature shipped, BISS writes nothing else, and fencing it would strand every
+ * plan that exists. The office reads through the admin realm and is never fenced.
  *
  * `teacher.leads` has already answered "may this teacher touch this class"
  * before any method here runs. A plan id is always resolved THROUGH that class
@@ -73,6 +82,15 @@ class LessonPlanController extends TeacherController
             ->orderBy('id')
             ->with('attachments.groupResource')
             ->get();
+
+        // The subject fence, applied in PHP rather than SQL: `lesson_plans.subject_key`
+        // keeps its own older derivation (see App\Support\SubjectKey), so the
+        // fence compares the folded key of each plan's subject instead.
+        $limits = $this->limits($group);
+
+        if ($limits !== null) {
+            $plans = $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+        }
 
         return response()->json([
             'status' => 'success',
@@ -169,6 +187,7 @@ class LessonPlanController extends TeacherController
     {
         $group = Group::findOrFail($group_id);
         $plan = $group->lessonPlans()->findOrFail($plan_id);
+        $this->fence($group, $plan->subject);
 
         $date = $plan->session_date->toDateString();
         $plan->delete();
@@ -212,6 +231,14 @@ class LessonPlanController extends TeacherController
             ], Response::HTTP_CONFLICT);
         }
 
+        // "The day's plan" is the single plan there is; a limited teacher may not
+        // remove it if it is another subject's.
+        $only = (clone $onDay)->first();
+
+        if ($only !== null) {
+            $this->fence($group, $only->subject);
+        }
+
         $onDay->delete();
 
         return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
@@ -225,6 +252,15 @@ class LessonPlanController extends TeacherController
     private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
     {
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+
+        // The subject fence, on the plan AS IT IS (a limited teacher cannot
+        // rewrite another subject's plan, whichever verb reached it) and on what
+        // it is becoming (nor move their own into a subject they do not teach).
+        if ($plan->exists) {
+            $this->fence($group, $plan->subject);
+        }
+
+        $this->fence($group, $request->validated('subject'));
 
         // The whole object, every time. The request declares every template
         // field `nullable` rather than `sometimes` precisely so that an omitted
@@ -396,6 +432,34 @@ class LessonPlanController extends TeacherController
         $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
 
         return $plans->count() === 1 ? $plans->first() : null;
+    }
+
+    /** @return list<string>|null  what the signed-in teacher is limited to here, NULL for all */
+    private function limits(Group $group): ?array
+    {
+        return SubjectFence::limitsFor(Auth::user(), (int) $group->id);
+    }
+
+    /**
+     * May a teacher with these limits read or write a plan filed under `$subject`?
+     * No subject is the day's general plan, which is nobody's to refuse.
+     *
+     * @param  list<string>  $limits
+     */
+    private function mayTouch(array $limits, ?string $subject): bool
+    {
+        return SubjectKey::clean($subject) === null
+            || SubjectFence::allows($limits, SubjectKey::for($subject));
+    }
+
+    /** Refuse, in the fence's own words, a plan in a subject this teacher does not teach. */
+    private function fence(Group $group, ?string $subject): void
+    {
+        $limits = $this->limits($group);
+
+        if ($limits !== null && ! $this->mayTouch($limits, $subject)) {
+            SubjectFence::refuse($subject);
+        }
     }
 
     /**

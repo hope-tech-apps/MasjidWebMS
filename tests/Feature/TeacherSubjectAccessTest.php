@@ -2,13 +2,20 @@
 
 namespace Tests\Feature;
 
+use App\Models\AssignmentScore;
+use App\Models\ClassAssignment;
+use App\Models\ClassGradeWeight;
 use App\Models\Contact;
+use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupStaff;
+use App\Models\LessonPlan;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
+use App\Models\SchoolSubject;
 use App\Models\User;
+use App\Support\SubjectFence;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -21,6 +28,12 @@ use Tests\TestCase;
  * access specific to the subject they're teaching." Arabic owns the letters and
  * the daily Arabic notes; Qur'an owns hifdh; Islamic Studies owns neither. Every
  * other part of a class belongs to whoever teaches it at all.
+ *
+ * Extended 2026-09-29 (W3): the same promise now reaches LESSON PLANS and the
+ * GRADEBOOK. A BISS teacher limited to Qur'an used to list, set, edit and mark
+ * Arabic work, because grades sat outside both fences. They cannot now, and the
+ * office (which reads the same controllers through the admin realm) still sees
+ * everything.
  *
  * Refused on the SERVER, not only hidden: a hidden tab is not a boundary. And an
  * assignment with no subjects recorded teaches everything, because that is every
@@ -146,6 +159,570 @@ class TeacherSubjectAccessTest extends TestCase
 
         $this->getJson($this->url('/letters'))->assertOk();
         $this->getJson($this->url('/hifz'))->assertOk();
+    }
+
+    // ============================================================ LESSON PLANS
+
+    #[Test]
+    public function a_quran_teacher_lists_only_the_plans_in_subjects_they_teach_and_the_general_plan(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->toDateString();
+
+        foreach ([
+            null, "Qur'an", 'Qur’an & Islamic Studies', 'Arabic Language', 'Islamic Studies', 'Mathematics',
+        ] as $subject) {
+            $this->plan($day, $subject);
+        }
+
+        $subjects = collect($this->getJson($this->url('/lesson-plans?from='.$day.'&to='.$day))
+            ->assertOk()->json('data.plans'))->pluck('subject')->all();
+
+        // The general plan (no subject) stays: fencing it would strand every plan
+        // BISS has. The combined guide column belongs to both staff subjects.
+        $this->assertEqualsCanonicalizing([null, "Qur'an", 'Qur’an & Islamic Studies'], $subjects);
+    }
+
+    #[Test]
+    public function an_unrestricted_teacher_lists_every_plan(): void
+    {
+        $this->assign(null);
+        $day = now()->toDateString();
+        foreach ([null, "Qur'an", 'Arabic Language', 'Mathematics'] as $subject) {
+            $this->plan($day, $subject);
+        }
+
+        $this->assertCount(4, $this->getJson($this->url('/lesson-plans?from='.$day.'&to='.$day))->assertOk()->json('data.plans'));
+    }
+
+    #[Test]
+    public function a_quran_teacher_cannot_write_a_plan_in_another_subject(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+
+        $this->postJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => 'Arabic Language', 'body' => 'Alif.'])
+            ->assertForbidden()
+            ->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
+
+        $this->postJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => 'Mathematics', 'body' => 'Sums.'])
+            ->assertForbidden();
+
+        $this->assertSame(0, LessonPlan::query()->count());
+
+        $this->postJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Fatiha.'])->assertOk();
+        $this->postJson($this->url('/lesson-plans'), ['session_date' => now()->addDays(2)->toDateString(), 'body' => 'General.'])->assertOk();
+    }
+
+    #[Test]
+    public function a_quran_teacher_cannot_rewrite_move_or_remove_another_subjects_plan(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+        $mine = $this->plan($day, "Qur'an");
+
+        // By id: rewrite and remove.
+        $this->putJson($this->url("/lesson-plans/{$arabic->id}"), ['session_date' => $day, 'subject' => 'Arabic Language', 'body' => 'Hijacked.'])
+            ->assertForbidden();
+        $this->deleteJson($this->url("/lesson-plans/{$arabic->id}"))->assertForbidden();
+
+        // Moving their own plan INTO Arabic is the same refusal.
+        $this->putJson($this->url("/lesson-plans/{$mine->id}"), ['session_date' => $day, 'subject' => 'Arabic Language', 'body' => 'Moved.'])
+            ->assertForbidden();
+
+        $this->assertSame('Body.', $arabic->fresh()->body);
+        $this->assertSame("Qur'an", $mine->fresh()->subject);
+    }
+
+    #[Test]
+    public function the_by_day_save_and_delete_cannot_be_used_to_reach_another_subjects_only_plan(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $arabic = $this->plan($day, 'Arabic Language');
+
+        // The old address falls back to "the day's only plan", which is Arabic's:
+        // it must be refused rather than silently rewritten under a Qur'an label.
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Overwritten.'])
+            ->assertForbidden();
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertForbidden();
+
+        $this->assertSame('Body.', $arabic->fresh()->body);
+        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    #[Test]
+    public function the_office_is_never_fenced_even_when_it_also_holds_a_class_assignment(): void
+    {
+        // An office administrator who is ALSO on the class's staff with one
+        // subject: acting as the office they read everything.
+        $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $this->school->user_id = $admin->id;
+        $this->school->save();
+        $this->class->staff()->attach($admin->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER,
+            'subjects' => [GroupStaff::SUBJECT_QURAN], 'assigned_at' => now(),
+        ]);
+        $day = now()->toDateString();
+        $this->plan($day, 'Arabic Language');
+        $this->plan($day, "Qur'an");
+        ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => 'Arabic quiz',
+            'points_possible' => 10, 'scale' => 'points', 'subject' => 'Arabic Language', 'assigned_on' => $day,
+        ]);
+
+        \Illuminate\Support\Facades\Auth::forgetGuards();
+        app(\App\Support\TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($admin);
+        $base = "/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}";
+
+        $this->assertCount(2, $this->getJson("{$base}/lesson-plans?from={$day}&to={$day}")->assertOk()->json('data.plans'));
+        $this->assertCount(1, $this->getJson("{$base}/assignments")->assertOk()->json('data'));
+    }
+
+    #[Test]
+    public function the_lesson_plan_subject_dropdown_is_limited_the_same_way(): void
+    {
+        foreach (['Mathematics', 'Arabic Language', "Qur'an"] as $name) {
+            SchoolSubject::create(['masjid_id' => $this->school->id, 'name' => $name]);
+        }
+        CurriculumWeek::create([
+            'masjid_id' => $this->school->id, 'grade_label' => '2nd', 'subject' => 'Qur’an & Islamic Studies', 'week_no' => 1, 'focus' => 'x',
+        ]);
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+
+        $base = "/api/teacher/masjids/{$this->school->id}/curriculum?grade=2nd";
+
+        $fenced = $this->getJson($base.'&group_id='.$this->class->id)->assertOk()->json('data.subjects');
+        $this->assertEqualsCanonicalizing(["Qur'an", 'Qur’an & Islamic Studies'], $fenced);
+
+        // Without a class named it is the whole list: reference data, and the
+        // write is the boundary.
+        $all = $this->getJson($base)->assertOk()->json('data.subjects');
+        $this->assertContains('Mathematics', $all);
+    }
+
+    // ================================================================ GRADEBOOK
+
+    #[Test]
+    public function a_quran_teacher_lists_only_quran_work_and_never_untagged_or_other_subjects(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        foreach ([["Qur'an"], ['Qur’an & Islamic Studies'], ['Arabic Language'], ['Islamic Studies'], ['Mathematics'], [null]] as [$subject]) {
+            $this->work($subject ?? 'Untagged', $subject);
+        }
+
+        $titles = collect($this->getJson($this->url('/assignments'))->assertOk()->json('data'))->pluck('title')->all();
+
+        $this->assertEqualsCanonicalizing(["Qur'an", 'Qur’an & Islamic Studies'], $titles);
+    }
+
+    #[Test]
+    public function an_unrestricted_teacher_lists_all_work_including_the_untagged(): void
+    {
+        $this->assign(null);
+        foreach (["Qur'an", 'Arabic Language', null] as $subject) {
+            $this->work($subject ?? 'Untagged', $subject);
+        }
+
+        $this->assertCount(3, $this->getJson($this->url('/assignments'))->assertOk()->json('data'));
+    }
+
+    #[Test]
+    public function a_quran_teacher_cannot_read_edit_withdraw_or_mark_arabic_work(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $arabic = $this->work('Arabic quiz', 'Arabic Language');
+        $scoresUrl = $this->url("/assignments/{$arabic->id}/scores");
+
+        $this->getJson($this->url("/assignments/{$arabic->id}"))
+            ->assertForbidden()->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
+        $this->putJson($this->url("/assignments/{$arabic->id}"), $this->body(['title' => 'Hijacked', 'subject' => 'Arabic Language']))->assertForbidden();
+        $this->deleteJson($this->url("/assignments/{$arabic->id}"))->assertForbidden();
+        $this->putJson($scoresUrl, ['scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 9]]])
+            ->assertForbidden();
+
+        $this->assertSame('Arabic quiz', $arabic->fresh()->title);
+        $this->assertNull(ClassAssignment::query()->find($arabic->id)?->deleted_at);
+        $this->assertSame(0, AssignmentScore::query()->count(), 'a refused mark writes nothing');
+    }
+
+    #[Test]
+    public function untagged_work_is_invisible_to_a_limited_teacher_not_merely_refused(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $old = $this->work('Old work', null);
+
+        $this->getJson($this->url("/assignments/{$old->id}"))->assertNotFound();
+        $this->putJson($this->url("/assignments/{$old->id}/scores"), [
+            'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 5]],
+        ])->assertNotFound();
+        $this->deleteJson($this->url("/assignments/{$old->id}"))->assertNotFound();
+    }
+
+    #[Test]
+    public function a_limited_teacher_must_name_a_subject_they_teach_when_setting_work(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $url = $this->url('/assignments');
+
+        // Leaving it blank is not a way round the fence.
+        $this->postJson($url, $this->body(['title' => 'Blank']))
+            ->assertStatus(422)->assertJsonPath('data.subject.0', 'Choose the subject this work is for.');
+
+        $this->postJson($url, $this->body(['title' => 'Arabic', 'subject' => 'Arabic Language']))->assertForbidden();
+        $this->postJson($url, $this->body(['title' => 'Maths', 'subject' => 'Mathematics']))->assertForbidden();
+        $this->postJson($url, $this->body(['title' => 'Islamic', 'subject' => 'Islamic Studies']))->assertForbidden();
+        $this->assertSame(0, ClassAssignment::query()->count());
+
+        $this->postJson($url, $this->body(['title' => 'Quran', 'subject' => "Qur'an"]))->assertCreated();
+        $this->postJson($url, $this->body(['title' => 'Combined', 'subject' => 'Qur’an & Islamic Studies']))->assertCreated();
+        $this->assertSame(2, ClassAssignment::query()->count());
+    }
+
+    #[Test]
+    public function a_limited_teacher_cannot_move_their_own_work_into_another_subject_or_clear_its_subject(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $mine = $this->work('Recitation', "Qur'an");
+        $url = $this->url("/assignments/{$mine->id}");
+
+        $this->putJson($url, $this->body(['title' => 'Recitation', 'subject' => 'Arabic Language']))->assertForbidden();
+        $this->putJson($url, $this->body(['title' => 'Recitation', 'subject' => null]))->assertStatus(422);
+        $this->assertSame("Qur'an", $mine->fresh()->subject);
+
+        // Editing the title without naming the subject keeps it, and works.
+        $this->putJson($url, $this->body(['title' => 'Recitation 2']))->assertOk()->assertJsonPath('data.subject', "Qur'an");
+    }
+
+    #[Test]
+    public function a_teacher_of_two_subjects_gets_work_in_both_and_the_dropdown_offers_only_their_own(): void
+    {
+        foreach (["Qur'an", 'Arabic Language', 'Islamic Studies', 'Mathematics'] as $name) {
+            SchoolSubject::create(['masjid_id' => $this->school->id, 'name' => $name]);
+        }
+        $this->assign([GroupStaff::SUBJECT_QURAN, GroupStaff::SUBJECT_ARABIC]);
+        $this->work('Quran work', "Qur'an");
+        $this->work('Arabic work', 'Arabic Language');
+        $this->work('Islamic work', 'Islamic Studies');
+
+        $body = $this->getJson($this->url('/assignments'))->assertOk()->json();
+
+        $this->assertEqualsCanonicalizing(['Quran work', 'Arabic work'], collect($body['data'])->pluck('title')->all());
+        $this->assertEqualsCanonicalizing(["Qur'an", 'Arabic Language'], array_column($body['subjects'], 'name'));
+        $this->assertNull($body['default_subject'], 'two subjects: the teacher chooses, the form does not guess');
+        $this->assertSame(['quran', 'arabic'], $body['my_subjects']);
+    }
+
+    #[Test]
+    public function a_single_subject_teachers_form_starts_on_their_subject(): void
+    {
+        foreach (["Qur'an", 'Arabic Language', 'Mathematics'] as $name) {
+            SchoolSubject::create(['masjid_id' => $this->school->id, 'name' => $name]);
+        }
+        $this->assign([GroupStaff::SUBJECT_ARABIC]);
+
+        $body = $this->getJson($this->url('/assignments'))->assertOk()->json();
+
+        $this->assertSame('Arabic Language', $body['default_subject']);
+        $this->assertSame(['Arabic Language'], array_column($body['subjects'], 'name'));
+    }
+
+    #[Test]
+    public function a_childs_summary_and_marks_carry_only_the_subjects_the_teacher_teaches(): void
+    {
+        $quran = $this->work("Qur'an recitation", "Qur'an", 10);
+        $arabic = $this->work('Arabic dictation', 'Arabic Language', 10);
+        $this->mark($quran, 8);
+        $this->mark($arabic, 2);
+
+        $grades = fn () => $this->getJson($this->url("/members/{$this->student->id}/grades"))->assertOk()->json('data');
+
+        // Qur'an teacher: the Qur'an mark only, and no trace of the Arabic one
+        // in the totals, the subject blocks or the list.
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $q = $grades();
+        $this->assertEquals(8, $q['summary']['points_earned']);
+        $this->assertEquals(10, $q['summary']['points_possible']);
+        $this->assertSame(1, $q['summary']['recorded']);
+        $this->assertSame(["Qur'an"], array_column($q['summary']['by_subject'], 'subject'));
+        $this->assertSame(["Qur'an recitation"], array_column(array_column($q['scores'], 'assignment'), 'title'));
+        $this->assertStringNotContainsString('Arabic', json_encode($q));
+
+        // The Arabic teacher's picture is the mirror image.
+        GroupStaff::query()->where('group_id', $this->class->id)->update(['subjects' => json_encode([GroupStaff::SUBJECT_ARABIC])]);
+        $a = $grades();
+        $this->assertEquals(2, $a['summary']['points_earned']);
+        $this->assertStringNotContainsString('Qur', json_encode($a));
+
+        // Unrestricted: everything, pooled as always.
+        GroupStaff::query()->where('group_id', $this->class->id)->update(['subjects' => null]);
+        $all = $grades();
+        $this->assertEquals(10, $all['summary']['points_earned']);
+        $this->assertEquals(20, $all['summary']['points_possible']);
+        $this->assertCount(2, $all['summary']['by_subject']);
+    }
+
+    #[Test]
+    public function the_fence_reaches_levels_and_simple_marks_in_a_childs_summary_too(): void
+    {
+        $levels = ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => 'Arabic rubric',
+            'points_possible' => 4, 'scale' => 'levels', 'subject' => 'Arabic Language', 'assigned_on' => now()->toDateString(),
+        ]);
+        $simple = ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => 'Arabic words',
+            'points_possible' => 3, 'scale' => 'simple', 'subject' => 'Arabic Language', 'assigned_on' => now()->toDateString(),
+        ]);
+        $this->mark($levels, 4);
+        $this->mark($simple, 3);
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+
+        $summary = $this->getJson($this->url("/members/{$this->student->id}/grades"))->assertOk()->json('data.summary');
+
+        $this->assertSame(0, $summary['levels']['recorded']);
+        $this->assertNull($summary['levels']['mean']);
+        $this->assertSame(0, $summary['simple']['recorded']);
+        $this->assertSame(0, $summary['recorded']);
+    }
+
+    #[Test]
+    public function the_family_and_the_office_read_every_subject_regardless_of_the_teachers_fence(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $arabic = $this->work('Arabic dictation', 'Arabic Language', 10);
+        $this->mark($arabic, 2);
+
+        // The FAMILY endpoint has no fence: a parent reads their own child's
+        // whole record, whichever teacher wrote it.
+        $parent = Contact::factory()->create([
+            'masjid_id' => $this->school->id, 'login_email' => 'p-'.uniqid().'@test.local', 'login_enabled_at' => now(),
+        ]);
+        GroupMembership::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'contact_id' => $parent->id,
+            'role' => GroupMembership::ROLE_GUARDIAN, 'guardian_of_contact_id' => $this->student->contact_id,
+            'confirmed_at' => now(), 'consent_granted_at' => now(), 'consent_scope' => GroupMembership::CONSENT_MEDIA,
+        ]);
+        \Illuminate\Support\Facades\Auth::forgetGuards();
+        app(\App\Support\TenantContext::class)->forgetTenant();
+
+        $this->withHeader('Authorization', 'Bearer '.$parent->refresh()->createFamilyToken()->plainTextToken)
+            ->getJson("/api/family/masjids/{$this->school->id}/groups/{$this->class->id}/members/{$this->student->id}/grades")
+            ->assertOk()
+            ->assertJsonPath('data.summary.recorded', 1)
+            ->assertJsonPath('data.scores.0.assignment.subject', 'Arabic Language');
+    }
+
+    #[Test]
+    public function a_teacher_of_another_class_is_fenced_by_that_class_not_this_one(): void
+    {
+        // Limited in THIS class, unrestricted in the other: the fence is per
+        // assignment (class, teacher), never a property of the person.
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $other = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => 'Grade 4', 'slug' => 'g4',
+        ]);
+        $other->staff()->attach($this->teacher->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'subjects' => null, 'assigned_at' => now(),
+        ]);
+        ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $other->id, 'title' => 'Arabic there',
+            'points_possible' => 10, 'scale' => 'points', 'subject' => 'Arabic Language', 'assigned_on' => now()->toDateString(),
+        ]);
+
+        $this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$other->id}/assignments")
+            ->assertOk()->assertJsonCount(1, 'data');
+        $this->getJson($this->url('/assignments'))->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    #[Test]
+    public function a_quran_teacher_cannot_refile_another_subjects_work_into_their_own_subject(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $arabic = $this->work('Arabic quiz', 'Arabic Language');
+        $url = $this->url("/assignments/{$arabic->id}");
+
+        // The subject it is BECOMING is one they teach, so the only thing between
+        // them and Arabic's work is the fence on the work AS IT IS.
+        $this->putJson($url, $this->body(['title' => 'Hijacked', 'subject' => "Qur'an", 'points_possible' => 99]))
+            ->assertForbidden()
+            ->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
+        // Naming no subject keeps the existing one, which is Arabic.
+        $this->putJson($url, $this->body(['title' => 'Hijacked', 'points_possible' => 99]))->assertForbidden();
+
+        $arabic->refresh();
+        $this->assertSame('Arabic quiz', $arabic->title);
+        $this->assertSame('Arabic Language', $arabic->subject);
+        $this->assertSame(10, (int) $arabic->points_possible, 'a refused edit writes nothing');
+    }
+
+    #[Test]
+    public function two_teachers_in_one_class_are_each_fenced_by_their_own_row_whichever_row_came_first(): void
+    {
+        $free = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        MasjidUser::create(['masjid_id' => $this->school->id, 'user_id' => $free->id, 'role' => 'teacher', 'is_default' => true]);
+
+        foreach ([true, false] as $limitedFirst) {
+            $class = Group::factory()->create([
+                'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+                'name' => 'Order '.($limitedFirst ? 'A' : 'B'), 'slug' => 'order-'.($limitedFirst ? 'a' : 'b'),
+            ]);
+            $attach = fn (User $u, ?array $subjects) => $class->staff()->attach($u->id, [
+                'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER,
+                'subjects' => $subjects, 'assigned_at' => now(),
+            ]);
+
+            // One class, two staff rows: Qur'an only, and everything.
+            if ($limitedFirst) {
+                $attach($this->teacher, [GroupStaff::SUBJECT_QURAN]);
+                $attach($free, null);
+            } else {
+                $attach($free, null);
+                $attach($this->teacher, [GroupStaff::SUBJECT_QURAN]);
+            }
+
+            foreach ([["Qur'an", 'Qur an work'], ['Arabic Language', 'Arabic work']] as [$subject, $title]) {
+                ClassAssignment::create([
+                    'masjid_id' => $this->school->id, 'group_id' => $class->id, 'title' => $title,
+                    'points_possible' => 10, 'scale' => 'points', 'subject' => $subject, 'assigned_on' => now()->toDateString(),
+                ]);
+            }
+
+            $this->assertSame([GroupStaff::SUBJECT_QURAN], SubjectFence::assigned($class->id, $this->teacher->id));
+            $this->assertNull(SubjectFence::assigned($class->id, $free->id), 'the other row is not this teacher\'s limit');
+
+            $list = function (User $as) use ($class): array {
+                \Illuminate\Support\Facades\Auth::forgetGuards();
+                app(\App\Support\TenantContext::class)->forgetTenant();
+                Sanctum::actingAs($as, ['staff']);
+
+                return collect($this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$class->id}/assignments")
+                    ->assertOk()->json('data'))->pluck('title')->all();
+            };
+
+            $this->assertSame(['Qur an work'], $list($this->teacher), 'the limited teacher reads only Qur\'an, whichever row is first');
+            $this->assertEqualsCanonicalizing(['Qur an work', 'Arabic work'], $list($free), 'the unrestricted teacher is not locked to the other row\'s subjects');
+        }
+    }
+
+    #[Test]
+    public function a_limited_teachers_summary_says_it_counts_only_their_subjects_and_an_unrestricted_one_does_not(): void
+    {
+        $this->mark($this->work("Qur'an recitation", "Qur'an"), 8);
+        $this->mark($this->work('Arabic dictation', 'Arabic Language'), 2);
+        $grades = fn () => $this->getJson($this->url("/members/{$this->student->id}/grades"))->assertOk()->json('data');
+
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->assertTrue($grades()['fenced'], 'the family sees Arabic too, so this teacher\'s figures are a subset and must say so');
+
+        GroupStaff::query()->where('group_id', $this->class->id)->update(['subjects' => null]);
+        $this->assertFalse($grades()['fenced']);
+    }
+
+    #[Test]
+    public function a_limited_teacher_cannot_clear_the_weights_while_another_subjects_work_carries_a_weight_of_its_own(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        $mine = $this->work("Qur'an project", "Qur'an");
+        $arabic = $this->work('Arabic project', 'Arabic Language');
+        $mine->update(['weight' => 20]);
+        $arabic->update(['weight' => 60]);
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])
+            ->assertForbidden();
+
+        $this->assertSame(60, $arabic->fresh()->weight, "the Arabic teacher's weight is not the Qur'an teacher's to erase");
+        $this->assertSame(20, $mine->fresh()->weight);
+        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count(), 'a refused clear writes nothing at all');
+    }
+
+    #[Test]
+    public function untagged_work_with_a_weight_also_blocks_a_limited_teachers_clear(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        // Invisible to this teacher (a 404), so not theirs to un-weight.
+        $this->work('Old work', null)->update(['weight' => 5]);
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])->assertForbidden();
+
+        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function a_limited_teacher_can_clear_the_weights_when_only_their_own_subjects_work_has_one(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        $mine = $this->work("Qur'an project", "Qur'an");
+        $mine->update(['weight' => 20]);
+        $this->work('Arabic project', 'Arabic Language');
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])
+            ->assertOk()
+            ->assertJsonPath('data.cleared_overrides', 1)
+            ->assertJsonPath('data.weighting_enabled', false);
+
+        $this->assertNull($mine->fresh()->weight);
+        $this->assertSame(0, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function setting_the_weights_is_still_open_to_a_limited_teacher(): void
+    {
+        // A class with a teacher per subject (BISS) would otherwise have nobody
+        // who could set them (DECISIONS W3-3e).
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+
+        $this->putJson($this->url('/grade-weights'), ['weights' => [
+            'test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10,
+        ]])->assertOk()->assertJsonPath('data.weighting_enabled', true);
+    }
+
+    private function plan(string $day, ?string $subject): LessonPlan
+    {
+        return LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'session_date' => $day,
+            'subject' => $subject, 'body' => 'Body.',
+        ]);
+    }
+
+    private function work(string $title, ?string $subject, int $outOf = 10): ClassAssignment
+    {
+        return ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => $title,
+            'points_possible' => $outOf, 'scale' => ClassAssignment::SCALE_POINTS, 'subject' => $subject,
+            'assigned_on' => now()->toDateString(),
+        ]);
+    }
+
+    private function mark(ClassAssignment $work, int|float $points): AssignmentScore
+    {
+        return AssignmentScore::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+            'class_assignment_id' => $work->id, 'group_membership_id' => $this->student->id,
+            'status' => 'scored', 'points_earned' => $points,
+        ]);
+    }
+
+    /** @param array<string,mixed> $over */
+    private function body(array $over = []): array
+    {
+        return $over + [
+            'title' => 'Work', 'scale' => 'points', 'points_possible' => 10, 'assigned_on' => now()->toDateString(),
+        ];
+    }
+
+    private function weigh(): void
+    {
+        foreach (['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10] as $type => $weight) {
+            ClassGradeWeight::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'assignment_type' => $type, 'weight' => $weight,
+            ]);
+        }
     }
 
     private function assign(?array $subjects): void

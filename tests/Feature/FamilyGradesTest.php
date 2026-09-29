@@ -199,6 +199,62 @@ class FamilyGradesTest extends TestCase
     }
 
     /**
+     * The levels block has its own join and its own soft-delete filter, separate
+     * from the points block's: a withdrawn rubric must leave `levels` as well as
+     * the points figures, or a parent reads a mean level over work the teacher
+     * took back.
+     */
+    #[Test]
+    public function withdrawn_levels_work_is_absent_from_the_levels_block_too(): void
+    {
+        $kept = $this->levelsWork('Reading rubric');
+        $dropped = $this->levelsWork('Withdrawn rubric');
+        $this->mark($kept, $this->childA, 'scored', 4);
+        $this->mark($dropped, $this->childA, 'scored', 1);
+
+        $dropped->delete();
+
+        $levels = $this->asParent($this->parentA)
+            ->getJson($this->gradesUrl($this->childA))
+            ->assertOk()
+            ->json('data.summary.levels');
+
+        $this->assertSame(1, $levels['counted']);
+        $this->assertSame(1, $levels['recorded']);
+        $this->assertEqualsWithDelta(4.0, (float) $levels['mean'], 0.0001);
+        $this->assertSame(0, collect($levels['distribution'])->firstWhere('level', 1)['count'], 'the withdrawn 1 is not in the distribution');
+    }
+
+    /**
+     * `weight` on a piece of work is its OWN override: null means "inherits the
+     * class's weight for its type". The portal prints "counts N (this work)" only
+     * when it is not null, so a null that arrived as 0 would label every piece of
+     * work "counts 0 (this work)".
+     */
+    #[Test]
+    public function a_pieces_own_weight_arrives_as_its_number_and_no_weight_arrives_as_null(): void
+    {
+        $this->weigh(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $plain = $this->typedWork('Plain quiz', 10, 'quiz', null);
+        $own = ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => 'Big project',
+            'points_possible' => 10, 'scale' => ClassAssignment::SCALE_POINTS, 'type' => 'homework',
+            'weight' => 30, 'assigned_on' => now()->toDateString(),
+        ]);
+        $this->mark($plain, $this->childA, 'scored', 5);
+        $this->mark($own, $this->childA, 'scored', 5);
+
+        $scores = collect($this->asParent($this->parentA)
+            ->getJson($this->gradesUrl($this->childA))
+            ->assertOk()
+            ->json('data.scores'))->keyBy(fn ($s) => $s['assignment']['title']);
+
+        $this->assertNull($scores['Plain quiz']['assignment']['weight'], 'no override is null, never 0');
+        $this->assertSame(30, $scores['Big project']['assignment']['weight']);
+    }
+
+    /**
      * Not-yet-marked is the ABSENCE of a row, never a status and never a zero.
      * A child their teacher has not reached yet has an empty screen, which is
      * the truth, rather than a nought that reads as a mark.
@@ -542,10 +598,18 @@ class FamilyGradesTest extends TestCase
             'data.student.contact'
         );
 
+        // `weighting` and `by_subject` arrive with W3 (T-001.2, T-001.3): the class's
+        // weights applied to THIS child's marks, and this child's marks grouped by
+        // subject. Both are figures about one child; neither carries a class fact.
         $this->assertKeysAre(
-            ['recorded', 'counted', 'excused', 'points_earned', 'points_possible', 'points_counted', 'levels', 'simple'],
+            ['recorded', 'counted', 'excused', 'points_earned', 'points_possible', 'points_counted', 'levels', 'simple', 'weighting', 'by_subject'],
             $body['data']['summary'],
             'data.summary'
+        );
+        $this->assertKeysAre(
+            ['enabled', 'weights', 'percent', 'points_pieces', 'level_mean', 'level_mean_label', 'level_pieces', 'untyped_excluded', 'by_type'],
+            $body['data']['summary']['weighting'],
+            'data.summary.weighting'
         );
         // This child's own count of each word, and deliberately no mean.
         $this->assertKeysAre(
@@ -575,7 +639,7 @@ class FamilyGradesTest extends TestCase
             'data.scores[]'
         );
         $this->assertKeysAre(
-            ['id', 'title', 'points_possible', 'scale', 'assigned_on'],
+            ['id', 'title', 'points_possible', 'scale', 'assigned_on', 'subject', 'type', 'weight', 'standard_code', 'curriculum_focus'],
             $body['data']['scores'][0]['assignment'],
             'data.scores[].assignment'
         );
@@ -677,6 +741,92 @@ class FamilyGradesTest extends TestCase
             $parentSummary,
             'one child has one average; the parent and the teacher must be reading the same one'
         );
+    }
+
+    /**
+     * The parity guarantee, again, for a WEIGHTED class with subjects: the new
+     * `weighting` and `by_subject` blocks are the same arithmetic on both sides,
+     * or a parent and a teacher would read two different averages for one child.
+     */
+    #[Test]
+    public function the_parents_weighted_figures_are_the_ones_the_teacher_sees(): void
+    {
+        $this->weigh(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->mark($this->typedWork('Unit test', 100, 'test', 'Mathematics'), $this->childA, 'scored', 80);
+        $this->mark($this->typedWork('Spelling', 10, 'quiz', 'Reading'), $this->childA, 'scored', 10);
+        $this->mark($this->typedWork('Old work', 10, null, null), $this->childA, 'scored', 5);
+        $this->mark($this->typedWork('Reading rubric', 4, 'test', 'Reading', levels: true), $this->childA, 'scored', 3);
+
+        $teacher = $this->asTeacher()
+            ->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}/members/{$this->childA->id}/grades")
+            ->assertOk()->json('data.summary');
+
+        $parent = $this->asParent($this->parentA)
+            ->getJson($this->gradesUrl($this->childA))
+            ->assertOk()->json('data.summary');
+
+        $this->assertSame($teacher, $parent);
+        $this->assertTrue($parent['weighting']['enabled']);
+        $this->assertNotNull($parent['weighting']['percent'], 'the fixture must actually produce a weighted figure');
+        $this->assertSame(1, $parent['weighting']['untyped_excluded']);
+        $this->assertCount(3, $parent['by_subject'], 'Mathematics, Reading, and the unnamed work');
+    }
+
+    /**
+     * PRIVACY: a weight is a class-wide setting (it is the same for every child),
+     * but the FIGURE it produces is one child's. Two children in one class marked
+     * on the same work, weights on: each parent's weighted average is arithmetically
+     * their own child's and no class total or mean rides along.
+     */
+    #[Test]
+    public function the_weighted_figure_is_this_childs_own_and_never_the_classs(): void
+    {
+        $this->weigh(['test' => 50, 'quiz' => 50, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+        $test = $this->typedWork('Unit test', 10, 'test', 'Mathematics');
+        $quiz = $this->typedWork('Pop quiz', 10, 'quiz', 'Mathematics');
+
+        // A: 10/10 and 0/10 -> 50. B: 10/10 and 10/10 -> 100. Class mean 75.
+        $this->mark($test, $this->childA, 'scored', 10);
+        $this->mark($quiz, $this->childA, 'scored', 0);
+        $this->mark($test, $this->childB, 'scored', 10);
+        $this->mark($quiz, $this->childB, 'scored', 10);
+
+        $a = $this->asParent($this->parentA)->getJson($this->gradesUrl($this->childA))->assertOk();
+        $this->assertEqualsWithDelta(50.0, $a->json('data.summary.weighting.percent'), 0.0001);
+        $this->assertEqualsWithDelta(50.0, $a->json('data.summary.by_subject.0.weighted_percent'), 0.0001);
+        $this->assertSame(2, $a->json('data.summary.weighting.points_pieces'), 'A has two marks, not the four in the class');
+
+        $b = $this->asParent($this->parentB)->getJson($this->gradesUrl($this->childB))->assertOk();
+        $this->assertEqualsWithDelta(100.0, $b->json('data.summary.weighting.percent'), 0.0001);
+
+        // Nothing in either body says 75, or names the other child.
+        $this->assertStringNotContainsString('Bilal', $a->getContent());
+        $this->assertStringNotContainsString('Amina', $b->getContent());
+        foreach (['class_average', 'class_mean', 'rank', 'position', 'roster'] as $classFact) {
+            $this->assertStringNotContainsString('"'.$classFact.'"', $a->getContent());
+        }
+    }
+
+    /** @param array<string,int> $weights */
+    private function weigh(array $weights): void
+    {
+        foreach ($weights as $type => $weight) {
+            \App\Models\ClassGradeWeight::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'assignment_type' => $type, 'weight' => $weight,
+            ]);
+        }
+    }
+
+    private function typedWork(string $title, int $outOf, ?string $type, ?string $subject, bool $levels = false): ClassAssignment
+    {
+        return ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+            'title' => $title, 'points_possible' => $outOf,
+            'scale' => $levels ? ClassAssignment::SCALE_LEVELS : ClassAssignment::SCALE_POINTS,
+            'type' => $type, 'subject' => $subject, 'assigned_on' => now()->toDateString(),
+        ]);
     }
 
     // ---------------------------------------------------------------- helpers

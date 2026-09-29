@@ -8,12 +8,19 @@ use App\Http\Requests\Teacher\StoreClassAssignmentRequest;
 use App\Jobs\SendGroupNotificationJob;
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
+use App\Models\ClassGradeWeight;
 use App\Models\Contact;
+use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Http\Requests\Teacher\SaveGradeWeightsRequest;
+use App\Support\ClassSubjects;
+use App\Support\GradeRecord;
 use App\Support\PerformanceLevel;
 use App\Support\SchoolSettings;
 use App\Support\SimpleMark;
+use App\Support\SubjectFence;
+use App\Support\SubjectKey;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -39,6 +46,20 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * Payloads are built through TeacherController::student(), the realm's
  * names-only boundary.
+ *
+ * ## THE SUBJECT FENCE (2026-09-29)
+ *
+ * A teacher whose assignment to the class lists subjects can list, set, edit,
+ * withdraw and mark ONLY work in those subjects, and reads only those subjects'
+ * marks for a child (App\Support\SubjectFence has the rule and the reasons). The
+ * office reads the same controller through the admin realm and is never fenced.
+ *
+ * ## SUBJECT, TYPE, WEIGHT, STANDARD
+ *
+ * Each piece of work may carry a subject (a snapshot of a name on the school's
+ * list), a type, an optional weight and ONE standard taken from the school's own
+ * pacing guide (never typed free, never invented). `PUT grade-weights` sets the
+ * class's weight per type; App\Support\GradeRecord applies them.
  */
 class GradebookController extends TeacherController
 {
@@ -47,14 +68,20 @@ class GradebookController extends TeacherController
     {
         $group = Group::findOrFail($group_id);
         $org = SchoolSettings::org($masjid_id);
+        $limits = $this->limits($group);
 
         $roster = $group->memberships()->participants()->current()->count();
 
         $assignments = $group->assignments()
             ->withCount('scores')
+            // The subject fence: a limited teacher lists only their own subjects.
+            ->when($limits !== null, fn ($q) => $q->whereIn('subject_key', SubjectFence::allowedKeys($limits)))
             ->orderByDesc('assigned_on')
             ->orderByDesc('id')
             ->get();
+
+        $offered = ClassSubjects::fenced(ClassSubjects::offered($group), $limits);
+        $weights = ClassGradeWeight::forGroup((int) $group->id);
 
         return response()->json([
             'status' => 'success',
@@ -72,14 +99,37 @@ class GradebookController extends TeacherController
             'default_scale' => SchoolSettings::defaultScale($org),
             'scales' => SchoolSettings::gradingScales($org),
             'simple_marks' => SimpleMark::key(),
+            // The vocabulary of the new fields, served rather than hardcoded so
+            // no screen re-spells a type or re-derives what a teacher may pick.
+            'types' => array_map(fn (string $t): array => [
+                'key' => $t, 'label' => ClassAssignment::TYPE_LABELS[$t],
+            ], ClassAssignment::TYPES),
+            // The class's weight per type; `{}` (never `[]`) when unweighted.
+            'weights' => (object) $weights,
+            'weighting_enabled' => $weights !== [],
+            'weight_max' => ClassGradeWeight::MAX,
+            // What THIS teacher may file work under, and where the form starts.
+            'subjects' => $offered,
+            'default_subject' => ClassSubjects::defaultFor($offered, $limits),
+            'my_subjects' => $limits,
+            // Off where the school teaches no pacing guide (BISS): the form hides
+            // the Standard field and the server would not write it.
+            'standards_enabled' => SchoolSettings::showsStandards($org),
         ], Response::HTTP_OK);
     }
 
     public function store(StoreClassAssignmentRequest $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+        $limits = $this->limits($group);
 
-        $assignment = ClassAssignment::create($request->validated() + [
+        $data = $request->validated();
+
+        if ($problem = $this->refuseWork($group, $limits, $data, null)) {
+            return $problem;
+        }
+
+        $assignment = ClassAssignment::create($data + [
             'masjid_id' => $group->masjid_id,
             'group_id' => $group->id,
             'created_by_user_id' => Auth::id(),
@@ -101,7 +151,7 @@ class GradebookController extends TeacherController
     public function show(Request $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $assignment = $group->assignments()->findOrFail($assignment_id);
+        $assignment = $this->work($group, $assignment_id, $this->limits($group));
 
         $students = $group->memberships()
             ->participants()->current()
@@ -148,7 +198,16 @@ class GradebookController extends TeacherController
     public function update(StoreClassAssignmentRequest $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $assignment = $group->assignments()->findOrFail($assignment_id);
+        $limits = $this->limits($group);
+        // Fenced on the work AS IT IS: a Qur'an teacher cannot edit Arabic work.
+        $assignment = $this->work($group, $assignment_id, $limits);
+
+        $data = $request->validated();
+
+        // ...and on what it is becoming: nor move their own work into Arabic.
+        if ($problem = $this->refuseWork($group, $limits, $data, $assignment)) {
+            return $problem;
+        }
 
         // Excellent / Good / Needs work is stored 3/2/1, so moving work onto or
         // off that scale with marks already entered would re-read every "Good"
@@ -188,7 +247,7 @@ class GradebookController extends TeacherController
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $assignment->update($request->validated());
+        $assignment->update($data);
 
         return response()->json([
             'status' => 'success',
@@ -203,7 +262,7 @@ class GradebookController extends TeacherController
     public function destroy(Request $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $assignment = $group->assignments()->findOrFail($assignment_id);
+        $assignment = $this->work($group, $assignment_id, $this->limits($group));
 
         $assignment->delete();
 
@@ -218,7 +277,7 @@ class GradebookController extends TeacherController
     public function saveScores(SaveAssignmentScoresRequest $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $assignment = $group->assignments()->findOrFail($assignment_id);
+        $assignment = $this->work($group, $assignment_id, $this->limits($group));
 
         $allowed = $group->memberships()->participants()->current()->pluck('id');
         $rows = collect($request->validated('scores'));
@@ -349,42 +408,16 @@ class GradebookController extends TeacherController
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
-        // THE AVERAGE IS AGGREGATED IN SQL, OVER EVERY MARK.
+        // THE ARITHMETIC IS App\Support\GradeRecord, the one copy the family's
+        // endpoint calls too: aggregated in SQL over EVERY mark (it used to come
+        // from an unordered `limit(200)`), withdrawn work joined out, the two
+        // scales never added together, a levels mark never a percentage.
         //
-        // It used to be computed from a `limit(200)` with NO ordering applied
-        // before the limit — so past 200 marks a child's average was taken over
-        // an arbitrary database-order subset, with nothing to indicate it. That is
-        // a wrong number on a screen a parent may be shown, which is worse than a
-        // missing one. The join is what keeps withdrawn work out: class_assignments
-        // soft-deletes, so a score can outlive a resolvable parent.
-        // GROUPED BY SCALE AS WELL AS STATUS. A class can hold both kinds of work
-        // — a spelling quiz out of 10 and a rubric marked 1-4 — and adding those
-        // denominators together produces a number that is wrong in a way nobody
-        // can see. The two scales are therefore summarised SEPARATELY and never
-        // combined into one figure.
-        $totals = AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membership->id)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->groupBy('assignment_scores.status', 'class_assignments.scale')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('class_assignments.scale as scale')
-            ->selectRaw('COUNT(*) as n')
-            ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
-            ->selectRaw('SUM(class_assignments.points_possible) as possible')
-            ->get();
-
-        $recorded = (int) $totals->sum('n');
-        $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
-
-        // Points work only. A levels mark must never reach a numerator over a
-        // denominator: 3 out of 4 rendered as 75% turns "Meets Expectations" into
-        // a C, which is precisely what a standards scale exists to stop.
-        $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
-        $earned = (float) $pointRows->sum('earned');
-        $possible = (float) $pointRows->sum('possible');
-
-        $levels = $this->levelSummary($membership->id);
+        // THE SUBJECT FENCE reaches the summary and the list alike: a limited
+        // teacher's picture of a child is arithmetically incapable of containing
+        // a mark in a subject they do not teach.
+        $subjectKeys = SubjectFence::allowedKeys($this->limits($group));
+        $summary = GradeRecord::summaryFor((int) $membership->id, $subjectKeys);
 
         // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
         // "the most recent N" rather than whichever rows the database returned.
@@ -394,6 +427,7 @@ class GradebookController extends TeacherController
             ->where('assignment_scores.group_membership_id', $membership->id)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($subjectKeys !== null, fn ($q) => $q->whereIn('class_assignments.subject_key', $subjectKeys))
             ->orderByDesc('class_assignments.assigned_on')
             ->orderByDesc('class_assignments.id')
             ->select('assignment_scores.*')
@@ -406,21 +440,11 @@ class GradebookController extends TeacherController
             'data' => [
                 'student' => $this->student($membership),
                 // Aggregated over the whole term, never over the page below.
-                'summary' => [
-                    'recorded' => $recorded,
-                    'counted' => (int) $countingRows->sum('n'),
-                    'excused' => (int) $totals->where('status', AssignmentScore::STATUS_EXCUSED)->sum('n'),
-                    // Points work only — see above.
-                    'points_earned' => round($earned, 2),
-                    'points_possible' => round($possible, 2),
-                    'points_counted' => (int) $pointRows->sum('n'),
-                    // Levels work, reported as levels: a distribution and a mean
-                    // level to one decimal. Never a percentage.
-                    'levels' => $levels,
-                    // Excellent / Good / Needs work, reported as a count of each
-                    // word. No mean and no percentage (App\Support\SimpleMark).
-                    'simple' => SimpleMark::summaryFor((int) $membership->id),
-                ],
+                'summary' => $summary,
+                // TRUE when the summary above counts only the subjects this
+                // teacher teaches in the class. The family and the office read
+                // every subject, so the screen must say the two can differ.
+                'fenced' => $subjectKeys !== null,
                 // THE KEY, served with the data rather than hardcoded on each
                 // screen, so "what does a 3 mean?" is answerable everywhere in
                 // the school's own words. See App\Support\PerformanceLevel.
@@ -434,7 +458,7 @@ class GradebookController extends TeacherController
                     'note' => $s->note,
                 ])->values(),
                 'scores_shown' => $scores->count(),
-                'scores_truncated' => $recorded > $scores->count(),
+                'scores_truncated' => $summary['recorded'] > $scores->count(),
             ],
         ], Response::HTTP_OK);
     }
@@ -485,61 +509,6 @@ class GradebookController extends TeacherController
     }
 
     /**
-     * One child's performance levels: how many of each, and the mean.
-     *
-     * Aggregated in SQL over EVERY levels mark for the same reason the points
-     * summary is — a total computed from a page stops being a total the moment
-     * the page fills up.
-     *
-     * `missing` is deliberately EXCLUDED from the mean rather than counted as a
-     * 1. On the points scale, work not handed in scores zero and that is fair:
-     * zero out of ten is a real statement about a real denominator. There is no
-     * equivalent on this scale — 1 is not "nothing", it is "Needs Support",
-     * which is a judgement about a child's understanding that nobody made. So a
-     * missing piece of work is counted and shown, and left out of the average.
-     *
-     * @return array{recorded:int, mean:float|null, mean_label:string|null, missing:int, distribution:array<int, array{level:int, label:string, short_label:string, count:int}>}
-     */
-    private function levelSummary(int $membershipId): array
-    {
-        $rows = AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membershipId)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
-            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
-            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('assignment_scores.points_earned as level')
-            ->selectRaw('COUNT(*) as n')
-            ->get();
-
-        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
-        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
-
-        $counted = (int) $scored->sum('n');
-        $sum = (float) $scored->sum(fn ($r) => (float) $r->level * (int) $r->n);
-        $mean = $counted > 0 ? round($sum / $counted, 1) : null;
-
-        return [
-            'recorded' => $counted + $missing,
-            'counted' => $counted,
-            'missing' => $missing,
-            'mean' => $mean,
-            'mean_label' => PerformanceLevel::labelForMean($mean),
-            // Every level is present even at zero, so the shape of the bar chart
-            // does not change as a child's marks come in, and "no 4s yet" is
-            // visible rather than absent.
-            'distribution' => array_map(fn (int $level): array => [
-                'level' => $level,
-                'label' => PerformanceLevel::label($level),
-                'short_label' => PerformanceLevel::shortLabel($level),
-                'count' => (int) $scored->where('level', $level)->sum('n'),
-            ], PerformanceLevel::ALL),
-        ];
-    }
-
-    /**
      * The WORD for an Excellent / Good / Needs work mark, so no screen turns the
      * stored 3/2/1 back into a word (or a number) itself. Null on every other
      * scale, where the payload has always carried the number alone.
@@ -559,6 +528,234 @@ class GradebookController extends TeacherController
             'points_possible' => (int) $a->points_possible,
             'scale' => $a->scale,
             'assigned_on' => $a->assigned_on->toDateString(),
+            // What the work is FOR. Snapshots: null on work set before they
+            // existed, which is shown as blank and never guessed.
+            'subject' => $a->subject,
+            'type' => $a->type,
+            'type_label' => $a->type !== null ? (ClassAssignment::TYPE_LABELS[$a->type] ?? null) : null,
+            // The piece's OWN override; the class's weight for its type is in
+            // the index payload's `weights`. NULL means "inherit".
+            'weight' => $a->weight !== null ? (int) $a->weight : null,
+            // The school's guide's words, labelled as such on every screen: the
+            // guide carries codes and weekly focus, not the standard's wording.
+            'standard_code' => $a->standard_code,
+            'curriculum_focus' => $a->curriculum_focus,
+            'curriculum_week_no' => $a->curriculum_week_no !== null ? (int) $a->curriculum_week_no : null,
         ];
+    }
+
+    // ---------------------------------------------------------------- weights
+
+    /**
+     * PUT .../grade-weights: set how much each TYPE of work counts for in this
+     * class (one slot in the weighted average, however many pieces it holds), or
+     * clear them all.
+     *
+     * ALL FIVE TYPES OR NONE (SaveGradeWeightsRequest): a half-set would leave a
+     * type with no answer to "how much does this count?", and the honest options
+     * are to refuse the average or to invent a number. `{"clear": true}` removes
+     * the weights, and with them every per-work override in the class, in the same
+     * transaction, so a weight typed against a weighted class cannot lie dormant
+     * and come back to life the day weights are turned on again.
+     *
+     * Any teacher who leads the class may SET them: they are a policy of the class,
+     * not of a subject, and a class with a teacher per subject (BISS) would
+     * otherwise have nobody who could.
+     *
+     * CLEARING is the one verb that reaches per-work fields, and a per-work weight
+     * belongs to a piece of work a subject-limited teacher may not even list. So a
+     * limited teacher's clear is refused (403, nothing written) while any work
+     * outside their subjects still carries a weight of its own; it cannot be
+     * narrowed to their own work, because the class's weights would go while the
+     * others' overrides stayed, which is the dormant override that clearing exists
+     * to prevent. An unrestricted teacher of the class clears everything.
+     */
+    public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+
+        $limits = $this->limits($group);
+
+        if ($limits !== null && $request->boolean('clear')) {
+            $allowed = SubjectFence::allowedKeys($limits);
+
+            $others = ClassAssignment::query()
+                ->where('group_id', $group->id)
+                ->whereNotNull('weight')
+                ->where(fn ($q) => $q->whereNotIn('subject_key', $allowed)->orWhereNull('subject_key'))
+                ->count();
+
+            if ($others > 0) {
+                abort(
+                    Response::HTTP_FORBIDDEN,
+                    'Work in subjects you do not teach has a weight of its own, so the weights cannot be cleared from here. '
+                    .'Ask the teacher of that work, who can clear them.'
+                );
+            }
+        }
+
+        $cleared = 0;
+
+        DB::transaction(function () use ($request, $group, &$cleared): void {
+            if ($request->boolean('clear')) {
+                ClassGradeWeight::query()->where('group_id', $group->id)->delete();
+                $cleared = ClassAssignment::query()
+                    ->where('group_id', $group->id)
+                    ->whereNotNull('weight')
+                    ->update(['weight' => null]);
+
+                return;
+            }
+
+            foreach ($request->validated('weights') as $type => $weight) {
+                ClassGradeWeight::query()->updateOrCreate(
+                    ['group_id' => $group->id, 'assignment_type' => $type],
+                    ['masjid_id' => $group->masjid_id, 'weight' => (int) $weight, 'updated_by_user_id' => Auth::id()],
+                );
+            }
+        });
+
+        $weights = ClassGradeWeight::forGroup((int) $group->id);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'weights' => (object) $weights,
+                'weighting_enabled' => $weights !== [],
+                'cleared_overrides' => $cleared,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    // ---------------------------------------------------------------- the fence
+
+    /** @return list<string>|null  what the signed-in teacher is limited to here, NULL for all */
+    private function limits(Group $group): ?array
+    {
+        return SubjectFence::limitsFor(Auth::user(), (int) $group->id);
+    }
+
+    /**
+     * One piece of work of this class, by id, or a refusal.
+     *
+     * Work in a subject the teacher does not teach is a 403 in the words the
+     * `teacher.teaches:` fence uses. Work with NO subject is invisible to a
+     * limited teacher (a 404), since it is not any subject's to refuse.
+     */
+    private function work(Group $group, $assignmentId, ?array $limits): ClassAssignment
+    {
+        $assignment = $group->assignments()->findOrFail($assignmentId);
+
+        if (! SubjectFence::allows($limits, $assignment->subject_key)) {
+            if ($assignment->subject_key === '') {
+                abort(Response::HTTP_NOT_FOUND);
+            }
+
+            SubjectFence::refuse($assignment->subject);
+        }
+
+        return $assignment;
+    }
+
+    /**
+     * Everything about a write that needs the CLASS to judge, which the
+     * FormRequest cannot see. Returns a 422 to send, NULL to carry on, and aborts
+     * with a 403 for a subject the teacher does not teach. `$data` is changed in
+     * place only to clear the standard's week when its standard is cleared.
+     *
+     * @param  list<string>|null  $limits
+     * @param  array<string,mixed>  $data  the validated payload
+     */
+    private function refuseWork(Group $group, ?array $limits, array &$data, ?ClassAssignment $existing): ?JsonResponse
+    {
+        $subjectSent = array_key_exists('subject', $data);
+        // The subject the work will have AFTER this write.
+        $subject = $subjectSent ? $data['subject'] : $existing?->subject;
+
+        // A limited teacher must name a subject they teach. Leaving it blank is
+        // not a way round the fence.
+        if ($limits !== null) {
+            if ($subject === null) {
+                return $this->failed('subject', 'Choose the subject this work is for.');
+            }
+
+            if (! SubjectFence::allows($limits, SubjectKey::for($subject))) {
+                SubjectFence::refuse($subject);
+            }
+        }
+
+        // The subject must be on the school's list, unless it is unchanged (a
+        // subject the office later retired must not make old work uneditable).
+        if ($subjectSent && $subject !== null
+            && ! ($existing !== null && SubjectKey::for($subject) === $existing->subject_key)
+            && ! ClassSubjects::accepts(ClassSubjects::offered($group), $subject)) {
+            return $this->failed('subject', "That subject is not on this school's list. Choose one from the list.");
+        }
+
+        // A weight override only means something against a weighted class.
+        if (($data['weight'] ?? null) !== null && ClassGradeWeight::forGroup((int) $group->id) === []) {
+            return $this->failed('weight', "Set this class's weights first, then you can change the weight of one piece of work.");
+        }
+
+        return $this->refuseStandard($data, $existing);
+    }
+
+    /**
+     * ONE STANDARD, and only one the school's own guide names. The teacher picks
+     * it from the standards search (CurriculumController::standards), which
+     * returns guide rows; this checks the pick really is one, so nothing typed or
+     * scripted can put a standard on a child's record that the school never wrote.
+     * Unchanged on an edit passes even if the guide has since been re-imported:
+     * the work keeps what it was set with.
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private function refuseStandard(array &$data, ?ClassAssignment $existing): ?JsonResponse
+    {
+        $sent = array_intersect_key($data, array_flip(['standard_code', 'curriculum_focus', 'curriculum_week_no']));
+
+        if ($sent === []) {
+            return null;
+        }
+
+        $code = $data['standard_code'] ?? null;
+        $focus = $data['curriculum_focus'] ?? null;
+        $week = $data['curriculum_week_no'] ?? null;
+
+        if ($code === null && $focus === null) {
+            // Cleared: the week belongs to the standard and goes with it.
+            $data['curriculum_week_no'] = null;
+            $data['standard_code'] = null;
+            $data['curriculum_focus'] = null;
+
+            return null;
+        }
+
+        if ($existing !== null
+            && $code === $existing->standard_code
+            && $focus === $existing->curriculum_focus) {
+            $data['curriculum_week_no'] = $week ?? $existing->curriculum_week_no;
+
+            return null;
+        }
+
+        $row = CurriculumWeek::query()
+            ->when($code === null, fn ($q) => $q->whereNull('standard_code'), fn ($q) => $q->where('standard_code', $code))
+            ->when($focus === null, fn ($q) => $q->whereNull('focus'), fn ($q) => $q->where('focus', $focus))
+            ->when($week !== null, fn ($q) => $q->where('week_no', (int) $week));
+
+        if (! $row->exists()) {
+            return $this->failed('standard_code', "That standard is not in this school's pacing guide. Choose one from the list.");
+        }
+
+        return null;
+    }
+
+    private function failed(string $field, string $message): JsonResponse
+    {
+        return response()->json([
+            'status' => 'failed',
+            'data' => [$field => [$message]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 }

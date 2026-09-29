@@ -718,6 +718,27 @@
                             </p>
 
                             <template v-else>
+                                <!-- THE WEIGHTED AVERAGE (T-001.2), only where the teacher
+                                     has given the class weights and there is a figure. It
+                                     leads, and the plain points figure stays below it, so a
+                                     parent never wonders which of two numbers is "the" one.
+                                     A percentage of POINTS work only: levels have their own
+                                     block and are never turned into one. -->
+                                <template v-if="marksFor(child).summary.weighting?.enabled && marksFor(child).summary.weighting.percent !== null">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_weighted_average') }}</h3>
+                                    <p class="small mb-1">
+                                        <span class="fw-semibold" dir="ltr">{{ percentText(marksFor(child).summary.weighting.percent) }}</span>
+                                        <span class="text-muted">
+                                            &middot; {{ tCount('marks_pieces', marksFor(child).summary.weighting.points_pieces) }}
+                                        </span>
+                                    </p>
+                                    <p class="text-muted small mb-1">{{ t('marks_weighted_note') }}</p>
+                                    <p v-if="marksFor(child).summary.weighting.untyped_excluded > 0" class="text-muted small mb-1">
+                                        {{ tCount('marks_untyped', marksFor(child).summary.weighting.untyped_excluded) }}
+                                    </p>
+                                    <div class="mb-3"></div>
+                                </template>
+
                                 <!-- POINTS AND LEVELS ARE NEVER ONE FIGURE. A
                                      class can hold a spelling quiz out of 10 and
                                      a rubric marked 1-4 at once, and the server
@@ -771,6 +792,13 @@
                                             &middot; {{ levelPhrase('level_short', Math.round(Number(marksFor(child).summary.levels.mean)), marksFor(child).summary.levels.mean_label) }}
                                         </span>
                                     </p>
+                                    <p v-if="marksFor(child).summary.weighting?.enabled && marksFor(child).summary.weighting.level_mean !== null && marksFor(child).summary.weighting.level_mean !== undefined"
+                                       class="small text-muted mb-2">
+                                        {{ t('marks_weighted_level', String(marksFor(child).summary.weighting.level_mean)) }}
+                                        <span v-if="marksFor(child).summary.weighting.level_mean_label" dir="auto">
+                                            &middot; {{ levelPhrase('level_short', Math.round(Number(marksFor(child).summary.weighting.level_mean)), marksFor(child).summary.weighting.level_mean_label) }}
+                                        </span>
+                                    </p>
                                     <!-- Every level, present even at zero, so
                                          the shape does not change as marks come
                                          in and "no 4s yet" is visible rather
@@ -810,6 +838,42 @@
                                             class="d-flex justify-content-between">
                                             <span>{{ t('mark_missing') }}</span>
                                             <span class="text-muted">{{ marksFor(child).summary.simple.missing }}</span>
+                                        </li>
+                                    </ul>
+                                </template>
+
+                                <!-- BY SUBJECT (T-001.3): the same marks, grouped by the
+                                     subject the teacher filed the work under. The subject
+                                     is the school's own word for it and is printed as
+                                     written; the figures are this child's alone. -->
+                                <template v-if="marksFor(child).summary.by_subject?.length">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_section_subjects') }}</h3>
+                                    <ul class="list-unstyled small mb-3">
+                                        <li v-for="b in marksFor(child).summary.by_subject" :key="b.subject ?? '_none'"
+                                            class="d-flex justify-content-between gap-3">
+                                            <span dir="auto">{{ b.subject ?? t('marks_no_subject') }}</span>
+                                            <span class="text-muted text-end" dir="auto">{{ subjectFigures(b) }}</span>
+                                        </li>
+                                    </ul>
+                                </template>
+
+                                <!-- BY TYPE, with the weight the teacher gave each type when
+                                     the class has weights. Points work only. -->
+                                <template v-if="marksFor(child).summary.weighting?.by_type?.length">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_section_types') }}</h3>
+                                    <ul class="list-unstyled small mb-3">
+                                        <li v-for="row in marksFor(child).summary.weighting.by_type" :key="row.type"
+                                            class="d-flex justify-content-between gap-3">
+                                            <span>
+                                                {{ typeWord(row.type) }}
+                                                <span v-if="row.weight !== null && row.weight !== undefined" class="text-muted">
+                                                    &middot; {{ t('marks_type_counts', String(row.weight)) }}
+                                                </span>
+                                            </span>
+                                            <span class="text-muted text-end">
+                                                <span dir="ltr">{{ percentText(row.percent) }}</span>
+                                                &middot; {{ tCount('marks_pieces', row.pieces) }}
+                                            </span>
                                         </li>
                                     </ul>
                                 </template>
@@ -854,6 +918,17 @@
                                                      typed it. -->
                                                 <div class="small" dir="auto">{{ s.assignment?.title }}</div>
                                                 <div class="text-muted small">{{ onDay(s.assignment?.assigned_on) }}</div>
+                                                <div v-if="s.assignment?.subject || typeWord(s.assignment?.type)" class="d-flex flex-wrap gap-1 mt-1">
+                                                    <span v-if="s.assignment?.subject" class="badge bg-light text-muted fw-normal" dir="auto">{{ s.assignment.subject }}</span>
+                                                    <span v-if="typeWord(s.assignment?.type)" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">{{ typeWord(s.assignment.type) }}</span>
+                                                </div>
+                                                <!-- The school's guide's words, printed as it wrote
+                                                     them, with the source said once beneath. -->
+                                                <div v-if="s.assignment?.standard_code || s.assignment?.curriculum_focus" class="text-muted small mt-1" dir="auto">
+                                                    <span v-if="s.assignment.standard_code" class="fw-semibold">{{ s.assignment.standard_code }}</span>
+                                                    {{ s.assignment.curriculum_focus }}
+                                                    <span class="d-block" style="font-size:.75rem">{{ t('marks_standard_source') }}</span>
+                                                </div>
                                             </div>
                                             <span class="badge fw-normal flex-shrink-0" :class="markClass(s)">
                                                 {{ markText(s) }}
@@ -916,6 +991,7 @@ import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
 import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
+import { percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
@@ -1612,6 +1688,11 @@ const EMPTY_MARKS = {
         points_earned: 0, points_possible: 0, points_counted: 0,
         levels: { recorded: 0, counted: 0, missing: 0, mean: null, mean_label: null, distribution: [] },
         simple: { recorded: 0, counted: 0, missing: 0, distribution: [] },
+        weighting: {
+            enabled: false, weights: {}, percent: null, points_pieces: 0, level_mean: null,
+            level_mean_label: null, level_pieces: 0, untyped_excluded: 0, by_type: [],
+        },
+        by_subject: [],
     },
     scores: [],
     scores_shown: 0,
@@ -1709,6 +1790,29 @@ const markClass = (s: any): string =>
     s?.status === 'scored'
         ? 'bg-primary-subtle text-primary-emphasis'
         : 'bg-light text-muted';
+
+/** The five types the school knows, in the parent's language; anything else prints nothing rather than a raw key. */
+const WORK_TYPES = ['test', 'quiz', 'homework', 'classwork', 'other'];
+const typeWord = (type: string | null | undefined): string => (type && WORK_TYPES.includes(type) ? t(`mark_type_${type}`) : '');
+
+/**
+ * One subject's line: this child's points and percentage, the weighted figure
+ * where the class has weights, and the mean level for levels work. Levels are a
+ * mean level and never a percentage, exactly as in the block above.
+ */
+const subjectFigures = (b: any): string => {
+    const parts: string[] = [];
+    if (b?.points_counted > 0 && Number(b.points_possible) > 0) {
+        parts.push(`${b.points_earned} ${t('count_of')} ${b.points_possible} (${percentText(b.percent)})`);
+    }
+    if (b?.weighted_percent !== null && b?.weighted_percent !== undefined) {
+        parts.push(t('marks_weighted_short', percentText(b.weighted_percent)));
+    }
+    if (b?.levels_counted > 0 && b.level_mean !== null && b.level_mean !== undefined) {
+        parts.push(t('marks_levels_mean', String(b.level_mean)));
+    }
+    return parts.join(' \u00b7 ');
+};
 
 // ---------- translating what the school wrote ----------
 //

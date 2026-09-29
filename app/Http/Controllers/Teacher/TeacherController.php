@@ -105,15 +105,6 @@ abstract class TeacherController extends Controller
     /** @return list<string>|null */
     private function mySubjects(Group $group): ?array
     {
-        $subjects = \App\Models\GroupStaff::query()
-            ->where('group_id', $group->id)
-            ->where('user_id', Auth::id())
-            ->value('subjects');
-
-        if (is_string($subjects)) {
-            $subjects = json_decode($subjects, true);
-        }
-
-        return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
+        return \App\Support\SubjectFence::assigned((int) $group->id, (int) Auth::id());
     }
 }

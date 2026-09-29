@@ -4885,3 +4885,120 @@ Decision: every lookup that turns a TYPED email address into a contact, a code r
 Alternatives considered: `EmailAddress::same()` as a new class (the brief allows it; ContactIdentity is the existing identity helper and the brief says to extend it); making `matchLiveCode` use `LOWER(email)` so the LOWER override would reach it (defeats the `app_signup_codes_lookup_index` on an unauthenticated table, so PHP re-checks instead); a hard `utf8mb4_bin` migration on the address columns (a production schema change, and it would not cover the next column).
 
 Not run: `php -l` on any file, PHPUnit. There is no PHP on this machine; the CI droplet must run the six new test files and the suites for the touched doors (`MemberPasswordSignInTest`, `AccountDeletionPageTest`, `MemberAccountDeletionTest`, `FamilyLoginCodeTest`, `FamilyPasswordTest`, `FamilyLoginEnablementTest`, `FamilyLoginLifecycleTest`, `TeacherAttachTest`, `ContactIdentityTest`) on SQLite and MySQL. Nothing ships without the owner's yes.
+
+## 2026-09-29 — School wave W3: grades and curriculum (T-001.1 to T-001.5; branch feat/school-w3-grades)
+
+Owner answers this wave builds on (2026-09-28, side-quest `DECISIONS.md`): **B3 yes** (seed the Subjects
+list on prod, guarded and reversible), **weights per type with a per-assignment override, relative,
+renormalised over the types with scored work**. Everything below is a choice this wave made inside those
+answers; each carries its alternative.
+
+- **W3-1 (REVISED at review). A weight is what a TYPE of work is worth in the average; a piece with its own weight
+  is a slot of its own.** The owner's words were "weights per type ... relative and renormalised over the types
+  that have scored work", and the first build read them per piece (`sum(w_i * pct_i) / sum(w_i)` over every
+  piece, `w_i` the piece's override else its type's weight). That made a type's weight a per-piece multiplier: with
+  Test 40 and Homework 10 a child with one Test at 90% and five Homework at 100% read 95.6%, ten Homework put
+  Homework at 71% of the grade against the 20% the teacher typed, and the parent's by-type rows ("Test counts 40")
+  could not reproduce the headline. The shipped rule (`GradeRecord::weighted`) is now: each type with counted work is
+  ONE slot worth its class weight, however many pieces are in it; the pieces in a slot are POOLED (points earned
+  over points possible, exactly as the by-type row prints them, so the headline is the sum of `weight x percent`
+  over the by-type rows divided by the sum of their weights); slots are renormalised over the types that have
+  counted work, so a type nobody has been marked on drags nothing down and weights need not add to 100. Test 40 and
+  Homework 10 with one Test at 90% and any number of Homework at 100% is 92.0. **The per-assignment override** ("each
+  assignment inherits its type's weight and may override it") **makes that piece a slot of its own worth exactly the
+  number typed**, beside its type's pool, and the piece leaves the pool (the by-type row is the type's slot, so it
+  excludes overridden pieces). That is my reading of "override" (alternative: a relative weight WITHIN its type's
+  pool, which changes nothing when the type has one piece, so the override would silently do nothing in the
+  commonest case). An override of 0 keeps a piece out of the figure and still counts it in `points_pieces`. A piece
+  with neither an override nor a type is left out and counted in `untyped_excluded`. Points work gets a percentage;
+  levels a weighted mean LEVEL over the same slots (never a percentage); simple marks are never averaged. No
+  weights means every average is unchanged. All five types are set together or cleared together. A per-work
+  weight is refused (422) unless the class is weighted, and clearing removes every per-work weight in the class in
+  the same transaction, so a dormant override cannot revive. **Owner to confirm** when he sees the Weights panel
+  (it explains "Tests make up four fifths ... whether a child has done one Homework or ten"). If he meant a per-piece
+  weight after all it is a change inside `GradeRecord::weighted`, the Weights-panel copy and
+  `GradebookWeightingTest`, and no schema.
+- **W3-2. `LessonPlan::subjectKeyFor` keeps its own key.** The plan named it as a second caller of
+  `SubjectKey`. It is not: `lesson_plans.subject_key` carries a unique index with live rows, so changing how it
+  is derived would leave every existing plan under its old key, the by-day save would miss the plan it means
+  and add a duplicate, and re-keying needs a data migration with a collision pre-flight on rows teachers wrote.
+  `SubjectKey` is used for `class_assignments.subject_key`, `school_subjects.name_key`, the per-subject blocks
+  and the fence, which is everything new. Alternative: migrate lesson-plan keys. Rejected: risk on live data for
+  no user-visible gain.
+- **W3-3. The subject fence, rule by rule** (`App\Support\SubjectFence`). (a) **Allow-list, not deny-list:** a
+  limited teacher touches work only when its subject maps to a staff subject they teach, so a Qur'an-only
+  teacher gets Qur'an and the combined "Qur'an & Islamic Studies" column and not Arabic Language, Islamic
+  Studies alone or Mathematics (the owner's words: "only access specific to the subject they're teaching").
+  (b) **Untagged work is invisible to a limited teacher** (404) and a limited teacher must name a subject they
+  teach when setting work, so "leave it blank" is no way round the fence. Consequence to know: work set before
+  subjects existed has no subject and is hidden from subject-limited teachers until an unrestricted teacher (or
+  a later edit) tags it. Unknown, needs investigation: how many BISS assignments exist (RECON says 9 on prod in
+  all and BISS had no teacher logins; users 38-49 are new), so this is expected to hide nothing today.
+  (c) **Lesson plans:** a plan that names a subject is fenced the same way; **the day's general plan (no
+  subject) stays open to every teacher of the class**, because BISS writes nothing else and fencing it would
+  strand every plan. (d) **Only a Teacher is limited.** The office reads the same controllers through the admin
+  realm and must see everything, so an admin who also holds a `group_staff` row is never fenced; the family
+  endpoint has no fence. (e) **`PUT grade-weights` is not fenced**: weights are a policy of the class, and a
+  class with a teacher per subject (BISS) would otherwise have nobody who could set them. **Setting is open to every teacher of the class; CLEARING is refused a limited teacher (403, nothing written) while
+  any work outside their subjects (untagged included) carries a weight of its own**: clearing reaches per-work fields
+  of work they cannot list, and narrowing it to their own work would leave the others' overrides dormant once the
+  class's weights go, which is the very thing clearing removes them to prevent. The confirm text also says clearing
+  removes weights another teacher gave their own work. (f) The fence reaches
+  the child's summary (`levels`, `simple`, `by_subject` and the list), not just the assignment routes, so a
+  limited teacher's picture of a child cannot contain a mark in another subject.
+- **W3-4. A standard is only ever a row of the school's own pacing guide.** The teacher picks it from the
+  existing standards search (no second matcher); the server checks the (code, focus, week) is a
+  `curriculum_weeks` row of THIS school before storing it (another school's guide is refused), and an unchanged
+  snapshot on edit passes even after the guide is re-imported. An uncoded weekly focus (the Islamic Studies
+  column) is a standard by its words. `standard_code` 32, `curriculum_focus` 500, `curriculum_week_no` are the
+  guide's own column sizes. Hidden and not written where `short_lesson_plan` is on (G8, BISS). Arabic has no
+  standards and the search answers nothing for it: none is invented (A-3).
+- **W3-5. The Subjects list.** `grade_labels` NULL means every grade; a subject limited to grades is compared
+  through `GradeLevel` (memberships say `1st`, the guide `Grade 1`, the Drive doc `1st Grade`), and a child with
+  no grade label hides no subject. A class offers the school's list, else the guide's subjects, else nothing to
+  check against (free text, as before). A school with NO guide gets its list in the lesson-plan picker without
+  choosing a grade. Names are unique per school by folded key. Work stores the subject as a snapshot string, so
+  no edit of the list moves a mark.
+- **W3-6. T-001.4 / T-001.5.** Qur'an, Islamic Studies and Arabic Language are separate subjects at every grade
+  for Al-Razi and BISS through the seed (B3). The guide's combined weekly "Qur'an & Islamic Studies" column
+  is NOT split, hidden or rewritten (that is authoring Islamic content); the lesson-plan picker keeps it,
+  labelled "school pacing-guide column", because the standards search only works under it. **T-001.4 is
+  therefore partial until the school's revised weekly guide (B12)**; the Arabic per-grade outcomes import
+  waits for B7 and is not in this wave.
+- **W3-7. `StandardPicker.vue` is new; the lesson plan's picker was NOT moved onto it.** The plan asked for an
+  extraction from `TeacherClass.vue`. The plan's picker shares state with its draft-loss guards (`autoFill`,
+  `stdLeft`, `cancelPrefill`, the 9ea27686 races) and `lesson-plans.test.ts` cannot exercise a component, so
+  extracting it without a browser to prove those races survive would risk a live feature. The searching logic
+  is a controller with no Vue and no HTTP (`core/helpers/standardSearch.ts`, 12 tests); the gradebook uses it,
+  and moving the lesson plan onto it is a follow-up that needs a browser.
+  **Open follow-up (W3-F1):** two client implementations of debounce, stale-answer and composition handling now exist
+  (`TeacherClass.vue`'s inline lesson-plan search and `standardSearch.ts`); a fix to one must be made in the other until
+  the plan moves onto `createStandardSearch`. Closes with a browser-verified run of the lesson plan's picker (type, pause,
+  Enter, IME composition, switch class mid-search) plus `lesson-plans.test.ts` green. Not done in this wave: no browser.
+- **W3-8. The seed migration** (`2026_10_03_100300`) writes only where the org id AND its name agree (14 says
+  "razi", 18 says "sunday school"), only INSERTS (an office decision is never overwritten), in one transaction,
+  with one WARNING line; Al-Razi's list is the three plus its own guide's subjects minus the combined column.
+  `down()` removes only rows this migration wrote (`school_subjects.seeded_by` carries its name; office rows leave it NULL)
+  that are still untouched (`updated_at = created_at`), and the table's own `down()` then refuses while the office keeps any
+  list. The mark is needed because an office "Qur'an" typed at the defaults (position 0, every grade) is column for column
+  the seed's own row, and the seed skips a subject that already exists, so it never owned that row; a column comparison alone
+  would have deleted it on a rollback. **It ships only after the owner's yes (B3), after hours, after a
+  backup, and after a run up/down/up on staging MySQL.** No prod data was touched by this wave.
+- **W3-9. New family copy needs a human reader.** Eighteen keys (`marks_weighted_*`, `marks_untyped_*`,
+  `marks_section_subjects|types`, `marks_no_subject`, `marks_type_counts`, `mark_type_*`,
+  `marks_standard_source`) are in all six portal languages. English is the source; the Arabic is mine and the
+  Urdu, Pashto, Dari and Spanish are machine-drafted like their tables. All five non-English sets want a fluent
+  reader before this ships (the same class of ask as W2's read-receipt notice).
+- **W3-10. Tripwires edited on purpose.** `TeacherRealmTest` write list +1 (`PUT grade-weights`); the
+  `TeacherMultiSchoolTest` sweep gained its body; `FamilyGradesTest` key pins gain `weighting`, `by_subject` and
+  the assignment's `subject`, `type`, `weight`, `standard_code`, `curriculum_focus`; the records export appends
+  five columns to the assignments file (positions of the older seven unchanged).
+- **W3-11. A limited teacher's figures say they are limited.** `GET members/{id}/grades` returns `data.fenced` (true when
+  the summary counts only the teacher's subjects) and the Students view labels every headline line "(your subjects)" and adds a
+  note that a parent sees every subject. The family and the office read every subject, so a limited teacher's "Weighted
+  average" and a parent's can differ, and nothing on the teacher's screen said why. Alternative: show only the by-subject
+  block to a limited teacher. Rejected: the headline is what gets quoted at a meeting.
+- **Deploy notes.** `bin/deploy` checks out new PHP before it migrates, so new code meets the old schema for a
+  few seconds (a gradebook save in that window would fail on an unknown column): deploy after school hours.
+  New unique indexes are hand-named under 64 characters; `GradebookSchemaTest` asserts it. The migrations
+  have not been run on MySQL by this wave.

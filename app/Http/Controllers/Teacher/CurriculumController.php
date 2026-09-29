@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Teacher;
 
 use App\Models\CurriculumWeek;
+use App\Models\SchoolSubject;
+use App\Support\SubjectFence;
+use App\Support\SubjectKey;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,10 +37,13 @@ class CurriculumController extends TeacherController
         $grades = CurriculumWeek::query()
             ->distinct()->orderBy('grade_label')->pluck('grade_label');
 
+        // With a grade: that grade's subjects. With none, only where the school has
+        // NO guide (BISS teaches from none): there is no grade to choose, and the
+        // school's own list is the whole answer. A school with a guide still
+        // chooses a grade first, exactly as it always did.
         $subjects = $grade
-            ? CurriculumWeek::query()->where('grade_label', $grade)
-                ->distinct()->orderBy('subject')->pluck('subject')
-            : collect();
+            ? $this->subjectsFor($request, (string) $grade)
+            : ($grades->isEmpty() ? $this->subjectsFor($request, null) : collect());
 
         $weeks = ($grade && $subject)
             ? CurriculumWeek::query()
@@ -91,6 +97,53 @@ class CurriculumController extends TeacherController
                 'cell' => $cell,
             ],
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * The subjects a grade's lesson plans may be filed under: the guide's own
+     * (spelled as the guide spells them, so the week and standards lookups below
+     * still match exactly), then the school's list (T-001.3) for any subject the
+     * guide does not have, e.g. Arabic Language, which the weekly guide has no
+     * column for. Matched by subject KEY, so the guide's "Qur’an" and the list's
+     * "Qur'an" are one entry.
+     *
+     * A subject that only the school's list has offers no weeks and no standards:
+     * the standards search returns nothing for it and never a made-up standard.
+     *
+     * With `?group_id=` the list is limited to the subjects THAT teacher teaches
+     * in THAT class (App\Support\SubjectFence). A courtesy: the boundary is the
+     * lesson-plan write, which refuses the same subjects.
+     *
+     * @return \Illuminate\Support\Collection<int, string>
+     */
+    private function subjectsFor(Request $request, ?string $grade): \Illuminate\Support\Collection
+    {
+        $out = [];
+
+        $guide = $grade === null
+            ? collect()
+            : CurriculumWeek::query()->where('grade_label', $grade)
+                ->distinct()->orderBy('subject')->pluck('subject');
+
+        foreach ($guide as $name) {
+            $out[SubjectKey::for($name)] ??= $name;
+        }
+
+        foreach (SchoolSubject::query()->orderBy('position')->orderBy('name')->get() as $subject) {
+            // No grade named (a school with no guide): every subject on its list.
+            if ($grade === null || $subject->appliesToGrade($grade)) {
+                $out[SubjectKey::for($subject->name)] ??= $subject->name;
+            }
+        }
+
+        $limits = $request->filled('group_id')
+            ? SubjectFence::limitsFor($request->user(), (int) $request->query('group_id'))
+            : null;
+
+        return collect($out)
+            ->filter(fn (string $name, string $key) => SubjectFence::allows($limits, $key))
+            ->sortBy(fn (string $name) => mb_strtolower($name))
+            ->values();
     }
 
     /**

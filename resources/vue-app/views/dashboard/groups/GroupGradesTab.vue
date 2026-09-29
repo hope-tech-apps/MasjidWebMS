@@ -24,6 +24,13 @@
                         <div class="text-muted small">
                             {{ a.assigned_on }} · {{ scaleLabel(a) }}
                         </div>
+                        <div v-if="a.subject || a.type_label || a.standard_code" class="d-flex flex-wrap gap-1 mt-1">
+                            <span v-if="a.subject" class="badge bg-primary-subtle text-primary-emphasis fw-normal">{{ a.subject }}</span>
+                            <span v-if="a.type_label" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">{{ a.type_label }}</span>
+                            <span v-if="weightNote(a, weights, weightingEnabled)" class="badge bg-light text-muted fw-normal">{{ weightNote(a, weights, weightingEnabled) }}</span>
+                            <span v-if="a.standard_code" class="badge bg-success-subtle text-success-emphasis fw-normal"
+                                  :title="a.curriculum_focus ?? ''">{{ a.standard_code }}</span>
+                        </div>
                     </div>
                     <span class="badge"
                           :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
@@ -112,12 +119,34 @@
                 </div>
             </div>
 
+            <!-- The class's weights applied to this child (T-001.2), and the same
+                 marks grouped by subject (T-001.3): what the teacher's Students
+                 view and the parent's screen show, from the same arithmetic. -->
+            <div v-if="studentLines.length || student.summary?.by_subject?.length" class="card border-0 bg-light mb-3">
+                <div class="card-body">
+                    <dl v-if="studentLines.length" class="row small mb-2">
+                        <template v-for="line in studentLines" :key="line.label">
+                            <dt class="col-sm-4 fw-semibold">{{ line.label }}</dt>
+                            <dd class="col-sm-8 mb-1">{{ line.value }} <span class="text-muted">{{ line.note }}</span></dd>
+                        </template>
+                    </dl>
+                    <ul v-if="student.summary?.by_subject?.length" class="list-unstyled small mb-0">
+                        <li v-for="b in student.summary.by_subject" :key="b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
+                            <span>{{ b.subject ?? 'No subject' }}</span>
+                            <span class="text-muted text-end">{{ subjectLine(b) || '—' }}</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
             <div class="list-group">
                 <div v-for="(s, i) in student.scores" :key="i"
                      class="list-group-item d-flex align-items-center gap-3">
                     <div class="flex-grow-1">
                         <div class="fw-semibold small">{{ s.assignment?.title ?? 'Withdrawn work' }}</div>
-                        <div class="text-muted small">{{ s.assignment?.assigned_on }}</div>
+                        <div class="text-muted small">
+                            {{ s.assignment?.assigned_on }}<span v-if="s.assignment?.subject"> · {{ s.assignment.subject }}</span><span v-if="s.assignment?.type_label"> · {{ s.assignment.type_label }}</span>
+                        </div>
                     </div>
                     <span class="badge" :class="markClass(s.status)">{{ markText(s, s.assignment) }}</span>
                 </div>
@@ -134,9 +163,18 @@
                 &larr; All work
             </button>
             <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
-            <div class="text-muted small mb-3">
+            <div class="text-muted small mb-1">
                 {{ openAssignment.assigned_on }} · {{ scaleLabel(openAssignment) }}
+                <span v-if="openAssignment.subject"> · {{ openAssignment.subject }}</span>
+                <span v-if="openAssignment.type_label"> · {{ openAssignment.type_label }}</span>
+                <span v-if="weightNote(openAssignment, weights, weightingEnabled)"> · {{ weightNote(openAssignment, weights, weightingEnabled) }}</span>
             </div>
+            <div v-if="openAssignment.standard_code || openAssignment.curriculum_focus" class="small mb-3">
+                <span class="fw-semibold">{{ openAssignment.standard_code || 'Standard' }}</span>
+                {{ openAssignment.curriculum_focus }}
+                <span class="text-muted">· from the school's pacing guide<span v-if="openAssignment.curriculum_week_no">, week {{ openAssignment.curriculum_week_no }}</span></span>
+            </div>
+            <div v-else class="mb-3"></div>
 
             <!-- The school's own words for the levels, off the payload rather
                  than hardcoded, so the office reads the same key the teacher
@@ -180,6 +218,7 @@
 <script setup lang="ts">
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
+import { averageLines, subjectLine, weightNote } from '@/core/helpers/gradebook';
 import { computed, onMounted, ref } from 'vue';
 
 /**
@@ -203,6 +242,9 @@ const loading = ref(true);
 const loadError = ref('');
 const assignments = ref<any[]>([]);
 const levelKey = ref<any[]>([]);
+// The class's weights, read-only here: the teacher sets them, the office reads them.
+const weights = ref<Record<string, number>>({});
+const weightingEnabled = ref(false);
 const openAssignment = ref<any>(null);
 const student = ref<any>(null);
 
@@ -261,6 +303,8 @@ const pointsPct = computed<number | null>(() => {
     return Math.round((Number(student.value?.summary?.points_earned ?? 0) / possible) * 100);
 });
 
+const studentLines = computed(() => averageLines(student.value?.summary));
+
 const load = async () => {
     loading.value = true;
     loadError.value = '';
@@ -268,6 +312,8 @@ const load = async () => {
         const res = await ApiService.get(`${base.value}/assignments` as any);
         assignments.value = res.data?.data ?? [];
         levelKey.value = res.data?.performance_levels ?? [];
+        weights.value = { ...(res.data?.weights ?? {}) };
+        weightingEnabled.value = !!res.data?.weighting_enabled;
     } catch (e: any) {
         loadError.value = e?.response?.data?.message ?? 'The gradebook could not be loaded.';
     } finally {

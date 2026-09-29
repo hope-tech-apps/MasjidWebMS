@@ -4,9 +4,11 @@ namespace App\Http\Requests\Teacher;
 
 use App\Http\Requests\BaseFormRequest;
 use App\Models\ClassAssignment;
+use App\Models\ClassGradeWeight;
 use App\Support\PerformanceLevel;
 use App\Support\SchoolSettings;
 use App\Support\SimpleMark;
+use App\Support\SubjectKey;
 use Illuminate\Validation\Rule;
 
 /**
@@ -40,6 +42,27 @@ use Illuminate\Validation\Rule;
  * way.
  *
  * ---------------------------------------------------------------------------
+ * SUBJECT, TYPE, WEIGHT and STANDARD (T-001.1, T-001.2, T-001.3)
+ * ---------------------------------------------------------------------------
+ *
+ * All four are OPTIONAL in the API and an absent key means "leave as it is" on an
+ * edit (an older screen still open in a tab must not wipe them), while a key
+ * sent as null CLEARS. `subject` is REQUIRED in the teacher's form, not here
+ * (owner decision G10), except for a subject-LIMITED teacher, whose fence
+ * (App\Support\SubjectFence) the controller enforces.
+ *
+ * What this class can check without the class it is for is checked here: the
+ * type is one of ClassAssignment::TYPES, the weight is 0-100, and every text
+ * field has the length of its column (SQLite would store more; MySQL would
+ * refuse). What needs the class is checked in GradebookController: that the
+ * subject is on the school's list, that a weight override has a weighted class
+ * to override, and that a standard is really one the school's own guide names.
+ *
+ * WHERE THE SCHOOL HAS TURNED OFF STANDARDS (`short_lesson_plan`, BISS) the three
+ * standard keys are dropped before validation: not shown AND not written, the
+ * rule the lesson plan's hidden fields follow.
+ *
+ * ---------------------------------------------------------------------------
  * WHICH scales a teacher may choose is the ORGANISATION'S (SchoolSettings)
  * ---------------------------------------------------------------------------
  *
@@ -65,6 +88,18 @@ class StoreClassAssignmentRequest extends BaseFormRequest
 
         $merge = ['scale' => $scale];
 
+        // Text keys are cleaned only when present, so an absent key stays absent.
+        if ($this->has('subject')) {
+            $merge['subject'] = is_string($this->input('subject')) ? SubjectKey::clean($this->input('subject')) : $this->input('subject');
+        }
+
+        if (! SchoolSettings::showsStandards($this->organisation())) {
+            // getInputSource(): a JSON body lives in json(), a form body in request.
+            foreach (['standard_code', 'curriculum_focus', 'curriculum_week_no'] as $key) {
+                $this->getInputSource()->remove($key);
+            }
+        }
+
         if ($scale === ClassAssignment::SCALE_LEVELS) {
             $merge['points_possible'] = PerformanceLevel::MAX;
         }
@@ -86,6 +121,13 @@ class StoreClassAssignmentRequest extends BaseFormRequest
                 'max:' . (int) config('groups.gradebook.max_points_possible', 1000),
             ],
             'assigned_on' => ['required', 'date_format:Y-m-d'],
+            // The lengths are the columns' own (class_assignments migration).
+            'subject' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'type' => ['sometimes', 'nullable', 'string', Rule::in(ClassAssignment::TYPES)],
+            'weight' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:' . ClassGradeWeight::MAX],
+            'standard_code' => ['sometimes', 'nullable', 'string', 'max:32'],
+            'curriculum_focus' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'curriculum_week_no' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:60'],
         ];
     }
 
@@ -117,6 +159,8 @@ class StoreClassAssignmentRequest extends BaseFormRequest
         return [
             'points_possible.min' => 'Work has to be out of at least one point.',
             'scale.in' => 'That is not a grading scale this gradebook understands.',
+            'type.in' => 'That is not a type of work this gradebook understands.',
+            'weight.max' => 'A weight is between 0 and ' . ClassGradeWeight::MAX . '.',
         ];
     }
 }

@@ -87,6 +87,16 @@ final class SchoolSettings
         return $masjid?->hasCapability(self::SHORT_LESSON_PLAN) ? self::HIDDEN_LESSON_PLAN_FIELDS : [];
     }
 
+    /**
+     * Whether this organisation's screens offer a standard on a lesson plan or a
+     * piece of work. Off where `short_lesson_plan` is on (BISS teaches no pacing
+     * guide), because the same setting hides `standard_code` on the plan.
+     */
+    public static function showsStandards(?Masjid $masjid): bool
+    {
+        return ! in_array('standard_code', self::hiddenLessonPlanFields($masjid), true);
+    }
+
     public static function simpleMarking(?Masjid $masjid): bool
     {
         return (bool) $masjid?->hasCapability(self::SIMPLE_MARKING);
