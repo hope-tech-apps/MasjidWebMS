@@ -5744,3 +5744,11 @@ Tests: `tests/Feature/Member/MemberPurchasesLookAlikeAddressTest.php`, one test 
 across all three, built on `Tests\Support\FoldsAccentsLikeUnicodeCi`: a look-alike's purchase is in no builder, no
 `find()`, no page, and its detail is the one 404; the page count and last page are the exact rows'; the premise
 (the SQL cannot tell the rows apart) is asserted first.
+(2) A CONTACT MERGE MOVES BASKETS AND LUNCHES (m1). `ContactsController::merge` moved donations, Wix orders and imported
+seats to the survivor but not `orders.contact_id` or `meal_orders.contact_id`; both are `nullOnDelete`, so the
+`forceDelete()` at the end nulled them, and because the portal lists a cart order and a lunch by `contact_id` beside the
+typed address, the survivor lost every purchase whose typed address was not their own verified one while their gifts and
+Wix orders still showed. Both now move to the survivor inside the merge's transaction, scoped to the bound organisation
+like the moves beside them. Live registrations' payers are still not moved (unchanged, DECISIONS 2026-09-25).
+Tests: `tests/Feature/Member/MemberPurchasesSurviveAMergeTest.php`: a basket and a lunch keyed to the absorbed contact
+under a work address are the survivor's after the merge (and were not before), a neighbour's basket does not move.

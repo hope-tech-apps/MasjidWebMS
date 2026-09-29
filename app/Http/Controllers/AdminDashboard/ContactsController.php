@@ -176,7 +176,8 @@ class ContactsController extends Controller
     /**
      * Merge a contact (typically a placeholder "Unidentified Card ####") into
      * another member — existing (target_contact_id) or newly created. Moves the
-     * source's donations and card last-4 onto the target, then removes the source.
+     * source's donations, cart orders, meal orders and card last-4 onto the target,
+     * then removes the source.
      *
      * All queries run in the bound-tenant context, so BelongsToMasjid scopes every
      * move to this masjid — a merge can't reach across tenants.
@@ -330,6 +331,19 @@ class ContactsController extends Controller
             // registration's payer is unchanged (DECISIONS.md 2026-09-25).
             \App\Models\Registration::where('contact_id', $source->id)
                 ->where('source', \App\Models\Registration::SOURCE_HISTORICAL)
+                ->update(['contact_id' => $target->id]);
+
+            // A paid basket and a lunch order follow their buyer as well.
+            // `orders.contact_id` and `meal_orders.contact_id` are `nullOnDelete`,
+            // so the force-delete below would leave a sale the office keeps keyed
+            // to nobody, and the member portal lists both by `contact_id` beside
+            // the typed address (MemberPurchases): the survivor would lose every
+            // purchase whose typed address is not their own verified one, while
+            // their gifts and Wix orders, which moved above, still showed.
+            \App\Models\Order::where('contact_id', $source->id)
+                ->update(['contact_id' => $target->id]);
+
+            \App\Models\MealOrder::where('contact_id', $source->id)
                 ->update(['contact_id' => $target->id]);
 
             foreach ($source->cards as $card) {
