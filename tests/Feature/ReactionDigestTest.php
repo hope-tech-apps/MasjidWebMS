@@ -20,6 +20,7 @@ use App\Services\Groups\GroupPushChannel;
 use App\Support\TenantContext;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
@@ -789,5 +790,61 @@ class ReactionDigestTest extends TestCase
         foreach (['group_message_reactions', 'group_post_reactions'] as $table) {
             $this->assertTrue(Schema::hasColumn($table, 'notified_at'));
         }
+    }
+
+    #[Test]
+    public function reactions_made_before_the_migration_are_stamped_as_announced_and_the_digest_ignores_them(): void
+    {
+        $migration = require database_path('migrations/2026_10_02_120000_add_notified_at_to_group_reaction_tables.php');
+
+        $post = $this->makePost();
+        $message = $this->teacherMessage($this->privateThread());
+
+        // The world as it is BEFORE the deploy: no `notified_at` on either table,
+        // and a guardian's reaction on a story and on a message that was made hours
+        // ago (long past the settle window, on something the author still owns).
+        $migration->down();
+        $madeAt = now()->subHours(3)->toDateTimeString();
+
+        DB::table('group_post_reactions')->insert([
+            'masjid_id' => $this->school->id, 'group_post_id' => $post->id,
+            'reaction' => 'ameen', 'contact_id' => $this->parentA->id,
+            'created_at' => $madeAt, 'updated_at' => $madeAt,
+        ]);
+        DB::table('group_message_reactions')->insert([
+            'masjid_id' => $this->school->id, 'group_message_id' => $message->id,
+            'reaction' => 'thumbs_up', 'contact_id' => $this->parentA->id,
+            'created_at' => $madeAt, 'updated_at' => $madeAt,
+        ]);
+
+        $migration->up();
+
+        // Each old row now says it was announced when it was made.
+        foreach (['group_message_reactions', 'group_post_reactions'] as $table) {
+            $row = DB::table($table)->sole();
+
+            $this->assertNotNull($row->notified_at, "{$table}: an old reaction is still unannounced");
+            $this->assertSame($row->created_at, $row->notified_at, "{$table}: notified_at is not created_at");
+            $this->assertSame($madeAt, $row->notified_at);
+        }
+        $this->assertSame(0, $this->unannounced());
+
+        // The first sweep after the deploy says nothing about them...
+        $this->runDigest();
+        Mail::assertNothingSent();
+        foreach (['group_message_reactions', 'group_post_reactions'] as $table) {
+            $this->assertSame($madeAt, DB::table($table)->sole()->notified_at, "{$table}: the sweep re-stamped an old row");
+        }
+
+        // ...while a reaction made after the deploy is still announced, so the
+        // silence above is the backfill and not a sweep that cannot see anything.
+        $this->react('family', $this->parentB, $post, 'hundred');
+        $this->assertSame(1, $this->unannounced());
+        $this->settle();
+        $this->runDigest();
+
+        $this->assertSame(1, $this->digests($this->teacher->email));
+        $this->assertSame(1, $this->allDigests());
+        $this->assertSame(0, $this->unannounced());
     }
 }

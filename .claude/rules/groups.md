@@ -697,6 +697,10 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
 - **At most once**: each row is CLAIMED by an UPDATE guarded by `notified_at IS NULL`
   before it is sent; skipped rows are claimed too. A crash between claim and send loses
   that digest rather than repeating it.
+- **A reaction that predates the column is not news.** The migration that adds
+  `notified_at` stamps every existing row `notified_at = created_at`, so the first
+  sweep after the deploy does not announce every reaction ever made (`ReactionDigestTest`
+  seeds one before `up()` and asserts the stamp and a silent first run).
 - **`SendGroupNotificationJob` picks the sign-in address by realm**: a staff recipient
   (`NudgeRecipient::realm === 'staff'`) gets `/auth/sign-in`, a guardian the family portal.
   It used to build the family URL for everybody, so a teacher told "a parent replied" was
