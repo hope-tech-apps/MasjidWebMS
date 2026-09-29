@@ -7,7 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * How much one piece of work of one type counts toward a class's average.
+ * How much one TYPE of work counts toward a class's average (one slot, however
+ * many pieces of it there are: App\Support\GradeRecord).
  *
  * A class has ALL of ClassAssignment::TYPES here or none of them; none means the
  * class is unweighted and every average is the arithmetic it was before weights
@@ -18,7 +19,7 @@ class ClassGradeWeight extends Model
 {
     use BelongsToMasjid;
 
-    /** The most one piece of work can count for, and the most a per-work override may say. */
+    /** The most a type can count for, and the most a per-work override may say. */
     public const MAX = 100;
 
     protected $fillable = [

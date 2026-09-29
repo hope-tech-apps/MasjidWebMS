@@ -547,8 +547,9 @@ class GradebookController extends TeacherController
     // ---------------------------------------------------------------- weights
 
     /**
-     * PUT .../grade-weights: set how much one piece of work of each type counts
-     * for in this class, or clear them all.
+     * PUT .../grade-weights: set how much each TYPE of work counts for in this
+     * class (one slot in the weighted average, however many pieces it holds), or
+     * clear them all.
      *
      * ALL FIVE TYPES OR NONE (SaveGradeWeightsRequest): a half-set would leave a
      * type with no answer to "how much does this count?", and the honest options

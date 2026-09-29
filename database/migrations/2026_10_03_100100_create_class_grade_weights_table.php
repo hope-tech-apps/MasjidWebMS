@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * How much one piece of work of each type counts toward a class's average
+ * How much each TYPE of work counts toward a class's average (a type is one slot)
  * (T-001.2; owner, 2026-09-28: weights "per type with a per-assignment override,
  * relative, renormalised over the types with scored work").
  *
