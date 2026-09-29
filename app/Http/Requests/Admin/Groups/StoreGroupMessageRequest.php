@@ -29,6 +29,12 @@ class StoreGroupMessageRequest extends GroupPostFormRequest
             // would have refused it as empty.
             'body' => 'nullable|required_without_all:' . self::UPLOAD_KEY . ',' . self::VIDEO_UPLOAD_KEY
                 . '|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
+            // A reply is sent when it is written (S11: only NEW conversations may be
+            // scheduled). A client that sends a time here believes it scheduled
+            // something; answering 201 and sending at once would be a silent success
+            // of the worst kind, so the field is refused.
+            'send_at' => 'prohibited',
+            'send_now' => 'prohibited',
         ], $this->mediaRules());
     }
 
@@ -41,6 +47,8 @@ class StoreGroupMessageRequest extends GroupPostFormRequest
     {
         return array_merge(parent::messages(), [
             'body.required_without_all' => 'Write a message or attach a photo or video.',
+            'send_at.prohibited' => 'A reply cannot be scheduled; only a new conversation can.',
+            'send_now.prohibited' => 'A reply cannot be scheduled; only a new conversation can.',
         ]);
     }
 }

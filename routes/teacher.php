@@ -5,6 +5,7 @@ use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
 use App\Http\Controllers\AdminDashboard\BehaviorSkillsController;
 use App\Http\Controllers\AdminDashboard\ContactAvatarController;
+use App\Http\Controllers\AdminDashboard\GroupMessageSchedulesController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
@@ -49,7 +50,9 @@ use Illuminate\Support\Facades\Route;
 | principal, and ResolveMasjidTenant verifies the URL id against the teacher's
 | own membership (a foreign id 403s).
 |
-| The ONLY writes this realm exposes: class-story create/update/delete, thread
+| The ONLY writes this realm exposes: class-story create/update/delete (which
+| also schedules and reschedules: `send_at`), scheduled NEW conversations
+| (create/edit/cancel; T-002.4), thread
 | REPLY (storeMessage only — never store/close/reopen/destroy), arabic mark +
 | stage, behaviour award store/destroy, hifz store/destroy, and a student avatar
 | override. Roster mutation, contacts, donations, funds, properties and the
@@ -329,6 +332,21 @@ Route::prefix('teacher')
                         Route::delete('/threads/{thread_id}/messages/{message_id}/reactions/{reaction}', [GroupThreadsController::class, 'unreact']);
                         Route::get('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}', [GroupThreadsController::class, 'downloadAttachment']);
                         Route::post('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback', [GroupThreadsController::class, 'playbackTicket']);
+
+                        // "Send later" for a NEW conversation (T-002.4, 2026-09-29), and
+                        // the Scheduled list beside it. The words wait in
+                        // group_message_schedules and become a real thread at their time
+                        // through the same writer `POST /threads` uses; until then no
+                        // reader, receipt or family endpoint can see them. `teacher.leads`
+                        // has proven the caller leads the class (co-teachers see each
+                        // other's items); the controller lets only the AUTHOR (here, the
+                        // office is not a teacher) edit, send now (PUT with send_now) or
+                        // cancel. +3 write verbs; the GET adds none. Story scheduling has
+                        // no verb of its own: it is `send_at` on the post routes above.
+                        Route::get('/scheduled-messages', [GroupMessageSchedulesController::class, 'index']);
+                        Route::post('/scheduled-messages', [GroupMessageSchedulesController::class, 'store']);
+                        Route::put('/scheduled-messages/{schedule_id}', [GroupMessageSchedulesController::class, 'update'])->whereNumber('schedule_id');
+                        Route::delete('/scheduled-messages/{schedule_id}', [GroupMessageSchedulesController::class, 'destroy'])->whereNumber('schedule_id');
 
                         // Student avatar OVERRIDE — group-scoped (solves the
                         // ContactAvatarController {contact_id} reverse-lookup: the

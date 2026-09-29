@@ -22,6 +22,7 @@ use App\Support\GroupAudience;
 use App\Support\GroupMedia;
 use App\Support\GroupMessageAttachments;
 use App\Support\GroupMessageSignals;
+use App\Support\ScheduledTime;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -728,6 +729,13 @@ class GroupThreadsController extends Controller
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_message' => (int) config('groups.media.max_per_post', 0),
             'reactions' => GroupMessageReaction::catalogue(),
+            // "Send later" for a NEW conversation: the SCHOOL's zone the field is read
+            // in and how far ahead it may go, so the compose box can label its time
+            // before anything has been scheduled.
+            'scheduling' => [
+                'timezone' => ScheduledTime::schoolTimezone(),
+                'max_days_ahead' => ScheduledTime::maxDaysAhead(),
+            ],
             // ADDITIVE, exactly as on the story side — the image-named keys are
             // a wire contract two native apps and the admin SPA read.
         ] + GroupMedia::videoMeta('max_videos_per_message');

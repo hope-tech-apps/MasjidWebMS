@@ -759,6 +759,18 @@ class TeacherMultiSchoolTest extends TestCase
             'PUT /groups/{group_id}/posts/{post_id}/reactions/{reaction}' => [],
             'DELETE /groups/{group_id}/posts/{post_id}/reactions/{reaction}' => [],
 
+            // -- "Send later" for a NEW conversation (T-002.4). A participant conversation, so the
+            // body names a row (the child) and the sweep's body-id leg can attack it.
+            'POST /groups/{group_id}/scheduled-messages' => [
+                'body' => fn (TeacherRealmWorld $w) => [
+                    'subject' => 'Sweep', 'scope' => 'participant', 'about_membership_id' => $w->student->id,
+                    'body' => 'Sweep, later.', 'send_at' => now()->addDays(3)->format('Y-m-d\TH:i'),
+                ],
+                'refuse' => $bodyRefusal,
+            ],
+            'PUT /groups/{group_id}/scheduled-messages/{schedule_id}' => ['body' => fn () => ['body' => 'Sweep, edited.']],
+            'DELETE /groups/{group_id}/scheduled-messages/{schedule_id}' => [],
+
             // -- avatars
             'PUT /groups/{group_id}/members/{membership_id}/avatar' => [
                 'body' => fn () => ['character' => Avatar::CHARACTERS[0], 'tone' => Avatar::TONES[0], 'color' => Avatar::COLORS[0]],

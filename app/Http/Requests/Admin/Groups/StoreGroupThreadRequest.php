@@ -48,6 +48,12 @@ class StoreGroupThreadRequest extends GroupPostFormRequest
             ],
             'body' => 'nullable|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
             'retained_until' => 'nullable|date|after_or_equal:today',
+            // This endpoint opens the conversation NOW. Scheduling one is its own
+            // resource (`scheduled-messages`); a time sent here would otherwise be
+            // ignored and the conversation opened at once, which is the opposite of
+            // what the client asked for.
+            'send_at' => 'prohibited',
+            'send_now' => 'prohibited',
         ], $this->mediaRules());
     }
 
@@ -59,6 +65,8 @@ class StoreGroupThreadRequest extends GroupPostFormRequest
     public function messages(): array
     {
         return array_merge(parent::messages(), [
+            'send_at.prohibited' => 'To send a new conversation later, use the scheduled-messages endpoint.',
+            'send_now.prohibited' => 'This endpoint already opens the conversation now.',
             'about_membership_id.required_if' =>
                 'A participant-scoped thread must name the membership of the member it concerns.',
             'about_membership_id.prohibited_unless' =>

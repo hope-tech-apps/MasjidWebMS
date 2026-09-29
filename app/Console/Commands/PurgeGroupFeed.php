@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\BehaviorAward;
+use App\Models\GroupMessageSchedule;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
 use Illuminate\Console\Command;
@@ -187,6 +188,29 @@ class PurgeGroupFeed extends Command
                 });
         }
 
+        // Scheduled NEW conversations (T-002.4). The words a teacher wrote about a child
+        // sit in `group_message_schedules` until their time and stay there afterwards
+        // (sent, failed, cancelled), so they are bounded by the same window as the thread
+        // they became. Rows only: a schedule carries no bytes (text only in v1). A row
+        // still waiting or being sent is never selected, whatever its window says: a
+        // pending message must not be deleted out from under its send.
+        $schedules = 0;
+
+        GroupMessageSchedule::withoutMasjidScope()
+            ->dueForPurge($before)
+            ->whereNotIn('status', [GroupMessageSchedule::STATUS_SCHEDULED, GroupMessageSchedule::STATUS_SENDING])
+            ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->orderBy('id')
+            ->chunkById(100, function ($due) use (&$schedules, $dryRun) {
+                foreach ($due as $schedule) {
+                    if (! $dryRun) {
+                        $schedule->delete();
+                    }
+
+                    $schedules++;
+                }
+            });
+
         // `hifz_entries` (T-014) is ABSENT FROM THIS SWEEP ON PURPOSE, and the
         // absence is a decision rather than an oversight — do not "finish the
         // job" by adding it. A feed post and a behaviour point describe a
@@ -199,7 +223,7 @@ class PurgeGroupFeed extends Command
         // with the student. See config/groups.php and .claude/rules/groups.md.
 
         $this->info(sprintf(
-            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s), %d video(s)%s.',
+            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s), %d video(s), %d scheduled conversation(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
             $posts,
             $images,
@@ -207,6 +231,7 @@ class PurgeGroupFeed extends Command
             $messages,
             $awards,
             $videos,
+            $schedules,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
 
@@ -229,6 +254,7 @@ class PurgeGroupFeed extends Command
             // post standing, so rolling the two together would make a working
             // video sweep indistinguishable from a post sweep that got busier.
             'videos' => $videos,
+            'scheduled_conversations' => $schedules,
         ]);
 
         return self::SUCCESS;

@@ -11,6 +11,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupMessage;
 use App\Models\GroupMessageAttachment;
+use App\Models\GroupMessageSchedule;
 use App\Models\GroupPost;
 use App\Models\GroupPostAttachment;
 use App\Models\GroupResource;
@@ -71,6 +72,8 @@ final class TeacherRealmWorld
     public GroupThread $thread;
     public GroupMessage $message;
     public GroupMessageAttachment $messageAttachment;
+    /** A NEW conversation waiting for its time (T-002.4): its words are in no thread yet. */
+    public GroupMessageSchedule $schedule;
 
     /**
      * @param BehaviorSkill $skill the school's skill, shared by every class of that school
@@ -177,6 +180,12 @@ final class TeacherRealmWorld
             'disk' => $mediaDisk, 'path' => $messagePath,
         ]);
 
+        $w->schedule = GroupMessageSchedule::create([
+            'masjid_id' => $masjid, 'group_id' => $group, 'author_user_id' => $teacher->id,
+            'scope' => GroupThread::SCOPE_GROUP, 'subject' => "MARK-{$tag}-SCHEDULE-SUBJECT",
+            'body' => "MARK-{$tag}-SCHEDULED", 'send_at' => now()->addDays(3),
+        ]);
+
         return $w;
     }
 
@@ -202,6 +211,7 @@ final class TeacherRealmWorld
             'post_id' => (string) $this->post->id,
             'thread_id' => (string) $this->thread->id,
             'message_id' => (string) $this->message->id,
+            'schedule_id' => (string) $this->schedule->id,
             'attachment_id' => str_contains($uri, '/posts/')
                 ? (string) $this->postAttachment->id
                 : (string) $this->messageAttachment->id,

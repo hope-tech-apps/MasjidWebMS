@@ -36,6 +36,7 @@ use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\AdministratorsController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
+use App\Http\Controllers\AdminDashboard\GroupMessageSchedulesController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\GroupWithdrawalController;
@@ -1359,6 +1360,21 @@ Route::prefix('admin')->group(function () {
                         Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
                         Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');
                         Route::delete('/{thread_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Scheduled NEW conversations (T-002.4): written now, opened later by
+                // `groups:publish-due`. The office reads AND writes here through `manage
+                // contacts` (S14: the author and the office edit, send now and cancel),
+                // and the controller asks GroupAudience::mayReadUnpublished again. Not
+                // threads: nothing here reaches a reader before its time. Story
+                // scheduling is `send_at` on the post routes above and needs no route.
+                Route::prefix('{masjid_id}/groups/{group_id}/scheduled-messages')
+                    ->controller(GroupMessageSchedulesController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:manage contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::put('/{schedule_id}', 'update')->middleware('permission:manage contacts')->whereNumber('schedule_id');
+                        Route::delete('/{schedule_id}', 'destroy')->middleware('permission:manage contacts')->whereNumber('schedule_id');
                     });
 
                 // Behaviour / recognition — the Classroom module (T-013).

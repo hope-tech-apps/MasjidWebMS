@@ -202,6 +202,15 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads',
+            // "Send later" for a NEW conversation (T-002.4, 2026-09-29): +3 verbs. The
+            // words wait in group_message_schedules and open at their time through the
+            // same writer `POST /threads` uses. `teacher.leads`, then the controller:
+            // only the AUTHOR edits, sends now (PUT with send_now) or cancels; a
+            // co-teacher sees the item and is refused. Replies are never scheduled and
+            // scheduling a STORY adds no verb (it is `send_at` on the post routes).
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/scheduled-messages',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/scheduled-messages/{schedule_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/scheduled-messages/{schedule_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',
             // A reaction (🤲 👍 💯 ❓) and its removal, 2026-09-21. The reply's

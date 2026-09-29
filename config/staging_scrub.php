@@ -459,6 +459,15 @@ return [
             'body' => 'free_text', // parent<->teacher message text
         ],
 
+        // A scheduled NEW conversation (T-002.4): the words wait here until their time,
+        // so a row that has not gone out yet holds exactly what group_threads.subject and
+        // group_messages.body hold once it has. `failure_reason` is one of a fixed set of
+        // sentences that name no person (see PublishDueGroupItems), so it needs no entry.
+        'group_message_schedules' => [
+            'subject' => 'free_text', // names the student, like group_threads.subject
+            'body' => 'free_text', // the message text a teacher wrote about a child
+        ],
+
         'masjid_sms_senders' => [
             'registration_status' => 'fixed:unregistered', // force the sender un-registered so staging cannot believe it may text
         ],

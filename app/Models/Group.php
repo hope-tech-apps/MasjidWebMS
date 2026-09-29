@@ -215,6 +215,16 @@ class Group extends Model
     }
 
     /**
+     * New conversations written and waiting for their time (T-002.4). Not threads:
+     * see GroupMessageSchedule. Rows only, no bytes, so the DB cascade on
+     * `group_message_schedules.group_id` is the whole teardown.
+     */
+    public function messageSchedules(): HasMany
+    {
+        return $this->hasMany(GroupMessageSchedule::class);
+    }
+
+    /**
      * This group's behaviour/recognition records (T-013).
      *
      * Deliberately NOT a surface anyone reads whole: an award is private to the
