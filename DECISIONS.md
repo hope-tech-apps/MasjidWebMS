@@ -4497,7 +4497,9 @@ Point's review follow-ups (2026-09-28). Every change is on the live-organisation
    and the phone builds its menu from the stored `/features` rows (iOS `LegacyMenuAdapter.menu`,
    NewMasjidSystem `Masjid/Models/Menu/LegacyMenuAdapter.swift`, read at 27ab75e on
    feat/studio-s16-generation-pr; the shipped build's tab gate, `MainTabView.swift` on main, is the same
-   ids 10, 11, 6 with `isAvailable == 1`). The frame then draws Home plus the registry tabs whose row is
+   ids 10, 11, 6 with `isAvailable == 1`). The phone prefers a cached good menu first (the LegacyMenuAdapter header), which
+   the preview cannot know, and the shipped main build reads the `/features` rows for its tabs whether or
+   not the kill row is set, so on today's shipped iOS the non-killed frame may differ from the phone. The frame then draws Home plus the registry tabs whose row is
    available, in bar order, with NO fallback bar (nothing available is Home alone), and the drawer from
    the same rows without `parts`. `app.ios.source: "features"` marks it (present only then, live only)
    and the preview column says so. The kill row is read through `AppMenu::killSwitchRow()`, not
@@ -4546,3 +4548,10 @@ Point's review follow-ups (2026-09-28). Every change is on the live-organisation
    organisation are dropped; (c) real tests: the untouched colours are shown, previewed and saved
    exactly as stored (`#fa0`, `#0A3D62FF`). Each of these was checked by deleting its target from the store
    and seeing a test fail. The PHP tests written here have not been run (no PHP on this machine).
+
+   Repair round (2026-09-28): the wiring of items 2b, 3 and 4 into the screen is pinned by anchored source
+   assertions in `StudioSpaSourceTest` (caption switch and its wording, `:stale` on the contrast report,
+   the refresh notice with its Reload button, `:home-slug` on the web frame and `openingPage` in it), since
+   a node test cannot mount the templates. The PHP tests remain unrun here; run the Studio feature tests
+   (StudioOrganisationPreviewTest, StudioSpaSourceTest, StudioPreviewTest, StudioLayoutPreviewTest,
+   StudioPreviewParityTest) on a PHP machine or CI before merge.

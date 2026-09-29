@@ -536,6 +536,36 @@ class StudioSpaSourceTest extends TestCase
         $this->assertMatchesRegularExpression('/yes = \(await confirm\(\)\) === true;.*return yes && gen === generation;/s', $store);
     }
 
+    #[Test]
+    public function the_live_screen_wires_the_store_s_honest_states_into_what_the_operator_sees(): void
+    {
+        // The store's flags (previewColoursIncomplete, refreshNotice, the server's home_slug) are tested on the real
+        // store and helpers; a node test cannot mount these templates, so each line that carries a flag to the
+        // screen is pinned here. Every assertion names the wiring itself, so deleting that line fails it.
+        $files = $this->studioFiles();
+        $column = $files['components/super/studio/live/LivePreviewColumn.vue'];
+        $brand = $files['components/super/studio/live/LiveBrandCard.vue'];
+        $view = $files['views/dashboard/super/studio/StudioOrganisationView.vue'];
+        $web = $files['components/super/studio/preview/WebFrame.vue'];
+
+        // Item 3: a half-typed colour never previews the saved colours under the "unsaved changes" label.
+        $this->assertMatchesRegularExpression('/\{\{\s*store\.previewColoursIncomplete\s*\?\s*CAPTION_SAVED\s*:\s*CAPTION\s*\}\}/', $column, 'the caption must switch to CAPTION_SAVED while the colours are incomplete');
+        $this->assertMatchesRegularExpression('/<p v-if="store\.previewColoursIncomplete"[^>]*>\s*The colours you are typing are not complete yet/', $column, 'the column must say the colours are not complete yet');
+        preg_match('/const CAPTION_SAVED = \'([^\']*)\'/', $column, $saved);
+        $this->assertNotEmpty($saved, 'CAPTION_SAVED is missing');
+        $this->assertStringContainsString('as it is saved now', $saved[1]);
+        $this->assertStringNotContainsString('with your unsaved changes', $saved[1], 'CAPTION_SAVED may only claim unsaved switch changes');
+        $this->assertMatchesRegularExpression('/<PaletteReport\b[^>]*:stale="!!store\.previewError \|\| store\.previewColoursIncomplete"/s', $brand, 'the contrast report must be marked stale while the colours are incomplete');
+
+        // Item 4: a failed re-read after a save says so, with a way to reload.
+        $this->assertMatchesRegularExpression('/<div v-if="store\.refreshNotice"[^>]*role="alert">.*?\{\{ store\.refreshNotice \}\}.*?<button[^>]*@click="load">Reload<\/button>/s', $view, 'the view must show store.refreshNotice with a Reload button that calls load');
+
+        // Item 2b: the web frame opens on the page the server names, never pages[0].
+        $this->assertMatchesRegularExpression('/<WebFrame\b[^>]*:home-slug="preview\.web\.home_slug"/s', $column, 'the live column must pass the server\'s home_slug to the web frame');
+        $this->assertStringContainsString('?? openingPage(props.pages, props.homeSlug));', $web, 'the frame opens on openingPage(pages, homeSlug)');
+        $this->assertSame(0, preg_match('/props\.pages\[0\]/', $web), 'the frame must not open on the first page listed');
+    }
+
     /** The body of `async function NAME(` … up to the next function at the same indent. */
     private function functionBody(string $code, string $name): string
     {

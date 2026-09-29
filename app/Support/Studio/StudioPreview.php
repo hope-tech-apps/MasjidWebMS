@@ -185,7 +185,10 @@ final class StudioPreview
      * its menu from the organisation's stored /features rows instead
      * (LegacyMenuAdapter.menu: Home, then the registry's tabs whose legacy id
      * is available, in bar order, no fallback bar: none available is Home
-     * alone). Otherwise it is /menu's, AppMenu::tabs.
+     * alone). Otherwise it is /menu's, AppMenu::tabs. The phone prefers a cached good
+     * menu before either (the adapter's header), which cannot be known here, and the
+     * shipped main build reads the /features rows for its tabs whether or not the kill
+     * row is set, so on that build the non-killed frame may differ from the phone.
      *
      * @return list<string>
      */
