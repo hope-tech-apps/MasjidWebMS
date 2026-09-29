@@ -279,12 +279,17 @@ final class TenantResolver
         $owned = $this->soleOwnedMembership($user);
 
         // A non-owner staff principal — a Teacher — owns no masjid, so the
-        // ownership expression above is empty. Their grant is instead their
-        // persisted `masjid_user` membership(s) naming a LIVE masjid, written at
-        // invite time. This does NOT open the multi-membership path: a teacher
-        // with two live memberships still returns two grants here, which
-        // resolve() then refuses as ambiguous exactly as it would for an owner.
-        // It only lets a single-school teacher (every teacher today) bind.
+        // ownership expression above is empty. Their grant is instead ALL of their
+        // persisted `masjid_user` memberships naming a LIVE masjid, written at
+        // invite time — whatever the gate says. A teacher with two live
+        // memberships returns two grants here, and resolve() then binds whichever
+        // one the ROUTE's `{masjid_id}` names (and refuses a third): every
+        // tenant-bound teacher route carries the id, so the gate does not decide
+        // whether a two-school teacher works. It is ambiguous only on a route with
+        // no `{masjid_id}`, which the teacher and lunch realms do not have inside
+        // `tenant` (pinned by a route-list test). Shutting the gate therefore
+        // leaves an existing two-school teacher working; it only stops NEW
+        // cross-school attaches (TeachersController::store).
         return $owned->isNotEmpty() ? $owned : $this->staffMemberships($user);
     }
 
@@ -293,8 +298,9 @@ final class TenantResolver
      *
      * Same shape and soft-delete guard as everyLiveMembership(), but reached on
      * the GATED (single-membership) path for a non-owner. Returning 0 or >1 is
-     * deliberate — it lets resolve() fail closed on "no school" and "ambiguous
-     * school" without a teacher-specific branch there.
+     * deliberate — it lets resolve() fail closed on "no school" and, on a route
+     * that names no masjid, "ambiguous school", without a teacher-specific branch
+     * there. A route that DOES name one binds it if it is among these.
      *
      * @return Collection<int, MasjidUser>
      */

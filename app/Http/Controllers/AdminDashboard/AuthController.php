@@ -285,14 +285,14 @@ class AuthController extends Controller
      * switches nothing", which is exactly true of them.
      *
      * READ THE QUESTION PRECISELY: this is "which organisations would the
-     * resolver bind if the ROUTE named them?". That is exactly the admin SPA's
-     * switcher contract, because every admin screen is `/masjids/{id}/…`. It is
-     * NOT the question the principal-bound realms ask — `user()` is reused by
-     * routes/teacher.php and routes/lunch.php, whose URLs name no masjid at all,
-     * so for those shells the list is informational rather than a switcher. It
-     * cannot mislead them either way: the resolver already refuses a Teacher or
-     * a LunchStaff login holding more than one membership on every route in
-     * those realms, with or without this list.
+     * resolver bind if the ROUTE named them?". That is exactly the switcher
+     * contract for every shell, because every tenant-bound screen — admin,
+     * teacher and lunch — is `/masjids/{id}/…` (routes/admin.php, routes/teacher.php,
+     * routes/lunch.php). `user()` is reused by the teacher and lunch realms and
+     * lives outside their `tenant` group, so it binds nothing; what it reports
+     * is the list of schools the SPA may put in the URL. For a teacher in two
+     * schools that list is both of them, by name, and the teacher shell's picker
+     * is built from it.
      */
     private function attachMemberships(User $user): void
     {
@@ -458,19 +458,17 @@ class AuthController extends Controller
                     // The teacher shell reads `logo_url` and falls back to the
                     // Manara mark. It carried the whole Media object and no
                     // `logo_url`, so the school's own logo could never appear in
-                    // the header however many were uploaded. Flattened here rather
-                    // than as an $appends on Masjid, which would widen the public
-                    // and mobile payloads too.
+                    // the header however many were uploaded. This names the
+                    // DEFAULT school; the shell's honest header comes from
+                    // GET /api/teacher/masjids/{id}/school, which names the bound one.
                     $masjid->logo_url = $logo?->original_url;
                     $user->setRelation('masjid', $masjid);
 
-                    // Whether the teacher shell offers its Calendar link: the
-                    // school has at least one school year. Teacher branch only,
-                    // additive, and a fact about the school rather than the
-                    // teacher. This route binds no tenant, so the school is named.
-                    $user->school_calendar_published = \App\Models\SchoolYear::query()
-                        ->where('masjid_id', (int) $masjid->id)
-                        ->exists();
+                    // Whether the teacher shell offers its Calendar link. Teacher
+                    // branch only, additive, and a fact about the school rather
+                    // than the teacher. This route binds no tenant, so the school
+                    // is named.
+                    $user->school_calendar_published = \App\Support\TeacherSchoolHeader::calendarPublished((int) $masjid->id);
                 }
 
                 // The switcher's list, on the endpoint the SPA calls on every

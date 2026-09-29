@@ -68,6 +68,44 @@ sections. The pre-S3 rule (`users.masjid_id` if present, else the masjid the
 admin owns via `masjids.user_id` -> `User::masjid()`) is still exactly what a
 production request resolves to, because the resolver's gate is shut.
 
+## The teacher and lunch realms: the URL names the school, and a person may hold several
+
+A Teacher (and a LunchStaff) is bound exactly like a MasjidAdmin: through
+`TenantResolver`, from the ROUTE's `{masjid_id}`. Every tenant-bound route in
+`routes/teacher.php` and `routes/lunch.php` carries the id, so a teacher who belongs to
+two schools works **whether `tenancy.multi_membership` is open or shut** — a non-owner's
+grants are all their live memberships either way (`TenantResolver::staffMemberships`),
+and the resolver binds the one the URL names and 403s a third. Measured, not just read:
+`TeacherMultiSchoolTest` runs the same fixture with the gate both ways. (Older comments
+in `ResolveMasjidTenant`, `TenantResolver` and `AuthController` said a teacher with two
+memberships "fails closed"; that is only true of a route with NO `{masjid_id}`, and they
+have been corrected.)
+
+- **STANDING RULE: no teacher or lunch endpoint may be tenant-bound without a
+  `{masjid_id}`.** A person with several grants would get 403 "several memberships and no
+  masjid in the route" on it — silently, while every single-school user (and every test
+  written for one) keeps passing. `/teacher/user` and `/teacher/logout` are id-less and
+  sit OUTSIDE `tenant` for exactly this reason. `TenantResolver::UNSCOPED_ADMIN_ROUTES`
+  is admin-only and must stay that way. `TeacherMultiSchoolTest` sweeps `route:list` and
+  fails on an offender.
+- **The header's school comes from `GET /api/teacher/masjids/{id}/school`** (the school
+  the server bound for that request), never from `/teacher/user`'s `masjid`, which names
+  the DEFAULT membership and would paint one school's name over another's classes. The
+  teacher tenant group is wrapped in `EchoResolvedTenant`, so the SPA can compare the
+  `X-Tenant-Id` echo with what it selected.
+- **A teacher's global row is shared.** `users` (name, phone, password, sessions) belongs
+  to the person, not to a school. For a Teacher with a live membership elsewhere
+  (`User::belongsOutside`), a school's screens show name and email only — never the
+  stored phone or a sign-in time that may be another school's — and the school cannot
+  rename or re-phone them, resend a set-password link (whose completion deletes every
+  token), or restore them if a SuperAdmin trashed them. See
+  `.claude/rules/auth-permissions.md` and `TeacherAttachTest`.
+- **Removal is per school and is never gated.** `TeachersController::destroy` removes
+  this school's rows, re-picks a default, keeps the sessions while another school
+  remains, and retires the login (tokens too) only when none does. The rollback for the
+  gate is "delete the extra memberships first", so the door that deletes them must work
+  with the gate shut.
+
 ## The resolver FAILS CLOSED — an unbound context is not a safe default
 
 `App\Support\TenantResolver` answers one question: which masjid may this

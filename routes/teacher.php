@@ -15,7 +15,9 @@ use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\LessonPlanController;
 use App\Http\Controllers\Teacher\ReportCardController;
 use App\Http\Controllers\Teacher\ResourcesController;
+use App\Http\Controllers\Teacher\SchoolController;
 use App\Http\Controllers\Teacher\StudentAvatarController;
+use App\Http\Middleware\EchoResolvedTenant;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -65,10 +67,30 @@ Route::prefix('teacher')
         Route::post('/logout', [AuthController::class, 'logout']);
 
         // Everything below is bound to the teacher's school.
+        //
+        // STANDING RULE: every route inside this group carries `{masjid_id}`, and a
+        // new one must too. A teacher may belong to several schools, and on a
+        // `tenant` route that names none the resolver cannot choose between them:
+        // it answers 403 "several memberships and no masjid in the route" for every
+        // multi-school teacher, silently, while every single-school teacher (and
+        // every test written for one) keeps passing. `/user` and `/logout` above
+        // are outside `tenant` for exactly this reason. A route-list test pins it
+        // (TeacherMultiSchoolTest). TenantResolver::UNSCOPED_ADMIN_ROUTES is
+        // admin-only and must stay that way.
+        //
+        // EchoResolvedTenant is FIRST so it wraps `tenant` and stamps `X-Tenant-Id`
+        // with the school the server actually bound. The shell compares it with the
+        // school it believes it selected and stops on a mismatch, instead of
+        // painting one school's name over another's rows.
         Route::prefix('masjids/{masjid_id}')
             ->whereNumber('masjid_id')
-            ->middleware('tenant')
+            ->middleware([EchoResolvedTenant::class, 'tenant'])
             ->group(function () {
+
+                // The school this request is bound to, for the shell's header.
+                // `/user` names the DEFAULT membership; this names the SELECTED
+                // one, verified by `tenant` for this very request.
+                Route::get('/school', [SchoolController::class, 'show']);
 
                 // The teacher's own classes (names-only), and the behaviour-skill
                 // vocabulary needed to fill the award dropdown. Neither is
