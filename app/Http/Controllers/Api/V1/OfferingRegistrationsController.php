@@ -14,6 +14,7 @@ use App\Models\Registration;
 use App\Services\Registrations\RegistrationException;
 use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
+use App\Support\ContactIdentity;
 use App\Support\Errors;
 use App\Support\OfferingPublicPayload;
 use App\Support\OfferingRegistrationState;
@@ -1246,11 +1247,23 @@ class OfferingRegistrationsController extends Controller
     /**
      * Lower-cased and trimmed — the form the identity comparisons above are
      * made in, rather than relying on a column collation that differs between
-     * production MySQL and the SQLite the suite runs on.
+     * production MySQL and the SQLite the suite runs on — and with a Unicode
+     * domain converted to punycode, the form sign-in stores and looks an address
+     * up in (`ContactIdentity::submittedAddress()`).
+     *
+     * This is the form `contacts.email` is WRITTEN in as well as compared in, so
+     * a registrant at `nadia@gmaíl.com` is stored as `nadia@xn--…`. That address
+     * can never equal an ASCII one however `contacts.email`'s collation folds
+     * accents, mail goes to the mailbox that was actually typed, and it is the
+     * spelling every later sign-in and roster lookup will build from the same
+     * input. An address the sign-in normaliser refuses (a non-ASCII local part)
+     * is stored as it was before: lower-cased and trimmed.
      */
     private function normaliseEmail(?string $email): string
     {
-        return Str::lower(trim((string) $email));
+        $typed = trim((string) $email);
+
+        return ContactIdentity::submittedAddress($typed) ?? Str::lower($typed);
     }
 
     /** Lower-cased with runs of whitespace collapsed, for the comparison above. */
