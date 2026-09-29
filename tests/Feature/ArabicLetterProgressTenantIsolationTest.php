@@ -168,7 +168,7 @@ class ArabicLetterProgressTenantIsolationTest extends TestCase
         $this->tenant->set($this->masjidA->id);
 
         // The two curricula that ship today name no drill alike — Arabic's ids
-        // are `ba`, `ba.fatha`; English's are `a`..`z`. The KEY is what
+        // are `ba`, `ba.fatha`; English's are `a.upper`..`z.lower`. The KEY is what
         // guarantees they never can, so a curriculum that later teaches a drill
         // the other side already names needs no data migration and mints no
         // silent duplicate. The database has no opinion on which ids are real;

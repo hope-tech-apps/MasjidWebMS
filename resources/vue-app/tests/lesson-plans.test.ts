@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+    attachmentIds,
     canSavePlan,
     copyRequest,
     formTicket,
@@ -20,6 +21,11 @@ import {
     subjectClash,
     subjectKey,
     takenSubjectKeys,
+    withAttachment,
+    MAX_PLAN_FILES,
+    planFilesFull,
+    unattachedFiles,
+    withoutAttachment,
 } from '../core/helpers/lessonPlans.ts';
 
 const week = [
@@ -131,6 +137,48 @@ test('copying onto a day without that subject creates a plan beside the others, 
     assert.equal(tuesday.payload.subject, 'Math');
 });
 
+const file = (id: number, title = `File ${id}`) => ({ id, title, original_name: `${title}.pdf`, size_bytes: 1000 });
+
+test('copying to a day follows the Activities rule: a day keeps its own files with its own activities', () => {
+    const plans = [
+        { id: 3, session_date: '2026-09-14', subject: 'Math', body: 'Count to ten.', attachments: [file(1), file(2)] },
+        { id: 4, session_date: '2026-09-15', subject: 'Math', body: 'Tuesday\'s own.', attachments: [file(9)] },
+        { id: 6, session_date: '2026-09-17', subject: 'Math', body: '', attachments: [file(8)] },
+    ];
+
+    // The day with its own activities keeps its own files.
+    const tuesday = copyRequest(base, plans, plans[0], '2026-09-15');
+    assert.deepEqual(tuesday.payload.resource_ids, [9]);
+    assert.equal(tuesday.payload.body, 'Tuesday\'s own.');
+
+    // A day that takes the source's activities takes the source's files, in order.
+    const wednesday = copyRequest(base, plans, plans[0], '2026-09-16');
+    assert.deepEqual(wednesday.payload.resource_ids, [1, 2]);
+    assert.equal(wednesday.method, 'post');
+
+    // A day whose plan has no activities takes the source's activities AND files.
+    const thursday = copyRequest(base, plans, plans[0], '2026-09-17');
+    assert.equal(thursday.payload.body, 'Count to ten.');
+    assert.deepEqual(thursday.payload.resource_ids, [1, 2]);
+
+    // The display objects never go up as a field.
+    assert.equal('attachments' in (tuesday.payload as any), false);
+});
+
+test('a source with no files copies an empty list, so a copy never inherits stale links', () => {
+    const plans = [{ id: 3, session_date: '2026-09-14', subject: 'Math', body: 'Go.' }];
+    assert.deepEqual(copyRequest(base, plans, plans[0], '2026-09-16').payload.resource_ids, []);
+    assert.deepEqual(attachmentIds(null), []);
+});
+
+test('attaching keeps the list distinct and within the cap, detaching removes only that link', () => {
+    const one = [file(1)];
+    assert.deepEqual(withAttachment(one, file(2), 10).map((a) => a.id), [1, 2]);
+    assert.equal(withAttachment(one, file(1), 10), one, 'the same file twice changes nothing');
+    assert.equal(withAttachment([file(1), file(2)], file(3), 2).length, 2, 'the cap is respected');
+    assert.deepEqual(withoutAttachment([file(1), file(2), file(3)], 2).map((a) => a.id), [1, 3]);
+});
+
 test('an answer for a form that has since been replaced is recognised as stale', () => {
     const forms = formTicket();
     const ticket = forms.current();
@@ -163,6 +211,16 @@ test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
     assert.match(view, /:disabled="!canSavePlan\(planSaving, planForm\.body, planClash\)"/);
+});
+
+test('the day view saves the files it shows: resource_ids from the form, never the display objects', () => {
+    const save = fn('savePlan');
+    assert.match(save, /resource_ids: attachmentIds\(planForm\.value\)/);
+    assert.match(save, /attachments: undefined/);
+    // The upload is the class's ordinary Files upload, staff-only.
+    const upload = fn('uploadPlanFile');
+    assert.match(upload, /postForm\(`\$\{base\.value\}\/resources`/);
+    assert.match(upload, /form\.append\('visibility', 'staff'\)/);
 });
 
 test('changing day or reloading the week keeps the open plan when it is still there', () => {
@@ -247,4 +305,45 @@ test('a plan switch loads the subject and week lists once', () => {
     const sync = fn('syncPlanForm');
     assert.equal((sync.match(/loadCurriculum\(/g) ?? []).length, 1);
     assert.doesNotMatch(view, /syncCurriculum/);
+});
+
+test('the plan file cap is the server default, and the screen stops offering files exactly at it', () => {
+    // The server's limit lives in config/groups.php; a constant that drifts from it lets the screen
+    // offer a 10th file the server then refuses (or refuse a file the server would take).
+    const config = readFileSync(new URL('../../../config/groups.php', import.meta.url), 'utf8');
+    const server = config.match(/'max_attachments' => \(int\) env\('GROUP_LESSON_MAX_ATTACHMENTS', (\d+)\)/);
+    assert.ok(server, 'config/groups.php names the cap');
+    assert.equal(MAX_PLAN_FILES, Number(server![1]));
+
+    const listed = (n: number) => Array.from({ length: n }, (_, i) => file(i + 1));
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES - 1)), false);
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES)), true);
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES + 1)), true);
+    assert.equal(planFilesFull(null), false);
+});
+
+test('the picker offers this class\u2019s files that the plan does not list yet, and nothing it already lists', () => {
+    const all = [file(1), file(2), file(3)];
+    assert.deepEqual(unattachedFiles(all, [file(2)]).map((f) => f.id), [1, 3]);
+    assert.deepEqual(unattachedFiles(all, []).map((f) => f.id), [1, 2, 3]);
+    assert.deepEqual(unattachedFiles(all, null).map((f) => f.id), [1, 2, 3]);
+    assert.deepEqual(unattachedFiles(all, all), []);
+    // Ids compare as numbers: a string id from a form does not hide or duplicate the file.
+    assert.deepEqual(unattachedFiles(all, [{ id: '2' as unknown as number }]).map((f) => f.id), [1, 3]);
+});
+
+test('the day view wires attach, detach, upload and the picker through those helpers', () => {
+    assert.match(view, /const planFilesFull = computed\(\(\) => planFilesFullOf\(planForm\.value\.attachments\)\);/);
+    assert.match(view, /const unattachedResources = computed\(\(\) => unattachedFiles\(resources\.value, planForm\.value\.attachments\)\);/);
+    assert.match(fn('attachPickedFile'), /withAttachment\(planForm\.value\.attachments, picked, MAX_PLAN_FILES\)/);
+    assert.match(fn('detachPlanFile'), /withoutAttachment\(planForm\.value\.attachments, id\)/);
+    assert.match(fn('uploadPlanFile'), /withAttachment\(planForm\.value\.attachments, created, MAX_PLAN_FILES\)/);
+    assert.match(fn('uploadPlanFile'), /if \(!file \|\| planFilesFull\.value\) return;/);
+    assert.match(view, /:disabled="planFilesFull" @change="attachPickedFile"/);
+    assert.match(view, /\{\{ planForm\.attachments\.length \}\} \/ \{\{ MAX_PLAN_FILES \}\}/);
+});
+
+test('the Files hint does not claim only staff can open a file the class already shares with families', () => {
+    assert.doesNotMatch(view, /Only you and the office can open these/);
+    assert.match(view, /Attaching a file here does not share it with families\. A file already shared from Files stays shared\./);
 });

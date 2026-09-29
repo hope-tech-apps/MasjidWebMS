@@ -469,9 +469,9 @@ final class DemoSchool
      * is not empty.
      *
      * "Disruption" carries polarity `negative` with a POSITIVE point value on
-     * purpose: polarity and the sign of the value are independent facts, so a
-     * school running a plain tally still has a summary that can say which
-     * points were encouragement. See .claude/rules/groups.md.
+     * purpose: the vocabulary stores a magnitude and polarity carries the
+     * direction, so every total reads it as SUBTRACTING 1
+     * (BehaviorAward::signedPointsSql(), B1). See .claude/rules/groups.md.
      *
      * @return array<string,array{label:string,polarity:string,points:int}>
      */

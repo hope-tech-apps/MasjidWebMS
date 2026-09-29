@@ -4498,3 +4498,78 @@ Review fixes (2026-09-28):
 - Pinned by `TeacherProvisioningTest`: creating_a_teacher_records_the_signed_in_admin_as_who_assigned_each_class,
   a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner,
   a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess.
+
+
+## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
+
+- **Review fixes (2026-09-28, after the 5-lens review of this branch).** Each has a test that fails without it
+  (mutation-proved on the droplet). Letters migration (`2026_10_01_100000`): the read that decides what to
+  write now sits INSIDE the transaction with `lockForUpdate`, and the two case copies use `insertOrIgnore`,
+  because `bin/deploy` checks out the new code (which accepts `a.upper`) before `migrate --force` with no
+  maintenance mode: a teacher's tap in that gap used to make the plain insert collide and abort the deploy
+  half-way, leaving new code live against an unconverted table. The row lock itself is a no-op on SQLite and
+  is **Unknown, needs investigation** on MySQL until the staging run; the `insertOrIgnore` half is pinned.
+  `down()` also refuses when the two cases differ on WHO marked them (it used to keep the capital's marker and
+  delete the other; the docblock promised it refuses rather than lose data), and the note, mastered-date, bare-row and
+  attribution guards are now each pinned. Plan files (`2026_10_01_110000`): `down()` refuses while any link exists.
+  A bare `migrate:rollback` undoes the WHOLE batch in reverse, so it would have dropped every attachment and then
+  failed on the letters migration above: **back W1 out only with `migrate:rollback --step=N`** (or ship B2's
+  migration in its own deploy). Also pinned: reorder and new-link positions, `resource_ids: null` is a 422,
+  plan-and-files atomicity, the Arabic stale-tab guard scope, the export's legacy label, the family summary's
+  corrupt-polarity bucket. SPA: tapping the other case of the open letter switches the card (it used to close it;
+  the open card is tracked by tile key), the family notes name the set in the portal's language, the plan Files
+  hint no longer claims only staff can open a file the class already shares with families.
+
+- **T-003.1 Positive always on top.** The skills list and both `by_skill` summaries order by
+  `BehaviorSkill::scopeInPickerOrder` (positive, negative, other; then label) instead of
+  `ORDER BY polarity`, which is alphabetical and put negatives first while the docblocks said the
+  opposite. The teacher picker opens on the first positive skill and a skill a teacher adds is
+  inserted in picker order (`core/helpers/behaviorSkills.ts`). Award logs stay newest-first (P1).
+  Alternative: sort only in the Vue picker. Rejected: the summaries are read by parents and the
+  office, and one server definition cannot drift between the three lists.
+- **T-004.2 English letters by case.** Drill ids become `x.upper` / `x.lower` (52 drills), never
+  `A` / `a`: prod `drill_id` is `utf8mb4_unicode_ci`, which is case-insensitive. `LetterCurriculum`
+  gains `sets()` and `set()` (Arabic: `[]`, `null`); the payload gains `sets`, `set_totals` and a
+  `set` on each drill; the teacher, office and family grids draw two runs (Capitals, Lower case)
+  with a count each and /52 overall (L7). `classOverview` now filters its numerator by the stage's
+  syllabus, which also fixes the latent Arabic over-count from letter-group drills. The data
+  migration `2026_10_01_100000_split_english_letters_by_case` copies each existing mark to BOTH
+  cases, keeping the original mastered date (owner question B2's default). **HELD FOR OWNER B2:
+  this migration rewrites production rows (35 marks, 4 children) and `bin/deploy` runs migrations
+  automatically, so W1 must not go to prod with it until the owner answers; if B2 is still open,
+  ship W1 without this commit.** It also wants a run up, rolled back and up again on staging
+  MySQL (the suite is SQLite and cannot see the collation). A stale tab posting a bare letter gets
+  a "reload the page" 422 (`code: stale_page`). The school records export keeps `Drill id` and
+  appends a readable `Letter` column. Alternative to copying into both cases: start every child
+  fresh. Rejected as the default: it erases recorded progress; it stays the owner's call (B2).
+- **T-004.1 Files under Activities.** A `lesson_plan_resources` join to the class's Files
+  (`group_resources`); a plan owns no bytes and `lesson_plans` is not altered. Uploads reuse
+  `POST /resources` (staff-only by default); attaching rides the plan save as `resource_ids`
+  (`sometimes|array|max:10`, config `groups.lessons.max_attachments`). `sometimes` is the one
+  exception to "every template field is nullable": absent keeps the plan's files (an old tab or
+  the by-day PUT must not silently detach), `[]` clears them. Every id must belong to the plan's
+  class AND school, or the whole request is a 422 before anything is written. `attachments` is in the
+  teacher and office plan payloads and in no family payload; `lesson_plan_count` is staff-only.
+  "Copy to week" copies files with the Activities rule (a day keeps its own activities and files,
+  else takes the source's). No new teacher write verb (L1, L2, L3). Alternative: a `files` column
+  or a per-plan upload endpoint. Rejected: a second copy of the type, size, private-disk and
+  per-class-ceiling rules that Files already enforces, and a new teacher write verb. Known limit
+  (L5): the private file disk has no backup, so a plan's files are one disk failure from gone;
+  a separate backup item is open.
+- **HELD FOR OWNER B1: negative behaviours always subtract.** (The owner answered B1 "negatives always
+  subtract" on 2026-09-28, so this commit is approved; it stays the LAST commit and its message is reworded
+  at integration.) Today a teacher-made negative skill ("Talking out of turn", polarity negative, default 1)
+  is stored as +1 and every `SUM(points)` ADDED it while the picker showed "-1" (`TeacherClass.vue:4112`,
+  `BehaviorAwardsController`). Every read aggregate (staff summary incl. `by_skill` and `by_polarity`, family
+  summary, class totals) now uses `BehaviorAward::signedPointsSql()`: `CASE WHEN skill_polarity = 'negative'
+  THEN -ABS(points) ELSE points END`. No stored row changes, and prod has 0 live negative awards, so no
+  total moves today. It settles the two conventions the docblocks disagreed on (`DemoSchool.php` and
+  `BehaviorAwardsController::totals`).
+  **Review fix (2026-09-28):** the first version read every non-negative row as `ABS(points)`. That silently
+  reversed a deliberate deduction: `StoreBehaviorAwardRequest` accepts an override from -max to +max and the
+  controller snapshots it as given, so 'Kindness' given with -3 netted -3 and would have netted +3. Rows of
+  every polarity except `negative` now read exactly as stored, so no positive-skill row moves whatever its
+  sign; the count of such rows in prod is therefore not needed (it stays "Unknown, needs investigation" and
+  does not matter). The award LOG rows now show the same signed figure (teacher, office and family screens),
+  so a negative behaviour reads "-1" beside a total that went down. It must be settled before W4 (the weekly
+  report and the buck ledger read these totals).

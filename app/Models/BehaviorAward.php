@@ -56,6 +56,38 @@ class BehaviorAward extends Model
         'retained_until',
     ];
 
+    /**
+     * What one award contributes to a TOTAL, as SQL: negative-polarity awards
+     * SUBTRACT, whatever sign they were stored with (B1, owner-approved 2026-09-28).
+     *
+     * The vocabulary stores a skill's MAGNITUDE and lets `polarity` carry the
+     * direction ("Talking out of turn", negative, 1), and the award snapshots that
+     * as `points = 1`. Summing the stored value therefore ADDED a correction to a
+     * child's total while the picker showed "-1". `-ABS(points)` rather than
+     * `-points`, so an older row that was stored already-signed (`-1`) is not
+     * flipped back to `+1`.
+     *
+     * Every OTHER row reads exactly as it was stored: `ELSE points`, not
+     * `ELSE ABS(points)`. `StoreBehaviorAwardRequest` lets a teacher type a point
+     * override from -max to +max, and the controller snapshots it as given, so a
+     * positive skill given with an override of -3 is a teacher docking a child, and
+     * has always netted -3. Taking the absolute value there would silently turn
+     * that into +3 in every total. This way no row of a positive (or unrecognised)
+     * polarity moves at all, whatever its sign, and no count of such rows is needed
+     * to know the change is safe. Anything that is not exactly `negative` is read
+     * as it was stored, the same degrade `BehaviorSkill::polarity()` makes.
+     *
+     * This is a READ rule: no stored row is changed, and it is the ONE definition
+     * every aggregate uses (the staff summary, the family summary, the class
+     * totals), so the three cannot disagree. The award LOG shows the same signed
+     * figure through `signedAwardPoints()` (core/helpers/behaviorSkills.ts).
+     * Interpolated into SQL, so it takes no input: a constant only.
+     */
+    public static function signedPointsSql(): string
+    {
+        return "CASE WHEN skill_polarity = '".BehaviorSkill::POLARITY_NEGATIVE."' THEN -ABS(points) ELSE points END";
+    }
+
     protected function casts(): array
     {
         return [

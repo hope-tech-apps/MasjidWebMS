@@ -206,6 +206,57 @@ class SchoolRecordsExportTest extends TestCase
         $this->getJson($this->url('contacts'))->assertUnauthorized();
     }
 
+    /**
+     * T-004.2: an English drill id is now `a.upper`, which a receiving school can
+     * decode but should not have to. The readable form is APPENDED (after
+     * 'Alphabet') so positional readers keep their columns, and 'Drill id' keeps
+     * the stored identity.
+     */
+    #[Test]
+    public function the_letters_file_spells_an_english_drill_out_and_keeps_the_stored_id_where_it_was(): void
+    {
+        foreach ([['english', 'a.upper'], ['english', 'a.lower'], ['arabic', 'ba']] as [$alphabet, $drill]) {
+            \App\Models\ArabicLetterProgress::withoutMasjidScope()->create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'group_membership_id' => $this->student->id, 'alphabet' => $alphabet,
+                'drill_id' => $drill, 'status' => 'mastered',
+            ]);
+        }
+
+        $lines = array_values(array_filter(explode("\n", str_replace("\r", '', $this->body('arabic_progress')))));
+        $header = str_getcsv(ltrim($lines[0], "\xEF\xBB\xBF"));
+
+        // Existing positions are unchanged; the new column is last.
+        $this->assertSame(['Drill id', 'Alphabet', 'Letter'], [$header[4], $header[7], $header[8]]);
+
+        $byDrill = [];
+        foreach (array_slice($lines, 1) as $line) {
+            $cells = str_getcsv($line);
+            $byDrill[$cells[4]] = $cells;
+        }
+
+        $this->assertSame('Capital A', $byDrill['a.upper'][8]);
+        $this->assertSame('Lower case a', $byDrill['a.lower'][8]);
+        $this->assertSame('', $byDrill['ba'][8], 'Arabic rows keep a blank Letter column');
+    }
+
+    /** A row written before the split, and one the migration has not reached yet, must not export a blank Letter. */
+    #[Test]
+    public function the_letters_file_explains_a_pre_split_bare_english_row_instead_of_leaving_it_blank(): void
+    {
+        \App\Models\ArabicLetterProgress::withoutMasjidScope()->create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+            'group_membership_id' => $this->student->id, 'alphabet' => 'english',
+            'drill_id' => 'a', 'status' => 'mastered',
+        ]);
+
+        $lines = array_values(array_filter(explode("\n", str_replace("\r", '', $this->body('arabic_progress')))));
+        $cells = str_getcsv($lines[1]);
+
+        $this->assertSame('a', $cells[4], 'the stored id is unchanged');
+        $this->assertSame('Letter a (recorded before capitals and lower case were tracked separately)', $cells[8]);
+    }
+
     // --------------------------------------------- 4. the traps that corrupt quietly
 
     /**

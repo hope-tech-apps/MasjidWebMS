@@ -55,6 +55,7 @@ class ResourcesController extends TeacherController
         // lazy read would be one query per file on a screen built to show many.
         $resources = $group->resources()
             ->with('recipients')
+            ->withCount('lessonPlanLinks')
             ->orderByDesc('created_at')->orderByDesc('id')->get();
 
         return response()->json([
