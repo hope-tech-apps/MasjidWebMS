@@ -13,6 +13,7 @@ use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\Member\MemberAuthController;
 use App\Http\Controllers\Mobile\Member\MemberDeviceController;
 use App\Http\Controllers\Mobile\Member\MemberInterestsController;
+use App\Http\Controllers\Mobile\Member\MemberPurchasesController;
 use App\Http\Controllers\Mobile\Member\MemberRecurringGivingController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\NotificationsController;
@@ -294,6 +295,30 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                             Route::post('/{uuid}/cancel', 'cancel');
                             Route::patch('/{uuid}', 'updateAmount');
                         });
+                    });
+
+                /*
+                | "Your orders" — what THIS member bought, from every place they bought it
+                | (the basket, the Wix history, the festival form, the lunch order), read
+                | only. Which purchases are theirs is App\Services\Member\MemberPurchases:
+                | confirmed to their VERIFIED address, or keyed to their contact, inside
+                | their organisation.
+                |
+                | The whole stack the recurring-giving routes have, and a limiter of their
+                | own. The inline throttle here carries a PREFIX, because an inline bucket
+                | is keyed on the caller alone: without one, opening this screen would spend
+                | the allowance of the monthly-giving screen beside it, and the other way round.
+                |
+                | No `where` constraint on {source} or {id}: MemberPurchasesController turns
+                | a junk handle, an unknown source, a miss and someone else's order into ONE
+                | 404, and a router 404 would be a second, different one.
+                */
+                Route::prefix('/me')
+                    ->controller(MemberPurchasesController::class)
+                    ->middleware('throttle:30,1,member-portal')
+                    ->group(function () {
+                        Route::get('/orders', 'orders');
+                        Route::get('/orders/{source}/{id}', 'order');
                     });
             });
 

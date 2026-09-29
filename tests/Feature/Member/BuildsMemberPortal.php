@@ -106,7 +106,7 @@ trait BuildsMemberPortal
             'buyer_phone' => '5550100',
             'status' => Order::STATUS_PAID,
             'total_minor' => array_sum(array_map(fn (array $l) => $l[1] * $l[2], $lines)),
-            'fee_minor' => 31337,
+            'fee_minor' => 3133731,
             'currency' => 'usd',
             'charge_account_id' => 'acct_CANARY_' . uniqid(),
             'basket_fingerprint' => hash('sha256', uniqid('', true)),
@@ -176,7 +176,7 @@ trait BuildsMemberPortal
             'contact_id' => $contact?->id,
             'total_minor' => 3300,
             'discount_minor' => 0,
-            'fee_minor' => 7654,
+            'fee_minor' => 7654321,
             'currency' => 'usd',
             'lines' => $lines ?? [[
                 'name' => 'Ramadan Date Box',
