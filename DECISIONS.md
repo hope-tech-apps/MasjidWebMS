@@ -4551,15 +4551,14 @@ app and orphaned the first (apps-plane recon R1).
   from the SuperAdmin UI. Delete a live organisation's orphaned app automatically: moving a live
   organisation is its own planned change, with its builds. Reuse `ONESIGNAL_USER_AUTH_KEY` for the
   provisioning calls: its type is not guaranteed and the shared app's requests would depend on it.
-- **Evidence (2026-09-29, droplet runner).** The S14 and OneSignal tests (`OneSignalAppProvisioningTest`,
-  `OnesignalDedicatedAppRoutingTest`, `MasjidOneSignalRouteTest`, every other OneSignal and splash test)
-  with the provisioning snapshot, migration and scrub suites: 116 passed, OneSignal faked with stray
-  requests refused. The full suite on the same code: 5397 passed, 1 skipped (a seat-concurrency test,
-  skipped before this change too), and 2 failed that were the test's own request count (a request the
-  fake answers with a dropped connection is not in `Http::recorded()`; the fake now counts what it
-  sees), green in the 116 above. The provisioning snapshots were re-recorded: the only difference is
-  the four new columns, null, in the written `masjid_app_publishing` rows. Nothing was sent to
-  OneSignal.
+- **Evidence (2026-09-29, droplet runner, on `6ac82e7b` over main `b883807b`).** The S14 and
+  OneSignal tests (`OneSignalAppProvisioningTest`, `OnesignalDedicatedAppRoutingTest`,
+  `MasjidOneSignalRouteTest`, every other OneSignal and splash test) with the provisioning
+  snapshot, migration, scrub, Studio organisation and app-provisioning suites: 167 passed,
+  OneSignal faked with stray requests refused. The full suite: 5545 passed, 1 skipped (a
+  seat-concurrency test, skipped before this change too), none failed. The provisioning snapshots
+  were re-recorded: the only difference is the four new columns, null, in the written
+  `masjid_app_publishing` rows. Nothing was sent to OneSignal.
 
 **Owner actions** (nothing here works until they are done; the values go in the droplet's `.env`,
 never in this repo):
