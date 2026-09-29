@@ -346,8 +346,11 @@ class TeacherAttachTest extends TestCase
     // -------------------------------------------------- privacy on the screens
 
     #[Test]
-    public function a_shared_teachers_stored_phone_and_global_sign_in_are_not_shown_to_either_school(): void
+    public function a_shared_teachers_phone_is_shown_to_every_school_that_has_them_and_the_global_sign_in_is_not(): void
     {
+        // Owner, 2026-09-29: "Seeing their phone number I do not see as a problem."
+        // What stays out of a school's screens is the newest token, a sign-in at ANY
+        // school (replaced by a per-school "last opened" in the next change).
         $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass], ['name' => 'Stored Name', 'phone' => '+15550001111']);
         $teacher->createToken('phone'); // a sign-in at school A
         $solo = $this->teacherAt($this->biss, [$this->seventh], ['phone' => '+15557778888']);
@@ -355,30 +358,33 @@ class TeacherAttachTest extends TestCase
 
         $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->eighth]))->assertCreated();
 
-        // Teachers screen: name and email only; the edit read hides the phone.
+        // Teachers list and edit read: the stored phone, for the shared teacher as for anyone.
         $list = $this->getJson($this->bissBase().'/teachers')->assertOk();
         $row = collect($list->json('data'))->firstWhere('id', $teacher->id);
-        $this->assertSame(['id', 'name', 'email', 'invited', 'classes'], array_keys($row));
+        $this->assertSame(['id', 'name', 'email', 'phone', 'invited', 'classes'], array_keys($row));
         $this->assertSame('Stored Name', $row['name']);
-        $this->assertStringNotContainsString('+15550001111', $list->getContent());
+        $this->assertSame('+15550001111', $row['phone']);
 
         $show = $this->getJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk();
         $show->assertJsonPath('data.shared', true);
-        $show->assertJsonPath('data.phone', '');
-        $this->assertStringNotContainsString('+15550001111', $show->getContent());
+        $show->assertJsonPath('data.phone', '+15550001111');
 
         // A single-school teacher is unchanged.
         $soloShow = $this->getJson($this->bissBase()."/teachers/{$solo->id}")->assertOk();
         $soloShow->assertJsonPath('data.shared', false);
         $soloShow->assertJsonPath('data.phone', '+15557778888');
 
-        // Team & Access: phone and last sign-in are withheld for the shared
-        // teacher only.
+        // Team & Access: the phone for both; the last sign-in is withheld for the
+        // shared teacher only.
         $team = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->keyBy('user_id');
-        $this->assertNull($team[$teacher->id]['phone']);
+        $this->assertSame('+15550001111', $team[$teacher->id]['phone']);
         $this->assertNull($team[$teacher->id]['last_sign_in_at']);
         $this->assertSame('+15557778888', $team[$solo->id]['phone']);
         $this->assertNotNull($team[$solo->id]['last_sign_in_at']);
+
+        // The other school sees it too: symmetric, nothing hidden either way.
+        Sanctum::actingAs($this->alraziAdmin, ['staff']);
+        $this->assertSame('+15550001111', collect($this->getJson($this->alraziBase().'/teachers')->assertOk()->json('data'))->firstWhere('id', $teacher->id)['phone']);
     }
 
     // ---------------------------------------------------------------- T1.10

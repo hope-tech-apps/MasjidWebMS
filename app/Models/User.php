@@ -190,11 +190,11 @@ class User extends Authenticatable implements HasMedia
      * The `users` row (name, phone, password, sessions) is global, so anything
      * one school does to it lands in every school the person belongs to. A school
      * office must therefore treat a login that is also somebody else's teacher as
-     * read-only where it is global: it cannot rewrite their name or phone, cannot
-     * mint a set-password link whose completion ends their sessions elsewhere, and
-     * cannot read data the other school entered (phone, sign-in times). Every one
-     * of those guards asks THIS question, so they cannot disagree about who is
-     * shared.
+     * read-only where it is global: it cannot rewrite their name or phone, and
+     * cannot mint a set-password link whose completion ends their sessions
+     * elsewhere. (It may SEE the phone: the owner decided, 2026-09-29, that every
+     * school that has the teacher can.) Every one of those guards asks THIS
+     * question, so they cannot disagree about who is shared.
      *
      * `whereHas('masjid')` drops an organisation that has been trashed, exactly as
      * TenantResolver does: a membership in an archived school shares nothing today.

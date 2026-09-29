@@ -49,6 +49,7 @@
                             <tr>
                                 <th>Name</th>
                                 <th>Email</th>
+                                <th>Phone</th>
                                 <th class="text-center">Status</th>
                                 <th>{{ classesTerm }}</th>
                                 <th class="text-end">Actions</th>
@@ -58,6 +59,7 @@
                             <tr v-for="teacher in teachers" :key="teacher.id">
                                 <td class="fw-semibold">{{ teacher.name }}</td>
                                 <td class="text-break">{{ teacher.email }}</td>
+                                <td class="text-nowrap">{{ teacher.phone || '—' }}</td>
                                 <td class="text-center">
                                     <span v-if="teacher.invited" class="badge bg-warning-subtle text-warning">
                                         <i class="bi bi-envelope me-1"></i>Invited
@@ -204,7 +206,7 @@
                                             :class="{ 'is-invalid': fieldErrors.phone }"
                                             v-model.trim="form.phone"
                                             :disabled="isEditing && sharedTeacher"
-                                            :placeholder="isEditing && sharedTeacher ? 'Not shown' : ''"
+                                            placeholder=""
                                         >
                                         <div v-if="fieldErrors.phone" class="invalid-feedback">{{ fieldErrors.phone }}</div>
                                     </div>
@@ -546,8 +548,8 @@ const submitForm = async () => {
             // Edit: email is fixed and not sent; class_ids is the full new set.
             const payload: TeacherUpdatePayload = {
                 name: form.value.name,
-                // A shared teacher's phone is hidden from this school and the
-                // server refuses any value, so none is sent.
+                // A shared teacher's phone is shown (read-only) but is one record
+                // every school holds; the server refuses any value, so none is sent.
                 phone: sharedTeacher.value ? '' : form.value.phone,
                 class_ids: form.value.class_ids,
                 class_subjects: form.value.class_subjects

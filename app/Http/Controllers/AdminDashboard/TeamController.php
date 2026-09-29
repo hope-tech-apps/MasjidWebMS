@@ -387,17 +387,18 @@ class TeamController extends Controller
         $isOwner = (int) $user->id === (int) $masjid->user_id;
         $isYou = $viewer !== null && (int) $viewer->id === (int) $user->id;
 
-        // A teacher who also belongs to another school shows this school their
-        // NAME AND EMAIL only. The phone on the `users` row is whatever the other
-        // school entered, and the newest token is a sign-in at ANY school — global
-        // facts about a person this school added, not facts about this school.
+        // A teacher who also belongs to another school is SHARED. Their phone is shown
+        // like anyone's (the owner decided, 2026-09-29, that every school that has
+        // the teacher may see it); what stays out of this school's screens is the
+        // newest token, which is a sign-in at ANY school and so not a fact about this
+        // one.
         $shared = $access === self::ACCESS_TEACHER && $user->belongsOutside((int) $masjid->id);
 
         return [
             'user_id' => (int) $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'phone' => $shared ? null : ($user->phone ?: null),
+            'phone' => $user->phone ?: null,
             'access' => $access,
             'is_owner' => $isOwner,
             'is_you' => $isYou,

@@ -23,6 +23,8 @@ export type Teacher = {
     id: number;
     name: string;
     email: string;
+    /** As stored; '' when none. Shown for every teacher, including one who also belongs to another school. */
+    phone?: string;
     /**
      * True while the emailed invite is still outstanding — the login exists but
      * the teacher has not yet accepted it. Rendered as an "Invited" vs "Active"
@@ -65,8 +67,8 @@ export type TeacherDetail = {
     phone: string;
     /**
      * The teacher also belongs to another school. Their name and phone are one
-     * record every school shares: the server hides the stored phone (`phone` is
-     * '') and refuses a change to either, so the edit form shows them read-only.
+     * record every school shares: every school SEES the stored phone, but the
+     * server refuses a change to either, so the edit form shows them read-only.
      */
     shared?: boolean;
     class_ids: number[];

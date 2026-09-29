@@ -97,6 +97,7 @@ class TeachersController extends Controller
                 'id' => (int) $user->id,
                 'name' => $user->name,
                 'email' => $user->email,      // admin-facing: staff detail, not a student/guardian
+                'phone' => $user->phone,      // shown to every school that has the teacher (owner, 2026-09-29)
                 'invited' => $user->password !== null && $user->email_verified_at === null,
                 'classes' => $classes,
             ];
@@ -373,9 +374,10 @@ class TeachersController extends Controller
     {
         $user = $this->resolveTeacher($user_id);
 
-        // A teacher who also belongs to another school: the stored phone is
-        // whatever THAT school entered, so it is not shown here, and the edit form
-        // is told the name and phone are read-only (see update()).
+        // A teacher who also belongs to another school is SHARED: the `users` row is
+        // one record every school holds, so the edit form is told the name and phone
+        // are read-only (see update()). The phone itself is shown: the owner decided
+        // (2026-09-29) that every school that has the teacher may see it.
         $shared = $user->belongsOutside((int) $this->tenant->get());
 
         return response()->json([
@@ -384,7 +386,7 @@ class TeachersController extends Controller
                 'id' => (int) $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'phone' => $shared ? '' : $user->phone,
+                'phone' => $user->phone,
                 'shared' => $shared,
                 'class_ids' => $this->ledClassIds($user),
                 // Per class, as stored: null for "teaches everything". The edit
@@ -413,9 +415,10 @@ class TeachersController extends Controller
      * is global: renaming or re-phoning them here rewrites every other school's
      * records of them. So for a shared teacher this school may edit CLASSES only.
      * The name must be the one already on file (the form shows it read-only), and
-     * any phone is refused rather than compared: the stored phone is hidden from
-     * this school (show()), and "same value accepted, different value refused"
-     * would let an office find it out by guessing.
+     * any phone is refused: the phone is one record every school shares and none of
+     * them may change it, so the form displays it and never sends it back. (Since
+     * 2026-09-29 the phone is visible to every school that has the teacher, so this
+     * is a rule about who may EDIT it, not about who may know it.)
      */
     public function update(TeacherUpdateRequest $request, $masjid_id, $user_id)
     {
