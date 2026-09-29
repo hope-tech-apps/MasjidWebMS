@@ -56,8 +56,18 @@ trait FoldsAccentsLikeUnicodeCi
         return strtr(mb_strtolower($value), self::accentFolds());
     }
 
+    /** MySQL has the real collation; only SQLite needs (and can take) the stand-in. */
+    private function onSqlite(): bool
+    {
+        return DB::connection()->getDriverName() === 'sqlite';
+    }
+
     protected function foldAccentsLikeUnicodeCi(): void
     {
+        if (! $this->onSqlite()) {
+            $this->markTestSkipped('This test builds production\'s collation on SQLite; the connection is not SQLite.');
+        }
+
         DB::connection()->getPdo()->sqliteCreateFunction(
             'lower',
             fn ($value) => $value === null ? null : self::foldLikeUnicodeCi((string) $value),
@@ -68,6 +78,10 @@ trait FoldsAccentsLikeUnicodeCi
     /** SQLite's own `LOWER()` folds ASCII only, which `strtolower()` matches since PHP 8.2. */
     protected function stopFoldingAccents(): void
     {
+        if (! $this->onSqlite()) {
+            return;
+        }
+
         DB::connection()->getPdo()->sqliteCreateFunction(
             'lower',
             fn ($value) => $value === null ? null : strtolower((string) $value),
