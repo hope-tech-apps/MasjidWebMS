@@ -21,6 +21,7 @@ use App\Support\Arabic\ArabicCurriculum;
 use App\Support\Avatar;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -392,6 +393,10 @@ class TeacherMultiSchoolTest extends TestCase
         $b2 = TeacherRealmWorld::seed($this->schoolB, $this->makeClass($this->schoolB, 'MARK-B2-CLASS'), $this->teacher, $skillB, 'B2', false);
         $third = $this->makeSchool('Gamma School');
 
+        // The two schools' own administrators, for the last phase (before any request).
+        $adminA = $this->makeAdminOf($this->schoolA);
+        $adminB = $this->makeAdminOf($this->schoolB);
+
         $this->assertSame(
             [$this->classA->id, $this->classB->id],
             GroupStaff::withoutMasjidScope()->where('user_id', $this->teacher->id)->orderBy('group_id')->pluck('group_id')->map(fn ($id): int => (int) $id)->all(),
@@ -457,6 +462,9 @@ class TeacherMultiSchoolTest extends TestCase
                 }
 
                 $url = $this->sweepUrl($route, (int) $urlSchool, $groupWorld, $otherWorld, $spec);
+
+                // Nothing is stamped going in, so anything stamped coming out was this request's.
+                DB::table('masjid_user')->update(['last_seen_at' => null]);
                 $before = $this->snapshot($tables);
 
                 $response = $this->send($route['method'], $url, $spec, $bodyWorld);
@@ -494,6 +502,16 @@ class TeacherMultiSchoolTest extends TestCase
                 if ($changed !== []) {
                     $failures[] = "{$where}: a refused request WROTE (".implode(', ', $changed).')';
                 }
+
+                // The "last opened" stamp: never on a refusal, and a request that DID go
+                // through (a no-op 200) may stamp only the URL school's own membership.
+                $stamped = $this->stampedMemberships();
+                if ($status >= 400 && $stamped !== []) {
+                    $failures[] = "{$where}: a refused request STAMPED last_seen_at (".implode(', ', $stamped).')';
+                }
+                if ($status < 400 && array_diff($stamped, ["{$urlSchool}:{$this->teacher->id}"]) !== []) {
+                    $failures[] = "{$where}: a request stamped a membership other than the URL school's (".implode(', ', $stamped).')';
+                }
             }
         }
 
@@ -510,7 +528,9 @@ class TeacherMultiSchoolTest extends TestCase
 
                 DB::beginTransaction();
                 try {
+                    DB::table('masjid_user')->update(['last_seen_at' => null]);
                     $response = $this->send($route['method'], $url, $spec, $world);
+                    $stamped = $this->stampedMemberships();
                 } finally {
                     DB::rollBack();
                 }
@@ -530,11 +550,55 @@ class TeacherMultiSchoolTest extends TestCase
                     $failures[] = "CONTROL {$key} in school {$world->tag} did not echo the school it bound";
                 }
 
+                // Every route that went through opened THIS school, and only this one.
+                if ($stamped !== ["{$world->school->id}:{$this->teacher->id}"]) {
+                    $failures[] = "CONTROL {$key} in school {$world->tag} stamped ".json_encode($stamped)." instead of exactly its own school's membership";
+                }
+
                 $body = (string) ($response->getContent() ?: '');
                 foreach (array_diff(['A', 'B', 'A2', 'B2'], [$world->tag]) as $tag) {
                     if ($this->carriesMarker($body, $tag)) {
                         $failures[] = "CONTROL {$key} in school {$world->tag} carries {$tag}'s data";
                     }
+                }
+            }
+        }
+
+        // ---- phase 3: a school's admins see only their OWN school's "last opened" ----
+        // The teacher is in both schools with different values. Each school's Teachers
+        // list, Teachers edit read and Team & Access carry its own and never the other's.
+        DB::table('masjid_user')->update(['last_seen_at' => null]);
+        DB::table('masjid_user')->where('user_id', $this->teacher->id)->where('masjid_id', $this->schoolA->id)->update(['last_seen_at' => '2026-09-01 10:00:00']);
+        DB::table('masjid_user')->where('user_id', $this->teacher->id)->where('masjid_id', $this->schoolB->id)->update(['last_seen_at' => '2026-09-02 11:00:00']);
+
+        foreach ([[$adminA, $this->schoolA, '2026-09-01 10:00:00', '2026-09-02'], [$adminB, $this->schoolB, '2026-09-02 11:00:00', '2026-09-01']] as [$admin, $school, $ownValue, $otherDate]) {
+            Sanctum::actingAs($admin, ['staff']);
+            $base = "/api/admin/masjids/{$school->id}";
+            $expected = \Illuminate\Support\Carbon::parse($ownValue)->toIso8601String();
+
+            $list = $this->getJson("{$base}/teachers");
+            $show = $this->getJson("{$base}/teachers/{$this->teacher->id}");
+            $team = $this->getJson("{$base}/team");
+
+            foreach (['teachers list' => $list, 'teacher show' => $show, 'team' => $team] as $what => $response) {
+                if ($response->getStatusCode() !== 200) {
+                    $failures[] = "ADMIN VIEW {$what} for school {$school->name} answered {$response->getStatusCode()}";
+
+                    continue;
+                }
+                if (str_contains($response->getContent(), $otherDate)) {
+                    $failures[] = "ADMIN VIEW {$what} for school {$school->name} carries the OTHER school's last-opened ({$otherDate})";
+                }
+            }
+
+            $seen = [
+                'teachers list' => collect($list->json('data'))->firstWhere('id', $this->teacher->id)['last_seen_at'] ?? null,
+                'teacher show' => $show->json('data.last_seen_at'),
+                'team' => collect($team->json('data.people'))->firstWhere('user_id', $this->teacher->id)['last_seen_at'] ?? null,
+            ];
+            foreach ($seen as $what => $value) {
+                if ($value !== $expected) {
+                    $failures[] = "ADMIN VIEW {$what} for school {$school->name} shows ".json_encode($value)." instead of its own {$expected}";
                 }
             }
         }
@@ -799,7 +863,17 @@ class TeacherMultiSchoolTest extends TestCase
         $state = [];
 
         foreach ($tables as $table) {
-            $state[$table] = md5(json_encode(DB::table($table)->get()->all(), JSON_THROW_ON_ERROR));
+            $rows = DB::table($table)->get()->all();
+
+            // `masjid_user.last_seen_at` is the one column a successful request MAY write
+            // (ResolveMasjidTenant, only below 400). It is judged on its own terms by
+            // stampedMemberships(); every OTHER column of the row, `updated_at` included,
+            // stays in the hash, so the stamp cannot be a way to slip a write past it.
+            if ($table === 'masjid_user') {
+                $rows = array_map(fn (object $row): array => Arr::except((array) $row, ['last_seen_at']), $rows);
+            }
+
+            $state[$table] = md5(json_encode($rows, JSON_THROW_ON_ERROR));
         }
 
         $files = [];
@@ -818,6 +892,17 @@ class TeacherMultiSchoolTest extends TestCase
     private function changedTables(array $before, array $after): array
     {
         return array_keys(array_filter($after, fn (string $hash, string $table): bool => ($before[$table] ?? null) !== $hash, ARRAY_FILTER_USE_BOTH));
+    }
+
+    /**
+     * Every membership carrying a `last_seen_at`, as "masjid:user" keys.
+     *
+     * @return list<string>
+     */
+    private function stampedMemberships(): array
+    {
+        return DB::table('masjid_user')->whereNotNull('last_seen_at')->get(['masjid_id', 'user_id'])
+            ->map(fn (object $row): string => "{$row->masjid_id}:{$row->user_id}")->sort()->values()->all();
     }
 
     /** The JSON `message` of a body, or null for anything else (a streamed file, a PDF, HTML). */
@@ -877,6 +962,17 @@ class TeacherMultiSchoolTest extends TestCase
         ]);
 
         return $thread;
+    }
+
+    /** The school's owner and administrator, so the admin screens can be read as the school sees them. */
+    private function makeAdminOf(Masjid $school): User
+    {
+        $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $school->user_id = $admin->id;
+        $school->save();
+        MasjidUser::ensureOwnerMembership((int) $school->id, (int) $admin->id);
+
+        return $admin;
     }
 
     private function makeSchool(string $name): Masjid

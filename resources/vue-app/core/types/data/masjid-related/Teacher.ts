@@ -25,6 +25,8 @@ export type Teacher = {
     email: string;
     /** As stored; '' when none. Shown for every teacher, including one who also belongs to another school. */
     phone?: string;
+    /** When this teacher last OPENED THIS school (never another school's); null before anything has recorded it. */
+    last_seen_at?: string | null;
     /**
      * True while the emailed invite is still outstanding — the login exists but
      * the teacher has not yet accepted it. Rendered as an "Invited" vs "Active"
@@ -65,6 +67,8 @@ export type TeacherDetail = {
     name: string;
     email: string;
     phone: string;
+    /** When this teacher last opened THIS school; null before anything has recorded it. */
+    last_seen_at?: string | null;
     /**
      * The teacher also belongs to another school. Their name and phone are one
      * record every school shares: every school SEES the stored phone, but the

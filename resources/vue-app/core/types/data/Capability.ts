@@ -146,8 +146,12 @@ export type TeamMember = {
     is_owner: boolean;
     is_you: boolean;
     classes: number | null;
-    last_sign_in_at: string | null;
-    /** A teacher who also belongs to another school: phone and last sign-in are withheld, not absent. Missing on an older backend. */
+    /**
+     * When this person last OPENED THIS organisation (masjid_user.last_seen_at), never
+     * another school's. Null: no request has opened it since the column shipped.
+     */
+    last_seen_at: string | null;
+    /** The person also belongs to another school: their name and phone are one shared record. Missing on an older backend. */
     shared?: boolean;
     removable: boolean;
 };

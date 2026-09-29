@@ -4627,6 +4627,48 @@ Each fix has a test that fails without it (mutation-proved, see the build report
   from `app/Services` or `app/Support` is outside it and belongs to its own lane).
 
 
+## 2026-09-29 — Multi-org users, round 2: "last opened this school" per organisation
+Decision (owner, on the review's question about what a second school sees of a shared teacher): "they should see when
+they last opened the specific school instead, not necessarily the last time they logged in." So the global last
+sign-in (the newest personal access token, a sign-in at ANY school) is gone from Team & Access, and the Teachers list
+gains the same column. Both now show `masjid_user.last_seen_at` for THIS school's membership, labelled "Last opened
+this school"; `last_sign_in_at` is removed from the Team payload (the SPA was its only reader).
+- **The column.** `masjid_user.last_seen_at`, nullable timestamp, no default, NO index, additive
+  (`2026_10_01_120000_add_last_seen_at_to_masjid_user_table`; `down()` drops it and the stamps with it). Nothing is
+  backfilled from tokens: a global sign-in is exactly the fact this replaces. **NULL means "no request has opened this
+  school since the column shipped", not "never signed in"**, and the SPA says "Not opened yet". Hidden on `MasjidUser`
+  (`$hidden`) so a serialised membership cannot carry one school's value into another school's payload; every screen
+  reads it through `MembershipSeen::forOrganisation($masjidId)`, which filters by masjid once.
+- **Who stamps it, and what it covers.** `ResolveMasjidTenant`, inline, after the tenant binds, and only on a response
+  below 400. It covers the three staff realms that bind through a `masjid_user` grant: **MasjidAdmin** (`/api/admin/
+  masjids/{id}/…`), **Teacher** (`/api/teacher/masjids/{id}/…`) and **LunchStaff** (`/api/lunch/masjids/{id}/…`).
+  It does NOT cover: a **SuperAdmin** acting in a school (no membership, and the branch never sets one); a **family or
+  student token** (a Contact is not a `User`; family routes use `family.tenant`, and a non-User principal is refused by
+  this middleware); any request that binds no school (`/teacher/user`, `/lunch/user`, sign-in, and
+  `TenantResolver::UNSCOPED_ADMIN_ROUTES`); a refused or failed request (401, 403, 404, 422, 5xx); and the ownership
+  fallback (an unsaved `MasjidUser`, which must never be persisted by a read path: `touch()` returns for a row that
+  does not exist).
+- **How.** ONE conditional statement on the query builder, `UPDATE masjid_user SET last_seen_at = :now WHERE masjid_id
+  = ? AND user_id = ? AND (last_seen_at IS NULL OR last_seen_at < :now - 5 min)`, not a read then a write and not a model
+  save: no model event, observer, `updated_at` touch or audit write can fire on a membership row, and the database
+  throttles a burst instead of a race between two reads. A request inside the window still issues the one statement,
+  which matches nothing, so a query-counting test sees the same count either way. It runs after the controller has
+  returned (no request-level transaction exists in this app, and the controllers' own have committed), and any
+  throwable is caught and logged at WARNING (`Log::info` is invisible on production, where `LOG_LEVEL` is warning), so it
+  can never fail or slow the caller.
+- **Rejected.** Terminable middleware (the production transport never runs `terminate()`; that is how the /features
+  counter was lost). A model `save()`/`touch()` (fires events, touches `updated_at`). Read-then-write throttling
+  (a race, and two statements). An index (nothing searches or sorts by it). Keeping the global sign-in beside it (the
+  point is that a school must not see another school's fact). A queue job (a failure mode for a timestamp).
+- **`config/staging_scrub.php`: no entry, on purpose.** That config keeps login-time timestamps by omission
+  (`contacts.last_login_at`, `users.*_verified_at`) and `last_seen_at` matches none of `StagingScrubCoverageTest`'s
+  personal-data tokens, so it stays green; the timestamp identifies nobody once the row's email and name are scrubbed.
+- **Known limits.** Unknown, needs investigation: the conditional UPDATE's behaviour under concurrent stamps on
+  MySQL (the suite is SQLite, which has no row locks); on InnoDB it takes a row lock on one membership row for one
+  statement. A person who last opened a school before this shipped shows "Not opened yet" until their next request.
+  Only the URL's school is stamped, so a teacher who works in school A all day shows school B's old value: that is the
+  point.
+
 ## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
 
 - **Review fixes (2026-09-28, after the 5-lens review of this branch).** Each has a test that fails without it

@@ -12,6 +12,7 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
+use App\Support\MembershipSeen;
 use App\Support\TenantContext;
 use Illuminate\Database\DeadlockException;
 use Illuminate\Database\QueryException;
@@ -75,9 +76,11 @@ class TeachersController extends Controller
         $rows = GroupStaff::query()->where('role', GroupStaff::ROLE_TEACHER)->get();
 
         $users = User::whereIn('id', $rows->pluck('user_id')->unique())->get()->keyBy('id');
+        // When each last opened THIS school, from this school's membership rows only.
+        $seen = MembershipSeen::forOrganisation((int) $this->tenant->get());
         $groups = Group::whereIn('id', $rows->pluck('group_id')->unique())->get()->keyBy('id');
 
-        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups) {
+        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups, $seen) {
             $user = $users->get($userId);
             if ($user === null) {
                 return null;
@@ -98,6 +101,8 @@ class TeachersController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,      // admin-facing: staff detail, not a student/guardian
                 'phone' => $user->phone,      // shown to every school that has the teacher (owner, 2026-09-29)
+                // This school's own "last opened this school", never another school's.
+                'last_seen_at' => MembershipSeen::iso($seen->get($user->id)),
                 'invited' => $user->password !== null && $user->email_verified_at === null,
                 'classes' => $classes,
             ];
@@ -388,6 +393,9 @@ class TeachersController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'shared' => $shared,
+                'last_seen_at' => MembershipSeen::iso(
+                    MembershipSeen::forOrganisation((int) $this->tenant->get(), [(int) $user->id])->get($user->id)
+                ),
                 'class_ids' => $this->ledClassIds($user),
                 // Per class, as stored: null for "teaches everything". The edit
                 // form round-trips this, so an admin editing a name cannot

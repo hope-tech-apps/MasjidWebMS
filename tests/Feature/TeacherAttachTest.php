@@ -346,11 +346,13 @@ class TeacherAttachTest extends TestCase
     // -------------------------------------------------- privacy on the screens
 
     #[Test]
-    public function a_shared_teachers_phone_is_shown_to_every_school_that_has_them_and_the_global_sign_in_is_not(): void
+    public function a_shared_teacher_shows_every_school_the_phone_and_only_that_schools_last_opened(): void
     {
-        // Owner, 2026-09-29: "Seeing their phone number I do not see as a problem."
-        // What stays out of a school's screens is the newest token, a sign-in at ANY
-        // school (replaced by a per-school "last opened" in the next change).
+        // Owner, 2026-09-29: "Seeing their phone number I do not see as a problem", and
+        // "they should see when they last opened the specific school instead, not
+        // necessarily the last time they logged in". So the phone is shown to both
+        // schools, the global sign-in (the newest token) is shown to neither, and each
+        // school sees its OWN membership's last_seen_at.
         $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass], ['name' => 'Stored Name', 'phone' => '+15550001111']);
         $teacher->createToken('phone'); // a sign-in at school A
         $solo = $this->teacherAt($this->biss, [$this->seventh], ['phone' => '+15557778888']);
@@ -358,33 +360,48 @@ class TeacherAttachTest extends TestCase
 
         $this->postJson($this->bissBase().'/teachers', $this->payload($teacher->email, [$this->eighth]))->assertCreated();
 
+        DB::table('masjid_user')->where('user_id', $teacher->id)->where('masjid_id', $this->alrazi->id)->update(['last_seen_at' => '2026-09-01 10:00:00']);
+        DB::table('masjid_user')->where('user_id', $teacher->id)->where('masjid_id', $this->biss->id)->update(['last_seen_at' => '2026-09-02 11:00:00']);
+        $alraziIso = \Illuminate\Support\Carbon::parse('2026-09-01 10:00:00')->toIso8601String();
+        $bissIso = \Illuminate\Support\Carbon::parse('2026-09-02 11:00:00')->toIso8601String();
+
         // Teachers list and edit read: the stored phone, for the shared teacher as for anyone.
         $list = $this->getJson($this->bissBase().'/teachers')->assertOk();
         $row = collect($list->json('data'))->firstWhere('id', $teacher->id);
-        $this->assertSame(['id', 'name', 'email', 'phone', 'invited', 'classes'], array_keys($row));
+        $this->assertSame(['id', 'name', 'email', 'phone', 'last_seen_at', 'invited', 'classes'], array_keys($row));
         $this->assertSame('Stored Name', $row['name']);
         $this->assertSame('+15550001111', $row['phone']);
+        $this->assertSame($bissIso, $row['last_seen_at'], 'BISS sees when they last opened BISS');
 
         $show = $this->getJson($this->bissBase()."/teachers/{$teacher->id}")->assertOk();
         $show->assertJsonPath('data.shared', true);
         $show->assertJsonPath('data.phone', '+15550001111');
+        $show->assertJsonPath('data.last_seen_at', $bissIso);
 
-        // A single-school teacher is unchanged.
+        // A single-school teacher is unchanged, and has nothing recorded yet.
         $soloShow = $this->getJson($this->bissBase()."/teachers/{$solo->id}")->assertOk();
         $soloShow->assertJsonPath('data.shared', false);
         $soloShow->assertJsonPath('data.phone', '+15557778888');
+        $soloShow->assertJsonPath('data.last_seen_at', null);
 
-        // Team & Access: the phone for both; the last sign-in is withheld for the
-        // shared teacher only.
-        $team = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->keyBy('user_id');
+        // Team & Access: the phone for both, this school's last-opened for both, and no
+        // global sign-in key at all.
+        $teamResponse = $this->getJson($this->bissBase().'/team')->assertOk();
+        $team = collect($teamResponse->json('data.people'))->keyBy('user_id');
         $this->assertSame('+15550001111', $team[$teacher->id]['phone']);
-        $this->assertNull($team[$teacher->id]['last_sign_in_at']);
+        $this->assertSame($bissIso, $team[$teacher->id]['last_seen_at']);
         $this->assertSame('+15557778888', $team[$solo->id]['phone']);
-        $this->assertNotNull($team[$solo->id]['last_sign_in_at']);
+        $this->assertNull($team[$solo->id]['last_seen_at']);
+        $this->assertArrayNotHasKey('last_sign_in_at', $team[$teacher->id]);
+        $this->assertStringNotContainsString('2026-09-01', $teamResponse->getContent(), "Al-Razi's value never appears in BISS's screen");
 
-        // The other school sees it too: symmetric, nothing hidden either way.
+        // The other school sees the phone too, and its OWN value, never BISS's.
         Sanctum::actingAs($this->alraziAdmin, ['staff']);
-        $this->assertSame('+15550001111', collect($this->getJson($this->alraziBase().'/teachers')->assertOk()->json('data'))->firstWhere('id', $teacher->id)['phone']);
+        $alraziList = $this->getJson($this->alraziBase().'/teachers')->assertOk();
+        $alraziRow = collect($alraziList->json('data'))->firstWhere('id', $teacher->id);
+        $this->assertSame('+15550001111', $alraziRow['phone']);
+        $this->assertSame($alraziIso, $alraziRow['last_seen_at']);
+        $this->assertStringNotContainsString('2026-09-02', $alraziList->getContent());
     }
 
     // ---------------------------------------------------------------- T1.10
@@ -889,7 +906,7 @@ class TeacherAttachTest extends TestCase
     // ------------------------------------------------- lens fixes: Team & Access payload
 
     #[Test]
-    public function team_and_access_says_a_shared_teachers_sign_in_is_withheld_not_absent(): void
+    public function team_and_access_marks_a_shared_teacher_and_shows_this_schools_last_opened(): void
     {
         $teacher = $this->teacherAt($this->alrazi, [$this->alraziClass]);
         $teacher->createToken('phone');
@@ -899,27 +916,33 @@ class TeacherAttachTest extends TestCase
         $team = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->keyBy('user_id');
 
         $this->assertTrue($team[$teacher->id]['shared']);
-        $this->assertNull($team[$teacher->id]['last_sign_in_at']);
-        $this->assertFalse($team[$solo->id]['shared'], 'a one-school teacher who never signed in is genuinely "not signed in yet"');
-        $this->assertNull($team[$solo->id]['last_sign_in_at']);
+        $this->assertFalse($team[$solo->id]['shared']);
+        // A token is a sign-in at ANY school, so it never becomes this school's date: nothing
+        // has opened BISS as this teacher yet, whatever they did at Al-Razi.
+        $this->assertNull($team[$teacher->id]['last_seen_at']);
+        $this->assertNull($team[$solo->id]['last_seen_at']);
+        $this->assertArrayNotHasKey('last_sign_in_at', $team[$teacher->id]);
     }
 
     #[Test]
-    public function gap_b5_a_second_school_does_not_hide_an_administrators_phone_or_sign_in(): void
+    public function gap_b5_a_second_school_does_not_hide_an_administrators_phone_and_shows_only_this_offices_last_opened(): void
     {
-        // Only a TEACHER's global fields are withheld: an administrator of two
-        // offices is the offices' own colleague, and hiding their phone from the
-        // second office would be a behaviour change for the multi-org admins.
+        // An administrator of two offices is the offices' own colleague: the phone is
+        // shown (as it now is for a shared teacher), and each office sees its own
+        // membership's last-opened.
         $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+15550005555']);
         MasjidUser::create(['masjid_id' => $this->biss->id, 'user_id' => $admin->id, 'role' => 'masjid-admin', 'is_default' => true]);
         MasjidUser::create(['masjid_id' => $this->alrazi->id, 'user_id' => $admin->id, 'role' => 'masjid-admin', 'is_default' => false]);
-        $admin->createToken('laptop');
+        DB::table('masjid_user')->where('user_id', $admin->id)->where('masjid_id', $this->biss->id)->update(['last_seen_at' => '2026-09-03 09:00:00']);
+        DB::table('masjid_user')->where('user_id', $admin->id)->where('masjid_id', $this->alrazi->id)->update(['last_seen_at' => '2026-09-04 09:00:00']);
 
-        $row = collect($this->getJson($this->bissBase().'/team')->assertOk()->json('data.people'))->firstWhere('user_id', $admin->id);
+        $response = $this->getJson($this->bissBase().'/team')->assertOk();
+        $row = collect($response->json('data.people'))->firstWhere('user_id', $admin->id);
 
         $this->assertSame('+15550005555', $row['phone']);
-        $this->assertNotNull($row['last_sign_in_at']);
+        $this->assertSame(\Illuminate\Support\Carbon::parse('2026-09-03 09:00:00')->toIso8601String(), $row['last_seen_at']);
         $this->assertFalse($row['shared']);
+        $this->assertStringNotContainsString('2026-09-04', $response->getContent());
     }
 
     // ---------------------------------------------------------------- helpers

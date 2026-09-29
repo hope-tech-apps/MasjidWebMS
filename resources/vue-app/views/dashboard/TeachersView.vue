@@ -51,6 +51,7 @@
                                 <th>Email</th>
                                 <th>Phone</th>
                                 <th class="text-center">Status</th>
+                                <th>{{ LAST_OPENED_LABEL }}</th>
                                 <th>{{ classesTerm }}</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -67,6 +68,10 @@
                                     <span v-else class="badge bg-success-subtle text-success">
                                         <i class="bi bi-check-circle me-1"></i>Active
                                     </span>
+                                </td>
+                                <td class="small text-nowrap">
+                                    <span v-if="teacher.last_seen_at">{{ formatLastOpened(teacher.last_seen_at) }}</span>
+                                    <span v-else class="text-muted" :title="NOT_OPENED_HINT">{{ NOT_OPENED_TEXT }}</span>
                                 </td>
                                 <td>
                                     <div v-if="teacher.classes.length" class="d-flex flex-wrap gap-1">
@@ -332,6 +337,7 @@ import { useTeachersStore } from '@/stores/masjid/teachersStore';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import Swal from 'sweetalert2';
 
 /**

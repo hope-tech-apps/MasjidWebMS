@@ -10,6 +10,7 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
+use App\Support\MembershipSeen;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -83,10 +84,13 @@ class TeamController extends Controller
             ->filter()
             ->unique();
 
+        // Read once for this organisation only (MembershipSeen::forOrganisation).
+        $seen = MembershipSeen::forOrganisation((int) $masjid->id);
+
         $people = User::whereIn('id', $ids)
             ->whereIn('type', self::STAFF_TYPES)
             ->get()
-            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user()))
+            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user(), $seen))
             ->sort(fn (array $a, array $b) => [! $a['is_owner'], self::ORDER[$a['access']], mb_strtolower($a['name'])]
                 <=> [! $b['is_owner'], self::ORDER[$b['access']], mb_strtolower($b['name'])])
             ->values();
@@ -376,7 +380,11 @@ class TeamController extends Controller
         ], $masjid->modules_off);
     }
 
-    private function serialize(User $user, Masjid $masjid, ?User $viewer): array
+    /**
+     * @param  \Illuminate\Support\Collection<int, \Illuminate\Support\Carbon|null>|null  $seen
+     *         user_id => last opened THIS organisation; read for the one person when omitted
+     */
+    private function serialize(User $user, Masjid $masjid, ?User $viewer, ?\Illuminate\Support\Collection $seen = null): array
     {
         $access = match ($user->type) {
             'MasjidAdmin' => self::ACCESS_ADMIN,
@@ -389,9 +397,8 @@ class TeamController extends Controller
 
         // A teacher who also belongs to another school is SHARED. Their phone is shown
         // like anyone's (the owner decided, 2026-09-29, that every school that has
-        // the teacher may see it); what stays out of this school's screens is the
-        // newest token, which is a sign-in at ANY school and so not a fact about this
-        // one.
+        // the teacher may see it). "Last opened" is this school's own membership row,
+        // never the newest token, which is a sign-in at ANY school.
         $shared = $access === self::ACCESS_TEACHER && $user->belongsOutside((int) $masjid->id);
 
         return [
@@ -406,14 +413,18 @@ class TeamController extends Controller
             'classes' => $access === self::ACCESS_TEACHER
                 ? GroupStaff::where('user_id', $user->id)->count()
                 : null,
-            // A token is minted at every sign-in, so its newest creation time is
-            // the last sign-in — the only reliable "did they get the invite?"
-            // (nothing writes users.email_verified_at).
-            //
-            // `shared` says WHY the sign-in is null for a teacher of two schools, so the
-            // screen can say "shared login" instead of the false "Not signed in yet".
+            // When this person last OPENED this organisation (masjid_user.last_seen_at,
+            // stamped by ResolveMasjidTenant): a fact about THIS school, so it is shown
+            // for a teacher of two schools too and never carries the other school's
+            // value. Null means no request has opened this school since the column
+            // shipped, not "never signed in".
+            'last_seen_at' => MembershipSeen::iso($seen !== null
+                ? $seen->get($user->id)
+                : MembershipSeen::forOrganisation((int) $masjid->id, [(int) $user->id])->get($user->id)),
+            // The person also belongs to another school: their name and phone are one
+            // record every school shares (edited on the Teachers screen, and refused
+            // there for a shared teacher).
             'shared' => $shared,
-            'last_sign_in_at' => $shared ? null : optional($user->tokens()->max('created_at'), fn ($t) => \Illuminate\Support\Carbon::parse($t)->toIso8601String()),
             'removable' => ! $isOwner && ! $isYou && $access !== self::ACCESS_TEACHER,
         ];
     }

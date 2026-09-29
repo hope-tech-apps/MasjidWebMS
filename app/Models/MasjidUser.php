@@ -119,6 +119,10 @@ class MasjidUser extends Model
      */
     protected $hidden = [
         'default_key',
+        // One school's "last opened" must never ride along when a membership is
+        // serialised for someone else's screen; a payload that wants it reads the
+        // attribute explicitly, for the school it is showing (see MembershipSeen).
+        'last_seen_at',
     ];
 
     protected function casts(): array
@@ -127,6 +131,7 @@ class MasjidUser extends Model
             // Advisory-only flag in this slice, but a real DB constraint: at most
             // one row per user may be true.
             'is_default' => 'boolean',
+            'last_seen_at' => 'datetime',
         ];
     }
 
