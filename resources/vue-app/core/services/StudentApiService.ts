@@ -1,4 +1,6 @@
-import axios, { AxiosInstance, AxiosResponse } from "axios";
+import axios from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
+import { stripInheritedAuthorization } from "@/core/services/stripInheritedAuthorization";
 
 /**
  * Child mode's own HTTP client — deliberately NOT FamilyApiService.
@@ -28,20 +30,57 @@ export interface StudentContext {
 class StudentApiService {
     private static client: AxiosInstance;
 
+    /**
+     * axios.create() COPIES axios's global defaults, and the admin ApiService writes
+     * three things onto them that must not reach a child's phone (the same three the
+     * family client pins; see FamilyApiService.init):
+     *
+     *  - the STAFF bearer token (`Authorization`). Stripped, and the interceptor below
+     *    removes any Authorization on a request with no child token, so a device where
+     *    an admin or teacher once signed in cannot sign the child's requests as staff;
+     *  - `withCredentials = true`. This realm is bearer-only, and a credentialed
+     *    cross-origin call needs Access-Control-Allow-Credentials, which
+     *    config/cors.php does not send;
+     *  - a global form-urlencoded Content-Type, under which a JSON body arrives as an
+     *    empty form (see JSON_WRITE).
+     */
+    public static init(baseUrl: string): void {
+        StudentApiService.client = axios.create({
+            baseURL: baseUrl,
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            withCredentials: false,
+        });
+
+        stripInheritedAuthorization(StudentApiService.client);
+
+        StudentApiService.client.interceptors.request.use((config) => {
+            const token = localStorage.getItem(STUDENT_STORAGE_KEYS.token);
+
+            if (token) {
+                config.headers.Authorization = `Bearer ${token}`;
+            } else {
+                // No child token means NO credential, whatever else set one.
+                config.headers.delete?.('Authorization');
+                delete (config.headers as any).Authorization;
+            }
+
+            return config;
+        });
+    }
+
     private static instance(): AxiosInstance {
         if (!StudentApiService.client) {
-            StudentApiService.client = axios.create({
-                baseURL: import.meta.env.VITE_APP_URL ?? '',
-                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-            });
-            StudentApiService.client.interceptors.request.use((config) => {
-                const token = localStorage.getItem(STUDENT_STORAGE_KEYS.token);
-                if (token) config.headers.Authorization = `Bearer ${token}`;
-                return config;
-            });
+            StudentApiService.init(import.meta.env.VITE_APP_URL ?? '');
         }
         return StudentApiService.client;
     }
+
+    /**
+     * A JSON body must be DECLARED as JSON: axios.create() inherits the admin
+     * ApiService's global form-urlencoded Content-Type, and a plain object under that
+     * label reaches Laravel as an unparseable form (every field empty, a 422).
+     */
+    private static readonly JSON_WRITE = { headers: { 'Content-Type': 'application/json' } };
 
     public static begin(token: string, context: StudentContext): void {
         localStorage.setItem(STUDENT_STORAGE_KEYS.token, token);
@@ -72,7 +111,7 @@ class StudentApiService {
     }
 
     public static put(url: string, data: any): Promise<AxiosResponse> {
-        return StudentApiService.instance().put(url, data);
+        return StudentApiService.instance().put(url, data, StudentApiService.JSON_WRITE);
     }
 }
 

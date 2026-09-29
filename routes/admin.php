@@ -106,9 +106,10 @@ Route::prefix('admin')->group(function () {
     //
     // EchoResolvedTenant is listed FIRST so it wraps `admin` and `tenant` and
     // stamps `X-Tenant-Id` on the way OUT, including the 401 envelope
-    // `admin` RETURNS (a refusal that throws — auth's 401, the tenant's 403 —
-    // unwinds past it and is rendered unstamped, which is correct: a refused
-    // request resolved no tenant). It is named by class rather than by an alias
+    // `admin` RETURNS (a refusal that throws — auth's 401, the tenant's 403 — is
+    // rendered where it is thrown, so it still passes back through here and is
+    // stamped `unbound`, which is correct: a refused request resolved no tenant;
+    // see EchoResolvedTenant). It is named by class rather than by an alias
     // because bootstrap/app.php's alias table is not part of this slice, and a
     // fully-qualified class name is as valid here as an alias. It reads
     // TenantContext after the request has run and changes no status, no body

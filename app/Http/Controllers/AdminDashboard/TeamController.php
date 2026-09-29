@@ -10,6 +10,7 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
+use App\Support\MembershipSeen;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -83,10 +84,13 @@ class TeamController extends Controller
             ->filter()
             ->unique();
 
+        // Read once for this organisation only (MembershipSeen::forOrganisation).
+        $seen = MembershipSeen::forOrganisation((int) $masjid->id);
+
         $people = User::whereIn('id', $ids)
             ->whereIn('type', self::STAFF_TYPES)
             ->get()
-            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user()))
+            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user(), $seen))
             ->sort(fn (array $a, array $b) => [! $a['is_owner'], self::ORDER[$a['access']], mb_strtolower($a['name'])]
                 <=> [! $b['is_owner'], self::ORDER[$b['access']], mb_strtolower($b['name'])])
             ->values();
@@ -240,12 +244,24 @@ class TeamController extends Controller
         $masjid = $this->boundMasjid();
         $user = $this->member($masjid, $user_id);
 
+        // Teachers are managed on the Teachers screen, as update() and destroy()
+        // already say — and this is the door that was missed. A teacher can belong
+        // to several schools, and the "account created" link this sends resets the
+        // password and deletes every token when it is used (AccountAccessService::
+        // reset), which would sign them out of every other school; merely minting
+        // it deletes a Forgot-password link they were waiting on. The Teachers
+        // screen's resend has the shared-login guard; this one simply refuses.
+        if ($user->type === 'Teacher') {
+            return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $sent = $access->invite($user, $masjid->name);
 
         return response()->json([
             'status' => $sent ? 'success' : 'failed',
             'message' => $sent
-                ? 'Invitation sent again to ' . $user->email . '. The link works for 60 minutes.'
+                ? 'Invitation sent again to ' . $user->email . '. The link works for '
+                    . \App\Mail\AccountAccessMail::inWords((int) config('auth.passwords.invites.expire', 60 * 24 * 7)) . '.'
                 : 'No invitation could be sent.',
         ], $sent ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
     }
@@ -364,7 +380,11 @@ class TeamController extends Controller
         ], $masjid->modules_off);
     }
 
-    private function serialize(User $user, Masjid $masjid, ?User $viewer): array
+    /**
+     * @param  \Illuminate\Support\Collection<int, \Illuminate\Support\Carbon|null>|null  $seen
+     *         user_id => last opened THIS organisation; read for the one person when omitted
+     */
+    private function serialize(User $user, Masjid $masjid, ?User $viewer, ?\Illuminate\Support\Collection $seen = null): array
     {
         $access = match ($user->type) {
             'MasjidAdmin' => self::ACCESS_ADMIN,
@@ -374,6 +394,12 @@ class TeamController extends Controller
 
         $isOwner = (int) $user->id === (int) $masjid->user_id;
         $isYou = $viewer !== null && (int) $viewer->id === (int) $user->id;
+
+        // A teacher who also belongs to another school is SHARED. Their phone is shown
+        // like anyone's (the owner decided, 2026-09-29, that every school that has
+        // the teacher may see it). "Last opened" is this school's own membership row,
+        // never the newest token, which is a sign-in at ANY school.
+        $shared = $access === self::ACCESS_TEACHER && $user->belongsOutside((int) $masjid->id);
 
         return [
             'user_id' => (int) $user->id,
@@ -387,10 +413,18 @@ class TeamController extends Controller
             'classes' => $access === self::ACCESS_TEACHER
                 ? GroupStaff::where('user_id', $user->id)->count()
                 : null,
-            // A token is minted at every sign-in, so its newest creation time is
-            // the last sign-in — the only reliable "did they get the invite?"
-            // (nothing writes users.email_verified_at).
-            'last_sign_in_at' => optional($user->tokens()->max('created_at'), fn ($t) => \Illuminate\Support\Carbon::parse($t)->toIso8601String()),
+            // When this person last OPENED this organisation (masjid_user.last_seen_at,
+            // stamped by ResolveMasjidTenant): a fact about THIS school, so it is shown
+            // for a teacher of two schools too and never carries the other school's
+            // value. Null means no request has opened this school since the column
+            // shipped, not "never signed in".
+            'last_seen_at' => MembershipSeen::iso($seen !== null
+                ? $seen->get($user->id)
+                : MembershipSeen::forOrganisation((int) $masjid->id, [(int) $user->id])->get($user->id)),
+            // The person also belongs to another school: their name and phone are one
+            // record every school shares (edited on the Teachers screen, and refused
+            // there for a shared teacher).
+            'shared' => $shared,
             'removable' => ! $isOwner && ! $isYou && $access !== self::ACCESS_TEACHER,
         ];
     }

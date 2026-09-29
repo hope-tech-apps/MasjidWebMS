@@ -1,32 +1,43 @@
 import { defineStore } from 'pinia';
-import FamilyApiService, { FAMILY_STORAGE_KEYS } from '@/core/services/FamilyApiService';
+import FamilyApiService from '@/core/services/FamilyApiService';
+import {
+    authFailureMasjidId,
+    dropSlot,
+    putSlot,
+    readSlots,
+    type FamilyContact,
+    type FamilySlots,
+} from '@/core/helpers/familySessions';
 
-export interface FamilyContact {
-    id: number;
-    masjid_id: number;
-    first_name: string | null;
-    last_name: string | null;
-    login_email: string | null;
-}
+export type { FamilyContact };
 
 /**
- * The parent's session. Kept entirely separate from authStore, which holds a
- * STAFF principal — a Contact is not a User, and the two realms share no guard,
- * no permissions and no token.
+ * The parent's sessions: one per school, side by side.
+ *
+ * Kept entirely separate from authStore, which holds a STAFF principal — a
+ * Contact is not a User, and the two realms share no guard, no permissions and
+ * no token. Within this realm, each school is its own identity too: signing in
+ * to school B adds a slot beside school A's, and nothing here ever offers "the"
+ * family token. The storage rules live in core/helpers/familySessions.ts.
  */
 export const useFamilyStore = defineStore('family', {
     state: () => ({
-        token: localStorage.getItem(FAMILY_STORAGE_KEYS.token) as string | null,
-        contact: JSON.parse(localStorage.getItem(FAMILY_STORAGE_KEYS.contact) || 'null') as FamilyContact | null,
-        masjidId: localStorage.getItem(FAMILY_STORAGE_KEYS.masjid) as string | null,
+        slots: readSlots(localStorage) as FamilySlots,
     }),
 
     getters: {
-        isSignedIn: (state) => !!state.token && !!state.contact,
-        displayName: (state) => {
-            if (!state.contact) return '';
-            return [state.contact.first_name, state.contact.last_name].filter(Boolean).join(' ');
+        isSignedInTo: (state) => (masjidId: string | number): boolean =>
+            !!state.slots[String(masjidId)],
+        contactFor: (state) => (masjidId: string | number): FamilyContact | null =>
+            state.slots[String(masjidId)]?.contact ?? null,
+        displayNameFor: (state) => (masjidId: string | number): string => {
+            const contact = state.slots[String(masjidId)]?.contact;
+            if (!contact) return '';
+            return [contact.first_name, contact.last_name].filter(Boolean).join(' ');
         },
+        /** The schools this parent is signed in to, lowest id first. */
+        signedInMasjidIds: (state): string[] =>
+            Object.keys(state.slots).sort((a, b) => Number(a) - Number(b)),
     },
 
     actions: {
@@ -90,39 +101,72 @@ export const useFamilyStore = defineStore('family', {
             return FamilyApiService.delete(`${this.base(masjidId)}/password`);
         },
 
-        /** Both doors mint the same session, so both land here. */
-        adoptSession(masjidId: string, res: any) {
+        /**
+         * Both doors mint the same session, so both land here.
+         *
+         * Stores the session in THIS school's slot and touches no other. A
+         * response with no token or no contact is a sign-in that did not happen:
+         * it is refused, not stored as a half-session that would look signed in.
+         * So is a contact that belongs to a different school than the URL the
+         * parent signed in at, which would file one school's token under another's
+         * slot.
+         */
+        adoptSession(masjidId: string | number, res: any) {
             const data = res.data?.data ?? {};
+            const contact = data.contact as FamilyContact | undefined;
 
-            this.token = data.token ?? null;
-            this.contact = data.contact ?? null;
-            this.masjidId = String(masjidId);
+            if (typeof data.token !== 'string' || data.token === '' || !contact) {
+                throw new Error('The sign-in response carried no session.');
+            }
 
-            localStorage.setItem(FAMILY_STORAGE_KEYS.token, this.token ?? '');
-            localStorage.setItem(FAMILY_STORAGE_KEYS.contact, JSON.stringify(this.contact));
-            localStorage.setItem(FAMILY_STORAGE_KEYS.masjid, this.masjidId);
+            if (contact.masjid_id != null && String(contact.masjid_id) !== String(masjidId)) {
+                throw new Error('The sign-in response belongs to a different school.');
+            }
+
+            this.slots = putSlot(localStorage, masjidId, { token: data.token, contact });
 
             return res;
         },
 
-        signOut() {
-            this.token = null;
-            this.contact = null;
-            localStorage.removeItem(FAMILY_STORAGE_KEYS.token);
-            localStorage.removeItem(FAMILY_STORAGE_KEYS.contact);
+        /** End ONE school's session. The parent stays signed in everywhere else. */
+        signOut(masjidId: string | number) {
+            this.slots = dropSlot(localStorage, masjidId);
         },
 
         /**
-         * Any 401/403 from the portal means the credential is no longer good —
+         * Another tab signed in or out: take storage's word for what is signed
+         * in. The request interceptor already reads storage on every call, so
+         * without this the screen and the requests would disagree.
+         */
+        syncFromStorage() {
+            this.slots = readSlots(localStorage);
+        },
+
+        /**
+         * A 401/403 from the portal means the credential is no longer good —
          * revoked by the office, disabled, or the CRM switched off. Drop it
          * rather than leaving the parent staring at empty screens.
+         *
+         * Takes the failed request's ERROR, not just its status, because the
+         * session to end is the one the request was signed with (read off its
+         * URL), and a response can land after the parent has moved to another
+         * school. `viewedMasjidId` is the school the calling screen is showing;
+         * it is the answer only when the error carries no family URL.
+         *
+         * Returns true only when the failure ended the session of the school the
+         * caller is showing — the caller then sends the parent to that school's
+         * sign-in. A late failure from a school they have already left ends that
+         * school's session and returns false, so it cannot pull them off the
+         * page they are on.
          */
-        handleAuthFailure(status?: number) {
-            if (status === 401 || status === 403) {
-                this.signOut();
-                return true;
-            }
-            return false;
+        handleAuthFailure(error: any, viewedMasjidId: string | number): boolean {
+            const failed = authFailureMasjidId(error, viewedMasjidId);
+
+            if (failed === null) return false;
+
+            this.signOut(failed);
+
+            return failed === String(viewedMasjidId);
         },
     },
 });

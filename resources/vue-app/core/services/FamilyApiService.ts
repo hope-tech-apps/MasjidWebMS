@@ -1,4 +1,7 @@
-import axios, { AxiosInstance, AxiosResponse } from "axios";
+import axios from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
+import { originOf, tokenForUrl } from "@/core/helpers/familySessions";
+import { stripInheritedAuthorization } from "@/core/services/stripInheritedAuthorization";
 
 /**
  * The parent portal's own HTTP client — deliberately NOT ApiService.
@@ -13,12 +16,12 @@ import axios, { AxiosInstance, AxiosResponse } from "axios";
  *
  * So the portal gets its own instance, its own storage key, and no access to
  * the admin token at all.
+ *
+ * One parent can be signed in to several schools at once (see
+ * core/helpers/familySessions.ts), so there is no single "the family token"
+ * either. The request interceptor below signs each request with the token of
+ * the school its URL names.
  */
-export const FAMILY_STORAGE_KEYS = {
-    token: 'MANARA_FAMILY_TOKEN',
-    contact: 'MANARA_FAMILY_CONTACT',
-    masjid: 'MANARA_FAMILY_MASJID_ID',
-};
 
 class FamilyApiService {
     private static client: AxiosInstance;
@@ -45,12 +48,47 @@ class FamilyApiService {
             withCredentials: false,
         });
 
+        // The same inheritance, in its third costume, and the one that crosses
+        // realms: ApiService.setHeader() writes the STAFF bearer token onto
+        // `axios.defaults.headers.common.Authorization`, and axios.create()
+        // copies the defaults it finds at that moment. On a device where an
+        // admin or teacher has signed in, this client is born carrying their
+        // token, and the interceptor below only ever ADDS a header, so a family
+        // request with no slot (the public directory, a school the parent has
+        // not signed in to, the sign-in call itself) went out under the staff
+        // credential. Strip it from the copy, in every bucket axios keeps
+        // headers in. The copy is deep, so the global — which the admin screens
+        // still need — is untouched.
+        stripInheritedAuthorization(FamilyApiService.client);
+
         // Read the token per-request rather than pinning it at init: the portal
-        // signs in and out inside one page life.
+        // signs in and out inside one page life, and possibly in a second tab.
+        //
+        // WHICH token is decided by the request's own URL. `/api/family/
+        // masjids/7/...` carries school 7's session and nothing else; a public
+        // directory read, or a school the parent has not signed in to, carries
+        // none. The API refuses a token from the wrong school anyway
+        // (`family.tenant`), but the client should not author the attempt, and a
+        // family token should not travel to an address that is not a family route.
+        //
+        // The portal's own origin is the API base when one is configured and the
+        // page's origin when it is not (relative calls). An absolute URL on any
+        // other origin gets no token, by PARSED origin: a text-prefix test would
+        // also pass `https://<portal>.evil.com/...`.
+        const portalOrigin = baseUrl
+            ? originOf(baseUrl)
+            : (typeof location !== 'undefined' ? originOf(location.origin) : null);
+
         FamilyApiService.client.interceptors.request.use((config) => {
-            const token = localStorage.getItem(FAMILY_STORAGE_KEYS.token);
+            const token = tokenForUrl(localStorage, config.url ?? '', portalOrigin);
+
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;
+            } else {
+                // No slot for this URL means NO credential, whatever else set
+                // one (a per-call header, a default written after init).
+                config.headers.delete?.('Authorization');
+                delete (config.headers as any).Authorization;
             }
             return config;
         });

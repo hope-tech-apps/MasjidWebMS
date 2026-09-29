@@ -130,6 +130,8 @@ import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
 import { useAuthStore } from '@/stores/authStore';
+import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
+import { signInSchoolId } from '@/core/helpers/teacherSchools';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { Form, Field } from 'vee-validate';
@@ -224,8 +226,18 @@ async function signIn () : Promise<void> {
                     // leans on. The teacher realm has no admin access, so we do NOT
                     // call the admin-scoped masjidStore.fetchMasjid(); the teacher
                     // shell reads its own /api/teacher/user for the school header.
-                    if (authStore.user.masjid) {
-                        authStore.saveDashboardMasjidId(authStore.user.masjid.id);
+                    //
+                    // A teacher at several schools lands in the one this browser last
+                    // used, when the server still grants it (an expired token sends
+                    // them here without signing them out), else in their default.
+                    let lastUsed: string | null = null;
+                    try {
+                        lastUsed = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
+                    } catch { /* blocked storage: the default it is */ }
+
+                    const teacherSchool = signInSchoolId(lastUsed, authStore.user.memberships, authStore.user.masjid?.id);
+                    if (teacherSchool !== null) {
+                        authStore.saveDashboardMasjidId(teacherSchool);
                     }
                     router.push("/teacher");
                 }

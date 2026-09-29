@@ -10,6 +10,7 @@ import { MSwal } from "@/core/plugins/SweetAlerts2";
 import { getMessageFromObj } from "@/assets/ts/swalMethods";
 import { BackendResponseData } from "@/core/types/config/AxiosCustom";
 import { bumpTenantEpoch, forgetServerTenant, serverTenantId } from "@/core/tenancy/tenantRequests";
+import { resetTeacherSchoolGuard } from "@/core/tenancy/teacherSchoolGuard";
 import { grantedMemberships } from "@/core/types/data/Membership";
 import { resetTenantScopedStores } from "@/stores/plugins/tenantStoreReset";
 
@@ -63,6 +64,10 @@ export const useAuthStore = defineStore('authStore', () => {
 
         localStorage.removeItem(LOCAL_STORAGE_KEYS.token);
         localStorage.removeItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
+        // The teacher shell's "can't open this school" / "wrong school" notices are
+        // module state, and this is an SPA navigation: without this the notice's own
+        // remedy (sign out, sign in) leaves the next sign-in behind the same notice.
+        resetTeacherSchoolGuard();
         isAuthenticated.value = false;
         user.value = null;
         token.value = null;

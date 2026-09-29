@@ -622,6 +622,23 @@ admin routes with a dummy value and needs auth to answer first.
   empty.
 - It creates only those two, never reads `type`, binds to the BOUND tenant, refuses the owner /
   yourself / teachers on removal, deletes tokens, and retires a login left with no organisation.
+- **Teachers are create-or-attach** (`TeachersController::store`, Phase 1 of multi-org users,
+  DECISIONS.md 2026-09-29). An email that belongs to a live Teacher at another school ATTACHES this
+  one: a `masjid_user` row (`is_default` derived under a lock on the user row, never asserted) and the
+  classes, with `users` untouched (password, name, phone, tokens) and an "added to {school}" notice
+  (`StaffAddedToOrganisation`, no token, no password link) instead of the set-password invite. Gated on
+  `tenancy.multi_membership` (only when the teacher already belongs somewhere). Any other type refuses
+  (MasjidAdmin, LunchStaff, SuperAdmin, live or trashed). A trashed Teacher is restored ONLY when they
+  hold no `masjid_user` row (a row means a SuperAdmin trashed them), and then treated as new (password
+  rotated, tokens deleted, name and phone overwritten, set-password invite). The email is trimmed and
+  lowercased for the lookup and on create. Every success answers with the same message and a `data`
+  block built from what the inviter typed, so the reply cannot say whether the address already
+  existed; the refusals are the accepted residual (today's `unique` rule already revealed it). The
+  guard test (`DualMembershipIsolationTest`) whitelists this door by name and pins that it checks the
+  gate and the type; its write sweep recognises every way to write a membership.
+- `TeamController::invite` refuses Teachers, like `update` and `destroy`: the "account created" link
+  resets the password and deletes every token when used, which would sign a shared teacher out of
+  every school.
 - This REPLACED the per-account `users.can_manage_web_pages` grant (6f5dbd6), which never reached
   the server; the fold migration gave `web_pages` to every organisation where someone held it.
 - `Permission::count()` stays 8: neither layer is a spatie permission.

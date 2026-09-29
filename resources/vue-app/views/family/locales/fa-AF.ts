@@ -107,6 +107,7 @@ export const FA_AF: Record<string, string> = {
     layout_portal: "پورتال خانواده",
     layout_sign_out: "خروج",
     layout_calendar: "تقویم مکتب",
+    layout_your_schools: "مکتب‌های شما",
 
     // ---------------------------------------------- FamilyCalendar
     cal_title: "تقویم مکتب",

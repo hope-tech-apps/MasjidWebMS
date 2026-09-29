@@ -1,5 +1,12 @@
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import { API_CONFIG, LOCAL_STORAGE_KEYS } from "@/core/constants/appConfigConstants";
+import {
+    dropSupersededResponse,
+    isFromSupersededEpoch,
+    stampTenantEpoch,
+} from "@/core/tenancy/tenantRequests";
+import { checkTeacherSchoolEcho, handleTeacherSchoolRefusal } from "@/core/tenancy/teacherSchoolGuard";
+import { createTeacherResponseHandlers } from "@/core/tenancy/teacherSchoolGuardCore";
 
 /**
  * The teacher shell's own HTTP client.
@@ -49,27 +56,42 @@ class TeacherApiService {
             return config;
         });
 
+        // A teacher can belong to several schools and switch between them, so
+        // this client takes part in the same request epoch the admin one does
+        // (core/tenancy/tenantRequests.ts): every request is stamped, and a
+        // response that arrives after the teacher moved to another school is
+        // dropped instead of written into a screen now labelled for the new one.
+        TeacherApiService.client.interceptors.request.use(stampTenantEpoch);
+
         // Centralized 401 handling: a teacher whose token is no longer good is
         // sent back to the single staff sign-in. The dynamic import keeps the
         // router out of this module's static dependency graph.
-        TeacherApiService.client.interceptors.response.use(
-            (res) => res,
-            async (error) => {
-                if (error?.response?.status === 401) {
-                    try {
-                        const { default: router } = await import("@/router/router");
-                        if (router.currentRoute.value.path !== "/auth/sign-in") {
-                            router.push("/auth/sign-in");
-                        }
-                    } catch {
-                        // If the router cannot be reached (very early boot), fall
-                        // back to a hard redirect.
-                        window.location.assign("/auth/sign-in");
+        //
+        // The ORDER of the steps (drop a superseded response before reading its
+        // echo; handle a refused school, then still reject) lives in
+        // createTeacherResponseHandlers, where it is tested.
+        const handlers = createTeacherResponseHandlers({
+            isFromSupersededEpoch,
+            dropSupersededResponse,
+            checkEcho: checkTeacherSchoolEcho,
+            // 403 "outside memberships": the teacher's school list changed while
+            // this tab was open. Refetch, rehydrate, reload (loop-guarded).
+            handleRefusal: handleTeacherSchoolRefusal,
+            onUnauthorized: async () => {
+                try {
+                    const { default: router } = await import("@/router/router");
+                    if (router.currentRoute.value.path !== "/auth/sign-in") {
+                        router.push("/auth/sign-in");
                     }
+                } catch {
+                    // If the router cannot be reached (very early boot), fall
+                    // back to a hard redirect.
+                    window.location.assign("/auth/sign-in");
                 }
-                return Promise.reject(error);
-            }
-        );
+            },
+        });
+
+        TeacherApiService.client.interceptors.response.use(handlers.onFulfilled, handlers.onRejected);
     }
 
     private static instance(): AxiosInstance {

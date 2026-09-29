@@ -4499,6 +4499,196 @@ Review fixes (2026-09-28):
   a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner,
   a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess.
 
+## 2026-09-29 — Multi-org users, Phase 1: one teacher login, several schools
+Decision: a Teacher can belong to several schools with ONE login and ONE password. The school
+office's "add a teacher" door (`TeachersController::store`) is now create-or-attach: an email that
+belongs to a live Teacher elsewhere attaches this school (a `masjid_user` row with `is_default`
+derived under a lock on the user row, plus the classes and their per-class subjects) and touches
+nothing on `users`; the teacher is sent a "you were added to {school}" notice
+(`StaffAddedToOrganisation`, no token, no password link) instead of the set-password invite. The
+teacher shell gets a school picker (rendered only with two or more memberships), its header is
+read from the new tenant-bound `GET /api/teacher/masjids/{id}/school` (the school the server
+bound, not `/teacher/user`'s default membership), the teacher tenant group is wrapped in
+`EchoResolvedTenant`, and `TeacherApiService` takes part in the request epoch, compares the
+`X-Tenant-Id` echo with the selection, and answers a 403 "outside memberships" by refetching
+`/teacher/user`, rehydrating and reloading. No resolver behaviour changed: only its stale
+comments (`ResolveMasjidTenant`, `TenantResolver::grantsFor`, `AuthController`). Design and
+critic: `~/Developer/multi-org-users/DESIGN.md` (outside this repo); the owner's answers and the
+critic fixes adopted are in that folder's `DECISIONS.md`.
+Alternatives: consent-first attach (a pending `staff_membership_invites` row the teacher accepts) —
+declined by the owner, "added straight away"; a second pivot or teacher-specific tenancy —
+rejected, the resolver already binds a teacher by the route's `{masjid_id}`; making mixed roles
+(teacher here, admin there) part of this slice — that is Phase 2, a separate project.
+Rationale and the calls made while building:
+- **The claim that a two-school teacher works with the gate shut is now a test, not a reading**
+  (`TeacherMultiSchoolTest`, gate open and shut). So closing `tenancy.multi_membership` does not
+  lock a teacher out the way it does a two-org admin; it only stops NEW attaches. The attach branch
+  is gated on the flag only when the teacher already belongs somewhere (attaching a live login that
+  belongs nowhere makes no cross-organisation grant). Removal never asks the flag: the rollback is
+  "delete the extra memberships first", so that door must work with the gate shut.
+- **What another school may see of a shared teacher (owner: added straight away).** For a Teacher
+  with a live membership elsewhere (`User::belongsOutside`), every school that has them sees the
+  STORED name, the email and the stored PHONE, and its OWN "last opened this school"; it never sees
+  the newest token (a sign-in at ANY school) or another school's `last_seen_at`. The name is the
+  stored one: `TeachersController::index` reads `users.name`, which the first school entered, so a
+  school that adds an existing login sees that name in its list and NOT the one its own office typed
+  (`TeacherAttachTest::a_shared_teacher_shows_every_school_the_phone_and_only_that_schools_last_opened`
+  pins `Stored Name` and the phone in the list). The owner accepted seeing the other school's name.
+  *(Changed 2026-09-29, round 2, by the owner's answer (a) below: this bullet first hid the stored
+  phone and the last sign-in from both schools "symmetrically", because `users` carries no
+  provenance. The phone is now shown, and the sign-in is replaced by the per-school "last opened".
+  It also once said the second school's screens show only the name and email it typed; that was
+  never true, and is corrected here and in the workspace folder's owner-answers note.)*
+- **What the add itself discloses, stated exactly.** A successful add answers with the same message
+  and the same data shape whether the address was new or existing, and the data is what the inviter
+  typed (`TeacherAttachTest::the_create_and_attach_replies_are_indistinguishable_by_message_and_by_data`),
+  so that reply alone cannot say. Three things can: (1) the list read above shows the stored name
+  and phone; (2) with `tenancy.multi_membership` shut, which production is today, an address that is
+  a live Teacher with a membership elsewhere is refused with "Adding an existing login to a second
+  school is switched off." (`TeacherAttachTest::with_the_gate_shut_the_attach_is_refused_but_a_new_teacher_still_works`),
+  which no other address is told, so the office learns the address is a live teacher at another
+  school; (3) a login of another type, or a teacher a SuperAdmin trashed on purpose, gets
+  `CANNOT_ADD` ("already has a Manara login that can't be added as a teacher"), and a teacher
+  already at this school gets its own line
+  (`TeacherAttachTest::adding_the_same_email_twice_at_one_school_is_refused_and_writes_nothing_more`).
+  So the refusals distinguish the KIND of login. They are not "equal to today's `unique` rule",
+  which says only that the address is taken. **The owner has accepted this (answer (b) below).**
+- **A shared teacher's name and phone are read-only from any school** (update refuses a different
+  name and ANY phone; the form shows the phone and never sends it back). Since answer (a) below the
+  phone is visible to every school, so this is a rule about who may EDIT the shared record, no longer
+  about who may know it. Classes stay editable. Resending the set-password link is refused for a shared teacher
+  (`TeachersController::invite`) and for every Teacher via Team & Access (`TeamController::invite`,
+  critic M1): completing that link deletes every token, ending the person's sessions at every school.
+- **A trashed Teacher is restored only when they hold no `masjid_user` row** (critic H1): a row means
+  a SuperAdmin trashed them on purpose (`UsersController::moveToTrash` leaves the rows). On restore
+  the password is rotated, tokens deleted, name/phone overwritten and the set-password invite sent.
+- **Email is trimmed and lowercased** for lookup (`LOWER(email)`, so a legacy mixed-case row is found on
+  SQLite too) and on create (M2).
+- **The switch is epoch abort + store reset, then a FULL RELOAD**, not the admin's in-place remount
+  (design §5): `TeacherClass.vue` is ~4,000 lines of local state plus a `groupId` in its route, and
+  none of it may survive into another school. The picker logic is pure (`core/helpers/teacherSchools.ts`)
+  so `npm run test:spa` covers it; the component and layout wiring are pinned by source assertions
+  because the suite has no Vue mount harness. Not exercised in a browser here.
+- **The notice mail is sent synchronously, like `AccountAccessMail`** (the design said "queued";
+  neither implements `ShouldQueue` and the suite asserts with `Mail::fake`), and a transport failure
+  after commit is reported, not thrown: a completed attach must not turn into a 500 the office retries.
+- ~~The teacher header now shows the teacher's name on wider screens.~~ **Reverted in the review fixes below**:
+  it was a visible change for every single-school teacher that nobody asked for.
+- **Not done here, on purpose:** lunch staff (Phase 1b: same branch table, `EchoResolvedTenant` on the
+  lunch group, its picker); `OrganisationProvisioner`'s existing-admin attach (Studio's lane);
+  `LunchStaffController`/`AdministratorsController` still hardcode `is_default = true`; whether Sanctum
+  rejects a soft-deleted user's tokens is Unknown, needs investigation, so `destroy` deletes them itself.
+- **Guard test:** `DualMembershipIsolationTest` whitelists `TeachersController` by name and pins that it
+  checks the gate and the type (behaviour in `TeacherAttachTest`, plus a source tripwire). Its write
+  sweep now recognises `firstOrCreate`, `updateOrCreate`, `->memberships()->create`,
+  `ensureOwnerMembership` and the rest (critic M3), and that recogniser is itself pinned.
+- Copy fixed: invite links last 7 days (`config/auth.php` `invites`), not "an hour" / "60 minutes".
+- **A correction found by measuring:** `EchoResolvedTenant`'s comments (and `routes/admin.php`) said a
+  refused request "unwinds past it and is rendered unstamped". It is not: Laravel's routing Pipeline
+  renders the exception where it is thrown, so the 403 passes back through the echo and is stamped
+  with the literal `unbound` (which the SPA already reads as "no echo"). Measured on the teacher
+  group; the comments are corrected and the test asserts what matters, that a refusal never names a
+  school. Nothing about the header's behaviour changed.
+
+## 2026-09-29 — Multi-org users, Phase 1: review fixes (opus + sonnet lens findings, all confirmed)
+Each fix has a test that fails without it (mutation-proved, see the build report).
+- **`AdministratorsController::destroy` removes MasjidAdmins only.** It only checked for a `masjid_user` row, so a crafted
+  request could remove a Teacher or LunchStaff there: their tokens are global, so it signed them out of every other school,
+  left this school's `group_staff` rows behind, and never re-picked a default. A Teacher or LunchStaff is now a 422 that
+  names their own screen (same rule as `TeamController::destroy`); an administrator's removal re-picks the default (lowest
+  live school id, as `MasjidAdminsController::revokeMembership` does). There was no test for this door at all.
+- **SuperAdmin delete and archive name every organisation** (DESIGN section 8, Phase 3 item 2 -- the OPEN GAP recorded
+  above is now closed): `core/helpers/userRemoval.ts` builds the confirmation from `user.organisations`
+  (`OrganisationAccess::forUsers`), saying "removes them from all N organisations: A, B" and pointing at the per-school
+  screens. It is UI wording only: the endpoints still act on every school at once, by design; the SuperAdmin now knows.
+- **The teacher shell's "can't open this school" and "wrong school" notices no longer outlive a sign-out.** They are
+  module state and sign-out is an SPA navigation, so the notice's own remedy left the next sign-in stuck behind it.
+  `removeAuth()` calls `resetTeacherSchoolGuard()` (notices and reload stamp); the shell clears the notices (not the
+  stamp, which is what stops a reload loop) on mount. The guard's logic moved to `core/tenancy/teacherSchoolGuardCore.ts`
+  with its browser dependencies injected, so it is now executed by `npm run test:spa` instead of regex-matched.
+- **Sign-in lands a teacher in the school this browser last used** when the server still grants it
+  (`signInSchoolId`), else the default. Before, a 401 sent a two-school teacher back to the default school.
+- **Team & Access says "Shared login", not "Not signed in yet"**, for a teacher whose last sign-in is withheld: the
+  payload now carries `shared`, and `last_sign_in_at` stays null as before (privacy unchanged).
+  *(Superseded 2026-09-29, round 2: the column is now the per-school "Last opened this school" for everyone, so
+  there is nothing withheld to explain; `shared` stays in the payload as the marker for the read-only name and
+  phone, and the "Shared login" label is gone.)*
+- **The teacher header prints no name** again (the unrequested change is reverted; if the owner wants it, it is one line).
+- **The typed-name mitigation is partial, and said so in the UI.** `store()` returns what the inviter typed, but the next
+  list read shows the stored name (the owner accepted seeing the other school's name). The add form now says, for every
+  add and so without hinting at any address, that a person who already has a login shows under the name on it.
+- **The attach lookup no longer locks a scan.** `LOWER(email)` cannot use `users_email_unique` on MySQL, so the old
+  `... FOR UPDATE` took locks on every row it scanned, and a locking read that matches nothing takes gap locks that
+  deadlock two concurrent adds of different new people. `User::scopeWhereEmailIs` uses plain equality on MySQL/MariaDB
+  (utf8mb4_unicode_ci is already case-insensitive) and `LOWER()` only on SQLite; the lookup takes no lock, then the ONE
+  row found is locked by key (the L1 lock is unchanged for an existing person). A deadlock victim (SQLSTATE 40001, or
+  Laravel's `DeadlockException` from a nested transaction) is retried once, like the unique-index loser.
+  **Unknown, needs investigation:** none of this could be observed on MySQL here (the suite is SQLite, which ignores
+  locks); the SQL shape is pinned per driver, the retry is exercised by simulating the exception, and the rest is
+  reasoned from InnoDB's documented behaviour. Verify on the staging MySQL before relying on it.
+- **Test gaps closed** (mutants that survived): `resolveTeacher`'s Teacher-type filter, the three-school default re-pick
+  (archived school, lowest id, non-default removal), both halves of the "already here" check, default derivation for a
+  person with memberships but no default, the post-commit mail failure, the unique-index retry, the `email` rule,
+  `belongsOutside`'s archived-school rule, the name trim, and that a two-office administrator is NOT treated as shared.
+  `DualMembershipIsolationTest`'s write recogniser now also knows `MasjidUser::query()->create`, `withoutGlobalScopes()`
+  hops, `firstOrNew`, `new MasjidUser`, and `memberships()->firstOrNew`; the sweep still reads controllers only (a write
+  from `app/Services` or `app/Support` is outside it and belongs to its own lane).
+
+
+## 2026-09-29 — Multi-org users, round 2: the owner's answers to the review's two questions
+Recorded from the coordinating session's message of 2026-09-29. Answer (a) is the owner's own words as relayed; the
+wording of question (b) is in the review and is not reproduced here, only the answer the coordinator reported.
+- **(a) What a second school sees of a shared teacher.** Owner: "they should see when they last opened the specific
+  school instead not necessarily the last time they logged in. Seeing their phone number I do not see as a problem."
+  Done: the phone is shown to every school that has the teacher (Teachers list and edit read, Team & Access); the
+  global last sign-in is replaced by a per-school "last opened this school" (next section). The refusal of name and
+  phone EDITS by one school on a shared teacher is kept.
+- **(b) That an office can infer an email teaches elsewhere.** Owner: "acceptable". The refusals on the add door
+  distinguish the kind of login (see "What the add itself discloses, stated exactly" above), so an inviter can learn that
+  an address is a live teacher at another school, or a login of another kind. That is accepted and no longer an open
+  question; the uniform reply to a SUCCESSFUL add is kept anyway, since it costs nothing.
+
+## 2026-09-29 — Multi-org users, round 2: "last opened this school" per organisation
+Decision (owner, on the review's question about what a second school sees of a shared teacher): "they should see when
+they last opened the specific school instead, not necessarily the last time they logged in." So the global last
+sign-in (the newest personal access token, a sign-in at ANY school) is gone from Team & Access, and the Teachers list
+gains the same column. Both now show `masjid_user.last_seen_at` for THIS school's membership, labelled "Last opened
+this school"; `last_sign_in_at` is removed from the Team payload (the SPA was its only reader).
+- **The column.** `masjid_user.last_seen_at`, nullable timestamp, no default, NO index, additive
+  (`2026_10_01_120000_add_last_seen_at_to_masjid_user_table`; `down()` drops it and the stamps with it). Nothing is
+  backfilled from tokens: a global sign-in is exactly the fact this replaces. **NULL means "no request has opened this
+  school since the column shipped", not "never signed in"**, and the SPA says "Not opened yet". Hidden on `MasjidUser`
+  (`$hidden`) so a serialised membership cannot carry one school's value into another school's payload; every screen
+  reads it through `MembershipSeen::forOrganisation($masjidId)`, which filters by masjid once.
+- **Who stamps it, and what it covers.** `ResolveMasjidTenant`, inline, after the tenant binds, and only on a response
+  below 400. It covers the three staff realms that bind through a `masjid_user` grant: **MasjidAdmin** (`/api/admin/
+  masjids/{id}/…`), **Teacher** (`/api/teacher/masjids/{id}/…`) and **LunchStaff** (`/api/lunch/masjids/{id}/…`).
+  It does NOT cover: a **SuperAdmin** acting in a school (no membership, and the branch never sets one); a **family or
+  student token** (a Contact is not a `User`; family routes use `family.tenant`, and a non-User principal is refused by
+  this middleware); any request that binds no school (`/teacher/user`, `/lunch/user`, sign-in, and
+  `TenantResolver::UNSCOPED_ADMIN_ROUTES`); a refused or failed request (401, 403, 404, 422, 5xx); and the ownership
+  fallback (an unsaved `MasjidUser`, which must never be persisted by a read path: `touch()` returns for a row that
+  does not exist).
+- **How.** ONE conditional statement on the query builder, `UPDATE masjid_user SET last_seen_at = :now WHERE masjid_id
+  = ? AND user_id = ? AND (last_seen_at IS NULL OR last_seen_at < :now - 5 min)`, not a read then a write and not a model
+  save: no model event, observer, `updated_at` touch or audit write can fire on a membership row, and the database
+  throttles a burst instead of a race between two reads. A request inside the window still issues the one statement,
+  which matches nothing, so a query-counting test sees the same count either way. It runs after the controller has
+  returned (no request-level transaction exists in this app, and the controllers' own have committed), and any
+  throwable is caught and logged at WARNING (`Log::info` is invisible on production, where `LOG_LEVEL` is warning), so it
+  can never fail or slow the caller.
+- **Rejected.** Terminable middleware (the production transport never runs `terminate()`; that is how the /features
+  counter was lost). A model `save()`/`touch()` (fires events, touches `updated_at`). Read-then-write throttling
+  (a race, and two statements). An index (nothing searches or sorts by it). Keeping the global sign-in beside it (the
+  point is that a school must not see another school's fact). A queue job (a failure mode for a timestamp).
+- **`config/staging_scrub.php`: no entry, on purpose.** That config keeps login-time timestamps by omission
+  (`contacts.last_login_at`, `users.*_verified_at`) and `last_seen_at` matches none of `StagingScrubCoverageTest`'s
+  personal-data tokens, so it stays green; the timestamp identifies nobody once the row's email and name are scrubbed.
+- **Known limits.** Unknown, needs investigation: the conditional UPDATE's behaviour under concurrent stamps on
+  MySQL (the suite is SQLite, which has no row locks); on InnoDB it takes a row lock on one membership row for one
+  statement. A person who last opened a school before this shipped shows "Not opened yet" until their next request.
+  Only the URL's school is stamped, so a teacher who works in school A all day shows school B's old value: that is the
+  point.
 
 ## 2026-09-28 — School side quest, W1-A quick wins (branch feat/school-w1-quick-wins)
 

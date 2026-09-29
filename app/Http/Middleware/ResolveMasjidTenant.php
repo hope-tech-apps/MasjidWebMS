@@ -2,7 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\MasjidUser;
 use App\Models\User;
+use App\Support\MembershipSeen;
 use App\Support\TenantContext;
 use App\Support\TenantResolver;
 use Closure;
@@ -24,6 +26,11 @@ use Symfony\Component\HttpFoundation\Response;
  *                     membership for is a 403, not a filter. Since S3 the
  *                     answer comes from a membership row rather than from a
  *                     raw id, so the binding carries its own provenance.
+ *   - Teacher,     -> the same route-match verdict as a MasjidAdmin: the
+ *     LunchStaff      `{masjid_id}` in the URL binds when they hold a live
+ *                     membership there and is a 403 otherwise. A person may
+ *                     hold several (a teacher at two schools) and the URL says
+ *                     which one this request is about.
  *   - SuperAdmin   -> bound to the masjid the ROUTE names. A SuperAdmin may act
  *                     on any masjid, but only one at a time: /masjids/5/... reads
  *                     and writes masjid 5. Left UNBOUND only when the route names
@@ -111,6 +118,11 @@ class ResolveMasjidTenant
 
         $routeMasjidId = $this->routeMasjidId($request);
 
+        // The membership a STAFF branch bound, if any: what `last_seen_at` is stamped
+        // on once the request is known to have succeeded (below). A SuperAdmin, who
+        // holds no membership, never sets it.
+        $membership = null;
+
         if ($user instanceof User && $user->type === 'MasjidAdmin') {
             // The admin SPA addresses a specific masjid via the route, matching
             // the existing convention (/masjids/{masjid_id}/...). The resolver
@@ -123,7 +135,7 @@ class ResolveMasjidTenant
             // route is not about one masjid" — not a failure to answer. It
             // cannot arise for a single-membership admin, so nothing about
             // today's binding changes. See applyVerdict() below.
-            $this->applyVerdict($user, $routeMasjidId, $request);
+            $membership = $this->applyVerdict($user, $routeMasjidId, $request);
         } elseif ($user instanceof User && $user->type === 'SuperAdmin') {
             // UNCHANGED. A SuperAdmin holds no memberships (S2's backfill gave
             // them none, deliberately) and is bound from the route instead:
@@ -133,24 +145,31 @@ class ResolveMasjidTenant
                 $this->tenant->set($routeMasjidId);
             }
         } elseif ($user instanceof User && $user->type === 'Teacher') {
-            // A Teacher names NO masjid in the URL — the teacher realm binds the
-            // tenant from the principal, like the family realm, not from the
-            // route. The resolver answers from their persisted `masjid_user`
-            // membership (TenantResolver::staffMemberships): a single-school
-            // teacher binds their one school; none or several fails closed. This
-            // branch is placed AFTER MasjidAdmin and SuperAdmin deliberately —
-            // the order is load-bearing (see the class docblock and
-            // SuperAdminExportScopeTest).
-            $this->applyVerdict($user, $routeMasjidId, $request);
+            // A Teacher's tenant-bound routes ALL carry `{masjid_id}`
+            // (routes/teacher.php), exactly as the admin realm's do, so this
+            // takes the same route-match branch of the resolver a MasjidAdmin
+            // does: the id in the URL binds if the teacher holds a live
+            // `masjid_user` membership there and is a 403 otherwise, never
+            // substituted with a default. A teacher in two schools therefore works
+            // whether the multi-membership gate is open or shut — a non-owner's
+            // grants are all their live memberships either way
+            // (TenantResolver::staffMemberships). "Several memberships and no
+            // masjid in the route" fails closed, but it can only arise on a
+            // route with no `{masjid_id}`, and the teacher realm has none inside
+            // `tenant` (`/teacher/user` and `/teacher/logout` sit outside it; a
+            // route-list test pins that). This branch is placed AFTER MasjidAdmin
+            // and SuperAdmin deliberately — the order is load-bearing (see the
+            // class docblock and SuperAdminExportScopeTest).
+            $membership = $this->applyVerdict($user, $routeMasjidId, $request);
         } elseif ($user instanceof User && $user->type === User::TYPE_LUNCH_STAFF) {
-            // Lunch staff name NO masjid in the URL — routes/lunch.php binds the
-            // tenant from the PRINCIPAL, like the teacher and family realms, not
-            // from the route. The resolver answers from their persisted
-            // `masjid_user` membership, written at invite time: one live
-            // membership binds, none or several fails closed. Placed after the
-            // three branches above for the same load-bearing ordering reason
+            // Lunch staff routes are `/lunch/masjids/{masjid_id}/…` too, so this
+            // is the same route-match verdict as the teacher's: the URL's id
+            // binds when they hold a live membership there and 403s otherwise.
+            // Only a route with NO `{masjid_id}` and several memberships fails
+            // closed, and the lunch realm has none inside `tenant`. Placed after
+            // the three branches above for the same load-bearing ordering reason
             // documented on the class.
-            $this->applyVerdict($user, $routeMasjidId, $request);
+            $membership = $this->applyVerdict($user, $routeMasjidId, $request);
         } else {
             // Fail closed. Falling through here would leave the context unbound
             // and hand an unfiltered view of every masjid to a principal that
@@ -158,7 +177,21 @@ class ResolveMasjidTenant
             abort(403, self::FORBIDDEN_MESSAGE);
         }
 
-        return $next($request);
+        $response = $next($request);
+
+        // "This person opened this school", stamped INLINE and only when a staff branch
+        // bound a real membership AND the request went through (below 400: never a
+        // refusal, a missing row or a server error). Not in terminable middleware: the
+        // production transport never runs terminate(). MembershipSeen throttles it to
+        // once per five minutes per membership and swallows its own failures, so this
+        // cannot change what the caller receives. A Contact's family or student token
+        // never reaches this class (family routes use `family.tenant`, and a non-User
+        // principal is refused above), so it cannot stamp a staff membership.
+        if ($membership !== null && $response->getStatusCode() < 400) {
+            MembershipSeen::touch($membership);
+        }
+
+        return $response;
     }
 
     /**
@@ -177,7 +210,7 @@ class ResolveMasjidTenant
      * `elseif` in its documented order, because the ORDER is load-bearing (see
      * the class docblock) even though these three bodies were not.
      */
-    private function applyVerdict(User $user, ?int $routeMasjidId, Request $request): void
+    private function applyVerdict(User $user, ?int $routeMasjidId, Request $request): ?MasjidUser
     {
         $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
 
@@ -193,6 +226,8 @@ class ResolveMasjidTenant
         if ($resolution->membership() !== null) {
             $this->tenant->setFromMembership($resolution->membership());
         }
+
+        return $resolution->membership();
     }
 
     /**

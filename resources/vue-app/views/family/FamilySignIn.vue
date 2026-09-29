@@ -128,7 +128,7 @@ const error = ref('');
 const emailLooksValid = computed(() => /\S+@\S+\.\S+/.test(email.value.trim()));
 
 onMounted(() => {
-    if (familyStore.isSignedIn && familyStore.masjidId === masjidId.value) {
+    if (familyStore.isSignedInTo(masjidId.value)) {
         router.replace(`/family/${masjidId.value}`);
     }
 });

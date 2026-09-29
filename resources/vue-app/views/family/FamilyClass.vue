@@ -910,9 +910,10 @@ import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
+import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
@@ -1067,19 +1068,15 @@ const tileTitle = (run: any, tile: any): string =>
 const handOver = async (child: any) => {
     handingOver.value = child.membership_id;
     try {
-        const res = await FamilyApiService.post(
-            `${base.value}/members/${child.membership_id}/student-session`, {}
-        );
-        const data = res.data?.data;
-        StudentApiService.begin(data.token, {
-            masjidId: String(masjidId.value),
-            groupId: String(groupId.value),
-            membershipId: String(child.membership_id),
+        // The run reads the school and class off the route ONCE, here, before
+        // the request: a school switch while the POST is out must not change
+        // what is stored or where the parent is sent (views/family/familyClassRun.ts).
+        await handOverFor(beginRun(), child, {
             name: childName(child),
+            begin: (token, context) => StudentApiService.begin(token, context),
+            open: (path) => { router.push(path); },
+            failed: () => { error.value = { key: 'handover_failed' }; },
         });
-        router.push(`/family/${masjidId.value}/student/${groupId.value}/${child.membership_id}`);
-    } catch (e) {
-        if (!fail(e)) error.value = { key: 'handover_failed' };
     } finally {
         handingOver.value = null;
     }
@@ -1118,8 +1115,10 @@ const startCompose = () => {
 const createThread = async () => {
     sendingCompose.value = true;
     composeError.value = null;
+    // Read once: the refresh after the send must go to the class it was sent to.
+    const classBase = base.value;
     try {
-        await FamilyApiService.post(`${base.value}/threads`, {
+        await FamilyApiService.post(`${classBase}/threads`, {
             subject: composeForm.value.subject,
             about_membership_id: composeForm.value.about_membership_id,
             body: composeForm.value.body,
@@ -1127,7 +1126,7 @@ const createThread = async () => {
         composing.value = false;
         // There is no standalone thread loader in this view — the list is
         // refreshed by re-reading the endpoint the class load uses.
-        const refreshed = await FamilyApiService.get(`${base.value}/threads`);
+        const refreshed = await FamilyApiService.get(`${classBase}/threads`);
         threads.value = rowsOf(refreshed.data?.data);
     } catch (e: any) {
         // The 429 is ours to word, because the throttle is a portal rule a
@@ -1237,12 +1236,29 @@ const messagePlaybackUrl = (message: any, attachmentId: number) =>
     `${messagePhotoUrl(message, attachmentId)}/playback`;
 
 const fail = (e: any) => {
-    if (familyStore.handleAuthFailure(e?.response?.status)) {
+    if (familyStore.handleAuthFailure(e, masjidId.value)) {
         router.replace(`/family/${masjidId.value}/sign-in`);
         return true;
     }
     return false;
 };
+
+/**
+ * Set when the school switch (or anything else) unmounts this screen. The loops
+ * below outlive the unmount and read `masjidId` and `base` off the SHARED route,
+ * which by then names the other school; see views/family/familyClassRun.ts.
+ */
+let unmounted = false;
+onBeforeUnmount(() => { unmounted = true; });
+
+/** One run of loads, bound to the school and class it started at. */
+const beginRun = () => beginClassRun({
+    masjidId: () => masjidId.value,
+    groupId: () => groupId.value,
+    base: () => base.value,
+    unmounted: () => unmounted,
+    fail,
+});
 
 const replyBody = ref('');
 /** The conversation's footer, so opening one lands on the reply box. */
@@ -1256,9 +1272,11 @@ const sendReply = async () => {
 
     sendingReply.value = true;
     replyError.value = null;
+    // Read once, for the same reason as createThread().
+    const classBase = base.value;
     try {
         const res = await FamilyApiService.post(
-            `${base.value}/threads/${openedThread.value.id}/messages`,
+            `${classBase}/threads/${openedThread.value.id}/messages`,
             { body }
         );
         // Append the server's own copy rather than echoing the draft, so what
@@ -1267,7 +1285,7 @@ const sendReply = async () => {
         replyBody.value = '';
 
         // The thread list's counts and unread flag are now stale.
-        const refreshed = await FamilyApiService.get(`${base.value}/threads`);
+        const refreshed = await FamilyApiService.get(`${classBase}/threads`);
         threads.value = rowsOf(refreshed.data?.data);
     } catch (e: any) {
         if (fail(e)) return;
@@ -1369,60 +1387,13 @@ const closeThread = () => {
     replyError.value = null;
 };
 
-const loadChildRecords = async () => {
-    for (const child of group.value?.children ?? []) {
-        try {
-            const [awards, hifz] = await Promise.all([
-                FamilyApiService.get(`${base.value}/members/${child.membership_id}/awards`),
-                FamilyApiService.get(`${base.value}/members/${child.membership_id}/hifz`),
-            ]);
-            records.value[child.membership_id] = {
-                awards: rowsOf(awards.data?.data),
-                hifz: rowsOf(hifz.data?.data),
-            };
-
-            // Both alphabets, asked for separately because they ARE separate
-            // records — same route, same ward-edge gate, one `?alphabet=` apart.
-            // Each is caught on its own: a track that fails to load must not
-            // take down the one that did, or a parent whose child has a full
-            // qāʿidah page would be told nothing is recorded.
-            const tracks = await Promise.all(LETTER_ALPHABETS.map(async (alphabet) => {
-                try {
-                    const l = await FamilyApiService.get(
-                        `${base.value}/members/${child.membership_id}/letters?alphabet=${alphabet}`
-                    );
-                    return l.data?.data ?? null;
-                } catch {
-                    // A class with no letter work is not an error; the card
-                    // simply says nothing is recorded yet.
-                    return null;
-                }
-            }));
-
-            // Only the tracks with work on them. The payload is full whichever
-            // way the class teaches, so this is where a school that does not
-            // use a track stops being shown an empty one — see trackHasWork().
-            letters.value[child.membership_id] = tracks.filter((track) => track && trackHasWork(track));
-
-            // The teacher's daily Arabic notes. Its own try: a failure here must
-            // not blank the letters above, and it must not read as "no notes"
-            // either — that is a sentence about the child that we would be
-            // inventing. `null` means we could not ask; `[]` means there are none.
-            try {
-                const n = await FamilyApiService.get(
-                    `${base.value}/members/${child.membership_id}/arabic-notes`
-                );
-                arabicDayNotes.value[child.membership_id] = rowsOf(n.data?.data);
-            } catch (e) {
-                if (fail(e)) return;
-                arabicDayNotes.value[child.membership_id] = null;
-            }
-        } catch (e) {
-            if (fail(e)) return;
-            records.value[child.membership_id] = { awards: [], hifz: [] };
-        }
-    }
-};
+const loadChildRecords = (run = beginRun()) => loadChildRecordsFor(run, group.value?.children ?? [], {
+    alphabets: LETTER_ALPHABETS,
+    hasWork: trackHasWork,
+    setRecords: (id, value) => { records.value[id] = value; },
+    setLetters: (id, tracks) => { letters.value[id] = tracks; },
+    setArabicNotes: (id, notes) => { arabicDayNotes.value[id] = notes; },
+});
 
 // ---------- report cards ----------
 // The list and the document are two requests: the index carries no marks (and
@@ -1458,23 +1429,12 @@ const loadReportCards = async () => {
     reportsError.value = null;
 
     try {
-        for (const child of group.value?.children ?? []) {
-            try {
-                const res = await FamilyApiService.get(
-                    `${base.value}/members/${child.membership_id}/report-cards`,
-                );
-                reportCards.value[child.membership_id] = rowsOf(res.data?.data);
-            } catch (e) {
-                if (fail(e)) return;
-                // Per child, so one sibling's failure does not blank the other's
-                // reports — the same reason loadChildRecords() catches inside
-                // its loop rather than around it.
-                reportCards.value[child.membership_id] = [];
-                reportsError.value = { key: 'reports_partial_error' };
-            }
-        }
+        const finished = await loadReportCardsFor(beginRun(), group.value?.children ?? [], {
+            setCards: (id, rows) => { reportCards.value[id] = rows; },
+            markPartial: () => { reportsError.value = { key: 'reports_partial_error' }; },
+        });
 
-        reportsLoaded.value = true;
+        if (finished) reportsLoaded.value = true;
     } finally {
         reportsLoading.value = false;
     }
@@ -1605,28 +1565,16 @@ const loadGrades = async () => {
     gradesError.value = null;
 
     try {
-        for (const child of group.value?.children ?? []) {
-            try {
-                const res = await FamilyApiService.get(
-                    `${base.value}/members/${child.membership_id}/grades`,
-                );
-                grades.value[child.membership_id] = res.data?.data ?? EMPTY_MARKS;
-                // `performance_levels` is a SIBLING of `data`, not a member of
-                // it. The `?? existing` keeps a key already loaded by the
-                // reports tab rather than blanking the legend if a response ever
-                // arrives without one.
-                levelKey.value = res.data?.performance_levels ?? levelKey.value;
-            } catch (e) {
-                if (fail(e)) return;
-                // Caught INSIDE the loop: one sibling's failure must not blank
-                // the other's marks, which is the same reason loadReportCards()
-                // and loadChildRecords() catch here rather than around the loop.
-                grades.value[child.membership_id] = EMPTY_MARKS;
-                gradesError.value = { key: 'marks_error' };
-            }
-        }
+        const finished = await loadGradesFor(beginRun(), group.value?.children ?? [], {
+            setMarks: (id, marks) => { grades.value[id] = marks; },
+            // The `?? existing` in the old inline version: a response without a
+            // key leaves a legend the reports tab already loaded alone.
+            setLevels: (levels) => { levelKey.value = levels; },
+            empty: EMPTY_MARKS,
+            markError: () => { gradesError.value = { key: 'marks_error' }; },
+        });
 
-        gradesLoaded.value = true;
+        if (finished) gradesLoaded.value = true;
     } finally {
         gradesLoading.value = false;
     }
@@ -1970,8 +1918,13 @@ const txMarkNote = (child: any, score: any, i: number) =>
     tx(KEY.markNote(child.membership_id, score, i), score.note);
 
 onMounted(async () => {
+    // The school and class are read once: the chain below awaits five times,
+    // and the route it would re-read on each can name another school by then.
+    const run = beginRun();
+
     try {
-        const res = await FamilyApiService.get(base.value);
+        const res = await FamilyApiService.get(run.base);
+        if (run.stale()) return;
         group.value = res.data?.data ?? null;
 
         // Whether this deployment can translate at all. Read from the envelope
@@ -1982,15 +1935,18 @@ onMounted(async () => {
         // The feed is consent-gated; asking for it without consent is a 403 the
         // parent has already been told about, so do not ask.
         if (group.value?.may_receive_feed) {
-            const p = await FamilyApiService.get(`${base.value}/posts`);
+            const p = await FamilyApiService.get(`${run.base}/posts`);
+            if (run.stale()) return;
             posts.value = rowsOf(p.data?.data);
         }
 
-        const refreshed = await FamilyApiService.get(`${base.value}/threads`);
+        const refreshed = await FamilyApiService.get(`${run.base}/threads`);
+        if (run.stale()) return;
         threads.value = rowsOf(refreshed.data?.data);
 
-        await loadChildRecords();
+        await loadChildRecords(run);
     } catch (e: any) {
+        if (run.stale()) return;
         if (!fail(e)) error.value = { key: 'class_load_error' };
     } finally {
         loading.value = false;

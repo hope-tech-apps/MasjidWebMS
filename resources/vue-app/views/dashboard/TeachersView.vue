@@ -49,7 +49,9 @@
                             <tr>
                                 <th>Name</th>
                                 <th>Email</th>
+                                <th>Phone</th>
                                 <th class="text-center">Status</th>
+                                <th>{{ LAST_OPENED_LABEL }}</th>
                                 <th>{{ classesTerm }}</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -58,6 +60,7 @@
                             <tr v-for="teacher in teachers" :key="teacher.id">
                                 <td class="fw-semibold">{{ teacher.name }}</td>
                                 <td class="text-break">{{ teacher.email }}</td>
+                                <td class="text-nowrap">{{ teacher.phone || '—' }}</td>
                                 <td class="text-center">
                                     <span v-if="teacher.invited" class="badge bg-warning-subtle text-warning">
                                         <i class="bi bi-envelope me-1"></i>Invited
@@ -65,6 +68,10 @@
                                     <span v-else class="badge bg-success-subtle text-success">
                                         <i class="bi bi-check-circle me-1"></i>Active
                                     </span>
+                                </td>
+                                <td class="small text-nowrap">
+                                    <span v-if="teacher.last_seen_at">{{ formatLastOpened(teacher.last_seen_at) }}</span>
+                                    <span v-else class="text-muted" :title="NOT_OPENED_HINT">{{ NOT_OPENED_TEXT }}</span>
                                 </td>
                                 <td>
                                     <div v-if="teacher.classes.length" class="d-flex flex-wrap gap-1">
@@ -133,8 +140,9 @@
                         <form @submit.prevent="submitForm">
                             <div class="modal-body">
                                 <p v-if="!isEditing" class="text-muted small">
-                                    The teacher receives an emailed invitation to set up their login. Assign at least one
-                                    {{ classesTerm.toLowerCase() }} they will lead.
+                                    The teacher is emailed. A new teacher gets a link to set up their login; someone who
+                                    already teaches at another Manara school keeps their existing login and password and is
+                                    simply added here. Assign at least one {{ classesTerm.toLowerCase() }} they will lead.
                                 </p>
                                 <p v-else class="text-muted small">
                                     Update this teacher's details and the {{ classesTerm.toLowerCase() }} they lead. Their
@@ -145,6 +153,15 @@
                                 <div v-if="loadingTeacher" class="text-center py-4">
                                     <span class="spinner-border spinner-border-sm text-primary me-2" role="status"></span>
                                     <span class="text-muted small">Loading teacher...</span>
+                                </div>
+
+                                <!-- A teacher who also belongs to another school: name and phone are
+                                     one record shared by every school, so they are read-only here
+                                     (TeachersController::update refuses them). -->
+                                <div v-if="isEditing && sharedTeacher" class="alert alert-info py-2 small" role="note">
+                                    This teacher also belongs to another Manara school, so their name and phone are shared
+                                    and can't be changed here. Ask them or Manara support. You can change the
+                                    {{ classesTerm.toLowerCase() }} they lead at this school.
                                 </div>
 
                                 <!-- A refusal that is not tied to one field (e.g. email already a teacher). -->
@@ -160,9 +177,16 @@
                                             class="form-control"
                                             :class="{ 'is-invalid': fieldErrors.name }"
                                             v-model.trim="form.name"
+                                            :disabled="isEditing && sharedTeacher"
                                             required
                                         >
                                         <div v-if="fieldErrors.name" class="invalid-feedback">{{ fieldErrors.name }}</div>
+                                        <!-- True for every add, so it says nothing about any one address: a person
+                                             who already has a Manara login keeps the name on it, and the list shows
+                                             that name, not the one typed here. -->
+                                        <div v-else-if="!isEditing" class="form-text">
+                                            If this person already has a Manara login, the name on that login is the one shown in your list.
+                                        </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">
@@ -186,6 +210,8 @@
                                             class="form-control"
                                             :class="{ 'is-invalid': fieldErrors.phone }"
                                             v-model.trim="form.phone"
+                                            :disabled="isEditing && sharedTeacher"
+                                            placeholder=""
                                         >
                                         <div v-if="fieldErrors.phone" class="invalid-feedback">{{ fieldErrors.phone }}</div>
                                     </div>
@@ -311,6 +337,7 @@ import { useTeachersStore } from '@/stores/masjid/teachersStore';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import Swal from 'sweetalert2';
 
 /**
@@ -349,6 +376,12 @@ const fieldErrors = ref<Record<string, string>>({});
 const editingId = ref<number | null>(null);
 /** True while the edit modal is pre-filling from GET /teachers/{id}. */
 const loadingTeacher = ref(false);
+/**
+ * The teacher being edited also belongs to another school (GET /teachers/{id}
+ * `shared`). Their name and phone are one record every school shares, so the form
+ * makes them read-only and never sends a phone.
+ */
+const sharedTeacher = ref(false);
 
 /** The teacher queued for removal (drives the confirm modal); `null` when idle. */
 const deleteTarget = ref<Teacher | null>(null);
@@ -433,6 +466,7 @@ const loadClasses = async () => {
 const openCreateModal = () => {
     editingId.value = null;
     loadingTeacher.value = false;
+    sharedTeacher.value = false;
     form.value = emptyForm();
     formError.value = '';
     fieldErrors.value = {};
@@ -450,6 +484,7 @@ const openCreateModal = () => {
  */
 const openEditModal = async (teacher: Teacher) => {
     editingId.value = teacher.id;
+    sharedTeacher.value = false;
     formError.value = '';
     fieldErrors.value = {};
     // Seed name/email from the row so the modal is not empty for the split second
@@ -462,6 +497,7 @@ const openEditModal = async (teacher: Teacher) => {
     loadingTeacher.value = true;
     try {
         const detail = await teachersStore.fetchTeacher(teacher.id);
+        sharedTeacher.value = detail.shared === true;
         form.value = {
             name: detail.name,
             email: detail.email,
@@ -518,7 +554,9 @@ const submitForm = async () => {
             // Edit: email is fixed and not sent; class_ids is the full new set.
             const payload: TeacherUpdatePayload = {
                 name: form.value.name,
-                phone: form.value.phone,
+                // A shared teacher's phone is shown (read-only) but is one record
+                // every school holds; the server refuses any value, so none is sent.
+                phone: sharedTeacher.value ? '' : form.value.phone,
                 class_ids: form.value.class_ids,
                 class_subjects: form.value.class_subjects
             };
@@ -539,8 +577,11 @@ const submitForm = async () => {
             Swal.fire({
                 icon: 'success',
                 title: 'Teacher added',
-                // The server's own message mentions the emailed invite.
-                text: created ? `${created.name} has been invited by email to set up their login.` : undefined,
+                // Deliberately the same words whether this is a new login or an
+                // existing teacher joining from another school: the server's reply
+                // is built to be indistinguishable, and the screen must not
+                // undo that by guessing.
+                text: created ? `${created.name} has been added to this school and emailed at ${created.email}.` : undefined,
                 timer: 3000,
                 showConfirmButton: false
             });

@@ -47,6 +47,31 @@ anything, so none of them are immune.
 
 ---
 
+## Teachers in several schools (Phase 1 of multi-org users)
+
+The same flag, a different risk profile. A **teacher** who belongs to two schools is
+bound by the `{masjid_id}` in the URL of every teacher route, so — unlike a two-organisation
+admin who owns nothing — closing the gate does **not** lock them out. Measured by
+`TeacherMultiSchoolTest` (the same fixture, gate open and gate shut). What the flag does
+for teachers:
+
+- **Open:** the Teachers screen may attach an existing teacher's email to a second school
+  (`TeachersController::store`, create-or-attach).
+- **Shut:** that attach is refused with "Adding an existing login to a second school is
+  switched off." Creating a brand-new teacher still works, and so does everything an
+  already-attached two-school teacher does.
+- **Removal never asks the flag.** `TeachersController::destroy` removes this school's rows
+  in either state, re-picks the default and keeps the teacher's sessions while another
+  school remains. So the rollback step "delete the extra memberships first" has a door that
+  works with the gate shut (`MasjidAdminsController::revokeMembership` does not).
+
+So the rollback rule above is unchanged for admins and is **not needed for teachers**:
+closing the flag leaves every existing two-school teacher working and only stops new
+attaches. Do not read that as permission to close the gate with two-org admins still in
+place.
+
+---
+
 ## Turning it on
 
 1. **Ship the code with the flag still false.** The deploy itself changes no

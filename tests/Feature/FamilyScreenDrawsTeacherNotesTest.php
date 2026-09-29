@@ -57,9 +57,16 @@ class FamilyScreenDrawsTeacherNotesTest extends TestCase
     public function the_portal_fetches_and_draws_the_daily_arabic_notes(): void
     {
         $source = $this->source();
+        // The per-class requests moved into familyClassRun.ts (one run per school, stale
+        // runs dropped); the screen keeps the rendering.
+        $run = base_path('resources/vue-app/views/family/familyClassRun.ts');
+        $this->assertFileExists($run);
+        $runSource = file_get_contents($run);
 
-        $this->assertStringContainsString('/arabic-notes`', $source,
+        $this->assertStringContainsString('/arabic-notes`', $runSource,
             'the portal must ask for the daily Arabic notes');
+        $this->assertMatchesRegularExpression('/catch\s*\(e\)\s*\{[^}]*setArabicNotes\(child\.membership_id,\s*null\)/s', $runSource,
+            'a failed notes request must hand the screen null ("could not ask"), never []');
         $this->assertMatchesRegularExpression('/txArabicDay\(n\)/', $source);
 
         // A failed request is said out loud, never shown as "no notes".

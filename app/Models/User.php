@@ -184,6 +184,52 @@ class User extends Authenticatable implements HasMedia
     }
 
     /**
+     * Whether this login holds a LIVE membership in an organisation other than
+     * $masjidId: the fact that makes it a SHARED person.
+     *
+     * The `users` row (name, phone, password, sessions) is global, so anything
+     * one school does to it lands in every school the person belongs to. A school
+     * office must therefore treat a login that is also somebody else's teacher as
+     * read-only where it is global: it cannot rewrite their name or phone, and
+     * cannot mint a set-password link whose completion ends their sessions
+     * elsewhere. (It may SEE the phone: the owner decided, 2026-09-29, that every
+     * school that has the teacher can.) Every one of those guards asks THIS
+     * question, so they cannot disagree about who is shared.
+     *
+     * `whereHas('masjid')` drops an organisation that has been trashed, exactly as
+     * TenantResolver does: a membership in an archived school shares nothing today.
+     */
+    public function belongsOutside(int $masjidId): bool
+    {
+        return $this->memberships()
+            ->where('masjid_id', '!=', $masjidId)
+            ->whereHas('masjid')
+            ->exists();
+    }
+
+    /**
+     * Match a login by email, however the address was capitalised when it was stored.
+     *
+     * On MySQL and MariaDB `users.email` is utf8mb4_unicode_ci, which already compares
+     * case-insensitively, so a plain equality is right AND is what lets the unique index
+     * answer it. Wrapping the column in LOWER() there would make the server scan the
+     * whole table, and under a locking read that means locking every row it scans.
+     * SQLite (the suite) compares case-sensitively, so it needs the LOWER().
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<User>  $query
+     */
+    public function scopeWhereEmailIs($query, string $email, ?string $driver = null)
+    {
+        $driver ??= $query->getConnection()->getDriverName();
+
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            return $query->where('email', $email);
+        }
+
+        return $query->whereRaw('LOWER(email) = ?', [strtolower($email)]);
+    }
+
+    /**
      * True for a school-teacher staff login (users.type = 'Teacher').
      *
      * The one place a teacher-specific code path may branch. `type` stays the

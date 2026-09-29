@@ -133,9 +133,12 @@ return [
         | re-open it. `App\Models\Contact` holds no spatie roles; if it is ever
         | given any, it must declare its own `$guard_name` first.
         |
-        | Expiry is the one thing this cannot express: Sanctum builds every
-        | guard with the single global `config('sanctum.expiration')`, so the
-        | family realm shares staff's 8 hours. See Contact::createFamilyToken().
+        | Expiry: this guard does NOT share staff's `config('sanctum.expiration')`.
+        | Its driver (below) applies `config('family.session.expiration_minutes')`,
+        | 30 days by default: see AppServiceProvider::registerFamilyGuard and
+        | Contact::createFamilyToken(). `tokens:prune-expired` reads this guard's
+        | driver to age Contact tokens, so changing `driver` also changes what the
+        | daily sweep deletes.
         */
         'family' => [
             // NOT 'sanctum'. This guard is built by our own driver

@@ -112,10 +112,15 @@ class EchoResolvedTenant
         // the binding during the request. What the client needs is what the
         // response was actually built under, which is only knowable here.
         //
-        // A fail-closed abort (403 from ResolveMasjidTenant) throws rather than
-        // returns, so it unwinds past this line and is rendered by the
-        // exception handler unstamped. That is correct: a refused request
-        // resolved no tenant, and stamping one would suggest it had.
+        // A fail-closed abort (403 from ResolveMasjidTenant) is NOT unstamped, as
+        // this comment used to say. Laravel's routing Pipeline renders an exception
+        // where it is thrown and hands the rendered response back up, so this line
+        // still runs, sees no bound tenant, and stamps the literal `unbound`. That
+        // is still correct — a refused request resolved no tenant, and `unbound` is
+        // exactly what says so; the SPA reads it as "no echo" — but it is a stamp,
+        // not an absence. Measured on the teacher group (TeacherMultiSchoolTest,
+        // a_refused_school_is_never_echoed_as_the_bound_one); the admin group is
+        // the same pipeline. What must never happen is a refusal naming a school.
         $masjidId = $this->tenant->get();
 
         $response->headers->set(

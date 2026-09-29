@@ -172,7 +172,7 @@ const familyStore = useFamilyStore();
 const { lang, isRtl, dir, t, tMessage, tBoth, tMessageBoth } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
-const firstName = computed(() => familyStore.contact?.first_name ?? '');
+const firstName = computed(() => familyStore.contactFor(masjidId.value)?.first_name ?? '');
 
 const chevronIcon = computed(() => (isRtl.value ? 'bi bi-chevron-left' : 'bi bi-chevron-right'));
 
@@ -271,7 +271,7 @@ const {
     // The same judgement onMounted makes below: an ended session is a
     // navigation, not a translation error to report on a page being replaced.
     onAuthFailure: (e: any) => {
-        if (!familyStore.handleAuthFailure(e?.response?.status)) return false;
+        if (!familyStore.handleAuthFailure(e, masjidId.value)) return false;
 
         router.replace(`/family/${masjidId.value}/sign-in`);
 
@@ -310,7 +310,7 @@ onMounted(async () => {
         // See FamilyClass.vue: no key on the box, no button on the screen.
         setTranslationAvailable(res.data?.meta?.translation_available);
     } catch (e: any) {
-        if (familyStore.handleAuthFailure(e?.response?.status)) {
+        if (familyStore.handleAuthFailure(e, masjidId.value)) {
             router.replace(`/family/${masjidId.value}/sign-in`);
             return;
         }

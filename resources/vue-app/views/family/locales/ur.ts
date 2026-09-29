@@ -107,6 +107,7 @@ export const UR: Record<string, string> = {
     layout_portal: "فیملی پورٹل",
     layout_sign_out: "سائن آؤٹ",
     layout_calendar: "اسکول کیلنڈر",
+    layout_your_schools: "آپ کے اسکول",
 
     // ---------------------------------------------- FamilyCalendar
     cal_title: "اسکول کیلنڈر",

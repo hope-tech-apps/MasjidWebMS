@@ -263,6 +263,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         layout_portal: "Family Portal",
         layout_sign_out: "Sign out",
         layout_calendar: "School calendar",
+        layout_your_schools: "Your schools",
 
         // --------------------------------------------------- FamilyCalendar
         // Only the chrome. A year's name and the reason there is no school on a
@@ -536,6 +537,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         layout_portal: "بوابة الأسرة",
         layout_sign_out: "تسجيل الخروج",
         layout_calendar: "التقويم المدرسي",
+        layout_your_schools: "مدارسك",
 
         // --------------------------------------------------- FamilyCalendar
         cal_title: "التقويم المدرسي",

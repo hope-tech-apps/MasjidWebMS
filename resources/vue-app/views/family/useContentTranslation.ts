@@ -1,4 +1,4 @@
-import { computed, ref, unref, watch } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, unref, watch } from "vue";
 import type { ComputedRef, Ref } from "vue";
 import FamilyApiService from "@/core/services/FamilyApiService";
 import { useFamilyLang } from "@/views/family/familyI18n";
@@ -162,6 +162,16 @@ export type ContentTranslationOptions = {
  * `masjidId` is taken as a ref rather than a string because every view in this
  * realm derives it from the route, and a route param can change under a mounted
  * component — the portal's own class links are same-component navigations.
+ *
+ * A RUN BELONGS TO THE SCHOOL IT STARTED AT. That ref is the shared route, so
+ * it moves the moment the parent picks another school from "Your schools" —
+ * while a run that began at school A is still awaiting its first batch, and
+ * after the layout has already unmounted the screen that started it. Reading
+ * the ref again per batch would POST batch 2, carrying school A's posts and
+ * messages, to school B's endpoint under B's token (the token is chosen from
+ * the URL). So translate() reads the school once, and a run stops as soon as
+ * the ref no longer agrees with it or the screen that owns the composable is
+ * gone.
  */
 export function useContentTranslation(
     masjidId: Ref<string> | ComputedRef<string>,
@@ -169,6 +179,18 @@ export function useContentTranslation(
 ) {
     const { translationTarget } = useFamilyLang();
     const target = computed<string>(() => unref(options.target ?? translationTarget));
+
+    // Set when the screen that called this composable is unmounted. A stopped
+    // scope does not freeze its computeds (they keep reading the live route),
+    // so the school check in translate() cannot be the only stop: this is the
+    // other one.
+    let disposed = false;
+
+    if (getCurrentScope()) {
+        onScopeDispose(() => {
+            disposed = true;
+        });
+    }
 
     /**
      * key → the translated string. A Map rather than a plain object because
@@ -462,7 +484,16 @@ export function useContentTranslation(
         // batch is on the wire, and a reply in the old language must not be
         // written into a map the watcher has just emptied for the new one.
         const askedIn = target.value;
-        const superseded = () => target.value !== askedIn;
+
+        // The school this run started at, read once. Every request below is
+        // addressed to it, whatever the route says by then.
+        const askedAt = masjidId.value;
+
+        // Superseded by a newer language, by a switch to another school, or by
+        // the screen going away. A school change is not "the parent's session
+        // ended" and is never routed: the run just stops, and what came back
+        // for the school they left is dropped rather than shown.
+        const superseded = () => disposed || target.value !== askedIn || masjidId.value !== askedAt;
 
         try {
             for (const batch of batches) {
@@ -470,7 +501,7 @@ export function useContentTranslation(
 
                 try {
                     const res = await FamilyApiService.post(
-                        `/api/family/masjids/${masjidId.value}/translations`,
+                        `/api/family/masjids/${askedAt}/translations`,
                         { target: askedIn, items: batch },
                     );
 

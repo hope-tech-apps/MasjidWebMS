@@ -45,7 +45,7 @@
                                 <th scope="col">Name</th>
                                 <th scope="col">Email</th>
                                 <th scope="col">Access</th>
-                                <th scope="col">Last sign-in</th>
+                                <th scope="col">{{ LAST_OPENED_LABEL }}</th>
                                 <th scope="col" class="text-end">Actions</th>
                             </tr>
                         </thead>
@@ -61,8 +61,8 @@
                                     <div class="small text-muted mt-1">{{ accessHint(p) }}</div>
                                 </td>
                                 <td class="small">
-                                    <span v-if="p.last_sign_in_at">{{ formatDate(p.last_sign_in_at) }}</span>
-                                    <span v-else class="text-warning-emphasis">Not signed in yet</span>
+                                    <span v-if="p.last_seen_at">{{ formatLastOpened(p.last_seen_at) }}</span>
+                                    <span v-else class="text-muted" :title="NOT_OPENED_HINT">{{ NOT_OPENED_TEXT }}</span>
                                 </td>
                                 <td class="text-end text-nowrap">
                                     <router-link v-if="p.access === 'teacher'" to="/masjid/teachers"
@@ -107,7 +107,7 @@
                         <div>
                             <label for="team-email" class="form-label">Email</label>
                             <input id="team-email" v-model="form.email" type="email" class="form-control" maxlength="190" required autocomplete="off" />
-                            <div class="form-text">They'll get a link to set their own password. The link works for 60 minutes; you can resend it.</div>
+                            <div class="form-text">They'll get a link to set their own password. The link works for 7 days; you can resend it.</div>
                         </div>
                         <div>
                             <label for="team-phone" class="form-label">Phone <span class="text-muted">(optional)</span></label>
@@ -147,6 +147,7 @@ import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
+import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import { CapabilityInfo, TeamAccess, TeamMember } from '@/core/types/data/Capability';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -216,11 +217,6 @@ function accessBadge(p: TeamMember): string {
     if (p.access === 'admin') return 'text-bg-primary';
     if (p.access === 'jummah_lunch') return 'text-bg-warning';
     return 'text-bg-info';
-}
-
-function formatDate(iso: string): string {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 async function load(): Promise<void> {
