@@ -3,6 +3,7 @@
 namespace App\Services\Receipts;
 
 use App\Models\Masjid;
+use App\Support\PdfLogo;
 
 /**
  * Letterhead — the masjid's own branding for a printed tax document.
@@ -72,18 +73,26 @@ class Letterhead
             return null;
         }
 
+        // Both branches go through PdfLogo, which leaves out a file too large to
+        // embed safely (the image decoding audit, 2026-09-29). A curated asset
+        // that is refused falls through to no logo rather than to the media
+        // logo: whoever placed it meant it to win.
         foreach (['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'] as $ext => $mime) {
             $path = storage_path("app/statement-assets/masjid-{$masjid->id}-logo.{$ext}");
             if (is_readable($path)) {
-                return "data:{$mime};base64," . base64_encode(file_get_contents($path));
+                return PdfLogo::dataUri($path, $mime, 'receipt letterhead', ['masjid_id' => $masjid->id]);
             }
         }
 
+        // NB: 'logo' (singular) has no writer; every upload uses 'logos'. Do not
+        // switch this to 'logos' before the pre-decode headroom guard is in
+        // PdfLogo: it would start embedding admin-uploaded images in receipts a
+        // Stripe webhook renders.
         $media = $masjid->getFirstMedia('logo');
-        if ($media && is_readable($media->getPath())) {
+        if ($media) {
             $mime = (string) $media->mime_type;
             if (str_contains($mime, 'jpeg') || str_contains($mime, 'png')) {
-                return "data:{$mime};base64," . base64_encode(file_get_contents($media->getPath()));
+                return PdfLogo::dataUri($media->getPath(), $mime, 'receipt letterhead', ['masjid_id' => $masjid->id, 'media_id' => $media->id]);
             }
         }
 

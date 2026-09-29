@@ -602,7 +602,14 @@ export const useFlyersStore = defineStore('flyersStore', () => {
                 + 'It is still on the flyer and will be included in the export.';
         }
 
-        const server = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+        const response = (e as { response?: { status?: number; data?: { message?: string; data?: { image?: string[] } } } })?.response;
+        const server = response?.data?.message || response?.data?.data?.image?.[0];
+
+        // A refusal (422) is about the photo itself, such as one too large to cut
+        // out safely: sending the same file again cannot help, so do not say to.
+        if (response?.status === 422 && server) {
+            return server + ' It is still on the flyer and will be included in the export.';
+        }
 
         return (server || 'The photo could not be sent for background removal.')
             + ' It is still on the flyer and will be included in the export — try again to have the background removed.';

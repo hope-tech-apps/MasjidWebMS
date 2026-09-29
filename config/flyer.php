@@ -56,6 +56,21 @@ return [
         'max_edge' => (int) env('FLYER_CUTOUT_MAX_EDGE', 1400),
 
         /*
+         * The most pixels a source photo may have before the cutout will open it
+         * at all (the image decoding audit, 2026-09-29). The script decodes the
+         * whole photo before it can shrink it, in the queue worker, which has no
+         * memory cap: 50 MP is about 150 MB as RGB, plus the convert copy, on
+         * top of the model's ~354 MB. A JPEG decodes smaller than this through
+         * Pillow's draft mode, but a PNG or WebP cannot. Checked from the header
+         * at upload, before the job starts the script, on a manual retry, and by
+         * the script itself, which exits with its own code
+         * (App\Services\Flyer\ImageCutout::EXIT_TOO_LARGE) so a refusal is
+         * never retried. A 48 MP phone photo (8064 x 6048) fits this ceiling
+         * but not the upload's 8000 px edge rule.
+         */
+        'max_pixels' => (int) env('FLYER_CUTOUT_MAX_PIXELS', 50_000_000),
+
+        /*
          * How to read the `coverage` the script reports. The failure that
          * actually costs us is not a crash — it is a run that exits 0 having
          * produced a blank mask, which looks like success to everything except

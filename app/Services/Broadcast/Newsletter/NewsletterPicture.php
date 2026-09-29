@@ -2,6 +2,7 @@
 
 namespace App\Services\Broadcast\Newsletter;
 
+use App\Support\HeavyImageDecode;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 use Spatie\Image\Enums\Fit;
@@ -113,11 +114,14 @@ final class NewsletterPicture
         }
 
         try {
-            Image::useImageDriver(ImageDriver::Gd)
+            // One heavy decode at a time across every PHP worker: libgd's
+            // buffers are outside memory_limit, so the raise above bounds this
+            // decode, not several at once (the image decoding audit, 2026-09-29).
+            HeavyImageDecode::run(fn () => Image::useImageDriver(ImageDriver::Gd)
                 ->loadFile($source)
                 ->fit(Fit::Max, self::MAX_WIDTH)
                 ->quality(self::QUALITY)
-                ->save($target);
+                ->save($target));
         } finally {
             if ($limit !== false) {
                 ini_set('memory_limit', $limit);

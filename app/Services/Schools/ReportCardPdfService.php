@@ -7,6 +7,7 @@ use App\Models\Masjid;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
 use App\Support\DesignTokens;
+use App\Support\PdfLogo;
 use App\Support\PerformanceLevel;
 use Illuminate\Support\Str;
 use Mpdf\Mpdf;
@@ -211,22 +212,25 @@ class ReportCardPdfService
      * SVG is skipped rather than attempted — the same call Letterhead makes for
      * the receipts. A missing logo degrades to the school's name in its own
      * colour, which is a document that still looks deliberate.
+     *
+     * The NEWEST logo, through the same relation the apps and the admin read
+     * (Masjid::logo()), not getFirstMedia(), which returns the oldest row: an
+     * organisation that uploaded a new logo would otherwise keep printing the
+     * old one on report cards. And through PdfLogo, which leaves out a file too
+     * large to embed safely (the image decoding audit, 2026-09-29).
      */
     private function logoDataUri(?Masjid $masjid): ?string
     {
-        $media = $masjid?->getFirstMedia('logos');
+        $media = $masjid?->logo()->first();
 
         if ($media === null || ! in_array($media->mime_type, ['image/png', 'image/jpeg', 'image/gif'], true)) {
             return null;
         }
 
-        $path = $media->getPath();
-
-        if (! is_readable($path)) {
-            return null;
-        }
-
-        return 'data:' . $media->mime_type . ';base64,' . base64_encode((string) file_get_contents($path));
+        return PdfLogo::dataUri($media->getPath(), (string) $media->mime_type, 'report card', [
+            'masjid_id' => $masjid->id,
+            'media_id' => $media->id,
+        ]);
     }
 
     private function documentTitle(ReportCard $card, GroupMembership $membership): string

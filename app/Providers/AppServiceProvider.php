@@ -247,6 +247,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('curriculum-standards', fn (Request $request) => Limit::perMinute(240)
             ->by('curriculum-standards:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
 
+        // A report card is rendered (and its logo decoded) on every download: 30
+        // a minute per teacher bounds the decodes (the image decoding audit,
+        // 2026-09-29). Named for the same reason as curriculum-standards.
+        RateLimiter::for('report-card-pdf', fn (Request $request) => Limit::perMinute(30)
+            ->by('report-card-pdf:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
+
         RateLimiter::for('login', function (Request $request) {
             $key = strtolower((string) $request->input('email')) . '|' . $request->ip();
             return Limit::perMinute(5)->by($key)->response(function () {

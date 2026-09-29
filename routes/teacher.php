@@ -213,8 +213,13 @@ Route::prefix('teacher')
 
                         // The printable copy. A teacher needs this for the
                         // family without a printer at home, and for the paper
-                        // file the office keeps.
-                        Route::get('/members/{membership_id}/report-card/pdf', [ReportCardController::class, 'pdf']);
+                        // file the office keeps. Throttled: every render decodes
+                        // the school's logo (mPDF, system libgd, outside
+                        // memory_limit), and the teacher realm has no other
+                        // limit; 30 a minute prints a whole class (the named limiter in
+                        // AppServiceProvider, so the bucket is not shared).
+                        Route::get('/members/{membership_id}/report-card/pdf', [ReportCardController::class, 'pdf'])
+                            ->middleware('throttle:report-card-pdf');
                         Route::put('/members/{membership_id}/report-card', [ReportCardController::class, 'save']);
                         Route::post('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'publish']);
                         Route::delete('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'unpublish']);

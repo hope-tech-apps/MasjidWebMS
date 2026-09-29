@@ -35,6 +35,51 @@ use Symfony\Component\Process\Process;
 class ImageCutout
 {
     /**
+     * The script's exit code for a source with more pixels than
+     * `flyer.cutout.max_pixels`, decided from the header before any decode (the
+     * image decoding audit, 2026-09-29). A property of the picture, so it is
+     * never retried: the job, the job's own retry and the Studio's Retry
+     * button would each decode the same oversized photo again.
+     */
+    public const EXIT_TOO_LARGE = 3;
+
+    /**
+     * Why the photo at this path is too large to cut out, worded for the admin,
+     * or null when it is not. Reads the header only (getimagesize), so it is
+     * safe on any file. Shared by the upload rule, the job (before it starts the
+     * script) and the Retry button, so all three refuse with the same sentence.
+     */
+    public static function oversizeReason(string $absolutePath): ?string
+    {
+        $size = @getimagesize($absolutePath);
+
+        if ($size === false) {
+            return null;
+        }
+
+        return self::tooLargeSentence((int) $size[0], (int) $size[1]);
+    }
+
+    /** The refusal, or null when width x height fits `flyer.cutout.max_pixels`. */
+    public static function tooLargeSentence(int $width, int $height): ?string
+    {
+        $max = max(1, (int) config('flyer.cutout.max_pixels', 50_000_000));
+
+        if ($width * $height <= $max) {
+            return null;
+        }
+
+        return sprintf(
+            'This photo is %s × %s pixels (%s megapixels), more than background removal can safely handle (%s megapixels). '
+                . 'Save a smaller copy (about 4000 pixels on its longest side is plenty) and upload it again.',
+            number_format($width),
+            number_format($height),
+            number_format($width * $height / 1_000_000, 1),
+            number_format($max / 1_000_000, 0),
+        );
+    }
+
+    /**
      * @return array{ok: bool, reason: ?string, meta: array<string, mixed>}
      */
     public function run(string $srcAbsolute, string $dstAbsolute): array
@@ -84,6 +129,8 @@ class ImageCutout
             // third number — a knob with two values is a knob nobody can reason
             // about from either end.
             (string) max(1, (int) ($config['max_edge'] ?? 1400)),
+            '--max-pixels',
+            (string) max(1, (int) ($config['max_pixels'] ?? 50_000_000)),
         ], timeout: $timeout);
 
         try {
@@ -94,6 +141,16 @@ class ImageCutout
                 $dstAbsolute,
                 ['retryable' => true],
             );
+        }
+
+        // The script's own size refusal, decided from the header: a property of
+        // the photo, so NOT retryable, and worded for the admin.
+        if ($process->getExitCode() === self::EXIT_TOO_LARGE) {
+            $payload = $this->decode($process->getOutput()) ?? [];
+            $reason = (isset($payload['w'], $payload['h']) ? self::tooLargeSentence((int) $payload['w'], (int) $payload['h']) : null)
+                ?? 'This photo is larger than background removal can safely handle. Save a smaller copy (about 4000 pixels on its longest side is plenty) and upload it again.';
+
+            return $this->fail($reason, $dstAbsolute, ['retryable' => false, 'too_large' => true, 'exit_code' => self::EXIT_TOO_LARGE]);
         }
 
         if (! $process->isSuccessful()) {

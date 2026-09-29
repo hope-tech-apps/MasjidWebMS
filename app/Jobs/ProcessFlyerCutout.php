@@ -164,6 +164,16 @@ class ProcessFlyerCutout implements ShouldQueue
             return;
         }
 
+        // Too many pixels to decode safely in this worker (the image decoding
+        // audit, 2026-09-29), read from the header before the script is even
+        // started. A property of the photo, so a plain failure: never re-queued.
+        // Photos stored before the upload rule tightened reach this too.
+        if (($tooLarge = ImageCutout::oversizeReason($disk->path($source))) !== null) {
+            $this->record($flyer, self::STATUS_FAILED, null, $tooLarge);
+
+            return;
+        }
+
         $this->record($flyer, self::STATUS_PROCESSING, null, null);
 
         $destination = $this->destinationPath($source);

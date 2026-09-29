@@ -5,9 +5,12 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessFlyerCutout;
 use App\Models\Flyer;
+use App\Services\Flyer\ImageCutout;
 use App\Support\Errors;
+use Closure;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -157,6 +160,17 @@ class FlyerCutoutController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // A photo too large to decode safely fails the same way every time, so
+        // Retry refuses it instead of queueing another decode of it.
+        $tooLarge = ImageCutout::oversizeReason(Storage::disk(self::IMAGE_DISK)->path($flyer->source_image_path));
+
+        if ($tooLarge !== null) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $tooLarge,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $flyer->update([
             'cutout_status' => ProcessFlyerCutout::STATUS_QUEUED,
             'cutout_error' => null,
@@ -271,7 +285,24 @@ class FlyerCutoutController extends Controller
                 'max:12288',
                 // The cutout downscales to max_edge before inference, but decoding a
                 // 30,000px-wide image to get there is its own way to run out of RAM.
-                'dimensions:max_width=10000,max_height=10000',
+                // 8000 px and flyer.cutout.max_pixels since the image decoding
+                // audit (2026-09-29): the script decodes the whole photo in the
+                // queue worker, which has no memory cap.
+                'dimensions:max_width=8000,max_height=8000',
+                function (string $attribute, mixed $value, Closure $fail) use ($request) {
+                    // Only when the photo is going to be cut out: a photo used as
+                    // uploaded (or on a host with no cutout) is never decoded by
+                    // the script.
+                    if (! $request->boolean('remove_background', true)
+                        || ! config('flyer.cutout.enabled', false)
+                        || ! $value instanceof UploadedFile) {
+                        return;
+                    }
+
+                    if (($tooLarge = ImageCutout::oversizeReason((string) $value->getRealPath())) !== null) {
+                        $fail($tooLarge);
+                    }
+                },
             ],
             'remove_background' => 'nullable|boolean',
         ]);
@@ -279,6 +310,9 @@ class FlyerCutoutController extends Controller
         if ($validator->fails()) {
             throw new HttpResponseException(response()->json([
                 'status' => 'failed',
+                // The Studio reads `message` (flyersStore.uploadFailureMessage);
+                // without it a size refusal showed a generic "try again".
+                'message' => $validator->errors()->first('image') ?: $validator->errors()->first(),
                 'data' => $validator->errors(),
             ], Response::HTTP_UNPROCESSABLE_ENTITY));
         }

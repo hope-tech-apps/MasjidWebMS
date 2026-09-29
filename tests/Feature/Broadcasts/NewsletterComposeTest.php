@@ -10,13 +10,16 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
 use App\Services\Broadcast\Newsletter\NewsletterPicture;
+use App\Support\HeavyImageDecode;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -250,6 +253,38 @@ class NewsletterComposeTest extends TestCase
         ]]);
 
         $this->assertSame(0, Broadcast::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_picture_waits_its_turn_and_is_refused_kindly_while_another_is_being_prepared(): void
+    {
+        // libgd's buffers are outside memory_limit, so two large decodes at once
+        // share the box's RAM: one at a time, box-wide (the image decoding audit).
+        Sanctum::actingAs($this->admin);
+        Sleep::fake(syncWithCarbon: true);
+        $before = now();
+        $held = Cache::lock(HeavyImageDecode::LOCK, HeavyImageDecode::HOLD_SECONDS);
+        $this->assertTrue($held->get(), 'the premise: another decode holds the lock');
+
+        $this->send($this->masjid, [['type' => 'image', 'image' => 'flyer', 'alt' => 'The flyer']], [
+            'flyer' => UploadedFile::fake()->image('flyer.png', 1200, 900),
+        ])->assertStatus(503)
+            ->assertHeader('Retry-After', '10')
+            ->assertJsonPath('data', 'Another large picture is being prepared right now. Nothing was sent; please try again in a moment.');
+
+        // It waited its turn first: about WAIT_SECONDS (block() polls every 250 ms), not an instant refusal.
+        $this->assertSame(5, HeavyImageDecode::WAIT_SECONDS);
+        $this->assertGreaterThanOrEqual(HeavyImageDecode::WAIT_SECONDS * 1000 - 250, abs($before->diffInMilliseconds(now())));
+
+        $this->assertSame(0, Broadcast::withoutMasjidScope()->count());
+        $this->assertSame([], Storage::disk('public')->allFiles(), 'nothing was published');
+
+        // Once the other decode is done, the same send goes through.
+        $held->release();
+        $this->send($this->masjid, [['type' => 'image', 'image' => 'flyer', 'alt' => 'The flyer']], [
+            'flyer' => UploadedFile::fake()->image('flyer.png', 1200, 900),
+        ])->assertStatus(202);
+        $this->assertTrue(Cache::lock(HeavyImageDecode::LOCK, 1)->get(), 'the lock is released after the decode');
     }
 
     #[Test]

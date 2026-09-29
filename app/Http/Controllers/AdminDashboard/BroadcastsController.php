@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Enums\BroadcastAudience;
 use App\Enums\BroadcastChannel;
+use App\Exceptions\ImageDecodeBusy;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Broadcasts\PreviewNewsletterRequest;
 use App\Http\Requests\Admin\Broadcasts\StoreBroadcastRequest;
@@ -126,6 +127,12 @@ class BroadcastsController extends Controller
                 'status' => 'success',
                 'data' => $this->present($broadcast->load('deliveries')),
             ], Response::HTTP_ACCEPTED);
+        } catch (ImageDecodeBusy $e) {
+            // Another large picture was being prepared; nothing was stored.
+            return response()->json([
+                'status' => 'error',
+                'data' => $e->getMessage(),
+            ], Response::HTTP_SERVICE_UNAVAILABLE, ['Retry-After' => '10']);
         } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
