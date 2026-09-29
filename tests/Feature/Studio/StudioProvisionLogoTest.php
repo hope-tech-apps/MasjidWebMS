@@ -4,9 +4,11 @@ namespace Tests\Feature\Studio;
 
 use App\Models\Masjid;
 use App\Models\StudioDraft;
+use App\Support\Studio\LogoDerivatives;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\Feature\Studio\Concerns\ProvisionsStudioDrafts;
 use Tests\TestCase;
 
@@ -28,6 +30,14 @@ class StudioProvisionLogoTest extends TestCase
 
         $this->setUpProvisioning();
         $this->actAsSuperAdmin();
+    }
+
+    protected function tearDown(): void
+    {
+        // The memory seam is static: put it back for the next test.
+        LogoDerivatives::$headroomBytes = null;
+
+        parent::tearDown();
     }
 
     #[Test]
@@ -79,5 +89,48 @@ class StudioProvisionLogoTest extends TestCase
         $fresh = StudioDraft::findOrFail($draft->id);
         $this->assertSame('logo.png', $fresh->logo_original_name, 'the record of what was uploaded stays');
         $this->assertSame([], $this->derivativeDirectories($draft->id), 'the temporary directory is gone');
+    }
+
+    #[Test]
+    public function a_logo_over_the_memory_left_is_a_clean_422_before_anything_is_written_and_a_retry_succeeds(): void
+    {
+        $draft = $this->draftWith($this->studioAnswers());
+        $masjidsBefore = Masjid::count();
+
+        // Under the 8 MiB the derive chain needs besides the logo itself.
+        LogoDerivatives::$headroomBytes = 1024 * 1024;
+
+        $response = $this->provision($draft->id)->assertStatus(422)->assertJsonPath('status', 'failed');
+        $this->assertStringContainsString('The logo is too large to make the icons from (400×200)', $response->json('data.logo.0'));
+
+        $this->assertSame($masjidsBefore, Masjid::count(), 'no organisation');
+        $this->assertSame(0, Media::count(), 'no media rows');
+        $this->assertSame([], $this->derivativeDirectories($draft->id), 'no temporary images');
+        $fresh = StudioDraft::findOrFail($draft->id);
+        $this->assertSame(StudioDraft::STATUS_DRAFT, $fresh->status);
+        $this->assertTrue($fresh->logoExists(), 'the draft keeps its logo');
+
+        LogoDerivatives::$headroomBytes = null;
+        $this->provision($draft->id)->assertCreated();
+    }
+
+    #[Test]
+    public function a_logo_whose_header_declares_more_than_the_edge_cap_is_refused_without_a_decode(): void
+    {
+        $draft = $this->draftWith($this->studioAnswers());
+
+        // The draft's stored bytes replaced by a 45-byte PNG that claims 20000 x 20000.
+        $chunk = fn (string $type, string $data) => pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+        Storage::disk((string) config('studio.logo.disk'))->put($draft->logo_path, "\x89PNG\r\n\x1a\n"
+            . $chunk('IHDR', pack('NN', 20000, 20000) . "\x08\x02\x00\x00\x00")
+            . $chunk('IEND', ''));
+
+        $this->provision($draft->id)
+            ->assertStatus(422)
+            ->assertJsonPath('data.logo.0', 'The logo is too large to make the icons from (20000×20000). Upload a smaller logo, at most ' . LogoDerivatives::MAX_EDGE . ' pixels on each side.');
+
+        $this->assertSame(0, Media::count());
+        $this->assertSame([], $this->derivativeDirectories($draft->id));
+        $this->assertSame(StudioDraft::STATUS_DRAFT, StudioDraft::findOrFail($draft->id)->status);
     }
 }

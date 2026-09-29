@@ -510,7 +510,7 @@ class BrandAssetRegenerationTest extends TestCase
 
         $this->assertSame(0, $this->derivativeCount($org));
         $this->assertSame($filesBefore, $this->publicFiles());
-        $this->assertSame([], File::glob(storage_path('app/private/studio-tmp/org-*')), 'nothing was even started');
+        $this->assertSame([], File::glob(storage_path('app/private/studio-tmp/org-*')), 'the temporary folder the refusal made is gone');
         $this->assertTrue($this->lockIsFree($org), 'a refusal gives the lock back');
     }
 
@@ -531,27 +531,30 @@ class BrandAssetRegenerationTest extends TestCase
         $org = $this->orgWithLogoFile($this->headerOnlyPng(3000, 3000));
         Sanctum::actingAs($this->superAdmin());
 
-        // 3000 x 3000 x 5 is 45 MB and the fixed allowance is 8 MB, against 10
-        // MB left. What would have fitted: (10 - 8) MB / 5 bytes is a 647 px
-        // square, said to the hundred below.
+        // 3000 x 3000 x 10 is 90 MB and the fixed allowance is 8 MB, against 10
+        // MB left. What would have fitted: (10 - 8) MB / 10 bytes is a 457 px
+        // square (less the 45-byte file), said to the hundred below.
         LogoDerivatives::$headroomBytes = 10 * 1024 * 1024;
 
         $this->regenerate($org)
             ->assertStatus(422)
-            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(3000, 3000, 600)]]]);
+            ->assertExactJson(['status' => 'failed', 'data' => ['logo' => [$this->tooLargeSentence(3000, 3000, 400)]]]);
 
         $this->assertSame(0, $this->derivativeCount($org));
         $this->assertTrue($this->lockIsFree($org));
     }
 
     #[Test]
-    public function the_memory_budget_is_width_times_height_times_five_plus_eight_megabytes(): void
+    public function the_memory_budget_is_ten_bytes_a_pixel_plus_the_file_plus_eight_megabytes(): void
     {
         $org = $this->org();
         Sanctum::actingAs($this->superAdmin());
 
-        // The 200 x 100 logo: 20,000 pixels x 5 = 100,000 bytes, plus 8 MiB.
-        $needed = 100000 + 8 * 1024 * 1024;
+        // The 200 x 100 logo: 20,000 pixels x 10 = 200,000 bytes, plus the
+        // file as it is on disk, plus 8 MiB. The 10 is measured (8.2 bytes a
+        // pixel for an RGBA PNG; a budget of 5 let a 4400 px one through 128M
+        // and then died decoding it), so a change to it fails here on purpose.
+        $needed = 200000 + filesize($org->logo->getPath()) + 8 * 1024 * 1024;
 
         LogoDerivatives::$headroomBytes = $needed - 1;
         $this->regenerate($org)->assertStatus(422);
@@ -560,6 +563,23 @@ class BrandAssetRegenerationTest extends TestCase
         LogoDerivatives::$headroomBytes = $needed;
         $this->regenerate($org)->assertOk();
         $this->assertSame(3, $this->derivativeCount($org));
+    }
+
+    #[Test]
+    public function a_4400_pixel_square_that_the_old_five_byte_budget_took_is_refused_at_128m(): void
+    {
+        $org = $this->orgWithLogoFile($this->headerOnlyPng(4400, 4400));
+        Sanctum::actingAs($this->superAdmin());
+
+        // 128M with about 22 MB in use: the case that used to pass (100.3 MB
+        // against 106 MB) and then exhaust memory in the decoder.
+        LogoDerivatives::$headroomBytes = 106 * 1024 * 1024;
+
+        $this->regenerate($org)
+            ->assertStatus(422)
+            ->assertJsonPath('data.logo.0', $this->tooLargeSentence(4400, 4400, 3200));
+
+        $this->assertSame(0, $this->derivativeCount($org));
     }
 
     #[Test]

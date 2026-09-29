@@ -6,10 +6,11 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 /**
- * A logo that LogoDerivatives::fromFile refused to decode: too many pixels on
- * an edge, or too many for the memory this process has left. GD holds a whole
- * image in memory at ~4 bytes a pixel, and a memory fatal cannot be caught, so
- * the size is read from the header and refused BEFORE anything is decoded.
+ * A logo LogoDerivatives refused to decode (fromFile and generate both): too
+ * many pixels on an edge, or too many for the memory this process has left. GD
+ * holds a whole image in memory at ~4 bytes a pixel and the derive chain costs
+ * about 8 in all, and a memory fatal cannot be caught, so the size is read from
+ * the header and refused BEFORE anything is decoded.
  *
  * A ValidationException so the regenerate route answers the legacy 422
  * ({status:'failed', data:{logo:[...]}}) with no extra code, and its own type

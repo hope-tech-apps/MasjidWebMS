@@ -51,6 +51,18 @@ use Throwable;
  * TOO BIG TO DECODE. LogoDerivatives refuses a logo over its edge cap or the
  * memory this process has left, from the header, before GD decodes anything
  * (LogoTooLarge). The route answers that as a 422; an upload skips.
+ *
+ * NESTED TRANSACTIONS. The rollback callback is registered on the transaction
+ * open when regenerate finishes. If that is a savepoint inside another
+ * transaction that later rolls back, Laravel's manager (12.x) does not run the
+ * savepoint's rollback callbacks, so the lock is held until its TTL and the
+ * new files are strays. No caller does this today (/details regenerates after
+ * DB::commit, update opens no transaction); the TTL is the fallback.
+ *
+ * STORE. The lock is only as wide as the cache store: `array` (the tests)
+ * locks one process, `database`, `redis` and `file` lock across PHP-FPM
+ * workers. With the `database` store and no DB_CACHE_LOCK_CONNECTION, taking
+ * the lock inside an open transaction puts its row inside that transaction.
  */
 final class BrandAssets
 {
@@ -98,12 +110,18 @@ final class BrandAssets
             throw new BrandAssetsBusy();
         }
 
+        $handedOver = false;
+
         try {
-            return self::run($org, $backgroundColor, $actor, $lock);
+            return self::run($org, $backgroundColor, $actor, $lock, $handedOver);
         } catch (Throwable $e) {
-            // run() hands the lock on to its commit callbacks only when it
-            // returns; any throw before that leaves it here.
-            $lock->release();
+            // The lock is given back here for any throw before run() has
+            // registered the callback that releases it. After that the
+            // callbacks own it: a late throw must not release it while the old
+            // rows are still waiting on an outer commit.
+            if (! $handedOver) {
+                $lock->release();
+            }
 
             throw $e;
         }
@@ -112,7 +130,7 @@ final class BrandAssets
     /**
      * @return array{logo_url: string, favicon_url: string, touch_icon_url: string, share_image_url: string}
      */
-    private static function run(Masjid $org, ?string $backgroundColor, ?int $actor, Lock $lock): array
+    private static function run(Masjid $org, ?string $backgroundColor, ?int $actor, Lock $lock, bool &$handedOver): array
     {
         $logo = $org->logo()->first();
         $source = $logo?->getPath();
@@ -148,6 +166,30 @@ final class BrandAssets
             File::deleteDirectory($files->directory);
         }
 
+        $result = [
+            'logo_url' => $logo->original_url,
+            'favicon_url' => $created[Masjid::FAVICONS]->original_url,
+            'touch_icon_url' => $created[Masjid::TOUCH_ICONS]->original_url,
+            'share_image_url' => $created[Masjid::SHARE_IMAGES]->original_url,
+        ];
+
+        // A caller's transaction that rolls back takes the new rows with it: the
+        // files it copied are strays, and the lock has to go. (No-op with none
+        // open, and then the commit callback below runs at once.) Registered on
+        // the transaction open now, so a savepoint that committed and whose
+        // parent then rolls back to level 0 is not reached by Laravel's manager
+        // (it walks only the current chain): the lock then lives out
+        // LOCK_SECONDS and the new files stay. Neither hook runs inside a
+        // transaction, so this is documented rather than engineered around.
+        $newDirectories = array_values(array_map(fn (Media $media) => self::directoryOf($media), $created));
+        DB::afterRollBack(function () use ($org, $newDirectories, $lock) {
+            try {
+                self::deleteDirectories($newDirectories, (int) $org->id);
+            } finally {
+                $lock->release();
+            }
+        });
+
         // Only once the outermost transaction has committed do the old rows,
         // and with them their files, go, and the lock with them. With none open
         // (a request) DB::afterCommit runs this at once.
@@ -159,24 +201,9 @@ final class BrandAssets
             }
         });
 
-        // A caller's transaction that rolls back takes the new rows with it: the
-        // files it copied are strays, and the lock has to go. (No-op with none
-        // open, and then the commit callback above has already run.)
-        $newDirectories = array_values(array_map(fn (Media $media) => self::directoryOf($media), $created));
-        DB::afterRollBack(function () use ($org, $newDirectories, $lock) {
-            try {
-                self::deleteDirectories($newDirectories, (int) $org->id);
-            } finally {
-                $lock->release();
-            }
-        });
+        $handedOver = true;
 
-        return [
-            'logo_url' => $logo->original_url,
-            'favicon_url' => $created[Masjid::FAVICONS]->original_url,
-            'touch_icon_url' => $created[Masjid::TOUCH_ICONS]->original_url,
-            'share_image_url' => $created[Masjid::SHARE_IMAGES]->original_url,
-        ];
+        return $result;
     }
 
     /**

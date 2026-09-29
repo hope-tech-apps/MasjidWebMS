@@ -25,7 +25,8 @@ use Symfony\Component\HttpFoundation\Response;
  *  - 201: the wizard's `{masjid_id, masjid, app_publishing}`, plus what Studio
  *    added and how the after-commit steps went (see body()).
  *  - 422: the legacy envelope, from the wizard's own request rules or from
- *    Studio's brand gate. Nothing was written.
+ *    Studio's brand gate, or under `logo` when the draft's logo is too large to
+ *    decode safely (LogoDerivatives). Nothing was written.
  *  - 409 `{status: 'conflict', data: {draft_id, provisioned_masjid_id}}`: the
  *    draft is already an organisation. Checked BEFORE validation, under the
  *    lock, and again whenever validation refuses the draft, because a second

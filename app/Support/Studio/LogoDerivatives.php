@@ -44,16 +44,26 @@ class LogoDerivatives
     public const MAX_EDGE = 8000;
 
     /**
-     * What decoding costs, per pixel of the source: GD holds it at ~4 bytes
-     * plus row overhead, and the resize makes a copy of the contained size
-     * (small), so 5 is 4 with a margin.
+     * What one pixel of the source costs to derive from, in bytes. MEASURED, not
+     * derived from GD's 4 bytes a pixel: the whole derive chain (spatie/image
+     * 3.9.5 loadFile, fit, resizeCanvas, background, save, for all three
+     * images) peaked at 8.19 bytes a pixel for an RGBA PNG, 7.19 for an RGB PNG
+     * and 4.19 for a JPEG, on PHP 8.3 with bundled GD, because GD's PNG reader
+     * holds a raw row buffer as well as the image. An EXIF-rotated JPEG
+     * (Orientation 3-8) is rotated into a second full-size copy, which is not
+     * measured but about 8.4 by the same arithmetic. So 10: the worst measured
+     * case with a margin, one number for both types, no dependence on the exif
+     * extension being loaded. A budget of 5 accepted a 4400 px RGBA PNG at
+     * 128M and then died in imagecreatefromstring.
      */
-    private const BYTES_PER_PIXEL = 5;
+    private const BYTES_PER_PIXEL = 10;
 
     /**
      * On top of that: the 1200x630 and 180x180 canvases, which are alive at the
      * same time as the source (about 3 MB and 0.1 MB at 4 bytes a pixel, each
-     * copied once by the resize), and the encoder's buffers.
+     * copied once by the resize), and the encoder's buffers. The file's own
+     * size is added per logo as well (assertFits): spatie keeps the whole file
+     * as a string while it decodes.
      */
     private const FIXED_ALLOWANCE_BYTES = 8 * 1024 * 1024;
 
@@ -67,6 +77,7 @@ class LogoDerivatives
 
     /**
      * @throws RuntimeException when the draft's logo bytes are gone
+     * @throws LogoTooLarge when it has too many pixels to decode safely (derive())
      */
     public function generate(StudioDraft $draft, string $backgroundColor): LogoFiles
     {
@@ -89,12 +100,8 @@ class LogoDerivatives
      * that exists (Studio W2 S8, BrandAssets::regenerate). The source is copied
      * into the temporary directory as `logo.{png|jpg}` and never modified.
      *
-     * The size is read from the header and checked BEFORE anything is decoded
-     * (assertFits): every caller, both admin upload hooks and the regenerate
-     * route, comes through here.
-     *
      * @throws RuntimeException when the file is not a PNG or JPEG
-     * @throws LogoTooLarge when it has too many pixels to decode safely
+     * @throws LogoTooLarge when it has too many pixels to decode safely (derive())
      */
     public function fromFile(string $absPath, string $backgroundColor): LogoFiles
     {
@@ -104,8 +111,6 @@ class LogoDerivatives
             IMAGETYPE_JPEG => 'jpg',
             default => throw new RuntimeException('The logo is not a PNG or JPEG image.'),
         };
-
-        self::assertFits((int) $info[0], (int) $info[1]);
 
         return $this->derive(
             'org',
@@ -157,24 +162,35 @@ class LogoDerivatives
     }
 
     /**
-     * Refuse a logo the edge cap or the memory left cannot take. The edge cap
-     * alone is not enough: 8000x8000 needs ~256 MB and production PHP-FPM has
-     * 128M.
+     * Refuse a logo the edge cap or the memory left cannot take, from its
+     * header and its size on disk, before anything decodes it. The edge cap
+     * alone is not enough: 8000x8000 needs over 500 MB (8.2 bytes a pixel measured) and
+     * production PHP-FPM has 128M.
      *
+     * @throws RuntimeException when the file is not a PNG or JPEG
      * @throws LogoTooLarge
      */
-    private static function assertFits(int $width, int $height): void
+    private static function assertFits(string $path): void
     {
+        $info = @getimagesize($path);
+
+        if ($info === false || ! in_array($info[2], [IMAGETYPE_PNG, IMAGETYPE_JPEG], true)) {
+            throw new RuntimeException('The logo is not a PNG or JPEG image.');
+        }
+
+        [$width, $height] = [(int) $info[0], (int) $info[1]];
+
         if ($width > self::MAX_EDGE || $height > self::MAX_EDGE) {
             throw new LogoTooLarge($width, $height, LogoTooLarge::EDGE, self::MAX_EDGE);
         }
 
+        $fixed = self::FIXED_ALLOWANCE_BYTES + (int) @filesize($path);
         $headroom = self::headroomBytes();
 
-        if ($headroom !== null && $width * $height * self::BYTES_PER_PIXEL + self::FIXED_ALLOWANCE_BYTES > $headroom) {
+        if ($headroom !== null && $width * $height * self::BYTES_PER_PIXEL + $fixed > $headroom) {
             // The longest square side the headroom would take, to the nearest
             // hundred down: a number the SuperAdmin can act on.
-            $side = (int) floor(sqrt(max(0, $headroom - self::FIXED_ALLOWANCE_BYTES) / self::BYTES_PER_PIXEL));
+            $side = (int) floor(sqrt(max(0, $headroom - $fixed) / self::BYTES_PER_PIXEL));
 
             throw new LogoTooLarge($width, $height, LogoTooLarge::MEMORY, min(self::MAX_EDGE, intdiv($side, 100) * 100));
         }
@@ -184,6 +200,11 @@ class LogoDerivatives
      * The image code both entry points share: write the logo into a fresh
      * directory under `studio-tmp/`, then the favicon, touch icon and share
      * image beside it. A failure deletes the directory.
+     *
+     * The written logo is measured (assertFits) before anything decodes it, so
+     * every caller shares the size and memory check: the two admin upload hooks
+     * and the regenerate route through fromFile, and Studio provisioning
+     * through generate. A refusal costs one copy of the file and no decode.
      *
      * @param  callable(string): mixed  $writeLogo  writes the source to the path it is given
      */
@@ -195,6 +216,7 @@ class LogoDerivatives
         try {
             $logo = $directory . '/logo.' . $extension;
             $writeLogo($logo);
+            self::assertFits($logo);
 
             $files = new LogoFiles(
                 directory: $directory,

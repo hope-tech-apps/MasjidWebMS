@@ -8,12 +8,14 @@ use App\Models\Masjid;
 use App\Models\StudioDraft;
 use App\Services\Auth\AccountAccessService;
 use App\Support\MobileCache;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\MediaLibrary\Support\PathGenerator\PathGeneratorFactory;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
@@ -57,7 +59,7 @@ class StudioProvisioning
      * @param  array{ios?: array<string, string>, android?: array<string, string>}  $secrets  BYO store credentials, typed at Step 3 and never stored on the draft (R7)
      * @param  ?int  $lockVersion  the version Step 3 reviewed; when given, a draft saved since is refused rather than provisioned
      *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException 422 from the request's rules or the brand gate
+     * @throws \Illuminate\Http\Exceptions\HttpResponseException 422 from the request's rules, the brand gate, or a logo too large to decode
      * @throws StudioDraftConflict when the draft was provisioned first
      * @throws StudioDraftChanged when the draft is not the one reviewed or read
      * @throws \Illuminate\Database\Eloquent\ModelNotFoundException when the draft was discarded meanwhile
@@ -81,9 +83,19 @@ class StudioProvisioning
 
         $palette = StudioBrandGate::assert($draft, $request);
 
-        $files = $draft->logoExists()
-            ? app(LogoDerivatives::class)->generate($draft, (string) $draft->section('brand')['background_color'])
-            : null;
+        // A logo too big to decode safely (LogoDerivatives::assertFits) is the
+        // same 422 shape the brand gate gives, keyed `logo`, before any row or
+        // file exists: the draft keeps its logo and the SPA shows the sentence.
+        try {
+            $files = $draft->logoExists()
+                ? app(LogoDerivatives::class)->generate($draft, (string) $draft->section('brand')['background_color'])
+                : null;
+        } catch (LogoTooLarge $e) {
+            throw new HttpResponseException(response()->json([
+                'status' => 'failed',
+                'data' => $e->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY));
+        }
 
         $context = ProvisionContext::fromAuth();
         $invitations = [];
