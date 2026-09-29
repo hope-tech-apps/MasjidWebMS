@@ -100,4 +100,25 @@ final class SubjectKey
     {
         return self::STAFF_SUBJECTS[$subjectKey] ?? [];
     }
+
+    /**
+     * Every subject KEY covered by ANY of `$staffSubjects`: the allow-list a
+     * subject-limited teacher's queries filter by. Finite and static, so a fenced
+     * read is `whereIn('subject_key', ...)` with no lookup first.
+     *
+     * @param  list<string>  $staffSubjects
+     * @return list<string>
+     */
+    public static function keysFor(array $staffSubjects): array
+    {
+        $keys = [];
+
+        foreach (self::STAFF_SUBJECTS as $key => $covers) {
+            if (array_intersect($covers, $staffSubjects) !== []) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
+    }
 }

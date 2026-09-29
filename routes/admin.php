@@ -968,6 +968,20 @@ Route::prefix('admin')->group(function () {
                     Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
                 });
 
+                // The school's own list of subjects (T-001.3), edited by the
+                // office and offered to teachers setting work. `view contacts`
+                // reads, `manage contacts` writes, like the class list beside it,
+                // and no permission is minted. Work keeps a SNAPSHOT of the
+                // subject's name, so no edit here moves a mark.
+                Route::prefix('{masjid_id}/school-subjects')
+                    ->controller(\App\Http\Controllers\AdminDashboard\SchoolSubjectsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::put('/{subject_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{subject_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
                 // Teacher provisioning — create a teacher login, assign the
                 // classes they lead, email an invite. Gated by `manage contacts`
                 // (the roster-administration permission every MasjidAdmin holds);
