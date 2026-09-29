@@ -1277,6 +1277,13 @@ Route::prefix('admin')->group(function () {
                             ->middleware('permission:view contacts');
                         Route::put('/{post_id}', 'update')->middleware('permission:manage contacts');
                         Route::delete('/{post_id}', 'destroy')->middleware('permission:manage contacts');
+                        // 🤲 👍 💯 ❓ on a story post (2026-09-29). Two idempotent
+                        // verbs, not a toggle. `manage contacts` here, and the
+                        // FEED read gate in the controller: reacting is reading's
+                        // twin, so an off-roster administrator who may publish but
+                        // not read back cannot react either.
+                        Route::put('/{post_id}/reactions/{reaction}', 'react')->middleware('permission:manage contacts');
+                        Route::delete('/{post_id}/reactions/{reaction}', 'unreact')->middleware('permission:manage contacts');
                     });
 
                 // Appointment requests (Community vertical, T-021) — the free

@@ -747,6 +747,9 @@ class TeacherMultiSchoolTest extends TestCase
             'PUT /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
             'DELETE /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
             'POST /groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback' => [],
+            // A reaction on a class STORY post (2026-09-29, T-002.1).
+            'PUT /groups/{group_id}/posts/{post_id}/reactions/{reaction}' => [],
+            'DELETE /groups/{group_id}/posts/{post_id}/reactions/{reaction}' => [],
 
             // -- avatars
             'PUT /groups/{group_id}/members/{membership_id}/avatar' => [

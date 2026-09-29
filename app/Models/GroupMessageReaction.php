@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use App\Support\Reactions;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -30,21 +31,14 @@ class GroupMessageReaction extends Model
 {
     use BelongsToMasjid;
 
-    /** key => emoji, in display order. */
-    public const REACTIONS = [
-        'ameen' => '🤲',
-        'thumbs_up' => '👍',
-        'hundred' => '💯',
-        'question' => '❓',
-    ];
+    /**
+     * The set lives in App\Support\Reactions, shared with the class story's
+     * reactions (GroupPostReaction) so the two surfaces cannot drift. These stay
+     * as aliases: they are what every existing caller and test names.
+     */
+    public const REACTIONS = Reactions::REACTIONS;
 
-    /** What each one means, for a screen reader and a tooltip. */
-    public const LABELS = [
-        'ameen' => 'Ameen',
-        'thumbs_up' => 'Thumbs up',
-        'hundred' => '100',
-        'question' => 'Question',
-    ];
+    public const LABELS = Reactions::LABELS;
 
     protected $fillable = [
         'masjid_id',
@@ -56,7 +50,7 @@ class GroupMessageReaction extends Model
 
     public static function isAllowed(mixed $key): bool
     {
-        return is_string($key) && array_key_exists($key, self::REACTIONS);
+        return Reactions::isAllowed($key);
     }
 
     /**
@@ -66,13 +60,7 @@ class GroupMessageReaction extends Model
      */
     public static function catalogue(): array
     {
-        $out = [];
-
-        foreach (self::REACTIONS as $key => $emoji) {
-            $out[] = ['key' => $key, 'emoji' => $emoji, 'label' => self::LABELS[$key]];
-        }
-
-        return $out;
+        return Reactions::catalogue();
     }
 
     protected static function booted(): void

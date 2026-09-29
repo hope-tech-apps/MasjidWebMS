@@ -271,6 +271,12 @@ Route::prefix('teacher')
                         Route::post('/posts/{post_id}/attachments/{attachment_id}/playback', [GroupPostsController::class, 'playbackTicket']);
                         Route::put('/posts/{post_id}', [GroupPostsController::class, 'update']);
                         Route::delete('/posts/{post_id}', [GroupPostsController::class, 'destroy']);
+                        // 🤲 👍 💯 ❓ on a story post (2026-09-29): the admin
+                        // controller again. `teacher.leads` has proven the caller
+                        // leads THIS class; the controller then asks the FEED read
+                        // gate. Two idempotent verbs; no notification at the tap.
+                        Route::put('/posts/{post_id}/reactions/{reaction}', [GroupPostsController::class, 'react']);
+                        Route::delete('/posts/{post_id}/reactions/{reaction}', [GroupPostsController::class, 'unreact']);
 
                         // Messages — READ + REPLY ONLY. storeMessage is the single
                         // write; store/close/reopen/destroy are deliberately absent

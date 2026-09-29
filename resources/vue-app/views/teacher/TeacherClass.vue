@@ -960,6 +960,9 @@
                                               :mime="a.mime_type" :is-video="a.is_video"
                                               :playback-path="a.playback_ticket_path" />
                             </div>
+                            <!-- 🤲 👍 💯 ❓ — every name, families included (you can already read the class). -->
+                            <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
+                                            :send="(key: string, on: boolean) => reactToPost(post, key, on)" />
                         </div>
                     </article>
                 </div>
@@ -4712,6 +4715,19 @@ const reactTo = async (m: any, key: string, on: boolean) => {
         return res.data?.data?.reactions ?? null;
     } catch (e: any) {
         replyError.value = apiErrorText(e, 'That reaction could not be saved.');
+        return null;
+    }
+};
+
+// A reaction on a class story post. The same two idempotent verbs as a message
+// reaction; the server answers with the post's fresh counts and names.
+const reactToPost = async (post: any, key: string, on: boolean) => {
+    const url = `${base.value}/posts/${post.id}/reactions/${key}`;
+    try {
+        const res = on ? await TeacherApiService.put(url) : await TeacherApiService.delete(url);
+        return res.data?.data?.reactions ?? null;
+    } catch (e: any) {
+        postError.value = apiErrorText(e, 'That reaction could not be saved.');
         return null;
     }
 };

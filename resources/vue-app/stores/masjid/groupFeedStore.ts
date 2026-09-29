@@ -5,7 +5,7 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
-import { GroupFeedMeta, GroupPost, GroupPostPayload } from "@/core/types/data/masjid-related/GroupPost";
+import { GroupFeedMeta, GroupPost, GroupPostPayload, GroupPostReaction } from "@/core/types/data/masjid-related/GroupPost";
 
 /**
  * The class story — the group's PRIVATE feed, over
@@ -107,6 +107,28 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
     }
 
     /**
+     * Add (`on`) or remove this caller's 🤲 / 👍 / 💯 / ❓ on a post. Two
+     * idempotent verbs server side; resolves with the post's fresh reactions, or
+     * null when the server declined to say. A 403 (an admin who may not read this
+     * class's feed) is thrown for the caller to show.
+     */
+    async function setReaction(
+        groupId: number | string,
+        postId: number | string,
+        key: string,
+        on: boolean
+    ): Promise<GroupPostReaction[] | null> {
+        if (!masjidStore.masjid?.id) return null;
+
+        const url = `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/posts/${postId}/reactions/${key}` as BackendApiRoute;
+        const res: AxiosResponse = on ? await ApiService.put(url, {}) : await ApiService.delete(url);
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data.reactions;
+        }
+        return null;
+    }
+
+    /**
      * Pull one attachment down and hand back an object URL for `<img src>`.
      *
      * Through the axios instance rather than `ApiService.get`, for the same
@@ -129,6 +151,7 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
         fetchPosts,
         createPost,
         deletePost,
+        setReaction,
         attachmentObjectUrl
     }
 })

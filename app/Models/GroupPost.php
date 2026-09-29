@@ -105,6 +105,17 @@ class GroupPost extends Model
     }
 
     /**
+     * 🤲 👍 💯 ❓ on this post. Nothing here needs a model-level teardown: a
+     * reaction holds no bytes and nothing hangs off it, so the DB cascade on
+     * `group_post_reactions.group_post_id` is the whole story when retention
+     * force-deletes the post.
+     */
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(GroupPostReaction::class);
+    }
+
+    /**
      * Posts whose retention window has closed, soft-deleted ones included — the
      * sweep `groups:purge-feed` runs. A null retained_until is never due: it
      * means nobody has set a window, not "purge me now".

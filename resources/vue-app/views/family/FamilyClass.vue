@@ -142,6 +142,7 @@
                 <div v-else-if="!posts.length" class="text-muted small">{{ t('story_empty') }}</div>
 
                 <div v-else class="d-flex flex-column gap-3">
+                    <p v-if="storyReactionError" class="text-danger small mb-0" role="alert">{{ tMessage(storyReactionError) }}</p>
                     <article v-for="post in posts" :key="post.id" class="card border-0 shadow-sm">
                         <div class="card-body">
                             <h2 v-if="post.title" class="h6 mb-1" dir="auto">{{ txPost(post, 'title') }}</h2>
@@ -161,6 +162,12 @@
                             <p v-if="post.media_withheld" class="text-muted small fst-italic mb-0 mt-2">
                                 {{ t('media_withheld') }}
                             </p>
+
+                            <!-- 🤲 👍 💯 ❓. The server sends staff names only: another
+                                 family's reaction is counted, never named. -->
+                            <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
+                                            :labels="signalLabels"
+                                            :send="(key: string, on: boolean) => reactToPost(post, key, on)" />
                         </div>
                     </article>
                 </div>
@@ -1363,6 +1370,27 @@ const reactTo = async (m: any, key: string, on: boolean) => {
         return null;
     }
 };
+
+// A reaction on a class story post. Same two idempotent verbs as a message
+// reaction. The URL is built from the RUN's base (school and class fixed when
+// the screen began), so a school switched mid-tap cannot aim it at the other
+// school's post; a run that went stale answers null and changes nothing.
+const reactToPost = async (post: any, key: string, on: boolean) => {
+    const run = beginRun();
+    const url = `${run.base}/posts/${post.id}/reactions/${key}`;
+    try {
+        const res = on ? await FamilyApiService.put(url) : await FamilyApiService.delete(url);
+        if (run.stale()) return null;
+        return res.data?.data?.reactions ?? null;
+    } catch (e: any) {
+        if (run.stale()) return null;
+        if (fail(e)) return null;
+        const served = e?.response?.data?.message;
+        storyReactionError.value = served ? { text: served } : { key: 'reaction_failed' };
+        return null;
+    }
+};
+const storyReactionError = ref<FamilyMessage | null>(null);
 
 const signalLabels = computed(() => ({
     you: t('msg_you'),

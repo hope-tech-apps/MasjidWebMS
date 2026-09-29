@@ -1690,6 +1690,15 @@ class FamilyPortalTest extends TestCase
         // Each is gated by the same media disclosure the download beside it
         // asks, and the URL it returns is re-checked again, in full, on every
         // range — see App\Http\Controllers\GroupMediaPlaybackController.
+        //
+        // 2026-09-29 (owner): the list grows by TWO — a parent's reaction on a
+        // CLASS STORY post (🤲 👍 💯 ❓) and its removal (T-002.1). They are the
+        // message reactions' twin and are admitted on the same terms: the FEED
+        // read gate (`GroupAudience::DISCLOSURE_FEED`), the post resolved
+        // THROUGH the group, the contact from the token, no payload, and no
+        // notification at the tap (the author hears once, in a content-free
+        // digest). Two verbs, not a toggle, so a double-tap cannot flip the
+        // answer. See GroupPostReactionsTest.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1709,6 +1718,7 @@ class FamilyPortalTest extends TestCase
         sort($writes);
 
         $this->assertSame([
+            'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/password',
             'POST /api/family/masjids/{masjid_id}/auth/invite',
@@ -1723,6 +1733,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/translations',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'PUT /api/family/masjids/{masjid_id}/password',
         ], $writes);

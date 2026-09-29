@@ -40,6 +40,20 @@ export type GroupPostAttachment = {
     retained_until?: string | null;
 };
 
+/**
+ * One of the four reactions on a post, as `App\Support\GroupPostSignals` serves
+ * it: always all four, in order. The server has already decided whose names THIS
+ * viewer may see (a parent is shown staff names only), so a screen renders
+ * `by` and never filters it.
+ */
+export type GroupPostReaction = {
+    key: string;
+    emoji: string;
+    count: number;
+    mine: boolean;
+    by: { name: string; is_parent: boolean }[];
+};
+
 /** The account that published a post — never a client-supplied author. */
 export type GroupPostAuthor = {
     id: number;
@@ -65,6 +79,8 @@ export type GroupPost = {
      * this week" is never confused with "not allowed to see them".
      */
     media_withheld: boolean;
+    /** 🤲 👍 💯 ❓ on this post — all four, in order, with counts and `mine`. */
+    reactions?: GroupPostReaction[];
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */

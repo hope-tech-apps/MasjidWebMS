@@ -186,6 +186,12 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
+            // A reaction on a class STORY post and its removal (T-002.1,
+            // 2026-09-29): the message reactions' twin. `teacher.leads`, then the
+            // FEED read gate, so a teacher reacts only in a class they lead and
+            // may read. No lifecycle verb and no notification at the tap.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',

@@ -113,6 +113,10 @@ class MemberAccountDeletion
         // Only a guardian can write one, and a guardian's edge already keeps
         // the contact, so this changes no outcome.
         'group_message_reactions' => ['contact_id'],
+        // The same, on a class STORY post (2026-09-29): a parent's 🤲/👍/💯/❓ on
+        // a post their teacher wrote. Only a guardian can write one, and a
+        // guardian's edge already keeps the contact, so this changes no outcome.
+        'group_post_reactions' => ['contact_id'],
         'group_thread_reads' => ['contact_id'],
         'group_threads' => ['created_by_contact_id'],
         // An order the person placed on the organisation's old Wix site,

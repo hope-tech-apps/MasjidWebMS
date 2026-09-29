@@ -16,6 +16,9 @@ use App\Support\Errors;
 use App\Support\GroupAudience;
 use App\Support\GroupMedia;
 use App\Support\GroupPostAttachments;
+use App\Support\GroupPostSignals;
+use App\Support\Reactions;
+use App\Models\GroupPostReaction;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -74,8 +77,14 @@ class GroupPostsController extends Controller
             ->with(['author:id,name', 'attachments'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate($request->query('per_page', 15))
-            ->through(fn (GroupPost $post) => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia));
+            ->paginate($request->query('per_page', 15));
+
+        // One query for the page's reactions, named as THIS viewer may see them.
+        $signals = GroupPostSignals::forPosts($posts->getCollection(), $request->user());
+
+        $posts = $posts->through(fn (GroupPost $post) => $this->serialize(
+            $post, $masjid_id, $group_id, $mayReceiveMedia, $signals[(int) $post->id] ?? null
+        ));
 
         return response()->json([
             'status' => 'success',
@@ -99,7 +108,10 @@ class GroupPostsController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $this->serialize($post, $masjid_id, $group_id, $mayReceiveMedia),
+            'data' => $this->serialize(
+                $post, $masjid_id, $group_id, $mayReceiveMedia,
+                GroupPostSignals::forPosts([$post], $request->user())[(int) $post->id] ?? null
+            ),
             'meta' => $this->meta($mayReceiveMedia),
         ], Response::HTTP_OK);
     }
@@ -152,7 +164,7 @@ class GroupPostsController extends Controller
                 'status' => 'success',
                 // The writer sees what they just wrote, images included: they
                 // supplied the bytes a moment ago.
-                'data' => $this->serialize($post->load(['author:id,name', 'attachments']), $masjid_id, $group_id, true),
+                'data' => $this->serialize($post->load(['author:id,name', 'attachments']), $masjid_id, $group_id, true, null),
                 'meta' => $this->meta(true),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
@@ -185,10 +197,13 @@ class GroupPostsController extends Controller
                 GroupPostAttachments::store($post, $this->uploads($request));
             });
 
+            $fresh = $post->fresh()->load(['author:id,name', 'attachments']);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serialize(
-                    $post->fresh()->load(['author:id,name', 'attachments']), $masjid_id, $group_id, true
+                    $fresh, $masjid_id, $group_id, true,
+                    GroupPostSignals::forPosts([$fresh], $request->user())[(int) $fresh->id] ?? null
                 ),
                 'meta' => $this->meta(true),
             ], Response::HTTP_OK);
@@ -198,6 +213,75 @@ class GroupPostsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * PUT .../groups/{group_id}/posts/{post_id}/reactions/{reaction}
+     *
+     * Add this caller's 🤲 / 👍 / 💯 / ❓ to a class story post (owner,
+     * 2026-09-29). Idempotent — a second tap, or two tabs, leave one row — which
+     * is why adding and removing are two verbs rather than one "toggle" that a
+     * double-tap would undo.
+     *
+     * THE GATE IS THE FEED READ GATE: the route's write gate
+     * (`permission:manage contacts` / `teacher.leads`), then
+     * GroupAudience::DISCLOSURE_FEED. A person may only react to what they may
+     * read. The post is found THROUGH the group, so another school's post, another
+     * class's post and a soft-deleted post are all a 404.
+     *
+     * The principal is the AUTHENTICATED account, never a client claim, and
+     * nothing is dispatched: the author hears about reactions once, in the
+     * content-free digest (`groups:notify-reactions`).
+     */
+    public function react(Request $request, $masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $post_id, $reaction, true);
+    }
+
+    /** DELETE .../reactions/{reaction} — take it back. Idempotent the same way. */
+    public function unreact(Request $request, $masjid_id, $group_id, $post_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $post_id, $reaction, false);
+    }
+
+    /** Shared body of react/unreact. */
+    private function setReaction(Request $request, $group_id, $post_id, $reaction, bool $on)
+    {
+        $group = Group::findOrFail($group_id);
+
+        $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
+
+        $post = $group->posts()->findOrFail($post_id);
+
+        if (! Reactions::isAllowed($reaction)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['reaction' => ['A reaction must be one of: '.implode(' ', Reactions::REACTIONS).'.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $key = [
+            'group_post_id' => $post->id,
+            'reaction' => $reaction,
+            // The AUTHENTICATED account, never a client claim.
+            'user_id' => $request->user()->id,
+        ];
+
+        if ($on) {
+            // createOrFirst: the unique key settles a race between two taps
+            // instead of the second one 500ing.
+            GroupPostReaction::createOrFirst($key);
+        } else {
+            GroupPostReaction::query()->where($key)->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'post_id' => (int) $post->id,
+                'reactions' => GroupPostSignals::reactionsFor($post, $request->user()),
+            ],
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -348,7 +432,7 @@ class GroupPostsController extends Controller
      *
      * @return array<string,mixed>
      */
-    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia): array
+    private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia, ?array $signals = null): array
     {
         $attachments = $mayReceiveMedia
             ? $post->attachments->map(fn ($attachment) => $attachment->toAudienceArray() + [
@@ -394,6 +478,10 @@ class GroupPostsController extends Controller
             // simply has no photos this week is not confused with one who is not
             // allowed to see them.
             'media_withheld' => ! $mayReceiveMedia && $post->attachments->isNotEmpty(),
+            // All four reactions with counts, named as THIS viewer may see them
+            // (App\Support\GroupPostSignals). A post just created has none, and
+            // the four empty buttons are still what the screen draws from.
+            'reactions' => $signals['reactions'] ?? Reactions::summarize(collect(), false, null, null),
         ];
     }
 
@@ -416,6 +504,8 @@ class GroupPostsController extends Controller
             'accepted_image_types' => (array) config('groups.media.mime_types', []),
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_post' => (int) config('groups.media.max_per_post', 0),
+            // The four reaction buttons, from the one shared list.
+            'reactions' => Reactions::catalogue(),
             // ADDITIVE. The four keys above are the wire contract the admin SPA
             // builds its `accept` attribute from; video gets its own five rather
             // than a widening of theirs, for the same reason the config block

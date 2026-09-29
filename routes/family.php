@@ -101,9 +101,17 @@ use Illuminate\Support\Facades\Route;
 | verbs rather than rows, and a POST in this realm should always have had to be
 | argued for.
 |
+| Two more (2026-09-29) are a parent's reaction on a CLASS STORY post and its
+| removal, on the FEED read gate exactly (the story's twin of the message
+| reaction above): consent withdrawn or a family that has left the class is
+| refused, the post is found through the group, the contact comes from the
+| token. Neither notifies at the tap; the author hears once, in a content-free
+| digest.
+|
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them (sixteen routes since 2026-09-24: the portal invite, and one
-| playback ticket for each of the two media surfaces) and fails on any other. Adding a route here without
+| every one of them (eighteen routes since 2026-09-29: the portal invite, one
+| playback ticket for each of the two media surfaces, and the story reaction
+| pair) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -263,6 +271,16 @@ Route::prefix('family')
                     // parked in a history entry, and it is on the counted-writes
                     // list below because the list counts VERBS, not rows.
                     Route::post('/{post_id}/attachments/{attachment_id}/playback', 'playbackTicket');
+
+                    // A parent's 🤲 / 👍 / 💯 / ❓ on a story post, and taking it
+                    // back (2026-09-29) — two more counted writes. The FEED read
+                    // gate exactly (`GroupAudience::DISCLOSURE_FEED`): consent
+                    // withdrawn, or a family that has left the class, is refused
+                    // and nothing is written. The post is found THROUGH the
+                    // group and the contact comes from the token; there is no
+                    // payload and nothing is dispatched at the tap.
+                    Route::put('/{post_id}/reactions/{reaction}', 'react');
+                    Route::delete('/{post_id}/reactions/{reaction}', 'unreact');
                 });
 
             // Handouts the class has chosen to share. BOTH are GETs — nothing
