@@ -910,7 +910,7 @@ import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
-import { beginClassRun, loadChildRecordsFor, loadGradesFor, loadReportCardsFor } from '@/views/family/familyClassRun';
+import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -1068,19 +1068,15 @@ const tileTitle = (run: any, tile: any): string =>
 const handOver = async (child: any) => {
     handingOver.value = child.membership_id;
     try {
-        const res = await FamilyApiService.post(
-            `${base.value}/members/${child.membership_id}/student-session`, {}
-        );
-        const data = res.data?.data;
-        StudentApiService.begin(data.token, {
-            masjidId: String(masjidId.value),
-            groupId: String(groupId.value),
-            membershipId: String(child.membership_id),
+        // The run reads the school and class off the route ONCE, here, before
+        // the request: a school switch while the POST is out must not change
+        // what is stored or where the parent is sent (views/family/familyClassRun.ts).
+        await handOverFor(beginRun(), child, {
             name: childName(child),
+            begin: (token, context) => StudentApiService.begin(token, context),
+            open: (path) => { router.push(path); },
+            failed: () => { error.value = { key: 'handover_failed' }; },
         });
-        router.push(`/family/${masjidId.value}/student/${groupId.value}/${child.membership_id}`);
-    } catch (e) {
-        if (!fail(e)) error.value = { key: 'handover_failed' };
     } finally {
         handingOver.value = null;
     }
@@ -1258,6 +1254,7 @@ onBeforeUnmount(() => { unmounted = true; });
 /** One run of loads, bound to the school and class it started at. */
 const beginRun = () => beginClassRun({
     masjidId: () => masjidId.value,
+    groupId: () => groupId.value,
     base: () => base.value,
     unmounted: () => unmounted,
     fail,

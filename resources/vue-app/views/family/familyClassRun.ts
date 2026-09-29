@@ -21,6 +21,10 @@ import FamilyApiService, { rowsOf } from "@/core/services/FamilyApiService";
  */
 
 export interface ClassRun {
+    /** The school the run began at, as the route named it then. */
+    school: string;
+    /** The class the run began at, as the route named it then. */
+    group: string;
     /** `/api/family/masjids/<school>/groups/<class>`, fixed when the run began. */
     base: string;
     /** True once the screen is gone or the parent is at another school. */
@@ -32,6 +36,8 @@ export interface ClassRun {
 export interface ClassRunSource {
     /** The school the route names right now. */
     masjidId: () => string;
+    /** The class the route names right now. */
+    groupId: () => string;
     /** The class's API base for the route as it stands right now. */
     base: () => string;
     /** True once the owning screen has been unmounted. */
@@ -46,9 +52,12 @@ export interface ClassRunSource {
  */
 export function beginClassRun(source: ClassRunSource): ClassRun {
     const school = source.masjidId();
+    const group = source.groupId();
     const base = source.base();
 
     return {
+        school,
+        group,
         base,
         stale: () => source.unmounted() || source.masjidId() !== school,
         fail: source.fail,
@@ -194,4 +203,50 @@ export async function loadGradesFor(run: ClassRun, children: any[], sinks: Grade
     }
 
     return true;
+}
+
+export interface HandOverSinks {
+    /** The child's own name for the hand-over screen, read before the request. */
+    name: string;
+    /** Store the child's session; the context names the school and class the POST was made for. */
+    begin: (token: string, context: { masjidId: string; groupId: string; membershipId: string; name: string }) => void;
+    /** Go into child mode. */
+    open: (path: string) => void;
+    /** The request failed and the screen's session handler did not take it. */
+    failed: () => void;
+}
+
+/**
+ * Hand the device to a child: ask the school the run began at for a session
+ * scoped to that child, store it, and open child mode.
+ *
+ * This used to read `masjidId` and `groupId` off the shared route AFTER the
+ * await. A parent who switched schools while the POST was in flight had school
+ * A's session stored under school B's id and was pushed off B onto a child-mode
+ * URL for the wrong school. The school and class now come from the run (read
+ * once, before the request), and a run that went stale while the request was out
+ * stores nothing and navigates nowhere: the parent moved on, and a session minted
+ * for the school they left is left to expire on the server.
+ */
+export async function handOverFor(run: ClassRun, child: any, sinks: HandOverSinks): Promise<void> {
+    try {
+        const res = await FamilyApiService.post(
+            `${run.base}/members/${child.membership_id}/student-session`, {},
+        );
+
+        if (run.stale()) return;
+
+        const data = res.data?.data;
+        sinks.begin(data.token, {
+            masjidId: run.school,
+            groupId: run.group,
+            membershipId: String(child.membership_id),
+            name: sinks.name,
+        });
+        sinks.open(`/family/${run.school}/student/${run.group}/${child.membership_id}`);
+    } catch (e) {
+        if (run.stale()) return;
+        if (run.fail(e)) return;
+        sinks.failed();
+    }
 }

@@ -89,6 +89,7 @@ function screen() {
     const state = { unmounted: false, failures: 0, failed: [] as any[] };
     const begin = (fail = (e: any) => { state.failed.push(e); return false; }) => run.beginClassRun({
         masjidId: () => masjidId.value,
+        groupId: () => route.value.groupId,
         base: () => base.value,
         unmounted: () => state.unmounted,
         fail,
@@ -251,4 +252,156 @@ test('a run pins the class it began at even while the route moves within the sam
 
     s.route.value = { masjidId: '9', groupId: '8' };
     assert.equal(started.stale(), true);
+});
+
+/** What the screen's hand-over hands the module: sinks that record, over a moving route. */
+function handOverSinks() {
+    const got = { begun: [] as any[], opened: [] as string[], failed: 0 };
+
+    return {
+        got,
+        sinks: {
+            name: 'Aisha Khan',
+            begin: (token: string, context: any) => { got.begun.push({ token, context }); },
+            open: (p: string) => { got.opened.push(p); },
+            failed: () => { got.failed++; },
+        },
+    };
+}
+
+const studentSession = (url: string) => (
+    url.endsWith('/student-session') ? { status: 200, data: { data: { token: 'student-tok' } } } : { status: 200, data: {} }
+);
+
+test('hand over, no switch: the session is stored for this school and class and child mode opens there', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = studentSession;
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.deepEqual(sent.map((r) => r.url), ['/api/family/masjids/7/groups/3/members/101/student-session']);
+    assert.equal(sent[0].auth, 'Bearer tok-7');
+    assert.deepEqual(got.begun, [{
+        token: 'student-tok',
+        context: { masjidId: '7', groupId: '3', membershipId: '101', name: 'Aisha Khan' },
+    }]);
+    assert.deepEqual(got.opened, ['/family/7/student/3/101']);
+    assert.equal(got.failed, 0);
+});
+
+test('hand over: a school switch while the POST is out stores nothing and leaves the parent at school B', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = studentSession;
+    // The parent picks school B as school A's answer lands.
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.deepEqual(got.begun, [], 'school A\'s session is not stored under school B\'s id');
+    assert.deepEqual(got.opened, [], 'the parent is not pushed off school B');
+    assert.equal(got.failed, 0);
+    assert.equal(toSchool9().length, 0, 'nothing was asked of school B');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, '/api/family/masjids/7/groups/3/members/101/student-session');
+});
+
+test('hand over: a switch to a school whose class id is unset does not turn into "undefined" in the stored context', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = studentSession;
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: 'undefined' }; };
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.equal(JSON.stringify(got).includes('undefined'), false);
+    assert.equal(got.begun.length, 0);
+    assert.equal(got.opened.length, 0);
+});
+
+test('hand over: the route moving to another class of the SAME school still stores the class the POST was made for', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = studentSession;
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '7', groupId: '8' }; };
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.equal(got.begun.length, 1);
+    assert.equal(got.begun[0].context.groupId, '3', 'not the class the route names after the await');
+    assert.equal(got.begun[0].context.masjidId, '7');
+    assert.deepEqual(got.opened, ['/family/7/student/3/101']);
+});
+
+test('hand over: an unmounted screen stores nothing even if the route still names the same school', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = studentSession;
+    onRequest = (n) => { if (n === 1) s.state.unmounted = true; };
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.deepEqual(got.begun, []);
+    assert.deepEqual(got.opened, []);
+});
+
+test('hand over: a 403 for a school left behind neither ends a session nor shows an error', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = () => ({ status: 403 });
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.equal(s.state.failed.length, 0, 'the screen\'s session handler was never asked about a stale 403');
+    assert.equal(got.failed, 0);
+    assert.deepEqual(got.begun, []);
+});
+
+test('hand over, a live 403 on the current school goes to the session handler and shows no second error', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = () => ({ status: 403 });
+
+    await run.handOverFor(s.begin(() => { s.state.failures++; return true; }), children[0], sinks);
+
+    assert.equal(s.state.failures, 1);
+    assert.equal(got.failed, 0);
+    assert.deepEqual(got.begun, []);
+    assert.deepEqual(got.opened, []);
+});
+
+test('hand over, a live failure the session handler does not take shows the hand-over error', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = () => ({ status: 500 });
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.equal(got.failed, 1);
+    assert.deepEqual(got.begun, []);
+    assert.deepEqual(got.opened, []);
+});
+
+test('hand over: an answer with no token is a failure, not a stored "undefined" session', async () => {
+    const s = screen();
+    const { got, sinks } = handOverSinks();
+    respond = () => ({ status: 200, data: {} });
+
+    await run.handOverFor(s.begin(), children[0], sinks);
+
+    assert.equal(got.failed, 1);
+    assert.deepEqual(got.begun, []);
+    assert.deepEqual(got.opened, []);
+});
+
+test('a run remembers the class it began at, not only its base path', async () => {
+    const s = screen();
+    const started = s.begin();
+
+    s.route.value = { masjidId: '9', groupId: '8' };
+
+    assert.equal(started.school, '7');
+    assert.equal(started.group, '3');
 });
