@@ -100,6 +100,13 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // false here for exactly the reason it gets them above.
         'readableResourcesQuery',
         'mayReceiveResource',
+        // The twentieth and twenty-first, added for the class store (T-003.4): the
+        // Manara Bucks ledger's audience query (the awards' audience, applied to
+        // a child's balance) and the class-totals decision the office's
+        // reconciliation asks. Both take a principal and refuse an unrecognized
+        // one: null (no standing in the class at all) and false.
+        'readablePrizeLedgerQuery',
+        'mayReceiveClassStoreTotals',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -311,7 +318,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(19, $seen);
+        $this->assertCount(21, $seen);
     }
 
     #[Test]
@@ -374,6 +381,10 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         $this->assertNull($this->audience->readableThreadsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableHifzQuery($this->foreign, $this->group));
+        // A child's Manara Bucks (T-003.4): no standing means null, never an empty page, and
+        // an unrecognized principal is not even the office.
+        $this->assertNull($this->audience->readablePrizeLedgerQuery($this->foreign, $this->group));
+        $this->assertFalse($this->audience->mayReceiveClassStoreTotals($this->foreign, $this->group));
 
         // The teacher seams: an unrecognized principal leads nothing.
         $this->assertFalse($this->audience->isLeaderOf($this->foreign, $this->group));
