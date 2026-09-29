@@ -116,6 +116,27 @@ class SignInAddressAtTheDoorTest extends TestCase
     }
 
     #[Test]
+    public function a_new_app_member_at_a_unicode_domain_is_stored_with_the_punycode_address_in_both_columns(): void
+    {
+        // `contacts.email` is written by this door too, not only `login_email`, and
+        // both take the form the address is looked up in, never the Unicode spelling.
+        $this->appPost('request-code', ['email' => self::UNICODE])->assertStatus(202);
+        $code = $this->appCodeMailedTo($this->puny);
+
+        $response = $this->appPost('verify-code', [
+            'email' => self::UNICODE,
+            'code' => $code,
+            'first_name' => 'New',
+            'last_name' => 'Member',
+        ]);
+
+        $response->assertOk()->assertJsonPath('data.created', true);
+        $stored = Contact::withoutMasjidScope()->findOrFail($response->json('data.contact.id'));
+        $this->assertSame($this->puny, $stored->email, 'contacts.email holds the Unicode spelling.');
+        $this->assertSame($this->puny, $stored->login_email);
+    }
+
+    #[Test]
     public function every_app_door_refuses_a_non_ascii_local_part_as_not_an_address(): void
     {
         foreach ([
