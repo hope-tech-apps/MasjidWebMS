@@ -205,6 +205,9 @@ trait BuildsClassStoreFixture
 
     protected function actAs(User $user): void
     {
+        // A parent's bearer header set by asParent() would otherwise ride along on every later
+        // request of the test, and answer for the staff user.
+        $this->flushHeaders();
         Auth::forgetGuards();
         app(TenantContext::class)->forgetTenant();
         Sanctum::actingAs($user, ['staff']);
@@ -212,6 +215,7 @@ trait BuildsClassStoreFixture
 
     protected function asParent(Contact $contact): static
     {
+        $this->flushHeaders();
         Auth::forgetGuards();
         app(TenantContext::class)->forgetTenant();
 

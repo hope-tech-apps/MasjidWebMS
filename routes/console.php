@@ -854,3 +854,14 @@ Schedule::command('backup:drill --json')->weeklyOn(0, '04:20')->withoutOverlappi
 // on this runs and does nothing. One line per run on the `monitors` channel is the proof
 // it ran. Same system cron as everything above (`schedule:run` every minute).
 Schedule::command('points:weekly-report')->hourly()->withoutOverlapping(50);
+
+// Manara Bucks (T-003.4, W6): two hourly sweeps, BOTH for a school that has the `class_store`
+// grant only, which is OFF for every organisation until a SuperAdmin decides. Until then they
+// run and do nothing. `bucks:mint` turns each class's closed points weeks into bucks (positive
+// points only, once per child and week, a two-week window for late changes, never below zero);
+// `bucks:expire` writes a balance off at the end of a class or a school year. Both are
+// idempotent through the ledger's dedupe_key, so an overlapping or repeated run writes nothing
+// twice, and each writes ONE line per run on the `monitors` channel as proof it ran. Same
+// system cron as everything above (`schedule:run` every minute).
+Schedule::command('bucks:mint')->hourlyAt(10)->withoutOverlapping(50);
+Schedule::command('bucks:expire')->hourlyAt(40)->withoutOverlapping(50);

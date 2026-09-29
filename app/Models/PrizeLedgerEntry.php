@@ -83,11 +83,17 @@ class PrizeLedgerEntry extends Model
         'retained_until',
     ];
 
+    /**
+     * `week_start` is deliberately NOT cast to a date. A `date` cast stores 'Y-m-d 00:00:00' on
+     * SQLite and 'Y-m-d' on MySQL, so an exact comparison (`where('week_start', '2026-10-04')`,
+     * which the dedupe and the minting window rely on) would match on one engine and silently
+     * miss on the other. It is a plain 'Y-m-d' string on both, the same way `behavior_weeks`
+     * keeps its own `week_start`.
+     */
     protected function casts(): array
     {
         return [
             'amount' => 'integer',
-            'week_start' => 'date',
             'week_basis' => 'integer',
             'prize_cost' => 'integer',
             'breakdown' => 'array',

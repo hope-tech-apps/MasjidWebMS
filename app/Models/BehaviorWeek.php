@@ -33,6 +33,10 @@ class BehaviorWeek extends Model
         'week_start',
         'report_sent_at',
         'recipients_count',
+        // Manara Bucks (T-003.4): this class's week has been turned into bucks. A record and a
+        // saving of work (bucks:mint skips a converted week older than its adjustment window);
+        // the ledger's dedupe_key is what makes minting once-only.
+        'prizes_converted_at',
     ];
 
     protected function casts(): array
@@ -41,6 +45,7 @@ class BehaviorWeek extends Model
             'week_start' => 'date',
             'report_sent_at' => 'datetime',
             'recipients_count' => 'integer',
+            'prizes_converted_at' => 'datetime',
         ];
     }
 
@@ -103,5 +108,46 @@ class BehaviorWeek extends Model
             ->where('week_start', $weekStart)
             ->whereNotNull('report_sent_at')
             ->exists();
+    }
+
+    /**
+     * Has this class's week already been turned into Manara Bucks (T-003.4)? Independent of
+     * the report's claim above: a row that exists only because minting made it has a null
+     * `report_sent_at`, so `sent()` still says the report has not gone.
+     */
+    public static function prizesConverted(int $groupId, string $weekStart): bool
+    {
+        return DB::table('behavior_weeks')
+            ->where('group_id', $groupId)
+            ->where('week_start', $weekStart)
+            ->whereNotNull('prizes_converted_at')
+            ->exists();
+    }
+
+    /**
+     * Record that minting has processed this class's week. Insert-or-ignore then a
+     * conditional UPDATE, exactly the shape of claim(), so it never disturbs a row the report
+     * already owns and never overwrites the first stamp.
+     */
+    public static function markPrizesConverted(int $masjidId, int $groupId, string $weekStart): void
+    {
+        $now = now();
+
+        DB::table('behavior_weeks')->insertOrIgnore([
+            'masjid_id' => $masjidId,
+            'group_id' => $groupId,
+            'week_start' => $weekStart,
+            'report_sent_at' => null,
+            'recipients_count' => null,
+            'prizes_converted_at' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        DB::table('behavior_weeks')
+            ->where('group_id', $groupId)
+            ->where('week_start', $weekStart)
+            ->whereNull('prizes_converted_at')
+            ->update(['prizes_converted_at' => $now, 'updated_at' => $now]);
     }
 }
