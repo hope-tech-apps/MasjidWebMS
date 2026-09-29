@@ -1166,23 +1166,44 @@ class OfferingRegistrationsController extends Controller
         return $matches->count() === 1 ? $matches->first() : null;
     }
 
-    /** The one live contact of this tenant holding this address, or null. */
+    /**
+     * The OLDEST live contact of this tenant holding EXACTLY this address, or
+     * null.
+     *
+     * Reached from the anonymous registration door (the payer, a registrant, and
+     * the guard in `createContact()`), so "holding this address" must mean the
+     * address that was TYPED and not one the database merely calls equal.
+     * `contacts.email` is `utf8mb4_unicode_ci` on production (read there
+     * 2026-09-29), which compares accents and expansions as equal
+     * (`victim@gmail.com` = `victim@gmaíl.com`, `ß` = `ss`), so the query alone
+     * would attach a registration typed at a look-alike to the REAL person's
+     * contact: the payer or registrant becomes somebody else's record.
+     *
+     * The SQL is therefore only a SHORTLIST, and `keepExactMatches()` decides
+     * (case and surrounding whitespace aside, byte for byte). The oldest-by-id
+     * rule is applied to the exact matches alone, so a look-alike with a lower id
+     * can neither win it nor stand in front of the real holder. There is no
+     * `limit()` on the shortlist for the same reason: one before the filter could
+     * cut the exact holder off behind look-alikes.
+     */
     private function findByAddress(int $masjidId, string $email): ?Contact
     {
         if ($email === '') {
             return null;
         }
 
-        return Contact::query()
+        $candidates = Contact::query()
             ->where('masjid_id', $masjidId)
             ->whereNotNull('email')
-            // LOWER() on both sides rather than relying on the column collation:
-            // production is utf8mb4_bin (case-SENSITIVE) and the suite runs
-            // SQLite, and which record a family attaches to must not depend on
-            // which one it is talking to.
+            // LOWER() on both sides is kept for the SQLite the suite runs, whose
+            // `=` is byte-exact, so the shortlist is the same set on both. It
+            // does not make the match exact on production: that is the filter
+            // below.
             ->whereRaw('LOWER(TRIM(email)) = ?', [$email])
             ->orderBy('id')
-            ->first();
+            ->get();
+
+        return ContactIdentity::keepExactMatches($candidates, 'email', $email)->first();
     }
 
     /** Does this submitted name name the person on that record? */
@@ -1216,7 +1237,10 @@ class OfferingRegistrationsController extends Controller
      *     teacher out of her own classroom for good. A household mailbox belongs
      *     to the person who typed it; the sibling registered under it gets a row
      *     with no address, which is what a child with no address of their own
-     *     has always had, and the office can type one in later.
+     *     has always had, and the office can type one in later. "Holds" means
+     *     EXACTLY (`findByAddress()`): a contact that holds only a look-alike of
+     *     the typed address is not a holder, so it neither blanks the new row's
+     *     address nor is it what the registration attaches to.
      *
      * @param  array{name?:?string,email?:?string,phone?:?string}  $person
      */
