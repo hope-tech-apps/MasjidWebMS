@@ -11,6 +11,7 @@
  * raw value is shown. The platforms section carries has_* flags and account
  * modes only, so no credential can be printed from here.
  */
+import { escapeHtml } from "@/core/plugins/swalSanitize";
 import { accountModeLabel, platformLabel } from "@/core/studio/platforms";
 import type { StudioOptions, StudioOptionValue } from "@/core/types/data/Studio";
 import type {
@@ -238,9 +239,8 @@ export const EMPTY_SECTION_TEXT: Partial<Record<StudioOrganisationSectionKey, st
     apps: 'Apps are generated from Studio in a later release. Until then they are managed on the organisation screen.',
 };
 
-export function escapeHtml(value: string): string {
-    return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string));
-}
+/** The one escaper for dialog HTML (the global SweetAlert2 sanitizer's), not a second copy. */
+export { escapeHtml };
 
 /**
  * A confirm dialog's body: each sentence a paragraph, then a list, every piece
