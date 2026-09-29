@@ -1029,12 +1029,12 @@ class WeeklyPointsReportTest extends TestCase
         Event::listen(\Illuminate\Mail\Events\MessageSending::class, function ($event) {
             foreach ($event->message->getTo() as $to) {
                 if ($to->getAddress() === 'huda@fam.test') {
-                    throw new \RuntimeException('smtp said no');
+                    // A transport quotes the address it refused, in whatever case it was given.
+                    throw new \RuntimeException('Cannot send to <HUDA@fam.test>: smtp said no');
                 }
             }
         });
-        Log::spy();
-        Log::shouldReceive('channel')->with('monitors')->andReturn(Mockery::spy(LoggerInterface::class));
+        $warnings = $this->captureWarnings();
 
         $this->now('2026-10-09 15:00');
         $this->run_();
@@ -1045,9 +1045,71 @@ class WeeklyPointsReportTest extends TestCase
         $this->assertContains('sara@fam.test', $delivered);
         $this->assertContains('teacher@school.test', $delivered);
         $this->assertNotContains('huda@fam.test', $delivered);
-        Log::shouldHaveReceived('warning')->withArgs(fn ($m) => str_contains((string) $m, 'huda@fam.test'))->atLeast()->once();
+        // Logged where production keeps it (warning), naming the guardian by contact id and carrying no
+        // address anywhere in the line: not the message, not the context, not the transport's own words.
+        $failed = array_values(array_filter($warnings->getArrayCopy(), fn (array $w) => ($w['context']['contact_id'] ?? null) === $this->huda->id));
+        $this->assertCount(1, $failed, 'the dead address is logged once, by its contact id');
+        $this->assertSame('family', $failed[0]['context']['audience']);
+        $this->assertNull($failed[0]['context']['user_id'], 'a guardian is a contact, not a user');
+        $this->assertStringContainsString('smtp said no', $failed[0]['context']['error'], 'the reason survives, without the address');
+        $this->assertNoAddressInAnyLogLine($warnings);
         $this->assertSame(1, (int) DB::table('behavior_weeks')->value('recipients_count'), 'only the delivered family is counted');
         $this->assertSame(1, $this->claimed(), 'a PARTIAL send keeps its claim: a retry would tell the delivered families twice');
+    }
+
+    #[Test]
+    public function a_teachers_failed_notice_is_logged_by_user_id_and_no_log_line_carries_an_address(): void
+    {
+        $this->ordinaryWeek();
+        app()->forgetInstance('mail.manager');
+        \Illuminate\Support\Facades\Facade::clearResolvedInstance('mail.manager');
+        Event::listen(\Illuminate\Mail\Events\MessageSending::class, function ($event) {
+            foreach ($event->message->getTo() as $to) {
+                if ($to->getAddress() === 'teacher@school.test') {
+                    throw new \RuntimeException('Rejected teacher@school.test (from office@school.test): mailbox full');
+                }
+            }
+        });
+        $warnings = $this->captureWarnings();
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+
+        $failed = array_values(array_filter($warnings->getArrayCopy(), fn (array $w) => ($w['context']['user_id'] ?? null) === $this->teacher->id));
+        $this->assertCount(1, $failed);
+        $this->assertSame('teacher', $failed[0]['context']['audience']);
+        $this->assertNull($failed[0]['context']['contact_id']);
+        $this->assertStringContainsString('mailbox full', $failed[0]['context']['error']);
+        $this->assertNoAddressInAnyLogLine($warnings);
+    }
+
+    /**
+     * A spy on the log that keeps every warning as ['message' => ..., 'context' => ...] and swallows the
+     * `monitors` channel line (whose own content is pinned elsewhere). The ArrayObject is shared by
+     * handle, so warnings written after this call appear in it.
+     */
+    private function captureWarnings(): \ArrayObject
+    {
+        $lines = new \ArrayObject();
+
+        Log::spy();
+        Log::shouldReceive('warning')->andReturnUsing(function ($message, array $context = []) use ($lines) {
+            $lines[] = ['message' => (string) $message, 'context' => $context];
+        });
+        Log::shouldReceive('channel')->with('monitors')->andReturn(Mockery::spy(LoggerInterface::class));
+
+        return $lines;
+    }
+
+    /** No warning carries an address anywhere: not in the message, not in a context value. */
+    private function assertNoAddressInAnyLogLine(\ArrayObject $warnings): void
+    {
+        $this->assertNotEmpty($warnings->getArrayCopy(), 'the failure was logged at all');
+
+        foreach ($warnings as $line) {
+            $text = $line['message'].' '.json_encode($line['context']);
+            $this->assertStringNotContainsString('@', $text, 'a log line carries no address: '.$text);
+        }
     }
 
     /** Swap the fake for the real array mailer, whose send() can be made to throw while `$down` is true. */

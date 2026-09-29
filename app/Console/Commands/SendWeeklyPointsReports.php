@@ -322,8 +322,8 @@ class SendWeeklyPointsReports extends Command
             .rawurlencode('/family/'.$masjid->id.'/classes/'.$group->id.'/report?week='.$weekStart);
         $teacherUrl = $base.'/teacher/classes/'.$group->id.'?tab=points&week='.$weekStart;
 
-        $sentFamilies = $this->deliver($families, WeeklyPointsReportMail::AUDIENCE_FAMILY, $familyUrl, $orgName, $groupLabel, $orgEmail, $run);
-        $sentTeachers = $this->deliver($teachers, WeeklyPointsReportMail::AUDIENCE_TEACHER, $teacherUrl, $orgName, $groupLabel, $orgEmail, $run);
+        $sentFamilies = $this->deliver($families, WeeklyPointsReportMail::AUDIENCE_FAMILY, $familyUrl, $orgName, $groupLabel, $orgEmail, $run, $group);
+        $sentTeachers = $this->deliver($teachers, WeeklyPointsReportMail::AUDIENCE_TEACHER, $teacherUrl, $orgName, $groupLabel, $orgEmail, $run, $group);
 
         // Every address failed (the mail transport was down): nobody was told, so the
         // claim is given back and the next hourly run, still inside the catch-up window,
@@ -349,10 +349,14 @@ class SendWeeklyPointsReports extends Command
     /**
      * Send one mail per recipient; a dead address is logged and skipped. Returns how many went.
      *
+     * The log line names the person by id and never by address: production keeps warnings, and a
+     * guardian's sign-in address, beside a school and a class, says whose parent someone is.
+     * The transport's own message often quotes the address it refused, so it is scrubbed too.
+     *
      * @param  \Illuminate\Support\Collection<int,NudgeRecipient>  $recipients
      * @param  array<string,mixed>  $run
      */
-    private function deliver($recipients, string $audience, string $url, string $orgName, string $groupLabel, ?string $orgEmail, array &$run): int
+    private function deliver($recipients, string $audience, string $url, string $orgName, string $groupLabel, ?string $orgEmail, array &$run, Group $group): int
     {
         $sent = 0;
 
@@ -369,10 +373,29 @@ class SendWeeklyPointsReports extends Command
                 $sent++;
             } catch (Throwable $e) {
                 $run['failures']++;
-                Log::warning('weekly points report email failed for '.$recipient->address.': '.$e->getMessage());
+                Log::warning('Weekly points report email failed for one recipient.', [
+                    'masjid_id' => (int) $group->masjid_id,
+                    'group_id' => (int) $group->id,
+                    'audience' => $audience,
+                    'contact_id' => $recipient->contactId,
+                    'user_id' => $recipient->userId,
+                    'error' => $this->withoutAddresses($e->getMessage(), $recipient->address),
+                ]);
             }
         }
 
         return $sent;
+    }
+
+    /**
+     * A transport's message with every address taken out: the recipient's own, however it is
+     * cased, and anything else shaped like one (a sender, a Cc), because a log line must not
+     * gain an address by way of somebody else's error text.
+     */
+    private function withoutAddresses(string $message, string $address): string
+    {
+        $message = str_ireplace($address, '[address]', $message);
+
+        return (string) preg_replace('/[^\s<>"\'(),;:]+@[^\s<>"\'(),;]+/u', '[address]', $message);
     }
 }
