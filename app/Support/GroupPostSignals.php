@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Contact;
+use App\Models\Group;
 use App\Models\GroupPost;
 use App\Models\GroupPostRead;
 use App\Models\GroupPostReaction;
@@ -28,6 +29,14 @@ use Illuminate\Contracts\Auth\Authenticatable;
  *
  * The viewer is never listed among the people who reacted — the screen says
  * "You" from `mine`.
+ *
+ * A GUARDIAN's reaction is drawn only while that guardian is still in the room
+ * (owner review, 2026-09-29): a family that withdrew consent or left the class is
+ * refused the reaction endpoints (nothing to un-react with), so their taps would
+ * otherwise sit on the story, counted and named to staff, with nobody able to take
+ * them back. The room is GroupAudience::storyGuardianContacts(), the same set
+ * seenFor() reads. Staff reactions are not asked. The rows themselves are kept, so
+ * a family that is re-admitted finds its reactions as it left them.
  */
 final class GroupPostSignals
 {
@@ -47,11 +56,20 @@ final class GroupPostSignals
         $viewerUserId = $viewer instanceof User ? (int) $viewer->getKey() : null;
         $viewerContactId = $viewerIsParent ? (int) $viewer->getKey() : null;
 
-        $reactions = GroupPostReaction::query()
+        $rows = GroupPostReaction::query()
             ->whereIn('group_post_id', $posts->pluck('id')->all())
             ->with(['user:id,name', 'contact:id,first_name,last_name'])
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        $audiences = self::guardianAudiences($posts, $rows);
+        $groupOfPost = $posts->pluck('group_id', 'id');
+
+        // Staff rows always stand; a guardian's stands only while they are in the
+        // audience of the post's own class. No audience found means nobody stands.
+        $reactions = $rows
+            ->filter(fn (GroupPostReaction $row): bool => $row->contact_id === null
+                || ($audiences[(int) $groupOfPost->get($row->group_post_id)] ?? collect())->has((int) $row->contact_id))
             ->groupBy('group_post_id');
 
         $out = [];
@@ -66,6 +84,39 @@ final class GroupPostSignals
         }
 
         return $out;
+    }
+
+    /**
+     * The story audience of each class that holds a guardian's reaction, keyed by
+     * group id. Classes with no guardian reaction are not resolved at all: a
+     * story only staff have reacted to costs no membership query.
+     *
+     * @param \Illuminate\Support\Collection<int,GroupPost> $posts
+     * @param \Illuminate\Support\Collection<int,GroupPostReaction> $rows
+     * @return array<int, \Illuminate\Support\Collection<int,Contact>> keyed by group id, then contact id
+     */
+    private static function guardianAudiences($posts, $rows): array
+    {
+        $postIdsWithGuardians = $rows->whereNotNull('contact_id')->pluck('group_post_id')->unique();
+
+        $groupIds = $posts
+            ->whereIn('id', $postIdsWithGuardians->all())
+            ->pluck('group_id')
+            ->unique()
+            ->values();
+
+        if ($groupIds->isEmpty()) {
+            return [];
+        }
+
+        $audience = app(GroupAudience::class);
+        $audiences = [];
+
+        foreach (Group::query()->whereIn('id', $groupIds->all())->get() as $group) {
+            $audiences[(int) $group->id] = $audience->storyGuardianContacts($group);
+        }
+
+        return $audiences;
     }
 
     /**

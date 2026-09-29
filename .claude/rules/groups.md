@@ -610,6 +610,13 @@ messaging arrangement above. Proven by `GroupPostReactionsTest`,
   `GroupPostSignals` (stories), never re-derives names: staff see every name; a
   parent sees staff names, their own reaction as `mine`, and other families as a
   COUNT only.
+- **A guardian's reaction is drawn only while that guardian is in the room.**
+  `GroupPostSignals::forPosts()` counts and names a guardian's reaction only if their
+  contact is in the CURRENT `GroupAudience::storyGuardianContacts()` of the post's
+  class (the set `seenFor()` reads); a family that withdrew consent, left the class or
+  lost its login is refused the reaction endpoints, so without this its taps would sit
+  on the story with nobody able to take them back. Staff reactions are never asked.
+  The row is kept, not deleted: a family that is re-admitted finds its reaction again.
 - **The gate is the FEED READ gate** (`GroupAudience::DISCLOSURE_FEED`), after the
   realm's write gate (`permission:manage contacts` / `teacher.leads` / the family
   guard): a person may react only to what they may read. A guardian with no consent,

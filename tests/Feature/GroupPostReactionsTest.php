@@ -3,12 +3,14 @@
 namespace Tests\Feature;
 
 use App\Jobs\SendGroupNotificationJob;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupMessageReaction;
 use App\Models\GroupPost;
 use App\Models\GroupPostReaction;
 use App\Models\Masjid;
+use App\Models\User;
 use App\Support\Reactions;
 use App\Support\TenantContext;
 use Illuminate\Database\QueryException;
@@ -365,6 +367,139 @@ class GroupPostReactionsTest extends TestCase
             ->putJson($this->familyUrl("/posts/{$post->id}/reactions/ameen"))
             ->assertStatus(403);
         $this->assertSame(0, GroupPostReaction::withoutMasjidScope()->count());
+    }
+
+    // ------------------------------------------ a departed family's reaction is not shown
+
+    /**
+     * 🤲 on the post as every surface that draws it shows it, in one map: the
+     * teacher's list and post, the office's list and post, the answer to a staff
+     * tap, and what a CURRENT parent (`$viewer`) is shown on their list, post and
+     * own tap. Each entry is the `ameen` summary plus the raw JSON, so a name is
+     * looked for anywhere in the payload and not only in `by`.
+     *
+     * @return array<string, array{ameen: array<string,mixed>, raw: string}>
+     */
+    private function ameenOnEverySurface(GroupPost $post, User $admin, Contact $viewer): array
+    {
+        $id = $post->id;
+        $shown = [
+            'teacher list' => [$this->asTeacher()->getJson($this->teacherUrl('/posts')), 'data.data.0.reactions'],
+            'teacher post' => [$this->asTeacher()->getJson($this->teacherUrl("/posts/{$id}")), 'data.reactions'],
+            'teacher tap' => [$this->asTeacher()->putJson($this->teacherUrl("/posts/{$id}/reactions/ameen")), 'data.reactions'],
+            'office list' => [$this->asUser($admin)->getJson($this->adminUrl('/posts')), 'data.data.0.reactions'],
+            'office post' => [$this->asUser($admin)->getJson($this->adminUrl("/posts/{$id}")), 'data.reactions'],
+            'family list' => [$this->asParent($viewer)->getJson($this->familyUrl('/posts')), 'data.data.0.reactions'],
+            'family post' => [$this->asParent($viewer)->getJson($this->familyUrl("/posts/{$id}")), 'data.reactions'],
+            'family tap' => [$this->asParent($viewer)->putJson($this->familyUrl("/posts/{$id}/reactions/ameen")), 'data.reactions'],
+        ];
+
+        $out = [];
+
+        foreach ($shown as $surface => [$response, $path]) {
+            $response->assertOk();
+            $out[$surface] = [
+                'ameen' => $response->json($path)[0],
+                'raw' => json_encode($response->json(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * $leaver reacted; then stopped being in the room by `$leave`. The teacher,
+     * the office and a family that stays all reacted too, and their taps must
+     * survive. The leaver's row is kept in the table, only never drawn.
+     */
+    private function assertLeaversReactionIsGoneFromEveryPayload(\Closure $leave, Contact $leaver, string $leaverName): void
+    {
+        $post = $this->makePost();
+        $admin = $this->makeLeadingAdmin();
+        [$stays] = $this->makeFamily('Layla', 'Noor', 'Haddad');
+        $this->consent($stays);
+        $ameen = "/posts/{$post->id}/reactions/ameen";
+
+        $this->asTeacher()->putJson($this->teacherUrl($ameen))->assertOk();
+        $this->asUser($admin)->putJson($this->adminUrl($ameen))->assertOk();
+        $this->asParent($leaver)->putJson($this->familyUrl($ameen))->assertOk();
+        $this->asParent($stays)->putJson($this->familyUrl($ameen))->assertOk();
+
+        // Before: all four are on the story, and the leaver is named to staff.
+        $before = $this->ameenOnEverySurface($post, $admin, $stays);
+        $this->assertSame(4, $before['teacher list']['ameen']['count']);
+        $this->assertStringContainsString($leaverName, $before['teacher list']['raw']);
+
+        $leave();
+
+        foreach ($this->ameenOnEverySurface($post, $admin, $stays) as $surface => $shown) {
+            // The teacher, the office and the family that stayed.
+            $this->assertSame(3, $shown['ameen']['count'], "{$surface}: the departed family is still counted");
+            $this->assertStringNotContainsString($leaverName, $shown['raw'], "{$surface}: the departed family is still named");
+
+            if (str_starts_with($surface, 'family')) {
+                // A parent is shown staff names and their own tap as `mine`; the
+                // other family is only ever a count, and the leaver was one.
+                $this->assertTrue($shown['ameen']['mine'], "{$surface}: a current family lost its own reaction");
+                $this->assertEqualsCanonicalizing(['Ustadh Bilal', 'Office Admin'], array_column($shown['ameen']['by'], 'name'), $surface);
+            } else {
+                // The viewer's own tap is `mine`, never listed: the other staff
+                // member and the current guardian are the two names.
+                $names = array_column($shown['ameen']['by'], 'name');
+                $this->assertContains('Noor Haddad', $names, "{$surface}: a current guardian's reaction went missing");
+                $this->assertCount(2, $names, $surface);
+            }
+        }
+
+        // Hidden, not destroyed: the row is still there for a family that comes back.
+        $this->assertSame(4, GroupPostReaction::withoutMasjidScope()->where('reaction', 'ameen')->count());
+    }
+
+    #[Test]
+    public function a_family_that_withdrew_consent_is_no_longer_counted_or_named_on_any_payload(): void
+    {
+        $this->assertLeaversReactionIsGoneFromEveryPayload(
+            fn () => $this->withdrawConsent($this->parentA), $this->parentA, 'Huda Yusuf'
+        );
+    }
+
+    #[Test]
+    public function a_family_that_left_the_class_is_no_longer_counted_or_named_on_any_payload(): void
+    {
+        $this->assertLeaversReactionIsGoneFromEveryPayload(
+            fn () => $this->familyLeaves($this->parentA), $this->parentA, 'Huda Yusuf'
+        );
+    }
+
+    #[Test]
+    public function a_family_that_comes_back_finds_its_reaction_where_it_left_it(): void
+    {
+        $post = $this->makePost();
+        $ameen = "/posts/{$post->id}/reactions/ameen";
+
+        $this->asParent($this->parentA)->putJson($this->familyUrl($ameen))->assertOk();
+
+        $this->withdrawConsent($this->parentA);
+        $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()
+            ->assertJsonPath('data.data.0.reactions.0.count', 0);
+
+        $this->consent($this->parentA);
+        $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()
+            ->assertJsonPath('data.data.0.reactions.0.count', 1)
+            ->assertJsonPath('data.data.0.reactions.0.by.0.name', 'Huda Yusuf');
+    }
+
+    #[Test]
+    public function a_guardian_with_no_live_login_is_outside_the_room_like_the_seen_by_audience(): void
+    {
+        $post = $this->makePost();
+        $this->asParent($this->parentA)->putJson($this->familyUrl("/posts/{$post->id}/reactions/ameen"))->assertOk();
+
+        // The same audience as the receipts: consented, current, holding a live login.
+        $this->parentA->forceFill(['login_revoked_at' => now()])->save();
+
+        $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()
+            ->assertJsonPath('data.data.0.reactions.0.count', 0);
     }
 
     #[Test]
