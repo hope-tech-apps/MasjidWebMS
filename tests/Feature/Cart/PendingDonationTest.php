@@ -159,9 +159,12 @@ class PendingDonationTest extends TestCase
     {
         $org = $this->org();
 
-        $donation = $this->service()->createPendingDonation($org, $this->fund($org), 5000, false, ['contact_id' => 4242]);
+        // A REAL contact: donations.contact_id is a foreign key, so an invented id (the
+        // first version passed 4242) is refused by the database before anything is tested.
+        $payer = \App\Models\Contact::factory()->create(['masjid_id' => $org->id]);
+        $donation = $this->service()->createPendingDonation($org, $this->fund($org), 5000, false, ['contact_id' => $payer->id]);
 
-        $this->assertSame(4242, $donation->contact_id);
+        $this->assertSame($payer->id, $donation->contact_id);
     }
 
     #[Test]
@@ -230,8 +233,9 @@ class PendingDonationTest extends TestCase
         $captured = null;
         $service = $this->service($captured);
 
-        $door = $service->createDonationCheckout($org, $fund, 10000, true, ['contact_id' => 9, 'zakat' => null]);
-        $direct = $service->createPendingDonation($org, $fund, 10000, true, ['contact_id' => 9, 'zakat' => null]);
+        $payer = \App\Models\Contact::factory()->create(['masjid_id' => $org->id]);   // a real one: contact_id is a foreign key
+        $door = $service->createDonationCheckout($org, $fund, 10000, true, ['contact_id' => $payer->id, 'zakat' => null]);
+        $direct = $service->createPendingDonation($org, $fund, 10000, true, ['contact_id' => $payer->id, 'zakat' => null]);
 
         $volatile = ['id', 'uuid', 'idempotency_key', 'created_at', 'updated_at',
             'stripe_checkout_session_id', 'stripe_payment_intent_id'];
