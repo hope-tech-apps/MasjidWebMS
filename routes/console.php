@@ -131,6 +131,20 @@ Schedule::command('alrazi:sync-website')->everyFiveMinutes()->withoutOverlapping
 // from where. 03:25 UTC, clear of the 03:10 group sweep.
 Schedule::command('family:prune-login-codes')->dailyAt('03:25')->withoutOverlapping();
 
+// Abandoned baskets (universal cart, brief 5 section 5). A basket holds the ANSWERS a shopper
+// typed (attendee names on a festival ticket form, a gift's zakat choice), and the public
+// endpoints slide its expiry a week out on every write, so an abandoned one lingers as personal
+// data behind a token nobody will present. The sweep deletes OPEN baskets whose expiry is more
+// than a day past, and their lines with them, unless a payment page of theirs could still be
+// paid; a payment that lands on a pruned basket's order is still settled and recorded in full,
+// because settlement writes from the order's own snapshot (see App\Console\Commands\PruneCarts).
+// A no-op wherever the cart was never switched on, which is every box until the owner says so.
+//
+// 03:41 UTC: after the 03:35 legacy-features report, and clear of the quarter-hourly registration
+// reaper (:00/:15/:30/:45) and the 03:53 draft purge; withoutOverlapping() so a slow run cannot
+// stack up and have two processes deleting the same baskets.
+Schedule::command('cart:prune')->dailyAt('03:41')->withoutOverlapping();
+
 /*
 |--------------------------------------------------------------------------
 | Who is still reading the legacy mobile feature list
