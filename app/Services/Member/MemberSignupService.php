@@ -464,7 +464,16 @@ class MemberSignupService
                     $updates['login_email'] = $email;
                 }
 
-                $contact->forceFill($updates)->save();
+                // Adopting the address writes `login_email`, and the
+                // `(masjid_id, login_email)` unique index can refuse it exactly as
+                // it refuses a new contact: a look-alike spelling, or a soft-deleted
+                // contact, may hold it (see `refuseCollidingAddress()`). It answers
+                // the same way, as the refused redeem it is, and never as a 500.
+                try {
+                    $contact->forceFill($updates)->save();
+                } catch (UniqueConstraintViolationException) {
+                    return $this->refuseCollidingAddress();
+                }
 
                 // A password on a contact with no login address was chosen
                 // under an address it no longer has (FamilyAccessService
@@ -562,15 +571,16 @@ class MemberSignupService
     }
 
     /**
-     * The `(masjid_id, login_email)` unique index refused the contact this redeem
-     * was about to create: somebody already holds an address the index calls the
-     * same as this one. Under utf8mb4_unicode_ci that includes a look-alike of it
+     * The `(masjid_id, login_email)` unique index refused the write this redeem
+     * was about to make (creating a contact at the address, or adopting it as an
+     * existing contact's `login_email`): somebody already holds an address the
+     * index calls the same as this one. Under utf8mb4_unicode_ci that includes a look-alike of it
      * (`victim@gmaíl.com` against `victim@gmail.com`), which resolveContact()
      * rightly does not return; it also includes a soft-deleted contact, which the
      * index still pins and resolveContact() never sees.
      *
      * Answered exactly as any other refused redeem: null (the controller's one
-     * 410), nothing created and no password set. The code is SPENT, because this
+     * 410), nothing created or adopted and no password set. The code is SPENT, because this
      * returns instead of throwing and the transaction commits the `consumed_at`
      * that opened it: whoever proved a mailbox they cannot use gets no second try
      * with the same code. Nothing says whose address collided, and the log line
