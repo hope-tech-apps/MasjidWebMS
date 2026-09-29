@@ -38,6 +38,8 @@ class Order extends Model
         'cart_id',
         'contact_id',
         'buyer_email',
+        'buyer_name',
+        'buyer_phone',
         'status',
         'total_minor',
         'fee_minor',

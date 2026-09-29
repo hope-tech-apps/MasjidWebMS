@@ -70,7 +70,10 @@ use Throwable;
  *
  * Stripe does not order its events. When `payment_intent.succeeded` settles the order
  * first it carries no payer (no session id, no `customer_details`), so a guest basket is
- * recorded with an anonymous gift and a placeholder meal customer. The session event that
+ * recorded with what the buyer typed at the basket page (the order's `buyer_email`,
+ * `buyer_name`, `buyer_phone`: the public endpoints always collect them), and an order opened
+ * without them (a late or legacy one) with an anonymous gift and a placeholder meal
+ * customer. The session event that
  * follows finds the order PAID and settles nothing, but it BACKFILLS what the intent could
  * not know (backfillLocked()): the donation's contact and session id, and a meal order's
  * placeholder name, phone and e-mail. Then the steps the first settlement had to skip —
@@ -804,16 +807,19 @@ class CartSettlementService
     }
 
     /**
-     * The payer's details, with the order's own buyer address standing in when Stripe
-     * gave none (the basket may have been opened with one).
+     * The payer's details, with what the buyer typed at the basket page (the order's own
+     * `buyer_email`, `buyer_name`, `buyer_phone`) standing in for anything Stripe's
+     * `customer_details` lack. Stripe's own value always wins where it has one.
      *
      * @param  array<string,mixed>  $customerDetails
      * @return array<string,mixed>
      */
     private function detailsWithBuyer(Order $order, array $customerDetails): array
     {
-        if (! filled($customerDetails['email'] ?? null) && filled($order->buyer_email)) {
-            $customerDetails['email'] = $order->buyer_email;
+        foreach (['email' => $order->buyer_email, 'name' => $order->buyer_name, 'phone' => $order->buyer_phone] as $key => $typed) {
+            if (! filled($customerDetails[$key] ?? null) && filled($typed)) {
+                $customerDetails[$key] = $typed;
+            }
         }
 
         return $customerDetails;
@@ -922,10 +928,12 @@ class CartSettlementService
     }
 
     /**
-     * Who a basket's meal order is for. The basket collects no name or phone of its own,
-     * so it is the buyer's contact when there is one, else what the payer typed into
-     * Stripe Checkout, else a plain label — `customer_name` and `customer_phone` are
-     * required columns, and money already taken must not fail on a blank.
+     * Who a basket's meal order is for: what the buyer typed at the basket page (the order's
+     * `buyer_name` and `buyer_phone`, which is what the office needs to ring them), else the
+     * buyer's contact when there is one, else what the payer typed into Stripe Checkout, else
+     * a plain label. `customer_name` and `customer_phone` are required columns, and money
+     * already taken must not fail on a blank, so an order opened without a name (a late or
+     * legacy one) still settles, under the placeholder.
      *
      * @param  array<string,mixed>  $details  the session's customer_details
      * @return array{name: string, phone: string, email: ?string, notes: null}
@@ -936,10 +944,12 @@ class CartSettlementService
             ? null
             : Contact::withoutMasjidScope()->where('masjid_id', $order->masjid_id)->find($order->contact_id);
 
-        $name = trim(trim((string) ($contact?->first_name ?? '')) . ' ' . trim((string) ($contact?->last_name ?? '')));
+        $name = trim((string) ($order->buyer_name ?? ''));
+        $name = $name !== '' ? $name : trim(trim((string) ($contact?->first_name ?? '')) . ' ' . trim((string) ($contact?->last_name ?? '')));
         $name = $name !== '' ? $name : trim((string) ($details['name'] ?? ''));
 
-        $phone = trim((string) ($contact?->phone ?? ''));
+        $phone = trim((string) ($order->buyer_phone ?? ''));
+        $phone = $phone !== '' ? $phone : trim((string) ($contact?->phone ?? ''));
         $phone = $phone !== '' ? $phone : trim((string) ($details['phone'] ?? ''));
 
         $email = null;

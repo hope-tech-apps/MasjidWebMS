@@ -353,13 +353,13 @@ class MemberAccountDeletion
                 ->delete();
 
             // An abandoned checkout (never paid) is not a sale, so it keeps nothing — but
-            // it still carries the address the shopper typed. Clear it. A PAID order is an
-            // office record and keeps its buyer, as meal_orders keep theirs.
+            // it still carries the address, name and phone the shopper typed. Clear them. A
+            // PAID order is an office record and keeps its buyer, as meal_orders keep theirs.
             Order::withoutMasjidScope()
                 ->where('masjid_id', $contact->masjid_id)
                 ->where('contact_id', $contact->id)
                 ->where('status', '!=', Order::STATUS_PAID)
-                ->update(['buyer_email' => null]);
+                ->update(['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null]);
 
             // App sign-in codes for whichever address could sign straight back in:
             // the proven one, or both when that is unknown.

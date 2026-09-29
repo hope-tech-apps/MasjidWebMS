@@ -32,6 +32,10 @@ use Illuminate\Support\Facades\Schema;
  *   Status moves only forward and only by the webhook: pending → paid, or pending →
  *   expired. Checkout never marks anything paid.
  *
+ *   `buyer_email`, `buyer_name` and `buyer_phone` are what the shopper typed at the basket
+ *   page. They are the buyer's contact on an order that has no account behind it: a meal
+ *   order takes the name and phone (settlement), a gift's donor falls back to all three.
+ *
  * order_items — WHAT THE ORDER CHARGED FOR, frozen at checkout.
  *
  *   A snapshot, not a reference: a later price edit or a deleted dish must not
@@ -70,6 +74,16 @@ return new class extends Migration
             $table->foreignId('cart_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('contact_id')->nullable()->constrained()->nullOnDelete();
             $table->string('buyer_email', 255)->nullable();
+
+            // Who to call about it, as typed at the basket page (slice 5, brief 5 section 3).
+            // A meal order needs both (the two meal doors require a name and a phone, and the
+            // kitchen board shows them), and a gift's donor falls back to them when Stripe's
+            // payer details lack them. Personal data on a row that outlives the basket: the
+            // staging scrub anonymises both, and an unpaid checkout loses them with the buyer's
+            // account (MemberAccountDeletion), as it loses buyer_email. Nullable: an order
+            // opened without them (a legacy or late one) settles with the placeholder name.
+            $table->string('buyer_name', 120)->nullable();
+            $table->string('buyer_phone', 32)->nullable();
 
             $table->string('status', 16)->default('pending');
 

@@ -494,6 +494,11 @@ return [
 
         'orders' => [
             'buyer_email' => 'email',
+            // What the shopper typed at the basket page, next to the address: the name and phone
+            // a meal order and a gift's donor are recorded from. Anonymised as meal_orders' own
+            // customer_name and customer_phone are, so the rows stay readable on staging.
+            'buyer_name' => 'full_name',
+            'buyer_phone' => 'phone',
         ],
 
         'meal_orders' => [

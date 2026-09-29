@@ -80,6 +80,10 @@ class CartCheckoutService
 
     private const PAID_MESSAGE = 'This basket has already been paid for.';
 
+    /** The width of orders.buyer_name and orders.buyer_phone. */
+    private const BUYER_NAME_MAX = 120;
+    private const BUYER_PHONE_MAX = 32;
+
     public function __construct(
         private readonly StripeClient $stripe,
         private readonly CartPricer $pricer = new CartPricer,
@@ -87,11 +91,19 @@ class CartCheckoutService
 
     /**
      * @param  string  $returnBase  an origin+path FormPaymentReturn::base() has already checked
+     * @param  string|null  $buyerName  what the shopper typed; kept on the order for the office and for
+     *                                  settlement (a meal order's name, a gift's donor)
+     * @param  string|null  $buyerPhone  likewise (a meal order's phone)
      * @return array{order: Order, url: string}
      */
-    public function checkout(Cart $cart, string $returnBase, ?string $buyerEmail = null): array
-    {
-        return DB::transaction(function () use ($cart, $returnBase, $buyerEmail): array {
+    public function checkout(
+        Cart $cart,
+        string $returnBase,
+        ?string $buyerEmail = null,
+        ?string $buyerName = null,
+        ?string $buyerPhone = null,
+    ): array {
+        return DB::transaction(function () use ($cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone): array {
             // Re-read under a lock: two tabs pressing "pay" must not open two pages.
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
 
@@ -131,10 +143,16 @@ class CartCheckoutService
 
             $reused = $this->reuseOpenPage($locked, $priced, $account);
             if ($reused !== null) {
+                // The same page, but the shopper may have corrected a phone number or a name on
+                // the way back to it: the office rings what they typed LAST. Neither is on the
+                // Stripe page. The email is, locked at the address the page opened with, so the
+                // order keeps that one and it is left alone here, as it always was.
+                $this->refreshBuyer($reused['order'], $buyerName, $buyerPhone);
+
                 return $reused;
             }
 
-            $order = $this->createPendingOrder($locked, $priced, $account, $buyerEmail);
+            $order = $this->createPendingOrder($locked, $priced, $account, $buyerEmail, $buyerName, $buyerPhone);
 
             $url = $this->openPage($order, $priced, $account, $returnBase, $buyerEmail);
 
@@ -315,8 +333,14 @@ class CartCheckoutService
         return null;
     }
 
-    private function createPendingOrder(Cart $cart, PricedBasket $priced, string $account, ?string $buyerEmail): Order
-    {
+    private function createPendingOrder(
+        Cart $cart,
+        PricedBasket $priced,
+        string $account,
+        ?string $buyerEmail,
+        ?string $buyerName = null,
+        ?string $buyerPhone = null,
+    ): Order {
         // Frozen BEFORE anything is written: a line that cannot be frozen refuses the
         // whole checkout, and there is then no order to clean up.
         $snapshots = [];
@@ -333,6 +357,8 @@ class CartCheckoutService
             'cart_id' => $cart->id,
             'contact_id' => $cart->contact_id,
             'buyer_email' => self::usableEmail($buyerEmail),
+            'buyer_name' => self::usableText($buyerName, self::BUYER_NAME_MAX),
+            'buyer_phone' => self::usableText($buyerPhone, self::BUYER_PHONE_MAX),
             'status' => Order::STATUS_PENDING,
             'total_minor' => $priced->totalMinor,
             'fee_minor' => self::applicationFee($priced->totalMinor),
@@ -644,6 +670,30 @@ class CartCheckoutService
             ->whereKey($order->id)
             ->where('status', Order::STATUS_PENDING)
             ->update(['status' => Order::STATUS_EXPIRED]);
+    }
+
+    /**
+     * The buyer's name and phone on a page that is being handed back, as the shopper typed them
+     * this time. Only what was given: an absent field never blanks what the order already holds.
+     */
+    private function refreshBuyer(Order $order, ?string $name, ?string $phone): void
+    {
+        $changes = array_filter([
+            'buyer_name' => self::usableText($name, self::BUYER_NAME_MAX),
+            'buyer_phone' => self::usableText($phone, self::BUYER_PHONE_MAX),
+        ], static fn (?string $value): bool => $value !== null);
+
+        if ($changes !== []) {
+            $order->forceFill($changes)->save();
+        }
+    }
+
+    /** A name or phone the shopper typed, trimmed and cut to its column, or null when there is none. */
+    private static function usableText(?string $text, int $max): ?string
+    {
+        $text = is_string($text) ? trim($text) : '';
+
+        return $text === '' ? null : mb_substr($text, 0, $max);
     }
 
     /** A plausible address, or null — an obviously bad one would make Stripe refuse the page. */
