@@ -993,17 +993,23 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   dropped before validation: not shown, not written. No standard exists for Arabic,
   Qur'an or Islamic Studies and none may be invented; an Arabic search answers nothing.
 - **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows
-  means the class is unweighted and every average is byte for byte what it was. A piece
-  counts by its own override else its type's weight; the weighted figure is the weighted
-  mean of each piece's OWN percentage, renormalised over the work that has marks, so a type
-  nobody has been marked on drags nothing down. A piece with neither a type nor a weight of
-  its own is left out and counted in `untyped_excluded` ("N pieces of work have no type").
-  Levels get a weighted mean LEVEL, never a percentage; simple marks are never averaged.
-  An override is refused (422) unless the class is weighted, and clearing the weights clears
-  every override in the class in the same transaction. The office reads the weights and has
-  no route to set them (`AdminGradebookReadTest`). `App\Support\GradeRecord` is the one
-  copy of the arithmetic; the teacher's and the parent's endpoints both call it, and
-  `weighting` / `by_subject` sit BESIDE the older summary keys, which are unchanged.
+  means the class is unweighted and every average is byte for byte what it was. A TYPE is
+  one slot in the weighted average, worth its class weight however many pieces are in it;
+  the pieces in a slot are pooled (points over points, as the by-type row prints them), and
+  slots are renormalised over the types that have counted work, so a type nobody has been
+  marked on drags nothing down and Test 40 / Homework 10 with one Test at 90% and any number
+  of Homework at 100% is 92.0. A piece with its own weight is a slot of its own worth exactly
+  that number (0 keeps it out of the figure), and is not in its type's by-type row. A piece
+  with neither a type nor a weight of its own is left out and counted in `untyped_excluded`
+  ("N pieces of work have no type"). Levels get a weighted mean LEVEL over the same slots,
+  never a percentage; simple marks are never averaged. An override is refused (422) unless
+  the class is weighted, and clearing the weights clears every override in the class in the
+  same transaction. A subject-limited teacher may SET the weights but not CLEAR them while
+  work outside their subjects carries a weight of its own (403, nothing written). The office
+  reads the weights and has no route to set them (`AdminGradebookReadTest`).
+  `App\Support\GradeRecord` is the one copy of the arithmetic; the teacher's and the
+  parent's endpoints both call it, and `weighting` / `by_subject` sit BESIDE the older
+  summary keys, which are unchanged. The teacher's endpoint adds `data.fenced`.
 - **The subject fence now covers grades and lesson plans** (`App\Support\SubjectFence`). A
   teacher whose `group_staff.subjects` lists some subjects is LIMITED: they list, set, edit,
   withdraw and mark only work whose subject maps to a staff subject they teach, read only
@@ -1022,12 +1028,13 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
   hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
   seed `seed_school_subjects_for_alrazi_and_biss` is guarded by org id AND name, insert-only,
-  logs one WARNING line, and its `down()` removes only untouched seeded rows. Deploy after
+  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`), and its `down()`
+  removes only marked rows that are still untouched (an office "Qur'an" it skipped is never its own). Deploy after
   hours (new code meets the old schema for a few seconds). Ship the seed only after the
   owner's yes (B3).
 - **Proven by** `GradebookWeightingTest`, `GradebookCurriculumFieldsTest`,
   `GradebookSubjectsTest`, `SchoolSubjectsTest`, `SchoolSubjectsTenantIsolationTest`,
-  `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherSubjectAccessTest`
+  `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherRoutesRegisteredOnceTest`, `TeacherSubjectAccessTest`
   (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
 
 ## Tenant isolation
