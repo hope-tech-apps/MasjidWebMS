@@ -4,6 +4,7 @@ namespace App\Services\Cart\Sources;
 
 use App\Models\Form;
 use App\Services\Cart\CartLineOutcome;
+use App\Support\FormSchema;
 use Carbon\CarbonInterface;
 
 /**
@@ -28,9 +29,19 @@ use Carbon\CarbonInterface;
  * whoever pays first; the other is told at checkout. Reserving places from a
  * basket would need a hold with an expiry, which nothing in the payment path has
  * today, and quietly overselling would be worse than telling the second shopper.
+ *
+ * A form that asks for a FILE is refused too (brief 5, section 2). A basket line carries
+ * answers, and an upload travels in its own multipart bag and is written to a private disk
+ * inside the response transaction (FormSubmissionsController), which a basket does not do.
+ * The add endpoint refuses such a form up front; asking here as well means a line that got in
+ * some other way, or a form edited to ask for a file after it was added, is dropped and named
+ * at checkout instead of being paid for and recorded without its document.
  */
 final readonly class FormLineSource
 {
+    /** The reason a form that asks for a file cannot be bought through a basket. */
+    public const FILE_FORM = 'This form asks for a file, so it has to be filled in on its own page.';
+
     /**
      * @param  array<string,mixed>  $payload  the answers this line will submit
      * @param  int|null  $quantityShown  how many places the basket showed; null skips the
@@ -47,6 +58,10 @@ final readonly class FormLineSource
         // `name`, not `title`: forms have no title column, and reading one gives
         // null, which would quietly label every dropped line with its slug.
         $label = (string) ($form->name ?: $form->slug);
+
+        if (FormSchema::for($form)->fileFields() !== []) {
+            return CartLineOutcome::gone($label, self::FILE_FORM);
+        }
 
         if (! $form->acceptsSubmissions($at)) {
             return CartLineOutcome::gone(

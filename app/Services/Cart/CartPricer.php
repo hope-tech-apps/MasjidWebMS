@@ -161,6 +161,7 @@ final class CartPricer
                         (int) $item->unit_amount_shown_minor,
                         is_string($pickup) && $pickup !== '' ? Carbon::parse($pickup) : null,
                         $at,
+                        $org,
                     ),
                     $this->ownAccount($org),
                 ];
@@ -173,7 +174,7 @@ final class CartPricer
                 }
 
                 return [
-                    $this->donations->reprice($fund, (int) $item->unit_amount_shown_minor, $at),
+                    $this->donations->reprice($fund, (int) $item->unit_amount_shown_minor, $at, $org),
                     $this->ownAccount($org),
                 ];
         }

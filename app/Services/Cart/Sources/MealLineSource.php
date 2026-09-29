@@ -2,6 +2,7 @@
 
 namespace App\Services\Cart\Sources;
 
+use App\Models\Masjid;
 use App\Models\MealMenuItem;
 use App\Services\Cart\CartLineOutcome;
 use Carbon\CarbonInterface;
@@ -30,17 +31,41 @@ use Carbon\CarbonInterface;
  * is now inside the 48-hour lead — the office would be handed an order it cannot
  * fill. That line is dropped, not quietly moved to another day: only the customer
  * can say when they can collect.
+ *
+ * The doors' own gate is asked here, so checkout re-asks it too (brief 5, section 2): the
+ * `jummah_lunch` capability. Both meal doors refuse an organisation without it
+ * (JummahLunchOrdersController::lunchIsOn(), KitchenOrdersController::organisation()) and
+ * answer 'Ordering is not available.', so the switch that closes the staff board also closes
+ * the basket, and a basket cannot keep charging for orders nobody at the organisation can see.
  */
 final readonly class MealLineSource
 {
+    /** The sentence both meal doors answer when the capability is off. */
+    public const ORDERING_OFF = 'Ordering is not available.';
+
+    /**
+     * @param  Masjid|null  $org  the organisation the dish belongs to. CartPricer passes the one
+     *                            it already loaded; a direct caller may omit it and the gate then
+     *                            reads it from the dish, so it is never skipped.
+     */
     public function reprice(
         MealMenuItem $item,
         int $quantity,
         int $unitAmountShownMinor,
         ?CarbonInterface $pickupAt = null,
         ?CarbonInterface $at = null,
+        ?Masjid $org = null,
     ): CartLineOutcome {
         $label = (string) $item->name;
+
+        // Fail closed: an organisation that cannot be read runs no lunch. Masjid::query()
+        // leaves out a soft-deleted one.
+        $org ??= Masjid::query()->find($item->masjid_id);
+
+        if ($org === null || ! $org->hasCapability('jummah_lunch')) {
+            return CartLineOutcome::gone($label, self::ORDERING_OFF);
+        }
+
         $menu = $item->menu;
 
         if ($menu === null) {
