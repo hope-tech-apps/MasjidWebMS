@@ -47,6 +47,19 @@ class FamilyApiService {
             withCredentials: false,
         });
 
+        // The same inheritance, in its third costume, and the one that crosses
+        // realms: ApiService.setHeader() writes the STAFF bearer token onto
+        // `axios.defaults.headers.common.Authorization`, and axios.create()
+        // copies the defaults it finds at that moment. On a device where an
+        // admin or teacher has signed in, this client is born carrying their
+        // token, and the interceptor below only ever ADDS a header, so a family
+        // request with no slot (the public directory, a school the parent has
+        // not signed in to, the sign-in call itself) went out under the staff
+        // credential. Strip it from the copy, in every bucket axios keeps
+        // headers in. The copy is deep, so the global — which the admin screens
+        // still need — is untouched.
+        FamilyApiService.stripInheritedAuthorization(FamilyApiService.client);
+
         // Read the token per-request rather than pinning it at init: the portal
         // signs in and out inside one page life, and possibly in a second tab.
         //
@@ -70,9 +83,32 @@ class FamilyApiService {
 
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;
+            } else {
+                // No slot for this URL means NO credential, whatever else set
+                // one (a per-call header, a default written after init).
+                config.headers.delete?.('Authorization');
+                delete (config.headers as any).Authorization;
             }
             return config;
         });
+    }
+
+    /**
+     * axios keeps default headers in `common` and one bucket per method (and
+     * accepts a bare top-level key), so the inherited Authorization is removed
+     * from all of them. Deleting a key from the instance's own copy never
+     * touches `axios.defaults`.
+     */
+    private static stripInheritedAuthorization(client: AxiosInstance): void {
+        const headers: any = client.defaults.headers;
+        if (!headers) return;
+
+        for (const bucket of [headers, headers.common, headers.get, headers.post, headers.put, headers.patch, headers.delete, headers.head]) {
+            if (bucket && typeof bucket === 'object') {
+                delete bucket.Authorization;
+                delete bucket.authorization;
+            }
+        }
     }
 
     private static instance(): AxiosInstance {
