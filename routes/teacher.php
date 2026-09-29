@@ -214,6 +214,16 @@ Route::prefix('teacher')
                         Route::put('/assignments/{assignment_id}', [GradebookController::class, 'update']);
                         Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
                         Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
+                        // How much one piece of work of each type counts for in
+                        // THIS class (T-001.2): all five types, or clear them. A
+                        // class-level setting, so it is not subject-fenced (see
+                        // GradebookController::saveWeights).
+                        Route::put('/grade-weights', [GradebookController::class, 'saveWeights']);
+                        // How much one piece of work of each type counts for in
+                        // THIS class (T-001.2), all five types or clear them. A
+                        // class-level setting, so it is not subject-fenced: see
+                        // GradebookController::saveWeights.
+                        Route::put('/grade-weights', [GradebookController::class, 'saveWeights']);
                         Route::get('/members/{membership_id}/grades', [GradebookController::class, 'forMember']);
 
                         // Report cards and progress reports. Both are the same

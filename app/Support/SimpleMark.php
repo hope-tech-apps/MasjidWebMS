@@ -86,12 +86,15 @@ final class SimpleMark
      *
      * @return array{recorded:int, counted:int, missing:int, distribution:array<int, array{value:int, label:string, count:int}>}
      */
-    public static function summaryFor(int $membershipId): array
+    public static function summaryFor(int $membershipId, ?array $subjectKeys = null): array
     {
         $rows = AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            // A subject-limited teacher reads only their own subjects' marks
+            // (App\Support\SubjectFence). NULL is no filter.
+            ->when($subjectKeys !== null, fn ($q) => $q->whereIn('class_assignments.subject_key', $subjectKeys))
             ->where('class_assignments.scale', ClassAssignment::SCALE_SIMPLE)
             ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
             ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')

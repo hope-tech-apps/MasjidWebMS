@@ -697,6 +697,11 @@ class TeacherMultiSchoolTest extends TestCase
                 'body' => fn (TeacherRealmWorld $w) => ['scores' => [['membership_id' => $w->student->id, 'status' => 'scored', 'points_earned' => 5]]],
                 'refuse' => $bodyRefusal,
             ],
+            // W3 (T-001.2): a class-level setting with no id in its body, so only the
+            // URL's school and class can be foreign to it.
+            'PUT /groups/{group_id}/grade-weights' => [
+                'body' => fn () => ['weights' => ['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]],
+            ],
 
             // -- report cards. The period is named so the fixture card is the one prepared.
             'PUT /groups/{group_id}/members/{membership_id}/report-card' => [

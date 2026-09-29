@@ -217,6 +217,17 @@ class GradesController extends FamilyController
             'points_possible' => (int) $a->points_possible,
             'scale' => $a->scale,
             'assigned_on' => $a->assigned_on->toDateString(),
+            // What the work is FOR (T-001.1-.3), the same facts the teacher sees.
+            // `type` is the KEY: the portal words it in the parent's language
+            // (familyI18n), so no English label travels here. `weight` is the
+            // piece's own override; the class's weight for its type is in
+            // `summary.weighting.weights`. The standard and its focus are the
+            // SCHOOL'S guide's words, and the screen says so.
+            'subject' => $a->subject,
+            'type' => $a->type,
+            'weight' => $a->weight !== null ? (int) $a->weight : null,
+            'standard_code' => $a->standard_code,
+            'curriculum_focus' => $a->curriculum_focus,
         ];
     }
 }
