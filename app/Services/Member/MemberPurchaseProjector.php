@@ -3,6 +3,7 @@
 namespace App\Services\Member;
 
 use App\Models\Donation;
+use App\Models\DonationReceipt;
 use App\Models\FormResponse;
 use App\Models\HistoricalOrder;
 use App\Models\MealOrder;
@@ -53,6 +54,8 @@ class MemberPurchaseProjector
     public const RECEIPT_NOTE_GIFT_WIX = 'This gift was made at the organisation\'s old Wix checkout, before it moved to this system, so no tax receipt is issued for it here.';
 
     public const RECEIPT_NOTE_GIFT_NONE = 'No tax receipt has been issued for this gift.';
+
+    public const RECEIPT_NOTE_GIFT_VOID = 'The tax receipt issued for this gift was voided, so it is not available here.';
 
     /** What a line is called when the buyer chose to cover the card fee or gave an extra with a meal. */
     public const LINE_FEE_COVERED = 'Card fee covered';
@@ -123,15 +126,15 @@ class MemberPurchaseProjector
      * with its gift, and the row number of either is not something to put in a URL. It is
      * the key of GET me/receipts/{id}/pdf.
      *
-     * An imported Wix gift never gets a receipt (ReceiptService::issueFor declines it, and
-     * the admin download refuses it), so it is told so instead of being shown an empty
-     * space where a document should be.
+     * An imported Wix gift never gets a receipt (ReceiptService::issueFor declines it), so it
+     * is told so instead of being shown an empty space where a document should be. A receipt
+     * the office voided is not shown either, and says that it was voided (see `receiptOf()`).
      *
      * @return array<string, mixed>
      */
     public function gift(Donation $gift, string $timezone): array
     {
-        $receipt = $gift->isHistorical() ? null : $gift->receipt;
+        $receipt = $this->receiptOf($gift);
 
         return [
             'id' => (string) $gift->uuid,
@@ -149,9 +152,33 @@ class MemberPurchaseProjector
             'receipt_note' => match (true) {
                 $receipt !== null => null,
                 $gift->isHistorical() => self::RECEIPT_NOTE_GIFT_WIX,
+                $gift->receipt?->status === DonationReceipt::STATUS_VOID => self::RECEIPT_NOTE_GIFT_VOID,
                 default => self::RECEIPT_NOTE_GIFT_NONE,
             },
         ];
+    }
+
+    /**
+     * The receipt document a member may be given for one of their gifts, or null.
+     *
+     * The ONE rule behind both the gift row's `receipt` object and the PDF door
+     * (MemberPurchasesController::receiptPdf asks this too), so the PDF is reachable for exactly
+     * the gifts whose row advertises a receipt:
+     *   - an imported Wix gift never has one, whatever a stray row says;
+     *   - only an `issued` receipt. `donation_receipts.status` also allows `void`, and
+     *     DonationReceiptPdfService renders a voided row exactly as it renders a live one, with
+     *     nothing on the page that says it was voided: handing that to a donor would be handing
+     *     them a tax document the office withdrew.
+     */
+    public function receiptOf(Donation $gift): ?DonationReceipt
+    {
+        if ($gift->isHistorical()) {
+            return null;
+        }
+
+        $receipt = $gift->receipt;
+
+        return $receipt !== null && $receipt->status === DonationReceipt::STATUS_ISSUED ? $receipt : null;
     }
 
     // ------------------------------------------------------------ per source

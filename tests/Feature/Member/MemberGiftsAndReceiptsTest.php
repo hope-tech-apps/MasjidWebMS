@@ -28,7 +28,8 @@ use Tests\TestCase;
  *    and a gift that never succeeded are not listed;
  *  - the projection: exact keys, canary values seeded into every hidden field of a donation,
  *    and what each field means (the charged amount, the organisation's calendar day);
- *  - the receipt object and its note, and the imported Wix gift that never has a receipt;
+ *  - the receipt object and its note, the imported Wix gift that never has a receipt, and the
+ *    voided receipt that is neither advertised nor served;
  *  - the PDF: the report-card headers plus no-store, and ONE 404 for every way of not being
  *    entitled to one;
  *  - the house paginator.
@@ -99,6 +100,16 @@ class MemberGiftsAndReceiptsTest extends TestCase
             'jurisdiction' => 'US',
             'status' => 'issued',
         ]);
+    }
+
+    /** The office withdraws a receipt (`donation_receipts.status` allows `void`; no code path writes it yet). */
+    private function voidReceiptOf(Donation $gift): void
+    {
+        $this->unbound();
+
+        DonationReceipt::withoutMasjidScope()
+            ->where('donation_id', $gift->id)
+            ->update(['status' => DonationReceipt::STATUS_VOID]);
     }
 
     /** @return list<string> */
@@ -299,6 +310,29 @@ class MemberGiftsAndReceiptsTest extends TestCase
     }
 
     #[Test]
+    public function a_voided_receipt_is_neither_advertised_on_the_gift_nor_served_as_a_pdf(): void
+    {
+        $gift = $this->gift($this->a, $this->fund, $this->me);
+        $this->issue($gift);
+
+        // The control: while the receipt is issued the row carries it and the PDF is served, so
+        // what changes below is the status and nothing else.
+        $this->assertNotNull($this->gifts()->assertOk()->json('data.data.0.receipt'));
+        $this->pdf($gift->uuid)->assertOk();
+
+        $this->voidReceiptOf($gift);
+
+        $row = $this->gifts()->assertOk()->json('data.data.0');
+
+        $this->assertNull($row['receipt']);
+        $this->assertSame(MemberPurchaseProjector::RECEIPT_NOTE_GIFT_VOID, $row['receipt_note']);
+        $this->assertStringContainsString('voided', $row['receipt_note']);
+
+        $response = $this->pdf($gift->uuid)->assertNotFound();
+        $this->assertNotSame('application/pdf', $response->headers->get('Content-Type'));
+    }
+
+    #[Test]
     public function an_imported_wix_gift_has_no_receipt_and_says_why_even_if_a_stray_receipt_row_exists(): void
     {
         $wix = $this->gift($this->a, $this->fund, $this->me, 3000, ['source' => Donation::SOURCE_HISTORICAL]);
@@ -410,6 +444,10 @@ class MemberGiftsAndReceiptsTest extends TestCase
 
         $noReceipt = $this->gift($this->a, $this->fund, $this->me, 1000);
 
+        $voided = $this->gift($this->a, $this->fund, $this->me, 1000);
+        $this->issue($voided);
+        $this->voidReceiptOf($voided);
+
         // The control: the same route hands the member their own.
         $this->pdf($mine->uuid)->assertOk();
 
@@ -422,6 +460,7 @@ class MemberGiftsAndReceiptsTest extends TestCase
             'my own gift that never succeeded' => $pending->uuid,
             'my own imported Wix gift' => $wix->uuid,
             'my own gift with no receipt' => $noReceipt->uuid,
+            'my own gift whose receipt was voided' => $voided->uuid,
         ];
 
         $bodies = [];

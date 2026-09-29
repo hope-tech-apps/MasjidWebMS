@@ -5761,3 +5761,15 @@ money table, with a Stripe backfill, is not a fix-round item); the gap is ASSUMP
 migration that would close it spelled out. The docblocks that say a gift is theirs by `contact_id` now point at it.
 Tests: none, because no behaviour changed; `MemberGiftsAndReceiptsTest` already pins "by their donation, never by an
 address".
+(4) ONLY AN `issued` RECEIPT IS SHOWN OR SERVED (m3). `donation_receipts.status` allows `issued` and `void`, and neither
+the receipt object on a gift row nor the PDF door looked at it; `DonationReceiptPdfService` renders a voided row exactly
+like a live one, with nothing on the page that says it was voided, so a receipt the office withdrew would have kept
+reaching the donor (latent today: no code path writes `void`). One rule now,
+`MemberPurchaseProjector::receiptOf()`, asked by the gift row and by `receiptPdf`, so the PDF is reachable for exactly the
+gifts whose row advertises a receipt: not an imported Wix gift, and only status `issued` (`DonationReceipt::STATUS_ISSUED`
+and `STATUS_VOID` are new constants). A gift whose receipt was voided carries `receipt: null` and its own note
+(`RECEIPT_NOTE_GIFT_VOID`, "The tax receipt issued for this gift was voided, so it is not available here."), because "No
+tax receipt has been issued" would be untrue of it. The PDF is the same one 404 as every other way of not being entitled.
+Tests: `MemberGiftsAndReceiptsTest::a_voided_receipt_is_neither_advertised_on_the_gift_nor_served_as_a_pdf` (issued, then
+voided: the row loses `receipt` and gains the note, the PDF goes 200 to 404) and a voided gift added to
+`every_way_of_not_being_entitled_to_a_receipt_is_one_and_the_same_404`.

@@ -156,16 +156,17 @@ class MemberPurchasesController extends Controller
      *
      * `id` is the gift's uuid, which is what `receipt.id` on the list carries. It is resolved
      * through the caller's own succeeded gifts, so someone else's gift, another
-     * organisation's, a gift that never succeeded, one with no receipt, an imported Wix gift
-     * and a junk handle are all the same 404. Nothing is issued or recomputed: the PDF is
+     * organisation's, a gift that never succeeded, one with no receipt, one whose receipt was
+     * voided, an imported Wix gift and a junk handle are all the same 404. Nothing is issued or recomputed: the PDF is
      * rendered from the stored receipt row, as the admin download renders it.
      */
     public function receiptPdf(Request $request, $masjid_id, string $id): Response
     {
         $gift = $this->purchases->findGift($this->contact($request), $id);
 
-        // An imported Wix gift never has a Manara receipt, whatever a stray row says.
-        $receipt = $gift === null || $gift->isHistorical() ? null : $gift->receipt;
+        // The same rule as the gift row's `receipt` object: an imported Wix gift has none,
+        // whatever a stray row says, and a voided receipt is not served.
+        $receipt = $gift === null ? null : $this->projector->receiptOf($gift);
 
         if ($receipt === null) {
             return $this->notFound('receipt');
