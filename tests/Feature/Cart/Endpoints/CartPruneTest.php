@@ -252,9 +252,7 @@ class CartPruneTest extends TestCase
 
         $this->assertSame('succeeded', Donation::withoutMasjidScope()->sole()->status);
 
-        Log::shouldHaveReceived('error')
-            ->withArgs(fn ($message) => str_contains((string) $message, 'could not be recorded'))
-            ->never();
+        Log::shouldNotHaveReceived('error', fn ($message) => str_contains((string) $message, 'could not be recorded'));
 
         $this->cartApi('GET', "/api/v1/cart-orders/{$uuid}", $org)->assertOk()->assertJsonPath('data.status', 'paid');
     }
