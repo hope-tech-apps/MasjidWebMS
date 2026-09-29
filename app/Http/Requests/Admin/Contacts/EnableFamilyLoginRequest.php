@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Contacts;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Http\Requests\Concerns\NormalisesSubmittedAddress;
 
 /**
  * Opening family sign-in for one contact (T-015d, admin half).
@@ -34,6 +35,19 @@ use App\Http\Requests\BaseFormRequest;
  */
 class EnableFamilyLoginRequest extends BaseFormRequest
 {
+    use NormalisesSubmittedAddress;
+
+    /**
+     * The address the parent will TYPE at the portal is the one stored, so it is
+     * put in the form the sign-in doors look it up in (a non-ASCII domain as
+     * punycode) and a non-ASCII local part is refused here, before a grant is
+     * written that no parent could ever sign in to.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->normaliseSubmittedAddress('login_email');
+    }
+
     public function rules(): array
     {
         return [
@@ -42,7 +56,7 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             // scoped to the bound tenant, so it lives in FamilyAccessService
             // beside the normalisation that makes it hold — one door, not a
             // validator and a service that agree today.
-            'login_email' => ['required', 'string', 'email', 'max:255'],
+            'login_email' => ['bail', 'required', 'string', 'email', 'ascii', 'max:255'],
 
             // The operator has read the refusal and confirmed taking the address
             // off a member whose portal access has already ended. NOT a force
@@ -64,6 +78,7 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             'login_email.required' => 'Enter the sign-in email address for this parent or guardian. '
                 . 'It is a credential and is deliberately separate from the contact email on their record.',
             'login_email.email' => 'That does not look like an email address.',
+            'login_email.ascii' => 'That does not look like an email address.',
         ];
     }
 }

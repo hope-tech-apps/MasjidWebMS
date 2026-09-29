@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Masjid;
 use App\Services\Member\MemberAccountDeletion;
 use App\Services\Member\MemberSignupService;
+use App\Support\ContactIdentity;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -63,6 +64,7 @@ class AccountDeletionController extends Controller
         'email.required' => 'Enter the email address you sign in to the app with.',
         'email.string' => 'Enter the email address you sign in to the app with.',
         'email.email' => 'Enter a full email address, like name@example.com.',
+        'email.ascii' => 'Enter a full email address, like name@example.com.',
         'email.max' => 'That email address is too long.',
         'code.required' => 'Enter the code from the email.',
         'code.string' => 'Enter the code from the email.',
@@ -101,7 +103,7 @@ class AccountDeletionController extends Controller
 
         /** @var Masjid $masjid */
         $masjid = $organisations->firstWhere('id', (int) $request->input('masjid_id'));
-        $email = mb_strtolower(trim((string) $request->input('email')));
+        $email = $this->typedAddress($request);
 
         $this->withTenant($masjid, fn () => $this->signups->issueAccountDeletionCode($email, $request->ip()));
 
@@ -124,7 +126,7 @@ class AccountDeletionController extends Controller
 
         /** @var Masjid $masjid */
         $masjid = $organisations->firstWhere('id', (int) $request->input('masjid_id'));
-        $email = mb_strtolower(trim((string) $request->input('email')));
+        $email = $this->typedAddress($request);
 
         $answer = Validator::make($request->only(['code', 'confirm']), [
             'code' => ['required', 'string', 'max:20'],
@@ -188,10 +190,30 @@ class AccountDeletionController extends Controller
     /** Organisation + address: the same rules at both steps. */
     private function validateIdentity(Request $request, Collection $organisations): \Illuminate\Validation\Validator
     {
-        return Validator::make($request->only(['masjid_id', 'email']), [
+        return Validator::make([
+            'masjid_id' => $request->input('masjid_id'),
+            'email' => $this->typedAddress($request),
+        ], [
             'masjid_id' => ['required', 'integer', Rule::in($organisations->pluck('id')->all())],
-            'email' => ['required', 'string', 'email', 'max:255'],
+            'email' => ['required', 'string', 'email', 'ascii', 'max:255'],
         ], self::MESSAGES);
+    }
+
+    /**
+     * The typed address in the form the code and the lookup use: lower-cased, a
+     * non-ASCII domain in punycode. One that cannot be made ASCII (a non-ASCII
+     * local part) is returned as typed, so the `ascii` rule refuses it with the
+     * page's ordinary "enter a full email address" sentence.
+     *
+     * A deletion code is mailed to THIS address and the account it then deletes is
+     * the one at this exact address (MemberAccountDeletion::deleteByAddress), so an
+     * accented look-alike of somebody else's address must reach neither.
+     */
+    private function typedAddress(Request $request): string
+    {
+        $typed = (string) $request->input('email');
+
+        return ContactIdentity::submittedAddress($typed) ?? mb_strtolower(trim($typed));
     }
 
     /** The organisations in the app directory, and nothing more about them. */

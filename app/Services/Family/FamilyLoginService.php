@@ -6,10 +6,10 @@ use App\Mail\FamilyLoginCodeMail;
 use App\Models\Contact;
 use App\Models\ContactLoginCode;
 use App\Models\Masjid;
+use App\Support\ContactIdentity;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
 use Laravel\Sanctum\NewAccessToken;
 use Throwable;
 
@@ -181,14 +181,28 @@ class FamilyLoginService
      * global scope — the thing .claude/rules/tenant-scoping.md forbids.
      *
      * `LOWER()` on both sides rather than trusting the column collation, for the
-     * reason `GroupAudience::identitiesFor()` records: production is utf8mb4_bin
-     * (case-SENSITIVE) and the suite is SQLite, and whether a parent can sign in
-     * must not depend on which database is answering.
+     * reason `GroupAudience::identitiesFor()` records: the suite is SQLite, which
+     * compares bytes, and whether a parent can sign in must not depend on which
+     * database is answering.
      *
-     * TWO ROWS IS NO ROW. The `(masjid_id, login_email)` unique index makes an
-     * exact duplicate impossible, but it cannot stop `Parent@x.com` and
-     * `parent@x.com` both existing — and an ambiguity about WHO is signing in
-     * resolves to nobody, the same call the staff identity bridge makes.
+     * THE SQL ONLY NARROWS; PHP DECIDES. Production's `contacts.login_email` is
+     * utf8mb4_unicode_ci (read from production 2026-09-29, and NOT the
+     * utf8mb4_bin some older comments here assumed), so the query also returns a
+     * contact whose address differs by an accent or an expansion (`victim@gmaíl.com`
+     * for `victim@gmail.com`, `straße` for `strasse`). The password door trusts
+     * this method's answer, so a look-alike typed with the victim's account
+     * would otherwise reach it. Only candidates whose address is the typed one,
+     * byte for byte after lower-casing (ContactIdentity::sameAddress), are
+     * matches. The code door mails `$contact->login_email`, never the typed
+     * address, so it was never exposed, but it resolves through this method too.
+     *
+     * TWO ROWS IS NO ROW, counted over the EXACT matches. The `(masjid_id,
+     * login_email)` unique index cannot stop `Parent@x.com` and `parent@x.com`
+     * both existing on a case-sensitive server, and an ambiguity about WHO is
+     * signing in resolves to nobody, the same call the staff identity bridge
+     * makes. A look-alike is not one of the two: it must neither make a real
+     * address ambiguous nor stand in for it. No `limit()` before the filter, for
+     * the same reason.
      *
      * PUBLIC since 2026-09-08 so `FamilyPasswordService` can share it rather
      * than own a second copy. "Which contact does this address name, in the
@@ -200,17 +214,22 @@ class FamilyLoginService
      */
     public function resolveContact(string $submittedEmail): ?Contact
     {
-        $email = Str::lower(trim($submittedEmail));
+        // Trimmed, lower-cased, a non-ASCII domain in punycode; null for a blank
+        // address and for one whose local part is not ASCII.
+        $email = ContactIdentity::submittedAddress($submittedEmail);
 
-        if ($email === '') {
+        if ($email === null) {
             return null;
         }
 
-        $matches = Contact::query()
-            ->whereNotNull('login_email')
-            ->whereRaw('LOWER(login_email) = ?', [$email])
-            ->limit(2)
-            ->get();
+        $matches = ContactIdentity::keepExactMatches(
+            Contact::query()
+                ->whereNotNull('login_email')
+                ->whereRaw('LOWER(login_email) = ?', [$email])
+                ->get(),
+            'login_email',
+            $email,
+        );
 
         if ($matches->count() !== 1) {
             return null;
