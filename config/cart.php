@@ -94,8 +94,11 @@ return [
      * cannot be sprayed for a fresh allowance each.
      */
     'throttle' => [
-        // Creating a basket: per connection and organisation.
-        'create_per_hour' => max(1, (int) env('CART_CREATE_PER_HOUR', 20)),
+        // Creating a basket: per connection and organisation. 200, not a handful, because a
+        // festival venue is one Wi-Fi network and so one public address: every phone in the
+        // hall shares this allowance, and an abandoned basket is one cheap row that
+        // `cart:prune` deletes. (DECISIONS.md, slice 5 fix round 2.)
+        'create_per_hour' => max(1, (int) env('CART_CREATE_PER_HOUR', 200)),
         // Adding, removing, acknowledging: per basket.
         'write_per_hour' => max(1, (int) env('CART_WRITE_PER_HOUR', 120)),
         // Reading the priced basket: per basket.

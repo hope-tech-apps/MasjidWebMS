@@ -5574,3 +5574,20 @@ already stamped on open orders, and the quantity is not part of the payload).
 Rationale: a date sold twice is not a count to put right afterwards, and a quantity edit must not delete
 what was never paid for. ASSUMPTIONS #36 closed. Tests: `FormLineSourceTest` (both date cases),
 `CartAddItemTest` (the refusal and the payable line), `CartSettlementRound2Test` (the quantity race).
+
+## 2026-09-29 — Universal cart, slice 5 fix round 2: the venue shares one address
+Decision: (5) the `cart-create` allowance (`config/cart.php` `throttle.create_per_hour`, `CART_CREATE_PER_HOUR`)
+is 200 an hour per IP|masjid, up from 20. The limiter is keyed by connection and organisation, and MEC's
+festival is one venue Wi-Fi network: every phone in the hall reaches the API from one public address, so 20
+starts an hour locked the 21st shopper out of opening a basket at all, and one script on the same network
+could do it in 20 requests. What a start costs is one cheap row (a basket with no lines and a token digest),
+and an abandoned one is deleted by `cart:prune` a day after its week is up, so a higher number costs storage
+for a few days and nothing else. The limit stays per connection: an anonymous door with no limit lets one
+caller fill the table.
+Alternatives: keying `cart-create` by something finer than the address (rejected: an anonymous caller has
+nothing finer that it cannot mint fresh, which is why the per-basket limiters key by a token that already
+exists); lifting the limit for one organisation (rejected: an allowlist of addresses is operations work and
+one more thing to forget on the day); leaving 20 and telling MEC to raise `CART_CREATE_PER_HOUR` (rejected:
+the default is what ships, and the failure lands on the shoppers at the event).
+Rationale: the 20 in the brief was sized for one person; the deployment is a room. Overridable by env either
+way. `CartConfigTest` pins the new default; `CartThrottleTest` sets its own small numbers and is unchanged.

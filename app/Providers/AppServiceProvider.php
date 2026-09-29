@@ -456,7 +456,7 @@ class AppServiceProvider extends ServiceProvider
         };
 
         RateLimiter::for('cart-create', function (Request $request) use ($cartTooMany) {
-            return Limit::perHour(max(1, (int) config('cart.throttle.create_per_hour', 20)))
+            return Limit::perHour(max(1, (int) config('cart.throttle.create_per_hour', 200)))
                 ->by('cart-create:' . $request->ip() . '|' . (int) $request->header('masjid-id'))
                 ->response($cartTooMany('baskets started from this connection'));
         });

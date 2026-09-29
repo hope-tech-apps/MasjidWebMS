@@ -40,7 +40,7 @@ class CartConfigTest extends TestCase
         $this->assertSame([], $config['masjid_ids'], 'an empty list means every organisation, once on');
         $this->assertSame(7, $config['ttl_days']);
         $this->assertSame(25, $config['max_lines']);
-        $this->assertSame(20, $config['throttle']['create_per_hour']);
+        $this->assertSame(200, $config['throttle']['create_per_hour']);
         $this->assertSame(120, $config['throttle']['write_per_hour']);
         $this->assertSame(600, $config['throttle']['read_per_hour']);
         $this->assertSame(20, $config['throttle']['checkout_per_hour']);
