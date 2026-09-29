@@ -315,7 +315,8 @@
                 "role": "masjid-admin",
                 "is_default": 1,
                 "created_at": "<timestamp>",
-                "updated_at": "<timestamp>"
+                "updated_at": "<timestamp>",
+                "last_seen_at": null
             }
         ],
         "masjids": [
