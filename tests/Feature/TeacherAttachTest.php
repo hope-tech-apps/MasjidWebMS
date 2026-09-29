@@ -638,11 +638,15 @@ class TeacherAttachTest extends TestCase
     }
 
     #[Test]
-    public function the_user_row_is_locked_before_the_default_is_derived(): void
+    public function source_pin_the_user_row_is_locked_before_the_default_is_derived(): void
     {
-        // SQLite ignores row locks, so the suite cannot OBSERVE the lock; this is a
-        // source pin, labelled as one. Two schools attaching the same default-less
-        // person at once would both compute "no default" and both write one, and
+        // A SOURCE PIN, not a concurrency test. SQLite ignores row locks and the
+        // suite runs on one connection, so nothing here can show two requests
+        // serialising: it shows only that the controller's source takes the lock
+        // before it derives `is_default`. Whether two schools attaching the same
+        // default-less person at once really serialise on MySQL is Unknown, needs a
+        // two-connection test on MySQL (not written). The risk it guards: both
+        // would compute "no default" and both write one, and
         // `masjid_user_default_unique` would turn the second into a 500.
         $source = file_get_contents(app_path('Http/Controllers/AdminDashboard/TeachersController.php'));
 
@@ -820,10 +824,13 @@ class TeacherAttachTest extends TestCase
     }
 
     #[Test]
-    public function the_lookup_takes_no_lock_runs_outside_the_transaction_and_only_the_found_row_is_locked(): void
+    public function source_pin_the_lookup_takes_no_lock_runs_outside_the_transaction_and_only_the_found_row_is_locked(): void
     {
-        // SQLite ignores row locks and snapshots, so this is a source pin, labelled as
-        // one. (1) A locking read that matches NOTHING (a brand-new address) takes gap
+        // A SOURCE PIN, not a concurrency test: SQLite ignores row locks and
+        // snapshots and the suite has one connection, so it cannot prove any
+        // serialisation or deadlock behaviour; it pins what the source says, and the
+        // InnoDB behaviour below is reasoned, not measured (Unknown on MySQL).
+        // (1) A locking read that matches NOTHING (a brand-new address) takes gap
         // locks on InnoDB, and two schools adding two different new people deadlock at
         // INSERT. (2) A plain read INSIDE the transaction would fix the REPEATABLE READ
         // snapshot before the wait for another school's row lock, so is_default would be

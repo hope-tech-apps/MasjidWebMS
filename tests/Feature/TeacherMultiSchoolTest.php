@@ -5,21 +5,31 @@ namespace Tests\Feature;
 use App\Http\Middleware\EchoResolvedTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Models\BehaviorSkill;
+use App\Models\ClassAssignment;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupMessage;
 use App\Models\GroupStaff;
 use App\Models\GroupThread;
+use App\Models\HifzEntry;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\SchoolYear;
 use App\Models\User;
+use App\Support\Arabic\ArabicCurriculum;
+use App\Support\Avatar;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\TeacherRealmWorld;
 use Tests\TestCase;
 
 /**
@@ -324,53 +334,503 @@ class TeacherMultiSchoolTest extends TestCase
         $this->getJson("{$base}/groups/{$this->classB->id}/threads/{$this->threadB->id}")->assertNotFound();
     }
 
+    /**
+     * T1.2, GENERATED FROM THE ROUTE LIST, over REAL ids.
+     *
+     * The first version of this sweep was GET-only and filled every placeholder
+     * but the class with 999999, so most routes answered 404 because no such row
+     * exists, not because anything checked anything. This one seeds a real row
+     * behind every id (TeacherRealmWorld) in two schools the teacher belongs to
+     * (A and B), and in a class of each that they do NOT lead (A2, B2), and runs
+     * every teacher route, every verb, through these legs:
+     *
+     *   1, 3    school A (B) in the URL, school B's (A's) class and ids -> 403 or 404
+     *   2u, 4u  its OWN class, the other school's ids in the URL, a valid own body
+     *           -> 403 or 404
+     *   2b, 4b  its OWN class and URL ids, the other school's ids in the BODY
+     *           -> the refusal the route's spec names (a 422, or a no-op 200)
+     *   5       a third school the teacher holds no membership in -> 403, the tenant gate
+     *   6, 7    a class of the SAME school the teacher does not lead -> 403 "You do
+     *           not lead this class", which is `teacher.leads` and nothing else
+     *
+     * One foreign thing per leg: a request with a foreign id in the URL and another
+     * in the body is refused by whichever is read first, and a 422 from the body
+     * would hide a missing check on the URL id.
+     *
+     * After every refused request the database (every table with a `masjid_id`,
+     * plus `users`, hashed row by row, so an UPDATE in place shows, not just an
+     * INSERT or DELETE) and the fake disk must be exactly as they were, and the
+     * body must not carry the other school's data.
+     *
+     * NON-VACUITY: the same request with the school's OWN ids must succeed (2xx),
+     * inside a savepoint that is rolled back. A payload that is merely invalid
+     * would make every attack pass on a 422, so a route whose control fails is
+     * reported as a defect in the sweep, not skipped. A non-GET route with no spec,
+     * or a spec with no route, fails the sweep too: a route added tomorrow cannot
+     * dodge it. And it has been seen to fail: a controller that looks a row up
+     * without the tenant scope turns it red (mutants in the build report).
+     */
     #[Test]
     #[DataProvider('gateStates')]
     public function a_route_list_sweep_finds_no_bleed_between_the_two_schools_in_either_direction(bool $gateOpen): void
     {
-        // T1.2, GENERATED. Every GET the teacher realm serves under a school, run
-        // with A in the URL and — where the route takes a class — B's class id, and
-        // the mirror. A class id from the other school must be a 403 or 404 (never
-        // a 200), and no route may put the other school's marked data in a body.
         config(['tenancy.multi_membership' => $gateOpen]);
 
-        $swept = 0;
+        // Notifications and pushes a write would send; the sweep is about who may
+        // touch what, not about delivery.
+        Queue::fake();
+        Storage::fake((string) config('groups.media.disk', 'local'));
+        Storage::fake((string) config('groups.resources.disk', 'local'));
 
-        foreach (Route::getRoutes()->getRoutes() as $route) {
-            if (! str_starts_with($route->uri(), 'api/teacher/masjids/{masjid_id}') || ! in_array('GET', $route->methods(), true)) {
-                continue;
-            }
+        $skillA = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolA->id)->firstOrFail();
+        $skillB = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolB->id)->firstOrFail();
 
-            foreach ([[$this->schoolA, $this->classB, 'B', $this->classA], [$this->schoolB, $this->classA, 'A', $this->classB]] as [$inSchool, $foreignClass, $foreignTag, $ownClass]) {
-                $usesClass = str_contains($route->uri(), '{group_id}');
+        // ALL fixtures before the first request (see TeacherRealmWorld).
+        $a = TeacherRealmWorld::seed($this->schoolA, $this->classA, $this->teacher, $skillA, 'A', true);
+        $b = TeacherRealmWorld::seed($this->schoolB, $this->classB, $this->teacher, $skillB, 'B', true);
+        $a2 = TeacherRealmWorld::seed($this->schoolA, $this->makeClass($this->schoolA, 'MARK-A2-CLASS'), $this->teacher, $skillA, 'A2', false);
+        $b2 = TeacherRealmWorld::seed($this->schoolB, $this->makeClass($this->schoolB, 'MARK-B2-CLASS'), $this->teacher, $skillB, 'B2', false);
+        $third = $this->makeSchool('Gamma School');
 
-                // A foreign class id under this school's URL: refused.
-                if ($usesClass) {
-                    $status = $this->getJson($this->fill($route->uri(), $inSchool->id, $foreignClass->id))->getStatusCode();
-                    $this->assertContains($status, [403, 404], "GET /{$route->uri()} with school {$inSchool->id} and a class of the other school answered {$status}");
+        $this->assertSame(
+            [$this->classA->id, $this->classB->id],
+            GroupStaff::withoutMasjidScope()->where('user_id', $this->teacher->id)->orderBy('group_id')->pluck('group_id')->map(fn ($id): int => (int) $id)->all(),
+            'the teacher leads exactly the two seeded classes and neither A2 nor B2'
+        );
+
+        $routes = $this->teacherRoutes();
+        $specs = $this->sweepSpecs();
+
+        $this->assertGreaterThan(70, count($routes), 'The sweep found too few teacher routes; it is not looking at the right list.');
+
+        $keys = array_map(fn (array $r): string => "{$r['method']} {$r['suffix']}", $routes);
+        $unspecced = array_values(array_filter($keys, fn (string $k): bool => ! str_starts_with($k, 'GET ') && ! isset($specs[$k])));
+        $this->assertSame([], $unspecced, 'These write routes have no sweep payload; add one to sweepSpecs() so they are swept: '.implode(', ', $unspecced));
+        $dead = array_values(array_diff(array_keys($specs), $keys));
+        $this->assertSame([], $dead, 'These sweep payloads name no teacher route (renamed or removed?): '.implode(', ', $dead));
+
+        $tables = $this->snapshotTables();
+        $failures = [];
+        $attacks = 0;
+        $controls = 0;
+        $legsRun = [];
+
+        // ---- phase 1: the refused requests -------------------------------------
+        //
+        // ONE foreign thing per leg. A request that carries a foreign id in the URL
+        // AND another in the body is refused by whichever is looked at first, and a
+        // 422 from the body hides a missing check on the URL id (the first version
+        // of this leg let a mutant that dropped the tenant scope on a plan lookup
+        // through exactly that way). So the URL-id legs send the caller's OWN,
+        // valid body, and the body-id legs send the caller's OWN URL ids.
+        //
+        // label, school in the URL, world for {group_id}, world for the other URL ids,
+        // world for the body, the kind of refusal owed, the tag whose data must not appear
+        $legs = [
+            ['1: A url, B class and ids', $a->school->id, $b, $b, $b, 'class', 'B'],
+            ['2u: A url, own class, B ids in the URL', $a->school->id, $a, $b, $a, 'url-ids', 'B'],
+            ['2b: A url, own class and URL ids, B ids in the body', $a->school->id, $a, $a, $b, 'body-ids', 'B'],
+            ['3: B url, A class and ids', $b->school->id, $a, $a, $a, 'class', 'A'],
+            ['4u: B url, own class, A ids in the URL', $b->school->id, $b, $a, $b, 'url-ids', 'A'],
+            ['4b: B url, own class and URL ids, A ids in the body', $b->school->id, $b, $b, $a, 'body-ids', 'A'],
+            ['5: third school url', $third->id, $a, $a, $a, 'tenant', 'A'],
+            ['6: A url, class A2 (not led)', $a->school->id, $a2, $a2, $a2, 'leader', 'A2'],
+            ['7: B url, class B2 (not led)', $b->school->id, $b2, $b2, $b2, 'leader', 'B2'],
+        ];
+
+        foreach ($routes as $route) {
+            $key = "{$route['method']} {$route['suffix']}";
+            $spec = $specs[$key] ?? [];
+            $hasGroup = in_array('group_id', $route['placeholders'], true);
+            $hasForeignUrlSlot = array_diff($route['placeholders'], ['masjid_id', 'group_id']) !== [];
+            $bodyCarriesIds = isset($spec['body']) && $spec['body']($a) !== $spec['body']($b);
+
+            foreach ($legs as [$label, $urlSchool, $groupWorld, $otherWorld, $bodyWorld, $kind, $foreignTag]) {
+                if ($kind !== 'tenant' && ! $hasGroup) {
+                    continue; // a school-level route has no class or foreign id to swap; only leg 5 applies
+                }
+                if ($kind === 'url-ids' && ! $hasForeignUrlSlot) {
+                    continue; // nothing in the URL but the school and the caller's own class
+                }
+                if ($kind === 'body-ids' && ! $bodyCarriesIds) {
+                    continue; // the body names no row
                 }
 
-                // Its own class (or no class): whatever it says, it says nothing
-                // about the other school.
-                $response = $this->getJson($this->fill($route->uri(), $inSchool->id, $ownClass->id));
-                $this->assertLessThan(500, $response->getStatusCode(), "GET /{$route->uri()} errored");
-                $this->assertNoMarker($response->getContent(), $foreignTag, "GET /{$route->uri()} in school {$inSchool->id}");
+                $url = $this->sweepUrl($route, (int) $urlSchool, $groupWorld, $otherWorld, $spec);
+                $before = $this->snapshot($tables);
 
-                $swept++;
+                $response = $this->send($route['method'], $url, $spec, $bodyWorld);
+                $status = $response->getStatusCode();
+                $body = (string) ($response->getContent() ?: '');
+
+                $attacks++;
+                $legsRun[$label] = ($legsRun[$label] ?? 0) + 1;
+
+                $where = "{$key} [leg {$label}] -> {$status}";
+
+                $allowed = match ($kind) {
+                    'class', 'url-ids' => [403, 404],
+                    'body-ids' => $spec['refuse'] ?? [403, 404],
+                    'tenant', 'leader' => [403],
+                };
+
+                if (! in_array($status, $allowed, true)) {
+                    $failures[] = "{$where}: expected one of ".implode('/', $allowed);
+                }
+
+                if ($kind === 'tenant' && $this->messageOf($body) !== ResolveMasjidTenant::FORBIDDEN_MESSAGE) {
+                    $failures[] = "{$where}: the third school was not refused by the tenant gate (message: ".json_encode($this->messageOf($body)).')';
+                }
+
+                if ($kind === 'leader' && $this->messageOf($body) !== 'You do not lead this class.') {
+                    $failures[] = "{$where}: the not-led class was not refused by teacher.leads (message: ".json_encode($this->messageOf($body)).')';
+                }
+
+                if ($this->carriesMarker($body, $foreignTag)) {
+                    $failures[] = "{$where}: the response carries school/class {$foreignTag}'s data";
+                }
+
+                $changed = $this->changedTables($before, $this->snapshot($tables));
+                if ($changed !== []) {
+                    $failures[] = "{$where}: a refused request WROTE (".implode(', ', $changed).')';
+                }
             }
         }
 
-        $this->assertGreaterThan(40, $swept, 'The sweep ran over almost no routes.');
+        // ---- phase 2: the controls, reads first (a write may delete a file a read needs) ----
+        $ordered = $routes;
+        usort($ordered, fn (array $x, array $y): int => [$x['method'] !== 'GET', $x['suffix']] <=> [$y['method'] !== 'GET', $y['suffix']]);
+
+        foreach ([$a, $b] as $world) {
+            foreach ($ordered as $route) {
+                $key = "{$route['method']} {$route['suffix']}";
+                $spec = $specs[$key] ?? [];
+
+                $url = $this->sweepUrl($route, (int) $world->school->id, $world, $world, $spec);
+
+                DB::beginTransaction();
+                try {
+                    $response = $this->send($route['method'], $url, $spec, $world);
+                } finally {
+                    DB::rollBack();
+                }
+
+                $status = $response->getStatusCode();
+                $controls++;
+
+                if ($status < 200 || $status >= 300) {
+                    $failures[] = "CONTROL {$key} in school {$world->tag} answered {$status} for its OWN ids "
+                        .'(the sweep payload is wrong, so the refusals above prove nothing for this route): '
+                        .substr((string) ($response->getContent() ?: ''), 0, 200);
+
+                    continue;
+                }
+
+                if ($response->headers->get(EchoResolvedTenant::TENANT_HEADER) !== (string) $world->school->id) {
+                    $failures[] = "CONTROL {$key} in school {$world->tag} did not echo the school it bound";
+                }
+
+                $body = (string) ($response->getContent() ?: '');
+                foreach (array_diff(['A', 'B', 'A2', 'B2'], [$world->tag]) as $tag) {
+                    if ($this->carriesMarker($body, $tag)) {
+                        $failures[] = "CONTROL {$key} in school {$world->tag} carries {$tag}'s data";
+                    }
+                }
+            }
+        }
+
+        $this->assertSame(count($routes) * 2, $controls);
+        $this->assertGreaterThan(300, $attacks, 'The sweep ran over almost no requests.');
+
+        // Every leg must have visited about as many routes as it applies to (64 class
+        // routes, 73 routes in all, roughly 40 with an id in the URL beyond the class,
+        // 11 with an id in the body), so a leg that quietly skips everything fails here.
+        foreach ($legs as [$label, , , , , $kind]) {
+            $floor = match ($kind) {
+                'body-ids' => 8,
+                'url-ids' => 35,
+                'tenant' => 70,
+                default => 60,
+            };
+
+            $this->assertGreaterThanOrEqual($floor, $legsRun[$label] ?? 0, "leg {$label} ran over too few routes: ".json_encode($legsRun));
+        }
+
+
+        $this->assertSame([], $failures, count($failures)." sweep failure(s) over {$attacks} refused requests and {$controls} controls:\n".implode("\n", $failures));
+    }
+
+    /**
+     * What each write route needs to be a VALID request, so that a refusal is the
+     * tenant/leader check and not validation. `body` is built from the world that
+     * supplies the ids (the caller's own for a control, the other school's for a
+     * leg-2 attack); `refuse` widens leg 2 for a foreign id carried in the body;
+     * `query` and `files` are what the route reads besides JSON.
+     *
+     * A route with no entry here fails the sweep (see above).
+     *
+     * @return array<string, array{body?: callable, refuse?: list<int>, query?: array<string, mixed>, files?: callable}>
+     */
+    private function sweepSpecs(): array
+    {
+        $today = now()->toDateString();
+        $soon = now()->addDays(3)->toDateString();
+        $card = TeacherRealmWorld::CARD_PERIOD;
+        $bodyRefusal = [403, 404, 422];
+
+        return [
+            'POST /behavior-skills' => [
+                'body' => fn (TeacherRealmWorld $w) => ['label' => "MARK-{$w->tag}-NEW-SKILL", 'polarity' => BehaviorSkill::POLARITY_POSITIVE, 'default_points' => 2],
+            ],
+
+            // -- Arabic
+            'PUT /groups/{group_id}/letters/stage' => ['body' => fn () => ['stage' => ArabicCurriculum::STAGE_TANWEEN]],
+            'PUT /groups/{group_id}/members/{membership_id}/letters' => ['body' => fn () => ['drill_id' => 'ba', 'status' => ArabicCurriculum::STATUS_MASTERED]],
+            'PUT /groups/{group_id}/members/{membership_id}/letters/master-all' => ['body' => fn () => []],
+            'PUT /groups/{group_id}/members/{membership_id}/arabic-notes' => ['body' => fn () => ['session_date' => $today, 'note' => 'Sweep note.']],
+            'DELETE /groups/{group_id}/members/{membership_id}/arabic-notes/{note_id}' => [],
+
+            // -- behaviour
+            'POST /groups/{group_id}/awards' => [
+                'body' => fn (TeacherRealmWorld $w) => ['membership_id' => $w->student->id, 'behavior_skill_id' => $w->skill->id, 'points' => 1],
+                'refuse' => $bodyRefusal,
+            ],
+            'DELETE /groups/{group_id}/awards/{award_id}' => [],
+
+            // -- attendance
+            'PUT /groups/{group_id}/attendance' => [
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => $today, 'marks' => [['membership_id' => $w->student->id, 'status' => 'present']]],
+                'refuse' => $bodyRefusal,
+            ],
+
+            // -- lesson plans
+            'POST /groups/{group_id}/lesson-plans' => [
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => $soon, 'subject' => 'Sweep', 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
+                'refuse' => $bodyRefusal,
+            ],
+            'PUT /groups/{group_id}/lesson-plans' => [
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => now()->addDays(4)->toDateString(), 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
+                'refuse' => $bodyRefusal,
+            ],
+            'DELETE /groups/{group_id}/lesson-plans' => ['query' => ['date' => $today]],
+            'PUT /groups/{group_id}/lesson-plans/{plan_id}' => [
+                // A free day: the plan moves there, so a foreign plan that got through would
+                // be WRITTEN, not refused for clashing with the class's own plan of the day.
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => now()->addDays(5)->toDateString(), 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
+                'refuse' => $bodyRefusal,
+            ],
+            'DELETE /groups/{group_id}/lesson-plans/{plan_id}' => [],
+
+            // -- gradebook
+            'POST /groups/{group_id}/assignments' => [
+                'body' => fn () => ['title' => 'Sweep work', 'scale' => ClassAssignment::SCALE_POINTS, 'points_possible' => 10, 'assigned_on' => $today],
+            ],
+            'PUT /groups/{group_id}/assignments/{assignment_id}' => [
+                'body' => fn () => ['title' => 'Sweep work', 'scale' => ClassAssignment::SCALE_POINTS, 'points_possible' => 10, 'assigned_on' => $today],
+            ],
+            'DELETE /groups/{group_id}/assignments/{assignment_id}' => [],
+            'PUT /groups/{group_id}/assignments/{assignment_id}/scores' => [
+                'body' => fn (TeacherRealmWorld $w) => ['scores' => [['membership_id' => $w->student->id, 'status' => 'scored', 'points_earned' => 5]]],
+                'refuse' => $bodyRefusal,
+            ],
+
+            // -- report cards. The period is named so the fixture card is the one prepared.
+            'PUT /groups/{group_id}/members/{membership_id}/report-card' => [
+                'query' => $card,
+                // A foreign MARK id in the body is skipped by saveMarks, not refused: a
+                // 200 that must write nothing, which the snapshot enforces.
+                'body' => fn (TeacherRealmWorld $w) => ['marks' => [['id' => $w->mark->id, 'level' => null, 'comment' => 'Sweep.']]],
+                'refuse' => [200, 403, 404, 422],
+            ],
+            'POST /groups/{group_id}/members/{membership_id}/report-card/publish' => ['query' => $card],
+            'DELETE /groups/{group_id}/members/{membership_id}/report-card/publish' => ['query' => $card],
+
+            // -- class files
+            'POST /groups/{group_id}/resources' => [
+                'body' => fn (TeacherRealmWorld $w) => ['title' => 'Sweep file', 'visibility' => 'students', 'recipient_membership_ids' => [$w->student->id]],
+                'files' => fn () => ['file' => UploadedFile::fake()->create('sweep.pdf', 5, 'application/pdf')],
+                'refuse' => $bodyRefusal,
+            ],
+            'PUT /groups/{group_id}/resources/{resource_id}' => [
+                'body' => fn (TeacherRealmWorld $w) => ['title' => 'Sweep file', 'visibility' => 'students', 'recipient_membership_ids' => [$w->student->id]],
+                'refuse' => $bodyRefusal,
+            ],
+            'DELETE /groups/{group_id}/resources/{resource_id}' => [],
+
+            // -- Hifdh
+            'POST /groups/{group_id}/hifz' => [
+                'body' => fn (TeacherRealmWorld $w) => [
+                    'membership_id' => $w->student->id, 'kind' => HifzEntry::KIND_SABAK,
+                    'from_surah' => 78, 'from_ayah' => 1, 'to_surah' => 78, 'to_ayah' => 5,
+                    'quality' => HifzEntry::QUALITY_GOOD,
+                ],
+                'refuse' => $bodyRefusal,
+            ],
+            'DELETE /groups/{group_id}/hifz/{entry_id}' => [],
+
+            // -- class story
+            'POST /groups/{group_id}/posts' => ['body' => fn () => ['title' => 'Sweep', 'body' => 'Sweep post.']],
+            'PUT /groups/{group_id}/posts/{post_id}' => ['body' => fn () => ['body' => 'Sweep post, edited.']],
+            'DELETE /groups/{group_id}/posts/{post_id}' => [],
+            'POST /groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback' => [],
+
+            // -- conversations
+            'POST /groups/{group_id}/threads' => [
+                'body' => fn (TeacherRealmWorld $w) => ['subject' => 'Sweep', 'scope' => 'participant', 'about_membership_id' => $w->student->id, 'body' => 'Sweep hello.'],
+                'refuse' => $bodyRefusal,
+            ],
+            'POST /groups/{group_id}/threads/{thread_id}/messages' => ['body' => fn () => ['body' => 'Sweep reply.']],
+            'PUT /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
+            'DELETE /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
+            'POST /groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback' => [],
+
+            // -- avatars
+            'PUT /groups/{group_id}/members/{membership_id}/avatar' => [
+                'body' => fn () => ['character' => Avatar::CHARACTERS[0], 'tone' => Avatar::TONES[0], 'color' => Avatar::COLORS[0]],
+            ],
+            'DELETE /groups/{group_id}/members/{membership_id}/avatar/override' => [],
+        ];
     }
 
     // ---------------------------------------------------------------- helpers
 
-    /** Fill a route URI: the masjid and class as given, every other placeholder with an id that exists nowhere. */
-    private function fill(string $uri, int $masjidId, int $groupId): string
+    /**
+     * Every route the teacher realm serves under a school, each verb on its own.
+     *
+     * @return list<array{method: string, uri: string, suffix: string, placeholders: list<string>}>
+     */
+    private function teacherRoutes(): array
     {
-        $uri = str_replace(['{masjid_id}', '{group_id}'], [(string) $masjidId, (string) $groupId], $uri);
+        $prefix = 'api/teacher/masjids/{masjid_id}';
+        $found = [];
 
-        return '/'.preg_replace('/\{[a-z_]+\}/', '999999', $uri);
+        foreach (Route::getRoutes()->getRoutes() as $route) {
+            if (! str_starts_with($route->uri(), $prefix)) {
+                continue;
+            }
+
+            preg_match_all('/\{([a-z_]+)\}/', $route->uri(), $names);
+
+            foreach (array_diff($route->methods(), ['HEAD', 'OPTIONS']) as $method) {
+                $found[] = [
+                    'method' => $method,
+                    'uri' => $route->uri(),
+                    'suffix' => substr($route->uri(), strlen($prefix)),
+                    'placeholders' => $names[1],
+                ];
+            }
+        }
+
+        usort($found, fn (array $x, array $y): int => [$x['suffix'], $x['method']] <=> [$y['suffix'], $y['method']]);
+
+        return $found;
+    }
+
+    /**
+     * A route's URL with the school as given, `{group_id}` from one world and every
+     * other id from another (the same world for a plain control or a leg 1/3 attack).
+     *
+     * @param array{uri: string, placeholders: list<string>} $route
+     */
+    private function sweepUrl(array $route, int $schoolId, TeacherRealmWorld $groupWorld, TeacherRealmWorld $otherWorld, array $spec): string
+    {
+        $url = str_replace('{masjid_id}', (string) $schoolId, $route['uri']);
+
+        $url = (string) preg_replace_callback('/\{([a-z_]+)\}/', function (array $m) use ($route, $groupWorld, $otherWorld): string {
+            $world = $m[1] === 'group_id' ? $groupWorld : $otherWorld;
+
+            return rawurlencode($world->idFor($m[1], $route['uri']));
+        }, $url);
+
+        $query = $spec['query'] ?? [];
+
+        return '/'.$url.($query === [] ? '' : '?'.http_build_query($query));
+    }
+
+    /** One request, with the body the route's spec builds from the given world. */
+    private function send(string $method, string $url, array $spec, TeacherRealmWorld $bodyWorld): \Illuminate\Testing\TestResponse
+    {
+        $data = isset($spec['body']) ? $spec['body']($bodyWorld) : [];
+        $files = isset($spec['files']) ? $spec['files']($bodyWorld) : [];
+
+        if ($files !== []) {
+            return $this->call($method, $url, $data, [], $files, ['HTTP_ACCEPT' => 'application/json']);
+        }
+
+        return $this->json($method, $url, $method === 'GET' ? [] : $data);
+    }
+
+    /**
+     * Every table a teacher request could write: everything that carries a
+     * `masjid_id`, plus the shared `users` row. Discovered, so a table added
+     * tomorrow is watched without anybody remembering to list it.
+     *
+     * @return list<string>
+     */
+    private function snapshotTables(): array
+    {
+        $tables = [];
+
+        foreach (Schema::getTables() as $table) {
+            $name = $table['name'];
+
+            if ($name === 'users' || Schema::hasColumn($name, 'masjid_id')) {
+                $tables[] = $name;
+            }
+        }
+
+        $this->assertGreaterThan(30, count($tables), 'the snapshot found almost no tenant tables');
+        $this->assertContains('lesson_plans', $tables);
+        $this->assertContains('group_messages', $tables);
+
+        return $tables;
+    }
+
+    /**
+     * A hash of every watched table's rows, and of the private disks' file list.
+     * Rows, not counts: `PUT /lesson-plans/{plan_id}` on another school's plan
+     * changes a row in place and leaves every count alone.
+     *
+     * @param list<string> $tables
+     * @return array<string, string>
+     */
+    private function snapshot(array $tables): array
+    {
+        $state = [];
+
+        foreach ($tables as $table) {
+            $state[$table] = md5(json_encode(DB::table($table)->get()->all(), JSON_THROW_ON_ERROR));
+        }
+
+        $files = [];
+        foreach (array_unique([(string) config('groups.media.disk', 'local'), (string) config('groups.resources.disk', 'local')]) as $disk) {
+            foreach (Storage::disk($disk)->allFiles() as $file) {
+                $files[] = $disk.':'.$file;
+            }
+        }
+        sort($files);
+        $state['(files on disk)'] = md5(json_encode($files, JSON_THROW_ON_ERROR));
+
+        return $state;
+    }
+
+    /** @return list<string> */
+    private function changedTables(array $before, array $after): array
+    {
+        return array_keys(array_filter($after, fn (string $hash, string $table): bool => ($before[$table] ?? null) !== $hash, ARRAY_FILTER_USE_BOTH));
+    }
+
+    /** The JSON `message` of a body, or null for anything else (a streamed file, a PDF, HTML). */
+    private function messageOf(string $body): ?string
+    {
+        $decoded = json_decode($body, true);
+
+        return is_array($decoded) && is_string($decoded['message'] ?? null) ? $decoded['message'] : null;
+    }
+
+    private function carriesMarker(string $body, string $tag): bool
+    {
+        return str_contains($body, "MARK-{$tag}-") || str_contains($body, "Mark{$tag}Student");
     }
 
     /** No `MARK-<tag>-…` / `Mark<tag>…` string anywhere in the body. */
