@@ -199,6 +199,62 @@ class FamilyGradesTest extends TestCase
     }
 
     /**
+     * The levels block has its own join and its own soft-delete filter, separate
+     * from the points block's: a withdrawn rubric must leave `levels` as well as
+     * the points figures, or a parent reads a mean level over work the teacher
+     * took back.
+     */
+    #[Test]
+    public function withdrawn_levels_work_is_absent_from_the_levels_block_too(): void
+    {
+        $kept = $this->levelsWork('Reading rubric');
+        $dropped = $this->levelsWork('Withdrawn rubric');
+        $this->mark($kept, $this->childA, 'scored', 4);
+        $this->mark($dropped, $this->childA, 'scored', 1);
+
+        $dropped->delete();
+
+        $levels = $this->asParent($this->parentA)
+            ->getJson($this->gradesUrl($this->childA))
+            ->assertOk()
+            ->json('data.summary.levels');
+
+        $this->assertSame(1, $levels['counted']);
+        $this->assertSame(1, $levels['recorded']);
+        $this->assertEqualsWithDelta(4.0, (float) $levels['mean'], 0.0001);
+        $this->assertSame(0, collect($levels['distribution'])->firstWhere('level', 1)['count'], 'the withdrawn 1 is not in the distribution');
+    }
+
+    /**
+     * `weight` on a piece of work is its OWN override: null means "inherits the
+     * class's weight for its type". The portal prints "counts N (this work)" only
+     * when it is not null, so a null that arrived as 0 would label every piece of
+     * work "counts 0 (this work)".
+     */
+    #[Test]
+    public function a_pieces_own_weight_arrives_as_its_number_and_no_weight_arrives_as_null(): void
+    {
+        $this->weigh(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $plain = $this->typedWork('Plain quiz', 10, 'quiz', null);
+        $own = ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => 'Big project',
+            'points_possible' => 10, 'scale' => ClassAssignment::SCALE_POINTS, 'type' => 'homework',
+            'weight' => 30, 'assigned_on' => now()->toDateString(),
+        ]);
+        $this->mark($plain, $this->childA, 'scored', 5);
+        $this->mark($own, $this->childA, 'scored', 5);
+
+        $scores = collect($this->asParent($this->parentA)
+            ->getJson($this->gradesUrl($this->childA))
+            ->assertOk()
+            ->json('data.scores'))->keyBy(fn ($s) => $s['assignment']['title']);
+
+        $this->assertNull($scores['Plain quiz']['assignment']['weight'], 'no override is null, never 0');
+        $this->assertSame(30, $scores['Big project']['assignment']['weight']);
+    }
+
+    /**
      * Not-yet-marked is the ABSENCE of a row, never a status and never a zero.
      * A child their teacher has not reached yet has an empty screen, which is
      * the truth, rather than a nought that reads as a mark.

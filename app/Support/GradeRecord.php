@@ -53,22 +53,32 @@ use Illuminate\Support\Facades\DB;
  * The weighted figure (owner, 2026-09-28: "per type with a per-assignment
  * override, relative, renormalised over the types with scored work"):
  *
- *  - Each counted piece of work has an EFFECTIVE weight: its own override
- *    (`class_assignments.weight`) else its type's class weight
- *    (`class_grade_weights`). A piece with neither is EXCLUDED from the weighted
- *    figure and counted in `untyped_excluded`, so the screen can say "3 pieces of
- *    work have no type" and never quietly averages them in or out.
- *  - POINTS: the weighted mean of each piece's own percentage. Each piece is
- *    earned / possible, so a 100-point test and a 10-point quiz of equal weight
- *    count equally (that is what a weight is for; the unweighted figure above
- *    still pools points, as it always did).
- *  - LEVELS: the weighted mean LEVEL over the scored pieces, never a percentage;
- *    the two scales are never mixed. `missing` stays out of a levels mean.
+ *  - THE TYPE IS THE UNIT, not the piece. Each type with counted work is ONE
+ *    SLOT in the average, worth its class weight however many pieces are in it,
+ *    so with Test at 40 and Homework at 10 the Tests are four fifths of the grade
+ *    whether the child has done one Homework or ten. (An earlier build gave every
+ *    piece its own copy of the type's weight, which made a type with many pieces
+ *    swamp one with few; DECISIONS W3-1 has the correction.)
+ *  - Inside a type the pieces are POOLED (points earned over points possible,
+ *    the way the per-type block prints them), so the headline can be rebuilt from
+ *    the by-type rows a parent reads: the sum of `weight x percent` over the rows,
+ *    divided by the sum of their weights.
+ *  - A piece with its own weight (`class_assignments.weight`, the "per-assignment
+ *    override") is NOT in its type's pool: it is a slot of its own, worth exactly
+ *    that number. That is what "override" has to mean for it to change anything
+ *    when the type has one piece in it, and it is the reading a teacher gives
+ *    "this project counts 30". Typed or not, a piece with an override counts.
+ *  - A piece with neither an override nor a type is EXCLUDED and counted in
+ *    `untyped_excluded`, so the screen can say "3 pieces of work have no type"
+ *    and never quietly averages them in or out.
+ *  - POINTS: each slot's percentage, weighted. LEVELS: each slot's mean LEVEL,
+ *    weighted, never a percentage; the two scales are never mixed. `missing` stays
+ *    out of a levels mean.
  *  - SIMPLE marks (Excellent / Good / Needs work) are never averaged and never
  *    weighted.
- *  - RENORMALISED: the sum divides by the weights of the pieces that HAVE marks
- *    for this child, so a type nobody has marked yet drags nothing down and the
- *    weights need not add up to 100.
+ *  - RENORMALISED: the sum divides by the weights of the slots that HAVE marks
+ *    for this child, so a type nobody has been marked on yet drags nothing down
+ *    and the weights need not add up to 100.
  *  - A class's weights are all-or-nothing (ClassGradeWeight). No rows means
  *    `enabled` is false and no weighted figure is produced, whatever a piece's
  *    own override says: an override is only meaningful against a weighted class.
@@ -263,7 +273,8 @@ final class GradeRecord
     }
 
     /**
-     * The weighted figures for a set of pieces.
+     * The weighted figures for a set of pieces. See the class docblock: a type is
+     * one slot, a piece with its own weight is a slot of its own.
      *
      * @param  Collection<int, object>  $pieces
      * @param  array<string,int>  $weights
@@ -271,13 +282,11 @@ final class GradeRecord
      */
     private static function weighted(Collection $pieces, array $weights): array
     {
-        $pointSum = 0.0;
-        $pointWeight = 0;
-        $pointPieces = 0;
-        $levelSum = 0.0;
-        $levelWeight = 0;
-        $levelPieces = 0;
+        // slot key => [scale, weight, earned, possible, n]. Points slots pool
+        // earned over possible; levels slots average the level.
+        $slots = [];
         $excluded = 0;
+        $own = 0;
 
         foreach ($pieces as $piece) {
             $isPoints = $piece->scale === ClassAssignment::SCALE_POINTS && self::counts($piece);
@@ -297,14 +306,34 @@ final class GradeRecord
                 continue;
             }
 
-            if ($isPoints) {
-                $pointSum += $weight * ((float) $piece->earned / max(1, (int) $piece->possible));
-                $pointWeight += $weight;
-                $pointPieces++;
+            // A piece's own weight makes it a slot of its own; everything else
+            // pools with the rest of its type.
+            $key = $piece->weight !== null
+                ? $piece->scale.'|own|'.($own++)
+                : $piece->scale.'|type|'.$piece->type;
+
+            $slots[$key] ??= ['scale' => $piece->scale, 'weight' => $weight, 'earned' => 0.0, 'possible' => 0.0, 'n' => 0];
+            $slots[$key]['earned'] += (float) $piece->earned;
+            $slots[$key]['possible'] += (float) $piece->possible;
+            $slots[$key]['n']++;
+        }
+
+        $pointSum = 0.0;
+        $pointWeight = 0;
+        $pointPieces = 0;
+        $levelSum = 0.0;
+        $levelWeight = 0;
+        $levelPieces = 0;
+
+        foreach ($slots as $slot) {
+            if ($slot['scale'] === ClassAssignment::SCALE_POINTS) {
+                $pointSum += $slot['weight'] * ($slot['earned'] / max(1.0, $slot['possible']));
+                $pointWeight += $slot['weight'];
+                $pointPieces += $slot['n'];
             } else {
-                $levelSum += $weight * (float) $piece->earned;
-                $levelWeight += $weight;
-                $levelPieces++;
+                $levelSum += $slot['weight'] * ($slot['earned'] / $slot['n']);
+                $levelWeight += $slot['weight'];
+                $levelPieces += $slot['n'];
             }
         }
 
@@ -331,14 +360,17 @@ final class GradeRecord
             ? self::weighted($pieces, $weights)
             : ['percent' => null, 'points_pieces' => 0, 'level_mean' => null, 'level_pieces' => 0, 'untyped_excluded' => 0];
 
-        // The per-type block: informational, and present whether or not the
-        // class is weighted. Points work only, pooled the way the headline
-        // figure is, with the type's weight beside it when there is one.
+        // The per-type block: present whether or not the class is weighted.
+        // Points work only, POOLED, with the type's weight beside it when there
+        // is one. In a weighted class it is the type's SLOT, so a piece that
+        // carries its own weight (a slot of its own, see the class docblock) is
+        // not in it: the rows then rebuild the headline figure exactly.
         $byType = [];
 
         foreach (ClassAssignment::TYPES as $type) {
             $rows = $pieces->filter(fn ($p) => $p->type === $type
-                && $p->scale === ClassAssignment::SCALE_POINTS && self::counts($p));
+                && $p->scale === ClassAssignment::SCALE_POINTS && self::counts($p)
+                && (! $enabled || $p->weight === null));
 
             if ($rows->isEmpty()) {
                 continue;

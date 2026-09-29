@@ -113,11 +113,12 @@ class GradebookWeightingTest extends TestCase
     // ---------------------------------------------------------- the arithmetic
 
     #[Test]
-    public function the_weighted_average_is_the_weighted_mean_of_each_pieces_own_percentage(): void
+    public function the_weighted_average_is_the_weighted_mean_of_each_types_own_percentage(): void
     {
         $this->setWeights(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
 
-        // Test 80/100 = 80%, quiz 10/10 = 100%, homework 10/20 = 50%.
+        // One piece in each type here (the many-pieces cases are below): test
+        // 80/100 = 80%, quiz 10/10 = 100%, homework 10/20 = 50%.
         $this->work('Unit test', 100, 'test', 80);
         $this->work('Spelling', 10, 'quiz', 10);
         $this->work('Reading log', 20, 'homework', 10);
@@ -305,6 +306,247 @@ class GradebookWeightingTest extends TestCase
         $byType = collect($this->summary()['weighting']['by_type'])->keyBy('type');
         $this->assertSame(40, $byType['test']['weight']);
         $this->assertSame(20, $byType['quiz']['weight']);
+    }
+
+    // ------------------------------------------------ a TYPE is one slot in the average
+
+    #[Test]
+    public function a_type_counts_once_however_many_pieces_are_in_it(): void
+    {
+        // The owner's model: "weights are per type ... renormalised over the types
+        // that have scored work". Test 40 and Homework 10 make the Tests four
+        // fifths of the grade, whatever the child has done more of.
+        $this->setWeights(['test' => 40, 'quiz' => 10, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->work('Unit test', 100, 'test', 90);
+        foreach (range(1, 5) as $i) {
+            $this->work("Homework {$i}", 10, 'homework', 10);
+        }
+
+        // 0.9 * 40/50 + 1.0 * 10/50 = 92.0. Per piece it would be
+        // (40*0.9 + 5*10*1.0) / 90 = 95.6, with Homework 5/9 of the grade.
+        $weighting = $this->summary()['weighting'];
+        $this->assertFigure(92.0, $weighting['percent']);
+        $this->assertSame(6, $weighting['points_pieces'], 'every counted piece is still in the count');
+
+        // Five more Homework change nothing: the type is one slot.
+        foreach (range(6, 10) as $i) {
+            $this->work("Homework {$i}", 10, 'homework', 10);
+        }
+        $this->assertFigure(92.0, $this->summary()['weighting']['percent']);
+    }
+
+    #[Test]
+    public function the_headline_can_be_rebuilt_from_the_by_type_rows_a_parent_reads(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->work('Unit test', 100, 'test', 70);
+        $this->work('Midterm', 50, 'test', 40);
+        $this->work('Spelling', 10, 'quiz', 9);
+        $this->work('Reading log', 20, 'homework', 10);
+        $this->work('Reading log 2', 10, 'homework', 10);
+
+        $weighting = $this->summary()['weighting'];
+
+        $numerator = 0.0;
+        $denominator = 0;
+        foreach ($weighting['by_type'] as $row) {
+            $numerator += $row['weight'] * $row['percent'];
+            $denominator += $row['weight'];
+        }
+
+        // test 110/150 = 73.33, quiz 90, homework 20/30 = 66.67:
+        // (40*73.33 + 20*90 + 10*66.67) / 70 = 77.14.
+        $this->assertFigure(77.1, $weighting['percent']);
+        $this->assertEqualsWithDelta($weighting['percent'], $numerator / $denominator, 0.1, 'weight x percent over the by-type rows IS the headline');
+    }
+
+    #[Test]
+    public function pieces_inside_a_type_are_pooled_by_points_not_averaged_as_percentages(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 10, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        // 5 of 10 and 90 of 100, one type: 95 of 110 = 86.4. The mean of the two
+        // percentages would be 70, and would not match the by-type row beside it.
+        $this->work('Short log', 10, 'homework', 5);
+        $this->work('Big project', 100, 'homework', 90);
+
+        $weighting = $this->summary()['weighting'];
+
+        $this->assertFigure(86.4, $weighting['percent']);
+        $this->assertFigure(86.4, collect($weighting['by_type'])->firstWhere('type', 'homework')['percent']);
+    }
+
+    #[Test]
+    public function a_piece_with_its_own_weight_is_a_slot_of_its_own_beside_its_types_pool(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->work('Unit test', 100, 'test', 80);
+        $this->work('Reading log', 10, 'homework', 10);
+        $this->work('Spelling log', 10, 'homework', 0);
+        $this->work('Big project', 20, 'homework', 10, weight: 30);
+
+        $weighting = $this->summary()['weighting'];
+
+        // test 80% x 40, the homework pool 10/20 = 50% x 10, the project 50% x 30:
+        // (32 + 5 + 15) / 80 = 65.0.
+        $this->assertFigure(65.0, $weighting['percent']);
+        $this->assertSame(4, $weighting['points_pieces']);
+
+        // The by-type row is the type's slot, so the project is not in it.
+        $homework = collect($weighting['by_type'])->firstWhere('type', 'homework');
+        $this->assertSame(2, $homework['pieces']);
+        $this->assertFigure(50.0, $homework['percent']);
+    }
+
+    #[Test]
+    public function a_per_work_weight_of_zero_keeps_that_piece_out_of_the_figure_but_still_counts_it(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 10, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->work('Unit test', 10, 'test', 10);
+        // A poor mark the teacher keeps out of the average: an override of 0 is a
+        // decision, not "no override" (0 is falsy and must not fall back to the
+        // type's 10).
+        $this->work('Optional extra', 10, 'homework', 0, weight: 0);
+
+        $weighting = $this->summary()['weighting'];
+
+        $this->assertFigure(100.0, $weighting['percent']);
+        $this->assertSame(0, $weighting['untyped_excluded'], 'a weight of 0 is a weight');
+        $this->assertSame(2, $weighting['points_pieces']);
+    }
+
+    #[Test]
+    public function levels_pieces_in_one_type_average_first_and_then_weigh_by_type(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->levelsWork('Rubric A', 'test', 4);
+        $this->levelsWork('Rubric B', 'test', 2);
+        $this->levelsWork('Rubric C', 'quiz', 1);
+
+        // test slot mean 3 x 40, quiz slot 1 x 20: (120 + 20) / 60 = 2.3.
+        // Per piece it would be (160 + 80 + 20) / 100 = 2.6.
+        $weighting = $this->summary()['weighting'];
+        $this->assertFigure(2.3, $weighting['level_mean']);
+        $this->assertSame(3, $weighting['level_pieces']);
+    }
+
+    #[Test]
+    public function a_typed_missing_levels_piece_never_enters_the_level_mean(): void
+    {
+        $this->setWeights(['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+
+        $this->levelsWork('Reading rubric', 'quiz', 4);
+        // A missing rubric carries a type and so has a weight to be averaged in
+        // with; 1 is "Needs Support", a judgement nobody made.
+        $this->levelsWork('Not handed in', 'test', null, status: 'missing');
+
+        $weighting = $this->summary()['weighting'];
+
+        $this->assertFigure(4.0, $weighting['level_mean']);
+        $this->assertSame(1, $weighting['level_pieces']);
+        $this->assertSame(0, $weighting['untyped_excluded']);
+    }
+
+    #[Test]
+    public function excused_and_missing_work_is_handled_the_same_way_in_the_by_subject_and_by_type_blocks(): void
+    {
+        // Unweighted on purpose: both blocks exist whether or not the class is
+        // weighted, and the parent screen prints both.
+        $this->work('Quiz A', 10, 'quiz', null, status: 'excused', subject: 'Reading');
+        $this->work('Quiz B', 10, 'quiz', 9, subject: 'Reading');
+        $this->work('Quiz C', 10, 'quiz', null, status: 'missing', subject: 'Reading');
+        $this->levelsWork('Rubric 1', null, 3, subject: 'Reading');
+        $this->levelsWork('Rubric 2', null, null, status: 'missing', subject: 'Reading');
+
+        $summary = $this->summary();
+        $reading = collect($summary['by_subject'])->firstWhere('subject', 'Reading');
+
+        // Five marks; four count (the excused one counts in neither half).
+        $this->assertSame(5, $reading['recorded']);
+        $this->assertSame(4, $reading['counted']);
+        $this->assertSame(1, $reading['excused']);
+        // Quiz B 9 of 10 and Quiz C not handed in 0 of 10: 9 of 20, never 9 of 30.
+        $this->assertFigure(9.0, (float) $reading['points_earned']);
+        $this->assertFigure(20.0, (float) $reading['points_possible']);
+        $this->assertSame(2, $reading['points_counted']);
+        $this->assertFigure(45.0, $reading['percent']);
+        // Levels: the one scored rubric only; the missing one is no level at all.
+        $this->assertSame(1, $reading['levels_counted']);
+        $this->assertFigure(3.0, $reading['level_mean']);
+
+        // By type: the same two counted quizzes, 9 of 20.
+        $quiz = collect($summary['weighting']['by_type'])->firstWhere('type', 'quiz');
+        $this->assertSame(2, $quiz['pieces'], 'the excused quiz is not a piece of the quiz row');
+        $this->assertFigure(45.0, $quiz['percent']);
+    }
+
+    #[Test]
+    public function withdrawn_levels_work_leaves_the_levels_block(): void
+    {
+        $this->levelsWork('Rubric A', 'test', 4);
+        $withdrawn = $this->levelsWork('Rubric B', 'test', 1);
+
+        $levels = $this->summary()['levels'];
+        $this->assertSame(2, $levels['counted']);
+        $this->assertFigure(2.5, $levels['mean']);
+
+        $withdrawn->delete();
+
+        $levels = $this->summary()['levels'];
+        $this->assertSame(1, $levels['counted']);
+        $this->assertSame(1, $levels['recorded']);
+        $this->assertFigure(4.0, $levels['mean']);
+        $counts = collect($levels['distribution'])->pluck('count', 'level')->all();
+        $this->assertSame(0, $counts[1], 'the withdrawn 1 is gone from the distribution');
+        $this->assertSame(1, $counts[4]);
+    }
+
+    // ------------------------------------------------------ one class is not another
+
+    #[Test]
+    public function weights_belong_to_one_class_and_reading_or_clearing_never_crosses_into_another(): void
+    {
+        [$b, $childB] = $this->classWithChild('Grade 6', 'g6');
+        [$c, $childC] = $this->classWithChild('Grade 7', 'g7');
+
+        // Class A (this one) and class B are both weighted, differently; B's are
+        // written LAST so a read that forgot which class it was in would answer B.
+        $this->setWeights(['test' => 40, 'quiz' => 10, 'homework' => 10, 'classwork' => 10, 'other' => 10]);
+        $this->putJson("/api/teacher/masjids/{$this->school->id}/groups/{$b->id}/grade-weights", [
+            'weights' => ['test' => 10, 'quiz' => 40, 'homework' => 10, 'classwork' => 10, 'other' => 10],
+        ])->assertOk();
+
+        // The same two marks in all three classes: a test 100%, a quiz 0%.
+        foreach ([[$this->class, $this->child], [$b, $childB], [$c, $childC]] as [$class, $child]) {
+            $this->markedWork($class, $child, 'Unit test', 10, 'test', 10);
+            $this->markedWork($class, $child, 'Pop quiz', 10, 'quiz', 0);
+        }
+
+        $this->assertEquals(
+            ['test' => 40, 'quiz' => 10, 'homework' => 10, 'classwork' => 10, 'other' => 10],
+            ClassGradeWeight::forGroup($this->class->id)
+        );
+        $this->assertEquals(['test' => 10, 'quiz' => 40], array_intersect_key(ClassGradeWeight::forGroup($b->id), ['test' => 1, 'quiz' => 1]));
+        $this->assertSame([], ClassGradeWeight::forGroup($c->id), 'an unweighted class reads as unweighted while its neighbours are weighted');
+
+        // (40*1 + 10*0) / 50 = 80 in A; (10*1 + 40*0) / 50 = 20 in B.
+        $this->assertFigure(80.0, $this->summaryOf($this->class, $this->child)['weighting']['percent']);
+        $this->assertFigure(20.0, $this->summaryOf($b, $childB)['weighting']['percent']);
+        $unweighted = $this->summaryOf($c, $childC)['weighting'];
+        $this->assertFalse($unweighted['enabled']);
+        $this->assertNull($unweighted['percent']);
+
+        // Clearing A leaves B exactly as it was.
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])->assertOk();
+
+        $this->assertSame([], ClassGradeWeight::forGroup($this->class->id));
+        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $b->id)->count(), "clearing one class's weights is that class's only");
+        $this->assertFigure(20.0, $this->summaryOf($b, $childB)['weighting']['percent']);
     }
 
     // --------------------------------------------------------------- by subject
@@ -540,6 +782,48 @@ class GradebookWeightingTest extends TestCase
         return Group::factory()->create(['masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => 'Grade 5', 'slug' => 'g5']);
     }
 
+    /**
+     * A second class in the same school, this teacher leading it, with one child.
+     *
+     * @return array{0: Group, 1: GroupMembership}
+     */
+    private function classWithChild(string $name, string $slug): array
+    {
+        $class = Group::factory()->create(['masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => $name, 'slug' => $slug]);
+        $class->staff()->attach($this->teacher->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
+        ]);
+
+        $contact = Contact::factory()->create(['masjid_id' => $this->school->id, 'first_name' => 'Child '.$slug, 'last_name' => 'Test']);
+
+        return [$class, GroupMembership::create([
+            'masjid_id' => $this->school->id, 'group_id' => $class->id,
+            'contact_id' => $contact->id, 'role' => GroupMembership::ROLE_MEMBER,
+        ])];
+    }
+
+    private function markedWork(Group $class, GroupMembership $child, string $title, int $outOf, ?string $type, int|float $points): void
+    {
+        $work = ClassAssignment::create([
+            'masjid_id' => $this->school->id, 'group_id' => $class->id, 'title' => $title,
+            'points_possible' => $outOf, 'scale' => ClassAssignment::SCALE_POINTS, 'type' => $type,
+            'assigned_on' => now()->toDateString(),
+        ]);
+
+        AssignmentScore::create([
+            'masjid_id' => $this->school->id, 'group_id' => $class->id,
+            'class_assignment_id' => $work->id, 'group_membership_id' => $child->id,
+            'status' => 'scored', 'points_earned' => $points,
+        ]);
+    }
+
+    /** @return array<string,mixed> */
+    private function summaryOf(Group $class, GroupMembership $child): array
+    {
+        return $this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$class->id}/members/{$child->id}/grades")
+            ->assertOk()->json('data.summary');
+    }
+
     /** @param array<string,int> $weights */
     private function setWeights(array $weights): void
     {
@@ -573,12 +857,12 @@ class GradebookWeightingTest extends TestCase
         return $work;
     }
 
-    private function levelsWork(string $title, ?string $type, int|float|null $level = null, string $status = 'scored'): ClassAssignment
+    private function levelsWork(string $title, ?string $type, int|float|null $level = null, string $status = 'scored', ?string $subject = null): ClassAssignment
     {
         $work = ClassAssignment::create([
             'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'title' => $title,
             'points_possible' => \App\Support\PerformanceLevel::MAX, 'scale' => ClassAssignment::SCALE_LEVELS,
-            'type' => $type, 'assigned_on' => now()->toDateString(),
+            'type' => $type, 'subject' => $subject, 'assigned_on' => now()->toDateString(),
         ]);
 
         $this->mark($work, $status, $level);
