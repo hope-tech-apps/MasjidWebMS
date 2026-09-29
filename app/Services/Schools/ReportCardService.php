@@ -33,10 +33,11 @@ use Illuminate\Support\Facades\DB;
  *     on a printed card.
  *
  * So `prepare()` builds the ROWS — the right criteria for this child's grade, in
- * order — and leaves every level NULL for the teacher to fill in.
- * `suggestionsFor()` offers what the gradebook knows ALONGSIDE, clearly labelled
- * as a suggestion, so a teacher has the evidence to hand without the system
- * pretending to have made the judgement.
+ * order — and leaves every level NULL for the teacher to fill in. There is no
+ * `suggestionsFor()`: an earlier draft of this comment named one, and it was never
+ * written. What the gradebook knows sits beside the card in the teacher's Grades
+ * tab (App\Support\GradeRecord), where it is evidence to hand and never a
+ * pre-filled judgement.
  */
 class ReportCardService
 {

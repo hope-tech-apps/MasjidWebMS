@@ -11,6 +11,7 @@ use App\Models\ClassAssignment;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Support\GradeRecord;
 use App\Support\PerformanceLevel;
 use App\Support\SchoolSettings;
 use App\Support\SimpleMark;
@@ -349,42 +350,11 @@ class GradebookController extends TeacherController
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
-        // THE AVERAGE IS AGGREGATED IN SQL, OVER EVERY MARK.
-        //
-        // It used to be computed from a `limit(200)` with NO ordering applied
-        // before the limit — so past 200 marks a child's average was taken over
-        // an arbitrary database-order subset, with nothing to indicate it. That is
-        // a wrong number on a screen a parent may be shown, which is worse than a
-        // missing one. The join is what keeps withdrawn work out: class_assignments
-        // soft-deletes, so a score can outlive a resolvable parent.
-        // GROUPED BY SCALE AS WELL AS STATUS. A class can hold both kinds of work
-        // — a spelling quiz out of 10 and a rubric marked 1-4 — and adding those
-        // denominators together produces a number that is wrong in a way nobody
-        // can see. The two scales are therefore summarised SEPARATELY and never
-        // combined into one figure.
-        $totals = AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membership->id)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->groupBy('assignment_scores.status', 'class_assignments.scale')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('class_assignments.scale as scale')
-            ->selectRaw('COUNT(*) as n')
-            ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
-            ->selectRaw('SUM(class_assignments.points_possible) as possible')
-            ->get();
-
-        $recorded = (int) $totals->sum('n');
-        $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
-
-        // Points work only. A levels mark must never reach a numerator over a
-        // denominator: 3 out of 4 rendered as 75% turns "Meets Expectations" into
-        // a C, which is precisely what a standards scale exists to stop.
-        $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
-        $earned = (float) $pointRows->sum('earned');
-        $possible = (float) $pointRows->sum('possible');
-
-        $levels = $this->levelSummary($membership->id);
+        // THE ARITHMETIC IS App\Support\GradeRecord, the one copy the family's
+        // endpoint calls too: aggregated in SQL over EVERY mark (it used to come
+        // from an unordered `limit(200)`), withdrawn work joined out, the two
+        // scales never added together, a levels mark never a percentage.
+        $summary = GradeRecord::summaryFor((int) $membership->id);
 
         // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
         // "the most recent N" rather than whichever rows the database returned.
@@ -406,21 +376,7 @@ class GradebookController extends TeacherController
             'data' => [
                 'student' => $this->student($membership),
                 // Aggregated over the whole term, never over the page below.
-                'summary' => [
-                    'recorded' => $recorded,
-                    'counted' => (int) $countingRows->sum('n'),
-                    'excused' => (int) $totals->where('status', AssignmentScore::STATUS_EXCUSED)->sum('n'),
-                    // Points work only — see above.
-                    'points_earned' => round($earned, 2),
-                    'points_possible' => round($possible, 2),
-                    'points_counted' => (int) $pointRows->sum('n'),
-                    // Levels work, reported as levels: a distribution and a mean
-                    // level to one decimal. Never a percentage.
-                    'levels' => $levels,
-                    // Excellent / Good / Needs work, reported as a count of each
-                    // word. No mean and no percentage (App\Support\SimpleMark).
-                    'simple' => SimpleMark::summaryFor((int) $membership->id),
-                ],
+                'summary' => $summary,
                 // THE KEY, served with the data rather than hardcoded on each
                 // screen, so "what does a 3 mean?" is answerable everywhere in
                 // the school's own words. See App\Support\PerformanceLevel.
@@ -434,7 +390,7 @@ class GradebookController extends TeacherController
                     'note' => $s->note,
                 ])->values(),
                 'scores_shown' => $scores->count(),
-                'scores_truncated' => $recorded > $scores->count(),
+                'scores_truncated' => $summary['recorded'] > $scores->count(),
             ],
         ], Response::HTTP_OK);
     }
@@ -482,61 +438,6 @@ class GradebookController extends TeacherController
                 authorContactId: null,
             )->afterCommit();
         }
-    }
-
-    /**
-     * One child's performance levels: how many of each, and the mean.
-     *
-     * Aggregated in SQL over EVERY levels mark for the same reason the points
-     * summary is — a total computed from a page stops being a total the moment
-     * the page fills up.
-     *
-     * `missing` is deliberately EXCLUDED from the mean rather than counted as a
-     * 1. On the points scale, work not handed in scores zero and that is fair:
-     * zero out of ten is a real statement about a real denominator. There is no
-     * equivalent on this scale — 1 is not "nothing", it is "Needs Support",
-     * which is a judgement about a child's understanding that nobody made. So a
-     * missing piece of work is counted and shown, and left out of the average.
-     *
-     * @return array{recorded:int, mean:float|null, mean_label:string|null, missing:int, distribution:array<int, array{level:int, label:string, short_label:string, count:int}>}
-     */
-    private function levelSummary(int $membershipId): array
-    {
-        $rows = AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membershipId)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
-            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
-            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('assignment_scores.points_earned as level')
-            ->selectRaw('COUNT(*) as n')
-            ->get();
-
-        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
-        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
-
-        $counted = (int) $scored->sum('n');
-        $sum = (float) $scored->sum(fn ($r) => (float) $r->level * (int) $r->n);
-        $mean = $counted > 0 ? round($sum / $counted, 1) : null;
-
-        return [
-            'recorded' => $counted + $missing,
-            'counted' => $counted,
-            'missing' => $missing,
-            'mean' => $mean,
-            'mean_label' => PerformanceLevel::labelForMean($mean),
-            // Every level is present even at zero, so the shape of the bar chart
-            // does not change as a child's marks come in, and "no 4s yet" is
-            // visible rather than absent.
-            'distribution' => array_map(fn (int $level): array => [
-                'level' => $level,
-                'label' => PerformanceLevel::label($level),
-                'short_label' => PerformanceLevel::shortLabel($level),
-                'count' => (int) $scored->where('level', $level)->sum('n'),
-            ], PerformanceLevel::ALL),
-        ];
     }
 
     /**
