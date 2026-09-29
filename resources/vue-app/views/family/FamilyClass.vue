@@ -438,7 +438,7 @@
                                     <ul class="list-unstyled small mb-0">
                                         <li v-for="n in drillNotes(track)" :key="n.drill.id" class="mt-1">
                                             <span :dir="track.direction" :lang="track.alphabet === 'arabic' ? 'ar' : 'en'" class="fw-semibold">{{ n.drill.set ? n.drill.text : n.letter.glyph }}</span>
-                                            <span class="text-muted" dir="ltr"> {{ n.drill.label }}</span>
+                                            <span class="text-muted" dir="auto"> {{ noteCaption(n.drill) }}</span>
                                             <div class="fst-italic" dir="auto">
                                                 {{ txDrillNote(child, track, n.drill) }}
                                             </div>
@@ -900,7 +900,7 @@
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
-import { letterRuns } from '@/core/helpers/letterRuns';
+import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
@@ -1044,6 +1044,9 @@ const setLabel = (run: any): string => {
 
     return translated === key ? (run.label ?? '') : translated;
 };
+
+/** The caption beside a drill note, in the portal's language (a set's name comes from the same table as the run headings). */
+const noteCaption = (drill: any): string => drillCaption(drill, (id) => setLabel({ id, label: drill.label }));
 
 /**
  * A tile's tooltip: what the letter is called, then how far along it is.

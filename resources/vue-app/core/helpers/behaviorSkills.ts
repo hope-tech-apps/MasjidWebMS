@@ -49,3 +49,17 @@ export function defaultSkillId<T extends PickerSkill>(skills: readonly T[]): str
     const positive = ordered.find((s) => s.polarity === 'positive');
     return (positive ?? ordered[0])?.id ?? '';
 }
+
+/**
+ * What the teacher's screen does with a vocabulary it has just loaded: the list
+ * in picker order, and the skill the picker sits on. A skill the teacher has
+ * already chosen (`currentId`) is kept; only an empty choice takes the default.
+ */
+export function pickerFrom<T extends PickerSkill>(
+    skills: readonly T[], currentId: string | number | '' | null | undefined,
+): { skills: T[]; selectedId: string | number | '' } {
+    return {
+        skills: inPickerOrder(skills),
+        selectedId: currentId ? currentId : defaultSkillId(skills),
+    };
+}

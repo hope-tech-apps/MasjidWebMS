@@ -326,7 +326,7 @@
                                 <button v-for="tile in run.tiles" :key="tile.key" type="button"
                                         class="letter-tile" :class="`letter-tile--${tile.status}`"
                                         :title="tile.title"
-                                        @click="openLetter = openLetter === tile.letterId ? null : tile.letterId">
+                                        @click="openTile = toggledTileKey(openTile, tile)">
                                     <span class="letter-tile__glyph">{{ tile.text }}</span>
                                     <span class="letter-tile__name">{{ tile.name }}</span>
                                 </button>
@@ -337,7 +337,7 @@
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-baseline mb-2">
                                     <h6 class="mb-0">{{ letterHeading }}</h6>
-                                    <button class="btn-close" @click="openLetter = null"></button>
+                                    <button class="btn-close" @click="openTile = null"></button>
                                 </div>
 
                                 <!-- An Arabic word BEGINS at the right, so the
@@ -1316,7 +1316,7 @@
                                     </label>
                                 </div>
                                 <p class="text-muted small mb-0 mt-1">
-                                    Only you and the office can open these. To share a file with families, use Files.
+                                    Attaching a file here does not share it with families. A file already shared from Files stays shared.
                                 </p>
                                 <p v-if="planFileError" class="text-danger small mb-0">{{ planFileError }}</p>
                             </div>
@@ -2163,11 +2163,11 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
-import { defaultSkillId, inPickerOrder, withSkillInserted } from '@/core/helpers/behaviorSkills';
-import { letterRuns } from '@/core/helpers/letterRuns';
+import { pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
+import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planLabel, plansOn, planSaveRequest,
-    subjectClash, subjectKey, takenSubjectKeys, withAttachment, withoutAttachment,
+    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
+    planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -2438,15 +2438,12 @@ const planSaved = ref(false);
 const planError = ref('');
 
 // ---------- files under Activities (T-004.1) ----------
-/** Mirrors `groups.lessons.max_attachments`; the server is the authority. */
-const MAX_PLAN_FILES = 10;
 const planFilePick = ref<string | number>('');
 const planFileBusy = ref(false);
 const planFileError = ref('');
-const planFilesFull = computed(() => planForm.value.attachments.length >= MAX_PLAN_FILES);
+const planFilesFull = computed(() => planFilesFullOf(planForm.value.attachments));
 /** This class's files that the open plan does not list yet. */
-const unattachedResources = computed(() => resources.value.filter(
-    (r: any) => !planForm.value.attachments.some((a: any) => Number(a.id) === Number(r.id))));
+const unattachedResources = computed(() => unattachedFiles(resources.value, planForm.value.attachments));
 
 const attachPickedFile = () => {
     const picked = resources.value.find((r: any) => Number(r.id) === Number(planFilePick.value));
@@ -3663,16 +3660,21 @@ onMounted(loadGroup);
 const selected = ref<any>(null);
 const tracker = ref<any>(null);
 const trackerLoading = ref(false);
-const openLetter = ref<string | null>(null);
+// The open tile's KEY (a drill id for English, a letter id for Arabic); the card's letter is derived from it.
+const openTile = ref<string | null>(null);
 const marking = ref<string | null>(null);
 const letterError = ref('');
 const savingStage = ref(false);
 const stageNote = ref('');
 
-const letter = computed(() => tracker.value?.letters?.find((l: any) => l.id === openLetter.value) ?? null);
-
 // The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.
 const letterRunsOf = computed(() => letterRuns(tracker.value));
+
+const letter = computed(() => {
+    const id = letterIdOfTile(letterRunsOf.value, openTile.value);
+
+    return id === null ? null : tracker.value?.letters?.find((l: any) => String(l.id) === id) ?? null;
+});
 
 /**
  * The tracks this tab can show, and which one it is showing.
@@ -3797,13 +3799,13 @@ const loadLettersOverview = async (which: string = lettersAlphabet.value) => {
  */
 const closeLetters = () => {
     selected.value = null;
-    openLetter.value = null;
+    openTile.value = null;
     loadLettersOverview();
 };
 
 const openLetters = async (s: any) => {
     selected.value = s;
-    openLetter.value = null;
+    openTile.value = null;
     letterError.value = '';
     tracker.value = null;
     trackerLoading.value = true;
@@ -3849,7 +3851,7 @@ const switchAlphabet = async (next: string) => {
     if (next === lettersAlphabet.value) return;
 
     lettersAlphabet.value = next;
-    openLetter.value = null;
+    openTile.value = null;
     letterError.value = '';
     stageNote.value = '';
     tracker.value = null;
@@ -4300,8 +4302,9 @@ const loadAwards = async () => {
         // The behaviour vocabulary, if the payload carries it alongside the log.
         const s = res.data?.data?.skills ?? group.value?.behavior_skills ?? [];
         if (Array.isArray(s) && s.length) {
-            skills.value = inPickerOrder(s);
-            if (!awardSkillId.value) awardSkillId.value = defaultSkillId(s);
+            const picker = pickerFrom(s, awardSkillId.value);
+            skills.value = picker.skills;
+            awardSkillId.value = picker.selectedId;
         }
     } catch {
         awardError.value = 'The behaviour record could not be loaded.';
@@ -4318,8 +4321,9 @@ const loadSkills = async () => {
         const res = await TeacherApiService.get(`/api/teacher/masjids/${masjidId.value}/behavior-skills`);
         const s = rowsOf(res.data?.data);
         if (s.length) {
-            skills.value = inPickerOrder(s);
-            if (!awardSkillId.value) awardSkillId.value = defaultSkillId(s);
+            const picker = pickerFrom(s, awardSkillId.value);
+            skills.value = picker.skills;
+            awardSkillId.value = picker.selectedId;
         }
     } catch {
         // Falls back to whatever the awards payload carried.

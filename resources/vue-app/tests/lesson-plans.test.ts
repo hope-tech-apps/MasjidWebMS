@@ -22,6 +22,9 @@ import {
     subjectKey,
     takenSubjectKeys,
     withAttachment,
+    MAX_PLAN_FILES,
+    planFilesFull,
+    unattachedFiles,
     withoutAttachment,
 } from '../core/helpers/lessonPlans.ts';
 
@@ -302,4 +305,45 @@ test('a plan switch loads the subject and week lists once', () => {
     const sync = fn('syncPlanForm');
     assert.equal((sync.match(/loadCurriculum\(/g) ?? []).length, 1);
     assert.doesNotMatch(view, /syncCurriculum/);
+});
+
+test('the plan file cap is the server default, and the screen stops offering files exactly at it', () => {
+    // The server's limit lives in config/groups.php; a constant that drifts from it lets the screen
+    // offer a 10th file the server then refuses (or refuse a file the server would take).
+    const config = readFileSync(new URL('../../../config/groups.php', import.meta.url), 'utf8');
+    const server = config.match(/'max_attachments' => \(int\) env\('GROUP_LESSON_MAX_ATTACHMENTS', (\d+)\)/);
+    assert.ok(server, 'config/groups.php names the cap');
+    assert.equal(MAX_PLAN_FILES, Number(server![1]));
+
+    const listed = (n: number) => Array.from({ length: n }, (_, i) => file(i + 1));
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES - 1)), false);
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES)), true);
+    assert.equal(planFilesFull(listed(MAX_PLAN_FILES + 1)), true);
+    assert.equal(planFilesFull(null), false);
+});
+
+test('the picker offers this class\u2019s files that the plan does not list yet, and nothing it already lists', () => {
+    const all = [file(1), file(2), file(3)];
+    assert.deepEqual(unattachedFiles(all, [file(2)]).map((f) => f.id), [1, 3]);
+    assert.deepEqual(unattachedFiles(all, []).map((f) => f.id), [1, 2, 3]);
+    assert.deepEqual(unattachedFiles(all, null).map((f) => f.id), [1, 2, 3]);
+    assert.deepEqual(unattachedFiles(all, all), []);
+    // Ids compare as numbers: a string id from a form does not hide or duplicate the file.
+    assert.deepEqual(unattachedFiles(all, [{ id: '2' as unknown as number }]).map((f) => f.id), [1, 3]);
+});
+
+test('the day view wires attach, detach, upload and the picker through those helpers', () => {
+    assert.match(view, /const planFilesFull = computed\(\(\) => planFilesFullOf\(planForm\.value\.attachments\)\);/);
+    assert.match(view, /const unattachedResources = computed\(\(\) => unattachedFiles\(resources\.value, planForm\.value\.attachments\)\);/);
+    assert.match(fn('attachPickedFile'), /withAttachment\(planForm\.value\.attachments, picked, MAX_PLAN_FILES\)/);
+    assert.match(fn('detachPlanFile'), /withoutAttachment\(planForm\.value\.attachments, id\)/);
+    assert.match(fn('uploadPlanFile'), /withAttachment\(planForm\.value\.attachments, created, MAX_PLAN_FILES\)/);
+    assert.match(fn('uploadPlanFile'), /if \(!file \|\| planFilesFull\.value\) return;/);
+    assert.match(view, /:disabled="planFilesFull" @change="attachPickedFile"/);
+    assert.match(view, /\{\{ planForm\.attachments\.length \}\} \/ \{\{ MAX_PLAN_FILES \}\}/);
+});
+
+test('the Files hint does not claim only staff can open a file the class already shares with families', () => {
+    assert.doesNotMatch(view, /Only you and the office can open these/);
+    assert.match(view, /Attaching a file here does not share it with families\. A file already shared from Files stays shared\./);
 });

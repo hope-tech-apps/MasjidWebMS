@@ -89,3 +89,41 @@ export function letterRuns(tracker: any): LetterRun[] {
         };
     });
 }
+
+/**
+ * The tile a tap on `tile` leaves open, given the one open now (T-004.2 follow-up).
+ *
+ * The open card is tracked by TILE key, not by letter id: the capital and the
+ * lower-case tile of one letter share a letter id, so toggling on the letter id
+ * closed the card when a teacher tapped the other case of the letter she was
+ * already looking at. Tapping the open tile again still closes it.
+ */
+export function toggledTileKey(open: string | null, tile: Pick<LetterTile, 'key'>): string | null {
+    return open === tile.key ? null : tile.key;
+}
+
+/** The letter the open tile belongs to (its card lists both cases), or null when nothing is open. */
+export function letterIdOfTile(runs: readonly LetterRun[], key: string | null): string | null {
+    if (key === null) return null;
+
+    for (const run of runs) {
+        const tile = run.tiles.find((t) => t.key === key);
+        if (tile) return tile.letterId;
+    }
+
+    return null;
+}
+
+/**
+ * The words that sit beside a drill in a notes list. A drill that belongs to a
+ * set (English `a.upper`) is captioned with the portal's OWN name for the set,
+ * asked through `setName`; the server's `label` ("Capital A") is English text and
+ * would appear untranslated in every other portal language. A drill with no set
+ * (Arabic) keeps its label, which is the letter's own name.
+ */
+export function drillCaption(
+    drill: { set?: string | null; label?: string | null },
+    setName: (setId: string) => string,
+): string {
+    return drill.set ? setName(String(drill.set)) : String(drill.label ?? '');
+}

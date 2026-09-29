@@ -6,7 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultSkillId, inPickerOrder, polarityRank, withSkillInserted } from '../core/helpers/behaviorSkills.ts';
+import { readFileSync } from 'node:fs';
+import { defaultSkillId, inPickerOrder, pickerFrom, polarityRank, withSkillInserted } from '../core/helpers/behaviorSkills.ts';
 
 const skills = [
     { id: 1, label: 'Argues', polarity: 'negative' },
@@ -21,9 +22,28 @@ test('positives, then negatives, then unrecognised, by label within each', () =>
 });
 
 test('ordering never mutates its argument', () => {
-    const before = skills.map((s) => s.id);
-    inPickerOrder(skills);
-    assert.deepEqual(skills.map((s) => s.id), before);
+    // A FRESH list, in payload order: the shared fixture above may already have been sorted in place by an earlier test.
+    const payload = [
+        { id: 1, label: 'Argues', polarity: 'negative' },
+        { id: 2, label: 'Zealous', polarity: 'positive' },
+        { id: 3, label: 'Kind', polarity: 'positive' },
+    ];
+    const ordered = inPickerOrder(payload);
+    assert.deepEqual(payload.map((s) => s.id), [1, 2, 3], 'the reactive array is left as it was');
+    assert.notEqual(ordered, payload);
+    assert.deepEqual(ordered.map((s) => s.id), [3, 2, 1]);
+});
+
+test('labels that differ only in case or accent tie, as the server collation ties them, so payload order holds', () => {
+    // utf8mb4_unicode_ci (config/database.php) treats these as equal; a case- or accent-sensitive compare would reorder them.
+    const asPaid = [
+        { id: 1, label: 'Éclair', polarity: 'positive' },
+        { id: 2, label: 'eclair', polarity: 'positive' },
+    ];
+    assert.deepEqual(inPickerOrder(asPaid).map((s) => s.id), [1, 2]);
+    assert.deepEqual(inPickerOrder([...asPaid].reverse()).map((s) => s.id), [2, 1]);
+    assert.deepEqual(inPickerOrder([{ id: 1, label: 'kind', polarity: 'positive' }, { id: 2, label: 'Kind', polarity: 'positive' }]).map((s) => s.id), [1, 2]);
+    assert.deepEqual(inPickerOrder([{ id: 2, label: 'Kind', polarity: 'positive' }, { id: 1, label: 'kind', polarity: 'positive' }]).map((s) => s.id), [2, 1]);
 });
 
 test('polarityRank mirrors the server CASE', () => {
@@ -44,4 +64,52 @@ test('a new skill is inserted in picker order, not appended', () => {
     assert.deepEqual(next.map((s) => s.label), ['Helpful', 'Kind', 'Zealous', 'Argues', 'Late', 'Odd']);
     const neg = withSkillInserted(inPickerOrder(skills), { id: 10, label: 'Bullies', polarity: 'negative' });
     assert.deepEqual(neg.map((s) => s.label), ['Kind', 'Zealous', 'Argues', 'Bullies', 'Late', 'Odd']);
+});
+
+test('labels sort without regard to case, so "apple" comes before "Banana" as the server orders them', () => {
+    const mixed = [
+        { id: 1, label: 'Banana', polarity: 'positive' },
+        { id: 2, label: 'apple', polarity: 'positive' },
+        { id: 3, label: 'Cherry', polarity: 'positive' },
+    ];
+    assert.deepEqual(inPickerOrder(mixed).map((s) => s.label), ['apple', 'Banana', 'Cherry']);
+});
+
+test('with no positive skill the picker opens on the FIRST NEGATIVE BY LABEL, not the first in the payload', () => {
+    const negatives = [
+        { id: 1, label: 'Zebra', polarity: 'negative' },
+        { id: 2, label: 'Argues', polarity: 'negative' },
+    ];
+    assert.equal(defaultSkillId(negatives), 2);
+});
+
+test('inserting a skill that is already listed replaces it rather than duplicating it', () => {
+    const list = inPickerOrder(skills);
+    const next = withSkillInserted(list, { id: 3, label: 'Kinder', polarity: 'positive' });
+    assert.equal(next.length, list.length);
+    assert.deepEqual(next.filter((s) => s.id === 3).map((s) => s.label), ['Kinder']);
+    // The id match is by string value, so a payload id typed differently is still the same skill.
+    assert.equal(withSkillInserted(list, { id: '3', label: 'Kinder', polarity: 'positive' }).length, list.length);
+});
+
+test('a freshly loaded vocabulary is reordered and the picker opens on a positive, keeping a choice already made', () => {
+    const before = skills.map((s) => s.id);
+    const fresh = pickerFrom(skills, '');
+    assert.deepEqual(fresh.skills.map((s) => s.label), ['Kind', 'Zealous', 'Argues', 'Late', 'Odd']);
+    assert.equal(fresh.selectedId, 3, 'an empty choice opens on the first positive skill, not skills[0]');
+    assert.deepEqual(skills.map((s) => s.id), before, 'the payload array is never sorted in place');
+
+    assert.equal(pickerFrom(skills, 4).selectedId, 4, 'a skill the teacher already chose is kept');
+    assert.equal(pickerFrom([], '').selectedId, '');
+});
+
+/** The teacher screen must load and grow its vocabulary through these, or the tests above pin nothing. */
+const teacher = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+
+test('the teacher screen orders what it loads and what a teacher adds through the helpers', () => {
+    assert.equal((teacher.match(/const picker = pickerFrom\(s, awardSkillId\.value\);/g) ?? []).length, 2, 'both loaders');
+    assert.equal((teacher.match(/skills\.value = picker\.skills;/g) ?? []).length, 2);
+    assert.equal((teacher.match(/awardSkillId\.value = picker\.selectedId;/g) ?? []).length, 2);
+    assert.match(teacher, /skills\.value = withSkillInserted\(skills\.value, created\);/);
+    assert.doesNotMatch(teacher, /skills\.value = \[\.\.\.skills\.value, created\]|skills\.value\.push\(/, 'a new skill is never appended out of order');
 });

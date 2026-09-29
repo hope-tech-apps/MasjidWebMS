@@ -175,6 +175,27 @@ export function withAttachment<T extends PlanAttachment>(list: readonly T[], fil
     return [...list, file];
 }
 
+/**
+ * The most files one plan lists. Mirrors `groups.lessons.max_attachments`
+ * (config/groups.php, default 10); the server is the authority, and
+ * tests/lesson-plans.test.ts fails when the two defaults drift apart.
+ */
+export const MAX_PLAN_FILES = 10;
+
+/** True when the plan lists as many files as it may, so the screen stops offering more. */
+export function planFilesFull(list: readonly PlanAttachment[] | null | undefined): boolean {
+    return (list?.length ?? 0) >= MAX_PLAN_FILES;
+}
+
+/** This class's files that the open plan does not list yet: what the "Add from this class's files" picker offers. */
+export function unattachedFiles<T extends PlanAttachment>(
+    files: readonly T[], attached: readonly PlanAttachment[] | null | undefined,
+): T[] {
+    const taken = new Set((attached ?? []).map((a) => Number(a.id)));
+
+    return files.filter((f) => !taken.has(Number(f.id)));
+}
+
 /** Detach one file from the form's list. The file itself stays in the class's Files. */
 export function withoutAttachment<T extends PlanAttachment>(list: readonly T[], id: number): T[] {
     return list.filter((a) => Number(a.id) !== Number(id));
