@@ -1,0 +1,218 @@
+<?php
+
+namespace App\Support;
+
+use App\Models\BehaviorAward;
+use App\Models\BehaviorSkill;
+use App\Models\BehaviorWeek;
+use App\Models\Group;
+use App\Models\GroupMembership;
+use App\Models\Masjid;
+use App\Models\PrizeLedgerEntry;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Date;
+
+/**
+ * The office's reconciliation view of the class store (T-003.4): for each class, what was
+ * minted, spent, given back, paid out and written off, what is still held, and whether the
+ * ledger still agrees with the points it came from.
+ *
+ * ## CLASS TOTALS ONLY. NO CHILD IS NAMED.
+ *
+ * The office administers the store but does not stand in a class, so it reads TOTALS, never a
+ * child's balance: no name, no roster id, no per-student row, no list of who holds what.
+ * (GroupAudience::mayReceiveClassStoreTotals is the decision; an office-run school-wide
+ * store, which would let an administrator read every child's balance, is deliberately not
+ * built.) The per-student grouping below happens in the database and collapses to counts
+ * before anything leaves this class.
+ *
+ * ## What "reconciles" means
+ *
+ * `expected_minted` is recomputed from the awards themselves: for each of the last `$weeks`
+ * closed weeks since the store began (`bucks_from`), `floor(positive points / points_per_buck)`
+ * for each child, summed. `minted` is what the ledger holds for the same weeks. They differ
+ * only for reasons the rules allow: a late change to a week older than the two-week
+ * adjustment window, a clawback clamped at a zero balance, or a child who left the class. A
+ * difference is therefore a question for the office, not an error, and the view says so.
+ * `negative_balances` counts children whose ledger sums below zero: it should always be 0.
+ */
+final class ClassStoreReconciliation
+{
+    public const DEFAULT_WEEKS = 8;
+    public const MAX_WEEKS = 26;
+
+    /**
+     * @param  Collection<int,Group>  $groups
+     * @return array<string,mixed>
+     */
+    public static function forSchool(Masjid $masjid, Collection $groups, int $weeks = self::DEFAULT_WEEKS): array
+    {
+        $weeks = max(1, min(self::MAX_WEEKS, $weeks));
+        $tz = SchoolPointsWeek::timezone((int) $masjid->id);
+        $settings = ClassStoreSettings::for((int) $masjid->id);
+        $window = self::window($tz, $settings['bucks_from'], $weeks);
+        $groupIds = $groups->pluck('id')->map(fn ($id): int => (int) $id)->all();
+
+        $byKind = PrizeLedgerEntry::query()
+            ->whereIn('group_id', $groupIds)
+            ->groupBy('group_id', 'kind')
+            ->selectRaw('group_id, kind, SUM(amount) as bucks')
+            ->get()
+            ->groupBy('group_id');
+
+        // Per child, in the database, and only ever counted: nothing below keeps a child.
+        $holdings = PrizeLedgerEntry::query()
+            ->whereIn('group_id', $groupIds)
+            ->groupBy('group_id', 'group_membership_id')
+            ->selectRaw('group_id, group_membership_id, SUM(amount) as bucks')
+            ->get()
+            ->groupBy('group_id');
+
+        $classes = $groups->map(function (Group $group) use ($byKind, $holdings, $window, $settings): array {
+            $kinds = collect($byKind->get($group->id, []))->mapWithKeys(fn ($r) => [$r->kind => (int) $r->bucks]);
+            $students = collect($holdings->get($group->id, []))->map(fn ($r): int => (int) $r->bucks);
+
+            $minted = (int) ($kinds[PrizeLedgerEntry::KIND_EARNED] ?? 0) + (int) ($kinds[PrizeLedgerEntry::KIND_ADJUSTED] ?? 0);
+            $inWindow = $window === [] ? 0 : self::mintedIn($group, $window);
+            $expected = $window === [] ? 0 : self::expectedFromPoints($group, $window, $settings['points_per_buck']);
+
+            return [
+                'group_id' => (int) $group->id,
+                'name' => $group->name,
+                'minted' => $minted,
+                'redeemed' => -(int) ($kinds[PrizeLedgerEntry::KIND_REDEEMED] ?? 0),
+                'reversed' => (int) ($kinds[PrizeLedgerEntry::KIND_REVERSAL] ?? 0),
+                'cashed_out' => -(int) ($kinds[PrizeLedgerEntry::KIND_CASHED_OUT] ?? 0),
+                'expired' => -(int) ($kinds[PrizeLedgerEntry::KIND_EXPIRED] ?? 0),
+                'outstanding' => (int) $students->sum(),
+                'children_holding' => $students->filter(fn (int $b) => $b > 0)->count(),
+                'negative_balances' => $students->filter(fn (int $b) => $b < 0)->count(),
+                'window_minted' => $inWindow,
+                'window_expected' => $expected,
+                'window_difference' => $inWindow - $expected,
+                'weeks_converted' => $window === [] ? 0 : self::convertedWeeks((int) $group->id, $window),
+            ];
+        })->values();
+
+        $sum = fn (string $field): int => (int) $classes->sum($field);
+
+        return [
+            'settings' => [
+                'points_per_buck' => $settings['points_per_buck'],
+                'paper_bucks_enabled' => $settings['paper_bucks_enabled'],
+                'bucks_from' => $settings['bucks_from'],
+            ],
+            'timezone' => $tz,
+            'window' => [
+                'weeks' => count($window),
+                'requested_weeks' => $weeks,
+                'from' => $window === [] ? null : end($window)->startDate(),
+                'to' => $window === [] ? null : $window[0]->lastDate(),
+            ],
+            'classes' => $classes,
+            'totals' => [
+                'minted' => $sum('minted'),
+                'redeemed' => $sum('redeemed'),
+                'reversed' => $sum('reversed'),
+                'cashed_out' => $sum('cashed_out'),
+                'expired' => $sum('expired'),
+                'outstanding' => $sum('outstanding'),
+                'children_holding' => $sum('children_holding'),
+                'negative_balances' => $sum('negative_balances'),
+                'window_minted' => $sum('window_minted'),
+                'window_expected' => $sum('window_expected'),
+                'window_difference' => $sum('window_difference'),
+            ],
+        ];
+    }
+
+    /**
+     * The closed weeks in view, newest first: at most `$weeks`, never before the week that
+     * holds `bucks_from`, and none at all while the store has not started.
+     *
+     * @return list<PointsWeek>
+     */
+    private static function window(string $tz, ?string $bucksFrom, int $weeks): array
+    {
+        if ($bucksFrom === null) {
+            return [];
+        }
+
+        $first = PointsWeek::startingOn($bucksFrom, $tz);
+
+        if ($first === null) {
+            return [];
+        }
+
+        $out = [];
+        $week = PointsWeek::containing(CarbonImmutable::instance(Date::now()), $tz)->previous();
+
+        while (count($out) < $weeks && $week->startDate() >= $first->startDate()) {
+            $out[] = $week;
+            $week = $week->previous();
+        }
+
+        return $out;
+    }
+
+    /** @param  list<PointsWeek>  $window */
+    private static function mintedIn(Group $group, array $window): int
+    {
+        return (int) PrizeLedgerEntry::query()
+            ->where('group_id', $group->id)
+            ->whereIn('kind', PrizeLedgerEntry::MINTED_KINDS)
+            ->whereIn('week_start', array_map(fn (PointsWeek $w) => $w->startDate(), $window))
+            ->sum('amount');
+    }
+
+    /** @param  list<PointsWeek>  $window */
+    private static function convertedWeeks(int $groupId, array $window): int
+    {
+        return (int) BehaviorWeek::query()
+            ->where('group_id', $groupId)
+            ->whereIn('week_start', array_map(fn (PointsWeek $w) => $w->startDate(), $window))
+            ->whereNotNull('prizes_converted_at')
+            ->count();
+    }
+
+    /**
+     * What the awards say the window should have minted: the SAME definition BucksMinter uses
+     * (positive points only, whole bucks per child per week), recomputed from the awards.
+     *
+     * @param  list<PointsWeek>  $window
+     */
+    private static function expectedFromPoints(Group $group, array $window, int $rate): int
+    {
+        $newest = $window[0];
+        $oldest = end($window);
+        $starts = array_map(fn (PointsWeek $w) => $w->startDate(), $window);
+
+        $eligible = GroupMembership::query()->where('group_id', $group->id)->participants()->current()->pluck('id')
+            ->merge(PrizeLedgerEntry::query()->where('group_id', $group->id)->whereIn('kind', PrizeLedgerEntry::MINTED_KINDS)
+                ->whereIn('week_start', $starts)->pluck('group_membership_id'))
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->flip();
+
+        $tz = $newest->timezone();
+        $sums = [];
+
+        BehaviorAward::query()
+            ->where('group_id', $group->id)
+            ->where('skill_polarity', '<>', BehaviorSkill::POLARITY_NEGATIVE)
+            ->where('points', '>', 0)
+            ->awardedWithin($oldest->startUtc(), $newest->endUtc())
+            ->get(['group_membership_id', 'points', 'awarded_at'])
+            ->each(function (BehaviorAward $a) use (&$sums, $tz, $eligible): void {
+                if (! $eligible->has((int) $a->group_membership_id)) {
+                    return;
+                }
+
+                $key = (int) $a->group_membership_id.'|'.PointsWeek::containing(CarbonImmutable::instance($a->awarded_at), $tz)->startDate();
+                $sums[$key] = ($sums[$key] ?? 0) + (int) $a->points;
+            });
+
+        return (int) collect($sums)->sum(fn (int $points) => intdiv($points, max(1, $rate)));
+    }
+}

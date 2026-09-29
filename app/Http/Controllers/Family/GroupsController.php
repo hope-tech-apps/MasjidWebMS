@@ -8,6 +8,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
+use App\Support\SchoolSettings;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -262,6 +263,19 @@ class GroupsController extends FamilyController
             'may_receive_media' => $this->audience->mayReceive(
                 $contact, $group, GroupAudience::DISCLOSURE_MEDIA
             ),
-        ];
+        ] + $this->classStoreFlag($group);
+    }
+
+    /**
+     * `['class_store' => true]` when this school runs the class store (T-003.4), else
+     * NOTHING: the key is added only when on, so a family at a school without the grant gets
+     * exactly the payload it always got. The portal shows the Manara Bucks section only when
+     * it reads `true`.
+     *
+     * @return array<string,bool>
+     */
+    private function classStoreFlag(Group $group): array
+    {
+        return SchoolSettings::classStore(SchoolSettings::org($group->masjid_id)) ? ['class_store' => true] : [];
     }
 }

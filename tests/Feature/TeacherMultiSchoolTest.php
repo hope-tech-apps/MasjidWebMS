@@ -386,6 +386,15 @@ class TeacherMultiSchoolTest extends TestCase
         $skillA = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolA->id)->firstOrFail();
         $skillB = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolB->id)->firstOrFail();
 
+        // The class store is OFF for every organisation by default; the sweep must exercise its
+        // routes for real (a control that answers 403 because the school never switched the
+        // store on would prove nothing), so both schools have it on, and paper cash-out too so
+        // that route and the hand-out are swept and not skipped (W6, T-003.4).
+        foreach ([$this->schoolA, $this->schoolB] as $school) {
+            $school->forceFill(['capability_overrides' => ['class_store' => true]])->save();
+            \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
+        }
+
         // ALL fixtures before the first request (see TeacherRealmWorld).
         $a = TeacherRealmWorld::seed($this->schoolA, $this->classA, $this->teacher, $skillA, 'A', true);
         $b = TeacherRealmWorld::seed($this->schoolB, $this->classB, $this->teacher, $skillB, 'B', true);
@@ -663,6 +672,24 @@ class TeacherMultiSchoolTest extends TestCase
 
             // -- how the class's points read (T-003.2): a view choice on the class, no row of a child
             'PUT /groups/{group_id}/points-period' => ['body' => fn () => ['points_period' => 'weekly']],
+
+            // -- the class store (T-003.4, W6): the realm's +5 write verbs. A redemption and its
+            // reversal carry a real prize and a real entry of the caller's own class for the
+            // control; a foreign prize in the body must be a refusal (422), and a foreign entry or
+            // student in the URL a 404. The two prize writes name no row in their body (their
+            // title is the same in every world), so only the URL's school and class can be foreign.
+            'POST /groups/{group_id}/prizes' => [
+                'body' => fn () => ['title' => 'Sweep prize', 'cost_bucks' => 3],
+            ],
+            'PUT /groups/{group_id}/prizes/{prize_id}' => [
+                'body' => fn () => ['title' => 'Sweep prize edited', 'cost_bucks' => 4, 'stock' => 9],
+            ],
+            'POST /groups/{group_id}/members/{membership_id}/prizes/redeem' => [
+                'body' => fn (TeacherRealmWorld $w) => ['prize_id' => $w->prize->id],
+                'refuse' => $bodyRefusal,
+            ],
+            'POST /groups/{group_id}/members/{membership_id}/prizes/cash-out' => ['body' => fn () => ['amount' => 1]],
+            'POST /groups/{group_id}/prize-entries/{entry_id}/reverse' => ['body' => fn () => ['note' => 'Sweep.']],
 
             // -- attendance
             'PUT /groups/{group_id}/attendance' => [

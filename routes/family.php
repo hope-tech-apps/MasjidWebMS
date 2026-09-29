@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Family\ArabicLettersController;
 use App\Http\Controllers\Family\BehaviorAwardsController;
+use App\Http\Controllers\Family\ClassStoreController;
 use App\Http\Controllers\Family\FamilyAuthController;
 use App\Http\Controllers\Family\FamilyPasswordController;
 use App\Http\Controllers\Family\GradesController;
@@ -411,6 +412,12 @@ Route::prefix('family')
 
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
+                // Manara Bucks (T-003.4, W6): the child's balance and history. A GET, so the
+                // realm's counted write list is untouched: a parent cannot spend, redeem or
+                // reverse anything, the store is the class's teachers'. The ward edge is the
+                // one awards use (GroupAudience), and `capability:class_store` keeps a school
+                // that has not switched the store on exactly as it was. No group-wide variant.
+                Route::get('/bucks', [ClassStoreController::class, 'forMember'])->middleware('capability:class_store');
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);
                 Route::get('/letters', [ArabicLettersController::class, 'forMember']);
                 // The teacher's daily Arabic notes on this child (owner, 2026-09-17).

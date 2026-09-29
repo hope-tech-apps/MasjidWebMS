@@ -738,6 +738,12 @@ Route::prefix('admin')->group(function () {
             // authorize(), so a non-super never sees validation output.
             Route::get('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'show']);
             Route::put('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'update']);
+            // SuperAdmin-only: how a school's points turn into Manara Bucks (T-003.4): points per
+            // buck, the day points start to count, and whether the paper cash-out is offered
+            // (OFF). Whether the store exists at all is the `class_store` capability above.
+            // GET checks in the controller, PUT in the request's authorize().
+            Route::get('{masjid_id}/class-store-settings', [\App\Http\Controllers\AdminDashboard\ClassStoreSettingsController::class, 'show']);
+            Route::put('{masjid_id}/class-store-settings', [\App\Http\Controllers\AdminDashboard\ClassStoreSettingsController::class, 'update']);
             // SuperAdmin-only: rebuild the favicon, touch icon and share image
             // from the current logo (Studio W2 S8, BrandAssets). A per-org
             // decision on a live organisation: it adds three keys to its
@@ -1412,6 +1418,24 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/awards', 'forMember')
                             ->middleware('permission:view contacts');
                     });
+
+                // THE CLASS STORE, the office's half (T-003.4, W6, R4): the school-wide prize
+                // list and the reconciliation view. Behind `capability:class_store` (OFF for
+                // every organisation until a SuperAdmin decides) and the CONTACTS permissions,
+                // like the behaviour vocabulary above. The office keeps the SCHOOL-WIDE list
+                // and reads CLASS TOTALS: it never reads a child's balance, never writes a
+                // class's own prize, and there is no ledger route at all. A prize is retired
+                // with `is_active`; there is no delete.
+                Route::prefix('{masjid_id}/prizes')
+                    ->middleware('capability:class_store')
+                    ->controller(\App\Http\Controllers\AdminDashboard\PrizesController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::put('/{prize_id}', 'update')->middleware('permission:manage contacts')->whereNumber('prize_id');
+                    });
+                Route::get('{masjid_id}/prize-reconciliation', [\App\Http\Controllers\AdminDashboard\PrizesController::class, 'reconciliation'])
+                    ->middleware(['capability:class_store', 'permission:view contacts']);
 
                 // Qur'an memorization — hifz tracking (T-014).
                 //
