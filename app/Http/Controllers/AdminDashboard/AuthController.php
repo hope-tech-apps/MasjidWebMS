@@ -555,8 +555,13 @@ class AuthController extends Controller
             $authUser = Auth::user();
             $user = User::findOrFail($authUser->id);
 
+            // NOT `email`: the sign-in address is an identity, and the request
+            // has already refused a value other than the one this account holds
+            // (UpdateProfileRequest). Leaving it out here means even a caller
+            // that skipped the request could not write it, and a case-only
+            // difference cannot rewrite the stored spelling either.
             $user->update($request->safe()->only([
-                'name', 'email', 'phone', 'password',
+                'name', 'phone', 'password',
             ]));
 
             if ($user && $request->hasFile('avatar')) {
