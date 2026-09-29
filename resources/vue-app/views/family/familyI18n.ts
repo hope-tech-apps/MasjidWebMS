@@ -456,6 +456,29 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_missing: "Not handed in",
         mark_excused: "Excused",
         marks_truncated: "Showing the most recent {x}.",
+        // ------------------------------------------ weighted marks (W3)
+        // A weight is what the teacher gave one type of work (or one piece), so a
+        // parent can read why a Test moves the figure more than a Homework. The
+        // standard and its focus are the SCHOOL'S guide's words and are printed as
+        // written; this line only says where they came from.
+        marks_weighted_average: "Weighted average",
+        marks_weighted_note: "Some work counts for more than other work, as your child's teacher has set for each type of work.",
+        marks_weighted_level: "Weighted level {x}",
+        marks_untyped_one: "{x} piece of work has no type, so it is left out of the weighted average.",
+        marks_untyped_two: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_untyped_few: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_untyped_many: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_section_subjects: "By subject",
+        marks_no_subject: "No subject",
+        marks_section_types: "By type of work",
+        marks_type_counts: "counts {x}",
+        marks_weighted_short: "weighted {x}",
+        mark_type_test: "Test",
+        mark_type_quiz: "Quiz",
+        mark_type_homework: "Homework",
+        mark_type_classwork: "Classwork",
+        mark_type_other: "Other",
+        marks_standard_source: "From the school's pacing guide",
     },
     ar: {
         // ------------------------------------------------------------ shared
@@ -694,6 +717,25 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_missing: "لم يُسلَّم",
         mark_excused: "معفى منه",
         marks_truncated: "تُعرض أحدث {x} من الدرجات.",
+        // ------------------------------------------ weighted marks (W3)
+        marks_weighted_average: "المعدّل الموزون",
+        marks_weighted_note: "تُحتسب بعض الأعمال بوزن أكبر من غيرها، بحسب ما حدّده المعلّم لكل نوع من الأعمال.",
+        marks_weighted_level: "المستوى الموزون {x}",
+        marks_untyped_one: "عمل واحد بلا نوع، لذلك لم يُحتسب في المعدّل الموزون.",
+        marks_untyped_two: "عملان بلا نوع، لذلك لم يُحتسبا في المعدّل الموزون.",
+        marks_untyped_few: "{x} أعمال بلا نوع، لذلك لم تُحتسب في المعدّل الموزون.",
+        marks_untyped_many: "{x} عملًا بلا نوع، لذلك لم تُحتسب في المعدّل الموزون.",
+        marks_section_subjects: "حسب المادة",
+        marks_no_subject: "بلا مادة",
+        marks_section_types: "حسب نوع العمل",
+        marks_type_counts: "وزنه {x}",
+        marks_weighted_short: "موزون {x}",
+        mark_type_test: "اختبار",
+        mark_type_quiz: "اختبار قصير",
+        mark_type_homework: "واجب منزلي",
+        mark_type_classwork: "عمل صفي",
+        mark_type_other: "أخرى",
+        marks_standard_source: "من الدليل الزمني للمنهج في المدرسة",
     },
 };
 
