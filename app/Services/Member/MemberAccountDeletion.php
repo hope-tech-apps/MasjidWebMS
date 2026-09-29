@@ -9,6 +9,7 @@ use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
+use App\Support\ContactIdentity;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -424,6 +425,14 @@ class MemberAccountDeletion
      * misses holds a token from before that change; it expires within the family
      * guard's 30 days, and Delete account in the app still works for them.
      *
+     * THE ADDRESS MUST BE THE ONE THAT WAS PROVED, EXACTLY. The code that
+     * authorised this call was mailed to the TYPED address, and `login_email` is
+     * utf8mb4_unicode_ci on production, where `victim@gmaíl.com` = `victim@gmail.com`.
+     * Trusting the query would let somebody who owns the look-alike domain prove
+     * THAT mailbox and delete the victim's account. The query only narrows; the
+     * candidates are filtered to the exact address (ContactIdentity) before they
+     * are counted, so a look-alike deletes nobody.
+     *
      * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int}|null
      */
     public function deleteByAddress(string $submittedEmail, string $via, ?string $ip = null): ?array
@@ -434,17 +443,20 @@ class MemberAccountDeletion
             return null;
         }
 
-        $email = mb_strtolower(trim($submittedEmail));
+        $email = ContactIdentity::submittedAddress($submittedEmail);
 
-        if ($email === '') {
+        if ($email === null) {
             return null;
         }
 
-        $matches = Contact::query()
-            ->whereNotNull('login_email')
-            ->whereRaw('LOWER(login_email) = ?', [$email])
-            ->limit(2)
-            ->get();
+        $matches = ContactIdentity::keepExactMatches(
+            Contact::query()
+                ->whereNotNull('login_email')
+                ->whereRaw('LOWER(login_email) = ?', [$email])
+                ->get(),
+            'login_email',
+            $email,
+        );
 
         // Two contacts on one address is ambiguous, and an identity service must
         // not guess which person to delete.
