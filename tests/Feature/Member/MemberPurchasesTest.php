@@ -160,6 +160,20 @@ class MemberPurchasesTest extends TestCase
     }
 
     #[Test]
+    public function a_paid_status_without_a_payment_method_is_not_a_money_leg(): void
+    {
+        $form = $this->form($this->a);
+        $me = $this->member($this->a, 'amina@example.test');
+
+        $listed = $this->formResponse($this->a, $form, 'amina@example.test');
+        // `payment_status = paid` and `payment_method` NULL: a half-written money leg, or an
+        // admin edit. Only the method clause excludes it: the status alone says paid.
+        $this->formResponse($this->a, $form, 'amina@example.test', ['payment_method' => null]);
+
+        $this->assertSame([$listed->id], $this->keys($this->purchases->formPurchases($me)));
+    }
+
+    #[Test]
     public function a_meal_order_is_listed_only_when_paid_and_by_address_or_contact(): void
     {
         $me = $this->member($this->a, 'amina@example.test');
@@ -227,6 +241,34 @@ class MemberPurchasesTest extends TestCase
         $this->orderRecords($order, OrderItem::RECORD_FORM_RESPONSE, $meal->id);
         $this->orderRecords($order, OrderItem::RECORD_DONATION, $response->id);
         $this->orderRecords($order, OrderItem::RECORD_DONATION, $meal->id);
+
+        $this->assertSame([$response->id], $this->keys($this->purchases->formPurchases($me)));
+        $this->assertSame([$meal->id], $this->keys($this->purchases->mealPurchases($me)));
+    }
+
+    #[Test]
+    public function an_order_line_of_another_organisation_hides_none_of_this_ones_rows(): void
+    {
+        $me = $this->member($this->a, 'amina@example.test');
+        $form = $this->form($this->a);
+
+        $response = $this->formResponse($this->a, $form, 'amina@example.test');
+        $meal = $this->mealOrder($this->a, 'amina@example.test');
+
+        // The control: a line of THIS organisation's own order that records a row hides it, so
+        // the fixture reaches the exclusion at all.
+        $ownedResponse = $this->formResponse($this->a, $form, 'amina@example.test');
+        $ownedMeal = $this->mealOrder($this->a, 'amina@example.test');
+        $own = $this->cartOrder($this->a, ['buyer_email' => 'amina@example.test']);
+        $this->orderRecords($own, OrderItem::RECORD_FORM_RESPONSE, $ownedResponse->id);
+        $this->orderRecords($own, OrderItem::RECORD_MEAL_ORDER, $ownedMeal->id);
+
+        // An order of ORGANISATION B whose lines record rows carrying these very numbers.
+        // The exclusion is about one organisation's orders: without its own `masjid_id`
+        // clause the other organisation's line would hide this member's rows.
+        $foreign = $this->cartOrder($this->b, ['buyer_email' => 'someone@example.test']);
+        $this->orderRecords($foreign, OrderItem::RECORD_FORM_RESPONSE, $response->id);
+        $this->orderRecords($foreign, OrderItem::RECORD_MEAL_ORDER, $meal->id);
 
         $this->assertSame([$response->id], $this->keys($this->purchases->formPurchases($me)));
         $this->assertSame([$meal->id], $this->keys($this->purchases->mealPurchases($me)));
@@ -347,6 +389,37 @@ class MemberPurchasesTest extends TestCase
 
             $this->assertSame(0, $this->purchases->orderPage($contact, 15)->total());
         }
+    }
+
+    #[Test]
+    public function a_soft_deleted_member_gets_empty_lists_though_the_row_still_holds_a_verified_address(): void
+    {
+        $form = $this->form($this->a);
+        $fund = $this->fund($this->a);
+
+        $gone = $this->member($this->a, 'gone@example.test');
+        $this->rowsFor($gone, $form, $fund);
+
+        // The control: alive, they have one row in every list.
+        $this->assertSame(4, $this->purchases->orderPage($gone, 15)->total());
+        $this->assertSame(1, $this->purchases->gifts($gone)->count());
+
+        $gone->delete();
+        $gone = Contact::withoutMasjidScope()->withTrashed()->findOrFail($gone->id);
+
+        // The premise: the deleted row still carries the address and its verification, so
+        // only the liveness check keeps the lists empty.
+        $this->assertTrue($gone->trashed());
+        $this->assertNotNull($gone->verified_at);
+        $this->assertSame('gone@example.test', $gone->login_email);
+
+        $this->assertNull($this->purchases->verifiedAddress($gone));
+
+        foreach (['cartOrders', 'historicalOrders', 'formPurchases', 'mealPurchases', 'gifts'] as $source) {
+            $this->assertSame(0, $this->purchases->{$source}($gone)->count(), "{$source} was not empty for a deleted member");
+        }
+
+        $this->assertSame(0, $this->purchases->orderPage($gone, 15)->total());
     }
 
     /** One row in every source that would be this contact's: by contact where that is a key, by address otherwise. */

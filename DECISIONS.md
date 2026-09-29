@@ -5792,3 +5792,17 @@ Tests: `MemberOrdersTest::the_page_links_keep_the_page_size_that_was_asked_for` 
 foreign-organisation 403) and a `"data":{}` assertion on the 429 in the limiter test;
 `MemberGiftsAndReceiptsTest::the_routes_are_named_under_the_prefix_the_error_envelope_matches_and_their_refusals_carry_data`
 (the four names exist; the 401 of the gifts door and of the PDF door).
+(6) TEST GAPS CLOSED, NO CODE CHANGED (m4-m8, m14). Six rules were stated in DECISIONS and ASSUMPTIONS and had no test that
+fails without them; each is now pinned, and none exposed a bug (every one passed against the code as it stood, by
+reading it: nothing was run). `MemberPurchasesTest`: `a_paid_status_without_a_payment_method_is_not_a_money_leg` (m5: the
+existing row had BOTH columns null, so the `payment_status` clause excluded it on its own),
+`an_order_line_of_another_organisation_hides_none_of_this_ones_rows` (m6: a line of organisation B recording this
+organisation's row numbers, beside a same-organisation control that does hide), and
+`a_soft_deleted_member_gets_empty_lists_though_the_row_still_holds_a_verified_address` (m14, the liveness check
+`verifiedAddress()` leans on). `MemberOrdersTest`: `a_lunch_total_is_what_was_paid_not_what_the_order_is_now` (m4:
+`settled_total_minor` 2160 against a current total of 3000), `a_form_row_written_before_the_cents_columns_falls_back_to_its_decimal_amount_and_to_due_plus_fee`
+(m7: 30.29 is 3028.9999999999995 as a float, so a cast in place of `round()` shows 3028; and a NULL total shows due plus
+fee) and `every_source_dates_an_evening_purchase_at_the_organisations_calendar_day` (m8: 03:30 UTC on the 6th is the 5th
+in New York, for a form, a lunch and a Wix order). One observation, not changed: `FormResponse::owedMinor()` already
+turns the legacy decimal into cents without a float, and the projector re-does it with `round((float) ...)`; the two agree
+for every two-place decimal, so it is a house-fit point, not a defect.
