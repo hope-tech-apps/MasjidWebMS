@@ -184,7 +184,12 @@ class GroupNotificationRecipientResolver
     private function principal(?int $userId, ?int $contactId): User|Contact|null
     {
         if ($userId !== null) {
-            return User::withoutGlobalScopes()->find($userId);
+            // withoutGlobalScopes() also drops SoftDeletes, and an archived
+            // ("moved to trash") staff member keeps their group_staff rows, so
+            // they would still read as leading the class: the digest would mail
+            // them, and count their taps. Trashed is nobody, the same as the
+            // trashed guardian below.
+            return User::withoutGlobalScopes()->whereNull('deleted_at')->find($userId);
         }
 
         // Contact soft-deletes: a trashed guardian is null here, i.e. nobody.

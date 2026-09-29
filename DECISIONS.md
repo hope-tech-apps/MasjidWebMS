@@ -4803,7 +4803,7 @@ this school"; `last_sign_in_at` is removed from the Team payload (the SPA was it
 **Reversed rule.** 2026-09-21 said reactions notify nobody. "Add notifications for reactions" is the owner's own
 instruction, so the rule is reversed; what survives is its reason (a push per 👍 buries the replies). A tap still
 dispatches nothing; the AUTHOR gets ONE content-free email per class per hour at most (`groups:notify-reactions`).
-`GroupMessageReactionsTest` still pins "a tap sends nothing".
+`GroupMessageReactionsTest` still pins "a tap sends nothing" (at the tap; the author hears in the digest).
 
 **Owner-driven changes to the plan:**
 - **No staff push.** The staff app is parked (S1), so reaction notifications are the email digest only. When the
@@ -4811,7 +4811,7 @@ dispatches nothing; the AUTHOR gets ONE content-free email per class per hour at
 - **Read receipts are built but OFF by default** (`groups.story_reads.enabled`, env `GROUP_STORY_READS_ENABLED`).
   The privacy notice's ar / ur / ps / fa-AF (and es) copy is machine-drafted and needs a human review BEFORE any
   read is recorded in production. The switch gates recording, the parent-facing notice and the staff "Seen by"
-  line together, from one config value (`meta.story_reads`), so they go live together.
+  line together, from one config value (`meta.story_reads.enabled`), so they go live together.
 
 **Decisions taken here (each defensible, none asked):**
 1. **Shared `App\Support\Reactions`** for the four keys and the naming rule, used by message and story reactions.
@@ -4827,11 +4827,29 @@ dispatches nothing; the AUTHOR gets ONE content-free email per class per hour at
    not always the family portal. Pre-existing bug, found in the recon and fixed here.
 
 **Counted lists:** teacher write verbs +2 (story reaction PUT/DELETE); family write verbs +3 (story reaction
-PUT/DELETE and `POST .../posts/seen`). `TeacherMultiSchoolTest`'s sweep, `MemberAccountDeletionCoverageTest` and
-`TenantScopingCoverageTest` were updated on purpose. No permission was added.
+PUT/DELETE and `POST .../posts/seen`). `TeacherMultiSchoolTest`'s sweep and `MemberAccountDeletionCoverageTest` were
+updated on purpose. `TenantScopingCoverageTest` needed no edit: it discovers models by reflection, and the new
+cross-tenant tests in `GroupPostReactionsTest` and `GroupPostReadsTest` satisfy its discovery. No permission was added.
+
+**Review round (2026-09-29, after the five-lens review of `ada6660c`):**
+8. **Reads are reported only once the Story section is drawn.** The load chain sets the posts mid-way, while the
+   page is a spinner, so reporting on `posts` alone recorded fifteen reads for a parent who then hit an error or left.
+   `watchStoriesSeen` (`familyClassRun.ts`) now also waits for `loading` to end without an `error`, and for the next
+   render; SPA tests drive it with real refs.
+9. **The notice says "parents" and "when"**, because staff see each guardian by name with a first-seen time, not "families".
+   The English source and the five machine drafts were re-derived from it; all five still need the human review.
+10. **`meta.story_reads` is one shape**: `{enabled}` in the family payload too (it was a bare bool there, an object in the
+   staff payloads). The portal reads `.enabled`; an old cached portal reads a missing bool as off, which fails safe.
+11. **"Not tracked before <date>" instead of "Seen by 0 of N"** for a story older than recording with no read on it.
+   The day is `groups.story_reads.since` if the owner sets it, else the school's earliest recorded read (no setting
+   needed); until either exists nothing is marked. A read that was recorded on an old story still shows.
+12. **An archived staff member is nobody** to the digest (author and reactor), as a trashed guardian already was.
+13. **Not changed on purpose:** the `seen_by` id tie-break (`orderBy('id')`) is kept but cannot be pinned on SQLite
+   (see the test's comment); the `first_seen_at` order is pinned. Unknown, needs investigation on staging MySQL.
 
 **Held for the owner:** the human review of the five machine-drafted `story_seen_notice` strings
-(`familyI18n.ts` ar, `locales/{es,ur,ps,fa-AF}.ts`); then set `GROUP_STORY_READS_ENABLED=true`. Also the settle window
+(`familyI18n.ts` ar, `locales/{es,ur,ps,fa-AF}.ts`); then set `GROUP_STORY_READS_ENABLED=true` (and, if wanted,
+`GROUP_STORY_READS_SINCE` to that day). Also the settle window
 (an estimate). BISS reach is 0 today (no consented guardians, staff or family logins there).
 
 **Migrations (all additive, deploy-order safe):** `2026_10_02_100000_create_group_post_reactions_table`,

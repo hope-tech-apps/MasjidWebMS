@@ -47,7 +47,7 @@ class GroupPostReadsTest extends TestCase
     use BuildsClassStoryFixture;
 
     /** Every key the family payload must never carry, at any depth. */
-    private const STAFF_ONLY_KEYS = ['seen_by', 'seen_count', 'audience_count', 'unreachable_count'];
+    private const STAFF_ONLY_KEYS = ['seen_by', 'seen_count', 'audience_count', 'unreachable_count', 'seen_tracked', 'seen_since'];
 
     protected function setUp(): void
     {
@@ -111,7 +111,7 @@ class GroupPostReadsTest extends TestCase
         $post = $this->makePost();
 
         $family = $this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->assertOk();
-        $this->assertFalse($family->json('meta.story_reads'));
+        $this->assertFalse($family->json('meta.story_reads.enabled'));
 
         $this->seen([$post->id], $this->parentA)
             ->assertOk()
@@ -428,12 +428,222 @@ class GroupPostReadsTest extends TestCase
         $this->makePost();
 
         // OFF: the portal is told not to show the notice, and would not record.
-        $this->assertFalse($this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->json('meta.story_reads'));
+        $this->assertFalse($this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->json('meta.story_reads.enabled'));
 
         // ON: the same request now says show the notice — and the POST records.
         $this->switchOn();
-        $this->assertTrue($this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->json('meta.story_reads'));
-        $this->assertTrue($this->asParent($this->parentA)->getJson($this->familyUrl('/posts/'.GroupPost::query()->value('id')))->json('meta.story_reads'));
+        $this->assertTrue($this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->json('meta.story_reads.enabled'));
+        $this->assertTrue($this->asParent($this->parentA)->getJson($this->familyUrl('/posts/'.GroupPost::query()->value('id')))->json('meta.story_reads.enabled'));
+    }
+
+    #[Test]
+    public function the_family_and_staff_payloads_share_one_story_reads_shape(): void
+    {
+        $this->makePost();
+
+        foreach ([false, true] as $on) {
+            config(['groups.story_reads.enabled' => $on]);
+
+            $family = $this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->assertOk()->json('meta.story_reads');
+            $staff = $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()->json('meta.story_reads');
+
+            $this->assertIsArray($family, 'an object with `enabled`, never a bare boolean: shared code reads `.enabled`');
+            $this->assertSame(['enabled'], array_keys($family), 'the family shape carries no staff-only field');
+            $this->assertSame($on, $family['enabled']);
+            $this->assertSame($on, $staff['enabled']);
+        }
+    }
+
+    // ------------------------------------------------ stories older than recording
+
+    /** A story written $days ago. */
+    private function makeOldPost(int $days, string $body): GroupPost
+    {
+        $post = $this->makePost(body: $body);
+        GroupPost::withoutMasjidScope()->whereKey($post->id)->update(['created_at' => now()->subDays($days), 'updated_at' => now()->subDays($days)]);
+
+        return $post->refresh();
+    }
+
+    private function readAt(GroupPost $post, Contact $parent, \Illuminate\Support\Carbon $when): void
+    {
+        GroupPostRead::create([
+            'masjid_id' => $this->school->id, 'group_post_id' => $post->id,
+            'contact_id' => $parent->id, 'first_seen_at' => $when,
+        ]);
+    }
+
+    #[Test]
+    public function a_story_that_predates_recording_is_not_tracked_rather_than_seen_by_zero(): void
+    {
+        $this->switchOn();
+        $since = now()->subDays(3)->toDateString();
+        config(['groups.story_reads.since' => $since]);
+
+        $unread = $this->makeOldPost(10, 'Old, no read on it');
+        $readLater = $this->makeOldPost(9, 'Old, but a parent opened it since');
+        $this->readAt($readLater, $this->parentA, now()->subDay());
+        $fresh = $this->makePost(body: 'Written after recording began');
+
+        $rows = collect($this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()->json('data.data'))->keyBy('id');
+
+        // Predates recording, nothing on it: "not kept", and no zero to misread.
+        $old = $rows[$unread->id];
+        $this->assertFalse($old['seen_tracked']);
+        $this->assertSame($since, $old['seen_since']);
+        foreach (['seen_by', 'seen_count', 'audience_count'] as $key) {
+            $this->assertArrayNotHasKey($key, $old, "`{$key}` would print 'Seen by 0 of N' for a story nobody was keeping receipts on");
+        }
+
+        // A read that was recorded is a real read, whatever the story's age.
+        $this->assertArrayNotHasKey('seen_tracked', $rows[$readLater->id]);
+        $this->assertSame(1, $rows[$readLater->id]['seen_count']);
+
+        // Written after recording began: zero of N really is zero.
+        $this->assertArrayNotHasKey('seen_tracked', $rows[$fresh->id]);
+        $this->assertSame(0, $rows[$fresh->id]['seen_count']);
+        $this->assertSame(2, $rows[$fresh->id]['audience_count']);
+
+        // The single-post payload says the same.
+        $this->asTeacher()->getJson($this->teacherUrl("/posts/{$unread->id}"))->assertOk()
+            ->assertJsonPath('data.seen_tracked', false)
+            ->assertJsonPath('data.seen_since', $since);
+
+        // Never in the family payload, whatever the story's age.
+        $family = $this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->assertOk()->json();
+        $keys = $this->allKeys($family);
+        foreach (self::STAFF_ONLY_KEYS as $key) {
+            $this->assertNotContains($key, $keys, "`{$key}` reached the family payload");
+        }
+    }
+
+    #[Test]
+    public function without_a_configured_day_recording_began_at_the_schools_earliest_read(): void
+    {
+        $this->switchOn();
+        config(['groups.story_reads.since' => null]);
+
+        $ancient = $this->makeOldPost(20, 'Before anything was recorded');
+        $older = $this->makeOldPost(5, 'Read on the first day');
+        $recent = $this->makeOldPost(1, 'Written after the first read');
+        $firstDay = now()->subDays(2);
+        $this->readAt($older, $this->parentA, $firstDay);
+
+        $rows = collect($this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()->json('data.data'))->keyBy('id');
+
+        $this->assertFalse($rows[$ancient->id]['seen_tracked']);
+        $this->assertSame($firstDay->toDateString(), $rows[$ancient->id]['seen_since']);
+        $this->assertSame(1, $rows[$older->id]['seen_count']);
+        $this->assertArrayNotHasKey('seen_tracked', $rows[$recent->id]);
+        $this->assertSame(0, $rows[$recent->id]['seen_count']);
+    }
+
+    #[Test]
+    public function with_no_configured_day_and_no_read_yet_no_story_is_marked(): void
+    {
+        $this->switchOn();
+        config(['groups.story_reads.since' => null]);
+        $old = $this->makeOldPost(30, 'Old');
+
+        $row = $this->asTeacher()->getJson($this->teacherUrl("/posts/{$old->id}"))->assertOk();
+
+        // Nothing to date it by: plain, honest zero until the first parent opens the page.
+        $this->assertSame(0, $row->json('data.seen_count'));
+        $this->assertNull($row->json('data.seen_tracked'));
+    }
+
+    #[Test]
+    public function the_tracking_day_is_never_served_while_receipts_are_off_and_a_bad_date_is_ignored(): void
+    {
+        config(['groups.story_reads.since' => now()->subDay()->toDateString()]);
+        $this->makeOldPost(10, 'Old');
+
+        $off = $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk();
+        $keys = $this->allKeys($off->json('data'));
+        foreach (self::STAFF_ONLY_KEYS as $key) {
+            $this->assertNotContains($key, $keys, "`{$key}` was served while receipts are off");
+        }
+
+        // A malformed date must not 500 the list: it falls back to the data.
+        $this->switchOn();
+        config(['groups.story_reads.since' => 'the day we started']);
+        $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk();
+    }
+
+    // ------------------------------------------------ a guardian with two children
+
+    #[Test]
+    public function a_parent_with_two_children_and_no_login_is_one_unreachable_parent_not_two(): void
+    {
+        $this->switchOn();
+        $this->makePost();
+
+        [$noLogin] = $this->makeFamily('Idris', 'Salma', 'Noor', login: false);
+        $this->addSibling($noLogin, 'Yusuf');
+        $this->consent($noLogin);
+
+        $response = $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk();
+
+        $this->assertSame(1, $response->json('meta.story_reads.unreachable_count'), 'two children, one parent');
+    }
+
+    #[Test]
+    public function a_parent_with_two_children_is_one_reader_in_the_audience(): void
+    {
+        $this->switchOn();
+        $post = $this->makePost();
+
+        $this->addSibling($this->parentA, 'Yusuf');
+        $this->consent($this->parentA);
+        $this->seen([$post->id], $this->parentA)->assertOk();
+
+        $row = $this->asTeacher()->getJson($this->teacherUrl("/posts/{$post->id}"))->assertOk();
+
+        $this->assertSame(2, $row->json('data.audience_count'), 'Huda and Maryam, however many children each has');
+        $this->assertSame(1, $row->json('data.seen_count'));
+        $this->assertSame(['Huda Yusuf'], array_column($row->json('data.seen_by'), 'name'));
+    }
+
+    // ------------------------------------------------ the order of "Seen by"
+
+    #[Test]
+    public function seen_by_lists_parents_in_the_order_they_first_opened_the_story(): void
+    {
+        $this->switchOn();
+        $post = $this->makePost();
+        $now = now();
+
+        // Maryam's row is written FIRST (lower id) but her first look was LATER, so
+        // neither insertion order nor contact id can produce this answer.
+        $this->readAt($post, $this->parentB, $now->copy()->addMinutes(5));
+        $this->readAt($post, $this->parentA, $now->copy());
+
+        $seenBy = $this->asTeacher()->getJson($this->teacherUrl("/posts/{$post->id}"))->assertOk()->json('data.seen_by');
+
+        $this->assertSame(['Huda Yusuf', 'Maryam Karimi'], array_column($seenBy, 'name'));
+        $this->assertSame(
+            [$now->copy()->toIso8601String(), $now->copy()->addMinutes(5)->toIso8601String()],
+            array_column($seenBy, 'seen_at')
+        );
+    }
+
+    #[Test]
+    public function seen_by_breaks_a_tie_on_the_same_instant_by_the_order_the_reads_arrived(): void
+    {
+        $this->switchOn();
+        $post = $this->makePost();
+        $same = now();
+
+        // Same instant. Maryam's read arrived first even though Huda's contact id is lower.
+        $this->readAt($post, $this->parentB, $same);
+        $this->readAt($post, $this->parentA, $same);
+
+        $names = array_column(
+            $this->asTeacher()->getJson($this->teacherUrl("/posts/{$post->id}"))->assertOk()->json('data.seen_by'),
+            'name'
+        );
+
+        $this->assertSame(['Maryam Karimi', 'Huda Yusuf'], $names);
     }
 
     // ------------------------------------------------ tenancy + schema

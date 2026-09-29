@@ -350,9 +350,10 @@ Route::prefix('family')
                     // back (2026-09-21) — two more counted writes. The
                     // reply's gate exactly: `mayReceiveThread()`, then "not
                     // closed", with the message found THROUGH the thread and the
-                    // contact from the token. Nothing else: no payload, no
-                    // notification, and only the four keys in
-                    // GroupMessageReaction::REACTIONS.
+                    // contact from the token. Nothing else: no payload, and only
+                    // the four keys in GroupMessageReaction::REACTIONS. A tap
+                    // dispatches nothing; the message's author hears once, in the
+                    // hourly content-free digest (groups:notify-reactions).
                     //
                     // Marking a thread READ is deliberately NOT a route. It stays
                     // what it always was — opening the thread (the GET above),

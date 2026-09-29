@@ -528,6 +528,89 @@ class GroupPostReactionsTest extends TestCase
         $this->assertSame(0, GroupPostReaction::withoutMasjidScope()->count());
     }
 
+    // ------------------------------------------------------------ taking one back
+
+    /** Who holds `$key` on the post, as `u<id>` (staff) or `c<id>` (guardian), oldest first. */
+    private function holders(GroupPost $post, string $key = 'ameen'): array
+    {
+        return GroupPostReaction::withoutMasjidScope()
+            ->where('group_post_id', $post->id)->where('reaction', $key)
+            ->orderBy('id')->get()
+            ->map(fn (GroupPostReaction $r) => $r->user_id !== null ? 'u'.$r->user_id : 'c'.$r->contact_id)
+            ->all();
+    }
+
+    #[Test]
+    public function taking_a_reaction_back_removes_only_that_persons_row_in_every_realm(): void
+    {
+        $post = $this->makePost();
+        $colleague = $this->makeTeacher($this->school, $this->class, 'Ustadha Salma');
+        $admin = $this->makeLeadingAdmin();
+        $ameen = "/posts/{$post->id}/reactions/ameen";
+
+        // Everybody holds 🤲; parent A also holds 💯.
+        $this->asParent($this->parentA)->putJson($this->familyUrl($ameen))->assertOk();
+        $this->asParent($this->parentB)->putJson($this->familyUrl($ameen))->assertOk();
+        $this->asTeacher()->putJson($this->teacherUrl($ameen))->assertOk();
+        $this->asTeacher($colleague)->putJson($this->teacherUrl($ameen))->assertOk();
+        $this->asUser($admin)->putJson($this->adminUrl($ameen))->assertOk();
+        $this->asParent($this->parentA)->putJson($this->familyUrl("/posts/{$post->id}/reactions/hundred"))->assertOk();
+
+        $all = ['c'.$this->parentA->id, 'c'.$this->parentB->id, 'u'.$this->teacher->id, 'u'.$colleague->id, 'u'.$admin->id];
+        $this->assertSame($all, $this->holders($post));
+
+        // A parent takes theirs back: the other parent and every staff row stay,
+        // and so does the same parent's OTHER reaction.
+        $this->asParent($this->parentA)->deleteJson($this->familyUrl($ameen))->assertOk();
+        $this->assertSame(array_values(array_diff($all, ['c'.$this->parentA->id])), $this->holders($post));
+        $this->assertSame(['c'.$this->parentA->id], $this->holders($post, 'hundred'), 'their 💯 is a different reaction');
+
+        // A teacher takes theirs back: a colleague, the office and the parent stay.
+        $this->asTeacher()->deleteJson($this->teacherUrl($ameen))->assertOk();
+        $this->assertSame(['c'.$this->parentB->id, 'u'.$colleague->id, 'u'.$admin->id], $this->holders($post));
+
+        // The office takes theirs back: the colleague and the parent stay.
+        $this->asUser($admin)->deleteJson($this->adminUrl($ameen))->assertOk();
+        $this->assertSame(['c'.$this->parentB->id, 'u'.$colleague->id], $this->holders($post));
+    }
+
+    // ------------------------------------------------------------ staff: `mine` survives a reload and an edit
+
+    #[Test]
+    public function a_staff_members_own_reaction_still_reads_as_mine_after_a_reload_and_an_edit(): void
+    {
+        $post = $this->makePost();
+        $colleague = $this->makeTeacher($this->school, $this->class, 'Ustadha Salma');
+        $admin = $this->makeLeadingAdmin();
+
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}/reactions/ameen"))->assertOk();
+        $this->asUser($admin)->putJson($this->adminUrl("/posts/{$post->id}/reactions/ameen"))->assertOk();
+
+        // Teacher realm: the list, the post, and the response to an edit.
+        $this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()
+            ->assertJsonPath('data.data.0.reactions.0.count', 2)
+            ->assertJsonPath('data.data.0.reactions.0.mine', true);
+        $this->asTeacher()->getJson($this->teacherUrl("/posts/{$post->id}"))->assertOk()
+            ->assertJsonPath('data.reactions.0.mine', true);
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Edited'])->assertOk()
+            ->assertJsonPath('data.reactions.0.mine', true);
+
+        // Office realm, the same three.
+        $this->asUser($admin)->getJson($this->adminUrl('/posts'))->assertOk()
+            ->assertJsonPath('data.data.0.reactions.0.mine', true);
+        $this->asUser($admin)->getJson($this->adminUrl("/posts/{$post->id}"))->assertOk()
+            ->assertJsonPath('data.reactions.0.mine', true);
+        $this->asUser($admin)->putJson($this->adminUrl("/posts/{$post->id}"), ['body' => 'Edited again'])->assertOk()
+            ->assertJsonPath('data.reactions.0.mine', true);
+
+        // A colleague who did not react sees the count but not "mine", everywhere.
+        $this->asTeacher($colleague)->getJson($this->teacherUrl("/posts/{$post->id}"))->assertOk()
+            ->assertJsonPath('data.reactions.0.count', 2)
+            ->assertJsonPath('data.reactions.0.mine', false);
+        $this->asTeacher($colleague)->putJson($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Third edit'])->assertOk()
+            ->assertJsonPath('data.reactions.0.mine', false);
+    }
+
     // ------------------------------------------------------------ teardown + schema
 
     #[Test]

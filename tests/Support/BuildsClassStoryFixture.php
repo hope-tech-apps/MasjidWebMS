@@ -132,6 +132,40 @@ trait BuildsClassStoryFixture
         return [$parent->refresh(), $membership];
     }
 
+    /**
+     * A SECOND child of an existing guardian in the same class: their own roster
+     * row, and a second guardian edge for the same contact. Call `consent()` again
+     * afterwards if the guardian has consented, since it stamps the edges that
+     * exist at the time.
+     *
+     * @return array{0: GroupMembership, 1: GroupMembership} the child's roster row and the guardian edge
+     */
+    private function addSibling(Contact $parent, string $childName, ?Group $class = null): array
+    {
+        $class ??= $this->class;
+
+        $child = Contact::factory()->create([
+            'masjid_id' => $class->masjid_id, 'first_name' => $childName, 'last_name' => $parent->last_name, 'email' => null,
+        ]);
+        $membership = GroupMembership::create([
+            'masjid_id' => $class->masjid_id, 'group_id' => $class->id,
+            'contact_id' => $child->id, 'role' => GroupMembership::ROLE_MEMBER,
+        ]);
+        $edge = GroupMembership::create([
+            'masjid_id' => $class->masjid_id, 'group_id' => $class->id,
+            'contact_id' => $parent->id, 'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $child->id,
+        ]);
+
+        return [$membership, $edge];
+    }
+
+    /** ONE guardian edge leaves the class (a parent's other child's edge stays). */
+    private function guardianEdgeLeaves(GroupMembership $edge): void
+    {
+        GroupMembership::withoutMasjidScope()->whereKey($edge->id)->update(['left_on' => now()->toDateString()]);
+    }
+
     /** Record feed (or media) consent on a guardian's edge in $class. */
     private function consent(Contact $parent, string $scope = GroupMembership::CONSENT_FEED, ?Group $class = null): void
     {

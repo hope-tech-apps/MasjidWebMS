@@ -17,8 +17,10 @@ use App\Models\GroupThread;
 use App\Models\User;
 use App\Services\Groups\GroupNotificationRecipientResolver;
 use App\Services\Groups\GroupPushChannel;
+use App\Support\TenantContext;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Test;
@@ -234,6 +236,70 @@ class ReactionDigestTest extends TestCase
     }
 
     #[Test]
+    public function a_teacher_of_two_classes_gets_one_digest_per_class_each_naming_its_own(): void
+    {
+        $second = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+            'name' => 'Grade 2', 'slug' => 'grade-2',
+        ]);
+        $second->staff()->attach($this->teacher->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
+        ]);
+        [$parentC] = $this->makeFamily('Idris', 'Salma', 'Noor', $second);
+        $this->consent($parentC, class: $second);
+
+        $first = $this->makePost();
+        $other = $this->makePost(class: $second);
+
+        $this->react('family', $this->parentA, $first);
+        $this->asParent($parentC)
+            ->putJson($this->familyUrl("/posts/{$other->id}/reactions/ameen", $second))
+            ->assertOk();
+
+        $this->settle();
+        $this->runDigest();
+
+        $this->assertSame(2, $this->digests($this->teacher->email), 'one email per class, not one merged email');
+        $this->assertSame(
+            ['Grade 1', 'Grade 2'],
+            Mail::sent(GroupUpdateNudgeMail::class, fn ($m) => $m->kind === 'reaction')
+                ->map(fn ($m) => $m->groupLabel)->sort()->values()->all(),
+            'each email names the class its reactions were in'
+        );
+        $this->assertSame(0, $this->unannounced(), 'and neither class\'s rows were claimed by the other\'s email');
+    }
+
+    #[Test]
+    public function a_message_reaction_waits_out_the_settle_window_and_a_taken_back_one_is_never_announced(): void
+    {
+        $thread = $this->privateThread();
+        $message = $this->teacherMessage($thread);
+        $path = "/threads/{$thread->id}/messages/{$message->id}/reactions";
+
+        // A sweep that runs the moment after the tap leaves it alone: unsent AND unclaimed.
+        $this->react('family', $this->parentA, $message, 'ameen', $thread);
+        $this->runDigest();
+        $this->assertSame(0, $this->allDigests());
+        $this->assertSame(1, $this->unannounced(), 'a message reaction inside the window is not claimed');
+
+        // Once it has stood, it is announced.
+        $this->settle();
+        $this->runDigest();
+        $this->assertSame(1, $this->digests($this->teacher->email));
+
+        // A tap taken back inside the window is never announced.
+        $this->react('family', $this->parentA, $message, 'hundred', $thread);
+        $this->settle(3);
+        $this->runDigest();
+        $this->assertSame(1, $this->allDigests());
+        $this->assertSame(1, $this->unannounced());
+        $this->asParent($this->parentA)->deleteJson($this->familyUrl("{$path}/hundred"))->assertOk();
+        $this->settle();
+        $this->runDigest();
+        $this->assertSame(1, $this->allDigests());
+    }
+
+    #[Test]
     public function the_settle_window_is_configurable_and_the_option_overrides_it(): void
     {
         $post = $this->makePost();
@@ -411,6 +477,63 @@ class ReactionDigestTest extends TestCase
     }
 
     #[Test]
+    public function an_archived_teacher_is_not_mailed_about_reactions_to_their_stories(): void
+    {
+        $post = $this->makePost();
+        $this->react('family', $this->parentA, $post);
+
+        // "Move to trash" soft-deletes the user and leaves their group_staff rows.
+        $this->teacher->delete();
+        $this->assertTrue($this->teacher->trashed());
+        $this->assertSame(1, GroupStaff::withoutMasjidScope()->where('user_id', $this->teacher->id)->count());
+
+        $this->settle();
+        $this->runDigest();
+
+        $this->assertSame(0, $this->digests($this->teacher->email), 'an archived account is nobody');
+        $this->assertSame(0, $this->allDigests());
+        $this->assertSame(0, $this->unannounced(), 'the row is still claimed, not re-examined every hour');
+    }
+
+    #[Test]
+    public function an_archived_colleagues_reaction_is_not_counted_but_an_active_ones_is(): void
+    {
+        $post = $this->makePost();
+        $archived = $this->makeTeacher($this->school, $this->class, 'Ustadha Salma');
+        $active = $this->makeTeacher($this->school, $this->class, 'Ustadh Idris');
+
+        $this->react('teacher', $archived, $post, 'thumbs_up');
+        $archived->delete();
+
+        $this->settle();
+        $this->runDigest();
+        $this->assertSame(0, $this->allDigests(), 'a reaction from an archived account no longer counts');
+        $this->assertSame(0, $this->unannounced());
+
+        $this->react('teacher', $active, $post, 'hundred');
+        $this->settle();
+        $this->runDigest();
+        $this->assertSame(1, $this->digests($this->teacher->email), 'control: an active colleague\'s reaction is announced');
+    }
+
+    #[Test]
+    public function a_parent_whose_one_childs_place_ended_still_counts_while_another_child_stays(): void
+    {
+        [, $secondEdge] = $this->addSibling($this->parentA, 'Yusuf');
+        $this->consent($this->parentA);
+
+        $post = $this->makePost();
+        $this->react('family', $this->parentA, $post);
+
+        // One child withdraws; Huda is still a current guardian of the other.
+        $this->guardianEdgeLeaves($secondEdge);
+        $this->settle();
+        $this->runDigest();
+
+        $this->assertSame(1, $this->digests($this->teacher->email), 'she is still a guardian in the class');
+    }
+
+    #[Test]
     public function the_job_rechecks_the_recipient_at_send_time_itself(): void
     {
         $post = $this->makePost();
@@ -522,6 +645,63 @@ class ReactionDigestTest extends TestCase
 
         $this->artisan('groups:notify-reactions', ['--masjid' => $this->school->id])->assertSuccessful();
         $this->assertSame(1, $this->allDigests());
+    }
+
+    #[Test]
+    public function the_sweep_can_be_narrowed_to_one_school_for_message_reactions_too(): void
+    {
+        $thread = $this->privateThread();
+        $this->react('family', $this->parentA, $this->teacherMessage($thread), 'ameen', $thread);
+        $this->settle();
+
+        $this->artisan('groups:notify-reactions', ['--masjid' => $this->otherSchool->id])->assertSuccessful();
+        $this->assertSame(0, $this->allDigests(), 'another school\'s sweep does not announce this school\'s message reactions');
+        $this->assertSame(1, $this->unannounced(), 'and does not claim them');
+
+        $this->artisan('groups:notify-reactions', ['--masjid' => $this->school->id])->assertSuccessful();
+        $this->assertSame(1, $this->digests($this->teacher->email));
+    }
+
+    #[Test]
+    public function the_sweeps_one_log_line_is_a_warning_because_production_drops_info(): void
+    {
+        Log::spy();
+        $this->react('family', $this->parentA, $this->makePost());
+        $this->settle();
+
+        $this->runDigest();
+
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(fn (string $message) => str_contains($message, 'groups:notify-reactions') && str_contains($message, '1 digest(s) for 1 reaction(s)'));
+    }
+
+    #[Test]
+    public function the_sweep_and_the_job_leave_the_tenant_as_they_found_it(): void
+    {
+        $this->react('family', $this->parentA, $this->makePost());
+        $this->settle();
+        $tenant = app(TenantContext::class);
+
+        // Unbound before, unbound after: a long-lived worker or the scheduler must not
+        // carry this class's organisation into whatever it runs next.
+        $tenant->forgetTenant();
+        $this->runDigest();
+        $this->assertNull($tenant->get());
+
+        $job = new SendGroupNotificationJob(
+            (int) $this->school->id, (int) $this->class->id, GroupNotificationEvent::REACTION,
+            recipientUserId: $this->teacher->id, subjects: ['story'],
+        );
+        $tenant->forgetTenant();
+        $job->handle(app(GroupNotificationRecipientResolver::class), app(GroupPushChannel::class));
+        $this->assertNull($tenant->get());
+
+        // Bound to some other organisation before, and that one is back after.
+        $tenant->set((int) $this->otherSchool->id);
+        app(GroupNotificationRecipientResolver::class)
+            ->principalMayStillRead($this->class, $this->teacher->id, null, null);
+        $this->assertSame((int) $this->otherSchool->id, $tenant->get());
     }
 
     #[Test]

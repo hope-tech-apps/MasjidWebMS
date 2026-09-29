@@ -628,10 +628,14 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   it returns the 15 newest stories, so a GET-side write would mark them all "seen"
   when a parent only opened Grades. A test pins that no GET records anything.
 - **The switch gates three things together and they must go live together:**
-  recording, the parent-facing notice ("your school can see which families have opened
-  each class story") and the staff "Seen by" line. The portal draws the notice from
-  `meta.story_reads`, which is the same config value, so no read is recorded before
-  the notice is on screen. **Do not switch it on until the ar / ur / ps / fa-AF (and
+  recording, the parent-facing notice ("your school can see which parents have opened
+  each class story, and when") and the staff "Seen by" line. The portal draws the notice
+  from `meta.story_reads.enabled`, which is the same config value (the family payload
+  and the staff payloads share ONE shape: an object with `enabled`), so no read is
+  recorded before the notice is on screen. The portal reports a read only once the
+  Story section has been DRAWN: `watchStoriesSeen` (`familyClassRun.ts`) waits for the
+  load chain to finish without failing and for the next render, and a parent still
+  looking at a spinner, or at the error alert, has had nothing recorded. **Do not switch it on until the ar / ur / ps / fa-AF (and
   es) `story_seen_notice` strings have had a human review**: they are machine-drafted
   (owner, 2026-09-29). While off, the staff payload OMITS the seen fields rather than
   showing "0 of 7" for a receipt nobody keeps.
@@ -639,10 +643,18 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   consented, still in the class (`current()`), with a live family login. A read row
   counts only while its reader is in that audience, so `seen_count` never exceeds
   `audience_count`. `meta.story_reads.unreachable_count` says how many consented,
-  current parents hold no portal login (the footnote). The email fan-out for a story
+  current parents hold no portal login (the footnote); a guardian with several
+  children in the class is one parent in both numbers. The email fan-out for a story
   (`GroupNotificationRecipientResolver::feedGuardians`) reads the same method.
-- **`seen_by`, `seen_count`, `audience_count` and `unreachable_count` exist ONLY in the
-  staff serializers** (`AdminDashboard\GroupPostsController`, which the teacher realm
+- **Nothing is recorded before the switch goes on**, so a story older than that with no
+  read on it is `seen_tracked: false` with `seen_since` (a school-local `Y-m-d`), and its
+  three seen fields are omitted: the staff line says "Not tracked before <date>", never
+  "Seen by 0 of 7". The day is `groups.story_reads.since` (`GROUP_STORY_READS_SINCE`) if
+  set, else the school's earliest recorded read (`GroupPostSignals::trackingSince`);
+  until either exists no story is marked. A read that WAS recorded on an old story is
+  shown as a read.
+- **`seen_by`, `seen_count`, `audience_count`, `unreachable_count`, `seen_tracked` and
+  `seen_since` exist ONLY in the staff serializers** (`AdminDashboard\GroupPostsController`, which the teacher realm
   also mounts). The family serializer never builds them; `GroupPostReadsTest` walks
   the family JSON on every surface (list, show, seen, react, class) for those keys and
   for another family's name.
@@ -669,7 +681,12 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   reactionRecipient`) re-checks that the recipient may still read it (a teacher taken off
   the class, an administrator who cannot read the story back, a guardian who left or lost
   their login gets nothing). Both run `GroupAudience` with the tenant bound to the
-  group's organisation, because a job starts unbound and that reads as "no standing".
+  group's organisation, because a job starts unbound and that reads as "no standing"
+  (and restore whatever was bound before, in a `finally`). An ARCHIVED (soft-deleted)
+  staff member is nobody, as a trashed guardian is: their `group_staff` rows survive the
+  archive, so `principal()` must not resolve them, or the digest would mail them and count
+  their taps. Digests are grouped per author AND per class, so a teacher of two classes gets
+  two emails, each naming its own class.
 - **At most once**: each row is CLAIMED by an UPDATE guarded by `notified_at IS NULL`
   before it is sent; skipped rows are claimed too. A crash between claim and send loses
   that digest rather than repeating it.

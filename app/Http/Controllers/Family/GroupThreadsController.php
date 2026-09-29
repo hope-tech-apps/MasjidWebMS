@@ -407,8 +407,9 @@ class GroupThreadsController extends FamilyController
      * its id with a thread they may read — that is a 404. The reacting contact
      * is the TOKEN's, never the payload's; there is no payload.
      *
-     * Idempotent: a second PUT leaves one row. No notification — a reaction is
-     * an acknowledgement, and a push for every 👍 would bury the replies.
+     * Idempotent: a second PUT leaves one row. A tap dispatches nothing — a push
+     * for every 👍 would bury the replies — and the message's author hears once,
+     * in the hourly content-free digest (`groups:notify-reactions`).
      */
     public function react($masjid_id, $group_id, $thread_id, $message_id, $reaction)
     {

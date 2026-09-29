@@ -80,9 +80,12 @@ class GroupPostsController extends FamilyController
                 'reactions' => Reactions::catalogue(),
                 // ONE value gates the notice AND the recording: the portal draws
                 // "your school can see who has opened a story" and fires the seen
-                // POST only when this is true, so no read is recorded before the
-                // notice is on screen. See config('groups.story_reads').
-                'story_reads' => (bool) config('groups.story_reads.enabled', false),
+                // POST only when `enabled` is true, so no read is recorded before
+                // the notice is on screen. The SAME shape as the staff payloads'
+                // `meta.story_reads` (an object with `enabled`), minus their
+                // staff-only fields, so a shared reader never gets a bare bool.
+                // See config('groups.story_reads').
+                'story_reads' => ['enabled' => (bool) config('groups.story_reads.enabled', false)],
             ]),
         ], Response::HTTP_OK);
     }
@@ -113,9 +116,12 @@ class GroupPostsController extends FamilyController
                 'reactions' => Reactions::catalogue(),
                 // ONE value gates the notice AND the recording: the portal draws
                 // "your school can see who has opened a story" and fires the seen
-                // POST only when this is true, so no read is recorded before the
-                // notice is on screen. See config('groups.story_reads').
-                'story_reads' => (bool) config('groups.story_reads.enabled', false),
+                // POST only when `enabled` is true, so no read is recorded before
+                // the notice is on screen. The SAME shape as the staff payloads'
+                // `meta.story_reads` (an object with `enabled`), minus their
+                // staff-only fields, so a shared reader never gets a bare bool.
+                // See config('groups.story_reads').
+                'story_reads' => ['enabled' => (bool) config('groups.story_reads.enabled', false)],
             ]),
         ], Response::HTTP_OK);
     }

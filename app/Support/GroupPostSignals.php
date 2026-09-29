@@ -7,6 +7,7 @@ use App\Models\GroupPost;
 use App\Models\GroupPostRead;
 use App\Models\GroupPostReaction;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
 
 /**
@@ -82,12 +83,17 @@ final class GroupPostSignals
      * `audience_count`: a family that left, withdrew consent or lost its login
      * stops being counted on either side of the fraction.
      *
+     * A story that PREDATES `$since` and has no read on it is `tracked => false`,
+     * not "0 seen": nothing is recorded before the switch goes on, so 0 there
+     * means "not kept", and a staff screen must not say "no parent opened it".
+     * `since` is a school-local `Y-m-d`.
+     *
      * @param iterable<GroupPost> $posts
      * @param \Illuminate\Support\Collection<int,Contact> $audience keyed by contact id
-     * @return array<int, array{seen_by: list<array{name:string, seen_at:?string}>, seen_count:int, audience_count:int}>
+     * @return array<int, array{seen_by: list<array{name:string, seen_at:?string}>, seen_count:int, audience_count:int, tracked:bool, since:?string}>
      *         keyed by post id
      */
-    public static function seenFor(iterable $posts, $audience): array
+    public static function seenFor(iterable $posts, $audience, ?CarbonImmutable $since = null, ?string $timezone = null): array
     {
         $posts = collect($posts)->filter(fn ($p) => $p instanceof GroupPost)->values();
 
@@ -120,14 +126,48 @@ final class GroupPostSignals
                 ];
             }
 
+            $untracked = $since !== null
+                && $seenBy === []
+                && $post->created_at !== null
+                && $post->created_at->lt($since);
+
             $out[(int) $post->id] = [
                 'seen_by' => $seenBy,
                 'seen_count' => count($seenBy),
                 'audience_count' => $audience->count(),
+                'tracked' => ! $untracked,
+                'since' => $untracked ? $since->setTimezone($timezone ?: config('app.timezone'))->toDateString() : null,
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * When recording began for THIS school (the bound tenant), or null when that
+     * is not yet known.
+     *
+     * `groups.story_reads.since` if the owner set it (a day, read as the school's
+     * own midnight); otherwise the school's earliest recorded read, which needs
+     * no setting and is exact about what was kept. Before any read exists there
+     * is nothing to date, and no story is marked.
+     */
+    public static function trackingSince(?string $timezone = null): ?CarbonImmutable
+    {
+        $timezone = $timezone ?: (string) config('app.timezone');
+        $configured = config('groups.story_reads.since');
+
+        if (is_string($configured) && trim($configured) !== '') {
+            try {
+                return CarbonImmutable::parse(trim($configured), $timezone)->startOfDay();
+            } catch (\Throwable) {
+                // A malformed date is ignored, not fatal: fall back to the data.
+            }
+        }
+
+        $first = GroupPostRead::query()->min('first_seen_at');
+
+        return $first !== null ? CarbonImmutable::parse($first) : null;
     }
 
     /**

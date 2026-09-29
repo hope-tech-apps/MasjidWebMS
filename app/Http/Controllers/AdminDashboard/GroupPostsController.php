@@ -509,7 +509,13 @@ class GroupPostsController extends Controller
             return $signals;
         }
 
-        $seen = GroupPostSignals::seenFor($posts, $this->audience->storyGuardianContacts($group));
+        $timezone = $this->schoolTimezone();
+        $seen = GroupPostSignals::seenFor(
+            $posts,
+            $this->audience->storyGuardianContacts($group),
+            GroupPostSignals::trackingSince($timezone),
+            $timezone,
+        );
 
         foreach ($signals as $id => $row) {
             $signals[$id] = $row + ['seen' => $seen[$id] ?? null];
@@ -527,11 +533,27 @@ class GroupPostsController extends Controller
             return [];
         }
 
+        // Predates recording and has no read: say so, rather than "0 of N".
+        if (($seen['tracked'] ?? true) === false) {
+            return ['seen_tracked' => false, 'seen_since' => $seen['since']];
+        }
+
         return [
             'seen_by' => $seen['seen_by'],
             'seen_count' => $seen['seen_count'],
             'audience_count' => $seen['audience_count'],
         ];
+    }
+
+    /** The school's own time zone, so "Not tracked before <date>" names the school's day. */
+    private function schoolTimezone(): string
+    {
+        $masjidId = app(TenantContext::class)->get();
+        $timezone = $masjidId ? Masjid::find($masjidId)?->timezone : null;
+
+        return is_string($timezone) && in_array($timezone, \DateTimeZone::listIdentifiers(), true)
+            ? $timezone
+            : (string) config('app.timezone');
     }
 
     /**
