@@ -133,8 +133,9 @@
                         <form @submit.prevent="submitForm">
                             <div class="modal-body">
                                 <p v-if="!isEditing" class="text-muted small">
-                                    The teacher receives an emailed invitation to set up their login. Assign at least one
-                                    {{ classesTerm.toLowerCase() }} they will lead.
+                                    The teacher is emailed. A new teacher gets a link to set up their login; someone who
+                                    already teaches at another Manara school keeps their existing login and password and is
+                                    simply added here. Assign at least one {{ classesTerm.toLowerCase() }} they will lead.
                                 </p>
                                 <p v-else class="text-muted small">
                                     Update this teacher's details and the {{ classesTerm.toLowerCase() }} they lead. Their
@@ -145,6 +146,15 @@
                                 <div v-if="loadingTeacher" class="text-center py-4">
                                     <span class="spinner-border spinner-border-sm text-primary me-2" role="status"></span>
                                     <span class="text-muted small">Loading teacher...</span>
+                                </div>
+
+                                <!-- A teacher who also belongs to another school: name and phone are
+                                     one record shared by every school, so they are read-only here
+                                     (TeachersController::update refuses them). -->
+                                <div v-if="isEditing && sharedTeacher" class="alert alert-info py-2 small" role="note">
+                                    This teacher also belongs to another Manara school, so their name and phone are shared
+                                    and can't be changed here. Ask them or Manara support. You can change the
+                                    {{ classesTerm.toLowerCase() }} they lead at this school.
                                 </div>
 
                                 <!-- A refusal that is not tied to one field (e.g. email already a teacher). -->
@@ -160,6 +170,7 @@
                                             class="form-control"
                                             :class="{ 'is-invalid': fieldErrors.name }"
                                             v-model.trim="form.name"
+                                            :disabled="isEditing && sharedTeacher"
                                             required
                                         >
                                         <div v-if="fieldErrors.name" class="invalid-feedback">{{ fieldErrors.name }}</div>
@@ -186,6 +197,8 @@
                                             class="form-control"
                                             :class="{ 'is-invalid': fieldErrors.phone }"
                                             v-model.trim="form.phone"
+                                            :disabled="isEditing && sharedTeacher"
+                                            :placeholder="isEditing && sharedTeacher ? 'Not shown' : ''"
                                         >
                                         <div v-if="fieldErrors.phone" class="invalid-feedback">{{ fieldErrors.phone }}</div>
                                     </div>
@@ -349,6 +362,12 @@ const fieldErrors = ref<Record<string, string>>({});
 const editingId = ref<number | null>(null);
 /** True while the edit modal is pre-filling from GET /teachers/{id}. */
 const loadingTeacher = ref(false);
+/**
+ * The teacher being edited also belongs to another school (GET /teachers/{id}
+ * `shared`). Their name and phone are one record every school shares, so the form
+ * makes them read-only and never sends a phone.
+ */
+const sharedTeacher = ref(false);
 
 /** The teacher queued for removal (drives the confirm modal); `null` when idle. */
 const deleteTarget = ref<Teacher | null>(null);
@@ -433,6 +452,7 @@ const loadClasses = async () => {
 const openCreateModal = () => {
     editingId.value = null;
     loadingTeacher.value = false;
+    sharedTeacher.value = false;
     form.value = emptyForm();
     formError.value = '';
     fieldErrors.value = {};
@@ -450,6 +470,7 @@ const openCreateModal = () => {
  */
 const openEditModal = async (teacher: Teacher) => {
     editingId.value = teacher.id;
+    sharedTeacher.value = false;
     formError.value = '';
     fieldErrors.value = {};
     // Seed name/email from the row so the modal is not empty for the split second
@@ -462,6 +483,7 @@ const openEditModal = async (teacher: Teacher) => {
     loadingTeacher.value = true;
     try {
         const detail = await teachersStore.fetchTeacher(teacher.id);
+        sharedTeacher.value = detail.shared === true;
         form.value = {
             name: detail.name,
             email: detail.email,
@@ -518,7 +540,9 @@ const submitForm = async () => {
             // Edit: email is fixed and not sent; class_ids is the full new set.
             const payload: TeacherUpdatePayload = {
                 name: form.value.name,
-                phone: form.value.phone,
+                // A shared teacher's phone is hidden from this school and the
+                // server refuses any value, so none is sent.
+                phone: sharedTeacher.value ? '' : form.value.phone,
                 class_ids: form.value.class_ids,
                 class_subjects: form.value.class_subjects
             };
@@ -539,8 +563,11 @@ const submitForm = async () => {
             Swal.fire({
                 icon: 'success',
                 title: 'Teacher added',
-                // The server's own message mentions the emailed invite.
-                text: created ? `${created.name} has been invited by email to set up their login.` : undefined,
+                // Deliberately the same words whether this is a new login or an
+                // existing teacher joining from another school: the server's reply
+                // is built to be indistinguishable, and the screen must not
+                // undo that by guessing.
+                text: created ? `${created.name} has been added to this school and emailed at ${created.email}.` : undefined,
                 timer: 3000,
                 showConfirmButton: false
             });

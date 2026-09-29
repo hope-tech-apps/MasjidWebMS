@@ -63,6 +63,12 @@ export type TeacherDetail = {
     name: string;
     email: string;
     phone: string;
+    /**
+     * The teacher also belongs to another school. Their name and phone are one
+     * record every school shares: the server hides the stored phone (`phone` is
+     * '') and refuses a change to either, so the edit form shows them read-only.
+     */
+    shared?: boolean;
     class_ids: number[];
     class_subjects?: ClassSubjects;
 };

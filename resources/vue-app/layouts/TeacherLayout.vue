@@ -26,6 +26,10 @@
                                  aria-label="School calendar" title="School calendar">
                         <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
                     </router-link>
+                    <!-- Only with 2+ schools (memberships[] on /api/teacher/user). A
+                         teacher at one school sees the header they always saw. -->
+                    <TeacherSchoolPicker :choices="choices" :current-id="selectedId" :switching="switching"
+                                         @choose="switchSchool" />
                     <span v-if="teacherName" class="text-muted small d-none d-md-inline">{{ teacherName }}</span>
                     <button class="btn btn-sm btn-outline-secondary teacher-tap" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>
@@ -36,17 +40,37 @@
         </nav>
 
         <main class="container py-3 py-sm-4" style="max-width: 960px;">
-            <router-view />
+            <!-- The server bound a different school than this tab selected: a screen
+                 headed one school over another's rows. Blocking, so nothing is read
+                 from it until the teacher reconciles (the admin notice, reused). -->
+            <TenantMismatchNotice v-if="mismatch" :server-name="nameFor(mismatch.server)"
+                                  :selected-name="nameFor(mismatch.selected)" :busy="switching"
+                                  @reconcile="reconcile" />
+
+            <!-- One refetch-and-reload has happened and the server still refuses the
+                 selected school. Say so; reloading again would only loop. -->
+            <div v-else-if="refused" class="alert alert-danger small" role="alert">
+                Manara can't open this school for your account right now. Sign out and sign in again,
+                or ask your school office.
+            </div>
+
+            <router-view v-else />
         </main>
     </div>
 </template>
 
 <script setup lang="ts">
 import TeacherApiService from '@/core/services/TeacherApiService';
+import TeacherSchoolPicker from '@/components/teacher/TeacherSchoolPicker.vue';
+import TenantMismatchNotice from '@/components/dashboard/TenantMismatchNotice.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
+import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/teacherSchools';
+import { teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
+import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
+import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
 
 interface TeacherSchool {
     id: number;
@@ -75,23 +99,125 @@ const isCalendarActive = computed(() => route.name === 'teacherCalendar');
 watch(() => school.value?.name, (name) => setOrgTitle(name), { immediate: true });
 onBeforeUnmount(() => setOrgTitle(null));
 
-onMounted(async () => {
-    // The header comes from the teacher's own self endpoint — the shell never
-    // reaches into the admin masjid store, which a teacher token cannot read.
+// ---------------------------------------------------------------- the schools
+
+/**
+ * The schools the SERVER granted this teacher — `memberships[]` on
+ * /api/teacher/user, the very list the resolver would bind (AuthController::
+ * attachMemberships). Never assembled here: an entry the resolver would refuse is
+ * a 403 with a spinner in front of it.
+ */
+const choices = computed(() => schoolChoices(authStore.user?.memberships));
+
+/** What this tab has selected: a claim, not a fact — the server checks it on every request. */
+const selectedId = computed<number | null>(() => {
+    const id = Number(authStore.dashboardMasjidId);
+    return Number.isInteger(id) && id > 0 ? id : null;
+});
+
+const nameFor = (id: number): string => choices.value.find((choice) => choice.id === id)?.name ?? `School #${id}`;
+
+const mismatch = teacherSchoolMismatch;
+const refused = teacherSchoolRefused;
+const switching = ref(false);
+
+/**
+ * Switch school: abort what is in flight, empty the stores, remember the choice,
+ * and start the shell again from nothing.
+ *
+ * The first three steps are the admin switcher's (tenantSwitchStore.switchTo):
+ * responses already on the wire carry the OTHER school's classes, students and
+ * messages, and would otherwise land in screens about to be labelled for this
+ * one. The last is a full reload rather than the admin's in-place remount,
+ * deliberately (design §5): the teacher's class screen holds thousands of lines
+ * of local state and a `groupId` in its route, and none of it may survive into
+ * another school. Teachers switch rarely, so the reload costs nothing that
+ * matters and removes a class of leak instead of guarding against it.
+ */
+function switchSchool(id: number): void {
+    const target = switchTarget(selectedId.value, id, choices.value);
+    if (target === null || switching.value) return;
+
+    switching.value = true;
+
     try {
-        const res = await TeacherApiService.get('/api/teacher/user');
+        bumpTenantEpoch();
+        resetTenantScopedStores();
+    } catch (error) {
+        // Not fatal: the reload below is what actually guarantees a clean slate.
+        console.warn('[tenant] store reset before the school switch failed', error);
+    }
+
+    forgetServerTenant();
+    authStore.saveDashboardMasjidId(target);
+    window.location.assign('/teacher');
+}
+
+/** "Continue in {server school}": adopt what the server bound (if we may) and start again. */
+function reconcile(): void {
+    const server = teacherSchoolMismatch.value?.server ?? null;
+    const target = server !== null && choices.value.some((choice) => choice.id === server)
+        ? server
+        : landingSchoolId(null, choices.value);
+
+    switching.value = true;
+    bumpTenantEpoch();
+    forgetServerTenant();
+
+    if (target !== null) authStore.saveDashboardMasjidId(target);
+    else authStore.forgetDashboardMasjidId();
+
+    window.location.assign('/teacher');
+}
+
+/**
+ * The header, from the school the SELECTED id names — read through the tenant-bound
+ * endpoint, so it is a school the server verified for this very request, never the
+ * default membership that /api/teacher/user names. For a teacher at two schools the
+ * old source painted school A's name and logo over school B's classes.
+ */
+async function loadSchoolHeader(): Promise<void> {
+    if (selectedId.value === null) {
+        // Nothing selected (an older payload with no memberships): the only school
+        // the shell can name is the login's own, which is what it always showed.
+        const own: any = authStore.user?.masjid ?? null;
+        school.value = own;
+        calendarPublished.value = (authStore.user as any)?.school_calendar_published === true;
+        return;
+    }
+
+    try {
+        const res = await TeacherApiService.get(`/api/teacher/masjids/${selectedId.value}/school`);
         const data = res.data?.data ?? null;
         if (data) {
-            school.value = data.masjid ?? null;
-            teacherName.value = [data.first_name, data.last_name].filter(Boolean).join(' ');
+            school.value = data;
             calendarPublished.value = data.school_calendar_published === true;
         }
     } catch {
-        // A failure here is not fatal to the shell — the classes screen shows its
-        // own error, and a 401 is already handled by TeacherApiService.
+        // Not fatal to the shell — the classes screen shows its own error, a 401 is
+        // already handled by TeacherApiService, and a refused school is handled by
+        // its 403 interceptor.
         school.value = null;
         calendarPublished.value = false;
     }
+}
+
+onMounted(async () => {
+    // The teacher's own name, from their own self endpoint — the shell never
+    // reaches into the admin masjid store, which a teacher token cannot read.
+    const identity = (async () => {
+        try {
+            const res = await TeacherApiService.get('/api/teacher/user');
+            const data = res.data?.data ?? null;
+            if (data) {
+                teacherName.value = data.name || [data.first_name, data.last_name].filter(Boolean).join(' ');
+            }
+        } catch {
+            teacherName.value = '';
+        }
+    })();
+
+    await Promise.all([identity, loadSchoolHeader()]);
 });
 
 const signOut = async () => {

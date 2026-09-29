@@ -1,5 +1,11 @@
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import { API_CONFIG, LOCAL_STORAGE_KEYS } from "@/core/constants/appConfigConstants";
+import {
+    dropSupersededResponse,
+    isFromSupersededEpoch,
+    stampTenantEpoch,
+} from "@/core/tenancy/tenantRequests";
+import { checkTeacherSchoolEcho, handleTeacherSchoolRefusal } from "@/core/tenancy/teacherSchoolGuard";
 
 /**
  * The teacher shell's own HTTP client.
@@ -49,12 +55,40 @@ class TeacherApiService {
             return config;
         });
 
+        // A teacher can belong to several schools and switch between them, so
+        // this client takes part in the same request epoch the admin one does
+        // (core/tenancy/tenantRequests.ts): every request is stamped, and a
+        // response that arrives after the teacher moved to another school is
+        // dropped instead of written into a screen now labelled for the new one.
+        TeacherApiService.client.interceptors.request.use(stampTenantEpoch);
+
         // Centralized 401 handling: a teacher whose token is no longer good is
         // sent back to the single staff sign-in. The dynamic import keeps the
         // router out of this module's static dependency graph.
         TeacherApiService.client.interceptors.response.use(
-            (res) => res,
+            (res) => {
+                // Staleness BEFORE the echo: a response from the school just left
+                // still names it, and must not be read as the server disagreeing.
+                if (isFromSupersededEpoch(res.config)) {
+                    return dropSupersededResponse(`${res.config?.url ?? 'a response'}`);
+                }
+
+                checkTeacherSchoolEcho(res);
+
+                return res;
+            },
             async (error) => {
+                // Includes the abort the switch itself fires.
+                if (isFromSupersededEpoch(error?.config)) {
+                    return dropSupersededResponse(`${error?.config?.url ?? 'a failed request'}`);
+                }
+
+                // 403 "outside memberships": the teacher's school list changed
+                // while this tab was open. Refetch, rehydrate, reload — and still
+                // reject, so the caller's own error handling runs if the reload
+                // does not (it is guarded against looping).
+                handleTeacherSchoolRefusal(error);
+
                 if (error?.response?.status === 401) {
                     try {
                         const { default: router } = await import("@/router/router");
