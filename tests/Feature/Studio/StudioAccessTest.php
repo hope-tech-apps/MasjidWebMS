@@ -41,6 +41,11 @@ class StudioAccessTest extends TestCase
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
 
         Storage::fake((string) config('studio.logo.disk'));
+
+        // The draft-logo upload runs the shared size and memory check; give it
+        // room so this test does not depend on what the process has built up.
+        \App\Support\Studio\LogoDerivatives::$headroomBytes = 512 * 1024 * 1024;
+        $this->beforeApplicationDestroyed(fn () => \App\Support\Studio\LogoDerivatives::$headroomBytes = null);
     }
 
     /**

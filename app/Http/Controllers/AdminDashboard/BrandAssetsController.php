@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Masjids\RegenerateBrandAssetsRequest;
 use App\Models\Masjid;
 use App\Support\BrandAssets;
+use App\Support\BrandAssetsBusy;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -15,20 +16,25 @@ use Symfony\Component\HttpFoundation\Response;
  * none yet, this changes its tab icon, its share card and /api/v1/settings, so
  * it is a per-organisation decision the owner makes; Studio's confirm dialog
  * says so.
+ *
+ * The SuperAdmin check is RegenerateBrandAssetsRequest::authorize(), which
+ * runs before validation.
  */
 class BrandAssetsController extends Controller
 {
     public function regenerate(RegenerateBrandAssetsRequest $request, string $masjid_id)
     {
-        if (Auth::user()?->type !== 'SuperAdmin') {
-            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can regenerate an organisation\'s brand images.');
-        }
-
         $masjid = Masjid::findOrFail($masjid_id);
 
-        return response()->json([
-            'status' => 'success',
-            'data' => BrandAssets::regenerate($masjid, $request->validated('background_color'), (int) Auth::id()),
-        ], Response::HTTP_OK);
+        try {
+            $data = BrandAssets::regenerate($masjid, $request->validated('background_color'), (int) Auth::id());
+        } catch (BrandAssetsBusy $e) {
+            // Built here, not thrown as an HttpException: the app's renderer
+            // replaces an HttpException's message outside debug, and this one is
+            // for the SuperAdmin to read.
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], Response::HTTP_CONFLICT);
+        }
+
+        return response()->json(['status' => 'success', 'data' => $data], Response::HTTP_OK);
     }
 }

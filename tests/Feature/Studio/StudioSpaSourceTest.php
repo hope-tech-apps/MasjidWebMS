@@ -5,6 +5,7 @@ namespace Tests\Feature\Studio;
 use App\Http\Requests\Admin\Studio\StoreStudioDraftLogoRequest;
 use App\Models\StudioDraft;
 use App\Support\AppMenu;
+use App\Support\Studio\LogoDerivatives;
 use App\Support\Studio\StudioPreview;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\ReadsStudioSource;
@@ -391,9 +392,10 @@ class StudioSpaSourceTest extends TestCase
         parse_str(str_replace(',', '&', substr($dimensions, strlen('dimensions:'))), $limits);
 
         $this->assertSame((int) config('studio.logo.min_px'), (int) $limits['min_width']);
-        $this->assertSame((int) $limits['max_width'], (int) $limits['max_height']);
         $this->assertStringContainsString('export const LOGO_MIN_EDGE = ' . (int) $limits['min_width'] . ';', $prepare);
-        $this->assertStringContainsString('export const LOGO_LARGEST_EDGE = ' . (int) $limits['max_width'] . ';', $prepare);
+        // The maximum is no longer a `dimensions` rule: the request checks it in
+        // after(), through LogoDerivatives::assertFits, so the constant is the source.
+        $this->assertStringContainsString('export const LOGO_LARGEST_EDGE = ' . LogoDerivatives::MAX_EDGE . ';', $prepare);
     }
 
     #[Test]
