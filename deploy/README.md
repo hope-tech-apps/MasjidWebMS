@@ -155,8 +155,11 @@ Both results empty (or held) means the rollback is safe for newsletters.
 
 ## Scheduler cron
 
-`routes/console.php` schedules `sanctum:prune-expired --hours=24` daily (keeps
-the `personal_access_tokens` table bounded). Laravel's scheduler only runs if
+`routes/console.php` schedules `tokens:prune-expired` daily (keeps the
+`personal_access_tokens` table bounded by deleting only tokens the guard that
+reads them already refuses, plus 24 hours; not Sanctum's own
+`sanctum:prune-expired`, which would delete parent tokens after ~32 hours).
+Laravel's scheduler only runs if
 the system cron invokes `schedule:run` every minute. Install once (as root):
 
 ```sh

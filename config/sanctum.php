@@ -48,8 +48,11 @@ return [
 
     // Security: tokens auto-expire after 8 hours of issuance. Override via
     // SANCTUM_EXPIRATION env var (in minutes). null = never expire (NOT recommended).
-    // Combined with `php artisan sanctum:prune-expired --hours=24` on a daily cron,
-    // this keeps the personal_access_tokens table bounded.
+    // This is the STAFF lifetime only: the `family` guard has its own
+    // (config/family.php, session.expiration_minutes). The table is kept bounded
+    // by `php artisan tokens:prune-expired` (a daily schedule entry), which
+    // ages each token kind against its own guard. Do NOT schedule Sanctum's
+    // `sanctum:prune-expired`: it would delete parent tokens after ~32 hours.
     'expiration' => env('SANCTUM_EXPIRATION', 480),
 
     /*

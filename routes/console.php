@@ -8,12 +8,18 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// Prune expired Sanctum personal access tokens daily so the
-// personal_access_tokens table stays bounded (tokens expire after 8h via
-// config/sanctum.php, but expired rows linger until pruned). Requires the
-// system cron to run `php artisan schedule:run` every minute — see
-// deploy/README.md.
-Schedule::command('sanctum:prune-expired --hours=24')->daily();
+// Prune expired API tokens daily so the personal_access_tokens table stays
+// bounded. This is NOT Sanctum's own `sanctum:prune-expired`: that command ages
+// every row against the single global `sanctum.expiration` (480 minutes, the
+// staff lifetime), which deleted every parent and app-member token ~32 hours
+// after sign-in although the `family` guard accepts them for 30 days
+// (config('family.session.expiration_minutes')). `tokens:prune-expired`
+// deletes, per token kind, only rows the guard that reads them already
+// refuses, plus 24 hours of grace; an unrecognised kind gets the longest
+// lifetime of any guard. withoutOverlapping() stops a slow sweep stacking up.
+// Requires the system cron running `php artisan schedule:run` every minute —
+// see deploy/README.md.
+Schedule::command('tokens:prune-expired')->daily()->withoutOverlapping();
 
 // Server-side prayer backstop: every minute, push adhan/iqama at prayer time to
 // devices that have gone dark (no heartbeat > 5 days) so they never miss a

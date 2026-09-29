@@ -161,7 +161,7 @@ class RetentionScheduleTest extends TestCase
     {
         // Adding to routes/console.php must not disturb what was there; the
         // prayer backstop going quiet is a silent failure by construction.
-        foreach (['sanctum:prune-expired', 'prayers:send-due', 'prayers:daily-resync'] as $command) {
+        foreach (['tokens:prune-expired', 'prayers:send-due', 'prayers:daily-resync'] as $command) {
             $this->assertNotNull(
                 $this->scheduledEventFor($command),
                 "{$command} fell off the schedule."
