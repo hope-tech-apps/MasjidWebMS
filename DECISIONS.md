@@ -5634,3 +5634,83 @@ Rationale: dark has to mean first, a corrected address has to be the address use
 they are asked to accept, and a number that decides who the kitchen rings has to be checked where the basket
 cannot change under it. The 20 in the brief was sized for one person; the deployment is a room.
 `CartConfigTest` pins the new defaults; `CartThrottleTest` sets its own small numbers and is unchanged.
+
+## 2026-09-29 — Member portal, slice 6: a member's orders, gifts and receipts (API only)
+Decision: (1) REALM. The routes are in the MEMBER realm, `/api/mobile/masjids/{masjid_id}/me/...`, inside the
+existing `crm` member group beside recurring giving, with its full stack (`auth:family`, `member.active`,
+`member.token`, `family.tenant`, `crm`, on top of the file's `throttle:mobile`) and limiters of their own:
+`throttle:30,1,member-portal` for `GET me/orders`, `me/orders/{source}/{id}` and `me/gifts`, and
+`throttle:20,1,member-receipt` for `GET me/receipts/{id}/pdf` (dompdf renders on every call). The prefix is
+load-bearing: an inline throttle is keyed on the caller alone, so without one these reads would spend the
+monthly-giving screen's allowance and the other way round. The family portal was not used because
+`FamilyAccessService` admits only a confirmed guardian of a live ward, so the 64 Wix members and every
+festival ticket buyer cannot enter it; the member realm is the one a plain contact reaches with no office
+step (an e-mail code adopts `login_email` and sets `verified_at`). Nothing client-side was built: which client
+shows it (the MEC apps or a web page) is the owner's open question.
+(2) THE LINKING RULE. A member sees a purchase when it was confirmed to THEIR VERIFIED ADDRESS (`login_email`
+while `verified_at` is set, through `Contact::memberAccessIsActive()`), or, where the source carries a contact,
+when `contact_id` is theirs, always inside their own organisation: cart `orders` PAID with `contact_id` = them OR
+`LOWER(TRIM(buyer_email))` = the address; `historical_orders` by `contact_id` (the importer's key; the table holds
+no e-mail); `form_responses` with a PAID money leg (`payment_method` set, `payment_status = paid`) whose
+`respondent_email` matches; `meal_orders` PAID whose `customer_email` matches or `contact_id` is theirs; donations
+by `contact_id`, status `succeeded`. A form response or meal order that an `order_items` row records
+(`record_type` + `record_id`, the type checked as well as the number) is left out, because the cart order already
+lists it. Without a verified address EVERY list is empty, the contact-keyed ones included (an unverified member
+never gets past `member.active`, so this is belt and braces). The confirmation e-mail already told the holder of
+the address, so the portal reveals nothing new, and someone who typed another person's address cannot see the
+order unless they own that inbox. `App\Services\Member\MemberPurchases` is the only place the rule lives: the
+list (a UNION of `{source, key, moment}` rows, ordered by moment, source, key so LIMIT/OFFSET pages are stable)
+and the detail are built from the same four per-source queries, and every query names `masjid_id` itself
+(`FormResponse` never had the tenant trait, the union runs on the base builder, and an unbound scope is no
+filter).
+(3) HANDLES. A cart order is addressed by its uuid; a Wix order, a form response and a meal order by their row
+number, ownership-checked on every lookup. The form response's and the meal order's uuids are NOT handed out,
+against the brief's "the uuid where there is one": they are bearer capabilities (a form response's opens its
+public payment page and `POST /form-responses/{uuid}/checkout`, a meal order's is the link that edits it,
+`PATCH /lunch-orders/{uuid}`, routes/api_v1.php), and a list that carried them would turn a stolen member token
+into the power to edit a lunch order. A donation's uuid was minted as the opaque external handle and unlocks
+nothing public; a receipt has no handle of its own and is one to one with its gift, so `receipt.id` and the
+`me/receipts/{id}/pdf` path use the GIFT's uuid.
+(4) ONE 404. A miss, another member's order, another organisation's, a form response or lunch the basket already
+lists, a handle of the wrong shape and an unknown source are one byte-identical body
+(`{status: error, message, data: {}}`), and none of them reaches a table before the shape is checked. The routes
+carry no `where` constraint because a router 404 has a different body. The receipt PDF is resolved through the
+caller's own succeeded gifts and refuses an imported Wix gift whatever a stray receipt row says.
+(5) WHAT IS SHOWN. Every row is built by hand (`MemberPurchaseProjector`); no model is serialised. List row:
+`source` (`manara` cart, `wix`, `form`, `meal`), `id`, `number`, `date`, `status`, `total_minor`, `currency`,
+`summary {labels (up to 3), count}`. Detail: the same identity, `lines [{label, quantity, unit_minor,
+line_minor}]`, `totals {subtotal_minor, discount_minor, total_minor}` and `receipt_note`. Gift: `id`, `date`,
+`fund_name`, `amount_minor` (the charged amount, which is the receipt's gross), `currency`, `is_zakat`,
+`receipt {id, serial} | null`, `receipt_note`. Statuses are one vocabulary: `paid`, `refunded`,
+`partially_refunded`, `disputed`, `canceled`, `declined`, and `unknown` for a Wix status the importer never
+writes; a canceled or declined Wix order keeps that word and a note that no money was taken, and a basket's
+refund or dispute flag is its status (the refunded AMOUNT is not shown). `fee_minor` is never shown (Manara's
+cut on `orders`, the fee Wix added on `historical_orders`), nor Stripe ids, accounts, fingerprints, payloads,
+answers, line options, the import batch, buyer names and phones, or what a Wix line was recorded as. A meal's
+donation and covered card fee are lines, so the lines add up. Dates are the calendar day in the ORGANISATION's
+timezone (`masjids.timezone`, UTC when it is not a real one), never a UTC instant rendered as a day. The
+receipt note for a cart, form or meal purchase is the brief's sentence; a Wix order and a Wix gift get their own
+(the organisation's old checkout, no receipt issued here).
+(6) The list is paginated as the admin lists are (`data` is the paginator, `data.data` the rows), 15 a page,
+at most 50, and `per_page[]` is not a number.
+Alternatives: (1) relaxing the guardian rule so the 64 members can use the family portal (rejected: the rule is
+what keeps a school's children's records to their guardians, and the member realm needs no office step);
+(2) matching orders to a contact at settlement on the typed `buyer_email` (rejected: unverified, so a mailbox
+owner could see an order a stranger typed their address into, and nothing there would ever change if the
+address moved); reading `contacts.email` instead of `login_email` (rejected: it is not proved); a signed
+link like `AccountAccessService` (rejected: typed to staff and one more emailed-secret channel for money);
+(3) the uuids the brief asked for (rejected as above); a `uuid` column on `donation_receipts` (rejected: a
+migration for a handle that already exists on the donation, and the receipt is one to one with it); an
+HMAC-derived handle per row (rejected: an ownership-checked row number discloses nothing a 404 does not, and
+inverting a derived handle means scanning the caller's rows); (4) a 403 for someone else's order (rejected:
+it confirms the handle is real, which is a disclosure about a named person's spending).
+Rationale: the address is what proves the person, the rule is asked in one place so the list and the detail
+cannot disagree, and the projection is an allowlist because `Order` hides four fields, `Donation` hides none and
+`fee_minor` means two opposite things. Nothing was RUN: there is no PHP on this machine, so the suites below
+have never executed (ASSUMPTIONS #47).
+Tests: `tests/Feature/Member/MemberPurchasesTest.php` (the rule, clause by clause, asked of the service:
+isolation, no verified address, case and space, the cart-owned exclusion by record type, order and paging,
+`find()` returning null for every way of not having a row), `MemberOrdersTest.php` (the stack read from the
+router, the door, isolation over HTTP, one 404, exact keys plus canary values, statuses, dates, pagination, the
+limiter buckets), `MemberGiftsAndReceiptsTest.php` (the gifts, the receipt object and its note, the PDF's
+headers, its one 404, the house paginator).
