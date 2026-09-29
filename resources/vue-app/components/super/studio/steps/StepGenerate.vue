@@ -162,7 +162,7 @@ async function provision() {
     const name = store.answers.identity.name?.trim() || 'this organisation';
     const answer = await QSwal.fire({
         icon: 'question',
-        title: `Provision ${name}?`,
+        titleText: `Provision ${name}?`,
         text: 'This creates the organisation and invites the administrator the draft names. It cannot be undone from Studio.',
         confirmButtonText: 'Provision',
         cancelButtonText: 'Not yet',

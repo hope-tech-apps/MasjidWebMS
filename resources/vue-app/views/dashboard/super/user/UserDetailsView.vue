@@ -129,6 +129,7 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import DataItemContainer from '@/components/DataItemContainer.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
+import { escapeHtml } from '@/core/plugins/swalSanitize';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { User } from '@/core/types/data/User';
@@ -204,7 +205,7 @@ const changeAccess = async (org: UserOrganisation, access: TeamAccess) => {
     if (!user.value?.id || access === org.access) return;
 
     const label = access === 'admin' ? 'an Administrator' : 'Friday lunch only';
-    const answer = await QSwal.fire("Question", `Make ${user.value.name} ${label} at ${org.name}? They'll be signed out and sign in again with the new access.`, 'question');
+    const answer = await QSwal.fire("Question", `Make ${escapeHtml(user.value.name)} ${label} at ${escapeHtml(org.name)}? They'll be signed out and sign in again with the new access.`, 'question');
     if (!answer.isConfirmed) { await reload(); return; }
 
     changing.value = true;

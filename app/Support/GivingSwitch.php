@@ -106,6 +106,49 @@ final class GivingSwitch
     }
 
     /**
+     * Why Giving cannot be switched OFF for this organisation right now, as the
+     * sentence the SuperAdmin reads, or null when nothing holds it.
+     *
+     * Giving is refused off while a monthly gift Stripe can bill exists (owner,
+     * 2026-09-14: block, not warn). A switch never cancels, pauses or changes a
+     * donor's gift, so the SuperAdmin cancels them first. Checkout pages still
+     * open block too, with their own sentence: cancelling one on Recurring
+     * Donations leaves the page payable, so it says wait, never cancel. There is
+     * no override: a page completed after the flip would start a monthly gift
+     * the organisation's admins cannot see.
+     *
+     * A gift that can bill decides the sentence when pages are also open. This
+     * can call Stripe (billedAfterCancelCount), so callers run it before they
+     * open a transaction. Switching Giving ON has no precondition.
+     */
+    public static function refusalToSwitchOff(Masjid $masjid): ?string
+    {
+        $live = self::liveSubscriptionCount($masjid);
+
+        if ($live > 0) {
+            $billedAfterCancel = self::billedAfterCancelCount($masjid);
+
+            return ($live === 1 ? '1 monthly gift can' : "{$live} monthly gifts can")
+                . ' still charge donors. Cancel them on Recurring Donations or in Stripe first.'
+                . ($billedAfterCancel > 0
+                    ? ($billedAfterCancel === 1
+                        ? ' 1 of them already shows as cancelled here but Stripe is still billing it, so cancel that one in Stripe.'
+                        : " {$billedAfterCancel} of them already show as cancelled here but Stripe is still billing them, so cancel those in Stripe.")
+                    : '');
+        }
+
+        $open = self::openCheckoutCount($masjid);
+
+        if ($open > 0) {
+            return $open === 1
+                ? '1 monthly-gift checkout page opened in the last 24 hours can still start a monthly gift. Try again once it expires, 24 hours after it opened.'
+                : "{$open} monthly-gift checkout pages opened in the last 24 hours can still start a monthly gift. Try again once they expire, 24 hours after each one opened.";
+        }
+
+        return null;
+    }
+
+    /**
      * Monthly-gift checkout pages opened in the last 24 hours that a donor can still
      * complete: `pending`, no Stripe subscription yet, and a Checkout Session Stripe
      * actually created (a row whose Stripe call threw has no page to complete).

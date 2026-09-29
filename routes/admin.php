@@ -717,6 +717,12 @@ Route::prefix('admin')->group(function () {
             // auth first (FamilyAuthGuardTest sweeps every admin route with a
             // family token), and the controller refuses it with a 422.
             Route::patch('{masjid_id}/capabilities/{capability}', [MasjidsController::class, 'setCapability']);
+            // SuperAdmin-only: several catalogue capabilities in one request
+            // (Studio W2 S7; Studio's live-organisation Features card is the
+            // caller, the panel above keeps sending one key). Same writer
+            // (CapabilityWriter::apply), same 403, same 422 envelope, and
+            // outside every gate like the single switch.
+            Route::patch('{masjid_id}/capabilities', [MasjidsController::class, 'setCapabilities']);
             // SuperAdmin-only read behind the switch panel: every catalogue entry
             // grouped, with its default, whether a SuperAdmin overrode it, how many
             // live page sections show it, and the last changes. Same in-controller

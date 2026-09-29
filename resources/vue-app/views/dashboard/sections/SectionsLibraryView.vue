@@ -210,6 +210,7 @@
 
 <script setup lang="ts">
 import { PageSection } from '@/core/types/data/masjid-related/PageSection';
+import { escapeHtml } from '@/core/plugins/swalSanitize';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { ref, onBeforeMount, computed } from 'vue';
 import { useRouter } from 'vue-router';
@@ -295,7 +296,7 @@ const confirmDelete = async (section: PageSection) => {
     
     const result = await Swal.fire({
         title: 'Are you sure?',
-        html: `Do you want to delete "${section.title || 'Untitled Section'}"?<br><br>
+        html: `Do you want to delete "${escapeHtml(section.title || 'Untitled Section')}"?<br><br>
                ${pagesCount > 0 ? `<strong class="text-danger">This section is used in ${pagesCount} page(s) and will be removed from all of them.</strong>` : ''}`,
         icon: 'warning',
         showCancelButton: true,

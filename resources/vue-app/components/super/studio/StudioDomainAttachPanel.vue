@@ -199,7 +199,7 @@ const checkNow = async (domain: MasjidDomain): Promise<void> => {
 const removeDomain = async (domain: MasjidDomain): Promise<void> => {
     const confirmed = await Swal.fire({
         icon: 'warning',
-        title: `Remove ${domain.host}?`,
+        titleText: `Remove ${domain.host}?`,
         text: 'Studio forgets this address. Nothing was made for it in Cloudflare, so nothing there changes.',
         showCancelButton: true,
         confirmButtonText: 'Remove',

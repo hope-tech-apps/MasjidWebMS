@@ -535,6 +535,7 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import DataItemContainer from '@/components/DataItemContainer.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
+import { escapeHtml } from '@/core/plugins/swalSanitize';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { Admin } from '@/core/types/data/Admin';
@@ -1184,12 +1185,12 @@ const confirmLink = async (): Promise<void> => {
         MSwal.fire('Check this organisation',
             'The server did not confirm the link. Reload the page to see what was saved.', 'warning');
     } else if (via.ready) {
-        MSwal.fire('Linked', `Card payments on ${childLabel.value}'s forms now go through ${via.holder.name ?? parentLabel.value}.`, 'success');
+        MSwal.fire('Linked', `Card payments on ${escapeHtml(childLabel.value)}'s forms now go through ${escapeHtml(via.holder.name ?? parentLabel.value)}.`, 'success');
     } else {
         const problem = formsCardProblemText(via.problem);
         MSwal.fire('Linked, but not ready',
-            `The link is saved, but card payments on ${childLabel.value}'s forms are refused right now`
-            + `${problem ? `, because ${problem}` : ''}.`, 'warning');
+            `The link is saved, but card payments on ${escapeHtml(childLabel.value)}'s forms are refused right now`
+            + `${problem ? `, because ${escapeHtml(problem)}` : ''}.`, 'warning');
     }
 };
 

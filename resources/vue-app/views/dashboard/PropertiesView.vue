@@ -245,7 +245,7 @@ async function save() {
 }
 
 async function remove(p: PropertyRow) {
-    const c = await Swal.fire({ icon: 'warning', title: `Archive ${p.name}?`, text: 'Rent history is kept.', showCancelButton: true, confirmButtonText: 'Archive', confirmButtonColor: '#dc3545' });
+    const c = await Swal.fire({ icon: 'warning', titleText: `Archive ${p.name}?`, text: 'Rent history is kept.', showCancelButton: true, confirmButtonText: 'Archive', confirmButtonColor: '#dc3545' });
     if (!c.isConfirmed) return;
     try { await ApiService.delete(`${base.value}/${p.id}` as any); await loadData(); }
     catch (e) { Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not archive.' }); }

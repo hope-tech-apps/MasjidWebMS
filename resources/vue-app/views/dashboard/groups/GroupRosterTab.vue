@@ -1285,7 +1285,7 @@ const confirmOne = async (membership: GroupMembership) => {
         const rivals = props.memberships.filter((m) => rivalIds.includes(m.id));
 
         const result = await Swal.fire({
-            title: `Which ${fullName(membership.contact)}?`,
+            titleText: `Which ${fullName(membership.contact)}?`,
             html: `<p class="mb-2">More than one entry claims to be a guardian of `
                 + `<strong>${escapeHtml(fullName(membership.guardian_of))}</strong> under this name. `
                 + 'They are different records, and at most one of them is the person you think it is.</p>'
@@ -1299,7 +1299,7 @@ const confirmOne = async (membership: GroupMembership) => {
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
-            confirmButtonText: `Confirm ${addressLabel(membership.contact)}`
+            confirmButtonText: `Confirm ${escapeHtml(addressLabel(membership.contact))}`
         });
 
         if (!result.isConfirmed) return;
