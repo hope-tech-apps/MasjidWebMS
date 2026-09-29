@@ -129,6 +129,19 @@ export function effectiveWeight(work: { weight?: number | null; type?: string | 
     return null;
 }
 
+/**
+ * Does a FAMILY see this child's weighted figures at all (review F8, 2026-09-29)? Only where the
+ * class is weighted AND nothing the child was marked on is left out of them. Once a class sets
+ * weights, older work with no type drops out of every weighted figure, so a child with nine older
+ * pieces and one new quiz would read "100% across 1 piece" above a plain total of 60 of 90, and the
+ * two would disagree with nothing to say why. Until the older work is typed, the family reads the
+ * plain total and the per-type rows and no weighted figure (headline, weighted level or per-subject),
+ * which needs no explanatory copy. Staff keep every figure and the untyped note that says what is left out.
+ */
+export function familySeesWeighted(weighting: { enabled?: boolean; untyped_excluded?: number | null } | null | undefined): boolean {
+    return !!weighting?.enabled && !(Number(weighting?.untyped_excluded ?? 0) > 0);
+}
+
 /** The scale whose marks are the three words. Never averaged, so never weighted. */
 export const SIMPLE_SCALE = 'simple';
 

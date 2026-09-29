@@ -12,6 +12,7 @@ import {
     averageLines,
     blankWorkForm,
     effectiveWeight,
+    familySeesWeighted,
     fencedNote,
     firstFieldError,
     isCombinedGuideColumn,
@@ -385,4 +386,56 @@ test('the office Grades tab takes its points percentage from the helper and roun
     assert.match(view, /\(\{\{ pointsPct \}\}\)/, 'the helper\'s string already carries its % sign');
     assert.doesNotMatch(view, /Math\.round/, 'no second rounding in the tab');
     assert.doesNotMatch(view, /\}\}%\)/, 'and no % appended to a string that has one');
+});
+
+// ---------------------------------------------------------------- review F8: a family sees no weighted figure while older work is left out of it
+
+test('a family sees weighted figures only while nothing is left out of them', () => {
+    // The review's case: nine older untyped pieces and one new typed quiz, weights just set. "100% across 1 piece".
+    const weighting = { enabled: true, percent: 100, points_pieces: 1, untyped_excluded: 9 };
+    assert.equal(familySeesWeighted(weighting), false, '9 pieces of older work are left out of the 100%');
+    assert.equal(familySeesWeighted({ ...weighting, untyped_excluded: 1 }), false, 'one is enough');
+
+    // Typed (or nothing untyped to begin with): the figure is honest again and comes back by itself.
+    assert.equal(familySeesWeighted({ ...weighting, untyped_excluded: 0 }), true);
+    assert.equal(familySeesWeighted({ ...weighting, untyped_excluded: null }), true);
+    assert.equal(familySeesWeighted({ enabled: true, percent: 80 }), true, 'an older payload with no count');
+
+    // Not a weighted class: nothing to show, whatever the count.
+    for (const w of [{ enabled: false, untyped_excluded: 0 }, { enabled: false }, null, undefined]) {
+        assert.equal(familySeesWeighted(w as any), false, JSON.stringify(w));
+    }
+});
+
+test('staff keep the weighted figure and the note that says what is left out', () => {
+    const summary = {
+        points_counted: 10, points_earned: 60, points_possible: 90,
+        weighting: { enabled: true, percent: 100, points_pieces: 1, untyped_excluded: 9, level_mean: null },
+    };
+    const lines = averageLines(summary);
+
+    // The teacher's and the office's screens still lead with the weighted figure, with its note ...
+    assert.equal(lines[0].label, 'Weighted average');
+    assert.equal(lines[0].value, '100%');
+    assert.match(lines[0].note, /across 1 piece of work; 9 pieces of work have no type, left out/);
+    // ... beside the plain total.
+    assert.equal(lines[1].value, '60 of 90');
+});
+
+test('the family screen asks familySeesWeighted before every weighted figure and prints no untyped note', () => {
+    const view = readFileSync(new URL('../views/family/FamilyClass.vue', import.meta.url), 'utf8');
+
+    // Headline, weighted level and per-subject figures all go through the one answer.
+    assert.match(view, /<template v-if="familySeesWeighted\(marksFor\(child\)\.summary\.weighting\) && marksFor\(child\)\.summary\.weighting\.percent !== null">/);
+    assert.match(view, /<p v-if="familySeesWeighted\(marksFor\(child\)\.summary\.weighting\) && marksFor\(child\)\.summary\.weighting\.level_mean !== null/);
+    assert.match(view, /subjectFigures\(b, familySeesWeighted\(marksFor\(child\)\.summary\.weighting\)\)/);
+    assert.match(view, /if \(showWeighted && b\?\.weighted_percent !== null/);
+
+    // No weighted figure is drawn from the payload any other way.
+    const weightedReads = view.match(/summary\.weighting\.(percent|level_mean)\b/g) ?? [];
+    assert.ok(weightedReads.length > 0);
+    assert.doesNotMatch(view, /weighting\?\.enabled && marksFor/, 'the old gate, which ignored what was left out, is gone');
+
+    // The block that used to explain what was left out is gone with the figure it explained.
+    assert.doesNotMatch(view, /tCount\('marks_untyped'/);
 });

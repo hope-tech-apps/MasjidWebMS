@@ -5213,3 +5213,15 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   `percentText`'s rounding (one decimal, whole numbers lose it), and both places call it. Chosen: one decimal, because the weighted, per-type
   and per-subject percentages the server sends are already to one decimal and this way the plain and weighted figures are comparable.
   Alternative: whole numbers everywhere. Rejected: it would hide a real difference between two children at 84.7 and 85.3.
+
+- **2026-09-29 (W3/W4 folds, F8, orchestrator's call): a family sees no weighted figure while older work is left out of it.** Once a class sets
+  weights, work with no type (everything set before) drops out of every weighted figure and is counted in `untyped_excluded`, so a child with nine
+  older pieces and one new typed quiz read "100% across 1 piece" above a plain total of 60 of 90, and the family's screen carried its untyped note
+  only inside the weighted block. Decision: while `weighting.untyped_excluded > 0` the FAMILY screen shows the plain total (and the per-type rows,
+  which are plain figures over typed work) and NO weighted figure: not the headline, not the weighted level, not a subject's weighted percentage
+  (`familySeesWeighted` in `core/helpers/gradebook.ts`). It returns by itself when the older work is typed, and needs no new family copy, so the
+  block that explained what was left out is removed from the family view; its strings (`marks_untyped_*`, in all six word tables and pinned by
+  `family-marks-i18n.test.ts`) are kept for the day the point prefers the note to the silence. STAFF views are unchanged: they keep the weighted figure
+  and the untyped note. The decision is in the SPA, not the payload: the family and teacher endpoints stay byte-identical (`FamilyGradesTest`'s parity
+  test), and the family payload keeps carrying `untyped_excluded` for the screen to decide on. Alternative: show the untyped note to families beside
+  the weighted figure. Rejected by the orchestrator: a family has no way to act on it, and the note still leaves the two figures disagreeing.
