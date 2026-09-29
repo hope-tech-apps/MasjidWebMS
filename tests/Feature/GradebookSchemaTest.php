@@ -91,7 +91,8 @@ class GradebookSchemaTest extends TestCase
             Schema::getColumnListing('class_grade_weights')
         );
         $this->assertSame(
-            ['id', 'masjid_id', 'name', 'name_key', 'grade_labels', 'position', 'seeded_by', 'created_at', 'updated_at'],
+            // `seeded_by` is its own later migration (2026_10_03_100250), so it lands after the timestamps.
+            ['id', 'masjid_id', 'name', 'name_key', 'grade_labels', 'position', 'created_at', 'updated_at', 'seeded_by'],
             Schema::getColumnListing('school_subjects')
         );
 

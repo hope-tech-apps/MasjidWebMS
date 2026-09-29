@@ -1216,7 +1216,9 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
   hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
   seed `seed_school_subjects_for_alrazi_and_biss` is guarded by org id AND name, insert-only,
-  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`), and its `down()`
+  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`, added by its own
+  guarded migration `add_seeded_by_to_school_subjects_table`, after the table and before the seed: an applied
+  migration is never edited), and its `down()`
   removes only marked rows that are still untouched (an office "Qur'an" it skipped is never its own). Deploy after
   hours (new code meets the old schema for a few seconds). Ship the seed only after the
   owner's yes (B3).

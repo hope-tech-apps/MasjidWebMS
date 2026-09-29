@@ -5156,3 +5156,13 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   so a hand-typed request gets no more than the screen shows. Alternative: hide it in the SPA only. Rejected: the data is the
   parent's own child's, but "off means off" is a claim about the API too, and the point asked for the server side checked.
   A non-weekly class no longer asks for a week at all. `PointsWeekTest` pins both sides; `points-week.test.ts` pins the views.
+
+- **2026-09-29 (W3/W4 folds, F3): `school_subjects.seeded_by` is its own migration; 100200 is what it first said.** Commit 12ced552
+  put the column into the create-table migration `2026_10_03_100200` after 4ebd8d8d (also on the W5 and W6 branches) had written it
+  without, so a box that had already run the earlier 100200 would never get the column and the seed's insert would abort its migrate.
+  100200 is restored byte for byte (SHA-1 pinned in `SchoolSubjectsSeededByMigrationTest`) and `2026_10_03_100250_add_seeded_by_to_school_subjects_table`
+  adds the column behind a `hasColumn` guard, after the table and before the seed (`2026_10_03_100300`, the only other file that names it;
+  the test fails on any later file that reads it from before 100250). Proven both ways: a fresh `migrate:fresh` runs 100200, 100250,
+  100300 in that order; and a box built as the old 100200 left it (table without the column, 100250 and 100300 not yet run) gains the
+  column and then the seed runs, marking its rows. Rule restated: an applied migration is never edited, a new column is a new migration.
+  The staging check the review asked for (does `migrations` hold `2026_10_03_100200`?) is no longer needed for this: either answer is safe.
