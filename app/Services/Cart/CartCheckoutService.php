@@ -12,6 +12,7 @@ use App\Models\OrderItem;
 use App\Services\Stripe\FormChargeAccount;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\FormPayment;
+use App\Support\FormSchema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LogicException;
@@ -57,6 +58,11 @@ use Throwable;
  * re-quotes, because a quote depends on the date and on the card switch, and one that
  * came back null would throw AFTER the money was taken.
  *
+ * A basket that has been PAID is closed (`Cart::STATUS_CHECKED_OUT`, by the settlement
+ * transaction) and checkout and acknowledge() refuse it; checkout also refuses a basket
+ * whose fingerprint already has a paid order on this cart, so a page for the same lines
+ * can never be opened after they were paid for, even on a cart that was left open.
+ *
  * Reachable from no endpoint until the public cart endpoints exist.
  */
 class CartCheckoutService
@@ -69,6 +75,8 @@ class CartCheckoutService
 
     /** The routing key on a holder's account — opaque, and the only one there. */
     public const CHARGE_REF_KEY = 'cart_charge_ref';
+
+    private const PAID_MESSAGE = 'This basket has already been paid for.';
 
     public function __construct(
         private readonly StripeClient $stripe,
@@ -85,6 +93,8 @@ class CartCheckoutService
             // Re-read under a lock: two tabs pressing "pay" must not open two pages.
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
 
+            self::assertOpen($locked);
+
             $priced = $this->pricer->price($locked);
 
             if ($priced->refusal !== null) {
@@ -97,6 +107,14 @@ class CartCheckoutService
 
             if (! $priced->isPayable()) {
                 throw new CartCheckoutRefused('Your basket has nothing to pay for.');
+            }
+
+            // Belt and braces for a cart left open with a paid order behind it (one paid
+            // before settlement closed baskets): the same lines are never charged twice.
+            // Scoped to THIS cart, so a later basket with the same contents (a monthly
+            // gift, say) is a new purchase and is not caught.
+            if ($this->alreadyPaid($locked, $priced)) {
+                throw new CartCheckoutRefused(self::PAID_MESSAGE);
             }
 
             // Before any write and before an old page is closed: a total Stripe would
@@ -137,6 +155,9 @@ class CartCheckoutService
     {
         return DB::transaction(function () use ($cart, $seen): PricedBasket {
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
+
+            self::assertOpen($locked);
+
             $priced = $this->pricer->price($locked);
 
             if (! hash_equals($priced->viewFingerprint(), $seen)) {
@@ -156,6 +177,25 @@ class CartCheckoutService
 
             return $this->pricer->price($locked);
         });
+    }
+
+    /** A basket that is not open (it was paid for) is never priced, paid or changed again. */
+    private static function assertOpen(Cart $cart): void
+    {
+        if ($cart->status !== Cart::STATUS_OPEN) {
+            throw new CartCheckoutRefused(self::PAID_MESSAGE);
+        }
+    }
+
+    /** Whether this cart already has a PAID order for exactly these lines, prices and payee. */
+    private function alreadyPaid(Cart $cart, PricedBasket $priced): bool
+    {
+        return Order::withoutMasjidScope()
+            ->where('masjid_id', $cart->masjid_id)
+            ->where('cart_id', $cart->id)
+            ->where('status', Order::STATUS_PAID)
+            ->where('basket_fingerprint', $priced->chargeFingerprint())
+            ->exists();
     }
 
     /** The platform's cut, on the charged total. Present only when above zero. */
@@ -290,7 +330,9 @@ class CartCheckoutService
      *    FormPayment::quote() as it stands NOW, in the exact shape FormResponseWriter is
      *    handed. Its total must equal what the page will charge for the line, or the
      *    checkout is refused: a row written from a snapshot that disagrees with the
-     *    charge would state the wrong amount for a ticket already paid for.
+     *    charge would state the wrong amount for a ticket already paid for. It also
+     *    carries `legacy_amount_due` and `entry_count`, which the row's legacy columns
+     *    are written from (the writer would compute them from the live form).
      *  - meal: `payload` is {menu_item_id, meal_menu_id, name, pickup_at} — the menu id is
      *    kept because a deleted dish leaves nothing to find it from — and
      *    `price_snapshot` is the line in LunchOrderLines::price()'s shape, at the price
@@ -320,6 +362,16 @@ class CartCheckoutService
                     || strtolower((string) $quote['currency']) !== strtolower($currency)) {
                     throw new CartCheckoutRefused('This basket could not be priced just now. Please try again.');
                 }
+
+                // The legacy decimal `amount_due` and `entry_count` the writer computes from
+                // the LIVE form (price and tier of the moment it runs) — frozen here from the
+                // same cleaned answers settlement will write, so a price edited before the
+                // payment lands cannot restate what was paid (the confirmation e-mail states
+                // it and FormInsights sums it).
+                $schema = FormSchema::for($form);
+                $clean = $schema->only($form->withoutUnusedPriceAnswers($answers));
+                $quote['legacy_amount_due'] = $schema->amountDue($clean);
+                $quote['entry_count'] = $schema->entryCount($clean);
 
                 return ['payload' => $answers, 'price_snapshot' => $quote];
 
@@ -414,6 +466,12 @@ class CartCheckoutService
             // Card only: a delayed method would hold tickets and dishes while it
             // cleared, and nothing here can release them yet.
             'payment_method_types' => ['card'],
+            // Adaptive Pricing OFF, on the org's own account and a holder's alike. Switched
+            // on in a Stripe dashboard it would show and report a converted price, and on the
+            // pinned API version (2024-06-20) the payment intent then carries the presentment
+            // currency: a basket paid and recorded from the session, but with a false
+            // "did not match, refund it" warning from the intent. As the linked form page does.
+            'adaptive_pricing' => ['enabled' => false],
             'line_items' => $lineItems,
             'payment_intent_data' => $paymentIntentData,
             'metadata' => $metadata,

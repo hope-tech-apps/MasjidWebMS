@@ -40,7 +40,10 @@ use Illuminate\Support\Facades\Log;
  * Paid means `payment_status === 'paid'`, never `status === 'complete'` alone: a delayed
  * method completes the page with money still unmoved. The basket's page is card-only, so
  * an unpaid completion should never arrive; if it does, nothing is settled.
- * `payment_intent.succeeded` settles idempotently if the session event has not.
+ * `payment_intent.succeeded` settles idempotently if the session event has not, unless it
+ * is in another currency than the order's (a localised payment): that one is skipped at
+ * info level and only the session event may report a refundable mismatch. A session event
+ * that follows the intent's settlement backfills the payer (CartSettlementService).
  *
  * Refusals are logged at WARNING and return normally. A 500 would make Stripe retry an
  * event that can never succeed. (A refusal is not a failure to record: the settlement
@@ -109,6 +112,24 @@ class CartPaymentService
         }
 
         [$currency, $amount] = $this->reportedTotal($intent, self::KIND_INTENT);
+
+        // A payment intent in another currency than the order's is a localised one (Adaptive
+        // Pricing is switched off on our pages, but a dashboard or an old page may still
+        // carry it): its converted amount can never equal the order's total, and it says
+        // nothing about a refundable mismatch, because the SESSION event reports the
+        // integration's own currency and total (`currency_conversion`) and settles it. Only
+        // the session event may report a mismatch as one to refund, so the intent is skipped
+        // quietly and settlement is left to it.
+        if ($currency !== strtolower((string) $order->currency)) {
+            Log::info('A cart payment intent is in a different currency than its order; it is left to the checkout session event to settle.', [
+                'order_id' => (int) $order->id,
+                'masjid_id' => (int) $order->masjid_id,
+                'order_currency' => strtolower((string) $order->currency),
+                'intent_currency' => $currency,
+            ]);
+
+            return CartSettlementResult::none();
+        }
 
         return $this->settlement->settle(
             (int) $order->id,

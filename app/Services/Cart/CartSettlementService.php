@@ -2,6 +2,8 @@
 
 namespace App\Services\Cart;
 
+use App\Models\Cart;
+use App\Models\CartItem;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Form;
@@ -55,7 +57,22 @@ use Throwable;
  *      log a warning, leave the order pending and settle NOTHING;
  *   3. mark the order paid and record its payment intent, once;
  *   4. for each line WITHOUT a `record_id` (the per-line idempotency), write the record
- *      from the snapshot taken at checkout, settle it, and link `record_type`/`record_id`.
+ *      from the snapshot taken at checkout, settle it, and link `record_type`/`record_id`;
+ *   5. close the basket (`Cart::STATUS_CHECKED_OUT`) and drop its lines, so the same
+ *      lines can never be checked out and charged a second time. The order's lines are
+ *      the snapshot; the cart is locked BEFORE the order (checkout's own lock order).
+ *
+ * ## The session event after the payment intent's
+ *
+ * Stripe does not order its events. When `payment_intent.succeeded` settles the order
+ * first it carries no payer (no session id, no `customer_details`), so a guest basket is
+ * recorded with an anonymous gift and a placeholder meal customer. The session event that
+ * follows finds the order PAID and settles nothing, but it BACKFILLS what the intent could
+ * not know (backfillLocked()): the donation's contact and session id, and a meal order's
+ * placeholder name, phone and e-mail. Then the steps the first settlement had to skip —
+ * the donor link, the receipt and its delivery, the meal confirmation — run, once: each
+ * is gated on the record still lacking what it needs, and the mailers claim their own
+ * sends. Nothing is re-settled.
  *
  * A failure on any line rolls back ALL of it, order included, and is rethrown: the
  * webhook answers 500 and Stripe retries, which is what a paid basket that could not be
@@ -138,11 +155,13 @@ class CartSettlementService
             throw $e;
         }
 
-        if (! $done['settled']) {
+        if (! $done['settled'] && $done['steps'] === []) {
             return CartSettlementResult::none();
         }
 
-        return new CartSettlementResult(true, $this->afterCommit($orderId, $done['steps']));
+        // `settled` stays true only for the call that moved the order to paid; a backfill
+        // on a paid order returns its receipts without claiming to have settled anything.
+        return new CartSettlementResult($done['settled'], $this->afterCommit($orderId, $done['steps']));
     }
 
     /**
@@ -156,7 +175,14 @@ class CartSettlementService
         ?string $sessionId,
         array $customerDetails,
     ): array {
-        // 1. The lock every settlement of this order queues behind.
+        // 1. The locks every settlement of this order queues behind: the CART first, then
+        // the order, the order checkout takes them in (it locks the basket, then touches its
+        // orders), so a checkout and a settlement of the same basket cannot deadlock.
+        $ref = Order::withoutMasjidScope()->whereKey($orderId)->first(['id', 'masjid_id', 'cart_id']);
+        $cart = $ref?->cart_id === null
+            ? null
+            : Cart::withoutMasjidScope()->where('masjid_id', $ref->masjid_id)->whereKey($ref->cart_id)->lockForUpdate()->first();
+
         $order = Order::withoutMasjidScope()->whereKey($orderId)->lockForUpdate()->first();
 
         if ($order === null) {
@@ -167,6 +193,12 @@ class CartSettlementService
 
         if ($order->isPaid()) {
             $this->noteRepeat($order, $paymentIntentId);
+
+            // A session event that follows the payment intent's brings the payer the
+            // intent could not know; it settles nothing, and fills in what is missing.
+            if ($sessionId !== null || $customerDetails !== []) {
+                return ['settled' => false, 'steps' => $this->backfillLocked($order, $sessionId, $customerDetails)];
+            }
 
             return self::NOT_SETTLED;
         }
@@ -238,7 +270,164 @@ class CartSettlementService
             };
         }
 
+        // 5. The basket is paid: close it, so it can never be checked out again.
+        $this->closeCart($order, $cart);
+
         return ['settled' => true, 'steps' => $steps];
+    }
+
+    /**
+     * Close the basket a paid order came from, and drop its lines: the order's lines are
+     * the snapshot (attendee names live there now), and a closed basket that still listed
+     * them would invite a second "Pay". Only an OPEN basket of this organisation, already
+     * locked by the caller; anything else is left as it is.
+     */
+    private function closeCart(Order $order, ?Cart $cart): void
+    {
+        if ($cart === null || (int) $cart->masjid_id !== (int) $order->masjid_id || $cart->status !== Cart::STATUS_OPEN) {
+            return;
+        }
+
+        $cart->forceFill(['status' => Cart::STATUS_CHECKED_OUT])->save();
+
+        CartItem::withoutMasjidScope()
+            ->where('cart_id', $cart->id)
+            ->where('masjid_id', $cart->masjid_id)
+            ->delete();
+    }
+
+    /**
+     * The order is ALREADY PAID and a session event arrived carrying the payer: fill in
+     * what the payment intent's earlier settlement could not know, and queue the steps it
+     * had to skip. Nothing is re-settled: no order, line or record changes status, and no
+     * line is written again.
+     *
+     *  - donation: the session id; and, while the gift has no contact, the donor link,
+     *    the receipt and its delivery (`linkFromCheckoutSession()` is a no-op once there
+     *    is a contact, `issueFor()` returns the receipt it already issued, and the
+     *    controller's `deliverReceipt()` is once-only on `receipt_delivered_at`);
+     *  - meal: the customer name, phone and e-mail, only where each is still the
+     *    placeholder settlement wrote (never over something a person typed or a contact
+     *    supplied), then the confirmation, which claims its own send;
+     *  - form: nothing; a registration's identity is its own answers, not Stripe's.
+     *
+     * A replay finds the records already filled, so it queues nothing.
+     *
+     * @param  array<string,mixed>  $customerDetails
+     * @return list<Closure(): ?array>
+     */
+    private function backfillLocked(Order $order, ?string $sessionId, array $customerDetails): array
+    {
+        $masjid = Masjid::withTrashed()->find($order->masjid_id);
+        $quiet = $masjid === null || $masjid->trashed();
+
+        $steps = [];
+
+        $items = OrderItem::withoutMasjidScope()
+            ->where('order_id', $order->id)
+            ->where('masjid_id', $order->masjid_id)
+            ->whereNotNull('record_id')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($items as $item) {
+            match ($item->record_type) {
+                OrderItem::RECORD_DONATION => $this->backfillDonation($order, $item, $sessionId, $customerDetails, $steps),
+                OrderItem::RECORD_MEAL_ORDER => $this->backfillMeal($order, $item, $customerDetails, $quiet, $steps),
+                default => null,
+            };
+        }
+
+        return $steps;
+    }
+
+    /**
+     * @param  array<string,mixed>  $customerDetails
+     * @param  list<Closure(): ?array>  $steps
+     */
+    private function backfillDonation(Order $order, OrderItem $item, ?string $sessionId, array $customerDetails, array &$steps): void
+    {
+        $donation = Donation::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->whereKey($item->record_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($donation === null) {
+            return;
+        }
+
+        if ($sessionId !== null && $donation->stripe_checkout_session_id === null) {
+            $donation->forceFill(['stripe_checkout_session_id' => $sessionId])->save();
+        }
+
+        // A gift that already has its contact was linked (and receipted) when it was
+        // settled; there is nothing left to run for it.
+        if ($donation->contact_id !== null) {
+            return;
+        }
+
+        $details = $this->detailsWithBuyer($order, $customerDetails);
+
+        if (! filled($details['email'] ?? null)) {
+            return;
+        }
+
+        $steps[] = $this->donorAndReceiptStep((int) $donation->id, $details);
+    }
+
+    /**
+     * @param  array<string,mixed>  $customerDetails
+     * @param  list<Closure(): ?array>  $steps
+     */
+    private function backfillMeal(Order $order, OrderItem $item, array $customerDetails, bool $quiet, array &$steps): void
+    {
+        $meal = MealOrder::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->whereKey($item->record_id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($meal === null) {
+            return;
+        }
+
+        $customer = $this->mealCustomer($order, $customerDetails);
+        $changes = [];
+
+        if ($meal->customer_name === $this->placeholderName($order) && $customer['name'] !== $this->placeholderName($order)) {
+            $changes['customer_name'] = $customer['name'];
+        }
+
+        if (trim((string) $meal->customer_phone) === '' && $customer['phone'] !== '') {
+            $changes['customer_phone'] = $customer['phone'];
+        }
+
+        $gainsEmail = trim((string) $meal->customer_email) === '' && $customer['email'] !== null;
+
+        if ($gainsEmail) {
+            $changes['customer_email'] = $customer['email'];
+        }
+
+        if ($changes !== []) {
+            $meal->forceFill($changes)->save();
+        }
+
+        // The confirmation the first settlement could not send (no address then). It claims
+        // its own send, so this can never mail the customer twice.
+        if ($gainsEmail && ! $quiet) {
+            $mealId = (int) $meal->id;
+
+            $steps[] = function () use ($mealId): ?array {
+                $fresh = MealOrder::withoutMasjidScope()->whereKey($mealId)->first();
+
+                if ($fresh !== null) {
+                    $this->lunchMail->confirmation($fresh);
+                }
+
+                return null;
+            };
+        }
     }
 
     /**
@@ -291,21 +480,27 @@ class CartSettlementService
             try {
                 // A savepoint of its own: a refused write must leave nothing behind before
                 // we go back to the first row.
-                $row = DB::transaction(fn (): FormResponse => $this->forms->write(
-                    $form,
-                    $schema,
-                    $clean,
-                    FormResponseWriter::LEG_ONLINE,
-                    $quote,
-                    [],
-                    $key,
-                    ['cart_order_item' => (int) $item->id],
-                ));
+                $row = DB::transaction(function () use ($form, $schema, $clean, $quote, $key, $item): FormResponse {
+                    $written = $this->forms->write(
+                        $form,
+                        $schema,
+                        $clean,
+                        FormResponseWriter::LEG_ONLINE,
+                        $quote,
+                        [],
+                        $key,
+                        ['cart_order_item' => (int) $item->id],
+                    );
+
+                    return $this->keepWhatWasPaidFor($written, $quote);
+                });
             } catch (UniqueConstraintViolationException) {
                 $row = $this->forms->earlier((int) $form->id, $key)
                     ?? throw new LogicException("Order {$order->id} line {$item->id}: the key is taken and no row answers to it.");
             }
         }
+
+        $this->pinToHolder($order, $row, $masjid);
 
         $settled = $row->markPaid($pi);
 
@@ -318,6 +513,71 @@ class CartSettlementService
                 return null;
             };
         }
+    }
+
+    /**
+     * The legacy decimal `amount_due` and `entry_count` are computed by the writer from
+     * the LIVE form, at the instant it runs: a price edited (or a tier crossed) between
+     * checkout and the payment landing would store a figure nobody paid, which the
+     * confirmation e-mail then states and FormInsights sums. So they are overwritten from
+     * what checkout froze. The writer is unchanged. An order opened before the snapshot
+     * carried them keeps the writer's figures.
+     *
+     * @param  array<string,mixed>  $quote  the line's price snapshot
+     */
+    private function keepWhatWasPaidFor(FormResponse $row, array $quote): FormResponse
+    {
+        $fields = [];
+
+        if (array_key_exists('legacy_amount_due', $quote)) {
+            $fields['amount_due'] = is_numeric($quote['legacy_amount_due']) ? round((float) $quote['legacy_amount_due'], 2) : null;
+        }
+
+        if (isset($quote['entry_count']) && is_numeric($quote['entry_count'])) {
+            $fields['entry_count'] = max(1, (int) $quote['entry_count']);
+        }
+
+        if ($fields !== []) {
+            $row->forceFill($fields)->save();
+        }
+
+        return $row;
+    }
+
+    /**
+     * A basket paid on a HOLDER's account (a linked organisation's forms, `charge_ref` set)
+     * leaves its registration pinned to that account, in the same transaction, the way
+     * FormResponseCheckoutService pins a linked row: `charge_account_id` and
+     * `charge_masjid_id` (the organisation holding the account). Unpinned, the row's charge
+     * would be read as sitting on its OWN organisation's account, and the holder's refund
+     * or dispute (FormResponsePaymentService::handleChargeFlag) would be dropped without a
+     * trace, the receipt would omit "processed by <holder>", and the admin API would say
+     * the card was not charged through anyone.
+     *
+     * The row's own `charge_ref` is NOT set: it is unique per row and a basket's one
+     * reference is shared by all of its lines. An already-pinned row is left as it is.
+     */
+    private function pinToHolder(Order $order, FormResponse $row, ?Masjid $masjid): void
+    {
+        if ($order->charge_ref === null || $row->hasChargePin()) {
+            return;
+        }
+
+        $account = (string) $order->charge_account_id;
+        $holders = Masjid::withTrashed()->where('stripe_account_id', $account)->pluck('id')->map(fn ($id): int => (int) $id);
+        $via = $masjid?->forms_card_via_masjid_id === null ? null : (int) $masjid->forms_card_via_masjid_id;
+
+        // The link's own holder when it still holds the pinned account, else whoever does.
+        $holder = $via !== null && $holders->contains($via) ? $via : ($holders->first() ?? $via);
+
+        if ($holder === null) {
+            Log::error('A linked cart registration was paid on an account no organisation holds; it is recorded pinned to the account alone.', $this->context($order));
+        }
+
+        $row->forceFill([
+            'charge_account_id' => $account,
+            'charge_masjid_id' => $holder,
+        ])->save();
     }
 
     /**
@@ -466,24 +726,51 @@ class CartSettlementService
         $this->link($item, OrderItem::RECORD_DONATION, (int) $locked->id);
 
         if ($settled) {
-            $details = $customerDetails;
+            $steps[] = $this->donorAndReceiptStep((int) $locked->id, $this->detailsWithBuyer($order, $customerDetails), true);
+        }
+    }
 
-            if (! filled($details['email'] ?? null) && filled($order->buyer_email)) {
-                $details['email'] = $order->buyer_email;
+    /**
+     * The payer's details, with the order's own buyer address standing in when Stripe
+     * gave none (the basket may have been opened with one).
+     *
+     * @param  array<string,mixed>  $customerDetails
+     * @return array<string,mixed>
+     */
+    private function detailsWithBuyer(Order $order, array $customerDetails): array
+    {
+        if (! filled($customerDetails['email'] ?? null) && filled($order->buyer_email)) {
+            $customerDetails['email'] = $order->buyer_email;
+        }
+
+        return $customerDetails;
+    }
+
+    /**
+     * After the commit, for one gift: seed the donor contact from the payer's details
+     * (a no-op once the gift has one), issue the receipt (returns the one already issued)
+     * and hand it back for the controller's once-only delivery. The arrival note is the
+     * settlement's alone (`$noteArrival`), and is itself once per donation.
+     *
+     * @param  array<string,mixed>  $details
+     * @return Closure(): ?array
+     */
+    private function donorAndReceiptStep(int $donationId, array $details, bool $noteArrival = false): Closure
+    {
+        return function () use ($donationId, $details, $noteArrival): ?array {
+            $donation = Donation::withoutMasjidScope()->whereKey($donationId)->firstOrFail();
+
+            $this->donorContacts->linkFromCheckoutSession($donation, ['customer_details' => $details]);
+            $receipt = $this->receipts->issueFor($donation->refresh());
+
+            if ($noteArrival) {
+                GivingSwitch::noteArrivalIfOff((int) $donation->masjid_id, 'gift', $donation->id, [
+                    'amount_minor' => (int) $donation->charged_amount,
+                ]);
             }
 
-            $steps[] = function () use ($locked, $details): ?array {
-                // Seeds the donor contact from the payer's details when the order had none.
-                $this->donorContacts->linkFromCheckoutSession($locked->refresh(), ['customer_details' => $details]);
-                $receipt = $this->receipts->issueFor($locked->refresh());
-
-                GivingSwitch::noteArrivalIfOff((int) $locked->masjid_id, 'gift', $locked->id, [
-                    'amount_minor' => (int) $locked->charged_amount,
-                ]);
-
-                return $receipt === null ? null : [$locked, $receipt];
-            };
-        }
+            return $receipt === null ? null : [$donation, $receipt];
+        };
     }
 
     /**
@@ -533,11 +820,17 @@ class CartSettlementService
         }
 
         return [
-            'name' => mb_substr($name !== '' ? $name : 'Online order ' . $order->order_number, 0, 255),
+            'name' => $name !== '' ? mb_substr($name, 0, 255) : $this->placeholderName($order),
             'phone' => mb_substr($phone, 0, 32),
             'email' => $email,
             'notes' => null,
         ];
+    }
+
+    /** The label a meal order carries until a real name is known: `customer_name` is required. */
+    private function placeholderName(Order $order): string
+    {
+        return mb_substr('Online order ' . $order->order_number, 0, 255);
     }
 
     /** The pickup instant a catalogue line was ordered for, or null when there is none or it cannot be read. */

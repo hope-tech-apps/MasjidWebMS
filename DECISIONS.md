@@ -5418,3 +5418,26 @@ A genuine failure to record a paid basket rolls back everything and is rethrown 
 (refusals, which no retry could fix, return 200 with a warning). Pinned by
 `tests/Feature/Cart/CartSettlementTest.php` and `CartWebhookRoutingTest.php`; every older webhook
 test passes untouched.
+
+## 2026-09-29 — Cart settlement review fixes (slice 4b): close the basket, backfill the payer, pin the holder
+Decision: the settlement review confirmed five defects, all fixed in `feat/universal-cart`.
+(1) Settlement closes the basket in its transaction (`Cart::STATUS_CHECKED_OUT`, lines deleted; the
+cart is locked before the order, checkout's own order, so the two cannot deadlock) and
+`CartCheckoutService::checkout()` / `acknowledge()` refuse a closed cart; checkout also refuses a
+basket whose fingerprint already has a PAID order on the same cart. (2) A session event that
+finds the order already paid backfills what `payment_intent.succeeded` could not know (donation
+contact and session id; a meal order's placeholder name, phone and e-mail) and runs the steps that
+were skipped (donor link, receipt delivery, meal confirmation) through their once-only paths;
+nothing is re-settled. (3) A basket paid on a holder's account pins each form row
+(`charge_account_id`, `charge_masjid_id`) in the settlement transaction, so the holder's refund or
+dispute flags it. (4) The legacy `amount_due` and `entry_count` are frozen into the form line's
+`price_snapshot` at checkout and written over the writer's live figures. (5) Cart pages disable
+Adaptive Pricing, and a payment intent in another currency than its order's is skipped at info
+level; only the session event reports a refundable mismatch.
+Alternatives: leave the cart open and rely on the fingerprint alone (rejected: the same lines are
+one tab away from a second charge); have the intent defer to the session event (rejected: a lost
+session event would leave paid money unrecorded); stamp `charge_ref` on the row (rejected: unique
+per row, and a basket has one).
+Rationale: money is taken once and recorded once, and the record says who paid and on whose
+account. Pinned by `tests/Feature/Cart/CartSettlementReviewFixesTest.php`; the existing cart and
+webhook tests are unmodified. ASSUMPTIONS #28-#30.

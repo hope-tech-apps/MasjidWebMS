@@ -23,6 +23,13 @@ class Cart extends Model
 
     public const STATUS_OPEN = 'open';
 
+    /**
+     * The basket was paid for. Set by the settlement transaction (CartSettlementService),
+     * never by a shopper: a closed basket is refused by checkout, so the same lines can
+     * never be charged and recorded a second time.
+     */
+    public const STATUS_CHECKED_OUT = 'checked_out';
+
     protected $fillable = [
         'masjid_id',
         'contact_id',

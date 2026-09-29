@@ -563,6 +563,31 @@ Direct charge on the ONE connected account, exactly the rules above.
   and the donation receipt through `ReceiptService` (delivered by the controller's existing
   once-only `deliverReceipt`). Never from inside the transaction: a rollback would leave an
   email for nothing.
+- **A paid basket is closed.** Settlement locks the cart BEFORE the order (checkout's order, so
+  no deadlock), and after the lines are recorded sets `Cart::STATUS_CHECKED_OUT` and deletes the
+  cart's lines (the order's lines are the snapshot). `CartCheckoutService::checkout()` and
+  `acknowledge()` refuse a cart that is not open, and checkout refuses a basket whose fingerprint
+  already has a PAID order on the same cart (belt and braces). Never reopen a basket to "try again".
+- **The session event after the payment intent's backfills, and settles nothing.** When the order
+  is already paid and a session event carries `customer_details` or a session id
+  (`CartSettlementService::backfillLocked()`), it fills the donation's contact and session id and
+  a meal order's PLACEHOLDER name, phone and e-mail (never over a real value), then queues the
+  steps the intent had to skip: `linkFromCheckoutSession`, `issueFor` and the controller's
+  once-only `deliverReceipt()`, and `LunchOrderMailer::confirmation()` (claims its own send). A gift
+  that already has a contact queues nothing, so a replay does nothing. `CartSettlementResult::settled`
+  stays false for a backfill.
+- **A linked basket's form row is pinned in the settlement transaction**: `charge_account_id` =
+  the order's pin, `charge_masjid_id` = the organisation holding that account, as
+  `FormResponseCheckoutService` pins a linked row, so the holder's `charge.refunded` /
+  `charge.dispute.created` flags it (`handleChargeFlag`). The row's `charge_ref` is left null (it is
+  unique per row; a basket has one). Known limit: one basket PI is shared by every registration in
+  it and `handleChargeFlag` flags the first row found by that intent.
+- **`amount_due` and `entry_count` on a cart form row are what checkout froze**
+  (`price_snapshot.legacy_amount_due`, `entry_count`, from the same cleaned answers), written over
+  the writer's live figures after `write()`. The writer is unchanged.
+- **Adaptive Pricing is off on every cart page** (`adaptive_pricing => ['enabled' => false]`, own
+  and linked). A `payment_intent.succeeded` in another currency than the order's is skipped at INFO
+  and left to the session event; only the session event may warn "did not match ... refund it".
 - Known limits: a meal line is one meal order per dish (one confirmation e-mail each); a basket
   collects no name or phone, so a meal order takes the buyer's contact, else the payer's
   Stripe details, else a plain label; an unknown line type or a form/fund/menu hard-deleted
