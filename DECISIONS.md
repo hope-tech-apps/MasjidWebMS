@@ -5708,8 +5708,9 @@ inverting a derived handle means scanning the caller's rows); (4) a 403 for some
 it confirms the handle is real, which is a disclosure about a named person's spending).
 Rationale: the address is what proves the person, the rule is asked in one place so the list and the detail
 cannot disagree, and the projection is an allowlist because `Order` hides four fields, `Donation` hides none and
-`fee_minor` means two opposite things. Nothing was RUN: there is no PHP on this machine, so the suites below
-have never executed (ASSUMPTIONS #47).
+`fee_minor` means two opposite things. Nothing was RUN on the machine this was written on (no PHP there); the
+suites below then ran on the CI box on SQLite, 83/83 at 5690ed6f (the pre-rebase tip of this branch; the rebase changed no
+portal file), and have never executed on MySQL (ASSUMPTIONS #47, corrected in fix round 1).
 Tests: `tests/Feature/Member/MemberPurchasesTest.php` (the rule, clause by clause, asked of the service:
 isolation, no verified address, case and space, the cart-owned exclusion by record type, order and paging,
 `find()` returning null for every way of not having a row), `MemberOrdersTest.php` (the stack read from the
@@ -5806,3 +5807,14 @@ fee) and `every_source_dates_an_evening_purchase_at_the_organisations_calendar_d
 in New York, for a form, a lunch and a Wix order). One observation, not changed: `FormResponse::owedMinor()` already
 turns the legacy decimal into cents without a float, and the projector re-does it with `round((float) ...)`; the two agree
 for every two-place decimal, so it is a house-fit point, not a defect.
+(7) DOCS CORRECTED (m11, m12, m13). m11: `LOWER(TRIM(col)) = ?` defeats an index on the column (`form_responses.respondent_email`
+is indexed; `orders.buyer_email` and `meal_orders.customer_email` are not), and the exact check in (1) adds one narrow query
+per address arm: recorded as a perf note, not changed, in ASSUMPTIONS #60 (written with (1)). m12: the docblocks said the
+admin receipt download "refuses" an imported Wix gift; it does not. `DonationsController::receiptPdf` 404s only when no
+receipt row exists, and only `issueReceipt` and `ReceiptService::issueFor` refuse a historical gift, so the portal's two
+refusals (a Wix gift, a voided receipt) are its own and stricter than the admin download's; the controller and projector
+docblocks now say so. m13: ASSUMPTIONS #47 and the "Nothing was RUN" sentence of the first entry said the suites had never
+executed. They ran on the CI box on SQLite, 83/83 at 5690ed6f (the pre-rebase tip; the rebase changed no portal file). What
+is still true, and is now what #47 says: CI's MySQL job runs migrations only, so the union, the shortlist keys and the
+`LOWER(TRIM())` comparisons have never executed on MySQL, and this fix round was written without PHP and has run on neither
+driver.

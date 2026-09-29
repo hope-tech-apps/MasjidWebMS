@@ -49,9 +49,14 @@ use Symfony\Component\HttpFoundation\Response;
  * is not held to the verified address the way an order is (ASSUMPTIONS #61, an owner
  * question). Its receipt document has no owner column of its own: ownership is receipt,
  * then donation, then `donations.contact_id`, which is what MemberPurchases::findGift()
- * asks, so the PDF is reachable for exactly the gifts the list shows and no others. The admin download
- * (DonationsController::receiptPdf) renders the same stored row through the same service;
- * the ownership check and the headers are the family report card's (routes/family.php,
+ * asks, so the PDF is reachable for exactly the gifts the list shows and no others.
+ *
+ * The admin download (DonationsController::receiptPdf) renders the same stored row through
+ * the same service, and is the model for the headers only: it has NO check on an imported
+ * Wix gift and NONE on the receipt's status, it 404s only when no receipt row exists. This
+ * door's two refusals (an imported Wix gift, a voided receipt: MemberPurchaseProjector::
+ * receiptOf) are its own and stricter than the admin's, not copies of it. The ownership
+ * check and the headers are the family report card's (routes/family.php,
  * ReportCardsController::pdf), with the admin download's `no-store` added because this is
  * a tax document naming a donor. A bearer token cannot ride a link, so a client fetches it
  * as a blob, as the family portal does.
@@ -162,7 +167,8 @@ class MemberPurchasesController extends Controller
      * through the caller's own succeeded gifts, so someone else's gift, another
      * organisation's, a gift that never succeeded, one with no receipt, one whose receipt was
      * voided, an imported Wix gift and a junk handle are all the same 404. Nothing is issued or recomputed: the PDF is
-     * rendered from the stored receipt row, as the admin download renders it.
+     * rendered from the stored receipt row, as the admin download renders it (but only when
+     * `MemberPurchaseProjector::receiptOf()` allows it, which the admin download does not ask).
      */
     public function receiptPdf(Request $request, $masjid_id, string $id): Response
     {

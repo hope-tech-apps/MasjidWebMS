@@ -126,9 +126,12 @@ class MemberPurchaseProjector
      * with its gift, and the row number of either is not something to put in a URL. It is
      * the key of GET me/receipts/{id}/pdf.
      *
-     * An imported Wix gift never gets a receipt (ReceiptService::issueFor declines it), so it
-     * is told so instead of being shown an empty space where a document should be. A receipt
-     * the office voided is not shown either, and says that it was voided (see `receiptOf()`).
+     * An imported Wix gift never gets a receipt (ReceiptService::issueFor declines it, and so
+     * does DonationsController::issueReceipt), so it is told so instead of being shown an empty
+     * space where a document should be. The admin DOWNLOAD (DonationsController::receiptPdf)
+     * has no such check and would render a stray row, so this refusal is the portal's own. A
+     * receipt the office voided is not shown either, and says that it was voided (see
+     * `receiptOf()`).
      *
      * @return array<string, mixed>
      */
