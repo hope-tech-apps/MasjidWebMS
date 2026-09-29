@@ -2032,7 +2032,9 @@ events calendar; a donation / fundraising appeal." The school board is out.
     labelled "Iqama in"; otherwise it counts to the adhan, labelled "Adhan in".
   - It shows an iqama only where the settings give one. Whether
     `/prayers/settings` says so directly is Unknown, needs investigation; if
-    it does not, the rule is "an iqama time exists for that prayer". This
+    it does not, the rule is "an iqama time exists for that prayer".
+    **Resolved in the build (DECISIONS.md 2026-09-27, S18):** it does, as
+    `iqama.show_iqama_times`; the board draws no iqama when it is false. This
     follows W1 S8's iqama decision: on the Studio path, iqama is displayed only
     when the client gave times (`docs/manara-studio-w1.md`, S8, "Decisions this
     slice records").
@@ -2046,7 +2048,10 @@ events calendar; a donation / fundraising appeal." The school board is out.
     - a nullable boolean `jumaa_settings.is_default`. `OrganisationProvisioner`
       sets it true when it writes the 13:30 default
       (`app/Support/Studio/OrganisationProvisioner.php:165-168`), and the admin
-      Jumu'ah save sets it false;
+      Jumu'ah save sets it false; (built: only a save that supplies an iqama,
+      athans or shifts clears it, athans or shifts on a placeholder also null
+      its 13:30 iqama, a save with no time keeps it, and NULL rows are
+      untouched. DECISIONS.md 2026-09-27, S18 review fix);
     - the prayer-settings payload emits `jumaa_is_default: true` **only when it
       is true**, the W1 R11 pattern, so every live organisation's bytes are
       unchanged (ABI).
@@ -2058,6 +2063,8 @@ events calendar; a donation / fundraising appeal." The school board is out.
     approach.
 - **Events** join the carousel after the announcements: up to six upcoming in
   the next 14 days, each an image or a text slide. With none, nothing is added.
+  (Built as text slides only: `/events` has no image field, and the feed covers
+  about six days ahead. DECISIONS.md 2026-09-27, S18.)
 - **Appeal.** The QR panel adds the donation link's title and message, and its
   image when present. There is no goal and no progress bar.
 - **The id-0 fix.** Rebase `3294c89` onto `main` and ship it.
@@ -2068,12 +2075,15 @@ events calendar; a donation / fundraising appeal." The school board is out.
 **Tests.**
 
 - `MasjidKitTests`: `EventDecodingTests`, using a fixture recorded from
-  staging's `/events` for a scrubbed organisation.
+  staging's `/events` for a scrubbed organisation. (Built: no organisation had
+  an event to record, so `tests/fixtures/mobile-events.json` is pinned by
+  `MobileEventsPayloadContractTest` and MasjidKit decodes a copy.)
 - `CountdownTargetTests`: before the adhan; between the adhan and the iqama;
   with no iqama; on Friday.
 - `JumuahVisibilityTests`: a Friday where only the stored default exists draws
   no Jumu'ah section; a Friday with a supplied time draws it.
-- `SignageStoreTests`: `events_keep_the_last_good_value_on_failure`.
+- `SignageStoreTests`: `events_keep_the_last_good_value_on_failure`. (Built as
+  MasjidKit `EventsRefreshTests` over `KeepLastGood`: MasjidTV has no test target.)
 - Passing **unedited**: `TvConfigEndpointTest`, `TvConfigSnapshotTest`.
 
 **Ship.** §3.3. **Burlington's board changes only when the owner releases a

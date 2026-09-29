@@ -153,19 +153,119 @@ class JumaaIsDefaultTest extends TestCase
         $this->assertArrayNotHasKey('jumaa_is_default', $this->settings($id));
     }
 
+    /**
+     * The admin Jumu'ah screen (JumaaSettingsView.vue) has had no iqama field
+     * since 1c92bbb5: it posts athans and shifts only. Saving khutbah times on
+     * the placeholder supplies Jumu'ah, but the invented 13:30 iqama must not
+     * ride along as a time someone gave: the board would draw "Iqama 1:30 PM"
+     * and count down to it.
+     */
     #[Test]
-    public function an_admin_save_makes_the_time_supplied_and_the_cached_payload_follows(): void
+    public function saving_khutbah_times_on_the_placeholder_supplies_them_and_drops_the_invented_iqama(): void
     {
         $this->actAsSuperAdmin();
         $masjid = $this->organisation(true);
         $this->assertTrue($this->settings($masjid->id)['jumaa_is_default'], 'cached with the flag first');
 
-        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", ['iqama' => '13:20', 'athans' => ['13:00']])->assertOk();
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", ['athans' => ['14:00']])->assertOk();
 
-        $this->assertFalse(JumaaSetting::where('masjid_id', $masjid->id)->sole()->is_default);
+        $row = JumaaSetting::where('masjid_id', $masjid->id)->sole();
+        $this->assertFalse($row->is_default);
+        $this->assertNull($row->iqama, 'the placeholder 13:30 is dropped, not promoted');
         $data = $this->settings($masjid->id);
         $this->assertArrayNotHasKey('jumaa_is_default', $data, 'the save flushed the cached payload');
-        $this->assertSame(['13:00'], $data['jumaa']['athans']);
+        $this->assertSame(['14:00'], $data['jumaa']['athans']);
+        $this->assertNull($data['jumaa']['iqama']);
+        $this->assertSame(self::JUMAA_KEYS, self::keys($data['jumaa']));
+    }
+
+    #[Test]
+    public function saving_shifts_only_on_the_placeholder_supplies_them_and_drops_the_invented_iqama(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(true);
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", [
+            'shifts' => [['time' => '13:00', 'khateeb_name' => 'Sh. Test', 'khateeb_title' => '', 'khutbah_title' => '']],
+        ])->assertOk();
+
+        $row = JumaaSetting::where('masjid_id', $masjid->id)->sole();
+        $this->assertFalse($row->is_default);
+        $this->assertNull($row->iqama);
+        $this->assertSame('13:00', $this->settings($masjid->id)['jumaa']['shifts'][0]['time']);
+    }
+
+    /** A save that gives no time at all leaves the placeholder a placeholder. */
+    #[Test]
+    public function saving_nothing_on_the_placeholder_keeps_it_flagged(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(true);
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", [])->assertOk();
+
+        $row = JumaaSetting::where('masjid_id', $masjid->id)->sole();
+        $this->assertTrue($row->is_default);
+        $this->assertTrue($this->settings($masjid->id)['jumaa_is_default']);
+    }
+
+    /** An iqama in the request (the API accepts one) is a time someone gave. */
+    #[Test]
+    public function an_iqama_in_the_request_is_supplied(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(true);
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", ['iqama' => '13:20', 'athans' => ['13:00']])->assertOk();
+
+        $row = JumaaSetting::where('masjid_id', $masjid->id)->sole();
+        $this->assertFalse($row->is_default);
+        $this->assertSame('13:20', substr((string) $row->iqama, 0, 5));
+        $this->assertArrayNotHasKey('jumaa_is_default', $this->settings($masjid->id));
+    }
+
+    /**
+     * Every live organisation's row predates the flag. Its admins save athans
+     * and shifts every week: the stored iqama must survive the save exactly as
+     * before S18, and nothing about the flag may appear.
+     */
+    #[Test]
+    public function a_live_rows_admin_save_keeps_its_iqama_and_its_bytes(): void
+    {
+        $this->actAsSuperAdmin();
+        $masjid = $this->organisation(null);
+        JumaaSetting::where('masjid_id', $masjid->id)->update(['iqama' => '13:20:00']);
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/jumaa", ['athans' => ['13:00', '14:00']])->assertOk();
+
+        $row = JumaaSetting::where('masjid_id', $masjid->id)->sole();
+        $this->assertSame('13:20', substr((string) $row->iqama, 0, 5));
+        $this->assertNotTrue($row->is_default);
+        $data = $this->settings($masjid->id);
+        $this->assertSame(self::DATA_KEYS, self::keys($data));
+        $this->assertSame(self::JUMAA_KEYS, self::keys($data['jumaa']));
+    }
+
+    /**
+     * Studio's "client has not given iqama times" tick greys out the Jumu'ah
+     * field and drops its preview row, so a time typed before the tick was not
+     * given: the organisation provisions with the flagged placeholder.
+     */
+    #[Test]
+    public function the_studio_tick_wins_over_a_jumuah_time_typed_before_it(): void
+    {
+        $this->actAsSuperAdmin();
+        $answers = $this->studioAnswers(sections: ['prayer' => [
+            'method' => 'NorthAmerica', 'madhab' => 'Shafi', 'high_latitude_rule' => 'MiddleOfTheNight',
+            'iqama_given' => false, 'jumaa_iqama' => '13:15',
+        ]]);
+
+        $id = $this->provisioned($this->draftWith($answers)->id);
+
+        $row = JumaaSetting::where('masjid_id', $id)->sole();
+        $this->assertTrue($row->is_default);
+        $this->assertSame('13:30', substr((string) $row->iqama, 0, 5));
+        $this->assertTrue($this->settings($id)['jumaa_is_default']);
     }
 
     #[Test]
