@@ -248,8 +248,9 @@ class CartPruneTest extends TestCase
         $old = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(9)));
 
         $this->assertSame(0, Artisan::call('cart:prune', ['--dry-run' => true]));
-        $this->assertStringContainsString('Would prune 0 open basket(s)', Artisan::output());
-        $this->assertStringContainsString('and 1 expired unpaid order(s)', Artisan::output());
+        $output = Artisan::output(); // the buffer empties on read, so read it once
+        $this->assertStringContainsString('Would prune 0 open basket(s)', $output);
+        $this->assertStringContainsString('and 1 expired unpaid order(s)', $output);
         $this->assertNotNull(Order::withoutMasjidScope()->find($old->id), 'a dry run deletes nothing');
         $this->assertSame(2, $this->linesOf($old));
 
