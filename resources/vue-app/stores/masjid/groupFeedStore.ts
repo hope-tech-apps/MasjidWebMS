@@ -76,6 +76,9 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
         const body = new FormData();
         if (payload.title) body.append('title', payload.title);
         body.append('body', payload.body);
+        // "Send later" (T-002.4): the school's own wall clock. Absent for an ordinary
+        // post, so that post is byte-identical to what it was before scheduling.
+        if (payload.send_at) body.append('send_at', payload.send_at);
         // TWO BAGS. The server validates them against different allowlists,
         // different size ceilings (8MB against 100MB) and different counts, so a
         // clip put in the images bag is a 422 the admin cannot act on. Both
@@ -94,6 +97,48 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
             return res.data.data;
         }
         throw new Error('Failed to publish the post.');
+    }
+
+    /**
+     * The stories that are written and waiting, or were refused at release, soonest
+     * first (T-002.4). A separate list from the feed: the feed shows what families see.
+     */
+    async function fetchScheduledPosts(groupId: number | string): Promise<GroupPost[]> {
+        if (!masjidStore.masjid?.id) return [];
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/posts?scheduled=1` as BackendApiRoute
+        );
+
+        if (res.data?.meta) feedMeta.value = res.data.meta;
+
+        return (res.data?.data?.data as GroupPost[]) ?? [];
+    }
+
+    /**
+     * Change a story that has not gone out: its words, its time (`send_at`, the
+     * school's wall clock) or `send_now`. Form-encoded, as every admin PUT is, so
+     * `send_now` arrives as the string "true" and the server's request coerces it.
+     */
+    async function updatePost(
+        groupId: number | string,
+        postId: number | string,
+        fields: { title?: string; body?: string; send_at?: string; send_now?: boolean }
+    ): Promise<GroupPost> {
+        if (!masjidStore.masjid?.id) throw new Error('Masjid not specified.');
+
+        const body = new URLSearchParams();
+        Object.entries(fields).forEach(([key, value]) => {
+            if (value !== undefined) body.append(key, String(value));
+        });
+
+        const res: AxiosResponse = await ApiService.put(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/posts/${postId}` as BackendApiRoute,
+            body
+        );
+        if (res.data?.status === 'success' && res.data?.data) return res.data.data;
+
+        throw new Error('Failed to update the post.');
     }
 
     /** Soft-delete a post. The bytes go when the retention window closes. */
@@ -150,6 +195,8 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
         feedMeta,
         fetchPosts,
         createPost,
+        fetchScheduledPosts,
+        updatePost,
         deletePost,
         setReaction,
         attachmentObjectUrl

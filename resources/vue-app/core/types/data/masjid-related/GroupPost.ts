@@ -97,12 +97,27 @@ export type GroupPost = {
      */
     seen_tracked?: boolean;
     seen_since?: string | null;
+    /**
+     * Scheduling (T-002.4). When it goes (or went) OUT to families, as an instant and
+     * as the SCHOOL's own wall clock in the form the Send-later field takes. Families
+     * see a story only once it is out, so a `scheduled` story is a staff-only row.
+     */
+    published_at?: string | null;
+    published_at_local?: string | null;
+    /** `published`, `scheduled` (waiting for its time) or `failed` (refused at release). */
+    status?: 'published' | 'scheduled' | 'failed';
+    /** Why a `failed` story did not go out, in words a teacher can act on. */
+    publish_failure?: string | null;
+    /** The author and the office may edit, send now or cancel; a co-teacher only sees. */
+    can_change_schedule?: boolean;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */
 export type GroupPostPayload = {
     title: string;
     body: string;
+    /** "Send later": the school's own wall clock, `2026-10-05T10:00`. Absent means now. */
+    send_at?: string;
 };
 
 /** `meta` on the feed endpoints. The upload constraints come from the server. */
@@ -125,4 +140,6 @@ export type GroupFeedMeta = {
     video_retention_days?: number;
     /** Read receipts: are they being collected, and how many parents cannot be counted. */
     story_reads?: { enabled: boolean; unreachable_count?: number };
+    /** "Send later": the SCHOOL's zone the field is read in, and how far ahead it may go. */
+    scheduling?: { timezone: string; max_days_ahead: number };
 };

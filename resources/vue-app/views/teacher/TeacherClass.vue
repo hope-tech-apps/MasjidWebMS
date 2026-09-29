@@ -968,14 +968,24 @@
                         <p v-if="storyPhotos.length" class="text-muted small mb-2">
                             Photos are shown only to families who have given photo consent.
                         </p>
+                        <!-- "Send later", on the SCHOOL's clock (the zone the server named). -->
+                        <SendLaterField v-if="storyScheduling" class="mb-2"
+                                        v-model:enabled="storyLater.enabled.value" v-model="storyLater.value.value"
+                                        :timezone="storyScheduling.timezone" :max-days="storyScheduling.max_days_ahead"
+                                        :error="storyLater.error.value" :disabled="posting" />
                         <div class="d-flex align-items-center gap-2">
                             <span v-if="postError" class="text-danger small">{{ postError }}</span>
-                            <button class="btn btn-sm btn-success ms-auto" :disabled="posting || !composeBody" @click="submitPost">
-                                <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>Post
+                            <button class="btn btn-sm btn-success ms-auto" :disabled="posting || !composeBody || !storyLater.ready.value" @click="submitPost">
+                                <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>{{ storyLater.enabled.value ? 'Schedule' : 'Post' }}
                             </button>
                         </div>
                     </div>
                 </div>
+
+                <!-- Written and waiting, or refused at release: Edit, Send now, Cancel. -->
+                <ScheduledItems :rows="scheduledStories" :timezone="storyScheduling?.timezone" :max-days="storyScheduling?.max_days_ahead"
+                                :busy="scheduledBusy" :error="scheduledError"
+                                @send-now="sendStoryNow" @cancel="cancelStory" @save="saveStory" />
 
                 <div v-if="postsLoading" class="text-center py-3"><span class="spinner-border text-success"></span></div>
                 <div v-else-if="!posts.length" class="text-muted small">Nothing posted yet.</div>
@@ -988,7 +998,7 @@
                                         :disabled="removingPost === post.id" @click="deletePost(post)">Remove</button>
                             </div>
                             <p class="text-muted small mb-2">
-                                {{ post.author?.name || 'You' }} · {{ when(post.created_at) }}
+                                {{ post.author?.name || 'You' }} · {{ when(post.published_at ?? post.created_at) }}
                             </p>
                             <p class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
                             <div v-if="post.attachments?.length" class="d-flex flex-wrap gap-2">
@@ -1044,7 +1054,16 @@
                             <textarea v-model="composeForm.body" rows="3" maxlength="5000"
                                       class="form-control form-control-sm mt-2"
                                       placeholder="Your first message…"></textarea>
-                            <GroupMediaPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
+                            <GroupMediaPicker v-if="!messageLater.enabled.value" v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
+                            <!-- "Send later", on the SCHOOL's clock. Text only: a photo cannot wait. -->
+                            <SendLaterField v-if="messageScheduling" class="mt-2"
+                                            v-model:enabled="messageLater.enabled.value" v-model="messageLater.value.value"
+                                            :timezone="messageScheduling.timezone" :max-days="messageScheduling.max_days_ahead"
+                                            :error="messageLater.error.value" :disabled="sendingCompose" />
+                            <p v-if="messageLater.enabled.value" class="text-muted small mt-1 mb-0">
+                                A message scheduled for later is text only. You can cancel it, or send it now, from the
+                                Scheduled list until it goes out.
+                            </p>
 
                             <p class="text-muted small mt-2 mb-2">
                                 <template v-if="composeForm.about_membership_id">
@@ -1061,9 +1080,10 @@
 
                             <div class="d-flex align-items-center gap-2">
                                 <button class="btn btn-sm btn-success"
-                                        :disabled="sendingCompose || !composeForm.subject.trim() || (!composeForm.body.trim() && !composePhotos.length)"
+                                        :disabled="sendingCompose || !composeForm.subject.trim() || !messageLater.ready.value
+                                            || (messageLater.enabled.value ? !composeForm.body.trim() : (!composeForm.body.trim() && !composePhotos.length))"
                                         @click="createThread">
-                                    {{ sendingCompose ? 'Sending…' : 'Send' }}
+                                    {{ sendingCompose ? 'Sending…' : (messageLater.enabled.value ? 'Schedule' : 'Send') }}
                                 </button>
                                 <button class="btn btn-sm btn-link text-muted" @click="composing = false">Cancel</button>
                                 <span v-if="composeError" class="text-danger small">{{ composeError }}</span>
@@ -1071,6 +1091,12 @@
                         </template>
                     </div>
                 </div>
+
+                <!-- Written and waiting, or refused at send time: Edit, Send now, Cancel. -->
+                <ScheduledItems v-if="!openedThread" :rows="scheduledMessages"
+                                :timezone="messageScheduling?.timezone" :max-days="messageScheduling?.max_days_ahead"
+                                :busy="scheduledBusy" :error="scheduledError"
+                                @send-now="sendMessageNow" @cancel="cancelMessage" @save="saveMessage" />
 
                 <div v-if="threadsLoading" class="text-center py-3"><span class="spinner-border text-success"></span></div>
                 <div v-else-if="!threads.length" class="text-muted small">No messages yet.</div>
@@ -2424,6 +2450,11 @@ import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
+// "Send later" and the Scheduled list (T-002.4), shared with the office's tabs.
+import SendLaterField from '@/components/common/SendLaterField.vue';
+import ScheduledItems from '@/components/common/ScheduledItems.vue';
+import { useSendLater } from '@/composables/useSendLater';
+import { messageRow, storyRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
@@ -3928,6 +3959,7 @@ const startCompose = () => {
     };
     composePhotos.value = [];
     composeError.value = '';
+    messageLater.reset();
     composing.value = true;
 };
 
@@ -3944,6 +3976,17 @@ const createThread = async () => {
             ...(about ? { about_membership_id: about } : {}),
             body: composeForm.value.body,
         };
+
+        // "Send later" (T-002.4): the words wait as a schedule row and open at their
+        // time, in the school's clock. Text only, and its OWN endpoint: a time sent to
+        // `/threads` is refused, never quietly sent now.
+        if (messageLater.enabled.value) {
+            await TeacherApiService.post(`${base.value}/scheduled-messages`, { ...fields, ...messageLater.fields() });
+            composing.value = false;
+            messageLater.reset();
+            await loadScheduledMessages();
+            return;
+        }
 
         if (composePhotos.value.length) {
             await TeacherApiService.postForm(`${base.value}/threads`, withPhotos(fields, composePhotos.value));
@@ -5104,12 +5147,24 @@ const posting = ref(false);
 const postError = ref('');
 const removingPost = ref<string | number | null>(null);
 
+// "Send later" for a story: the school's zone and horizon come from the server's meta.
+const storyScheduling = ref<{ timezone: string; max_days_ahead: number } | null>(null);
+const storyLater = useSendLater(
+    computed(() => storyScheduling.value?.timezone),
+    computed(() => storyScheduling.value?.max_days_ahead),
+);
+const scheduledStories = ref<ScheduledRow[]>([]);
+const scheduledBusy = ref(false);
+const scheduledError = ref('');
+
 const loadPosts = async () => {
     postsLoading.value = true;
     try {
         const res = await TeacherApiService.get(`${base.value}/posts`);
         posts.value = rowsOf(res.data?.data);
         storyReads.value = res.data?.meta?.story_reads ?? { enabled: false };
+        storyScheduling.value = res.data?.meta?.scheduling ?? null;
+        await loadScheduledStories();
     } catch {
         posts.value = [];
     } finally {
@@ -5117,24 +5172,63 @@ const loadPosts = async () => {
     }
 };
 
+/** The stories written and waiting, or refused at release. Nothing to show is not an error. */
+const loadScheduledStories = async () => {
+    try {
+        const res = await TeacherApiService.get(`${base.value}/posts?scheduled=1`);
+        scheduledStories.value = rowsOf(res.data?.data).map(storyRow);
+    } catch {
+        scheduledStories.value = [];
+    }
+};
+
+/** One Scheduled-list action, then both lists again (Send now moves a story into the feed). */
+const runScheduledStory = async (action: () => Promise<unknown>, failure: string) => {
+    scheduledBusy.value = true;
+    scheduledError.value = '';
+    try {
+        await action();
+        await loadPosts();
+    } catch (e: any) {
+        scheduledError.value = apiErrorText(e, failure);
+    } finally {
+        scheduledBusy.value = false;
+    }
+};
+
+const sendStoryNow = (row: ScheduledRow) =>
+    runScheduledStory(() => TeacherApiService.put(`${base.value}/posts/${row.id}`, { send_now: true }), 'That story could not be sent.');
+
+const cancelStory = (row: ScheduledRow) =>
+    runScheduledStory(() => TeacherApiService.delete(`${base.value}/posts/${row.id}`), 'That story could not be cancelled.');
+
+const saveStory = (row: ScheduledRow, fields: { heading: string; body: string; sendAt: string | null }) =>
+    runScheduledStory(() => TeacherApiService.put(`${base.value}/posts/${row.id}`, {
+        title: fields.heading || null,
+        body: fields.body,
+        ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
+    }), 'That story could not be saved.');
+
 const submitPost = async () => {
     if (!composeBody.value) return;
     posting.value = true;
     postError.value = '';
     try {
         if (storyPhotos.value.length) {
-            const fields: Record<string, string> = { body: composeBody.value };
+            const fields: Record<string, string> = { body: composeBody.value, ...storyLater.fields() };
             if (composeTitle.value) fields.title = composeTitle.value;
             await TeacherApiService.postForm(`${base.value}/posts`, withPhotos(fields, storyPhotos.value));
         } else {
             await TeacherApiService.post(`${base.value}/posts`, {
                 title: composeTitle.value || null,
                 body: composeBody.value,
+                ...storyLater.fields(),
             });
         }
         composeTitle.value = '';
         composeBody.value = '';
         storyPhotos.value = [];
+        storyLater.reset();
         await loadPosts();
     } catch (e: any) {
         postError.value = photoErrorText(e, 'The post could not be published.');
@@ -5165,17 +5259,65 @@ const replyPhotos = ref<File[]>([]);
 const sendingReply = ref(false);
 const replyError = ref('');
 
+// "Send later" for a NEW conversation: same zone and horizon, from the threads' meta.
+const messageScheduling = ref<{ timezone: string; max_days_ahead: number } | null>(null);
+const messageLater = useSendLater(
+    computed(() => messageScheduling.value?.timezone),
+    computed(() => messageScheduling.value?.max_days_ahead),
+);
+const scheduledMessages = ref<ScheduledRow[]>([]);
+
 const loadThreads = async () => {
     threadsLoading.value = true;
     try {
         const res = await TeacherApiService.get(`${base.value}/threads`);
         threads.value = rowsOf(res.data?.data);
+        messageScheduling.value = res.data?.meta?.scheduling ?? null;
+        await loadScheduledMessages();
     } catch {
         threads.value = [];
     } finally {
         threadsLoading.value = false;
     }
 };
+
+/** The conversations written and waiting, or refused at send time. */
+const loadScheduledMessages = async () => {
+    try {
+        const res = await TeacherApiService.get(`${base.value}/scheduled-messages`);
+        scheduledMessages.value = rowsOf(res.data?.data)
+            .filter((item: any) => item.status !== 'sent' && item.status !== 'cancelled')
+            .map(messageRow);
+    } catch {
+        scheduledMessages.value = [];
+    }
+};
+
+const runScheduledMessage = async (action: () => Promise<unknown>, failure: string) => {
+    scheduledBusy.value = true;
+    scheduledError.value = '';
+    try {
+        await action();
+        await loadScheduledMessages();
+    } catch (e: any) {
+        scheduledError.value = apiErrorText(e, failure);
+    } finally {
+        scheduledBusy.value = false;
+    }
+};
+
+const sendMessageNow = (row: ScheduledRow) =>
+    runScheduledMessage(() => TeacherApiService.put(`${base.value}/scheduled-messages/${row.id}`, { send_now: true }), 'That message could not be sent.');
+
+const cancelMessage = (row: ScheduledRow) =>
+    runScheduledMessage(() => TeacherApiService.delete(`${base.value}/scheduled-messages/${row.id}`), 'That message could not be cancelled.');
+
+const saveMessage = (row: ScheduledRow, fields: { heading: string; body: string; sendAt: string | null }) =>
+    runScheduledMessage(() => TeacherApiService.put(`${base.value}/scheduled-messages/${row.id}`, {
+        subject: fields.heading,
+        body: fields.body,
+        ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
+    }), 'That message could not be saved.');
 
 const openThread = async (thread: any) => {
     try {

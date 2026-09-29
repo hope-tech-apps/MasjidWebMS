@@ -10,7 +10,8 @@ import {
     GroupMessageReaction,
     GroupThread,
     GroupThreadPayload,
-    GroupThreadsMeta
+    GroupThreadsMeta,
+    ScheduledMessage
 } from "@/core/types/data/masjid-related/GroupThread";
 
 /**
@@ -143,6 +144,87 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
     }
 
     /**
+     * "Send later" for a NEW conversation (T-002.4): write it now, and it is opened at
+     * `sendAt` (the SCHOOL's wall clock, `2026-10-05T10:00`). TEXT ONLY: a scheduled
+     * conversation cannot carry a photo, and the server refuses one rather than drop it.
+     * Until then it is a schedule row and nothing a family can see.
+     */
+    async function scheduleThread(
+        groupId: number | string,
+        payload: GroupThreadPayload,
+        sendAt: string
+    ): Promise<ScheduledMessage> {
+        if (!masjidStore.masjid?.id) throw new Error('Masjid not specified.');
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/scheduled-messages` as BackendApiRoute,
+            {
+                subject: payload.subject,
+                scope: payload.scope,
+                ...(payload.scope === 'participant' && payload.about_membership_id !== null
+                    ? { about_membership_id: payload.about_membership_id } : {}),
+                body: payload.body,
+                send_at: sendAt,
+            }
+        );
+        if (res.data?.status === 'success' && res.data?.data) return res.data.data;
+
+        throw new Error('Failed to schedule the conversation.');
+    }
+
+    /** The conversations still ahead: waiting, being sent, or refused at send time. */
+    async function fetchScheduled(groupId: number | string): Promise<ScheduledMessage[]> {
+        if (!masjidStore.masjid?.id) return [];
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/scheduled-messages` as BackendApiRoute
+        );
+
+        if (res.data?.meta?.scheduling) {
+            threadsMeta.value = { ...(threadsMeta.value as GroupThreadsMeta), scheduling: res.data.meta.scheduling };
+        }
+
+        return (res.data?.data?.data as ScheduledMessage[]) ?? [];
+    }
+
+    /**
+     * Edit, reschedule or send now. Form-encoded, as every admin PUT is: `send_now`
+     * arrives as the string "true" and the server's request coerces it. A new
+     * `send_at` puts a failed item back in the queue.
+     */
+    async function updateScheduled(
+        groupId: number | string,
+        id: number | string,
+        fields: { subject?: string; body?: string; send_at?: string; send_now?: boolean }
+    ): Promise<ScheduledMessage> {
+        if (!masjidStore.masjid?.id) throw new Error('Masjid not specified.');
+
+        const body = new URLSearchParams();
+        Object.entries(fields).forEach(([key, value]) => {
+            if (value !== undefined) body.append(key, String(value));
+        });
+
+        const res: AxiosResponse = await ApiService.put(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/scheduled-messages/${id}` as BackendApiRoute,
+            body
+        );
+        if (res.data?.status === 'success' && res.data?.data) return res.data.data;
+
+        throw new Error('Failed to update the scheduled conversation.');
+    }
+
+    /** Cancel. The row is kept as `cancelled`; nothing is ever sent. */
+    async function cancelScheduled(groupId: number | string, id: number | string): Promise<boolean> {
+        if (!masjidStore.masjid?.id) return false;
+
+        const res: AxiosResponse = await ApiService.delete(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/scheduled-messages/${id}` as BackendApiRoute
+        );
+
+        return res.data?.status === 'success';
+    }
+
+    /**
      * Post a message — text, attachments, or both. Refused (403) if the caller
      * may not read the thread, 422 if it is closed.
      *
@@ -226,6 +308,10 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
         fetchThread,
         clearOpenThread,
         createThread,
+        scheduleThread,
+        fetchScheduled,
+        updateScheduled,
+        cancelScheduled,
         postMessage,
         setReaction,
         setThreadClosed

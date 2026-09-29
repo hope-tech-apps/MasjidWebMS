@@ -154,7 +154,7 @@
                         <div class="card-body">
                             <h2 v-if="post.title" class="h6 mb-1" dir="auto">{{ txPost(post, 'title') }}</h2>
                             <p class="text-muted small mb-2">
-                                {{ post.author?.name || t('the_school') }} · {{ when(post.created_at) }}
+                                {{ post.author?.name || t('the_school') }} · {{ when(post.published_at ?? post.created_at) }}
                             </p>
                             <p class="mb-2" style="white-space: pre-wrap;" dir="auto">{{ txPost(post, 'body') }}</p>
 

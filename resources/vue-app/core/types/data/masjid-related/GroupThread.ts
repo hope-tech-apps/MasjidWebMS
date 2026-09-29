@@ -131,4 +131,29 @@ export type GroupThreadsMeta = {
     max_video_size_kb?: number;
     max_videos_per_message?: number;
     video_retention_days?: number;
+    /** "Send later": the SCHOOL's zone the field is read in, and how far ahead it may go. */
+    scheduling?: { timezone: string; max_days_ahead: number };
+};
+
+/**
+ * A NEW conversation written and waiting for its time (T-002.4). Not a thread: until
+ * `groups:publish-due` opens it, no reader, receipt or family endpoint can see it.
+ */
+export type ScheduledMessage = {
+    id: number;
+    group_id: number;
+    scope: ThreadScope;
+    about: { membership_id: number; contact: GroupContact | null } | null;
+    subject: string;
+    body: string;
+    send_at: string | null;
+    /** The school's own wall clock, in the form the Send-later field takes. */
+    send_at_local: string | null;
+    status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+    failure_reason: string | null;
+    sent_thread_id: number | null;
+    author: { id: number; name: string } | null;
+    /** The author and the office only; a co-teacher sees the item and may not touch it. */
+    can_change: boolean;
+    created_at: string | null;
 };

@@ -36,14 +36,29 @@
                             <button type="button" class="btn btn-link btn-sm p-0 ms-1" @click="clearChosenFiles">clear</button>
                         </span>
                         <span v-if="uploadHint" class="small text-muted ms-auto">{{ uploadHint }}</span>
-                        <button type="submit" class="btn btn-sm btn-success ms-auto" :disabled="posting || preparingPhotos || !composeBody">
+                        <button type="submit" class="btn btn-sm btn-success ms-auto"
+                                :disabled="posting || preparingPhotos || !composeBody || !later.ready.value">
                             <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>
-                            Post
+                            {{ later.enabled.value ? 'Schedule' : 'Post' }}
                         </button>
                     </div>
+                    <!--
+                        "Send later" — the school's own clock. Only offered once the server
+                        has said which zone that is (`meta.scheduling`), so the label can
+                        never be the browser's.
+                    -->
+                    <SendLaterField v-if="scheduling" class="mt-2"
+                                    v-model:enabled="later.enabled.value" v-model="later.value.value"
+                                    :timezone="scheduling.timezone" :max-days="scheduling.max_days_ahead"
+                                    :error="later.error.value" :disabled="posting" />
                 </form>
             </div>
         </div>
+
+        <!-- Written and waiting, or refused at send time: Edit, Send now, Cancel. -->
+        <ScheduledItems :rows="scheduledRows" :timezone="scheduling?.timezone" :max-days="scheduling?.max_days_ahead"
+                        :busy="scheduledBusy" :error="scheduledError"
+                        @send-now="sendScheduledNow" @cancel="cancelScheduled" @save="saveScheduled" />
 
         <div v-if="loading" class="text-center py-5">
             <div class="spinner-border text-primary" role="status">
@@ -163,6 +178,11 @@ import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 // two surfaces cannot drift.
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
+// "Send later" and the Scheduled list (T-002.4), shared with the teacher screen.
+import SendLaterField from '@/components/common/SendLaterField.vue';
+import ScheduledItems from '@/components/common/ScheduledItems.vue';
+import { useSendLater } from '@/composables/useSendLater';
+import { storyRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 // The same tile the conversation tab uses for a video: one renderer for the
 // ticket-and-<video> arrangement rather than a second copy of it here.
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
@@ -205,6 +225,16 @@ const preparingPhotos = ref(false);
 let pickCount = 0;
 /** Object URLs keyed by attachment id, revoked on page change / unmount. */
 const imageUrls = ref<Record<number, string>>({});
+
+// "Send later": the school's zone and horizon come from the server's meta.
+const scheduling = computed(() => feedStore.feedMeta?.scheduling);
+const later = useSendLater(
+    computed(() => scheduling.value?.timezone),
+    computed(() => scheduling.value?.max_days_ahead),
+);
+const scheduledRows = ref<ScheduledRow[]>([]);
+const scheduledBusy = ref(false);
+const scheduledError = ref('');
 
 // Computed
 const posts = computed<GroupPost[]>(() => (feedStore.postsPaginated?.data as GroupPost[]) || []);
@@ -277,6 +307,7 @@ const loadPosts = async (page: number) => {
     releaseImageUrls();
     try {
         await feedStore.fetchPosts(props.groupId, page);
+        await loadScheduled();
         await hydrateImages();
     } catch (error) {
         if (isForbidden(error)) {
@@ -288,6 +319,47 @@ const loadPosts = async (page: number) => {
         loading.value = false;
     }
 };
+
+/**
+ * The Scheduled list. A refusal (an administrator who may read the feed as a parent but is
+ * neither a teacher of the class nor the office) is not an error to show: they have no
+ * scheduled stories to see, and the list stays hidden.
+ */
+const loadScheduled = async () => {
+    try {
+        scheduledRows.value = (await feedStore.fetchScheduledPosts(props.groupId)).map(storyRow);
+    } catch (error) {
+        scheduledRows.value = [];
+        if (!isForbidden(error)) scheduledError.value = apiErrorText(error, 'The scheduled stories could not be loaded.');
+    }
+};
+
+/** Run one Scheduled-list action, then reload both lists (Send now moves a story into the feed). */
+const runScheduled = async (action: () => Promise<unknown>, failure: string) => {
+    scheduledBusy.value = true;
+    scheduledError.value = '';
+    try {
+        await action();
+        await loadPosts(1);
+    } catch (error) {
+        scheduledError.value = apiErrorText(error, failure);
+    } finally {
+        scheduledBusy.value = false;
+    }
+};
+
+const sendScheduledNow = (row: ScheduledRow) =>
+    runScheduled(() => feedStore.updatePost(props.groupId, row.id, { send_now: true }), 'That story could not be sent.');
+
+const cancelScheduled = (row: ScheduledRow) =>
+    runScheduled(() => feedStore.deletePost(props.groupId, row.id), 'That story could not be cancelled.');
+
+const saveScheduled = (row: ScheduledRow, fields: { heading: string; body: string; sendAt: string | null }) =>
+    runScheduled(() => feedStore.updatePost(props.groupId, row.id, {
+        title: fields.heading,
+        body: fields.body,
+        ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
+    }), 'That story could not be saved.');
 
 /** 🤲 👍 💯 ❓ — refused (403) for an admin who may not read this class's feed. */
 const reactTo = async (post: GroupPost, key: string, on: boolean) => {
@@ -367,16 +439,18 @@ const submitPost = async () => {
     if (!composeBody.value || preparingPhotos.value) return;
     posting.value = true;
     try {
+        const scheduled = later.enabled.value;
         await feedStore.createPost(
             props.groupId,
-            { title: composeTitle.value, body: composeBody.value },
+            { title: composeTitle.value, body: composeBody.value, ...later.fields() },
             chosenFiles.value
         );
         composeTitle.value = '';
         composeBody.value = '';
         chosenFiles.value = [];
+        later.reset();
         await loadPosts(1);
-        Swal.fire({ icon: 'success', title: 'Posted', timer: 1600, showConfirmButton: false });
+        Swal.fire({ icon: 'success', title: scheduled ? 'Scheduled' : 'Posted', timer: 1600, showConfirmButton: false });
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to publish the post.') });
     } finally {

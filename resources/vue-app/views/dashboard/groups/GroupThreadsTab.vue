@@ -7,6 +7,14 @@
             </button>
         </div>
 
+        <!--
+            New conversations written and waiting for their time, or refused at send time
+            (T-002.4). Not threads: nothing here is readable by a family until it opens.
+        -->
+        <ScheduledItems :rows="scheduledRows" :timezone="scheduling?.timezone" :max-days="scheduling?.max_days_ahead"
+                        :busy="scheduledBusy" :error="scheduledError"
+                        @send-now="sendScheduledNow" @cancel="cancelScheduled" @save="saveScheduled" />
+
         <div v-if="loading" class="text-center py-5">
             <div class="spinner-border text-primary" role="status">
                 <span class="visually-hidden">Loading...</span>
@@ -224,6 +232,7 @@
                                         design around.
                                     -->
                                     <GroupMediaPicker
+                                        v-if="!later.enabled.value"
                                         v-model="threadMedia"
                                         class="mt-2"
                                         :disabled="creating"
@@ -232,13 +241,25 @@
                                         :max="maxImages"
                                         :max-videos="maxVideos"
                                     />
+                                    <div v-else class="form-text">
+                                        A conversation scheduled for later is text only. Photos and video can be sent in
+                                        a reply once it has opened.
+                                    </div>
                                 </div>
+                                <!--
+                                    "Send later" — the school's own clock. Offered once the
+                                    server has said which zone that is (`meta.scheduling`).
+                                -->
+                                <SendLaterField v-if="scheduling" class="mt-3"
+                                                v-model:enabled="later.enabled.value" v-model="later.value.value"
+                                                :timezone="scheduling.timezone" :max-days="scheduling.max_days_ahead"
+                                                :error="later.error.value" :disabled="creating" />
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" @click="showThreadModal = false" :disabled="creating">Cancel</button>
                                 <button type="submit" class="btn btn-success" :disabled="creating || !canCreate">
                                     <span v-if="creating" class="spinner-border spinner-border-sm me-1"></span>
-                                    Open
+                                    {{ later.enabled.value ? 'Schedule' : 'Open' }}
                                 </button>
                             </div>
                         </form>
@@ -256,6 +277,11 @@ import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
+// "Send later" and the Scheduled list (T-002.4), shared with the teacher screen.
+import SendLaterField from '@/components/common/SendLaterField.vue';
+import ScheduledItems from '@/components/common/ScheduledItems.vue';
+import { useSendLater } from '@/composables/useSendLater';
+import { messageRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { GroupMessage, GroupThread, GroupThreadPayload } from '@/core/types/data/masjid-related/GroupThread';
@@ -292,6 +318,16 @@ const replyMedia = ref<File[]>([]);
 const threadMedia = ref<File[]>([]);
 /** Kept apart from `threadForm` so switching back to a group-wide scope cannot leave a stale subject. */
 const aboutMembershipId = ref<number | null>(null);
+
+// "Send later": the school's zone and horizon come from the server's meta.
+const scheduling = computed(() => threadsStore.threadsMeta?.scheduling);
+const later = useSendLater(
+    computed(() => scheduling.value?.timezone),
+    computed(() => scheduling.value?.max_days_ahead),
+);
+const scheduledRows = ref<ScheduledRow[]>([]);
+const scheduledBusy = ref(false);
+const scheduledError = ref('');
 
 const emptyThreadForm = (): GroupThreadPayload => ({
     subject: '', scope: 'participant', about_membership_id: null, body: ''
@@ -338,6 +374,8 @@ const paginationOptions = computed<PaginationOptions | undefined>(() => {
 
 const canCreate = computed<boolean>(() => {
     if (!threadForm.value.subject) return false;
+    // A scheduled conversation has no first message to add later: it IS the message.
+    if (later.enabled.value && (!threadForm.value.body || !later.ready.value)) return false;
     return threadForm.value.scope !== 'participant' || aboutMembershipId.value !== null;
 });
 
@@ -362,6 +400,7 @@ const loadThreads = async (page: number) => {
     forbidden.value = false;
     try {
         await threadsStore.fetchThreads(props.groupId, page);
+        await loadScheduled();
     } catch (error) {
         if (isForbidden(error)) {
             forbidden.value = true;
@@ -372,6 +411,47 @@ const loadThreads = async (page: number) => {
         loading.value = false;
     }
 };
+
+/**
+ * The Scheduled list. A refusal (an administrator without `manage contacts`) is not an
+ * error to show: they have nothing scheduled to see and the list stays hidden.
+ */
+const loadScheduled = async () => {
+    try {
+        scheduledRows.value = (await threadsStore.fetchScheduled(props.groupId))
+            .filter((item) => item.status !== 'sent' && item.status !== 'cancelled')
+            .map(messageRow);
+    } catch (error) {
+        scheduledRows.value = [];
+        if (!isForbidden(error)) scheduledError.value = apiErrorText(error, 'The scheduled conversations could not be loaded.');
+    }
+};
+
+const runScheduled = async (action: () => Promise<unknown>, failure: string) => {
+    scheduledBusy.value = true;
+    scheduledError.value = '';
+    try {
+        await action();
+        await loadScheduled();
+    } catch (error) {
+        scheduledError.value = apiErrorText(error, failure);
+    } finally {
+        scheduledBusy.value = false;
+    }
+};
+
+const sendScheduledNow = (row: ScheduledRow) =>
+    runScheduled(() => threadsStore.updateScheduled(props.groupId, row.id, { send_now: true }), 'That conversation could not be sent.');
+
+const cancelScheduled = (row: ScheduledRow) =>
+    runScheduled(() => threadsStore.cancelScheduled(props.groupId, row.id), 'That conversation could not be cancelled.');
+
+const saveScheduled = (row: ScheduledRow, fields: { heading: string; body: string; sendAt: string | null }) =>
+    runScheduled(() => threadsStore.updateScheduled(props.groupId, row.id, {
+        subject: fields.heading,
+        body: fields.body,
+        ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
+    }), 'That conversation could not be saved.');
 
 const pageChange = async (data: PageChangeData) => {
     if (data.toPage === (paginationOptions.value?.currentPage ?? 1)) return;
@@ -395,6 +475,21 @@ const submitThread = async () => {
     if (!canCreate.value) return;
     creating.value = true;
     try {
+        // "Send later": written now, opened at its time. Text only; there is no thread
+        // to select yet, so the Scheduled list is what shows it.
+        if (later.enabled.value) {
+            await threadsStore.scheduleThread(props.groupId, {
+                ...threadForm.value,
+                about_membership_id: threadForm.value.scope === 'participant' ? aboutMembershipId.value : null
+            }, later.value.value);
+            showThreadModal.value = false;
+            later.reset();
+            await loadScheduled();
+            Swal.fire({ icon: 'success', title: 'Scheduled', timer: 1600, showConfirmButton: false });
+
+            return;
+        }
+
         const thread = await threadsStore.createThread(props.groupId, {
             ...threadForm.value,
             about_membership_id: threadForm.value.scope === 'participant' ? aboutMembershipId.value : null
@@ -470,6 +565,7 @@ const openThreadModal = () => {
     // along into the next one — the picker keeps File objects, not a form field
     // the reset above would clear.
     threadMedia.value = [];
+    later.reset();
     showThreadModal.value = true;
 };
 
