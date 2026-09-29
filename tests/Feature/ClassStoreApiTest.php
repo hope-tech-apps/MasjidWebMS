@@ -234,6 +234,13 @@ class ClassStoreApiTest extends TestCase
         $stranger = $this->enrol($this->school, $other, Contact::factory()->create(['masjid_id' => $this->school->id, 'email' => null]));
         $this->credit($stranger, 20);
 
+        // A guardian edge names a relationship, not a student: 403 at the door, not a quiet 422 from the service.
+        $edge = GroupMembership::query()->where('contact_id', $this->amiraParent->id)->firstOrFail();
+        $this->credit($this->amira, 10);
+        $this->postJson($this->redeemUrl($edge), ['prize_id' => $prize->id])->assertForbidden();
+        $this->postJson($this->teacherUrl('/members/'.$edge->id.'/prizes/cash-out'), ['amount' => 1])->assertForbidden();
+        $this->getJson($this->teacherUrl('/members/'.$edge->id.'/bucks'))->assertForbidden();
+
         // A student of a class this teacher leads in name only.
         $this->postJson($this->redeemUrl($stranger), ['prize_id' => $prize->id])->assertNotFound();
         $this->getJson($this->teacherUrl('/members/'.$stranger->id.'/bucks'))->assertNotFound();
