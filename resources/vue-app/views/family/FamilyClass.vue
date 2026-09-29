@@ -404,6 +404,11 @@
                             </li>
                         </ul>
 
+                        <!-- MANARA BUCKS (T-003.4): only where this school runs the class store
+                             (the payload carries `class_store: true` then and no key otherwise).
+                             This child's balance and history, read-only, from their own endpoint. -->
+                        <FamilyBucks v-if="group.class_store === true" :base="base" :member-id="child.membership_id" />
+
                         <h3 class="text-uppercase text-muted small">{{ t('section_letters') }}</h3>
                         <!-- EVERY TRACK THIS CLASS USES, one under the other,
                              each named and each counted on its own. No switcher
@@ -1023,6 +1028,7 @@ import { percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
+import FamilyBucks from '@/views/family/FamilyBucks.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';

@@ -52,7 +52,7 @@
                     <div v-if="moreOpen"
                          class="position-absolute end-0 mt-1 bg-white border rounded-3 shadow py-1"
                          style="min-width: 12rem; z-index: 1080;">
-                        <button v-for="t in moreTabs" :key="t.key" type="button"
+                        <button v-for="t in shownMoreTabs" :key="t.key" type="button"
                                 class="btn btn-sm w-100 text-start border-0 rounded-0 px-3 py-2"
                                 :class="activeTab === t.key ? 'bg-success-subtle text-success-emphasis fw-semibold' : ''"
                                 @click="activeTab = t.key; moreOpen = false">
@@ -2390,6 +2390,11 @@
                     </div>
                 </template>
             </section>
+
+            <!-- ============================== CLASS STORE (T-003.4, only where switched on) -->
+            <section v-else-if="activeTab === 'store' && group.class_store === true">
+                <TeacherClassStore :base="base" />
+            </section>
         </template>
 
         <!-- Avatar picker modal (Roster tab) -->
@@ -2422,6 +2427,7 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
+import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
@@ -2444,7 +2450,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
-    | 'lessons' | 'grades' | 'files' | 'reports';
+    | 'lessons' | 'grades' | 'files' | 'reports' | 'store';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -2489,7 +2495,12 @@ const moreTabs: { key: TabKey; label: string; icon: string }[] = [
     // in the same dropdown, and two clipboards read as one entry.
     { key: 'reports', label: 'Reports', icon: 'bi-file-earmark-bar-graph' },
     { key: 'files', label: 'Files', icon: 'bi-folder2-open' },
+    // Manara Bucks (T-003.4). Listed here but SHOWN only for a school that has the store on:
+    // the class payload carries `class_store: true` then and no key at all otherwise.
+    { key: 'store', label: 'Class Store', icon: 'bi-shop' },
 ];
+
+const shownMoreTabs = computed(() => moreTabs.filter((t) => t.key !== 'store' || group.value?.class_store === true));
 
 const activeMoreTab = computed(() => moreTabs.find((t) => t.key === activeTab.value) ?? null);
 
