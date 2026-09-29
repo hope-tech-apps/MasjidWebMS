@@ -127,6 +127,24 @@ class CartSettlementReviewFixesTest extends TestCase
     }
 
     #[Test]
+    public function a_closed_basket_that_still_has_lines_is_refused_before_it_is_priced(): void
+    {
+        // Settlement closes a basket only once it is empty, so the test above is refused
+        // for having nothing to pay for as well. This pins the open-status check on its own:
+        // lines that are still payable, in a basket that is no longer open.
+        [, $cart] = $this->basket();
+        Cart::withoutMasjidScope()->whereKey($cart->id)->update(['status' => Cart::STATUS_CHECKED_OUT]);
+        $this->assertSame(3, CartItem::withoutMasjidScope()->where('cart_id', $cart->id)->count(), 'premise: the lines are still there');
+
+        $svc = $this->checkoutService();
+        $refusal = $this->refused(fn () => $svc->checkout($cart->fresh(), self::RETURN_BASE, 'buyer@example.org'));
+
+        $this->assertSame('This basket has already been paid for.', $refusal->getMessage());
+        $this->assertCount(0, $svc->created, 'no page is opened for a basket that is not open');
+        $this->assertSame(0, Order::withoutMasjidScope()->count());
+    }
+
+    #[Test]
     public function a_settlement_that_does_not_happen_leaves_the_basket_open(): void
     {
         [, $cart] = $this->basket();
