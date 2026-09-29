@@ -372,6 +372,52 @@ class CartCheckoutEndpointTest extends TestCase
     }
 
     #[Test]
+    public function the_409_shows_the_basket_the_shopper_is_asked_to_accept(): void
+    {
+        // A notice is a sentence with no amount. Acknowledging adopts the new price and quantity, so
+        // the 409 must carry them: the shopper agrees to what they were shown, never to a sentence.
+        $org = $this->org();
+        $fund = $this->fund($org);
+        $dish = $this->dish($org);
+        $token = $this->startBasket($org);
+        $this->addLine($org, $token, $this->giftBody($fund->id))->assertOk();
+        $this->addLine($org, $token, $this->dishBody($dish->id, 2, '2026-10-06T14:00'))->assertOk();
+
+        $dish->forceFill(['price_minor' => 1800])->save();
+
+        $changed = $this->checkout($org, $token)->assertStatus(409)->assertJsonPath('status', 'error');
+
+        // The repriced dish, at its NEW unit price and the quantity the shopper asked for.
+        $dishLine = collect($changed->json('data.lines'))->firstWhere('label', 'Baked Lamb');
+        $this->assertSame('repriced', $dishLine['status']);
+        $this->assertSame(1800, $dishLine['unit_minor'], 'the new unit amount is in the body');
+        $this->assertSame(2, $dishLine['quantity']);
+        $this->assertSame(5000 + 2 * 1800, $changed->json('data.total_minor'), 'and so is the new total');
+        $this->assertSame('usd', $changed->json('data.currency'));
+
+        // Exactly what GET /cart returns, which is what acknowledge will apply.
+        $this->assertSame($this->cartApi('GET', '/api/v1/cart', $org, $token)->json('data'), $changed->json('data'));
+        $this->assertNotEmpty($changed->json('data.notices'));
+        $this->assertMatchesRegularExpression('/\A[a-f0-9]{64}\z/', $changed->json('data.view_fingerprint'));
+
+        // Nothing that /cart withholds is in it either.
+        foreach (['answers', 'payload', 'acct_', 'basket_fingerprint'] as $private) {
+            $this->assertStringNotContainsString($private, $changed->getContent(), "the 409 leaks '{$private}'");
+        }
+
+        // A basket that moved again under the acknowledge is the same 409, with its new prices.
+        $dish->forceFill(['price_minor' => 2000])->save();
+        $again = $this->cartApi('POST', '/api/v1/cart/acknowledge', $org, $token, ['seen' => $changed->json('data.view_fingerprint')])
+            ->assertStatus(409);
+        $this->assertSame(
+            2000,
+            collect($again->json('data.lines'))->firstWhere('label', 'Baked Lamb')['unit_minor'],
+            'the acknowledge 409 shows the price it moved to'
+        );
+        $this->assertSame(5000 + 2 * 2000, $again->json('data.total_minor'));
+    }
+
+    #[Test]
     public function acknowledge_needs_what_was_seen(): void
     {
         [$org, $token] = $this->giftBasket();

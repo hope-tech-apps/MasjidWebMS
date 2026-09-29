@@ -121,7 +121,7 @@ class CartCheckoutService
             }
 
             if ($priced->notices() !== []) {
-                throw CartCheckoutRefused::basketChanged($priced->notices(), $priced->viewFingerprint());
+                throw CartCheckoutRefused::basketChanged($priced);
             }
 
             if (! $priced->isPayable()) {
@@ -186,7 +186,7 @@ class CartCheckoutService
             $priced = $this->pricer->price($locked);
 
             if (! hash_equals($priced->viewFingerprint(), $seen)) {
-                throw CartCheckoutRefused::basketChanged($priced->notices(), $priced->viewFingerprint());
+                throw CartCheckoutRefused::basketChanged($priced);
             }
 
             foreach ($priced->lines as ['item' => $item, 'outcome' => $outcome]) {

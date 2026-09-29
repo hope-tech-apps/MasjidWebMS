@@ -271,8 +271,9 @@ class CartsController extends Controller
      * Opens ONE Stripe page for the whole basket and answers `{checkout_url, order_uuid}`. The
      * return address is FormPaymentReturn::base() exactly as the form door builds it (the
      * request's Origin and `return_path`; a refusal is its one message). A basket that changed
-     * since the shopper last looked is a 409 carrying `notices` and `view_fingerprint`, so the
-     * page can show them and acknowledge; any other refusal is a 422 with its sentence.
+     * since the shopper last looked is a 409 carrying the priced basket (the shape of GET /cart, with its
+     * `notices` and `view_fingerprint`), so the page can show what it is asked to accept and
+     * acknowledge; any other refusal is a 422 with its sentence.
      *
      * The buyer's rules are the doors' floor: a name, a real address (receipts, and the future
      * portal, key on it), and a phone when the basket has a dish, because both meal doors
@@ -417,16 +418,16 @@ class CartsController extends Controller
     }
 
     /**
-     * What a refused checkout or acknowledge answers: a basket that changed is a 409 with what
-     * the shopper must see and the fingerprint to hand back; anything else is one sentence.
+     * What a refused checkout or acknowledge answers: a basket that changed is a 409 whose body
+     * is the priced basket exactly as GET /cart draws it (every line's quantity, unit price and
+     * status, the total, the `notices` and the `view_fingerprint` to hand back), because the
+     * shopper is asked to accept the basket at its new prices and a notice alone carries no
+     * amount; anything else is one sentence.
      */
     private function refusedCheckout(CartCheckoutRefused $refused): JsonResponse
     {
-        if ($refused->seen() !== null) {
-            return response()->api(409, $refused->getMessage(), [
-                'notices' => $refused->notices(),
-                'view_fingerprint' => $refused->seen(),
-            ]);
+        if ($refused->priced() !== null) {
+            return response()->api(409, $refused->getMessage(), $this->present($refused->priced()));
         }
 
         return response()->api(422, $refused->getMessage(), null);

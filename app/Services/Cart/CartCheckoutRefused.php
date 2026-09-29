@@ -12,7 +12,10 @@ use RuntimeException;
  *
  * `notices` carries the lines that changed since the shopper last looked — gone, or
  * still here at a different price or quantity. They are the reason to refuse: the
- * shopper must see them BEFORE the card screen, never discover them on a receipt.
+ * shopper must see them BEFORE the card screen, never discover them on a receipt. The
+ * refusal also carries the whole priced basket they were found in (`priced()`), because a
+ * notice is a sentence and carries no amount: what the shopper is asked to accept is the
+ * basket at its new prices, and the page has to be able to show it.
  */
 final class CartCheckoutRefused extends RuntimeException
 {
@@ -21,17 +24,20 @@ final class CartCheckoutRefused extends RuntimeException
 
     private ?string $seen = null;
 
+    private ?PricedBasket $priced = null;
+
     /**
-     * @param  list<array{label: string, status: string, reason: string}>  $notices
-     * @param  string  $seen  PricedBasket::viewFingerprint() of the basket these notices
-     *                        describe. The page shows the notices and hands this back to
-     *                        acknowledge(), which applies them only if it still matches.
+     * @param  PricedBasket  $priced  the basket as it prices now. Its notices are the reason to
+     *                                refuse; its viewFingerprint() is what the page hands back to
+     *                                acknowledge(), which applies the changes only while it still
+     *                                matches.
      */
-    public static function basketChanged(array $notices, string $seen): self
+    public static function basketChanged(PricedBasket $priced): self
     {
         $refusal = new self('Some things in your basket changed. Please check them before paying.');
-        $refusal->notices = $notices;
-        $refusal->seen = $seen;
+        $refusal->notices = $priced->notices();
+        $refusal->seen = $priced->viewFingerprint();
+        $refusal->priced = $priced;
 
         return $refusal;
     }
@@ -46,5 +52,11 @@ final class CartCheckoutRefused extends RuntimeException
     public function notices(): array
     {
         return $this->notices;
+    }
+
+    /** The basket as the shopper is asked to accept it, for a refusal that is a changed basket. */
+    public function priced(): ?PricedBasket
+    {
+        return $this->priced;
     }
 }
