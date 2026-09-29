@@ -95,11 +95,22 @@ have been corrected.)
   `X-Tenant-Id` echo with what it selected.
 - **A teacher's global row is shared.** `users` (name, phone, password, sessions) belongs
   to the person, not to a school. For a Teacher with a live membership elsewhere
-  (`User::belongsOutside`), a school's screens show name and email only — never the
-  stored phone or a sign-in time that may be another school's — and the school cannot
-  rename or re-phone them, resend a set-password link (whose completion deletes every
-  token), or restore them if a SuperAdmin trashed them. See
-  `.claude/rules/auth-permissions.md` and `TeacherAttachTest`.
+  (`User::belongsOutside`), every school that has them sees the stored name, email and
+  PHONE (owner, 2026-09-29: "I do not see as a problem") and its OWN "last opened this
+  school" — never the newest token, which is a sign-in at ANY school, and never another
+  school's value. The school cannot rename or re-phone them, resend a set-password link
+  (whose completion deletes every token), or restore them if a SuperAdmin trashed them.
+  See `.claude/rules/auth-permissions.md` and `TeacherAttachTest`.
+- **`masjid_user.last_seen_at` is per school, and is stamped in exactly one place.**
+  `ResolveMasjidTenant` calls `MembershipSeen::touch()` inline, after the tenant binds and
+  only on a response below 400, for MasjidAdmin, Teacher and LunchStaff: never for a
+  SuperAdmin, a family or student token, an unbound route, a refusal, or the ownership
+  fallback (an unsaved membership). It is one conditional UPDATE on the query builder
+  (throttled to five minutes, no model event, no `updated_at`), and any failure is a
+  WARNING, never a 500. Every screen reads it through `MembershipSeen::forOrganisation()`,
+  which filters by masjid once; the column is `$hidden` on `MasjidUser`, so a serialised
+  membership cannot carry it into another school. `StaffLastSeenTest` and the leak sweep in
+  `TeacherMultiSchoolTest` pin all of it. See DECISIONS.md, 2026-09-29, round 2.
 - **Removal is per school and is never gated.** `TeachersController::destroy` removes
   this school's rows, re-picks a default, keeps the sessions while another school
   remains, and retires the login (tokens too) only when none does. The rollback for the

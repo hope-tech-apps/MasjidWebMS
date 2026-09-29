@@ -4527,31 +4527,36 @@ Rationale and the calls made while building:
   belongs nowhere makes no cross-organisation grant). Removal never asks the flag: the rollback is
   "delete the extra memberships first", so that door must work with the gate shut.
 - **What another school may see of a shared teacher (owner: added straight away).** For a Teacher
-  with a live membership elsewhere (`User::belongsOutside`), the Teachers and Team screens withhold
-  the stored phone and the last sign-in (a sign-in at ANY school). They still show the STORED name
-  and the email: `TeachersController::index` reads `users.name`, which the first school entered, so
-  a school that adds an existing login sees that name in its list and NOT the one its own office
-  typed (`TeacherAttachTest.php:362` pins `Stored Name` in the list). The owner accepted seeing the
-  other school's name. The withholding is symmetric on purpose: `users` carries no provenance, so
-  the school that first entered the phone loses sight of it too. *(Corrected in the review fixes:
-  this bullet, and the owner-answers note in the workspace folder, first said the second school's
-  screens show only the name and email it typed. That is false.)*
+  with a live membership elsewhere (`User::belongsOutside`), every school that has them sees the
+  STORED name, the email and the stored PHONE, and its OWN "last opened this school"; it never sees
+  the newest token (a sign-in at ANY school) or another school's `last_seen_at`. The name is the
+  stored one: `TeachersController::index` reads `users.name`, which the first school entered, so a
+  school that adds an existing login sees that name in its list and NOT the one its own office typed
+  (`TeacherAttachTest::a_shared_teacher_shows_every_school_the_phone_and_only_that_schools_last_opened`
+  pins `Stored Name` and the phone in the list). The owner accepted seeing the other school's name.
+  *(Changed 2026-09-29, round 2, by the owner's answer (a) below: this bullet first hid the stored
+  phone and the last sign-in from both schools "symmetrically", because `users` carries no
+  provenance. The phone is now shown, and the sign-in is replaced by the per-school "last opened".
+  It also once said the second school's screens show only the name and email it typed; that was
+  never true, and is corrected here and in the workspace folder's owner-answers note.)*
 - **What the add itself discloses, stated exactly.** A successful add answers with the same message
   and the same data shape whether the address was new or existing, and the data is what the inviter
   typed (`TeacherAttachTest::the_create_and_attach_replies_are_indistinguishable_by_message_and_by_data`),
-  so that reply alone cannot say. Three things can: (1) the list read above shows the stored name;
-  (2) with `tenancy.multi_membership` shut, which production is today, an address that is a live
-  Teacher with a membership elsewhere is refused with "Adding an existing login to a second school is
-  switched off." (`TeacherAttachTest.php:225`), which no other address is told, so the office learns
-  the address is a live teacher at another school; (3) a login of another type, or a teacher a
-  SuperAdmin trashed on purpose, gets `CANNOT_ADD` ("already has a Manara login that can't be added as
-  a teacher"), and a teacher already at this school gets its own line (`TeacherAttachTest.php:309`).
-  So the refusals distinguish the KIND of login. They are not "equal to today's `unique` rule", which
-  says only that the address is taken. The owner accepted the name; whether he accepts the "switched
-  off" wording is Unknown, needs the owner's call. Recorded as a known residual, not as settled.
+  so that reply alone cannot say. Three things can: (1) the list read above shows the stored name
+  and phone; (2) with `tenancy.multi_membership` shut, which production is today, an address that is
+  a live Teacher with a membership elsewhere is refused with "Adding an existing login to a second
+  school is switched off." (`TeacherAttachTest::with_the_gate_shut_the_attach_is_refused_but_a_new_teacher_still_works`),
+  which no other address is told, so the office learns the address is a live teacher at another
+  school; (3) a login of another type, or a teacher a SuperAdmin trashed on purpose, gets
+  `CANNOT_ADD` ("already has a Manara login that can't be added as a teacher"), and a teacher
+  already at this school gets its own line
+  (`TeacherAttachTest::adding_the_same_email_twice_at_one_school_is_refused_and_writes_nothing_more`).
+  So the refusals distinguish the KIND of login. They are not "equal to today's `unique` rule",
+  which says only that the address is taken. **The owner has accepted this (answer (b) below).**
 - **A shared teacher's name and phone are read-only from any school** (update refuses a different
-  name and ANY phone; it does not compare phones, which would let an office guess the hidden one).
-  Classes stay editable. Resending the set-password link is refused for a shared teacher
+  name and ANY phone; the form shows the phone and never sends it back). Since answer (a) below the
+  phone is visible to every school, so this is a rule about who may EDIT the shared record, no longer
+  about who may know it. Classes stay editable. Resending the set-password link is refused for a shared teacher
   (`TeachersController::invite`) and for every Teacher via Team & Access (`TeamController::invite`,
   critic M1): completing that link deletes every token, ending the person's sessions at every school.
 - **A trashed Teacher is restored only when they hold no `masjid_user` row** (critic H1): a row means
@@ -4605,6 +4610,9 @@ Each fix has a test that fails without it (mutation-proved, see the build report
   (`signInSchoolId`), else the default. Before, a 401 sent a two-school teacher back to the default school.
 - **Team & Access says "Shared login", not "Not signed in yet"**, for a teacher whose last sign-in is withheld: the
   payload now carries `shared`, and `last_sign_in_at` stays null as before (privacy unchanged).
+  *(Superseded 2026-09-29, round 2: the column is now the per-school "Last opened this school" for everyone, so
+  there is nothing withheld to explain; `shared` stays in the payload as the marker for the read-only name and
+  phone, and the "Shared login" label is gone.)*
 - **The teacher header prints no name** again (the unrequested change is reverted; if the owner wants it, it is one line).
 - **The typed-name mitigation is partial, and said so in the UI.** `store()` returns what the inviter typed, but the next
   list read shows the stored name (the owner accepted seeing the other school's name). The add form now says, for every
@@ -4626,6 +4634,19 @@ Each fix has a test that fails without it (mutation-proved, see the build report
   hops, `firstOrNew`, `new MasjidUser`, and `memberships()->firstOrNew`; the sweep still reads controllers only (a write
   from `app/Services` or `app/Support` is outside it and belongs to its own lane).
 
+
+## 2026-09-29 — Multi-org users, round 2: the owner's answers to the review's two questions
+Recorded from the coordinating session's message of 2026-09-29. Answer (a) is the owner's own words as relayed; the
+wording of question (b) is in the review and is not reproduced here, only the answer the coordinator reported.
+- **(a) What a second school sees of a shared teacher.** Owner: "they should see when they last opened the specific
+  school instead not necessarily the last time they logged in. Seeing their phone number I do not see as a problem."
+  Done: the phone is shown to every school that has the teacher (Teachers list and edit read, Team & Access); the
+  global last sign-in is replaced by a per-school "last opened this school" (next section). The refusal of name and
+  phone EDITS by one school on a shared teacher is kept.
+- **(b) That an office can infer an email teaches elsewhere.** Owner: "acceptable". The refusals on the add door
+  distinguish the kind of login (see "What the add itself discloses, stated exactly" above), so an inviter can learn that
+  an address is a live teacher at another school, or a login of another kind. That is accepted and no longer an open
+  question; the uniform reply to a SUCCESSFUL add is kept anyway, since it costs nothing.
 
 ## 2026-09-29 — Multi-org users, round 2: "last opened this school" per organisation
 Decision (owner, on the review's question about what a second school sees of a shared teacher): "they should see when

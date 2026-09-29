@@ -57,9 +57,14 @@ use Symfony\Component\HttpFoundation\Response;
  *                           attached, and never restored.
  *
  * Every success answers with the SAME message and the SAME data shape, built from
- * what the inviter typed, so the response cannot tell the inviter whether the
- * email already existed at another school. The refusals are the accepted residual
- * (DECISIONS.md): today's `unique` rule already told them the address was taken.
+ * what the inviter typed, so the reply itself cannot tell the inviter whether the
+ * email already existed at another school. Other things can, and the owner has
+ * accepted that an office may infer an email teaches elsewhere (2026-09-29,
+ * "acceptable"; DECISIONS.md, "What the add itself discloses"): the refusals
+ * distinguish the KIND of login (gate shut: a live teacher elsewhere is "switched
+ * off"; another type, or a teacher a SuperAdmin trashed, is CANNOT_ADD; a teacher
+ * already here has its own line), which is more than today's `unique` rule said,
+ * and the next list read shows the stored name and phone.
  *
  * $masjid_id is route-shape; the authoritative masjid is the BOUND tenant.
  */
