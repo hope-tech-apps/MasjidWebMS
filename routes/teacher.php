@@ -13,6 +13,7 @@ use App\Http\Controllers\Teacher\CurriculumController;
 use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\LessonPlanController;
+use App\Http\Controllers\Teacher\PointsPeriodController;
 use App\Http\Controllers\Teacher\ReportCardController;
 use App\Http\Controllers\Teacher\ResourcesController;
 use App\Http\Controllers\Teacher\SchoolController;
@@ -181,6 +182,11 @@ Route::prefix('teacher')
                         Route::delete('/awards/{award_id}', [BehaviorAwardsController::class, 'destroy']);
                         Route::get('/members/{membership_id}/awards', [BehaviorAwardsController::class, 'forMember']);
                         Route::get('/members/{membership_id}/awards/summary', [BehaviorAwardsController::class, 'summary']);
+                        // How this class's points READ: one running total, or a
+                        // week at a time (T-003.2). A view choice that changes no
+                        // award; it applies to every teacher of the class. The
+                        // realm's +1 write verb for the points reset.
+                        Route::put('/points-period', [PointsPeriodController::class, 'update']);
 
                         // The class register. The teacher realm's OWN controller,
                         // not a reused admin one: taking a register is a teacher

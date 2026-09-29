@@ -179,6 +179,10 @@ export const UR: Record<string, string> = {
     handover_let: "{x} کو خود چننے دیں",
     handover_failed: "یہ شروع نہیں ہو سکا۔ براہ کرم دوبارہ کوشش کریں۔",
     section_behaviour: "رویہ",
+    // Weekly points view (T-003.2). Machine-drafted where the file says so.
+    points_this_week: "اس ہفتے",
+    points_all_weeks: "تمام ہفتے",
+    points_history: "تاریخ",
     section_letters: "حروف",
     alphabet_arabic: "عربی حروف",
     alphabet_english: "انگریزی حروف",

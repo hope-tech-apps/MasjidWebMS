@@ -357,6 +357,10 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         handover_let: "Let {x} choose",
         handover_failed: "That could not be started. Please try again.",
         section_behaviour: "Behaviour",
+        // Weekly points view (T-003.2). Machine-drafted where the file says so.
+        points_this_week: "This week",
+        points_all_weeks: "All weeks",
+        points_history: "History",
         // "Letters", not "Arabic letters": the section now heads both tracks and
         // each names itself underneath. These names are CHROME — this portal's
         // own words for its own sections — and belong here rather than in the
@@ -623,6 +627,10 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         handover_let: "دع {x} يختار",
         handover_failed: "تعذّر البدء. يرجى المحاولة مرة أخرى.",
         section_behaviour: "السلوك",
+        // Weekly points view (T-003.2). Machine-drafted where the file says so.
+        points_this_week: "هذا الأسبوع",
+        points_all_weeks: "كل الأسابيع",
+        points_history: "السجل",
         section_letters: "الحروف",
         alphabet_arabic: "الحروف العربية",
         alphabet_english: "الحروف الإنجليزية",

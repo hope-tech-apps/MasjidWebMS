@@ -4794,3 +4794,24 @@ this school"; `last_sign_in_at` is removed from the Team payload (the SPA was it
   4. **Tests no longer depend on the process's memory.** `StudioDraftFixtures::setUpStudio` (which `ProvisionsStudioDrafts::setUpProvisioning` and the draft tests call) sets `LogoDerivatives::$headroomBytes` to 512 MiB and resets it to null with `beforeApplicationDestroyed`. `StudioProvisionLogoTest::the_real_memory_path_reads_the_ini_limit_minus_what_the_process_holds` keeps the real `memory_limit` minus usage path, with a limit the test sets (10 MiB above what it holds, then 512 MiB) and restores.
   5. **The draft-logo upload runs the same check** (Point's requirement). `LogoDerivatives::assertFits` is public and `StoreStudioDraftLogoRequest::after()` calls it on the uploaded file once the type and size rules have passed. A `LogoTooLarge` becomes an error on `logo` with its own sentence, so the answer is the legacy 422 `{status:'failed', data:{logo:[sentence]}}` and nothing is stored (the request fails before the controller opens its transaction). Provisioning keeps its own run, since the headroom there can differ. **The upload's `dimensions` rule lost its maximum**: with it, a 20000x20000 logo got Laravel's generic sentence before this check ran, not provisioning's. The maximum edge is `LogoDerivatives::MAX_EDGE`, checked by `assertFits`, and `StudioSpaSourceTest` now reads that constant for the SPA's `LOGO_LARGEST_EDGE` pin. Tests in `StudioDraftLogoTest`: a crafted 20000x20000 header (valid signature, IHDR with its CRC, IEND) gets the sentence and is not stored; a 3000x3000 header under a 40 MiB seam gets the memory sentence, keeps the draft's earlier logo, and is taken once the room is given.
   6. **Not done, on purpose.** No log line for a refused upload: the user sees the 422, and the hooks log only because they skip silently. Not run: `StudioProvisionLogoTest` and the suites on SQLite versus MySQL on the CI droplet.
+
+- **2026-09-29 (school side quest W4, T-003.2): the weekly points reset is a teacher-opt-in VIEW; nothing is deleted.**
+  Owner: "Points need to have a reset option at the end of week that Teachers can opt into." Decision: `groups.points_period`
+  (`running` | `weekly`, null reads as `running`) says how a class's points are SHOWN; a teacher of the class flips it
+  (`PUT .../points-period`, the teacher realm's +1 write verb, pinned in `TeacherRealmTest`) or the office through the group
+  form. It is on the CLASS, not the teacher (a family sees one number for their child), and the screen and the response say it
+  applies to every teacher. A weekly class leads with the week and keeps the running history beside it; nothing in the table
+  moves (`PointsWeekTest` snapshots every award row, revoked ones included, before and after a toggle), so no backup and no data
+  migration are needed and switching it off gives the running total straight back.
+  Week rule: Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock (`App\Support\PointsWeek`, start day passed explicitly), ends built as
+  local midnights then converted, so the daylight-saving weeks are 167 and 169 hours (pinned for 2026-11-01 and 2027-03-14).
+  Awards are placed by instant (`BehaviorAward::scopeAwardedWithin`, half-open), NEVER `whereDate`, which reads the UTC date and moves a
+  Saturday-evening Eastern award into the next week (the test shows the row the old range loses). `?week=` (any day of the week, or
+  `current`) narrows the same audience-constrained query on the staff and family listings and summaries; a non-date is a 422, never a
+  silent fall back to this week under last week's label. `totals` carries `week_points`/`week_awards` beside the running figures, and
+  negatives subtract in both (`signedPointsSql`). Alternative: a stored "week start" per class or a snapshot table of weekly totals.
+  Rejected: a second copy of every total that can disagree with the award rows, and a reset that has to be undone. No leaderboard
+  anywhere: the weekly list is roster order with no rank (test). The family portal gets a "This week" line under Behaviour and the
+  printable report page (T-003.3). Non-English copy for the new portal words is machine-drafted like the rest of those files (es, ur,
+  ps, fa-AF), flagged in each file's own banner. Unknown, needs investigation: Al-Razi's dismissal time and whether a Monday-start week
+  is wanted (the start day is one argument).

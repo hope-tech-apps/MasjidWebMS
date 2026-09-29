@@ -179,6 +179,10 @@ export const ES: Record<string, string> = {
     handover_let: "Dejar que {x} elija",
     handover_failed: "No se pudo iniciar. Inténtelo de nuevo.",
     section_behaviour: "Comportamiento",
+    // Weekly points view (T-003.2). Machine-drafted where the file says so.
+    points_this_week: "Esta semana",
+    points_all_weeks: "Todas las semanas",
+    points_history: "Historial",
     section_letters: "Letras",
     alphabet_arabic: "Letras árabes",
     alphabet_english: "Letras en inglés",

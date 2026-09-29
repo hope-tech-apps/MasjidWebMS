@@ -6,6 +6,9 @@ use App\Models\Contact;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
 use App\Models\Group;
+use App\Support\PointsWeek;
+use App\Support\SchoolPointsWeek;
+use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -55,9 +58,15 @@ class BehaviorAwardsController extends FamilyController
         $group = $this->group($group_id);
         $membership = $this->subject($group, $membership_id);
 
+        $week = $this->requestedWeek($request);
+
         $awards = $this->readable($group)
             ->where('group_membership_id', $membership->id)
-            ->awardedBetween($request->query('from'), $request->query('to'))
+            ->when(
+                $week !== null,
+                fn (Builder $q) => $q->awardedWithin($week->startUtc(), $week->endUtc()),
+                fn (Builder $q) => $q->awardedBetween($request->query('from'), $request->query('to'))
+            )
             ->with(['membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS, 'awardedBy:id,name'])
             ->orderByDesc('awarded_at')
             ->orderByDesc('id')
@@ -67,7 +76,7 @@ class BehaviorAwardsController extends FamilyController
         return response()->json([
             'status' => 'success',
             'data' => $awards,
-            'meta' => $this->meta(['student' => $this->student($membership)]),
+            'meta' => $this->meta(['student' => $this->student($membership)] + $this->weekMeta($week)),
         ], Response::HTTP_OK);
     }
 
@@ -83,9 +92,18 @@ class BehaviorAwardsController extends FamilyController
         $group = $this->group($group_id);
         $membership = $this->subject($group, $membership_id);
 
+        // `?week=` (T-003.2) names one points week by INSTANT and supersedes
+        // from/to. It narrows the SAME audience-constrained query, so a week is
+        // arithmetically incapable of including another family's child.
+        $week = $this->requestedWeek($request);
+
         $base = $this->readable($group)
             ->where('group_membership_id', $membership->id)
-            ->awardedBetween($request->query('from'), $request->query('to'));
+            ->when(
+                $week !== null,
+                fn (Builder $q) => $q->awardedWithin($week->startUtc(), $week->endUtc()),
+                fn (Builder $q) => $q->awardedBetween($request->query('from'), $request->query('to'))
+            );
 
         // Both grouped columns are selected, so MySQL's ONLY_FULL_GROUP_BY is
         // satisfied and SQLite behaves identically.
@@ -127,6 +145,9 @@ class BehaviorAwardsController extends FamilyController
             'data' => [
                 'student' => $this->student($membership),
                 'range' => ['from' => $request->query('from'), 'to' => $request->query('to')],
+                // The week these figures are for, when one was asked for; null
+                // for the whole record, as before (T-003.2).
+                'week' => $week !== null ? SchoolPointsWeek::payload($week, app(TenantContext::class)->get()) : null,
                 'totals' => [
                     'awards' => array_sum(array_column($byPolarity, 'awards')),
                     // The NET of the snapshotted values. Not a score, and not
@@ -142,6 +163,18 @@ class BehaviorAwardsController extends FamilyController
     }
 
     // ------------------------------------------------------------- internals
+
+    /** The week `?week=` names on this school's clock, or null. 422 for a value that is no date. */
+    private function requestedWeek(Request $request): ?PointsWeek
+    {
+        return SchoolPointsWeek::fromRequest($request, app(TenantContext::class)->get());
+    }
+
+    /** @return array<string,mixed> */
+    private function weekMeta(?PointsWeek $week): array
+    {
+        return $week === null ? [] : ['week' => SchoolPointsWeek::payload($week, app(TenantContext::class)->get())];
+    }
 
     /**
      * The awards this parent may read in this group, as a constrained query.

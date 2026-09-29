@@ -373,8 +373,10 @@ class TeacherClassShortcutsTest extends TestCase
             ->assertJsonPath('data.class.awards', 4);
 
         // No rank, no position — nothing that orders children against each other.
+        // `week_awards` / `week_points` are the same two figures over one points week
+        // (T-003.2), added on purpose; they are counts, not a place in any order.
         $this->assertSame(
-            ['membership_id', 'contact', 'awards', 'points'],
+            ['membership_id', 'contact', 'awards', 'points', 'week_awards', 'week_points'],
             array_keys($res->json('data.students.0'))
         );
 

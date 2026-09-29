@@ -36,6 +36,9 @@ paths:
   - "database/migrations/*_create_group_thread_reads_table.php"
   - "app/Models/BehaviorSkill.php"
   - "app/Models/BehaviorAward.php"
+  - "app/Support/PointsWeek.php"
+  - "app/Support/SchoolPointsWeek.php"
+  - "app/Http/Controllers/Teacher/PointsPeriodController.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorSkillsController.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
   - "database/migrations/*_create_behavior_skills_table.php"
@@ -735,9 +738,12 @@ group; never to the whole tenant; never as a class-wide ranking.
   constraint are both required — the 403 is honest to a parent who mistyped an
   id, and the constraint is what makes the honesty safe.
 - Every aggregate is **per student**. There is deliberately no class-wide
-  endpoint, no rank column, and no comparison payload. If a future slice wants
-  a teacher's overview, it is a list of per-student rows a leader is already
-  entitled to — not a ranking, and not something a guardian can reach.
+  RANKING, no rank column, and no comparison payload. The one class-wide read is
+  the teacher's overview, `GET .../awards/totals` (BISS, 2026-09-21): a list of
+  per-student rows a leader is already entitled to, in roster order, leaders
+  only, and not something a guardian can reach. (An earlier version of this
+  bullet said "no class-wide endpoint" and was already false the day `totals`
+  shipped.)
 - **Consent gates broadcasts, not a parent's view of their own child** — the
   same call T-005c made for participant threads. A guardian with no consent
   record still reads their own ward's awards; requiring feed consent there
@@ -806,6 +812,33 @@ positioning, not its configuration.
   newest-first. On the teacher's screen `core/helpers/behaviorSkills.ts` keeps a
   locally added skill in the same order and opens the picker on the first
   positive skill. Pinned by `BehaviorSkillOrderTest` and `behavior-skills.test.ts`.
+- **The weekly view is a VIEW, and nothing is deleted (T-003.2, 2026-09-29;
+  owner: "points need a reset option at the end of the week that teachers can opt
+  into").** `groups.points_period` (`running` | `weekly`; null reads as `running`,
+  `Group::pointsPeriod()`) decides only how a class's points are SHOWN. A teacher of
+  the class sets it (`PUT .../points-period`, the realm's +1 write verb) or the office
+  does through the group form; it belongs to the CLASS, not the teacher, because a
+  family sees one figure for their child, and the screen and the response both say it
+  applies to every teacher. Turning it on or off changes no `behavior_awards` row, so
+  it needs no backup and switching it off gives the running total straight back
+  (`PointsWeekTest` snapshots every row before and after).
+  - **A week is Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock**
+    (`App\Support\PointsWeek`, start day named explicitly). Its two ends are built as
+    local midnights and converted, so the week that holds a daylight-saving change is
+    167 or 169 hours, not 168; `start + 7 x 24h` would drop a Saturday-night award into
+    the wrong report.
+  - **Awards are placed by INSTANT, never `whereDate`**
+    (`BehaviorAward::scopeAwardedWithin`, half-open `[start, end)`). `DATE(awarded_at)`
+    is the UTC date, so a Saturday-evening Eastern award is already Sunday in the column.
+    The older `awardedBetween(from, to)` is left exactly as it was for its callers.
+  - **`?week=`** (any day of a week names it, or the word `current` for the school's
+    week in progress) narrows the SAME audience-constrained query, so a week can never
+    include anything the caller could not already read. A value that is not a date is a
+    422, never a silent fall back to this week under last week's label. It is on the
+    staff and family listings and summaries; `totals` always carries the week beside the
+    running figures (`week_points`, `week_awards`, and the class's).
+  - **The figure a class leads with follows `points_period`; both are always served.**
+    Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 

@@ -179,6 +179,10 @@ export const FA_AF: Record<string, string> = {
     handover_let: "بگذارید {x} انتخاب کند",
     handover_failed: "شروع نشد. لطفاً دوباره کوشش کنید.",
     section_behaviour: "رفتار",
+    // Weekly points view (T-003.2). Machine-drafted where the file says so.
+    points_this_week: "این هفته",
+    points_all_weeks: "همهٔ هفته‌ها",
+    points_history: "تاریخچه",
     section_letters: "حروف",
     alphabet_arabic: "حروف عربی",
     alphabet_english: "حروف انگلیسی",

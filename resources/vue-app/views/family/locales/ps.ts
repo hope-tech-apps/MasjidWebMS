@@ -179,6 +179,10 @@ export const PS: Record<string, string> = {
     handover_let: "{x} ته اجازه ورکړئ چې وټاکي",
     handover_failed: "دا پیل نه شو. مهرباني وکړئ بیا هڅه وکړئ.",
     section_behaviour: "چلند",
+    // Weekly points view (T-003.2). Machine-drafted where the file says so.
+    points_this_week: "دا اونۍ",
+    points_all_weeks: "ټولې اونۍ",
+    points_history: "تاریخچه",
     section_letters: "توري",
     alphabet_arabic: "عربي توري",
     alphabet_english: "انګلیسي توري",

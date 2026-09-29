@@ -72,6 +72,13 @@ export interface ChildRecordSinks {
     setLetters: (membershipId: number, tracks: any[]) => void;
     /** `null` means "we could not ask"; `[]` means there are none. */
     setArabicNotes: (membershipId: number, notes: any[] | null) => void;
+    /**
+     * The child's points totals: this week's and the whole record's (T-003.2).
+     * `null` means "we could not ask", which is NOT zero points: the screen hides
+     * the figure rather than print a made-up 0. Optional, so a screen that does not
+     * show the weekly figure asks for nothing.
+     */
+    setPoints?: (membershipId: number, points: { week: any; all: any } | null) => void;
 }
 
 export async function loadChildRecordsFor(run: ClassRun, children: any[], sinks: ChildRecordSinks): Promise<void> {
@@ -90,6 +97,25 @@ export async function loadChildRecordsFor(run: ClassRun, children: any[], sinks:
                 awards: rowsOf(awards.data?.data),
                 hifz: rowsOf(hifz.data?.data),
             });
+
+            // The points totals. Its own try, like the notes below: a failure here
+            // must not blank the award log above, and it must not read as "no
+            // points" either. `week=current` is the school's own week in progress,
+            // which the browser could not work out (its zone is the parent's).
+            if (sinks.setPoints) {
+                try {
+                    const [week, all] = await Promise.all([
+                        FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary?week=current`),
+                        FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary`),
+                    ]);
+                    if (run.stale()) return;
+                    sinks.setPoints(child.membership_id, { week: week.data?.data ?? null, all: all.data?.data ?? null });
+                } catch (e) {
+                    if (run.stale()) return;
+                    if (run.fail(e)) return;
+                    sinks.setPoints(child.membership_id, null);
+                }
+            }
 
             // Both alphabets, asked for separately because they ARE separate
             // records — same route, same ward-edge gate, one `?alphabet=` apart.

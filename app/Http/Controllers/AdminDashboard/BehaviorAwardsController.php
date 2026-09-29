@@ -13,6 +13,8 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Support\Errors;
 use App\Support\GroupAudience;
+use App\Support\PointsWeek;
+use App\Support\SchoolPointsWeek;
 use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -72,7 +74,7 @@ class BehaviorAwardsController extends Controller
     }
 
     /**
-     * GET .../groups/{group_id}/awards[?from=&to=&membership_id=&polarity=]
+     * GET .../groups/{group_id}/awards[?from=&to=&week=&membership_id=&polarity=]
      *
      * The group's awards, newest first, PRE-FILTERED to what this caller may
      * read. A leader sees the group; anybody else sees only their own record
@@ -100,7 +102,7 @@ class BehaviorAwardsController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $awards,
-            'meta' => $this->meta(),
+            'meta' => $this->meta() + $this->weekMeta($request),
         ], Response::HTTP_OK);
     }
 
@@ -131,12 +133,12 @@ class BehaviorAwardsController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $awards,
-            'meta' => $this->meta() + ['student' => $this->student($membership)],
+            'meta' => $this->meta() + $this->weekMeta($request) + ['student' => $this->student($membership)],
         ], Response::HTTP_OK);
     }
 
     /**
-     * GET .../groups/{group_id}/members/{membership_id}/awards/summary[?from=&to=]
+     * GET .../groups/{group_id}/members/{membership_id}/awards/summary[?from=&to=&week=]
      *
      * Totals for ONE student, by polarity and by skill — the report a teacher
      * reads before a parents' evening and a parent reads about their own child.
@@ -207,6 +209,11 @@ class BehaviorAwardsController extends Controller
                     'from' => $request->query('from'),
                     'to' => $request->query('to'),
                 ],
+                // The week the figures are for, when `?week=` asked for one
+                // (T-003.2); null for the whole record, as before.
+                'week' => ($week = $this->requestedWeek($request)) !== null
+                    ? SchoolPointsWeek::payload($week, app(TenantContext::class)->get())
+                    : null,
                 'totals' => [
                     'awards' => array_sum(array_column($byPolarity, 'awards')),
                     // The NET of the snapshotted values. Not a score and not
@@ -243,6 +250,12 @@ class BehaviorAwardsController extends Controller
      *     SUBTRACTING (`BehaviorAward::signedPointsSql()`, B1). One definition,
      *     pinned by a test that compares them.
      *
+     * Each row carries the running `awards`/`points` AND the same two figures over
+     * one points week (`week_awards`/`week_points`, T-003.2: `?week=` or the week in
+     * progress on the school's clock). The class's `points_period` says which the
+     * screen should lead with; the endpoint serves both either way, because turning
+     * the weekly view on changes what is SHOWN and never what is stored.
+     *
      * The class figure is the sum of the rows returned, so it can never
      * disagree with the list beneath it. Awards of a child who has since left
      * the class are in neither: they are still that child's, but they are no
@@ -269,12 +282,32 @@ class BehaviorAwardsController extends Controller
             ->get()
             ->keyBy('group_membership_id');
 
-        $rows = $students->map(function (GroupMembership $m) use ($sums): array {
+        // THE WEEK (T-003.2): the same figures over one points week, `?week=` or
+        // the one in progress. Added ALONGSIDE the running figures, never instead
+        // of them: the running total is still what a class that never opted in
+        // reads, and the history a weekly class keeps beside its week. Same
+        // signed sum, same audience-constrained query, so a week can never
+        // disagree with the running number about what one award is worth.
+        $week = $this->requestedWeek($request)
+            ?? SchoolPointsWeek::current(app(TenantContext::class)->get());
+
+        $weekSums = $this->readableAwards($request->user(), $group)
+            ->whereIn('group_membership_id', $students->pluck('id'))
+            ->awardedWithin($week->startUtc(), $week->endUtc())
+            ->selectRaw('group_membership_id, COUNT(*) as awards_count, SUM('.BehaviorAward::signedPointsSql().') as points_total')
+            ->groupBy('group_membership_id')
+            ->get()
+            ->keyBy('group_membership_id');
+
+        $rows = $students->map(function (GroupMembership $m) use ($sums, $weekSums): array {
             $row = $sums[$m->id] ?? null;
+            $weekRow = $weekSums[$m->id] ?? null;
 
             return $this->student($m) + [
                 'awards' => (int) ($row->awards_count ?? 0),
                 'points' => (int) ($row->points_total ?? 0),
+                'week_awards' => (int) ($weekRow->awards_count ?? 0),
+                'week_points' => (int) ($weekRow->points_total ?? 0),
             ];
         })->values();
 
@@ -285,7 +318,11 @@ class BehaviorAwardsController extends Controller
                 'class' => [
                     'awards' => (int) $rows->sum('awards'),
                     'points' => (int) $rows->sum('points'),
+                    'week_awards' => (int) $rows->sum('week_awards'),
+                    'week_points' => (int) $rows->sum('week_points'),
                 ],
+                'week' => SchoolPointsWeek::payload($week, app(TenantContext::class)->get()),
+                'points_period' => $group->pointsPeriod(),
             ],
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
@@ -458,8 +495,16 @@ class BehaviorAwardsController extends Controller
      */
     private function applyFilters(Builder $query, Request $request): Builder
     {
+        // `?week=` (T-003.2) is a whole points week by INSTANT, and supersedes
+        // from/to: a caller that names a week is not also naming a date range.
+        $week = $this->requestedWeek($request);
+
         return $query
-            ->awardedBetween($request->query('from'), $request->query('to'))
+            ->when(
+                $week !== null,
+                fn (Builder $q) => $q->awardedWithin($week->startUtc(), $week->endUtc()),
+                fn (Builder $q) => $q->awardedBetween($request->query('from'), $request->query('to'))
+            )
             ->when(
                 in_array($request->query('polarity'), BehaviorSkill::POLARITIES, true),
                 fn (Builder $q) => $q->where('skill_polarity', $request->query('polarity'))
@@ -468,6 +513,20 @@ class BehaviorAwardsController extends Controller
                 $request->filled('membership_id'),
                 fn (Builder $q) => $q->where('group_membership_id', $request->integer('membership_id'))
             );
+    }
+
+    /** `['week' => …]` when `?week=` named one, else nothing: an unrequested week adds no key. */
+    private function weekMeta(Request $request): array
+    {
+        $week = $this->requestedWeek($request);
+
+        return $week === null ? [] : ['week' => SchoolPointsWeek::payload($week, app(TenantContext::class)->get())];
+    }
+
+    /** The week `?week=` names on this school's clock, or null. 422 for a value that is no date. */
+    private function requestedWeek(Request $request): ?PointsWeek
+    {
+        return SchoolPointsWeek::fromRequest($request, app(TenantContext::class)->get());
     }
 
     /** @return array<int,string> */
