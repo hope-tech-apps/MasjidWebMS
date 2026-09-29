@@ -4577,6 +4577,11 @@ the `jumaa_times` bullets above, and `StudioJumuahShiftsTest` is now `StudioJumu
 - **The tick does not touch the list.** "Client has not given iqama times" drops fixed iqama times only.
   Khutbah times are not iqama times, and the list moved out of the tick's fieldset. The duplicate check is
   likewise independent of the tick.
+  It replaces W2 S18's review fix (9b56bb6e), which dropped `jumaa_iqama` under the tick while that
+  field was the greyed-out "Jumu'ah iqama". Studio's payload no longer carries `jumaa_iqama` at all, so
+  that block went, and its two tests were rewritten to the new meaning, not deleted:
+  `StudioDraftProvisionPayloadTest::the_tick_leaves_a_jumuah_time_typed_before_it_and_still_hides_the_iqama`
+  and `JumaaIsDefaultTest::the_studio_tick_leaves_a_jumuah_time_typed_before_it_supplied` (T4 agreed).
 - **Fixed times need a zone that can place them (PRAYER-1, PRAYER-2).** With any fixed iqama time and a
   UTC-named timezone (`IqamaResolver::UTC_NAMES`) the request refuses on `timezone`: the apps and push
   resolve every prayer through `iqamaAt()`, which ignores ranges there, so iqama would land on the adhan

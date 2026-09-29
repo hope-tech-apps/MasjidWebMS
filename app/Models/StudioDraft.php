@@ -285,7 +285,12 @@ class StudioDraft extends Model
         // Studio collects khutbah times only. An older draft's lone
         // `jumaa_iqama` is what the panel shows as the list's first entry, so
         // it goes out as that. Before withoutUnaskedPrayerKeys(), so a draft
-        // that is not a masjid sends neither.
+        // that is not a masjid sends neither. The "client has not given iqama
+        // times" tick no longer drops it: the list sits outside the tick's
+        // fieldset and the preview keeps its rows, because khutbah times are
+        // not iqama times. This replaces the W2 S18 review fix that dropped
+        // `jumaa_iqama` under the tick, when that field was the greyed-out
+        // "Jumu'ah iqama" (T4 agreed, 2026-09-28).
         if (($payload['jumaa_times'] ?? []) === [] && filled($payload['jumaa_iqama'] ?? null)) {
             $payload['jumaa_times'] = [$payload['jumaa_iqama']];
         }
@@ -323,16 +328,6 @@ class StudioDraft extends Model
         // keeps the wizard's `true` and fills every missing offset with its
         // invented 20/10/10/5/10.
         $payload['show_iqama_times'] = $this->showsIqama();
-
-        // The "client has not given iqama times" tick greys out the Jumu'ah
-        // field too, and the preview drops its row (PrayerPanel.vue), so a time
-        // typed before the tick was not given: the tick wins, as it already does
-        // over offsets typed before it. Without `jumaa_iqama` the provisioner
-        // stores its flagged placeholder and no screen draws Jumu'ah (W2 S18).
-        // The draft keeps the typed value for the day the tick is removed.
-        if (($this->section('prayer')['iqama_given'] ?? null) === false) {
-            unset($payload['jumaa_iqama']);
-        }
 
         $capabilities = $this->section('features')['capabilities'] ?? null;
         if (is_array($capabilities)) {

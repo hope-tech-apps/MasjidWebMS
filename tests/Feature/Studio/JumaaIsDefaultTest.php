@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Studio;
 
+use App\Models\IqamaTimeSetting;
 use App\Models\JumaaSetting;
 use App\Models\Masjid;
 use App\Support\MobileCache;
@@ -250,25 +251,37 @@ class JumaaIsDefaultTest extends TestCase
     }
 
     /**
-     * Studio's "client has not given iqama times" tick greys out the Jumu'ah
-     * field and drops its preview row, so a time typed before the tick was not
-     * given: the organisation provisions with the flagged placeholder.
+     * Studio's "client has not given iqama times" tick is about iqama times;
+     * the Jumu'ah list is khutbah times and sits outside it (DECISIONS
+     * 2026-09-27 Studio Step 0, 2026-09-28 addendum). So a time typed before
+     * the tick is supplied: it is stored as the Jumu'ah athans every screen
+     * draws, never the flagged placeholder, while the daily iqama stays hidden.
+     * This replaces W2 S18's "the tick wins", written when the field was the
+     * greyed-out "Jumu'ah iqama".
      */
     #[Test]
-    public function the_studio_tick_wins_over_a_jumuah_time_typed_before_it(): void
+    public function the_studio_tick_leaves_a_jumuah_time_typed_before_it_supplied(): void
     {
         $this->actAsSuperAdmin();
         $answers = $this->studioAnswers(sections: ['prayer' => [
             'method' => 'NorthAmerica', 'madhab' => 'Shafi', 'high_latitude_rule' => 'MiddleOfTheNight',
+            'iqama_type' => 'minutes_after_adhan', 'iqama' => ['fajr' => 20, 'dhuhr' => 10, 'asr' => 10, 'maghrib' => 5, 'isha' => 10],
             'iqama_given' => false, 'jumaa_iqama' => '13:15',
         ]]);
 
         $id = $this->provisioned($this->draftWith($answers)->id);
 
         $row = JumaaSetting::where('masjid_id', $id)->sole();
-        $this->assertTrue($row->is_default);
-        $this->assertSame('13:30', substr((string) $row->iqama, 0, 5));
-        $this->assertTrue($this->settings($id)['jumaa_is_default']);
+        $this->assertFalse($row->is_default);
+        $this->assertSame(['13:15'], $row->athans);
+        $this->assertNull($row->getAttributes()['iqama'], 'a khutbah time is not an iqama');
+        $this->assertNull($row->getAttributes()['shifts'] ?? null);
+
+        $data = $this->settings($id);
+        $this->assertArrayNotHasKey('jumaa_is_default', $data);
+        $this->assertSame(['13:15'], $data['jumaa']['athans']);
+
+        $this->assertFalse((bool) IqamaTimeSetting::where('masjid_id', $id)->value('show_iqama_times'), 'the tick still hides the daily iqama times');
     }
 
     #[Test]

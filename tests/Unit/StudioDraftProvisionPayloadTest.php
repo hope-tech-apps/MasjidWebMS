@@ -162,18 +162,28 @@ class StudioDraftProvisionPayloadTest extends TestCase
     }
 
     /**
-     * W2 S18: the tick greys out the Jumu'ah field too, so a Jumu'ah time typed
-     * before it is not sent, and the provisioner stores its flagged placeholder.
-     * Without the tick the typed time is sent as given.
+     * The tick is about iqama times, and Studio's Jumu'ah list is khutbah
+     * times (DECISIONS 2026-09-27 Studio Step 0, 2026-09-28 addendum): it sits
+     * outside the tick's fieldset, so a time typed before the tick is still
+     * sent, as the list's first entry when an older draft holds it as
+     * `jumaa_iqama`. This replaces W2 S18's "the tick wins over a Jumu'ah time",
+     * written when that field was the greyed-out "Jumu'ah iqama". The tick
+     * still hides the five daily iqama times.
      */
     #[Test]
-    public function the_tick_also_wins_over_a_jumuah_time_typed_before_it(): void
+    public function the_tick_leaves_a_jumuah_time_typed_before_it_and_still_hides_the_iqama(): void
     {
+        $five = ['fajr' => 20, 'dhuhr' => 10, 'asr' => 10, 'maghrib' => 5, 'isha' => 10];
         $payload = fn (array $prayer) => $this->draft(['identity' => ['org_type' => 'masjid'], 'prayer' => $prayer])->toProvisionPayload();
 
-        $this->assertArrayNotHasKey('jumaa_iqama', $payload(['iqama_given' => false, 'jumaa_iqama' => '13:15']));
-        $this->assertSame('13:15', $payload(['jumaa_iqama' => '13:15'])['jumaa_iqama']);
-        $this->assertSame('13:15', $payload(['iqama_given' => null, 'jumaa_iqama' => '13:15'])['jumaa_iqama'], 'only the tick itself drops it');
+        $ticked = $payload(['iqama_given' => false, 'jumaa_iqama' => '13:15', 'iqama' => $five]);
+        $this->assertSame(['13:15'], $ticked['jumaa_times']);
+        $this->assertArrayNotHasKey('jumaa_iqama', $ticked, 'Studio never sends the iqama field');
+        $this->assertFalse($ticked['show_iqama_times'], 'the tick still hides the daily iqama times');
+
+        $this->assertSame(['13:15'], $payload(['jumaa_iqama' => '13:15'])['jumaa_times']);
+        $this->assertSame(['12:30', '13:30'], $payload(['iqama_given' => false, 'jumaa_times' => ['12:30', '13:30']])['jumaa_times']);
+        $this->assertTrue($payload(['iqama' => $five])['show_iqama_times'], 'the same offsets without the tick are shown');
     }
 
     #[Test]
