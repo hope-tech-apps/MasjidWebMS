@@ -32,16 +32,29 @@ use Illuminate\Support\Facades\Log;
  * Only OPEN baskets go: a basket that was paid for (`checked_out`) is an empty shell that
  * holds nothing personal. Deleting a basket cascades its lines (`cart_items.cart_id`), so the
  * answers go with it. A basket with no expiry (one the public endpoint did not make) is left
- * alone. Idempotent (a second run finds nothing), `--dry-run` deletes nothing, and it runs
- * UNBOUND across every organisation, as a console sweep does.
+ * alone.
+ *
+ * The frozen copy of the same data lives on the ORDER, and outlives the basket by design
+ * (`orders.cart_id` is nullOnDelete): `order_items.payload` holds the attendee names and
+ * `orders.buyer_name`, `buyer_phone` and `buyer_email` the shopper's own details. An order
+ * whose status is `expired` is a payment page that was never completed, so once its page
+ * closed more than `prune.expired_order_days` (a week) ago the order goes too, and its lines
+ * with it in the same statement (`order_items.order_id` cascades). By then no payment can
+ * arrive for it: the page closes within 31 minutes, and Stripe redelivers a webhook for three
+ * days at most. NEVER a `pending` order, because a delayed payment can still settle it, and
+ * never a `paid` one, which is the organisation's record of a sale.
+ *
+ * Idempotent (a second run finds nothing), `--dry-run` deletes nothing, and it runs UNBOUND
+ * across every organisation, as a console sweep does. It prints its counts and logs them
+ * (`schedule:run` discards stdout).
  *
  * Scheduled daily in routes/console.php.
  */
 class PruneCarts extends Command
 {
-    protected $signature = 'cart:prune {--dry-run : Count the baskets that would go and delete nothing}';
+    protected $signature = 'cart:prune {--dry-run : Count the baskets and orders that would go and delete nothing}';
 
-    protected $description = 'Delete open baskets whose expiry is more than a day past, unless a payment page of theirs could still be paid.';
+    protected $description = 'Delete open baskets whose expiry is more than a day past (unless a payment page of theirs could still be paid) and expired unpaid orders whose page closed more than a week ago.';
 
     public function handle(): int
     {
@@ -76,8 +89,31 @@ class PruneCarts extends Command
             }
         });
 
+        $orderDays = max(1, (int) config('cart.prune.expired_order_days', 7));
+        $lapsedBefore = now()->subDays($orderDays);
+        $orderCount = 0;
+
+        // Only `expired`, and only one whose page has a closing time to age from. The delete
+        // names the status again, so an order that settled between the read and the delete is
+        // never taken. The lines cascade (`order_items.order_id`), in the same statement.
+        Order::withoutMasjidScope()
+            ->where('status', Order::STATUS_EXPIRED)
+            ->whereNotNull('checkout_expires_at')
+            ->where('checkout_expires_at', '<', $lapsedBefore)
+            ->chunkById(200, function (Collection $orders) use ($dryRun, &$orderCount): void {
+                $orderCount += $dryRun
+                    ? $orders->count()
+                    : Order::withoutMasjidScope()
+                        ->whereIn('id', $orders->modelKeys())
+                        ->where('status', Order::STATUS_EXPIRED)
+                        ->delete();
+            });
+
         $verb = $dryRun ? 'Would prune' : 'Pruned';
-        $this->info("{$verb} {$count} open basket(s) that expired before {$expiredBefore->toDateTimeString()}.");
+        $this->info(
+            "{$verb} {$count} open basket(s) that expired before {$expiredBefore->toDateTimeString()}"
+            . " and {$orderCount} expired unpaid order(s) whose page closed before {$lapsedBefore->toDateTimeString()}."
+        );
 
         // The scheduled run's only evidence: `schedule:run` discards stdout (routes/console.php,
         // the retention sweeps), as groups:purge-feed and registrations:reap-expired say. This
@@ -88,6 +124,8 @@ class PruneCarts extends Command
             'dry_run' => $dryRun,
             'baskets_expired_before' => $expiredBefore->toIso8601String(),
             'baskets' => $count,
+            'orders_page_closed_before' => $lapsedBefore->toIso8601String(),
+            'orders' => $orderCount,
         ]);
 
         return self::SUCCESS;

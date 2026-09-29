@@ -20,6 +20,7 @@ class CartConfigTest extends TestCase
         'CART_MAX_LINES',
         'CART_CREATE_PER_HOUR',
         'CART_WRITE_PER_HOUR',
+        'CART_PRUNE_EXPIRED_ORDER_DAYS',
     ];
 
     protected function tearDown(): void
@@ -94,6 +95,17 @@ class CartConfigTest extends TestCase
         $this->assertSame(1, $config['throttle']['write_per_hour']);
 
         $this->assertSame(40, $this->evaluate(['CART_MAX_LINES' => '40'])['max_lines']);
+    }
+
+    #[Test]
+    public function an_expired_order_is_kept_a_week_and_a_typo_cannot_shorten_it_below_a_day(): void
+    {
+        $this->assertSame(7, $this->evaluate([])['prune']['expired_order_days'], 'a week, as the brief says');
+        $this->assertSame(14, $this->evaluate(['CART_PRUNE_EXPIRED_ORDER_DAYS' => '14'])['prune']['expired_order_days']);
+
+        foreach (['0', '-3', 'soon'] as $bad) {
+            $this->assertSame(1, $this->evaluate(['CART_PRUNE_EXPIRED_ORDER_DAYS' => $bad])['prune']['expired_order_days'], "CART_PRUNE_EXPIRED_ORDER_DAYS={$bad}");
+        }
     }
 
     /**

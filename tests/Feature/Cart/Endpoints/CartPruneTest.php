@@ -91,6 +91,33 @@ class CartPruneTest extends TestCase
         ]);
     }
 
+    /** An order's frozen lines, as checkout leaves them: attendee names in the payload. */
+    private function withLines(Order $order, int $lines = 2): Order
+    {
+        for ($i = 1; $i <= $lines; $i++) {
+            OrderItem::withoutMasjidScope()->create([
+                'order_id' => $order->id,
+                'masjid_id' => $order->masjid_id,
+                'buyable_type' => CartItem::TYPE_FORM,
+                'buyable_id' => 1,
+                'recorded_as' => CartItem::RECORDED_AS_ORDER_ONLY,
+                'label' => "Ticket {$i}",
+                'quantity' => 1,
+                'unit_amount_minor' => 2500,
+                'total_minor' => 2500,
+                'currency' => 'usd',
+                'payload' => ['tickets' => [['attendeeName' => "Attendee {$i}"]]],
+            ]);
+        }
+
+        return $order;
+    }
+
+    private function linesOf(Order $order): int
+    {
+        return OrderItem::withoutMasjidScope()->where('order_id', $order->id)->count();
+    }
+
     // -------------------------------------------------------------- which baskets go
 
     #[Test]
@@ -179,6 +206,81 @@ class CartPruneTest extends TestCase
         $this->assertNull(Cart::withoutMasjidScope()->find($two->id));
     }
 
+    // ------------------------------------------------- unpaid orders: a page never completed
+
+    #[Test]
+    public function an_expired_order_more_than_a_week_past_its_page_goes_with_its_lines_and_no_other_order_does(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $other = $this->org();
+        $otherCart = $this->cart($other);
+        $otherCart->forceFill(['expires_at' => now()->addDay()])->save();
+
+        $old = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(8)));
+        $oldElsewhere = $this->withLines($this->orderFor($otherCart, Order::STATUS_EXPIRED, now()->subDays(30)));
+        $recent = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(6)));
+        $unaged = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, null));
+        // A delayed payment can still settle a pending order, and a paid one is a sale: neither is touched, however old.
+        $pending = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(30)));
+        $paid = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(30)));
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('and 2 expired unpaid order(s)')
+            ->assertExitCode(0);
+
+        foreach ([$old, $oldElsewhere] as $gone) {
+            $this->assertNull(Order::withoutMasjidScope()->find($gone->id), "order {$gone->id} was deleted");
+            $this->assertSame(0, $this->linesOf($gone), "order {$gone->id}: its lines, and the attendee names in them, went with it");
+        }
+
+        foreach (['6 days old' => $recent, 'no closing time' => $unaged, 'pending' => $pending, 'paid' => $paid] as $why => $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), "{$why}: the order stays");
+            $this->assertSame(2, $this->linesOf($kept), "{$why}: and so do its lines");
+        }
+
+        $this->assertNotNull(Cart::withoutMasjidScope()->find($cart->id), 'a live basket is not this sweep\'s business');
+    }
+
+    #[Test]
+    public function the_order_sweep_honours_a_dry_run_and_a_second_run_finds_nothing(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $old = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(9)));
+
+        $this->assertSame(0, Artisan::call('cart:prune', ['--dry-run' => true]));
+        $this->assertStringContainsString('Would prune 0 open basket(s)', Artisan::output());
+        $this->assertStringContainsString('and 1 expired unpaid order(s)', Artisan::output());
+        $this->assertNotNull(Order::withoutMasjidScope()->find($old->id), 'a dry run deletes nothing');
+        $this->assertSame(2, $this->linesOf($old));
+
+        $this->artisan('cart:prune')->expectsOutputToContain('and 1 expired unpaid order(s)')->assertExitCode(0);
+        $this->artisan('cart:prune')->expectsOutputToContain('and 0 expired unpaid order(s)')->assertExitCode(0);
+
+        $this->assertNull(Order::withoutMasjidScope()->find($old->id));
+        $this->assertSame(0, $this->linesOf($old));
+    }
+
+    #[Test]
+    public function an_expired_order_that_outlives_its_pruned_basket_is_swept_a_week_after_its_page_closed(): void
+    {
+        // The basket goes first (a day past its week), the order a week after ITS page closed:
+        // the frozen copy of the shopper's details does not outlive the policy on the original.
+        $cart = $this->basket(['expires_at' => now()->subDays(2)]);
+        $order = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(3)));
+
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        $this->assertNull(Cart::withoutMasjidScope()->find($cart->id));
+        $this->assertNull($order->fresh()->cart_id, 'premise: the order outlived its basket');
+        $this->assertSame(2, $this->linesOf($order));
+
+        Carbon::setTestNow(now()->addDays(5));
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        $this->assertNull(Order::withoutMasjidScope()->find($order->id), 'eight days after its page closed');
+        $this->assertSame(0, $this->linesOf($order));
+    }
+
     // ------------------------------------------------------------- the trace it leaves
 
     #[Test]
@@ -186,14 +288,16 @@ class CartPruneTest extends TestCase
     {
         $this->basket(['expires_at' => now()->subDays(2)]);
         $this->basket(['expires_at' => now()->subDays(3)]);
-        $this->basket(['expires_at' => now()->addDay()]);
+        $live = $this->basket(['expires_at' => now()->addDay()]);
+        $this->orderFor($live, Order::STATUS_EXPIRED, now()->subDays(10));
 
         $this->artisan('cart:prune')->assertExitCode(0);
 
         Log::shouldHaveReceived('info')
             ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
                 && $context['dry_run'] === false
-                && $context['baskets'] === 2)
+                && $context['baskets'] === 2
+                && $context['orders'] === 1)
             ->once();
     }
 
@@ -205,16 +309,19 @@ class CartPruneTest extends TestCase
         Log::shouldHaveReceived('info')
             ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
                 && $context['dry_run'] === false
-                && $context['baskets'] === 0)
+                && $context['baskets'] === 0
+                && $context['orders'] === 0)
             ->once();
 
-        $this->basket(['expires_at' => now()->subDays(2)]);
+        $cart = $this->basket(['expires_at' => now()->subDays(2)]);
+        $this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(10));
         $this->artisan('cart:prune', ['--dry-run' => true])->assertExitCode(0);
 
         Log::shouldHaveReceived('info')
             ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
                 && $context['dry_run'] === true
-                && $context['baskets'] === 1)
+                && $context['baskets'] === 1
+                && $context['orders'] === 1)
             ->once();
     }
 

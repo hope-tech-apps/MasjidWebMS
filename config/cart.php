@@ -80,10 +80,17 @@ return [
      * paid: one whose own expiry is less than `hold_minutes` behind. A payment that lands
      * on a page as it lapses is still recorded even with the basket gone, so this is belt
      * and braces, not what makes a late payment safe.
+     *
+     * It also deletes an order whose status is `expired`, with its lines, once its page
+     * closed more than `expired_order_days` ago: a payment page that was never completed,
+     * holding the buyer's name, phone and address and the answers frozen in its lines.
+     * Never a `pending` order (a delayed payment can still settle it) and never a `paid` one.
+     * The floor is one day, so a typo cannot delete an order whose page has only just closed.
      */
     'prune' => [
         'grace_days' => max(0, (int) env('CART_PRUNE_GRACE_DAYS', 1)),
         'hold_minutes' => max(0, (int) env('CART_PRUNE_HOLD_MINUTES', 60)),
+        'expired_order_days' => max(1, (int) env('CART_PRUNE_EXPIRED_ORDER_DAYS', 7)),
     ],
 
     /*
