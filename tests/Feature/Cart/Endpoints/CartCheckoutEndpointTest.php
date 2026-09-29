@@ -7,6 +7,7 @@ use App\Models\CartItem;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Masjid;
+use App\Models\MasjidDomain;
 use App\Models\MealOrder;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -61,6 +62,19 @@ class CartCheckoutEndpointTest extends TestCase
     private function checkout(Masjid $org, string $token, array $body = [], ?string $origin = self::ORIGIN): TestResponse
     {
         return $this->cartApi('POST', '/api/v1/cart/checkout', $org, $token, $body === [] ? $this->checkoutBody() : $body, $origin);
+    }
+
+    /** A host of $org that we have seen serving our own site: what CORS and a payment return trust. */
+    private function confirmedDomain(Masjid $org, string $host): MasjidDomain
+    {
+        return MasjidDomain::create([
+            'masjid_id' => $org->id,
+            'host' => $host,
+            'kind' => MasjidDomain::KIND_CUSTOM,
+            'zone_apex' => implode('.', array_slice(explode('.', $host), -2)),
+            'status' => MasjidDomain::STATUS_MANUAL,
+            'serving_confirmed_at' => now(),
+        ]);
     }
 
     private function orderOf(string $uuid): Order
@@ -346,6 +360,38 @@ class CartCheckoutEndpointTest extends TestCase
 
         // The list is what decides: the same request from a listed origin opens the page.
         $this->checkout($org, $token, $this->checkoutBody(), self::ORIGIN)->assertOk();
+    }
+
+    #[Test]
+    public function a_confirmed_domain_of_this_organisation_is_the_return_base_and_another_organisations_is_refused(): void
+    {
+        // The env allowlist is empty: the return address comes from `masjid_domains` alone, the
+        // organisation-bound half ASSUMPTIONS #43 says MEC will rely on. The controller has to hand
+        // FormPaymentReturn::base() THIS basket's organisation, or the real path breaks silently.
+        [$org, $token] = $this->giftBasket();
+        $other = $this->org();
+        config(['forms.payment_return_origins' => []]);
+
+        $this->confirmedDomain($org, 'shop.mec-festival.test');
+        $this->confirmedDomain($other, 'shop.other-masjid.test');
+
+        // Another organisation's confirmed host is not this one's return address.
+        $this->checkout($org, $token, $this->checkoutBody(), 'https://shop.other-masjid.test')
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', FormPaymentReturn::REFUSED);
+        $this->assertSame(0, Order::withoutMasjidScope()->count());
+        $this->assertSame([], $this->stripe->created);
+
+        // This organisation's own confirmed host is admitted, and Stripe sends the payer back to it.
+        $response = $this->checkout($org, $token, $this->checkoutBody(), 'https://shop.mec-festival.test')->assertOk();
+
+        $uuid = $response->json('data.order_uuid');
+        $this->assertSame(
+            'https://shop.mec-festival.test' . self::RETURN_PATH . '?cart_order_uuid=' . $uuid . '&paid=1',
+            $this->stripe->created[0]['params']['success_url']
+        );
+        $this->assertSame((int) $org->id, (int) $this->orderOf($uuid)->masjid_id);
     }
 
     #[Test]

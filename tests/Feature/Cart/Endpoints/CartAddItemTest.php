@@ -56,7 +56,7 @@ class CartAddItemTest extends TestCase
         return CartItem::withoutMasjidScope()->count();
     }
 
-    private function fileForm(Masjid $org): Form
+    private function fileForm(Masjid $org, bool $fileRequired = false): Form
     {
         return $this->ticketForm($org, [
             'name' => 'Volunteer Application',
@@ -64,7 +64,7 @@ class CartAddItemTest extends TestCase
                 'id' => 'main', 'title' => 'Main', 'repeatable' => false,
                 'fields' => [
                     ['name' => 'fullName', 'type' => 'text', 'label' => 'Name', 'required' => true],
-                    ['name' => 'resume', 'type' => 'file', 'label' => 'Resume', 'required' => false],
+                    ['name' => 'resume', 'type' => 'file', 'label' => 'Resume', 'required' => $fileRequired],
                 ],
             ]]],
             'settings' => [
@@ -177,6 +177,30 @@ class CartAddItemTest extends TestCase
             ->assertJsonPath('status', 'error')
             ->assertJsonPath('message', FormLineSource::FILE_FORM);
 
+        $this->assertSame(0, $this->lineCount());
+    }
+
+    #[Test]
+    public function a_form_whose_file_question_is_required_gets_the_same_one_sentence_and_not_a_field_bag(): void
+    {
+        // The refusal sits AHEAD of validation. With the file question optional, validation passes
+        // and FormLineSource says the same sentence at pricing, so that test cannot tell the two
+        // apart. With it required, the shopper can never satisfy the validator (a basket carries
+        // no files): were the add-level refusal not first, the answer would be a 422 `failed` bag
+        // naming `resume`, a question the shopper is unable to answer.
+        $org = $this->org();
+        $token = $this->startBasket($org);
+
+        $response = $this->addLine($org, $token, [
+            'type' => 'form',
+            'form_id' => $this->fileForm($org, fileRequired: true)->id,
+            'answers' => ['fullName' => 'A. Applicant'],
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', FormLineSource::FILE_FORM);
+
+        $this->assertArrayNotHasKey('resume', (array) $response->json('data'), 'not a field bag');
         $this->assertSame(0, $this->lineCount());
     }
 
@@ -677,6 +701,78 @@ class CartAddItemTest extends TestCase
 
         $line = CartItem::withoutMasjidScope()->sole();
         $this->assertSame(5000, (int) $line->unit_amount_shown_minor, 'the first line is as it was');
+    }
+
+    #[Test]
+    public function the_same_key_with_other_form_answers_another_quantity_or_another_pickup_is_a_409(): void
+    {
+        // Each field the replay hash reads is pinned: drop one from the hash and a retry with a
+        // changed request returns the OLD line with a 200, and nobody notices.
+        $org = $this->org();
+        $form = $this->ticketForm($org);
+        $dish = $this->dish($org);
+        $token = $this->startBasket($org);
+
+        $ticketed = $this->twoTicketsBody($form->id, 'press-form-01');
+        $meal = $this->dishBody($dish->id, 2, '2026-10-06T14:00', 'press-meal-01');
+
+        $this->addLine($org, $token, $ticketed)->assertOk();
+        $this->addLine($org, $token, $meal)->assertOk();
+        $this->assertSame(2, $this->lineCount());
+
+        $different = [
+            'other attendee names' => ['tickets' => [['attendeeName' => 'A'], ['attendeeName' => 'C']]],
+            'one more attendee' => ['tickets' => [['attendeeName' => 'A'], ['attendeeName' => 'B'], ['attendeeName' => 'C']]],
+        ];
+
+        foreach ($different as $why => $answers) {
+            $this->addLine($org, $token, ['answers' => $answers] + $ticketed)
+                ->assertStatus(409)
+                ->assertJsonPath('status', 'error');
+        }
+
+        $this->addLine($org, $token, ['quantity' => 3] + $meal)->assertStatus(409)->assertJsonPath('status', 'error');
+        $this->addLine($org, $token, ['pickup_at' => '2026-10-07T14:00'] + $meal)->assertStatus(409)->assertJsonPath('status', 'error');
+
+        // Nothing changed, and the same requests are still recognised as themselves.
+        $this->assertSame(2, $this->lineCount());
+        $this->assertSame($this->twoTickets(), CartItem::withoutMasjidScope()->where('buyable_type', CartItem::TYPE_FORM)->sole()->payload);
+        $this->assertSame(2, (int) CartItem::withoutMasjidScope()->where('buyable_type', CartItem::TYPE_MEAL)->sole()->quantity);
+        $this->addLine($org, $token, $ticketed)->assertOk();
+        $this->addLine($org, $token, $meal)->assertOk();
+        $this->assertSame(2, $this->lineCount());
+    }
+
+    #[Test]
+    public function at_the_cap_a_replay_of_the_last_lines_key_returns_that_line_and_a_new_key_meets_the_cap(): void
+    {
+        // A replay is answered before the cap is looked at: the shopper who pressed "add" for the
+        // 25th line and retried on a bad connection gets their line back, not "holds at most 25
+        // items". (CartLineAdder answers it early, and again under the lock for two taps at once;
+        // only the first is reachable one request at a time.)
+        $org = $this->org();
+        $fund = $this->fund($org);
+        $token = $this->startBasket($org);
+
+        for ($i = 1; $i <= 25; $i++) {
+            $body = $this->giftBody($fund->id, 100 * $i, sprintf('press-line-%02d', $i));
+            $last = $this->addLine($org, $token, $body)->assertOk();
+        }
+
+        $this->assertSame(25, $this->lineCount(), 'premise: the basket is full');
+
+        $again = $this->addLine($org, $token, $body)->assertOk()->assertJsonPath('status', 'success');
+
+        $this->assertSame($last->json('data.line_id'), $again->json('data.line_id'), 'the 25th line, not a refusal');
+        $this->assertSame(25, $this->lineCount());
+        $this->assertCount(25, $again->json('data.lines'));
+
+        // A NEW press at the cap is still refused, and a changed request under the 25th key is a 409, not the cap.
+        $this->addLine($org, $token, $this->giftBody($fund->id, 100, 'press-line-26'))
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'A basket holds at most 25 items. Please remove one to add another.');
+        $this->addLine($org, $token, $this->giftBody($fund->id, 9900, 'press-line-25'))->assertStatus(409);
+        $this->assertSame(25, $this->lineCount());
     }
 
     #[Test]
