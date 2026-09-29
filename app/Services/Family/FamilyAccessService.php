@@ -7,6 +7,7 @@ use App\Models\GroupMembership;
 use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\User;
+use App\Support\ContactIdentity;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -63,6 +64,14 @@ use RuntimeException;
  *  2. **A case-insensitive pre-check refuses the address with a 422** naming
  *     the member who already holds it, so an admin gets an explanation instead
  *     of an integrity-constraint 500.
+ *
+ * CORRECTED 2026-09-29: `contacts.login_email` is utf8mb4_unicode_ci on
+ * production (read there), not utf8mb4_bin. The index is therefore ALSO
+ * case-insensitive, and accent- and expansion-insensitive (`é` = `e`, `ß` =
+ * `ss`). Nothing above depends on which collation is in force — the stored
+ * value is lower-cased either way, and the pre-check names only a holder whose
+ * address is exactly the one typed (`currentHolderOf()`): a look-alike is not
+ * that holder, and the index refuses it with the same 422 as a lost race.
  *
  * The pre-check spans SOFT-DELETED contacts too (`withTrashed`), matching the
  * index — which deliberately keeps pinning a deleted contact's address so a new
@@ -261,7 +270,13 @@ class FamilyAccessService
         $email = $this->normalise($submittedEmail);
 
         if ($email === '') {
-            throw new RuntimeException('A sign-in email address is required.');
+            throw new RuntimeException(
+                trim($submittedEmail) === ''
+                    ? 'A sign-in email address is required.'
+                    : 'That sign-in email address cannot be used: a sign-in code cannot be sent to a '
+                        . 'name with accents or other non-ASCII letters before the @. Use the address '
+                        . 'the parent actually receives mail at, written with plain letters.'
+            );
         }
 
         // Refuses outright for a LIVE holder; returns the ended-access holder to
@@ -567,12 +582,16 @@ class FamilyAccessService
     // ------------------------------------------------------------- internals
 
     /**
-     * Lower-cased and trimmed — the form `FamilyLoginService::resolveContact()`
-     * compares against, and the form the unique index must therefore hold.
+     * The form `FamilyLoginService::resolveContact()` compares against, and the
+     * form the unique index must therefore hold: trimmed, lower-cased, a
+     * non-ASCII domain in punycode. `''` for a blank address and for one that
+     * sign-in would refuse (a non-ASCII local part): a login stored under an
+     * address the parent's own sign-in can never type would be a grant that
+     * reads as enabled and answers nothing.
      */
     private function normalise(string $email): string
     {
-        return Str::lower(trim($email));
+        return ContactIdentity::submittedAddress($email) ?? '';
     }
 
     /**
@@ -634,14 +653,27 @@ class FamilyAccessService
      * (.claude/rules/tenant-scoping.md). `withTrashed` because the unique index
      * constrains soft-deleted rows too and because a deleted contact's address
      * must not be silently inheritable.
+     *
+     * The holder is the contact whose `login_email` IS this address, byte for
+     * byte after lower-casing. `contacts.login_email` is utf8mb4_unicode_ci on
+     * production, so the query also returns a look-alike (`victim@gmaíl.com` for
+     * `victim@gmail.com`), and treating that as the holder would let a
+     * confirmed reassignment strip the REAL holder's address on the strength of a
+     * different one. A look-alike is not released. The same index still refuses
+     * to store the second address, so `enable()` ends in its ordinary
+     * "just taken" refusal rather than a 500.
      */
     private function currentHolderOf(string $email, Contact $claimant): ?Contact
     {
-        return Contact::withTrashed()
-            ->whereNotNull('login_email')
-            ->whereRaw('LOWER(login_email) = ?', [$email])
-            ->whereKeyNot($claimant->getKey())
-            ->first();
+        return ContactIdentity::keepExactMatches(
+            Contact::withTrashed()
+                ->whereNotNull('login_email')
+                ->whereRaw('LOWER(login_email) = ?', [$email])
+                ->whereKeyNot($claimant->getKey())
+                ->get(),
+            'login_email',
+            $email,
+        )->first();
     }
 
     /**
