@@ -6,6 +6,7 @@ use App\Exceptions\AmbiguousDonorNameException;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\DonationSubscription;
+use App\Support\ContactIdentity;
 
 /**
  * Turns an anonymous donor into a first-class Contact — the seed of the donor
@@ -76,10 +77,24 @@ class DonorContactService
 
         [$first, $last] = $this->splitName((string) ($customerDetails['name'] ?? ''));
 
-        $contact = Contact::withoutMasjidScope()
-            ->where('masjid_id', $masjidId)
-            ->where('email', $email)
-            ->first();
+        // THE QUERY IS A SHORTLIST. `contacts.email` is utf8mb4_unicode_ci on
+        // production (read 2026-09-29), where `donor@gmail.com` = `donor@gmaíl.com`,
+        // so this returns a look-alike registered through a public door for the
+        // real donor's address. Taking it would put every later gift of the real
+        // donor on the look-alike's record and mail their receipts to the
+        // look-alike's address. Only a contact holding the address exactly (case
+        // and surrounding spaces aside) is this donor, and the OLDEST such contact
+        // is the one: ordered by id, filtered after, with no `limit()` ahead of the
+        // filter that could cut the exact row off behind look-alikes.
+        $contact = ContactIdentity::keepExactMatches(
+            Contact::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('email', $email)
+                ->orderBy('id')
+                ->get(),
+            'email',
+            $email,
+        )->first();
 
         if (! $contact) {
             $contact = new Contact([
