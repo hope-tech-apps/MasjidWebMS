@@ -117,6 +117,12 @@ class MemberAccountDeletion
         // a post their teacher wrote. Only a guardian can write one, and a
         // guardian's edge already keeps the contact, so this changes no outcome.
         'group_post_reactions' => ['contact_id'],
+        // Which class stories a guardian opened (2026-09-29, read receipts; off by
+        // default). Recorded only for a consented guardian with a live login, so
+        // their guardian edge already keeps the contact: no outcome changes. It
+        // is the school's record of what it published to whom, like the thread
+        // read bookmark above.
+        'group_post_reads' => ['contact_id'],
         'group_thread_reads' => ['contact_id'],
         'group_threads' => ['created_by_contact_id'],
         // An order the person placed on the organisation's old Wix site,

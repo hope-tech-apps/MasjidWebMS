@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\User;
+use App\Support\GroupAudience;
 use App\Support\NudgeRecipient;
 use Illuminate\Support\Collection;
 
@@ -38,19 +39,13 @@ class GroupNotificationRecipientResolver
      */
     public function feedGuardians(Group $group, ?string $authorAddress): Collection
     {
-        $contacts = $group->memberships()
-            ->consented()
-            // AND STILL IN THE CLASS. Every HTTP surface refuses a departed
-            // family, but this one sends mail to their own address, where no
-            // member of staff would ever see it happening — so a class story or
-            // a handout would go on arriving for a family the school has
-            // formally recorded as gone. Consent says they agreed to hear about
-            // the class; the leaving date says which class they are in.
-            ->current()
-            ->with('contact')
-            ->get()
-            ->map(fn (GroupMembership $m) => $m->contact)
-            ->filter();
+        // GroupAudience::storyGuardianContacts() is the ONE definition of who a
+        // class story reaches: consented, AND STILL IN THE CLASS (every HTTP
+        // surface refuses a departed family, but this one sends mail to their own
+        // address, where no member of staff would ever see it happening), and
+        // holding a live family login. The read receipts count the same set, so
+        // "Seen by 4 of 7" and "who gets the email" cannot drift apart.
+        $contacts = app(GroupAudience::class)->storyGuardianContacts($group);
 
         return $this->resolveAddressable($contacts, $authorAddress);
     }

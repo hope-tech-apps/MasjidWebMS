@@ -963,6 +963,10 @@
                             <!-- 🤲 👍 💯 ❓ — every name, families included (you can already read the class). -->
                             <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
                                             :send="(key: string, on: boolean) => reactToPost(post, key, on)" />
+                            <!-- "Seen by 4 of 7 parents" — only while the school has receipts on. -->
+                            <StorySeenLine :enabled="storyReads.enabled" :seen-by="post.seen_by"
+                                           :seen-count="post.seen_count" :audience-count="post.audience_count"
+                                           :unreachable="storyReads.unreachable_count" />
                         </div>
                     </article>
                 </div>
@@ -2163,6 +2167,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
+import StorySeenLine from '@/components/common/StorySeenLine.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -4591,6 +4596,8 @@ const photoErrorText = (e: any, fallback: string): string =>
 
 // ============================================================ STORY
 const posts = ref<any[]>([]);
+/** `meta.story_reads` of the feed: receipts on or off, and the parents who cannot be counted. */
+const storyReads = ref<{ enabled: boolean; unreachable_count?: number }>({ enabled: false });
 const postsLoading = ref(false);
 const composeTitle = ref('');
 const composeBody = ref('');
@@ -4604,6 +4611,7 @@ const loadPosts = async () => {
     try {
         const res = await TeacherApiService.get(`${base.value}/posts`);
         posts.value = rowsOf(res.data?.data);
+        storyReads.value = res.data?.meta?.story_reads ?? { enabled: false };
     } catch {
         posts.value = [];
     } finally {

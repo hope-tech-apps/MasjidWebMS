@@ -142,6 +142,13 @@
                 <div v-else-if="!posts.length" class="text-muted small">{{ t('story_empty') }}</div>
 
                 <div v-else class="d-flex flex-column gap-3">
+                    <!-- The disclosure that the school can see who has opened a story.
+                         Drawn from the SAME server value that lets the portal record
+                         a read (`meta.story_reads`), so the notice and the recording
+                         go live together and never one without the other. -->
+                    <p v-if="storyReadsEnabled" class="text-muted small mb-0" dir="auto" data-test="story-seen-notice">
+                        <i class="bi bi-eye me-1" aria-hidden="true"></i>{{ t('story_seen_notice') }}
+                    </p>
                     <p v-if="storyReactionError" class="text-danger small mb-0" role="alert">{{ tMessage(storyReactionError) }}</p>
                     <article v-for="post in posts" :key="post.id" class="card border-0 shadow-sm">
                         <div class="card-body">
@@ -917,7 +924,7 @@ import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
-import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor } from '@/views/family/familyClassRun';
+import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, recordStoriesSeenFor } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -1391,6 +1398,39 @@ const reactToPost = async (post: any, key: string, on: boolean) => {
     }
 };
 const storyReactionError = ref<FamilyMessage | null>(null);
+
+// ---------- story read receipts ("Seen by 4 of 7 parents", staff-side) ----------
+// The school's `groups.story_reads` switch, as the server reports it. It gates
+// the notice above AND the recording below, so the two go live together.
+const storyReadsEnabled = ref(false);
+/** Stories already reported this visit, so a re-render does not ask again. */
+const storiesReported = new Set<number>();
+
+/**
+ * Tell the school which stories this parent has the Story tab open on.
+ *
+ * Called ONLY when the tab is actually showing the posts (a watch on the tab and
+ * the list, and on the page becoming visible) — never from the fetch that loads
+ * them, which runs on page load whatever tab is open and returns the newest 15.
+ */
+const reportStoriesSeen = async () => {
+    if (tab.value !== 'story' || !storyReadsEnabled.value || !group.value?.may_receive_feed) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+
+    const ids = posts.value.map((p: any) => p.id).filter((id: number) => !storiesReported.has(id));
+    if (!ids.length) return;
+
+    // Claimed first, so two triggers in the same tick send once; given back on
+    // failure so the next time the tab is shown it tries again.
+    ids.forEach((id: number) => storiesReported.add(id));
+    const ok = await recordStoriesSeenFor(beginRun(), ids);
+    if (!ok) ids.forEach((id: number) => storiesReported.delete(id));
+};
+watch([tab, posts, storyReadsEnabled], reportStoriesSeen);
+// A tab that was in the background when the stories loaded reports them the
+// moment it is looked at.
+onMounted(() => document.addEventListener('visibilitychange', reportStoriesSeen));
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', reportStoriesSeen));
 
 const signalLabels = computed(() => ({
     you: t('msg_you'),
@@ -1966,6 +2006,7 @@ onMounted(async () => {
             const p = await FamilyApiService.get(`${run.base}/posts`);
             if (run.stale()) return;
             posts.value = rowsOf(p.data?.data);
+            storyReadsEnabled.value = p.data?.meta?.story_reads === true;
         }
 
         const refreshed = await FamilyApiService.get(`${run.base}/threads`);

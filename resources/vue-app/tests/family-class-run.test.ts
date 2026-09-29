@@ -405,3 +405,69 @@ test('a run remembers the class it began at, not only its base path', async () =
     assert.equal(started.school, '7');
     assert.equal(started.group, '3');
 });
+
+// ---------------------------------------------------------------- story receipts
+
+test('story seen: the ids go to the class the run began at, signed with that school\'s token', async () => {
+    const s = screen();
+
+    const ok = await run.recordStoriesSeenFor(s.begin(), [11, 12]);
+
+    assert.equal(ok, true);
+    assert.deepEqual(sent.map((r) => r.url), ['/api/family/masjids/7/groups/3/posts/seen']);
+    assert.equal(sent[0].auth, 'Bearer tok-7');
+});
+
+test('story seen: nothing to say sends nothing', async () => {
+    const s = screen();
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), []), false);
+    assert.equal(sent.length, 0);
+});
+
+test('story seen: a run that is already stale sends nothing', async () => {
+    const s = screen();
+    const started = s.begin();
+    s.route.value = { masjidId: '9', groupId: '5' };
+
+    assert.equal(await run.recordStoriesSeenFor(started, [11]), false);
+    assert.equal(sent.length, 0, 'school B is asked for nothing');
+});
+
+test('story seen: a school switch while the POST is out reports nothing and asks school B for nothing', async () => {
+    const s = screen();
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, '/api/family/masjids/7/groups/3/posts/seen');
+    assert.equal(toSchool9().length, 0);
+});
+
+test('story seen: a long list is sent in server-sized chunks, and a switch between chunks stops the rest', async () => {
+    const s = screen();
+    const ids = Array.from({ length: 120 }, (_, i) => i + 1);
+    const bodies: number[] = [];
+    respond = () => ({ status: 200, data: { data: { recorded: 0 } } });
+
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), ids), true);
+    assert.equal(sent.length, 3, '50 + 50 + 20');
+
+    sent.length = 0;
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), ids), false);
+    assert.equal(sent.length, 1, 'the second chunk is never sent');
+    void bodies;
+});
+
+test('story seen: an expired session goes to the screen\'s handler; any other failure is silent', async () => {
+    const s = screen();
+
+    respond = () => ({ status: 401, data: { message: 'Unauthenticated.' } });
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(s.state.failed.length, 1, 'the handler was asked about the 401');
+
+    respond = () => ({ status: 500, data: {} });
+    assert.equal(await run.recordStoriesSeenFor(s.begin(), [11]), false);
+    assert.equal(s.state.failed.length, 2, 'the handler decides; the helper shows nothing itself');
+});

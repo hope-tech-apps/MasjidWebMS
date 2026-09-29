@@ -108,10 +108,18 @@ use Illuminate\Support\Facades\Route;
 | token. Neither notifies at the tap; the author hears once, in a content-free
 | digest.
 |
+| One more (2026-09-29) is the STORY-SEEN POST: "I have the Story tab open on
+| these stories", the only write that records a read. It is fired by the portal
+| when the tab is showing the posts and never from a GET, it takes the FEED read
+| gate and the token's contact, and it writes nothing at all while
+| `groups.story_reads.enabled` is off (the default) — the parent-facing notice
+| that reads are recorded ships on the same switch. A parent's reading is never
+| shown to another parent.
+|
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them (eighteen routes since 2026-09-29: the portal invite, one
-| playback ticket for each of the two media surfaces, and the story reaction
-| pair) and fails on any other. Adding a route here without
+| every one of them (nineteen routes since 2026-09-29: the portal invite, one
+| playback ticket for each of the two media surfaces, the story reaction pair
+| and the story-seen POST) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -281,6 +289,17 @@ Route::prefix('family')
                     // payload and nothing is dispatched at the tap.
                     Route::put('/{post_id}/reactions/{reaction}', 'react');
                     Route::delete('/{post_id}/reactions/{reaction}', 'unreact');
+
+                    // "I have the Story tab open on these stories" (2026-09-29):
+                    // the ONLY thing that records a read, and one more counted
+                    // write. Fired by the portal when the tab is showing the
+                    // posts — never from the /posts GET above. The FEED read gate
+                    // again; the contact is the token's; the ids name stories and
+                    // nothing else. It writes NOTHING while
+                    // `groups.story_reads.enabled` is off (the default), because
+                    // the parent-facing notice ships on the same switch. (No
+                    // POST /{post_id} exists, so nothing shadows this path.)
+                    Route::post('/seen', 'markSeen');
                 });
 
             // Handouts the class has chosen to share. BOTH are GETs — nothing

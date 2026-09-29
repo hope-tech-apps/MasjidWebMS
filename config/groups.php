@@ -38,6 +38,44 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Class story read receipts ("Seen by 4 of 7 parents") — OFF BY DEFAULT
+    |--------------------------------------------------------------------------
+    |
+    | When on, the family portal records that a guardian OPENED a class story
+    | (a client POST fired only when the Story tab is showing the posts — never
+    | from the /posts GET), and the school sees who, in the staff payloads only.
+    | A parent is never shown another parent's reading, or a count of it.
+    |
+    | THE SWITCH GATES THREE THINGS TOGETHER, and they must go live together:
+    |   1. RECORDING — the family POST writes nothing while this is off;
+    |   2. the parent-facing NOTICE that the school can see who has opened a
+    |      story (the portal draws it from `meta.story_reads`, which is this
+    |      value) — so no read is recorded before the notice is on screen;
+    |   3. the staff-facing "Seen by" line, so "0 of 7" is never shown for
+    |      a receipt nobody has been collecting.
+    |
+    | It ships OFF because the notice's ar / ur / ps / fa-AF wording is
+    | machine-drafted and needs a human review first (owner, 2026-09-29). Turn it
+    | on with GROUP_STORY_READS_ENABLED=true ONLY after that review has landed in
+    | the locale files.
+    |
+    */
+
+    'story_reads' => [
+
+        'enabled' => filter_var(env('GROUP_STORY_READS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+
+        /*
+         * Most story ids one "I have seen these" request may name. The portal
+         * lists 15 stories a page and a request may ask for up to 100, so this
+         * sits above any page the portal draws and below "a whole term".
+         */
+        'max_ids_per_request' => 50,
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Group messaging threads (T-005c)
     |--------------------------------------------------------------------------
     |

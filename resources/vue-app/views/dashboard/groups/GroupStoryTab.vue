@@ -139,6 +139,11 @@
                     <!-- 🤲 👍 💯 ❓. The server has already decided whose names this viewer sees. -->
                     <MessageSignals v-if="post.reactions" v-model:reactions="post.reactions"
                                     :send="(key: string, on: boolean) => reactTo(post, key, on)" />
+                    <!-- "Seen by 4 of 7 parents" — only while the school has receipts on. -->
+                    <StorySeenLine :enabled="feedStore.feedMeta?.story_reads?.enabled"
+                                   :seen-by="post.seen_by" :seen-count="post.seen_count"
+                                   :audience-count="post.audience_count"
+                                   :unreachable="feedStore.feedMeta?.story_reads?.unreachable_count" />
                 </div>
             </div>
 
@@ -156,6 +161,7 @@ import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 // 🤲 👍 💯 ❓ under each story card — the conversation tab's component, so the
 // two surfaces cannot drift.
 import MessageSignals from '@/components/common/MessageSignals.vue';
+import StorySeenLine from '@/components/common/StorySeenLine.vue';
 // The same tile the conversation tab uses for a video: one renderer for the
 // ticket-and-<video> arrangement rather than a second copy of it here.
 import GroupMessagePhoto from './GroupMessagePhoto.vue';

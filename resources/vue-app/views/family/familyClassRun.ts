@@ -250,3 +250,46 @@ export async function handOverFor(run: ClassRun, child: any, sinks: HandOverSink
         sinks.failed();
     }
 }
+
+export const STORIES_SEEN_CHUNK = 50;
+
+/**
+ * Tell the school which class stories this parent has the Story tab open on
+ * (T-002.3, "Seen by 4 of 7 parents").
+ *
+ * The caller has already decided this is the moment: the Story tab is showing
+ * these posts, the school has switched read receipts on (`meta.story_reads`) and
+ * the page is visible. It must NEVER be called from the fetch that loads the
+ * posts — the portal fetches them on page load whatever tab is open, so a
+ * fetch-side call would mark the 15 newest stories "seen" for a parent who only
+ * opened Grades.
+ *
+ * Like every other request on this screen it belongs to the run it was started
+ * from: the school and class are read once (`run.base`), the request is signed
+ * with THAT school's token by its URL, and a run that went stale — the parent
+ * switched schools, or the screen is gone — sends nothing and reports nothing.
+ *
+ * Nothing here is shown to the parent. A failure is silent (the receipt is the
+ * school's convenience, not the parent's task) except that an expired session is
+ * handed to the screen's own handler, exactly as every other request does.
+ * Resolves true only when every chunk was taken.
+ */
+export async function recordStoriesSeenFor(run: ClassRun, ids: number[]): Promise<boolean> {
+    if (ids.length === 0 || run.stale()) return false;
+
+    for (let i = 0; i < ids.length; i += STORIES_SEEN_CHUNK) {
+        if (run.stale()) return false;
+
+        try {
+            await FamilyApiService.post(`${run.base}/posts/seen`, {
+                post_ids: ids.slice(i, i + STORIES_SEEN_CHUNK),
+            });
+        } catch (e) {
+            if (run.stale()) return false;
+            run.fail(e);
+            return false;
+        }
+    }
+
+    return !run.stale();
+}

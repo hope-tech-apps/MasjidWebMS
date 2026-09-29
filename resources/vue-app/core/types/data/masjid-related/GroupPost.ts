@@ -81,6 +81,15 @@ export type GroupPost = {
     media_withheld: boolean;
     /** 🤲 👍 💯 ❓ on this post — all four, in order, with counts and `mine`. */
     reactions?: GroupPostReaction[];
+    /**
+     * Read receipts — STAFF payloads only, and ABSENT (not zero) while the school
+     * has receipts switched off (`meta.story_reads.enabled`). `audience_count` is
+     * the consented, current parents with a live portal login; `seen_count` never
+     * exceeds it.
+     */
+    seen_by?: { name: string; seen_at: string | null }[];
+    seen_count?: number;
+    audience_count?: number;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */
@@ -107,4 +116,6 @@ export type GroupFeedMeta = {
     max_video_size_kb?: number;
     max_videos_per_post?: number;
     video_retention_days?: number;
+    /** Read receipts: are they being collected, and how many parents cannot be counted. */
+    story_reads?: { enabled: boolean; unreachable_count?: number };
 };

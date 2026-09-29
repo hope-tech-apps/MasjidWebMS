@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Family;
 
 use App\Models\GroupPost;
+use App\Http\Requests\Family\MarkStoriesSeenRequest;
+use App\Models\GroupPostRead;
 use App\Models\GroupPostReaction;
 use App\Models\Masjid;
 use App\Support\GroupAudience;
@@ -10,6 +12,7 @@ use App\Support\GroupMedia;
 use App\Support\GroupPostSignals;
 use App\Support\Reactions;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -72,7 +75,15 @@ class GroupPostsController extends FamilyController
         return response()->json([
             'status' => 'success',
             'data' => $posts,
-            'meta' => $this->meta(['may_receive_media' => $mayReceiveMedia, 'reactions' => Reactions::catalogue()]),
+            'meta' => $this->meta([
+                'may_receive_media' => $mayReceiveMedia,
+                'reactions' => Reactions::catalogue(),
+                // ONE value gates the notice AND the recording: the portal draws
+                // "your school can see who has opened a story" and fires the seen
+                // POST only when this is true, so no read is recorded before the
+                // notice is on screen. See config('groups.story_reads').
+                'story_reads' => (bool) config('groups.story_reads.enabled', false),
+            ]),
         ], Response::HTTP_OK);
     }
 
@@ -97,7 +108,84 @@ class GroupPostsController extends FamilyController
                 $post, $masjid_id, $group_id, $mayReceiveMedia,
                 GroupPostSignals::forPosts([$post], $this->contact())[(int) $post->id] ?? null
             ),
-            'meta' => $this->meta(['may_receive_media' => $mayReceiveMedia, 'reactions' => Reactions::catalogue()]),
+            'meta' => $this->meta([
+                'may_receive_media' => $mayReceiveMedia,
+                'reactions' => Reactions::catalogue(),
+                // ONE value gates the notice AND the recording: the portal draws
+                // "your school can see who has opened a story" and fires the seen
+                // POST only when this is true, so no read is recorded before the
+                // notice is on screen. See config('groups.story_reads').
+                'story_reads' => (bool) config('groups.story_reads.enabled', false),
+            ]),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * POST .../posts/seen   { post_ids: [int, ...] }
+     *
+     * "I have the Story tab open on these stories" — the ONLY thing that records
+     * a read (T-002.3, owner 2026-09-29). The portal fires it when the tab is
+     * showing the posts, never from the /posts GET (which it fetches on page load
+     * whatever tab is open, and which returns the 15 newest stories).
+     *
+     * OFF BY DEFAULT: while `groups.story_reads.enabled` is false this writes
+     * NOTHING and says so. The parent-facing notice that reads are recorded is
+     * translated into five languages by machine and needs a human review first,
+     * so recording and the notice go live together, on one switch.
+     *
+     * THE GATE IS THE FEED READ GATE, so it records only somebody the story was
+     * actually shown to: a consented guardian who is still in the class. The
+     * token's contact must also hold a live family login (the same test the
+     * `family.active` door applies) — a receipt for a login that is switched off
+     * would be a receipt for nobody. Ids that are not stories of THIS class
+     * (another class, another school, soft-deleted, or invented) are ignored
+     * without a word, so this cannot be used to probe for them.
+     *
+     * insertOrIgnore on the (post, contact) unique key: idempotent, two tabs race
+     * to one row, and the FIRST time is kept. masjid_id comes from the group just
+     * resolved through the bound tenant, never from the request. A parent's read
+     * is never shown to another parent: the seen_* fields exist only in the staff
+     * serializer.
+     */
+    public function markSeen(MarkStoriesSeenRequest $request, $masjid_id, $group_id)
+    {
+        $group = $this->group($group_id);
+
+        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
+
+        $contact = $this->contact();
+
+        if (! $contact->familyLoginIsActive()) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to read this group\'s feed.');
+        }
+
+        if (! config('groups.story_reads.enabled', false)) {
+            return response()->json([
+                'status' => 'success',
+                'data' => ['recorded' => 0, 'enabled' => false],
+            ], Response::HTTP_OK);
+        }
+
+        $postIds = $group->posts()
+            ->whereIn('id', array_map('intval', $request->validated('post_ids')))
+            ->pluck('id');
+
+        $now = now();
+
+        $recorded = $postIds->isEmpty() ? 0 : (int) GroupPostRead::query()->insertOrIgnore(
+            $postIds->map(fn ($postId): array => [
+                'masjid_id' => (int) $group->masjid_id,
+                'group_post_id' => (int) $postId,
+                'contact_id' => (int) $contact->id,
+                'first_seen_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ])->all()
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['recorded' => $recorded, 'enabled' => true],
         ], Response::HTTP_OK);
     }
 

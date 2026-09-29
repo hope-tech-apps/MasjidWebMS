@@ -1699,6 +1699,16 @@ class FamilyPortalTest extends TestCase
         // notification at the tap (the author hears once, in a content-free
         // digest). Two verbs, not a toggle, so a double-tap cannot flip the
         // answer. See GroupPostReactionsTest.
+        //
+        // 2026-09-29 (owner): ONE more — `POST .../posts/seen`, "I have the Story
+        // tab open on these stories" (T-002.3). The only write that records a
+        // read. It is admitted narrowly: fired by the portal when the tab shows
+        // the posts and never from a GET; the FEED read gate; the contact from
+        // the token; the ids name stories of the URL's class and nothing else;
+        // and it writes NOTHING while `groups.story_reads.enabled` is off (the
+        // default), because the parent-facing notice ships on the same switch. A
+        // parent's reading is never shown to another parent (the seen_* fields
+        // exist only in the staff serializer). See GroupPostReadsTest.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1726,6 +1736,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/posts/seen',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',

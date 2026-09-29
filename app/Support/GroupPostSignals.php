@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\Contact;
 use App\Models\GroupPost;
+use App\Models\GroupPostRead;
 use App\Models\GroupPostReaction;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -60,6 +61,69 @@ final class GroupPostSignals
                     $reactions->get($post->id, collect()),
                     $viewerIsParent, $viewerUserId, $viewerContactId
                 ),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * "Seen by 4 of 7 parents", per post, for a STAFF viewer (owner, 2026-09-29).
+     *
+     * THIS IS STAFF-ONLY BY CONSTRUCTION. Only the admin/teacher serializer calls
+     * it; the family serializer never builds `seen_by`, `seen_count` or
+     * `audience_count`, and GroupPostReadsTest walks the family JSON to prove
+     * it. A parent is never
+     * told another parent opened anything, or how many did.
+     *
+     * The AUDIENCE is GroupAudience::storyGuardianContacts(): consented, current
+     * guardians with a live family login. A read row counts only while its reader
+     * is still in that audience, so `seen_count` can never exceed
+     * `audience_count`: a family that left, withdrew consent or lost its login
+     * stops being counted on either side of the fraction.
+     *
+     * @param iterable<GroupPost> $posts
+     * @param \Illuminate\Support\Collection<int,Contact> $audience keyed by contact id
+     * @return array<int, array{seen_by: list<array{name:string, seen_at:?string}>, seen_count:int, audience_count:int}>
+     *         keyed by post id
+     */
+    public static function seenFor(iterable $posts, $audience): array
+    {
+        $posts = collect($posts)->filter(fn ($p) => $p instanceof GroupPost)->values();
+
+        if ($posts->isEmpty()) {
+            return [];
+        }
+
+        $reads = $audience->isEmpty()
+            ? collect()
+            : GroupPostRead::query()
+                ->whereIn('group_post_id', $posts->pluck('id')->all())
+                ->whereIn('contact_id', $audience->keys()->all())
+                ->orderBy('first_seen_at')
+                ->orderBy('id')
+                ->get()
+                ->groupBy('group_post_id');
+
+        $out = [];
+
+        foreach ($posts as $post) {
+            $seenBy = [];
+
+            foreach ($reads->get($post->id, collect()) as $read) {
+                /** @var Contact|null $contact */
+                $contact = $audience->get($read->contact_id);
+
+                $seenBy[] = [
+                    'name' => Reactions::nameOf(null, $contact, true),
+                    'seen_at' => optional($read->first_seen_at)->toIso8601String(),
+                ];
+            }
+
+            $out[(int) $post->id] = [
+                'seen_by' => $seenBy,
+                'seen_count' => count($seenBy),
+                'audience_count' => $audience->count(),
             ];
         }
 

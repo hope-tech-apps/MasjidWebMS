@@ -971,6 +971,61 @@ class GroupAudience
     }
 
     /**
+     * The guardians a CLASS STORY actually reaches: consented, still in the class,
+     * and holding a LIVE family login (owner, 2026-09-29).
+     *
+     * The denominator of "Seen by 4 of 7 parents", and the one definition of
+     * "who is in the room for a story" that the reaction and receipt code reads,
+     * so a receipt can never count somebody who could not have seen the story.
+     * It is the story audience's guardian half exactly:
+     *
+     *   - CONSENTED — `consented()`, any scope: media consent covers the feed, the
+     *     same rule `mayReceive(DISCLOSURE_FEED)` applies row by row;
+     *   - CURRENT — `current()`: a family that has left the class receives
+     *     nothing from the day it left, and so is not counted;
+     *   - a LIVE LOGIN — `familyLoginIsActive()`: a guardian with no portal login
+     *     cannot open a story, so counting them would make every story look
+     *     unread. They are counted separately (storyGuardiansWithoutLogin) so the
+     *     school can be told how many parents this receipt cannot reach.
+     *
+     * Staff and participants are not in it: this is the parents' half.
+     *
+     * @return Collection<int,Contact> keyed by contact id
+     */
+    public function storyGuardianContacts(Group $group): Collection
+    {
+        return $this->consentedCurrentGuardians($group)
+            ->filter(fn (Contact $contact): bool => $contact->familyLoginIsActive())
+            ->keyBy('id');
+    }
+
+    /**
+     * How many consented, current guardians hold NO live family login — the
+     * parents a story reaches on paper and a receipt cannot. The footnote under
+     * "Seen by 4 of 7".
+     */
+    public function storyGuardiansWithoutLogin(Group $group): int
+    {
+        return $this->consentedCurrentGuardians($group)
+            ->reject(fn (Contact $contact): bool => $contact->familyLoginIsActive())
+            ->count();
+    }
+
+    /** @return Collection<int,Contact> distinct guardians, consented and still in the class */
+    private function consentedCurrentGuardians(Group $group): Collection
+    {
+        return $group->memberships()
+            ->consented()
+            ->current()
+            ->with('contact')
+            ->get()
+            ->map(fn (GroupMembership $membership) => $membership->contact)
+            ->filter()
+            ->unique('id')
+            ->values();
+    }
+
+    /**
      * The caller's whole footing in one group, resolved once: which of their
      * contact identities hold memberships, in what roles, over which wards.
      * Shared by the thread decisions above so the single-thread check and the
