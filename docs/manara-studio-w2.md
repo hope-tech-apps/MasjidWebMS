@@ -1047,8 +1047,18 @@ the old favicon.
     renderer drops the old head. The lookup's KV record rewrites itself on
     change (W1 R5).
 - **Route.** `POST /api/admin/masjids/{masjid_id}/brand-assets/regenerate`
-  (super, in-controller 403). Body `{background_color?}`. 200 returns the four
-  URLs.
+  (super; the 403 is `RegenerateBrandAssetsRequest::authorize()`, so it comes
+  before any 422). Body `{background_color?}`. 200 returns the four URLs.
+  - **422** `{status:'failed', data:{logo:[...]}}` also when the logo is too
+    large to decode: over `LogoDerivatives::MAX_EDGE` (8000, the Studio logo
+    upload's cap, one constant) on an edge, or over the memory the request has
+    left (`width × height × 5 + 8 MiB` against `memory_limit` minus current
+    use). Read from the header, before any decode; nothing is written.
+  - **409** `{status:'error', message:'The brand images are already being made. Try again in a moment.'}`
+    when another regeneration for the organisation holds its lock
+    (`brand-assets:regenerate:{masjid_id}`, waited on for 3 seconds). The lock
+    is held until the old rows are deleted, or the caller's transaction has
+    rolled back.
 - **Logo upload keeps derivatives in step.** After either admin logo upload
   commits, if the organisation **already has** a row in any of the three
   collections, `BrandAssets::regenerate` runs. An organisation with none, which
@@ -1056,7 +1066,8 @@ the old favicon.
   - The hook runs after the upload has committed and **never changes the
     upload's response.** A failure, such as a logo GD cannot read, is caught
     and logged at `warning` (production's level), and the previous
-    derivatives stay.
+    derivatives stay. A logo too large to decode, or a lock still held, is
+    the same: one warning (with the width and height for the former), skipped.
 
 **Tests** (`BrandAssetRegenerationTest`):
 
@@ -1068,6 +1079,11 @@ the old favicon.
 - `a_studio_orgs_logo_upload_regenerates_its_derivatives`
 - `a_failed_regeneration_after_an_upload_leaves_the_upload_response_unchanged`
 - `a_non_super_gets_403`
+- S8 hardening (2026-09-28): the edge and memory cap (route 422, both upload
+  hooks skip), the shared 8000 constant, `a_non_super_with_an_invalid_body_gets_403_not_422`,
+  the lock (409, hook skip, release), and the lifecycle pins (old rows survive
+  until the outer commit, an outer rollback, a failing delete, the
+  `MasjidsController::update` hook failure).
 
 Passing **unedited**: `StudioProvisionLogoTest`,
 `LiveSettingsPayloadUnchangedTest` (its premise holds: a live org gets

@@ -37,6 +37,35 @@ use Throwable;
 class LogoDerivatives
 {
     /**
+     * The longest edge, in pixels, of a logo any path here will decode. The
+     * Studio logo upload's `dimensions` rule reads this same constant, so the
+     * two cannot drift.
+     */
+    public const MAX_EDGE = 8000;
+
+    /**
+     * What decoding costs, per pixel of the source: GD holds it at ~4 bytes
+     * plus row overhead, and the resize makes a copy of the contained size
+     * (small), so 5 is 4 with a margin.
+     */
+    private const BYTES_PER_PIXEL = 5;
+
+    /**
+     * On top of that: the 1200x630 and 180x180 canvases, which are alive at the
+     * same time as the source (about 3 MB and 0.1 MB at 4 bytes a pixel, each
+     * copied once by the resize), and the encoder's buffers.
+     */
+    private const FIXED_ALLOWANCE_BYTES = 8 * 1024 * 1024;
+
+    /**
+     * TEST SEAM. When set, this many bytes is the memory left, instead of the
+     * ini `memory_limit` minus what this process holds. A test sets it to make a
+     * small logo not fit without touching the real limit, and must reset it to
+     * null (BrandAssetRegenerationTest does, in setUp and tearDown).
+     */
+    public static ?int $headroomBytes = null;
+
+    /**
      * @throws RuntimeException when the draft's logo bytes are gone
      */
     public function generate(StudioDraft $draft, string $backgroundColor): LogoFiles
@@ -60,16 +89,23 @@ class LogoDerivatives
      * that exists (Studio W2 S8, BrandAssets::regenerate). The source is copied
      * into the temporary directory as `logo.{png|jpg}` and never modified.
      *
+     * The size is read from the header and checked BEFORE anything is decoded
+     * (assertFits): every caller, both admin upload hooks and the regenerate
+     * route, comes through here.
+     *
      * @throws RuntimeException when the file is not a PNG or JPEG
+     * @throws LogoTooLarge when it has too many pixels to decode safely
      */
     public function fromFile(string $absPath, string $backgroundColor): LogoFiles
     {
-        $type = is_file($absPath) ? (@getimagesize($absPath)[2] ?? null) : null;
-        $extension = match ($type) {
+        $info = is_file($absPath) ? @getimagesize($absPath) : false;
+        $extension = match ($info[2] ?? null) {
             IMAGETYPE_PNG => 'png',
             IMAGETYPE_JPEG => 'jpg',
             default => throw new RuntimeException('The logo is not a PNG or JPEG image.'),
         };
+
+        self::assertFits((int) $info[0], (int) $info[1]);
 
         return $this->derive(
             'org',
@@ -77,6 +113,71 @@ class LogoDerivatives
             fn (string $logo) => copy($absPath, $logo) ?: throw new RuntimeException('The logo could not be copied.'),
             $backgroundColor,
         );
+    }
+
+    /**
+     * The memory left for this request, in bytes, or null when there is no
+     * limit. The ini limit minus what the process holds now, so a request that
+     * is already heavy has less to spend.
+     */
+    public static function headroomBytes(): ?int
+    {
+        if (self::$headroomBytes !== null) {
+            return self::$headroomBytes;
+        }
+
+        $limit = self::bytesFromIni((string) ini_get('memory_limit'));
+
+        return $limit === null ? null : $limit - memory_get_usage(true);
+    }
+
+    /**
+     * An ini size ("128M", "1G", "512K", "134217728") in bytes; null for -1,
+     * which is no limit. A value that is not a size is 0: a guard that cannot
+     * read its limit refuses, it does not wave everything through.
+     */
+    public static function bytesFromIni(string $value): ?int
+    {
+        $value = trim($value);
+
+        if ($value === '-1') {
+            return null;
+        }
+
+        if (preg_match('/^(\d+)\s*([KMG]?)$/i', $value, $m) !== 1) {
+            return 0;
+        }
+
+        return (int) $m[1] * match (strtoupper($m[2])) {
+            'K' => 1024,
+            'M' => 1024 ** 2,
+            'G' => 1024 ** 3,
+            default => 1,
+        };
+    }
+
+    /**
+     * Refuse a logo the edge cap or the memory left cannot take. The edge cap
+     * alone is not enough: 8000x8000 needs ~256 MB and production PHP-FPM has
+     * 128M.
+     *
+     * @throws LogoTooLarge
+     */
+    private static function assertFits(int $width, int $height): void
+    {
+        if ($width > self::MAX_EDGE || $height > self::MAX_EDGE) {
+            throw new LogoTooLarge($width, $height, LogoTooLarge::EDGE, self::MAX_EDGE);
+        }
+
+        $headroom = self::headroomBytes();
+
+        if ($headroom !== null && $width * $height * self::BYTES_PER_PIXEL + self::FIXED_ALLOWANCE_BYTES > $headroom) {
+            // The longest square side the headroom would take, to the nearest
+            // hundred down: a number the SuperAdmin can act on.
+            $side = (int) floor(sqrt(max(0, $headroom - self::FIXED_ALLOWANCE_BYTES) / self::BYTES_PER_PIXEL));
+
+            throw new LogoTooLarge($width, $height, LogoTooLarge::MEMORY, min(self::MAX_EDGE, intdiv($side, 100) * 100));
+        }
     }
 
     /**

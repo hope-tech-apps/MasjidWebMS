@@ -6,6 +6,10 @@ use App\Models\Masjid;
 use App\Support\Renderer\RendererPurgeScheduler;
 use App\Support\Studio\LogoDerivatives;
 use App\Support\Studio\LogoFiles;
+use App\Support\Studio\LogoTooLarge;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
@@ -35,6 +39,18 @@ use Throwable;
  * on a rollback. A failure before the commit deletes the directories of the
  * new rows it made (StudioProvisioning's pattern) and leaves the old
  * derivatives exactly as they were.
+ *
+ * ONE RUN PER ORGANISATION. A per-org cache lock is taken before the previous
+ * rows are read and released only when the old rows are gone (or the outer
+ * transaction they wait on has rolled back), so a double click, or the upload
+ * hook racing the route, cannot each add three rows and leave six. The
+ * deletion of the old rows is registered with DB::afterCommit, so it is right
+ * both when nothing is open (it runs at once) and when a caller's transaction
+ * is (it waits for that commit).
+ *
+ * TOO BIG TO DECODE. LogoDerivatives refuses a logo over its edge cap or the
+ * memory this process has left, from the header, before GD decodes anything
+ * (LogoTooLarge). The route answers that as a 422; an upload skips.
  */
 final class BrandAssets
 {
@@ -46,12 +62,57 @@ final class BrandAssets
     public const NO_BACKGROUND = 'Choose a background colour as #RRGGBB: the organisation\'s theme has none.';
 
     /**
+     * How long a holder may keep the lock if it never releases (a killed
+     * process, an outer transaction that never ends): well over a run, short
+     * enough that nobody waits on a dead one.
+     */
+    private const LOCK_SECONDS = 60;
+
+    /**
+     * TEST SEAM: how long regenerate() waits for the lock before it gives up
+     * with BrandAssetsBusy. A test sets 0 to make a held lock fail at once and
+     * must put it back (BrandAssetRegenerationTest does, in tearDown).
+     */
+    public static float $lockWaitSeconds = 3.0;
+
+    public static function lockKey(int $masjidId): string
+    {
+        return "brand-assets:regenerate:{$masjidId}";
+    }
+
+    /**
      * @param  string|null  $backgroundColor  #RRGGBB; null takes the theme's background colour
      * @return array{logo_url: string, favicon_url: string, touch_icon_url: string, share_image_url: string}
      *
      * @throws ValidationException 422 when there is no PNG/JPEG logo or no usable background colour
+     * @throws LogoTooLarge 422 (a ValidationException) when the logo is too large to decode safely
+     * @throws BrandAssetsBusy when another regeneration for this organisation did not finish inside the wait
      */
     public static function regenerate(Masjid $org, ?string $backgroundColor, ?int $actor): array
+    {
+        $lock = Cache::lock(self::lockKey((int) $org->id), self::LOCK_SECONDS);
+
+        try {
+            $lock->block(self::$lockWaitSeconds);
+        } catch (LockTimeoutException) {
+            throw new BrandAssetsBusy();
+        }
+
+        try {
+            return self::run($org, $backgroundColor, $actor, $lock);
+        } catch (Throwable $e) {
+            // run() hands the lock on to its commit callbacks only when it
+            // returns; any throw before that leaves it here.
+            $lock->release();
+
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array{logo_url: string, favicon_url: string, touch_icon_url: string, share_image_url: string}
+     */
+    private static function run(Masjid $org, ?string $backgroundColor, ?int $actor, Lock $lock): array
     {
         $logo = $org->logo()->first();
         $source = $logo?->getPath();
@@ -69,6 +130,9 @@ final class BrandAssets
 
         try {
             $files = app(LogoDerivatives::class)->fromFile($source, $background);
+        } catch (LogoTooLarge $e) {
+            // Not "no logo": the caller is told the size, and nothing was written.
+            throw $e;
         } catch (Throwable $e) {
             // A header GD accepted and data it could not decode: the same
             // answer as no logo, and the reason in the log.
@@ -84,7 +148,45 @@ final class BrandAssets
             File::deleteDirectory($files->directory);
         }
 
-        // Committed. Only now do the old rows, and with them their files, go.
+        // Only once the outermost transaction has committed do the old rows,
+        // and with them their files, go, and the lock with them. With none open
+        // (a request) DB::afterCommit runs this at once.
+        DB::afterCommit(function () use ($org, $previous, $background, $actor, $lock) {
+            try {
+                self::finish($org, $previous, $background, $actor);
+            } finally {
+                $lock->release();
+            }
+        });
+
+        // A caller's transaction that rolls back takes the new rows with it: the
+        // files it copied are strays, and the lock has to go. (No-op with none
+        // open, and then the commit callback above has already run.)
+        $newDirectories = array_values(array_map(fn (Media $media) => self::directoryOf($media), $created));
+        DB::afterRollBack(function () use ($org, $newDirectories, $lock) {
+            try {
+                self::deleteDirectories($newDirectories, (int) $org->id);
+            } finally {
+                $lock->release();
+            }
+        });
+
+        return [
+            'logo_url' => $logo->original_url,
+            'favicon_url' => $created[Masjid::FAVICONS]->original_url,
+            'touch_icon_url' => $created[Masjid::TOUCH_ICONS]->original_url,
+            'share_image_url' => $created[Masjid::SHARE_IMAGES]->original_url,
+        ];
+    }
+
+    /**
+     * The after-commit half of a regeneration. Nothing here may throw: it runs
+     * inside somebody's commit, and the new images are already what is served.
+     *
+     * @param  \Illuminate\Support\Collection<int, Media>  $previous
+     */
+    private static function finish(Masjid $org, $previous, string $background, ?int $actor): void
+    {
         foreach ($previous as $media) {
             try {
                 $media->delete();
@@ -99,7 +201,11 @@ final class BrandAssets
 
         // The renderer's cached pages carry the old head. The by-host lookup's
         // KV record rewrites itself when its value changes (W1 R5).
-        RendererPurgeScheduler::afterSave((int) $org->id);
+        try {
+            RendererPurgeScheduler::afterSave((int) $org->id);
+        } catch (Throwable $e) {
+            Log::warning('Brand assets: the renderer purge was not scheduled', ['masjid_id' => (int) $org->id, 'message' => $e->getMessage()]);
+        }
 
         // Warning, not info: production runs LOG_LEVEL=warning, and this changes
         // what a live site shows.
@@ -109,13 +215,6 @@ final class BrandAssets
             'background_color' => $background,
             'replaced' => $previous->count(),
         ]);
-
-        return [
-            'logo_url' => $logo->original_url,
-            'favicon_url' => $created[Masjid::FAVICONS]->original_url,
-            'touch_icon_url' => $created[Masjid::TOUCH_ICONS]->original_url,
-            'share_image_url' => $created[Masjid::SHARE_IMAGES]->original_url,
-        ];
     }
 
     /**
@@ -135,6 +234,20 @@ final class BrandAssets
             }
 
             self::regenerate($org, null, $actor);
+        } catch (LogoTooLarge $e) {
+            // One warning, with the size, and no other log line on this path.
+            Log::warning('Brand assets were not regenerated after a logo upload: the logo is too large to make the icons from; the previous favicon, touch icon and share image stay', [
+                'masjid_id' => (int) $org->id,
+                'actor_user_id' => $actor,
+                'width' => $e->width,
+                'height' => $e->height,
+                'limit' => $e->limit,
+            ]);
+        } catch (BrandAssetsBusy) {
+            Log::warning('Brand assets were not regenerated after a logo upload: another regeneration was still running; the previous favicon, touch icon and share image stay', [
+                'masjid_id' => (int) $org->id,
+                'actor_user_id' => $actor,
+            ]);
         } catch (Throwable $e) {
             Log::warning('Brand assets were not regenerated after a logo upload; the previous favicon, touch icon and share image stay', [
                 'masjid_id' => (int) $org->id,
@@ -180,9 +293,7 @@ final class BrandAssets
                 }
             });
         } catch (Throwable $e) {
-            foreach ($stray as [$disk, $directory]) {
-                Storage::disk($disk)->deleteDirectory($directory);
-            }
+            self::deleteDirectories($stray, (int) $org->id);
 
             throw $e;
         }
@@ -212,12 +323,32 @@ final class BrandAssets
             return self::derivatives($org)
                 ->whereNotIn('id', $previousIds)
                 ->get()
-                ->map(fn (Media $media) => [$media->disk, rtrim(PathGeneratorFactory::create($media)->getPath($media), '/')])
+                ->map(fn (Media $media) => self::directoryOf($media))
                 ->all();
         } catch (Throwable $e) {
             Log::warning('Brand assets: could not list the media to clean up after a failure', ['masjid_id' => (int) $org->id, 'message' => $e->getMessage()]);
 
             return [];
+        }
+    }
+
+    /** @return array{0: string, 1: string} the media's disk and its directory on it */
+    private static function directoryOf(Media $media): array
+    {
+        return [$media->disk, rtrim(PathGeneratorFactory::create($media)->getPath($media), '/')];
+    }
+
+    /** @param  list<array{0: string, 1: string}>  $directories */
+    private static function deleteDirectories(array $directories, int $masjidId): void
+    {
+        foreach ($directories as [$disk, $directory]) {
+            try {
+                Storage::disk($disk)->deleteDirectory($directory);
+            } catch (Throwable $e) {
+                Log::warning('Brand assets: a directory of a rolled-back regeneration was not deleted', [
+                    'masjid_id' => $masjidId, 'directory' => $directory, 'message' => $e->getMessage(),
+                ]);
+            }
         }
     }
 }

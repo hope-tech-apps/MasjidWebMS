@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Studio;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\Studio\LogoDerivatives;
 
 /**
  * Validates POST /api/admin/studio/drafts/{draft_id}/logo (multipart `logo`).
@@ -18,6 +19,8 @@ class StoreStudioDraftLogoRequest extends BaseFormRequest
     public function rules(): array
     {
         $min = (int) config('studio.logo.min_px', 96);
+        // The same cap LogoDerivatives::fromFile enforces before it decodes.
+        $max = LogoDerivatives::MAX_EDGE;
 
         return [
             'logo' => [
@@ -25,7 +28,7 @@ class StoreStudioDraftLogoRequest extends BaseFormRequest
                 'file',
                 'mimetypes:' . config('studio.logo.mime_types', 'image/png,image/jpeg'),
                 'max:' . (int) config('studio.logo.max_kb', 8192),
-                "dimensions:min_width={$min},min_height={$min},max_width=8000,max_height=8000",
+                "dimensions:min_width={$min},min_height={$min},max_width={$max},max_height={$max}",
             ],
         ];
     }
