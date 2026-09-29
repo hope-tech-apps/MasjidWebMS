@@ -631,6 +631,32 @@ class PointsWeekTest extends TestCase
     }
 
     #[Test]
+    public function a_weekly_class_still_serves_a_parent_the_whole_record_until_a_week_is_asked_for(): void
+    {
+        $this->seedRecord();
+        // The teacher's opt-in is a VIEW choice for the teacher's own screen. It must never narrow what
+        // the family endpoints answer when no ?week= is sent: the parent keeps the running record and
+        // the full history, and the portal asks for a week by name when it wants one.
+        Group::withoutMasjidScope()->whereKey($this->group->id)->update(['points_period' => 'weekly']);
+
+        $summary = $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary"))->assertOk();
+        $this->assertSame(13, $summary->json('data.totals.points'), 'the whole record, not this week');
+        $this->assertSame(5, $summary->json('data.totals.awards'));
+        $this->assertNull($summary->json('data.week'), 'no week was asked for, so none is imposed');
+
+        $log = $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards"))->assertOk();
+        $this->assertSame(5, $log->json('data.total'), 'the full history');
+        $this->assertNull($log->json('meta.week'));
+
+        // And a week still narrows it when the portal asks.
+        $week = $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=current"))->assertOk();
+        $this->assertSame(4, $week->json('data.totals.points'));
+    }
+
+    #[Test]
     public function a_week_can_never_widen_what_a_parent_may_read(): void
     {
         $this->seedRecord();

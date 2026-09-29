@@ -120,6 +120,7 @@ class SendWeeklyPointsReports extends Command
             'classes_sent' => 0,
             'classes_already_sent' => 0,
             'classes_nobody_to_tell' => 0,
+            'classes_undelivered' => 0,
             'family_emails' => 0,
             'teacher_emails' => 0,
             'failures' => 0,
@@ -151,7 +152,7 @@ class SendWeeklyPointsReports extends Command
         Log::channel('monitors')->info('points:weekly-report', $run);
 
         $this->line(sprintf(
-            'points:weekly-report%s: %d organisation(s), %d class(es) %s, %d family notice(s), %d teacher notice(s), %d already sent, %d with nobody to tell, %d failure(s).',
+            'points:weekly-report%s: %d organisation(s), %d class(es) %s, %d family notice(s), %d teacher notice(s), %d already sent, %d with nobody to tell, %d undelivered (retried next run), %d failure(s).',
             $dry ? ' (dry run)' : '',
             $run['organisations'],
             $run['classes_sent'],
@@ -160,6 +161,7 @@ class SendWeeklyPointsReports extends Command
             $run['teacher_emails'],
             $run['classes_already_sent'],
             $run['classes_nobody_to_tell'],
+            $run['classes_undelivered'],
             $run['failures'],
         ));
 
@@ -313,12 +315,26 @@ class SendWeeklyPointsReports extends Command
         $groupLabel = (string) $group->name;
         $base = rtrim((string) config('app.url'), '/');
 
+        // Both links NAME the week that was reported. Without it they open "the week in
+        // progress", and a parent or teacher who reads Al-Razi's Friday 15:00 email on the
+        // Sunday or Monday after lands on a new, empty week.
         $familyUrl = $base.'/family/'.$masjid->id.'/sign-in?next='
-            .rawurlencode('/family/'.$masjid->id.'/classes/'.$group->id.'/report');
-        $teacherUrl = $base.'/teacher/classes/'.$group->id.'?tab=points';
+            .rawurlencode('/family/'.$masjid->id.'/classes/'.$group->id.'/report?week='.$weekStart);
+        $teacherUrl = $base.'/teacher/classes/'.$group->id.'?tab=points&week='.$weekStart;
 
         $sentFamilies = $this->deliver($families, WeeklyPointsReportMail::AUDIENCE_FAMILY, $familyUrl, $orgName, $groupLabel, $orgEmail, $run);
         $sentTeachers = $this->deliver($teachers, WeeklyPointsReportMail::AUDIENCE_TEACHER, $teacherUrl, $orgName, $groupLabel, $orgEmail, $run);
+
+        // Every address failed (the mail transport was down): nobody was told, so the
+        // claim is given back and the next hourly run, still inside the catch-up window,
+        // tries again. ONLY on total failure: after a partial send a retry would tell the
+        // families who already have it a second time.
+        if ($sentFamilies + $sentTeachers === 0) {
+            BehaviorWeek::release((int) $group->id, $weekStart);
+            $run['classes_undelivered']++;
+
+            return;
+        }
 
         DB::table('behavior_weeks')
             ->where('group_id', $group->id)

@@ -82,6 +82,19 @@ class BehaviorWeek extends Model
             ->update(['report_sent_at' => $now, 'updated_at' => $now]) === 1;
     }
 
+    /**
+     * Give a claim back after a send in which NOT ONE mail went out, so the next run may
+     * try the week again. The command calls this only on total failure; releasing after a
+     * partial send would tell the families who already have the notice a second time.
+     */
+    public static function release(int $groupId, string $weekStart): void
+    {
+        DB::table('behavior_weeks')
+            ->where('group_id', $groupId)
+            ->where('week_start', $weekStart)
+            ->update(['report_sent_at' => null, 'recipients_count' => null, 'updated_at' => now()]);
+    }
+
     /** Has this class's report for this week already been claimed? */
     public static function sent(int $groupId, string $weekStart): bool
     {

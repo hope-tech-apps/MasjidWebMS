@@ -110,7 +110,7 @@
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
-import { signedPoints, weekRangeLabel } from '@/core/helpers/pointsWeek';
+import { signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
@@ -208,7 +208,9 @@ onMounted(async () => {
         const res = await FamilyApiService.get(run.base);
         if (run.stale()) return;
         group.value = res.data?.data ?? null;
-        await loadWeek(run, 'current');
+        // The week the emailed link named (?week=), else the week in progress: a parent who opens
+        // Friday's report on Sunday must still see the week it was about.
+        await loadWeek(run, weekFromQuery(route.query.week) ?? 'current');
     } catch (e: any) {
         if (run.stale()) return;
         if (!fail(e)) error.value = 'weekly_report_load_error';

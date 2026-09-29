@@ -47,6 +47,17 @@ function calendarDay(iso: string | null | undefined): Date | null {
 }
 
 /**
+ * The week a link names: `?week=YYYY-MM-DD` from the Friday report's email (the first day of
+ * the week that was reported), or null for "the week in progress". Anything that is not one
+ * real calendar day (an array from a repeated key, a made-up date, a sentence) is null, so a
+ * mangled link opens the current week instead of sending the server a value it would 422.
+ * The server decides which week the day belongs to; nothing is worked out from the browser's clock.
+ */
+export function weekFromQuery(value: unknown): string | null {
+    return typeof value === 'string' && calendarDay(value) !== null ? value : null;
+}
+
+/**
  * "Oct 4 - Oct 10" (or "Oct 4, 2026 - Jan 2, 2027" across a year), in the parent's
  * language. Formatted in UTC from the server's calendar dates, so the browser's own
  * zone can never shift a date by one.

@@ -1,6 +1,6 @@
 import { RouteRecordRaw } from "vue-router";
 import { useFamilyStore } from "@/stores/familyStore";
-import { familyRouteRedirect } from "@/core/helpers/familySessions";
+import { familyReturnTarget, familyRouteRedirect } from "@/core/helpers/familySessions";
 
 /**
  * The parent portal.
@@ -101,8 +101,9 @@ const familyRoutes: RouteRecordRaw[] = [
             // `beforeEnter` does not see.
             return familyRouteRedirect(familyStore.slots, to.params.masjidId as string, !!to.meta?.family,
                 // The weekly report is what the Friday email links to: a parent with no
-                // session signs in and comes back to it (see familyNextPath).
-                to.meta?.returnAfterSignIn ? to.path : undefined);
+                // session signs in and comes back to it, to the same WEEK when the link
+                // names one (see familyNextPath).
+                to.meta?.returnAfterSignIn ? familyReturnTarget(to.path, to.query.week) : undefined);
         },
     },
 ];

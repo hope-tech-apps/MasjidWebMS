@@ -868,7 +868,10 @@ positioning, not its configuration.
   - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
     with `?week=`, for the parent's own children only, printable, and says so when a read fails.
     Sign-in follows `?next=` only for that one path shape for the same school
-    (`familyNextPath`).
+    (`familyNextPath`), optionally with `?week=YYYY-MM-DD` (a real date): both emailed links NAME the
+    week that was reported, so a link opened on the Sunday after still shows that week, not the new one.
+  - **A send in which every email failed is given back** (`BehaviorWeek::release`), so the next run
+    inside the 12-hour window retries; a partial send keeps its claim (a retry would double-send).
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 

@@ -2201,7 +2201,7 @@ import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
-import { isWeekly, pointsHeadline, signedPoints, weekRangeLabel } from '@/core/helpers/pointsWeek';
+import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
@@ -2231,6 +2231,9 @@ const error = ref('');
 // `?tab=points` is what the weekly class-summary email links to (T-003.3). The one tab a
 // link may open, so an arbitrary query value can never select a tab the screen hides.
 const activeTab = ref<TabKey>(route.query.tab === 'points' ? 'points' : 'roster');
+// `?week=` (with `?tab=points`) names the week the email reported, so the Points tab opens on
+// that week and not on the one in progress; null (or an invalid value) is the current week.
+const linkedPointsWeek = route.query.tab === 'points' ? weekFromQuery(route.query.week) : null;
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },
@@ -4335,6 +4338,13 @@ const loadPointsTotals = async (week: string | null = null) => {
         pointsTotalsFailed.value = true;
     }
 };
+// Landing on the Points tab from the email link (?tab=points) is not a tab CHANGE, so the watch on
+// `activeTab` below never fires for it: load what the tab shows here, on the reported week.
+onMounted(() => {
+    if (activeTab.value !== 'points') return;
+    loadSkills();
+    loadPointsTotals(linkedPointsWeek);
+});
 const selectedPointsTotal = computed(() => pointsTotals.value?.students
     ?.find((t: any) => String(t.membership_id) === String(pointsMembership.value)) ?? null);
 

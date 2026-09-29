@@ -4865,3 +4865,33 @@ this school"; `last_sign_in_at` is removed from the Team payload (the SPA was it
     so there is no collision; the integrator should expect the same five files to conflict with any other wave that adds a grant.
   - **Not done, on purpose.** The child's week inside the email (a template-only follow-up if the owner reverses B5). Reach is limited: only
     guardians with a live family login are reachable, about 10 at Al-Razi and 0 at BISS on 2026-09-28 (to tell the owner at ship).
+
+- **2026-09-29 (school side quest W4, review fixes to T-003.3): the report's links name the week; a total send failure gives the claim back.**
+  From the seven-lens review of 7c30697a. Each fix has a test that fails without it.
+  - **Both links carry the reported week.** `/family/{school}/sign-in?next=/family/{school}/classes/{class}/report?week=YYYY-MM-DD` and
+    `/teacher/classes/{class}?tab=points&week=YYYY-MM-DD`, where the date is the points week the sweep reported (its first day, the same value
+    as `behavior_weeks.week_start`), not the week holding "now". Before, both opened the week in progress, so Al-Razi's Friday 15:00 email read
+    on Sunday or Monday landed on a new, empty week (`weekly_report_none`). `familyNextPath` now admits exactly one query shape after the
+    report path, `?week=` plus a REAL calendar date (open-redirect cases still tested); the family route hands the week through sign-in
+    (`familyReturnTarget`, which drops every other query); `FamilyWeeklyReport.vue` and the teacher's Points tab read it through
+    `weekFromQuery` and fall back to the current week when it is absent or invalid. Found while wiring the teacher side: landing on the Points
+    tab from `?tab=points` is not a tab change, so the `watch(activeTab)` that loads the totals never fired and the tab opened with no totals at
+    all; a mount hook now loads them (on the linked week). Not changed: the teacher's sign-in does not carry `next` for the teacher realm
+    (unchanged from before; an already signed-in teacher lands on the week, a signed-out one signs in and opens the class).
+  - **A class whose every email failed is not left "sent".** After the deliveries, if no mail went out at all (the transport was down),
+    `BehaviorWeek::release()` clears `report_sent_at` and `recipients_count` so the next hourly run, inside the 12-hour catch-up window, tries
+    again; the class is counted as `classes_undelivered` (and is on the monitors line and in the command output), not as `classes_sent`. Only on
+    TOTAL failure: after a partial send the claim stays, because a retry would tell the families who already have it a second time. The window
+    still bounds a long outage (a test brings the transport back after 12 hours and nothing goes). The earlier "a crash between the claim and
+    the mail loses that notice" stands: a process that dies cannot release.
+  - **A closure on any day of the week skips the whole report.** This was already the behaviour (`closureWithin(start, last)`); now it is
+    decided and tested: first day, a middle day, the send day, the last day skip the week, the day before and the day after do not.
+    Whether a Monday holiday SHOULD skip a whole Friday report is the owner's to say; Unknown, needs investigation, and it is one call to change.
+  - **Tests added for behaviour that was already right, so a regression fails:** the guardian query is scoped to the class (a guardian of the
+    same child in another class only, and an unconsented edge here beside a consented one there, are not told); the catch-up window is exactly
+    12 hours in both branches (11:59:59 sends, 12:00:00 does not); a retired (`is_active = false`) class is not reported; a weekly class still
+    serves a parent the whole record with no `?week=` (summary and list); `24:00`, `24:30` and `23:60` are refused as a report time; the BISS seed
+    migration refuses a non-school and a soft-deleted org 18 even with the right name.
+  - **Left as they were.** The resolver's own `->current()` on the ward query is redundant with the command's (defence in depth; the
+    review marked the mutant equivalent). The `familyLoginIsActive` and `PointsWeek::containing` time-zone mutants that survived the command
+    test file alone are covered elsewhere or unconfirmed; not re-litigated here.

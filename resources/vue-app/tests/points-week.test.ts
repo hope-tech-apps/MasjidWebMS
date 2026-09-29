@@ -6,7 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWeekly, pointsHeadline, signedPoints, weekRangeLabel } from '../core/helpers/pointsWeek.ts';
+import { readFileSync } from 'node:fs';
+import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '../core/helpers/pointsWeek.ts';
 
 test('only the word weekly makes a class weekly', () => {
     assert.equal(isWeekly('weekly'), true);
@@ -63,4 +64,24 @@ test('a week across new year names both years', () => {
 test('a value that is not a date is printed as given rather than as Invalid Date', () => {
     assert.equal(weekRangeLabel('soon', '2026-10-10'), 'soon - 2026-10-10');
     assert.equal(weekRangeLabel('2026-02-30', '2026-03-05'), '2026-02-30 - 2026-03-05');
+});
+
+test('a linked week is one real calendar day, else the week in progress', () => {
+    assert.equal(weekFromQuery('2026-10-04'), '2026-10-04');
+    assert.equal(weekFromQuery('2028-02-29'), '2028-02-29');
+
+    // Not a date, not a real date, a repeated key, an empty value, a sentence: null = "current".
+    for (const bad of [undefined, null, '', 'current', '2026-02-30', '2026-13-01', '2026-10-4', '2026-10-04 ', ' 2026-10-04',
+        '2026-10-04&x=1', ['2026-10-04'], ['2026-10-04', '2026-10-11'], 20261004, {}]) {
+        assert.equal(weekFromQuery(bad), null, JSON.stringify(bad));
+    }
+});
+
+test('the teacher\'s Points tab opens on the week the email reported and loads on landing', () => {
+    const view = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+
+    // The link's week is read only together with ?tab=points, through the validator.
+    assert.match(view, /linkedPointsWeek = route\.query\.tab === 'points' \? weekFromQuery\(route\.query\.week\) : null/);
+    // Landing on the tab is not a tab change, so the watch never fires for it: the mount hook loads it.
+    assert.match(view, /onMounted\(\(\) => \{\s*if \(activeTab\.value !== 'points'\) return;\s*loadSkills\(\);\s*loadPointsTotals\(linkedPointsWeek\);\s*\}\);/);
 });

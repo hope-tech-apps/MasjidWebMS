@@ -406,6 +406,44 @@ class WeeklyPointsReportTest extends TestCase
     }
 
     #[Test]
+    public function the_catch_up_window_is_exactly_twelve_hours_from_the_moment(): void
+    {
+        $this->ordinaryWeek();        // the moment is Friday 2026-10-09 15:00 EDT
+
+        // Twelve hours to the second: the window has closed (its edge is exclusive).
+        $this->now('2026-10-10 03:00:00');
+        $out = $this->run_();
+        Mail::assertNothingSent();
+        $this->assertStringContainsString('0 class(es) sent', $out);
+        $this->assertSame(0, DB::table('behavior_weeks')->count());
+
+        // One second inside it, eleven hours fifty-nine minutes fifty-nine seconds after: still owed.
+        $this->now('2026-10-10 02:59:59');
+        $this->run_();
+        $this->assertSame(['huda@fam.test'], $this->families());
+    }
+
+    #[Test]
+    public function the_window_into_the_next_week_is_exactly_twelve_hours_too(): void
+    {
+        // Saturday 23:00 moment; the window runs into Sunday, where the previous week is picked up.
+        MasjidPointsSetting::create(['masjid_id' => $this->masjid->id, 'report_weekday' => 6, 'report_time' => '23:00']);
+        $this->award('2026-10-06 10:00', $this->amiraMembership);
+
+        // Sunday 11:00:00 is twelve hours after: closed.
+        $this->now('2026-10-11 11:00:00');
+        $this->run_();
+        Mail::assertNothingSent();
+        $this->assertSame(0, DB::table('behavior_weeks')->count());
+
+        // Sunday 10:59:59: eleven hours fifty-nine minutes fifty-nine seconds after: still owed.
+        $this->now('2026-10-11 10:59:59');
+        $this->run_();
+        $this->assertSame(['huda@fam.test'], $this->families());
+        $this->assertSame(['2026-10-04'], DB::table('behavior_weeks')->pluck('week_start')->all());
+    }
+
+    #[Test]
     public function a_moment_late_on_saturday_still_catches_up_after_midnight_into_the_next_week(): void
     {
         // Saturday 23:00: the catch-up window runs into Sunday, where the week containing "now" is the NEXT
@@ -667,6 +705,9 @@ class WeeklyPointsReportTest extends TestCase
         $this->guardianOf($this->amira, 'revoked@fam.test', ['revoked' => true]);
         $this->guardianOf($this->amira, 'no-login@fam.test', ['login' => false]);
         $this->guardianOf($this->amira, 'self-asserted@fam.test', ['provenance' => GroupMembership::PROVENANCE_SELF_ASSERTED]);
+        // An address on file whose login was never switched on (login_enabled_at is null): not a live login.
+        $never = $this->guardianOf($this->amira, 'never-enabled@fam.test');
+        $never->forceFill(['login_enabled_at' => null])->save();
 
         $this->now('2026-10-09 15:00');
         $this->run_();
@@ -686,6 +727,51 @@ class WeeklyPointsReportTest extends TestCase
         DB::table('group_memberships')
             ->where('contact_id', $departed->id)->where('role', GroupMembership::ROLE_GUARDIAN)
             ->update(['left_on' => '2026-10-05']);
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+
+        $this->assertSame(['huda@fam.test'], $this->families());
+    }
+
+    private function secondClass(string $name = 'Hifdh circle'): Group
+    {
+        return Group::factory()->create([
+            'masjid_id' => $this->masjid->id, 'kind' => Group::KIND_HALAQA, 'name' => $name,
+        ]);
+    }
+
+    #[Test]
+    public function a_guardian_of_the_same_child_in_another_class_only_is_not_told_about_this_class(): void
+    {
+        // Amira is in Grade 3 AND in a hifdh circle. Kareem holds a consented, current, confirmed edge over
+        // her in the CIRCLE only. He has no standing in Grade 3, and its report is none of his business.
+        $circle = $this->secondClass();
+        $this->participant($this->amira, $circle);
+        $this->guardianOf($this->amira, 'kareem@fam.test', ['group' => $circle]);
+        $this->ordinaryWeek();
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+
+        $this->assertSame(['huda@fam.test'], $this->families(), 'the guardian is Grade 3\'s, not the circle\'s');
+    }
+
+    #[Test]
+    public function a_guardian_consented_in_another_class_but_not_in_this_one_is_not_told(): void
+    {
+        // Layla is Amira's guardian in Grade 3 WITHOUT consent, and holds a consented edge in the circle.
+        // Consent is per class: the circle's does not carry over.
+        $circle = $this->secondClass();
+        $this->participant($this->amira, $circle);
+        $layla = $this->guardianOf($this->amira, 'layla@fam.test', ['consented' => false]);
+        GroupMembership::create([
+            'masjid_id' => $this->masjid->id, 'group_id' => $circle->id,
+            'contact_id' => $layla->id, 'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $this->amira->id,
+            'consent_granted_at' => now(), 'consent_scope' => GroupMembership::CONSENT_FEED,
+        ]);
+        $this->ordinaryWeek();
 
         $this->now('2026-10-09 15:00');
         $this->run_();
@@ -865,8 +951,9 @@ class WeeklyPointsReportTest extends TestCase
 
         $mail = collect(Mail::sent(WeeklyPointsReportMail::class))->first(fn ($m) => $m->audience === 'family');
 
+        // The link names the week that was reported (?week=), so it still opens THAT week on Sunday.
         $expected = rtrim((string) config('app.url'), '/')."/family/{$this->masjid->id}/sign-in?next="
-            .rawurlencode("/family/{$this->masjid->id}/classes/{$this->group->id}/report");
+            .rawurlencode("/family/{$this->masjid->id}/classes/{$this->group->id}/report?week=2026-10-04");
 
         $this->assertSame($expected, $mail->url);
         $this->assertStringContainsString($expected, $mail->render());
@@ -884,12 +971,37 @@ class WeeklyPointsReportTest extends TestCase
         $html = $mail->render();
 
         $this->assertSame('Your weekly class summary is ready', $mail->build()->subject);
-        $this->assertSame(rtrim((string) config('app.url'), '/')."/teacher/classes/{$this->group->id}?tab=points", $mail->url);
+        $this->assertSame(rtrim((string) config('app.url'), '/')."/teacher/classes/{$this->group->id}?tab=points&week=2026-10-04", $mail->url);
         $this->assertStringNotContainsString('/family/', $html, 'a teacher is not sent to the family door');
 
         foreach (['Amira', 'Zzyzx', '91'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $html);
         }
+    }
+
+    #[Test]
+    public function both_links_name_the_week_that_was_reported_even_when_the_email_goes_out_in_the_next_one(): void
+    {
+        // A Saturday 23:00 school: the report for the week of 2026-10-04 goes out on the Sunday after
+        // midnight (a catch-up), where "this week" is already the NEXT week. A link that says nothing about
+        // the week would open the new, empty one; both must name 2026-10-04.
+        MasjidPointsSetting::create(['masjid_id' => $this->masjid->id, 'report_weekday' => 6, 'report_time' => '23:00']);
+        $this->award('2026-10-06 10:00', $this->amiraMembership);
+
+        $this->now('2026-10-11 01:30');
+        $this->run_();
+
+        $family = collect(Mail::sent(WeeklyPointsReportMail::class))->first(fn ($m) => $m->audience === 'family');
+        $teacher = collect(Mail::sent(WeeklyPointsReportMail::class))->first(fn ($m) => $m->audience === 'teacher');
+
+        parse_str((string) parse_url($family->url, PHP_URL_QUERY), $query);
+        $this->assertSame("/family/{$this->masjid->id}/classes/{$this->group->id}/report?week=2026-10-04", $query['next']);
+
+        parse_str((string) parse_url($teacher->url, PHP_URL_QUERY), $teacherQuery);
+        $this->assertSame(['tab' => 'points', 'week' => '2026-10-04'], $teacherQuery);
+
+        // The week the link names is the one the sweep recorded, not the one holding "now".
+        $this->assertSame(['2026-10-04'], DB::table('behavior_weeks')->pluck('week_start')->all());
     }
 
     #[Test]
@@ -935,6 +1047,86 @@ class WeeklyPointsReportTest extends TestCase
         $this->assertNotContains('huda@fam.test', $delivered);
         Log::shouldHaveReceived('warning')->withArgs(fn ($m) => str_contains((string) $m, 'huda@fam.test'))->atLeast()->once();
         $this->assertSame(1, (int) DB::table('behavior_weeks')->value('recipients_count'), 'only the delivered family is counted');
+        $this->assertSame(1, $this->claimed(), 'a PARTIAL send keeps its claim: a retry would tell the delivered families twice');
+    }
+
+    /** Swap the fake for the real array mailer, whose send() can be made to throw while `$down` is true. */
+    private function mailTransportThatCanGoDown(bool &$down): void
+    {
+        app()->forgetInstance('mail.manager');
+        \Illuminate\Support\Facades\Facade::clearResolvedInstance('mail.manager');
+        Event::listen(\Illuminate\Mail\Events\MessageSending::class, function () use (&$down) {
+            if ($down) {
+                throw new \RuntimeException('smtp is down');
+            }
+        });
+    }
+
+    /** @return list<string> */
+    private function deliveredAddresses(): array
+    {
+        return collect(app('mail.manager')->mailer('array')->getSymfonyTransport()->messages())
+            ->flatMap(fn ($m) => collect($m->getEnvelope()->getRecipients())->map(fn ($a) => $a->getAddress()))
+            ->sort()->values()->all();
+    }
+
+    #[Test]
+    public function a_class_whose_every_email_failed_is_not_claimed_and_is_retried_by_the_next_run(): void
+    {
+        $this->ordinaryWeek();
+        $down = true;
+        $this->mailTransportThatCanGoDown($down);
+        Log::spy();
+        $channel = Mockery::spy(LoggerInterface::class);
+        Log::shouldReceive('channel')->with('monitors')->andReturn($channel);
+
+        // The transport is down at the 15:00 sweep: the family and the teacher both fail.
+        $this->now('2026-10-09 15:00');
+        $out = $this->run_();
+
+        $this->assertSame([], $this->deliveredAddresses());
+        $this->assertSame(0, $this->claimed(), 'nobody was told, so the week is not marked as sent');
+        $this->assertNull(DB::table('behavior_weeks')->value('recipients_count'));
+        $this->assertStringContainsString('0 class(es) sent', $out);
+        $this->assertStringContainsString('1 undelivered', $out);
+        $channel->shouldHaveReceived('info')->withArgs(fn ($m, $ctx) => $m === 'points:weekly-report'
+            && $ctx['classes_sent'] === 0 && $ctx['classes_undelivered'] === 1 && $ctx['failures'] === 2);
+
+        // The transport comes back an hour later, inside the catch-up window: the next run tells them.
+        $down = false;
+        $this->now('2026-10-09 16:00');
+        $out = $this->run_();
+
+        $this->assertSame(['huda@fam.test', 'teacher@school.test'], $this->deliveredAddresses());
+        $this->assertSame(1, $this->claimed());
+        $this->assertSame(1, (int) DB::table('behavior_weeks')->value('recipients_count'));
+        $this->assertStringContainsString('1 class(es) sent', $out);
+
+        // ...and once told, never again.
+        $this->now('2026-10-09 17:00');
+        $this->run_();
+        $this->assertSame(['huda@fam.test', 'teacher@school.test'], $this->deliveredAddresses());
+    }
+
+    #[Test]
+    public function a_total_outage_is_still_bounded_by_the_catch_up_window(): void
+    {
+        $this->ordinaryWeek();
+        $down = true;
+        $this->mailTransportThatCanGoDown($down);
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+        $this->now('2026-10-10 02:00');
+        $this->run_();
+        $this->assertSame(0, $this->claimed());
+
+        // Back up only after the window has closed: the report does not go out a day late.
+        $down = false;
+        $this->now('2026-10-10 03:00:00');
+        $this->run_();
+
+        $this->assertSame([], $this->deliveredAddresses());
     }
 
     #[Test]
@@ -985,6 +1177,60 @@ class WeeklyPointsReportTest extends TestCase
         $this->assertSame(0, DB::table('behavior_weeks')->count());
 
         $this->now('2026-10-18 18:00');
+        $this->run_();
+        $this->assertSame(['huda@fam.test'], $this->families());
+    }
+
+    #[Test]
+    public function a_closure_on_any_day_of_the_week_skips_it_and_one_just_outside_it_does_not(): void
+    {
+        // The Friday school's week is Sunday 2026-10-04 to Saturday 2026-10-10, sent on Friday the 9th.
+        $year = SchoolYear::create([
+            'masjid_id' => $this->masjid->id, 'label' => '2026-27',
+            'first_day' => '2026-09-06', 'last_day' => '2027-06-13',
+        ]);
+        $this->ordinaryWeek();
+
+        foreach ([
+            // [closed on, is the week skipped?, where in the week that is]
+            ['2026-10-04', true, 'the first day'],
+            ['2026-10-07', true, 'a middle day, not the send day'],
+            ['2026-10-09', true, 'the send day'],
+            ['2026-10-10', true, 'the last day, after the send moment'],
+            ['2026-10-03', false, 'the day before the week'],
+            ['2026-10-11', false, 'the day after the week'],
+        ] as [$closed, $skipped, $where]) {
+            Mail::fake();
+            DB::table('behavior_weeks')->delete();
+            SchoolClosure::withoutMasjidScope()->delete();
+            SchoolClosure::create([
+                'masjid_id' => $this->masjid->id, 'school_year_id' => $year->id,
+                'closed_on' => $closed, 'reason' => 'Closed',
+            ]);
+
+            $this->now('2026-10-09 15:00');
+            $this->run_();
+
+            $this->assertSame($skipped ? [] : ['huda@fam.test'], $this->families(), "closure on {$where} ({$closed})");
+        }
+    }
+
+    #[Test]
+    public function a_retired_class_is_not_told_about_and_claims_nothing(): void
+    {
+        $this->ordinaryWeek();
+        // Retiring a class means is_active = false (groups.md); its last awards must not produce a notice.
+        DB::table('groups')->where('id', $this->group->id)->update(['is_active' => false]);
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+
+        Mail::assertNothingSent();
+        $this->assertSame(0, DB::table('behavior_weeks')->count());
+
+        // Brought back, it is reported again.
+        DB::table('groups')->where('id', $this->group->id)->update(['is_active' => true]);
+        $this->now('2026-10-09 16:00');
         $this->run_();
         $this->assertSame(['huda@fam.test'], $this->families());
     }
@@ -1158,7 +1404,7 @@ class WeeklyPointsReportTest extends TestCase
         foreach ([
             ['report_weekday' => 7], ['report_weekday' => -1], ['report_weekday' => 'friday'], ['report_weekday' => 1.5],
             ['report_weekday' => 10], ['report_weekday' => true],
-            ['report_time' => '25:00'], ['report_time' => '9:00'], ['report_time' => '15:00:00'], ['report_time' => '15:60'],
+            ['report_time' => '25:00'], ['report_time' => '24:00'], ['report_time' => '24:30'], ['report_time' => '23:60'], ['report_time' => '9:00'], ['report_time' => '15:00:00'], ['report_time' => '15:60'],
             ['report_time' => 'noon'], ['report_time' => 1500], ['report_time' => ['15:00']],
             [],
         ] as $body) {
@@ -1275,5 +1521,30 @@ class WeeklyPointsReportTest extends TestCase
         $row->forceFill(['report_time' => '18:00'])->save();
         $migration->down();
         $this->assertSame(0, MasjidPointsSetting::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function the_biss_schedule_migration_refuses_a_non_school_and_a_deleted_organisation_even_with_the_right_name(): void
+    {
+        $migration = require base_path('database/migrations/2026_10_02_130000_seed_points_report_schedule_for_biss.php');
+
+        // Organisation 18 has the Sunday school's NAME but is a masjid: the org_type guard stops it.
+        Masjid::forceCreate([
+            'id' => 18, 'name' => 'Burlington Islamic Sunday School', 'email' => 'x@y.test', 'phone' => '+15550000018',
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St', 'latitude' => 0.0, 'longitude' => 0.0,
+            'crm_enabled' => true, 'org_type' => 'masjid',
+        ]);
+        $migration->up();
+        $this->assertSame(0, MasjidPointsSetting::withoutMasjidScope()->count(), 'a masjid is not the Sunday school');
+
+        // A school with the right name that has been soft-deleted: the deleted_at guard stops it.
+        DB::table('masjids')->where('id', 18)->update(['org_type' => 'school', 'deleted_at' => now()]);
+        $migration->up();
+        $this->assertSame(0, MasjidPointsSetting::withoutMasjidScope()->count(), 'a deleted organisation gets no row');
+
+        // Live and a school: only now is the row written (the two guards were what held it back).
+        DB::table('masjids')->where('id', 18)->update(['deleted_at' => null]);
+        $migration->up();
+        $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count());
     }
 }
