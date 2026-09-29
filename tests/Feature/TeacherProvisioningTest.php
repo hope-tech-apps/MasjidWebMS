@@ -236,7 +236,7 @@ class TeacherProvisioningTest extends TestCase
         // attach() runs its extras through GroupStaff::fill(), which drops a column
         // outside $fillable. GroupStaff's creating hook now records the actor.
         Mail::fake();
-        $someoneElse = User::factory()->create();
+        $someoneElse = User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)]);
 
         $id = $this->postJson($this->base().'/teachers', [
             'name' => 'Br. Audit', 'email' => 'audit@school.test',
@@ -255,7 +255,7 @@ class TeacherProvisioningTest extends TestCase
     public function a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner(): void
     {
         $teacher = $this->makeTeacher([$this->classOne->id]);
-        $earlier = User::factory()->create();
+        $earlier = User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)]);
         GroupStaff::withoutMasjidScope()->where('user_id', $teacher->id)
             ->update(['assigned_by_user_id' => $earlier->id]);
 
@@ -274,7 +274,7 @@ class TeacherProvisioningTest extends TestCase
     #[Test]
     public function a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess(): void
     {
-        $teacher = User::factory()->create(['type' => 'Teacher']);
+        $teacher = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
         $this->app['auth']->forgetGuards();
 
         $this->classOne->staff()->attach($teacher->id, [
