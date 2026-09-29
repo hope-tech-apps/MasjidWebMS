@@ -5,9 +5,11 @@ namespace App\Services\Groups;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupThread;
 use App\Models\User;
 use App\Support\GroupAudience;
 use App\Support\NudgeRecipient;
+use App\Support\TenantContext;
 use Illuminate\Support\Collection;
 
 /**
@@ -123,6 +125,115 @@ class GroupNotificationRecipientResolver
             ->filter();
 
         return $this->finalize($staff->merge($leaderContacts), $authorAddress);
+    }
+
+    /**
+     * The one person a reaction digest goes to — the AUTHOR of the story or the
+     * message — IF they may still read what was reacted to, checked NOW, at send
+     * time (owner, 2026-09-29).
+     *
+     * A reaction outlives the standing of the person it is about. A guardian who
+     * wrote a message, and then withdrew consent or left the class, must not be
+     * mailed about it; a teacher taken off the class, or an office administrator
+     * who published a story but is not on the roster and so cannot read it back,
+     * has nothing to sign in to. `$subjects` are the things the digest covers
+     * ('story', 'thread:{id}'); one still readable is enough to send.
+     *
+     * Returns zero or one recipient: the address they SIGN IN with, and only while
+     * a guardian's family login is live.
+     *
+     * @param  list<string>  $subjects
+     * @return Collection<int,NudgeRecipient>
+     */
+    public function reactionRecipient(Group $group, ?int $userId, ?int $contactId, array $subjects): Collection
+    {
+        foreach ($subjects as $subject) {
+            $threadId = str_starts_with($subject, 'thread:') ? (int) substr($subject, 7) : null;
+
+            if ($subject !== 'story' && ($threadId === null || $threadId <= 0)) {
+                continue;
+            }
+
+            $principal = $this->principal($userId, $contactId);
+
+            if ($principal === null || ! $this->mayRead($group, $principal, $threadId)) {
+                continue;
+            }
+
+            $recipient = $principal instanceof User ? $this->fromUser($principal) : $this->fromContact($principal);
+
+            return $recipient !== null ? collect([$recipient]) : collect();
+        }
+
+        return collect();
+    }
+
+    /**
+     * May this staff user or guardian STILL read the story (`$threadId` null) or
+     * the thread, right now? The reaction digest asks it of the reactor, so a
+     * reaction from somebody who lost their standing since the tap is not
+     * announced, and (through reactionRecipient) of the author.
+     */
+    public function principalMayStillRead(Group $group, ?int $userId, ?int $contactId, ?int $threadId): bool
+    {
+        $principal = $this->principal($userId, $contactId);
+
+        return $principal !== null && $this->mayRead($group, $principal, $threadId);
+    }
+
+    private function principal(?int $userId, ?int $contactId): User|Contact|null
+    {
+        if ($userId !== null) {
+            return User::withoutGlobalScopes()->find($userId);
+        }
+
+        // Contact soft-deletes: a trashed guardian is null here, i.e. nobody.
+        return $contactId !== null ? Contact::withoutMasjidScope()->find($contactId) : null;
+    }
+
+    /**
+     * GroupAudience's own answer, asked with the tenant bound to the group's
+     * organisation for the duration: the email-to-Contact bridge and the
+     * guardian's identity both resolve inside the BOUND tenant, and a job or a
+     * console sweep starts unbound (which would read as "no standing").
+     */
+    private function mayRead(Group $group, User|Contact $principal, ?int $threadId): bool
+    {
+        $audience = app(GroupAudience::class);
+        $tenant = app(TenantContext::class);
+        $previousId = $tenant->get();
+        $previousMembership = $tenant->membership();
+
+        $tenant->set((int) $group->masjid_id);
+
+        try {
+            // A guardian who has LEFT the class is told nothing about it. The
+            // thread rules deliberately keep a departed family's OWN record
+            // readable (a conversation about their child does not vanish), which
+            // is right for a screen they open and wrong for an email the school
+            // pushes to them, or for counting them as a reactor. Standing here
+            // means at least one guardian edge still on the roster.
+            if ($principal instanceof Contact
+                && $audience->membershipsFor($principal, $group)->every(fn (GroupMembership $m): bool => $m->hasLeft())) {
+                return false;
+            }
+
+            if ($threadId === null) {
+                return $audience->mayReceive($principal, $group, GroupAudience::DISCLOSURE_FEED);
+            }
+
+            $thread = GroupThread::withoutMasjidScope()->where('group_id', $group->id)->find($threadId);
+
+            return $thread !== null && ! $thread->trashed() && $audience->mayReceiveThread($principal, $group, $thread);
+        } finally {
+            if ($previousId === null) {
+                $tenant->forgetTenant();
+            } elseif ($previousMembership !== null) {
+                $tenant->setFromMembership($previousMembership);
+            } else {
+                $tenant->set($previousId);
+            }
+        }
     }
 
     /**

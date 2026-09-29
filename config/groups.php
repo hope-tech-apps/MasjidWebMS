@@ -61,6 +61,29 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | The reaction digest (owner, 2026-09-29)
+    |--------------------------------------------------------------------------
+    |
+    | `groups:notify-reactions` (hourly) emails the AUTHOR of a class story or a
+    | message, once, that there are new reactions — content-free, no names, no
+    | emoji. A tap itself notifies nobody.
+    |
+    */
+
+    'reactions' => [
+
+        /*
+         * Minutes a reaction must have stood before the digest counts it: a tap
+         * taken back inside it is deleted and never announced, and a burst of
+         * reactions on one story is one email. An ESTIMATE, not a measurement:
+         * production had 0 reactions when it was set. Change it once there is data.
+         */
+        'settle_minutes' => (int) env('GROUP_REACTION_SETTLE_MINUTES', 10),
+
+    ],
+
     'story_reads' => [
 
         'enabled' => filter_var(env('GROUP_STORY_READS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),

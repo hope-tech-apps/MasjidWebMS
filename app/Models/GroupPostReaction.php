@@ -42,6 +42,11 @@ class GroupPostReaction extends Model
         'contact_id',
     ];
 
+    protected function casts(): array
+    {
+        return ['notified_at' => 'datetime'];
+    }
+
     protected static function booted(): void
     {
         static::saving(function (self $reaction): void {

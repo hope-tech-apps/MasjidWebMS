@@ -286,7 +286,8 @@ Route::prefix('family')
                     // withdrawn, or a family that has left the class, is refused
                     // and nothing is written. The post is found THROUGH the
                     // group and the contact comes from the token; there is no
-                    // payload and nothing is dispatched at the tap.
+                    // payload and nothing is dispatched at the tap (the author
+                    // hears once, in the hourly digest `groups:notify-reactions`).
                     Route::put('/{post_id}/reactions/{reaction}', 'react');
                     Route::delete('/{post_id}/reactions/{reaction}', 'unreact');
 

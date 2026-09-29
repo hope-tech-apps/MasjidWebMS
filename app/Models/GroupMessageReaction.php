@@ -24,8 +24,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * The reacting person is a staff User OR a guardian Contact, never both and
  * never neither (booted()); the principal comes from the token, never from the
- * payload. A reaction is not a message: it sends no notification and has no
- * body, so it is not retained or scrubbed like one.
+ * payload. A reaction is not a message: it has no body, so it is not retained
+ * or scrubbed like one.
+ *
+ * NOTIFICATIONS (owner, 2026-09-29 — this reverses "reactions notify nobody",
+ * 2026-09-21): a tap still dispatches nothing, because a push per 👍 would bury
+ * the replies. The AUTHOR of the message hears about new reactions once, in the
+ * hourly content-free digest `groups:notify-reactions`, which stamps
+ * `notified_at` to claim each row. See App\Console\Commands\NotifyReactions.
  */
 class GroupMessageReaction extends Model
 {
@@ -47,6 +53,11 @@ class GroupMessageReaction extends Model
         'user_id',
         'contact_id',
     ];
+
+    protected function casts(): array
+    {
+        return ['notified_at' => 'datetime'];
+    }
 
     public static function isAllowed(mixed $key): bool
     {
