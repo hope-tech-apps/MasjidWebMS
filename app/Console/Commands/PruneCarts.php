@@ -7,6 +7,7 @@ use App\Models\Order;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Delete open baskets that were abandoned long enough ago (universal cart, brief 5 section 5).
@@ -77,6 +78,17 @@ class PruneCarts extends Command
 
         $verb = $dryRun ? 'Would prune' : 'Pruned';
         $this->info("{$verb} {$count} open basket(s) that expired before {$expiredBefore->toDateTimeString()}.");
+
+        // The scheduled run's only evidence: `schedule:run` discards stdout (routes/console.php,
+        // the retention sweeps), as groups:purge-feed and registrations:reap-expired say. This
+        // deletes personal data on a timer, so a night that found nothing (the cart never
+        // switched on, a schedule that stopped) must look different from a night that ran.
+        // Always emitted, zeros included.
+        Log::info('Cart retention sweep completed.', [
+            'dry_run' => $dryRun,
+            'baskets_expired_before' => $expiredBefore->toIso8601String(),
+            'baskets' => $count,
+        ]);
 
         return self::SUCCESS;
     }

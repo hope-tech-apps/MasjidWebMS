@@ -179,6 +179,45 @@ class CartPruneTest extends TestCase
         $this->assertNull(Cart::withoutMasjidScope()->find($two->id));
     }
 
+    // ------------------------------------------------------------- the trace it leaves
+
+    #[Test]
+    public function a_run_logs_its_counts_because_the_scheduler_throws_stdout_away(): void
+    {
+        $this->basket(['expires_at' => now()->subDays(2)]);
+        $this->basket(['expires_at' => now()->subDays(3)]);
+        $this->basket(['expires_at' => now()->addDay()]);
+
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
+                && $context['dry_run'] === false
+                && $context['baskets'] === 2)
+            ->once();
+    }
+
+    #[Test]
+    public function a_night_that_finds_nothing_still_leaves_a_line_and_a_dry_run_says_so(): void
+    {
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
+                && $context['dry_run'] === false
+                && $context['baskets'] === 0)
+            ->once();
+
+        $this->basket(['expires_at' => now()->subDays(2)]);
+        $this->artisan('cart:prune', ['--dry-run' => true])->assertExitCode(0);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
+                && $context['dry_run'] === true
+                && $context['baskets'] === 1)
+            ->once();
+    }
+
     #[Test]
     public function it_is_on_the_schedule_daily(): void
     {
