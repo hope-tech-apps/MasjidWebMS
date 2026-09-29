@@ -246,7 +246,7 @@ export const UTC_ZONE_NAMES = [
 ];
 
 /** ProvisionMasjidRequest::UTC_FIXED_REFUSAL, word for word. */
-export const UTC_FIXED_REFUSAL = 'Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.';
+export const UTC_FIXED_REFUSAL = "Fixed iqama times need the organisation's own timezone, such as Europe/London. UTC cannot place them.";
 
 /** YYYY-MM-DD, `days` after the YYYY-MM-DD `date`. */
 export function addDays(date: string, days: number): string {

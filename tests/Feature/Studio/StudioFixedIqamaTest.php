@@ -248,10 +248,18 @@ class StudioFixedIqamaTest extends TestCase
     #[Test]
     public function fixed_times_are_refused_for_a_utc_named_timezone(): void
     {
-        foreach (['UTC', 'Etc/UTC', 'GMT'] as $zone) {
+        $this->provisionPrayer(self::NAFIS, 'UTC')
+            ->assertStatus(422)
+            ->assertJsonPath('data.timezone.0', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
+
+        // The other UTC names (Etc/UTC, GMT, ...) are backward-compatible
+        // aliases that the request's own `timezone` rule already refuses: it
+        // takes DateTimeZone::ALL, which lists only UTC. So UTC is the one
+        // name that reaches this check.
+        foreach (['Etc/UTC', 'GMT'] as $zone) {
             $this->provisionPrayer(self::NAFIS, $zone)
                 ->assertStatus(422)
-                ->assertJsonPath('data.timezone.0', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
+                ->assertJsonPath('data', fn ($errors) => isset($errors['timezone']));
         }
 
         $this->assertSame('Fixed iqama times need the organisation\'s own timezone, such as Europe/London. UTC cannot place them.', ProvisionMasjidRequest::UTC_FIXED_REFUSAL);
@@ -274,11 +282,9 @@ class StudioFixedIqamaTest extends TestCase
     {
         $given = ['iqama' => ['fajr' => 25, 'dhuhr' => 10, 'asr' => 12, 'maghrib' => 7, 'isha' => 15]];
 
-        foreach (['UTC', 'Etc/UTC'] as $zone) {
-            $this->provisionPrayer($given, $zone)->assertCreated();
-        }
+        $this->provisionPrayer($given, 'UTC')->assertCreated();
 
-        $this->assertSame(2, Masjid::count());
+        $this->assertSame(1, Masjid::count());
         $this->assertSame(0, IqamaTimeRange::count());
     }
 
