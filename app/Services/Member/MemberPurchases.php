@@ -71,6 +71,8 @@ use Illuminate\Support\Facades\DB;
  * the capability to edit it (routes/api_v1.php, `lunch-orders/{uuid}`). Ownership is
  * asked on every lookup, and a miss, a foreign row, a junk handle and an unknown
  * source all come back as null: the controller turns each into the same 404.
+ *
+ * Pinned by tests/Feature/Member/MemberPurchasesTest.php.
  */
 class MemberPurchases
 {
@@ -219,10 +221,10 @@ class MemberPurchases
      * One page of the caller's orders across every source, newest first.
      *
      * Each item is a bare `{portal_source, portal_id, portal_at}` row and nothing else:
-     * the union carries only the numeric key so it can never mix the collations of a
-     * uuid and a number in one column (MySQL refuses that in a UNION; SQLite, which the
-     * suite runs on, does not, so a test could not have told us). What the member is shown
-     * is read afterwards, per source, by `load()`.
+     * the union carries only the numeric key, so it never puts a uuid and a number in one
+     * column. MySQL can refuse that in a UNION ("Illegal mix of collations") where SQLite,
+     * which the suite runs on, never would, so a test could not have told us. What the
+     * member is shown is read afterwards, per source, by `load()`.
      *
      * The order is total (time, then source, then key) because `paginate()` is
      * LIMIT/OFFSET and MySQL orders equal keys arbitrarily per execution: without the
