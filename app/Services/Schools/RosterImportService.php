@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\User;
 use App\Support\AcademicRecordsHeld;
+use App\Support\ContactIdentity;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -315,19 +316,25 @@ class RosterImportService
         // no row left to lower and the preview says "will be created" for a
         // parent `apply()` — which matches with LOWER(email) — then links. The
         // two halves have to ask the database the same question.
+        //
+        // …AND WHAT COMES BACK IS ONLY A SHORTLIST. Production's `contacts.email` is
+        // utf8mb4_unicode_ci (read 2026-09-29), where `person@gmail.com` =
+        // `person@gmaíl.com`, so the query returns a look-alike for the real
+        // address. `keepExactMatches()` decides, byte for byte, exactly as
+        // `apply()` does — a look-alike contact somebody registered through the
+        // public offering form is not this parent, and must never be reported as
+        // "already on record" here or linked as their guardian there.
         $addresses = array_keys($guardians);
 
-        $onRecord = $addresses === [] ? [] : Contact::query()
+        $candidates = $addresses === [] ? collect() : Contact::query()
             ->whereRaw(
                 'LOWER(email) IN (' . implode(',', array_fill(0, count($addresses), '?')) . ')',
                 $addresses
             )
-            ->pluck('email')
-            ->map(fn ($e) => Str::lower((string) $e))
-            ->all();
+            ->get(['id', 'email']);
 
         foreach ($guardians as $email => $guardian) {
-            $guardians[$email]['existing'] = in_array($email, $onRecord, true);
+            $guardians[$email]['existing'] = ContactIdentity::keepExactMatches($candidates, 'email', (string) $email)->isNotEmpty();
         }
 
         return compact('students', 'guardians', 'edges', 'refused');
@@ -404,7 +411,21 @@ class RosterImportService
                 // — and the engine the tests run on is the one that disagrees
                 // with production. Single quotes in the raw fragment for the
                 // reason `findStudent()` gives.
-                $existing = Contact::whereRaw('LOWER(email) = ?', [$email])->first();
+                //
+                // The query is a SHORTLIST, not the answer: `contacts.email` is
+                // utf8mb4_unicode_ci on production, so `LOWER(email) = ?` also
+                // returns a look-alike (`person@gmaíl.com` for `person@gmail.com`),
+                // and a look-alike contact made through the anonymous
+                // offering-registration door would become the staff-CONFIRMED
+                // guardian of the real parent's children. `keepExactMatches()`
+                // drops it. The importer's rule is unchanged, "the first contact
+                // holding the address"; it now reads the exact holders only, and
+                // there is no `limit` ahead of the filter to cut them off.
+                $existing = ContactIdentity::keepExactMatches(
+                    Contact::whereRaw('LOWER(email) = ?', [$email])->get(),
+                    'email',
+                    (string) $email,
+                )->first();
 
                 if ($existing) {
                     $counts['matched']['guardians']++;

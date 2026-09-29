@@ -281,6 +281,56 @@ class MemberSignInLookAlikeAddressTest extends TestCase
         $this->assertNoAddressWasLogged();
     }
 
+    #[Test]
+    public function adopting_the_address_on_the_link_path_is_refused_cleanly_when_a_look_alike_holds_it(): void
+    {
+        // The LINK path: the office's contact has the address in `email` and no
+        // login yet, and redeeming a code adopts it as `login_email`. Another
+        // contact already holds the look-alike as ITS login, so the collation-equal
+        // unique index refuses the write, which used to surface as a 500.
+        $this->collateContactLoginEmailIndexLikeUnicodeCi();
+
+        $holder = $this->contact(self::STORED, $this->office(), self::THEIRS);
+        $this->assertTheSqlStillFinds('login_email', $holder);
+        $office = $this->contact(null, self::TYPED);
+        $holderBefore = $this->stored($holder);
+        $officeBefore = $this->stored($office);
+        $contactsBefore = Contact::withoutMasjidScope()->count();
+
+        $code = $this->requestCode(self::TYPED);
+        $response = $this->verify(self::TYPED, $code, ['password' => self::MINE]);
+
+        $response->assertStatus(410);
+        $this->assertSame(self::GONE, $response->getContent());
+
+        $this->assertSame($officeBefore, $this->stored($office), 'The office\'s contact was linked or written to.');
+        $this->assertSame([], $office->tokens()->pluck('id')->all(), 'A session was minted for the contact.');
+        $this->assertSame($holderBefore, $this->stored($holder), 'The look-alike\'s holder was written to.');
+        $this->assertSame($contactsBefore, Contact::withoutMasjidScope()->count());
+        $this->assertNotNull(AppSignupCode::withoutMasjidScope()->where('email', self::TYPED)->sole()->consumed_at, 'The code was not spent.');
+
+        $this->assertOneCollisionWarning();
+    }
+
+    #[Test]
+    public function adopting_the_address_on_the_link_path_is_the_same_clean_refusal_when_a_soft_deleted_contact_holds_it(): void
+    {
+        $gone = $this->contact(self::TYPED, $this->office());
+        $gone->delete();
+        $office = $this->contact(null, self::TYPED);
+        $officeBefore = $this->stored($office);
+
+        $code = $this->requestCode(self::TYPED);
+        $response = $this->verify(self::TYPED, $code, ['password' => self::MINE]);
+
+        $response->assertStatus(410);
+        $this->assertSame(self::GONE, $response->getContent());
+        $this->assertSame($officeBefore, $this->stored($office));
+        $this->assertSame([], $office->tokens()->pluck('id')->all());
+        $this->assertNotNull(AppSignupCode::withoutMasjidScope()->where('email', self::TYPED)->sole()->consumed_at);
+        $this->assertOneCollisionWarning();
+    }
+
     // -------------------------------------------------------------- password door
 
     #[Test]
@@ -431,6 +481,17 @@ class MemberSignInLookAlikeAddressTest extends TestCase
     {
         $this->assertSame($before, $this->stored($other), 'The other contact was written to.');
         $this->assertSame($tokensBefore, $other->tokens()->pluck('id')->all(), 'Their sessions changed.');
+    }
+
+    private function assertOneCollisionWarning(): void
+    {
+        $warnings = array_values(array_filter(
+            $this->logged,
+            fn (MessageLogged $event) => $event->level === 'warning' && str_contains($event->message, 'collides'),
+        ));
+        $this->assertCount(1, $warnings);
+        $this->assertSame($this->masjid->id, $warnings[0]->context['masjid_id']);
+        $this->assertNoAddressWasLogged();
     }
 
     private function assertNoAddressWasLogged(): void
