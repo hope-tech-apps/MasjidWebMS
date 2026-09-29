@@ -133,6 +133,17 @@ export function weightNote(work: { weight?: number | null; type?: string | null 
     return work.weight !== null && work.weight !== undefined ? `counts ${w} (this work)` : `counts ${w}`;
 }
 
+/**
+ * May this teacher change the class's weights? Only a teacher who is not limited to some
+ * subjects (`group.my_subjects` is null or empty: every full-time teacher). The weights move
+ * every subject's average, which families read, so a teacher limited to one subject reads them
+ * and cannot change them. This only decides what the screen offers; the server refuses the same
+ * request (review F5), which is the real boundary.
+ */
+export function mayChangeWeights(mySubjects: unknown): boolean {
+    return !Array.isArray(mySubjects) || mySubjects.length === 0;
+}
+
 export function weightsFormFrom(weights: Record<string, number>, types: WorkType[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const t of types) out[t.key] = Object.prototype.hasOwnProperty.call(weights, t.key) ? String(weights[t.key]) : '';

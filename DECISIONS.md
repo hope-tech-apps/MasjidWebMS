@@ -5180,3 +5180,20 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   teacher's empty-day delete is still a harmless 200. The 403 stays for a subject the teacher TYPES and does not teach, in the words
   they typed, before anything about the day is read, so it is the same sentence whether or not that subject has a plan. Alternative:
   keep the 403s and only stop naming the subject. Rejected: a status that differs from "no such thing" still confirms the thing.
+
+- **2026-09-29 (W3/W4 folds, F5, the point's decision, superseding W3-3(e)): the class's weights are for a teacher of ALL subjects, and the office.**
+  W3-3(e) left `PUT grade-weights` unfenced so that a class with a teacher per subject (BISS) would not be left with nobody able to set
+  them, and refused a limited teacher only the CLEAR while other subjects' work carried a weight of its own. The point's review found
+  the cost: the weights are one policy for the whole class and they change the weighted average a parent reads for EVERY subject, so a
+  one-subject teacher (a Qur'an-only teacher) could re-weight what families see for Arabic and Mathematics, work they cannot even list.
+  New rule: a teacher limited to some subjects (`group_staff.subjects` a non-empty list, however long) is refused, setting or clearing,
+  with a 403 that writes nothing; a teacher with no list (or an empty one, "everything") and the office are not. `SubjectFence::mayWeighClass`
+  is the one answer; the clear-only special case is deleted with it, and the teacher's Weights panel is read-only for a limited teacher
+  (the server refuses either way). Alternative: refuse only the set, or only where the class already has weights. Rejected: the
+  point asked for the plain rule, and a half-fence would leave the same re-weighting one keystroke away.
+  Consequence to know, for the owner: a class whose EVERY teacher is limited (BISS, if each teacher is given a subject) now has nobody who can
+  set its weights, because the office has NO route to this verb (`GradebookWeightingTest::the_office_has_no_route_to_set_weights`, and
+  DECISIONS W3-3(e) said the office reads and does not set). The gate admits the office if a route is ever mounted, but none was added
+  here. Unknown, needs investigation: whether any live class has only limited teachers (BISS is on simple marking, which is never averaged, so
+  weights matter to it only for points work; whether Al-Razi's teachers carry a subject list was not read from production). Open question for
+  the point: an admin-realm `PUT` for the weights (`permission:manage contacts`), or leave it.

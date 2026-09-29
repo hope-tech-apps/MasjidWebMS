@@ -15,6 +15,7 @@ import {
     fencedNote,
     firstFieldError,
     isCombinedGuideColumn,
+    mayChangeWeights,
     percentText,
     subjectLine,
     untypedNote,
@@ -264,4 +265,31 @@ test('the lesson plan names the class when it asks for subjects, and labels the 
     const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
     assert.match(source, /q\.set\('group_id', groupId\.value\)/);
     assert.match(source, /isCombinedGuideColumn\(s\) \? ' \(school pacing-guide column\)'/);
+});
+
+// ---------------------------------------------------------------- review F5: who changes the class's weights
+
+test('only a teacher of every subject may change the weights: a limited list, of any length, may not', () => {
+    // null and an empty list are "everything" (a full-time teacher, or every assignment before subjects existed).
+    for (const all of [null, undefined, []]) assert.equal(mayChangeWeights(all), true, JSON.stringify(all));
+    for (const limited of [['quran'], ['arabic'], ['quran', 'arabic'], ['quran', 'arabic', 'islamic_studies']]) {
+        assert.equal(mayChangeWeights(limited), false, JSON.stringify(limited));
+    }
+    // Anything that is not a list is not a limit the server sent.
+    assert.equal(mayChangeWeights('quran'), true);
+});
+
+test('the weights panel is read-only for a limited teacher and offers no save or clear', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+
+    assert.match(source, /const canChangeWeights = computed\(\(\) => mayChangeWeights\(group\.value\?\.my_subjects\)\)/);
+    // The inputs are disabled, and the Save and Clear buttons (and the clear confirmation) exist only when allowed.
+    assert.match(source, /:disabled="!canChangeWeights"/);
+    assert.match(source, /<div v-if="canChangeWeights" class="col-auto d-flex gap-2">/);
+    assert.match(source, /<div v-if="canChangeWeights && confirmClearWeights"/);
+    // And the screen says why.
+    assert.match(source, /data-test="weights-read-only"/);
+    assert.match(source, /only a\s+teacher of all the subjects in this class, or the office, can change them/);
+    // The button no longer invites a limited teacher to "Set weights".
+    assert.match(source, /weightingEnabled \|\| !canChangeWeights \? 'Weights' : 'Set weights'/);
 });

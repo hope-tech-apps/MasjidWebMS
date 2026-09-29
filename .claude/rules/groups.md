@@ -1192,9 +1192,10 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   ("N pieces of work have no type"). Levels get a weighted mean LEVEL over the same slots,
   never a percentage; simple marks are never averaged. An override is refused (422) unless
   the class is weighted, and clearing the weights clears every override in the class in the
-  same transaction. A subject-limited teacher may SET the weights but not CLEAR them while
-  work outside their subjects carries a weight of its own (403, nothing written). The office
-  reads the weights and has no route to set them (`AdminGradebookReadTest`).
+  same transaction. Only a teacher NOT limited to some subjects may set or clear
+  them (403, nothing written, for a limited one: the weights move every subject's average, which
+  parents read; review F5, 2026-09-29, superseding W3-3(e)); the office passes the same gate
+  (`SubjectFence::mayWeighClass`) but has no route to set them (`AdminGradebookReadTest`).
   `App\Support\GradeRecord` is the one copy of the arithmetic; the teacher's and the
   parent's endpoints both call it, and `weighting` / `by_subject` sit BESIDE the older
   summary keys, which are unchanged. The teacher's endpoint adds `data.fenced`.

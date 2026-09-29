@@ -824,8 +824,30 @@ class TeacherSubjectAccessTest extends TestCase
         $this->assertFalse($grades()['fenced']);
     }
 
+    // ---- review F5 (2026-09-29): the class's weights are for a teacher of ALL subjects, and the office
+
+    private const WEIGHTS = ['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10];
+
+    /** @return array<string,int> the class's stored weights by type */
+    private function storedWeights(): array
+    {
+        return ClassGradeWeight::query()->where('group_id', $this->class->id)->pluck('weight', 'assignment_type')->map(fn ($w) => (int) $w)->all();
+    }
+
     #[Test]
-    public function a_limited_teacher_cannot_clear_the_weights_while_another_subjects_work_carries_a_weight_of_its_own(): void
+    public function a_subject_limited_teacher_cannot_set_the_weights_and_nothing_is_written(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+
+        $this->putJson($this->url('/grade-weights'), ['weights' => self::WEIGHTS])
+            ->assertForbidden()
+            ->assertJsonPath('message', "The class's weights decide how much each type of work counts in every subject's average, so only a teacher of all the subjects in this class, or the office, can change them.");
+
+        $this->assertSame([], $this->storedWeights(), 'a refused set writes nothing');
+    }
+
+    #[Test]
+    public function a_subject_limited_teacher_cannot_replace_or_clear_weights_that_are_already_set(): void
     {
         $this->assign([GroupStaff::SUBJECT_QURAN]);
         $this->weigh();
@@ -833,56 +855,103 @@ class TeacherSubjectAccessTest extends TestCase
         $arabic = $this->work('Arabic project', 'Arabic Language');
         $mine->update(['weight' => 20]);
         $arabic->update(['weight' => 60]);
+        $before = $this->storedWeights();
 
-        $this->putJson($this->url('/grade-weights'), ['clear' => true])
+        // Re-weighting what parents read for every subject: refused.
+        $this->putJson($this->url('/grade-weights'), ['weights' => ['test' => 5, 'quiz' => 5, 'homework' => 80, 'classwork' => 5, 'other' => 5]])
             ->assertForbidden();
-
-        $this->assertSame(60, $arabic->fresh()->weight, "the Arabic teacher's weight is not the Qur'an teacher's to erase");
-        $this->assertSame(20, $mine->fresh()->weight);
-        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count(), 'a refused clear writes nothing at all');
-    }
-
-    #[Test]
-    public function untagged_work_with_a_weight_also_blocks_a_limited_teachers_clear(): void
-    {
-        $this->assign([GroupStaff::SUBJECT_QURAN]);
-        $this->weigh();
-        // Invisible to this teacher (a 404), so not theirs to un-weight.
-        $this->work('Old work', null)->update(['weight' => 5]);
-
+        // Clearing: refused whether or not another subject's work carries a weight of its own (it used to
+        // be refused only while it did), and with only their own subject's overrides too.
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])->assertForbidden();
+        $arabic->update(['weight' => null]);
         $this->putJson($this->url('/grade-weights'), ['clear' => true])->assertForbidden();
 
-        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+        $this->assertEquals($before, $this->storedWeights(), 'the weights are unchanged');
+        $this->assertSame(20, $mine->fresh()->weight, 'and so is a piece of work\'s own weight');
     }
 
     #[Test]
-    public function a_limited_teacher_can_clear_the_weights_when_only_their_own_subjects_work_has_one(): void
+    public function every_kind_of_limit_is_refused_and_only_an_unlimited_teacher_of_the_class_is_allowed(): void
     {
-        $this->assign([GroupStaff::SUBJECT_QURAN]);
-        $this->weigh();
-        $mine = $this->work("Qur'an project", "Qur'an");
-        $mine->update(['weight' => 20]);
-        $this->work('Arabic project', 'Arabic Language');
+        // Two subjects is still a limit: it is the list, not the count, that fences a teacher.
+        foreach ([[GroupStaff::SUBJECT_QURAN, GroupStaff::SUBJECT_ARABIC], [GroupStaff::SUBJECT_ISLAMIC_STUDIES]] as $subjects) {
+            GroupStaff::query()->where('group_id', $this->class->id)->delete();
+            $this->assign($subjects);
+            $this->putJson($this->url('/grade-weights'), ['weights' => self::WEIGHTS])->assertForbidden();
+        }
+        $this->assertSame([], $this->storedWeights());
 
-        $this->putJson($this->url('/grade-weights'), ['clear' => true])
-            ->assertOk()
-            ->assertJsonPath('data.cleared_overrides', 1)
-            ->assertJsonPath('data.weighting_enabled', false);
+        // NULL and an empty list both mean "everything" (GroupStaff::teaches): allowed, set and cleared.
+        foreach ([null, []] as $subjects) {
+            GroupStaff::query()->where('group_id', $this->class->id)->delete();
+            $this->assign($subjects);
 
-        $this->assertNull($mine->fresh()->weight);
-        $this->assertSame(0, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+            $this->putJson($this->url('/grade-weights'), ['weights' => self::WEIGHTS])
+                ->assertOk()->assertJsonPath('data.weighting_enabled', true);
+            $this->assertEquals(self::WEIGHTS, $this->storedWeights());
+
+            $this->putJson($this->url('/grade-weights'), ['clear' => true])
+                ->assertOk()->assertJsonPath('data.weighting_enabled', false);
+            $this->assertSame([], $this->storedWeights());
+        }
     }
 
     #[Test]
-    public function setting_the_weights_is_still_open_to_a_limited_teacher(): void
+    public function in_one_class_the_limited_teacher_is_refused_and_the_all_subjects_teacher_is_not(): void
     {
-        // A class with a teacher per subject (BISS) would otherwise have nobody
-        // who could set them (DECISIONS W3-3e).
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $free = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        MasjidUser::create(['masjid_id' => $this->school->id, 'user_id' => $free->id, 'role' => 'teacher', 'is_default' => true]);
+        $this->class->staff()->attach($free->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'subjects' => null, 'assigned_at' => now(),
+        ]);
+
+        $this->putJson($this->url('/grade-weights'), ['weights' => self::WEIGHTS])->assertForbidden();
+        $this->assertSame([], $this->storedWeights());
+
+        \Illuminate\Support\Facades\Auth::forgetGuards();
+        app(\App\Support\TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($free, ['staff']);
+
+        $this->putJson($this->url('/grade-weights'), ['weights' => self::WEIGHTS])->assertOk();
+        $this->assertEquals(self::WEIGHTS, $this->storedWeights());
+        $this->assertSame($free->id, (int) ClassGradeWeight::query()->where('group_id', $this->class->id)->value('updated_by_user_id'));
+    }
+
+    #[Test]
+    public function the_office_is_never_limited_on_the_weights_even_when_it_also_holds_a_limited_class_assignment(): void
+    {
+        $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        // An administrator who is ALSO on the class's staff with one subject: acting as the office they are not fenced.
+        $this->class->staff()->attach($admin->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER,
+            'subjects' => [GroupStaff::SUBJECT_QURAN], 'assigned_at' => now(),
+        ]);
         $this->assign([GroupStaff::SUBJECT_QURAN]);
 
-        $this->putJson($this->url('/grade-weights'), ['weights' => [
-            'test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10,
-        ]])->assertOk()->assertJsonPath('data.weighting_enabled', true);
+        $this->assertTrue(SubjectFence::mayWeighClass($admin, $this->class->id));
+        $this->assertTrue(SubjectFence::mayWeighClass($super, $this->class->id));
+        $this->assertFalse(SubjectFence::mayWeighClass($this->teacher, $this->class->id));
+
+        // And the controller itself lets the office through. The office has no ROUTE to this verb (pinned in
+        // GradebookWeightingTest), so the verb is called directly with a validated request.
+        foreach ([$admin, $super] as $office) {
+            \Illuminate\Support\Facades\Auth::forgetGuards();
+            app(\App\Support\TenantContext::class)->forgetTenant();
+            app(\App\Support\TenantContext::class)->set($this->school->id);
+            \Illuminate\Support\Facades\Auth::setUser($office);
+
+            $request = \App\Http\Requests\Teacher\SaveGradeWeightsRequest::create('/grade-weights', 'PUT', ['weights' => self::WEIGHTS]);
+            $request->setContainer(app())->setRedirector(app('redirect'))->setUserResolver(fn () => $office)->validateResolved();
+
+            $response = app(\App\Http\Controllers\Teacher\GradebookController::class)
+                ->saveWeights($request, $this->school->id, $this->class->id);
+
+            $this->assertSame(200, $response->getStatusCode());
+            $this->assertEquals(self::WEIGHTS, $this->storedWeights());
+            ClassGradeWeight::query()->where('group_id', $this->class->id)->delete();
+        }
     }
 
     private function plan(string $day, ?string $subject): LessonPlan

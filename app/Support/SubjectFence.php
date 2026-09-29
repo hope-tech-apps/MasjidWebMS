@@ -79,6 +79,19 @@ final class SubjectFence
         return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
     }
 
+    /**
+     * May `$user` change how much each type of work counts in `$groupId`?
+     *
+     * The weights are a policy of the whole class and move every subject's average,
+     * so only someone who is not limited to some subjects may: an unrestricted
+     * teacher of the class, or the office (anyone who is not a Teacher, which
+     * `limitsFor` never limits). A Teacher limited to some subjects may not.
+     */
+    public static function mayWeighClass(?User $user, int $groupId): bool
+    {
+        return self::limitsFor($user, $groupId) === null;
+    }
+
     /** May a teacher with these limits touch work whose subject key is `$subjectKey`? */
     public static function allows(?array $limits, ?string $subjectKey): bool
     {
