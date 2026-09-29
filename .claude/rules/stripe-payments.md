@@ -563,11 +563,17 @@ Direct charge on the ONE connected account, exactly the rules above.
   and the donation receipt through `ReceiptService` (delivered by the controller's existing
   once-only `deliverReceipt`). Never from inside the transaction: a rollback would leave an
   email for nothing.
-- **A paid basket is closed.** Settlement locks the cart BEFORE the order (checkout's order, so
-  no deadlock), and after the lines are recorded sets `Cart::STATUS_CHECKED_OUT` and deletes the
-  cart's lines (the order's lines are the snapshot). `CartCheckoutService::checkout()` and
-  `acknowledge()` refuse a cart that is not open, and checkout refuses a basket whose fingerprint
-  already has a PAID order on the same cart (belt and braces). Never reopen a basket to "try again".
+- **A paid basket is closed, but only of what it paid for.** Settlement locks the cart BEFORE the order
+  (checkout's order, so no deadlock) and, after the lines are recorded, removes from the cart ONLY the
+  lines this order paid for (matched by `buyable_type`, `buyable_id` and the canonical hash of the
+  line's payload, `order_items.cart_payload_hash`, stamped at checkout; one order line removes one cart
+  line), then sets `Cart::STATUS_CHECKED_OUT` only when nothing is left. A line added after the page
+  opened (page A paid as it expired, page B opened for X + Y) is never dropped unpaid. After the commit
+  it expires the cart's OTHER still-pending pages through `CartCheckoutService::closeOtherPages()` (the
+  checkout's own `closePage()`), so a page holding paid lines can never charge them again; a Stripe
+  failure there is logged, never thrown. `CartCheckoutService::checkout()` and `acknowledge()` refuse a
+  cart that is not open, and checkout refuses a basket whose fingerprint already has a PAID order on the
+  same cart (belt and braces). Never reopen a basket to "try again".
 - **The session event after the payment intent's backfills, and settles nothing.** When the order
   is already paid and a session event carries `customer_details` or a session id
   (`CartSettlementService::backfillLocked()`), it fills the donation's contact and session id and
@@ -575,13 +581,29 @@ Direct charge on the ONE connected account, exactly the rules above.
   steps the intent had to skip: `linkFromCheckoutSession`, `issueFor` and the controller's
   once-only `deliverReceipt()`, and `LunchOrderMailer::confirmation()` (claims its own send). A gift
   that already has a contact queues nothing, so a replay does nothing. `CartSettlementResult::settled`
-  stays false for a backfill.
-- **A linked basket's form row is pinned in the settlement transaction**: `charge_account_id` =
+  stays false for a backfill. **The donor link and the delivery are claimed atomically per line**
+  (`order_items.receipt_claimed_at`, `UPDATE ... WHERE receipt_claimed_at IS NULL`, in
+  `donorAndReceiptStep()`): both success events queue the step for one gift and the controller's
+  `deliverReceipt()` is check-then-send, so only the step that changed 1 row links the donor and hands
+  the receipt on. A step with no address and no contact yet claims nothing (it only issues the receipt);
+  a claim that delivers nothing, or fails, is released.
+- **A linked basket's form row is pinned** in the settlement transaction: `charge_account_id` =
   the order's pin, `charge_masjid_id` = the organisation holding that account, as
-  `FormResponseCheckoutService` pins a linked row, so the holder's `charge.refunded` /
-  `charge.dispute.created` flags it (`handleChargeFlag`). The row's `charge_ref` is left null (it is
-  unique per row; a basket has one). Known limit: one basket PI is shared by every registration in
-  it and `handleChargeFlag` flags the first row found by that intent.
+  `FormResponseCheckoutService` pins a linked row. The pin gives staff the right refund instruction
+  (`FormChargeAccount::refundInstruction`); the row's `charge_ref` is left null (it is unique per row).
+  **The pin does NOT drive a per-row refund or dispute flag.**
+- **A refund or dispute on a basket's charge flags the ORDER, never a line.** A basket has one charge and
+  one payment intent; a partial refund's event says how much (`amount_refunded`), never which line.
+  `charge.refunded` / `charge.dispute.created` go to `CartPaymentService::handleChargeFlag()` BEFORE the
+  form arm: the order is found by its `stripe_payment_intent_id`, accepted only when its pinned account
+  equals `event.account` (`hash_equals`) and it belongs to the masjid holding that account (a linked
+  order belongs to the child, so a `charge_ref` order is accepted on its pinned account alone). It sets
+  `orders.charge_flag` (`refunded` | `partially_refunded` | `disputed`; a dispute is never downgraded),
+  `charge_refunded_minor` (the latest amount, never added to) and `charge_flagged_at`, and logs a WARNING
+  naming the order number and saying the lines cannot be attributed automatically, so staff reconcile it.
+  Idempotent, never throws. `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
+  `order_items` line points at (`record_type='form_response'`); every other row is one per payment intent
+  and behaves exactly as before.
 - **`amount_due` and `entry_count` on a cart form row are what checkout froze**
   (`price_snapshot.legacy_amount_due`, `entry_count`, from the same cleaned answers), written over
   the writer's live figures after `write()`. The writer is unchanged.

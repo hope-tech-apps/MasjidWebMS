@@ -29,8 +29,8 @@ use Tests\TestCase;
  *     fingerprint), so the same lines are never charged and recorded twice;
  *  2. a session event that follows the payment intent's settlement backfills the payer and
  *     runs the donor link, receipt delivery and meal confirmation the intent had to skip, once;
- *  3. a linked organisation's registration is pinned to the holder's account, so the
- *     holder's refund or dispute flags it;
+ *  3. a linked organisation's registration is pinned to the holder's account (the refund
+ *     instruction); the holder's refund or dispute flags the ORDER since round 2;
  *  4. the legacy `amount_due` and `entry_count` are what checkout froze, not what the form
  *     says when the webhook lands;
  *  5. Adaptive Pricing is off on cart pages, and a payment intent in another currency is
@@ -262,7 +262,10 @@ class CartSettlementReviewFixesTest extends TestCase
         $this->assertSame($holder->id, (int) $row->charge_masjid_id, 'the organisation holding the account');
         $this->assertTrue($row->isChargedThroughAnotherOrg());
 
-        // The holder refunds the basket's charge on ITS account: the registration is flagged.
+        // The holder refunds the basket's charge on ITS account. Round 2 (brief-4b-fixes-round2
+        // B): a basket has ONE charge and the event names an amount, never a line, so the ORDER
+        // is flagged and the registration is left to the cart, not guessed. The pin stays: it
+        // still tells staff which account to refund on (FormChargeAccount::refundInstruction).
         $refund = $this->cartEvent('charge.refunded', $order, [], [
             'id' => 'ch_cart_1',
             'object' => 'charge',
@@ -272,7 +275,8 @@ class CartSettlementReviewFixesTest extends TestCase
         ]);
         $this->postWebhook($refund)->assertOk();
 
-        $this->assertSame(FormResponse::CHARGE_FLAG_REFUNDED, $row->fresh()->charge_flag);
+        $this->assertNull($row->fresh()->charge_flag, 'a cart row is never flagged per line');
+        $this->assertSame(Order::CHARGE_FLAG_REFUNDED, $order->fresh()->charge_flag);
     }
 
     #[Test]

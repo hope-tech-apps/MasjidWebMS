@@ -103,6 +103,16 @@ final readonly class PricedBasket
         return hash('sha256', json_encode([$this->totalMinor, $this->currency, (string) $this->refusal, $lines]));
     }
 
+    /**
+     * The hash of one basket line's payload, keys sorted at every level. Checkout stamps it
+     * on the order line (`cart_payload_hash`); settlement compares it with the basket's own
+     * lines to drop exactly the ones this order paid for.
+     */
+    public static function payloadHash(mixed $payload): string
+    {
+        return hash('sha256', json_encode(self::canonical($payload)));
+    }
+
     /** A payload with its keys sorted at every level, so key order never changes a hash. */
     private static function canonical(mixed $value): mixed
     {

@@ -13,7 +13,9 @@ use App\Services\Stripe\FormChargeAccount;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\FormPayment;
 use App\Support\FormSchema;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use LogicException;
 use Stripe\Exception\ApiErrorException;
@@ -179,6 +181,47 @@ class CartCheckoutService
         });
     }
 
+    /**
+     * A basket was just paid through ONE of its pages: expire every OTHER page of the same
+     * basket that is still pending, so a page holding lines that are already paid for can
+     * never charge them again (the expired-but-paid race: page A is paid as it lapses, the
+     * shopper adds a line and opens page B, and A's late webhook arrives). It is CartSettlement's
+     * step after its commit, so it reuses closePage() and never throws: the money is recorded,
+     * and a page Stripe would not close (or could not be asked about) is logged for staff.
+     */
+    public function closeOtherPages(int $masjidId, int $cartId, int $exceptOrderId): void
+    {
+        $others = self::otherPendingPages($masjidId, $cartId, $exceptOrderId)->orderBy('id')->get();
+
+        foreach ($others as $other) {
+            try {
+                $this->closePage($other);
+            } catch (Throwable $e) {
+                Log::warning(
+                    'A basket was paid, and another payment page of the same basket could not be closed afterwards. '
+                    . 'It may still be payable; if it is paid, its lines were already paid for and one payment is a double charge to refund.',
+                    [
+                        'order_id' => (int) $other->id,
+                        'paid_order_id' => $exceptOrderId,
+                        'masjid_id' => $masjidId,
+                        'exception' => $e::class,
+                    ]
+                );
+            }
+        }
+    }
+
+    /** This basket's pending orders that opened a Stripe page, other than the one that was paid. */
+    public static function otherPendingPages(int $masjidId, int $cartId, int $exceptOrderId): Builder
+    {
+        return Order::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('cart_id', $cartId)
+            ->where('status', Order::STATUS_PENDING)
+            ->whereNotNull('stripe_checkout_session_id')
+            ->whereKeyNot($exceptOrderId);
+    }
+
     /** A basket that is not open (it was paid for) is never priced, paid or changed again. */
     private static function assertOpen(Cart $cart): void
     {
@@ -316,6 +359,7 @@ class CartCheckoutService
                 'currency' => $priced->currency,
                 'payload' => $snapshots[$index]['payload'],
                 'price_snapshot' => $snapshots[$index]['price_snapshot'],
+                'cart_payload_hash' => PricedBasket::payloadHash($item->payload),
             ]);
         }
 

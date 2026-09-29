@@ -7,7 +7,9 @@ use App\Models\Order;
 use App\Services\Cart\CartCheckoutService;
 use App\Services\Cart\CartSettlementResult;
 use App\Services\Cart\CartSettlementService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Inbound Stripe events for a universal-cart order (slice 4b) — the fifth sibling of
@@ -173,6 +175,139 @@ class CartPaymentService
             'checkout_session_id' => $session['id'] ?? null,
             'account' => $account,
         ]);
+    }
+
+    /**
+     * charge.refunded / charge.dispute.created on a BASKET's charge: flag the ORDER, never a
+     * line. A basket has one charge and one payment intent, and Stripe says only how much of
+     * it was refunded, never which line, so any per-line flag would be a guess. The order
+     * carries `charge_flag` (refunded | partially_refunded | disputed), `charge_refunded_minor`
+     * (the latest `amount_refunded`, recorded and never added to, so a replay changes nothing)
+     * and `charge_flagged_at`, and a WARNING names the order for staff to reconcile by hand.
+     *
+     * The order is the one whose recorded payment intent the event names, found only when its
+     * pinned account equals `event.account` (`hash_equals`) and it belongs to the organisation
+     * that account resolves to. A holder's account is the one exception to "the organisation
+     * holding the account": a linked basket's order belongs to the CHILD, so an order that
+     * carries a `charge_ref` is accepted on its pinned account alone. Metadata never decides.
+     * A charge that is no basket's (every donation, lunch and registration refund) is acked
+     * silently, exactly as before this arm existed. It never throws: a 500 would only make
+     * Stripe retry, and a lost flag is logged at error.
+     *
+     * The form registrations such a basket settled are the cart's, not the form arm's
+     * (FormResponsePaymentService::handleChargeFlag skips them).
+     *
+     * @param  string  $flag  Order::CHARGE_FLAG_REFUNDED | Order::CHARGE_FLAG_DISPUTED
+     */
+    public function handleChargeFlag(array $object, ?string $account, string $flag): void
+    {
+        try {
+            $this->flagOrder($object, $account, $flag);
+        } catch (Throwable $e) {
+            Log::error('A refund or dispute on a cart basket\'s charge could not be recorded on its order; staff must check the order by hand.', [
+                'flag' => $flag,
+                'account' => $account,
+                'exception' => $e::class,
+            ]);
+        }
+    }
+
+    private function flagOrder(array $object, ?string $account, string $flag): void
+    {
+        $intent = $object['payment_intent'] ?? null;
+        $intentId = is_array($intent) ? $this->stringOrNull($intent['id'] ?? null) : $this->stringOrNull($intent);
+
+        if ($intentId === null || $account === null || $account === '') {
+            return;
+        }
+
+        $candidates = Order::withoutMasjidScope()->where('stripe_payment_intent_id', $intentId)->get();
+
+        if ($candidates->isEmpty()) {
+            return;
+        }
+
+        $holder = Masjid::withTrashed()->where('stripe_account_id', $account)->first();
+
+        $order = $candidates->first(fn (Order $o): bool => hash_equals((string) $o->charge_account_id, $account)
+            && ($o->charge_ref !== null || ($holder !== null && (int) $o->masjid_id === (int) $holder->id)));
+
+        if ($order === null) {
+            Log::warning('A refund or dispute named a cart order\'s payment, but on an account the order was not charged on; nothing was flagged.', [
+                'flag' => $flag,
+                'account' => $account,
+                'payment_intent' => $intentId,
+            ]);
+
+            return;
+        }
+
+        DB::transaction(function () use ($order, $object, $flag): void {
+            $locked = Order::withoutMasjidScope()->whereKey($order->id)->lockForUpdate()->firstOrFail();
+
+            if (! $locked->isPaid()) {
+                return;
+            }
+
+            $recorded = (int) $locked->charge_refunded_minor;
+            $refunded = $flag === Order::CHARGE_FLAG_DISPUTED ? null : $this->refundedMinor($object, $locked);
+            // Stripe's figure is cumulative, so the latest is the largest: a late or repeated
+            // delivery of an older event can never move it back, and none is ever added.
+            $latest = max($recorded, $refunded ?? 0);
+
+            $target = match (true) {
+                $flag === Order::CHARGE_FLAG_DISPUTED => Order::CHARGE_FLAG_DISPUTED,
+                // A dispute is never overwritten by a refund (it is the one with a deadline).
+                $locked->charge_flag === Order::CHARGE_FLAG_DISPUTED => Order::CHARGE_FLAG_DISPUTED,
+                $latest >= (int) $locked->total_minor,
+                $refunded === null && ($object['refunded'] ?? null) === true,
+                $locked->charge_flag === Order::CHARGE_FLAG_REFUNDED => Order::CHARGE_FLAG_REFUNDED,
+                default => Order::CHARGE_FLAG_PARTIALLY_REFUNDED,
+            };
+
+            $changes = [];
+
+            if ($target !== $locked->charge_flag) {
+                $changes['charge_flag'] = $target;
+            }
+
+            if ($latest !== $recorded) {
+                $changes['charge_refunded_minor'] = $latest;
+            }
+
+            if ($changes === []) {
+                return;
+            }
+
+            $locked->forceFill($changes + ['charge_flagged_at' => now()])->save();
+
+            Log::warning(
+                'A cart basket\'s charge was ' . ($flag === Order::CHARGE_FLAG_DISPUTED ? 'disputed' : 'refunded') . ' on Stripe. '
+                . "The order {$locked->order_number} is flagged, but a basket has one charge and Stripe does not say which line was refunded or disputed, "
+                . 'so the lines cannot be attributed automatically: staff must reconcile the order\'s lines by hand.',
+                [
+                    'order_id' => (int) $locked->id,
+                    'order_number' => (string) $locked->order_number,
+                    'masjid_id' => (int) $locked->masjid_id,
+                    'flag' => $locked->charge_flag,
+                    'refunded_minor' => (int) $locked->charge_refunded_minor,
+                    'total_minor' => (int) $locked->total_minor,
+                ]
+            );
+        });
+    }
+
+    /** A charge's amount_refunded in the order's currency, or null when it cannot be read as one. */
+    private function refundedMinor(array $charge, Order $order): ?int
+    {
+        $amount = $charge['amount_refunded'] ?? null;
+        $currency = strtolower((string) ($charge['currency'] ?? ''));
+
+        if (! is_int($amount) || $amount < 0 || $currency === '' || $currency !== strtolower((string) $order->currency)) {
+            return null;
+        }
+
+        return $amount;
     }
 
     /**

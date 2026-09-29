@@ -23,6 +23,14 @@ class Order extends Model
     public const STATUS_PAID = 'paid';
     public const STATUS_EXPIRED = 'expired';
 
+    /**
+     * What a refund or dispute on the basket's one charge did (CartPaymentService::handleChargeFlag).
+     * Flagged on the ORDER: the event names an amount, never a line.
+     */
+    public const CHARGE_FLAG_REFUNDED = 'refunded';
+    public const CHARGE_FLAG_PARTIALLY_REFUNDED = 'partially_refunded';
+    public const CHARGE_FLAG_DISPUTED = 'disputed';
+
     protected $fillable = [
         'masjid_id',
         'uuid',
@@ -47,6 +55,7 @@ class Order extends Model
     protected $attributes = [
         'status' => self::STATUS_PENDING,
         'fee_minor' => 0,
+        'charge_refunded_minor' => 0,
     ];
 
     /**
@@ -62,6 +71,8 @@ class Order extends Model
             'fee_minor' => 'integer',
             'checkout_expires_at' => 'datetime',
             'paid_at' => 'datetime',
+            'charge_refunded_minor' => 'integer',
+            'charge_flagged_at' => 'datetime',
         ];
     }
 

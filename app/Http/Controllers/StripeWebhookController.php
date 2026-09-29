@@ -8,6 +8,7 @@ use App\Models\Donation;
 use App\Models\DonationReceipt;
 use App\Models\FormResponse;
 use App\Models\Masjid;
+use App\Models\Order;
 use App\Models\StripeWebhookEvent;
 use App\Services\Cart\CartSettlementResult;
 use App\Services\Crm\DonorContactService;
@@ -334,14 +335,32 @@ class StripeWebhookController extends Controller
             // New for DECISIONS.md 2026-09-15, all three additive (each was `default`'s
             // null before). A refund or dispute only FLAGS a form registration whose charge
             // was pinned to the event's account; every other charge is acked as before.
-            'charge.refunded' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_REFUNDED),
-            'charge.dispute.created' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_DISPUTED),
+            // A basket's charge is asked about FIRST and flags its ORDER (a refund names an amount,
+            // never a line); the form arm then skips every registration a cart settled.
+            'charge.refunded' => $this->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_REFUNDED),
+            'charge.dispute.created' => $this->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_DISPUTED),
             // An organisation disconnected the platform from its Standard account. No
             // account.updated follows, so the stored flags would say "can take charges"
             // forever: cleared here, so every gate that reads them fails closed.
             'account.application.deauthorized' => $this->handleAccountDeauthorized($account, $event),
             default => null, // unhandled event types are acked and ignored.
         };
+    }
+
+    /**
+     * A refund or dispute: the universal cart's question first (a basket's one charge is
+     * flagged on its ORDER, CartPaymentService::handleChargeFlag, which never throws), then
+     * the form registrations' unchanged one, which leaves the rows a cart settled to the cart.
+     */
+    private function handleChargeFlag(array $object, ?string $account, string $formFlag): void
+    {
+        $this->cartPayments->handleChargeFlag(
+            $object,
+            $account,
+            $formFlag === FormResponse::CHARGE_FLAG_DISPUTED ? Order::CHARGE_FLAG_DISPUTED : Order::CHARGE_FLAG_REFUNDED,
+        );
+
+        $this->formResponsePayments->handleChargeFlag($object, $account, $formFlag);
     }
 
     /**

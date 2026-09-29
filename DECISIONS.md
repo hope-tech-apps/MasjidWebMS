@@ -5441,3 +5441,34 @@ per row, and a basket has one).
 Rationale: money is taken once and recorded once, and the record says who paid and on whose
 account. Pinned by `tests/Feature/Cart/CartSettlementReviewFixesTest.php`; the existing cart and
 webhook tests are unmodified. ASSUMPTIONS #28-#30.
+
+## 2026-09-29 — Cart settlement review fixes, round 2 (slice 4b): one receipt, refunds on the order, only paid lines leave the basket
+Decision: the check of bc4771df found one major, one design gap and two minors; all fixed in
+`feat/universal-cart`, in the still-unshipped `2026_09_28_090000` orders migration (no new one).
+(A) A donor receipt could be mailed twice when `payment_intent.succeeded` and
+`checkout.session.completed` arrive together: both queue `donorAndReceiptStep`, and the controller's
+`deliverReceipt()` is check-then-send. The step now claims the line first
+(`order_items.receipt_claimed_at`, `UPDATE ... WHERE receipt_claimed_at IS NULL`); only the process that
+changed one row links the donor and hands the receipt on. `deliverReceipt()` is untouched. A step with
+no address and no contact on the gift claims nothing (else the intent's step would use up the claim the
+session event's step needs); a claim that delivers nothing or fails is released. (B) A refund or dispute
+on a basket's charge is flagged on the ORDER (`orders.charge_flag`, `charge_refunded_minor`,
+`charge_flagged_at`) by a new cart arm that runs before the form arm, and `handleChargeFlag` skips every
+form row a cart settled. A basket's rows share one payment intent and the event names an amount, never a
+line, so any per-row flag was a guess (and flagged the first row only). Fix 3's pin stays: it still
+gives the refund instruction. (C) Settlement removes from the basket only the lines the order paid for
+(type, id and the canonical payload hash, stored at checkout as `order_items.cart_payload_hash`), closes
+the basket only when nothing is left, and after the commit expires the cart's other pending pages
+through `CartCheckoutService::closeOtherPages()`, so page B can no longer charge lines page A paid.
+Alternatives: dedupe the mail on `receipt_delivered_at` alone (rejected: it is written after the send, so
+it cannot be atomic; the brief also forbids changing `deliverReceipt()`); attribute a partial refund to a
+line by amount (rejected: a guess with money on it); match paid lines by comparing the order line's
+`payload` with the cart's (rejected: a meal's order payload is reshaped, so only a hash stored at
+checkout compares exactly).
+Rationale: money is mailed for once, flagged where the fact is, and never dropped unpaid. Two calls the
+brief left open: the cart arm accepts a linked basket's order (its masjid is the CHILD, not the account's
+holder) on its pinned account alone, since that is the motivating BISS case; and the recorded refunded
+amount is the largest figure seen (Stripe's is cumulative), so a late event cannot lower it. Pinned by
+`tests/Feature/Cart/CartSettlementRound2Test.php`. One existing assertion changed:
+`CartSettlementReviewFixesTest::a_linked_baskets_registration_is_pinned_to_the_holder_so_its_refund_flags_it`
+now expects the order flagged and the row not (that is the design change). ASSUMPTIONS #28, #30-#32.

@@ -27,6 +27,7 @@ use App\Support\GivingSwitch;
 use Closure;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use LogicException;
@@ -58,9 +59,12 @@ use Throwable;
  *   3. mark the order paid and record its payment intent, once;
  *   4. for each line WITHOUT a `record_id` (the per-line idempotency), write the record
  *      from the snapshot taken at checkout, settle it, and link `record_type`/`record_id`;
- *   5. close the basket (`Cart::STATUS_CHECKED_OUT`) and drop its lines, so the same
- *      lines can never be checked out and charged a second time. The order's lines are
+ *   5. take the lines this order paid for out of the basket (matched by type, id and
+ *      the canonical payload hash), and close it (`Cart::STATUS_CHECKED_OUT`) only when
+ *      nothing is left, so the same lines can never be checked out and charged a second
+ *      time and a line added meanwhile is never dropped unpaid. The order's lines are
  *      the snapshot; the cart is locked BEFORE the order (checkout's own lock order).
+ *      After the commit, the basket's OTHER pending pages are expired (closeOtherPages()).
  *
  * ## The session event after the payment intent's
  *
@@ -116,6 +120,9 @@ class CartSettlementService
         private readonly ReceiptService $receipts,
         private readonly DonorContactService $donorContacts,
         private readonly LunchOrderMailer $lunchMail,
+        // Optional so a subclass built with the six older arguments still works (closeOtherPages()
+        // falls back to the container). The container fills it.
+        private readonly ?CartCheckoutService $checkout = null,
     ) {}
 
     /**
@@ -161,11 +168,42 @@ class CartSettlementService
 
         // `settled` stays true only for the call that moved the order to paid; a backfill
         // on a paid order returns its receipts without claiming to have settled anything.
-        return new CartSettlementResult($done['settled'], $this->afterCommit($orderId, $done['steps']));
+        $receipts = $this->afterCommit($orderId, $done['steps']);
+
+        if ($done['settled'] && isset($done['cart'])) {
+            $this->closeOtherPages($orderId, $done['cart'][0], $done['cart'][1]);
+        }
+
+        return new CartSettlementResult($done['settled'], $receipts);
     }
 
     /**
-     * @return array{settled: bool, steps: list<Closure(): ?array>}
+     * The order is paid and committed: expire this basket's OTHER still-pending Stripe pages,
+     * so one that contains lines this order already paid for can never charge them again.
+     * CartCheckoutService::closeOtherPages() is the close logic (not copied here). Settlement
+     * has committed, so nothing here may throw: a retry would find the order paid and stop.
+     */
+    private function closeOtherPages(int $orderId, int $masjidId, int $cartId): void
+    {
+        try {
+            // The ordinary basket has no other page: do not build a Stripe client to find that out.
+            if (! CartCheckoutService::otherPendingPages($masjidId, $cartId, $orderId)->exists()) {
+                return;
+            }
+
+            ($this->checkout ?? app(CartCheckoutService::class))->closeOtherPages($masjidId, $cartId, $orderId);
+        } catch (Throwable $e) {
+            Log::warning('A basket was paid, but its other payment pages could not be checked afterwards; one may still be payable.', [
+                'order_id' => $orderId,
+                'masjid_id' => $masjidId,
+                'cart_id' => $cartId,
+                'exception' => $e::class,
+            ]);
+        }
+    }
+
+    /**
+     * @return array{settled: bool, steps: list<Closure(): ?array>, cart?: array{0: int, 1: int}}
      */
     private function settleLocked(
         int $orderId,
@@ -270,30 +308,61 @@ class CartSettlementService
             };
         }
 
-        // 5. The basket is paid: close it, so it can never be checked out again.
-        $this->closeCart($order, $cart);
+        // 5. Take what this order paid for out of the basket, and close it when nothing is left.
+        $this->closeCart($order, $cart, $items);
 
-        return ['settled' => true, 'steps' => $steps];
+        return [
+            'settled' => true,
+            'steps' => $steps,
+            // Where the after-commit page closing looks: this basket's other pending pages.
+            'cart' => $order->cart_id === null ? null : [(int) $order->masjid_id, (int) $order->cart_id],
+        ];
     }
 
     /**
-     * Close the basket a paid order came from, and drop its lines: the order's lines are
-     * the snapshot (attendee names live there now), and a closed basket that still listed
-     * them would invite a second "Pay". Only an OPEN basket of this organisation, already
-     * locked by the caller; anything else is left as it is.
+     * Take from the basket the lines THIS order paid for, and close it only when nothing is
+     * left. A line is the order's when its buyable_type, buyable_id and the canonical hash of
+     * its payload (`cart_payload_hash`, stamped at checkout) match a line still in the basket;
+     * one order line removes one basket line. The order's own lines are the snapshot, so
+     * a paid line is dropped rather than left to invite a second "Pay".
+     *
+     * Not "every line": page A (lines X) can be paid just as it expires, after the shopper
+     * added Y and opened page B (X + Y). A's late webhook must not silently drop Y, which was
+     * never paid for; the basket then stays open with Y, and B's page is closed after the
+     * commit (closeOtherPages()). Only an OPEN basket of this organisation, already locked by
+     * the caller; anything else is left as it is.
+     *
+     * @param  Collection<int, OrderItem>  $paidLines
      */
-    private function closeCart(Order $order, ?Cart $cart): void
+    private function closeCart(Order $order, ?Cart $cart, Collection $paidLines): void
     {
         if ($cart === null || (int) $cart->masjid_id !== (int) $order->masjid_id || $cart->status !== Cart::STATUS_OPEN) {
             return;
         }
 
-        $cart->forceFill(['status' => Cart::STATUS_CHECKED_OUT])->save();
-
-        CartItem::withoutMasjidScope()
+        $inBasket = CartItem::withoutMasjidScope()
             ->where('cart_id', $cart->id)
             ->where('masjid_id', $cart->masjid_id)
-            ->delete();
+            ->orderBy('id')
+            ->get();
+
+        foreach ($paidLines as $paid) {
+            // A line with no stored hash (none is written without one) matches on type and id alone.
+            $key = $inBasket->search(fn (CartItem $line): bool => $line->buyable_type === $paid->buyable_type
+                && (int) $line->buyable_id === (int) $paid->buyable_id
+                && ($paid->cart_payload_hash === null
+                    || hash_equals((string) $paid->cart_payload_hash, PricedBasket::payloadHash($line->payload))));
+
+            if ($key === false) {
+                continue;
+            }
+
+            $inBasket->pull($key)->delete();
+        }
+
+        if ($inBasket->isEmpty()) {
+            $cart->forceFill(['status' => Cart::STATUS_CHECKED_OUT])->save();
+        }
     }
 
     /**
@@ -373,7 +442,7 @@ class CartSettlementService
             return;
         }
 
-        $steps[] = $this->donorAndReceiptStep((int) $donation->id, $details);
+        $steps[] = $this->donorAndReceiptStep((int) $item->id, (int) $donation->id, $details);
     }
 
     /**
@@ -549,10 +618,14 @@ class CartSettlementService
      * leaves its registration pinned to that account, in the same transaction, the way
      * FormResponseCheckoutService pins a linked row: `charge_account_id` and
      * `charge_masjid_id` (the organisation holding the account). Unpinned, the row's charge
-     * would be read as sitting on its OWN organisation's account, and the holder's refund
-     * or dispute (FormResponsePaymentService::handleChargeFlag) would be dropped without a
-     * trace, the receipt would omit "processed by <holder>", and the admin API would say
-     * the card was not charged through anyone.
+     * would be read as sitting on its OWN organisation's account, the receipt would omit
+     * "processed by <holder>", and the admin API would say the card was not charged through
+     * anyone; pinned, FormChargeAccount::refundInstruction tells staff where to refund it.
+     *
+     * The pin no longer drives a per-row refund or dispute flag: a basket's one charge is
+     * flagged on the ORDER (CartPaymentService::handleChargeFlag), because the event says how
+     * much was refunded and never which line, and FormResponsePaymentService::handleChargeFlag
+     * skips rows a cart settled.
      *
      * The row's own `charge_ref` is NOT set: it is unique per row and a basket's one
      * reference is shared by all of its lines. An already-pinned row is left as it is.
@@ -726,7 +799,7 @@ class CartSettlementService
         $this->link($item, OrderItem::RECORD_DONATION, (int) $locked->id);
 
         if ($settled) {
-            $steps[] = $this->donorAndReceiptStep((int) $locked->id, $this->detailsWithBuyer($order, $customerDetails), true);
+            $steps[] = $this->donorAndReceiptStep((int) $item->id, (int) $locked->id, $this->detailsWithBuyer($order, $customerDetails), true);
         }
     }
 
@@ -749,28 +822,79 @@ class CartSettlementService
     /**
      * After the commit, for one gift: seed the donor contact from the payer's details
      * (a no-op once the gift has one), issue the receipt (returns the one already issued)
-     * and hand it back for the controller's once-only delivery. The arrival note is the
-     * settlement's alone (`$noteArrival`), and is itself once per donation.
+     * and hand it back for the controller's delivery. The arrival note is the settlement's
+     * alone (`$noteArrival`), and is itself once per donation.
+     *
+     * THE LINE'S RECEIPT IS CLAIMED ATOMICALLY. `payment_intent.succeeded` and
+     * `checkout.session.completed` arrive together, and each may queue this step for the
+     * same gift (the second reads the gift before the first has linked its donor). The
+     * controller's deliverReceipt() is check-then-send, so two steps that both hand back a
+     * receipt mail it twice, and two findOrCreate calls can link different contacts. So a
+     * step that can deliver first claims the line (`receipt_claimed_at`, one UPDATE ... WHERE
+     * NULL), and only the process that changed 1 row links the donor and returns the receipt.
+     *
+     * A step with nobody to deliver to (a guest's intent, before the session's details: no
+     * address and no contact on the gift) claims nothing and delivers nothing: it may still
+     * issue the receipt (issuing is idempotent), but it must not use up the claim the session
+     * event's step needs. A claim that ends with no contact or no receipt, or with a failure,
+     * is released for the next step.
      *
      * @param  array<string,mixed>  $details
      * @return Closure(): ?array
      */
-    private function donorAndReceiptStep(int $donationId, array $details, bool $noteArrival = false): Closure
+    private function donorAndReceiptStep(int $orderItemId, int $donationId, array $details, bool $noteArrival = false): Closure
     {
-        return function () use ($donationId, $details, $noteArrival): ?array {
+        return function () use ($orderItemId, $donationId, $details, $noteArrival): ?array {
             $donation = Donation::withoutMasjidScope()->whereKey($donationId)->firstOrFail();
 
-            $this->donorContacts->linkFromCheckoutSession($donation, ['customer_details' => $details]);
-            $receipt = $this->receipts->issueFor($donation->refresh());
-
+            // Once per donation on its own, so it does not depend on who wins the claim.
             if ($noteArrival) {
                 GivingSwitch::noteArrivalIfOff((int) $donation->masjid_id, 'gift', $donation->id, [
                     'amount_minor' => (int) $donation->charged_amount,
                 ]);
             }
 
-            return $receipt === null ? null : [$donation, $receipt];
+            // Nobody to deliver to yet: no address, and no contact on the gift already.
+            if (! filled($details['email'] ?? null) && $donation->contact_id === null) {
+                $this->receipts->issueFor($donation->refresh());
+
+                return null;
+            }
+
+            $claimed = OrderItem::withoutMasjidScope()
+                ->whereKey($orderItemId)
+                ->whereNull('receipt_claimed_at')
+                ->update(['receipt_claimed_at' => now()]);
+
+            if ($claimed !== 1) {
+                return null;
+            }
+
+            try {
+                $this->donorContacts->linkFromCheckoutSession($donation, ['customer_details' => $details]);
+                $receipt = $this->receipts->issueFor($donation->refresh());
+            } catch (Throwable $e) {
+                $this->releaseReceiptClaim($orderItemId);
+
+                throw $e;
+            }
+
+            // Nothing to deliver (no contact could be made, or the gift takes no receipt): give
+            // the claim back and hand nothing on, so no delivery can race a later step's.
+            if ($receipt === null || $donation->contact_id === null) {
+                $this->releaseReceiptClaim($orderItemId);
+
+                return null;
+            }
+
+            return [$donation, $receipt];
         };
+    }
+
+    /** Give the claim back: nothing was delivered, so a later step may still try. */
+    private function releaseReceiptClaim(int $orderItemId): void
+    {
+        OrderItem::withoutMasjidScope()->whereKey($orderItemId)->update(['receipt_claimed_at' => null]);
     }
 
     /**

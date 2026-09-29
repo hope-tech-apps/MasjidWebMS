@@ -97,6 +97,15 @@ return new class extends Migration
             $table->timestamp('checkout_expires_at')->nullable();
             $table->timestamp('paid_at')->nullable();
 
+            // A refund or dispute on the basket's ONE charge, flagged on the ORDER and never
+            // guessed per line: the webhook says how much of the charge was refunded, never
+            // which line. `charge_flag` is refunded | partially_refunded | disputed;
+            // `charge_refunded_minor` is the latest amount_refunded Stripe reported (recorded,
+            // never added to); staff reconcile the lines by hand (CartPaymentService::handleChargeFlag).
+            $table->string('charge_flag', 16)->nullable();
+            $table->unsignedBigInteger('charge_refunded_minor')->default(0);
+            $table->timestamp('charge_flagged_at')->nullable();
+
             $table->timestamps();
 
             $table->unique('uuid', 'orders_uuid_unique');
@@ -105,6 +114,9 @@ return new class extends Migration
             $table->unique('charge_ref', 'orders_charge_ref_unique');
             $table->index(['masjid_id', 'status'], 'orders_tenant_status_index');
             $table->index(['masjid_id', 'contact_id'], 'orders_tenant_contact_index');
+            // Every charge.refunded / charge.dispute.created (donations and lunches too) asks
+            // "is this payment intent a basket's?"; that must not scan the table.
+            $table->index('stripe_payment_intent_id', 'orders_payment_intent_index');
         });
 
         Schema::create('order_items', function (Blueprint $table) {
@@ -128,6 +140,18 @@ return new class extends Migration
             // The real record the line's own service created for it.
             $table->string('record_type', 64)->nullable();
             $table->unsignedBigInteger('record_id')->nullable();
+
+            // The canonical hash of the BASKET line's payload as it stood at checkout
+            // (PricedBasket::payloadHash). `payload` above is reshaped per type (a meal's
+            // carries the dish name), so it cannot be compared with the cart's line; this can.
+            // Settlement uses it to drop from the basket ONLY the lines this order paid for.
+            $table->char('cart_payload_hash', 64)->nullable();
+
+            // The donation receipt's donor link and delivery, claimed atomically by whichever
+            // settlement step gets there first (CartSettlementService::donorAndReceiptStep):
+            // payment_intent.succeeded and checkout.session.completed both queue one, and the
+            // mail's own check-then-send is not atomic.
+            $table->timestamp('receipt_claimed_at')->nullable();
 
             $table->timestamps();
 

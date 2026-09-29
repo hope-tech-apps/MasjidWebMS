@@ -42,6 +42,7 @@ class OrderItem extends Model
         'price_snapshot',
         'record_type',
         'record_id',
+        'cart_payload_hash',
     ];
 
     protected $hidden = ['payload', 'price_snapshot'];
@@ -56,6 +57,7 @@ class OrderItem extends Model
             'payload' => 'array',
             'price_snapshot' => 'array',
             'record_id' => 'integer',
+            'receipt_claimed_at' => 'datetime',
         ];
     }
 
