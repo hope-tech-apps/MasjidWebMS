@@ -966,6 +966,70 @@ tracked as **52 drills, not 26**: `a.upper` … `z.lower`, in two runs of tiles
   `Letter` column ("Capital A") after `Alphabet`, so positional readers keep
   their columns.
 
+## Gradebook — subject, type, weight, standard and the subject fence (W3, 2026-09-29)
+
+Work (`class_assignments`) carries a **subject**, a **type**, an optional **weight** and
+**one standard**. Every one is a SNAPSHOT, never a foreign key, and existing rows stay
+NULL (blank is not a default): renaming a subject, re-importing the pacing guide or
+retiring a type changes no mark a family has read. `subject_key` is derived from
+`subject` on every save (`App\Support\SubjectKey`) and is `hidden`.
+
+- **One key for "the same subject".** `SubjectKey::for()` trims, collapses spaces,
+  lower-cases and DROPS every apostrophe-like mark, so `Qur’an`, `Qur'an` and `Quran` are
+  one subject. It never lengthens a name (a 64-character name is a key that fits a
+  64-character column). `LessonPlan::subjectKeyFor` does NOT use it: that key carries a
+  unique index with live rows, and changing it would let the by-day save miss the plan it
+  means and add a duplicate. The lesson-plan fence compares the folded key instead.
+- **The school's list** (`school_subjects`, the office's Subjects screen) decides what a
+  class offers (`ClassSubjects`): the list, else the guide's subjects, else free text;
+  limited to grades someone in the class is in (`GradeLevel` folds `Pre-K`/`Pre-Kindergarten`,
+  `KG`/`Kindergarten`, `1st`/`Grade 1`); an unlabelled child hides nothing. It is
+  reference data: the office edits it, a teacher never does.
+- **A standard is only ever a row of the school's own guide.** The teacher picks it from
+  `GET curriculum/standards` (the ONE matcher; there is no second one), and
+  `GradebookController::refuseStandard` checks the (code, focus, week) really is a
+  `curriculum_weeks` row of this school before it is stored. An uncoded weekly focus is a
+  standard by its words. Where `short_lesson_plan` is on (BISS) the three standard keys are
+  dropped before validation: not shown, not written. No standard exists for Arabic,
+  Qur'an or Islamic Studies and none may be invented; an Arabic search answers nothing.
+- **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows
+  means the class is unweighted and every average is byte for byte what it was. A piece
+  counts by its own override else its type's weight; the weighted figure is the weighted
+  mean of each piece's OWN percentage, renormalised over the work that has marks, so a type
+  nobody has been marked on drags nothing down. A piece with neither a type nor a weight of
+  its own is left out and counted in `untyped_excluded` ("N pieces of work have no type").
+  Levels get a weighted mean LEVEL, never a percentage; simple marks are never averaged.
+  An override is refused (422) unless the class is weighted, and clearing the weights clears
+  every override in the class in the same transaction. The office reads the weights and has
+  no route to set them (`AdminGradebookReadTest`). `App\Support\GradeRecord` is the one
+  copy of the arithmetic; the teacher's and the parent's endpoints both call it, and
+  `weighting` / `by_subject` sit BESIDE the older summary keys, which are unchanged.
+- **The subject fence now covers grades and lesson plans** (`App\Support\SubjectFence`). A
+  teacher whose `group_staff.subjects` lists some subjects is LIMITED: they list, set, edit,
+  withdraw and mark only work whose subject maps to a staff subject they teach, read only
+  those subjects' marks of a child (the summary, `by_subject`, `levels`, `simple` and the
+  list are all filtered), must NAME a subject they teach when setting work, and cannot move
+  work into another subject. `SubjectKey::staffKeys()` is the map: the combined
+  "Qur'an & Islamic Studies" column belongs to BOTH `quran` and `islamic_studies`;
+  Mathematics belongs to none, so a limited teacher does not teach it. Work with NO subject
+  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse).
+  A lesson plan with no subject (the day's general plan) stays open to every teacher of the
+  class, because fencing it would strand every plan BISS has. Only a signed-in TEACHER is
+  limited: the office reads the same controllers through the admin realm and is never
+  fenced, and the family endpoint has no fence at all. Refusals use the words of
+  `teacher.teaches:` ("You do not teach X in this class.").
+- **Migrations.** `add_curriculum_fields_to_class_assignments_table` (one migration for all
+  three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
+  hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
+  seed `seed_school_subjects_for_alrazi_and_biss` is guarded by org id AND name, insert-only,
+  logs one WARNING line, and its `down()` removes only untouched seeded rows. Deploy after
+  hours (new code meets the old schema for a few seconds). Ship the seed only after the
+  owner's yes (B3).
+- **Proven by** `GradebookWeightingTest`, `GradebookCurriculumFieldsTest`,
+  `GradebookSubjectsTest`, `SchoolSubjectsTest`, `SchoolSubjectsTenantIsolationTest`,
+  `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherSubjectAccessTest`
+  (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
+
 ## Tenant isolation
 
 Both models use `BelongsToMasjid`; `group_memberships.masjid_id` is
