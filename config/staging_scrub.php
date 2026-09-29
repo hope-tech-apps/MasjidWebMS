@@ -339,6 +339,9 @@ return [
             // ticket form, the name of every attendee (slice 4b). Frozen at checkout,
             // so it outlives the basket; the sale's amounts and labels do not need it.
             'payload',
+            // An unsalted sha256 of that payload. A short answer set (a name, an email)
+            // can be guessed back from it, so it goes with the payload it was taken from.
+            'cart_payload_hash',
         ],
 
         'orders' => [
