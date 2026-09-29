@@ -10,6 +10,7 @@ use App\Models\Masjid;
 use App\Models\MealOrder;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Support\ContactIdentity;
 use DateTimeZone;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -42,7 +43,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Within the caller's own organisation only, on every source:
  *   - cart `orders`: PAID, and `contact_id` is the caller OR the typed `buyer_email`
- *     is the address;
+ *     is the address ("is the address" is exact: see the next section);
  *   - `historical_orders` (Wix): `contact_id` is the caller. The importer's link key;
  *     the table holds no e-mail;
  *   - door purchases, so this year's festival tickets show up: a paid money leg on a
@@ -52,6 +53,35 @@ use Illuminate\Support\Facades\DB;
  *   - a form response or meal order that an `order_items` row records is LEFT OUT: the
  *     cart order already lists it, and listing both would count one purchase twice;
  *   - donations: `contact_id` is the caller and the gift succeeded.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE ADDRESS IS DECIDED IN PHP, AND THE SQL ONLY SHORTLISTS
+ * ---------------------------------------------------------------------------
+ * `orders.buyer_email`, `form_responses.respondent_email` and `meal_orders.customer_email`
+ * set no collation of their own, so on production they take the connection's,
+ * `utf8mb4_unicode_ci` (read from production 2026-09-29). Under it `LOWER(TRIM(col)) = ?`
+ * is TRUE for a look-alike: `victim@gmail.com` = `victim@gmaíl.com`, `ß` = `ss`. Whoever
+ * owns the look-alike domain can request a member code at it, redeem it and hold a verified
+ * `login_email` that the database calls equal to the victim's typed address, and would
+ * then be shown the victim's baskets, festival tickets and lunches. SQLite compares bytes,
+ * so the suite could not have told us (tests/Support/FoldsAccentsLikeUnicodeCi builds the
+ * production premise on it).
+ *
+ * So the query only narrows: each address arm runs the `LOWER(TRIM(col)) = ?` query as a
+ * SHORTLIST, `ContactIdentity::keepExactMatches()` keeps the candidates whose stored
+ * address is exactly the proved one, and the query the caller receives asks for those
+ * keys (`id IN (...)`) beside the caller's own `contact_id` arm. The exact check is
+ * therefore already made before anything is counted, paginated or projected: the union's
+ * count, the page cut and `find()` are all built on the same corrected builder, and a
+ * look-alike's purchase is in none of them. The shortlist carries no LIMIT (a limit
+ * taken before the exact check could cut the real match off behind look-alikes), and
+ * the keys are inlined as integers (`whereIntegerInRaw`), so the list is not bound
+ * by the driver's placeholder limit. It is one address's purchases inside one organisation.
+ *
+ * What it costs: one extra narrow query per address arm each time a builder is made
+ * (three for a list page, then one per source on the page for `load()`, one for a
+ * detail). The `LOWER(TRIM())` wrapper still defeats an index on the column, as it did
+ * before (ASSUMPTIONS #60).
  *
  * ---------------------------------------------------------------------------
  * WHY EVERY QUERY NAMES THE ORGANISATION ITSELF
@@ -72,7 +102,8 @@ use Illuminate\Support\Facades\DB;
  * asked on every lookup, and a miss, a foreign row, a junk handle and an unknown
  * source all come back as null: the controller turns each into the same 404.
  *
- * Pinned by tests/Feature/Member/MemberPurchasesTest.php.
+ * Pinned by tests/Feature/Member/MemberPurchasesTest.php, and, for the look-alike
+ * addresses, tests/Feature/Member/MemberPurchasesLookAlikeAddressTest.php.
  */
 class MemberPurchases
 {
@@ -118,9 +149,7 @@ class MemberPurchases
     /** Cart orders that were paid and were confirmed to the caller's address, or are the caller's. */
     public function cartOrders(Contact $contact): Builder
     {
-        $query = Order::query()
-            ->where('orders.masjid_id', $contact->masjid_id)
-            ->where('orders.status', Order::STATUS_PAID);
+        $query = $this->cartBase($contact);
 
         $address = $this->verifiedAddress($contact);
 
@@ -128,10 +157,16 @@ class MemberPurchases
             return $this->none($query);
         }
 
+        $atAddress = $this->keysAtAddress(
+            $this->cartBase($contact)->whereRaw('LOWER(TRIM(orders.buyer_email)) = ?', [$address]),
+            'buyer_email',
+            $address
+        );
+
         // One group, so the OR cannot escape the organisation and status above.
-        return $query->where(function (Builder $q) use ($contact, $address) {
+        return $query->where(function (Builder $q) use ($contact, $atAddress) {
             $q->where('orders.contact_id', $contact->id)
-                ->orWhereRaw('LOWER(TRIM(orders.buyer_email)) = ?', [$address]);
+                ->orWhereIntegerInRaw('orders.id', $atAddress);
         });
     }
 
@@ -151,10 +186,7 @@ class MemberPurchases
     /** Paid form responses (a money leg) confirmed to the caller's address and not owned by a cart order. */
     public function formPurchases(Contact $contact): Builder
     {
-        $query = FormResponse::query()
-            ->where('form_responses.masjid_id', $contact->masjid_id)
-            ->whereNotNull('form_responses.payment_method')
-            ->where('form_responses.payment_status', FormResponse::PAYMENT_PAID);
+        $query = $this->formBase($contact);
 
         $address = $this->verifiedAddress($contact);
 
@@ -162,8 +194,14 @@ class MemberPurchases
             return $this->none($query);
         }
 
+        $atAddress = $this->keysAtAddress(
+            $this->formBase($contact)->whereRaw('LOWER(TRIM(form_responses.respondent_email)) = ?', [$address]),
+            'respondent_email',
+            $address
+        );
+
         return $this->notOwnedByACart(
-            $query->whereRaw('LOWER(TRIM(form_responses.respondent_email)) = ?', [$address]),
+            $query->whereIntegerInRaw('form_responses.id', $atAddress),
             'form_responses',
             OrderItem::RECORD_FORM_RESPONSE
         );
@@ -172,9 +210,7 @@ class MemberPurchases
     /** Paid meal orders confirmed to the caller's address, or the caller's, not owned by a cart order. */
     public function mealPurchases(Contact $contact): Builder
     {
-        $query = MealOrder::query()
-            ->where('meal_orders.masjid_id', $contact->masjid_id)
-            ->where('meal_orders.payment_status', MealOrder::PAYMENT_PAID);
+        $query = $this->mealBase($contact);
 
         $address = $this->verifiedAddress($contact);
 
@@ -182,10 +218,16 @@ class MemberPurchases
             return $this->none($query);
         }
 
+        $atAddress = $this->keysAtAddress(
+            $this->mealBase($contact)->whereRaw('LOWER(TRIM(meal_orders.customer_email)) = ?', [$address]),
+            'customer_email',
+            $address
+        );
+
         return $this->notOwnedByACart(
-            $query->where(function (Builder $q) use ($contact, $address) {
+            $query->where(function (Builder $q) use ($contact, $atAddress) {
                 $q->where('meal_orders.contact_id', $contact->id)
-                    ->orWhereRaw('LOWER(TRIM(meal_orders.customer_email)) = ?', [$address]);
+                    ->orWhereIntegerInRaw('meal_orders.id', $atAddress);
             }),
             'meal_orders',
             OrderItem::RECORD_MEAL_ORDER
@@ -407,6 +449,54 @@ class MemberPurchases
                 ->whereColumn('order_items.record_id', "{$table}.id")
                 ->whereColumn('order_items.masjid_id', "{$table}.masjid_id");
         });
+    }
+
+    /** What every cart-order query starts from: this organisation's PAID orders. */
+    private function cartBase(Contact $contact): Builder
+    {
+        return Order::query()
+            ->where('orders.masjid_id', $contact->masjid_id)
+            ->where('orders.status', Order::STATUS_PAID);
+    }
+
+    /** What every form query starts from: this organisation's responses with a PAID money leg. */
+    private function formBase(Contact $contact): Builder
+    {
+        return FormResponse::query()
+            ->where('form_responses.masjid_id', $contact->masjid_id)
+            ->whereNotNull('form_responses.payment_method')
+            ->where('form_responses.payment_status', FormResponse::PAYMENT_PAID);
+    }
+
+    /** What every meal query starts from: this organisation's PAID lunch orders. */
+    private function mealBase(Contact $contact): Builder
+    {
+        return MealOrder::query()
+            ->where('meal_orders.masjid_id', $contact->masjid_id)
+            ->where('meal_orders.payment_status', MealOrder::PAYMENT_PAID);
+    }
+
+    /**
+     * The keys of the rows, among a shortlist that matched the address in SQL, whose stored
+     * `$column` is EXACTLY the proved address (`ContactIdentity::sameAddress()`): equal apart
+     * from case and the space around it, and nothing the collation merely calls equal.
+     *
+     * The shortlist must not `limit()`, and is read whole: the address is the filter that
+     * bounds it. Only the key and the address are read.
+     *
+     * @return list<int>
+     */
+    private function keysAtAddress(Builder $shortlist, string $column, string $address): array
+    {
+        $model = $shortlist->getModel();
+
+        return ContactIdentity::keepExactMatches(
+            $shortlist->get([$model->getQualifiedKeyName(), $model->qualifyColumn($column)]),
+            $column,
+            $address
+        )
+            ->map(fn (Model $row) => (int) $row->getKey())
+            ->all();
     }
 
     /** A query that matches nothing, still carrying its model so callers can chain on it. */

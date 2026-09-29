@@ -5650,9 +5650,11 @@ shows it (the MEC apps or a web page) is the owner's open question.
 (2) THE LINKING RULE. A member sees a purchase when it was confirmed to THEIR VERIFIED ADDRESS (`login_email`
 while `verified_at` is set, through `Contact::memberAccessIsActive()`), or, where the source carries a contact,
 when `contact_id` is theirs, always inside their own organisation: cart `orders` PAID with `contact_id` = them OR
-`LOWER(TRIM(buyer_email))` = the address; `historical_orders` by `contact_id` (the importer's key; the table holds
+`buyer_email` is exactly the address (case and the spaces around it aside: fix round 1, below, item 1);
+`historical_orders` by `contact_id` (the importer's key; the table holds
 no e-mail); `form_responses` with a PAID money leg (`payment_method` set, `payment_status = paid`) whose
-`respondent_email` matches; `meal_orders` PAID whose `customer_email` matches or `contact_id` is theirs; donations
+`respondent_email` is exactly the address; `meal_orders` PAID whose `customer_email` is exactly the address or
+whose `contact_id` is theirs; donations
 by `contact_id`, status `succeeded`. A form response or meal order that an `order_items` row records
 (`record_type` + `record_id`, the type checked as well as the number) is left out, because the cart order already
 lists it. Without a verified address EVERY list is empty, the contact-keyed ones included (an unverified member
@@ -5714,3 +5716,31 @@ isolation, no verified address, case and space, the cart-owned exclusion by reco
 router, the door, isolation over HTTP, one 404, exact keys plus canary values, statuses, dates, pagination, the
 limiter buckets), `MemberGiftsAndReceiptsTest.php` (the gifts, the receipt object and its note, the PDF's
 headers, its one 404, the house paginator).
+
+## 2026-09-29 — Member portal, slice 6, fix round 1 (review wf_97cdfff0-76f)
+Decision: (1) THE ADDRESS IS DECIDED IN PHP, THE SQL ONLY SHORTLISTS (major). `orders.buyer_email`,
+`form_responses.respondent_email` and `meal_orders.customer_email` set no collation of their own, so on production
+(verified read-only) they are `utf8mb4_unicode_ci`, and `LOWER(TRIM(col)) = ?` is TRUE for `victim@gmail.com` against
+`victim@gmaíl.com`. Somebody who owns the look-alike domain can redeem a member code at it and hold a verified
+`login_email` that the database calls equal to the victim's typed address, and then read the victim's baskets, festival
+tickets and lunches (lines and totals). SQLite compares bytes, so 83 green tests could not show it. Each address arm of
+`MemberPurchases` (cart `buyer_email`, form `respondent_email`, meal `customer_email`) now runs the `LOWER(TRIM())`
+query as a SHORTLIST (no LIMIT), keeps the rows whose stored address is exactly the proved one with
+`ContactIdentity::keepExactMatches()`, and hands the caller a builder that asks for those keys (`id IN (...)`, inlined
+as integers) beside the caller's own `contact_id` arm. The exact filter therefore runs before anything is counted,
+paginated or projected: the union's `COUNT` and its LIMIT/OFFSET page, `load()` and `find()` are all built on the same
+corrected builders, so the page count is right and no PHP filter is applied after a page is cut. The `contact_id` arms
+are untouched (an order keyed to the caller stays theirs whatever address was typed). Cost: one extra narrow query per
+address arm each time a builder is made (ASSUMPTIONS #60). ASSUMPTIONS #49 said the columns were `utf8mb4_bin`; it is
+rewritten. The same collation lets `MemberSignupService` (`LOWER(login_email) = ?`) resolve a contact for a look-alike;
+that lookup and its fix are on main already (`ContactIdentity`, `MemberSignInLookAlikeAddressTest`) and are not touched
+here.
+Alternatives: `COLLATE utf8mb4_bin` on the comparison (the reviewer's fix; rejected: MySQL-only, so SQLite needs a
+second branch the suite cannot show is equivalent, and the house already has one exact-address comparison,
+`ContactIdentity::sameAddress()`); filtering the union's rows in PHP after `paginate()` (rejected: the page would be
+short, `total` and `last_page` would count look-alikes, and a look-alike could push a real row off the page);
+paginating by hand in PHP (rejected: it reads every source's whole history to cut one page).
+Tests: `tests/Feature/Member/MemberPurchasesLookAlikeAddressTest.php`, one test per source (cart, form, meal) plus one
+across all three, built on `Tests\Support\FoldsAccentsLikeUnicodeCi`: a look-alike's purchase is in no builder, no
+`find()`, no page, and its detail is the one 404; the page count and last page are the exact rows'; the premise
+(the SQL cannot tell the rows apart) is asserted first.
