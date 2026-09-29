@@ -229,6 +229,61 @@ class TeacherProvisioningTest extends TestCase
         Mail::assertSent(AccountAccessMail::class);
     }
 
+    #[Test]
+    public function creating_a_teacher_records_the_signed_in_admin_as_who_assigned_each_class(): void
+    {
+        // Before 2026-09-29 this column was NULL on every row TeachersController wrote:
+        // attach() runs its extras through GroupStaff::fill(), which drops a column
+        // outside $fillable. GroupStaff's creating hook now records the actor.
+        Mail::fake();
+        $someoneElse = User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)]);
+
+        $id = $this->postJson($this->base().'/teachers', [
+            'name' => 'Br. Audit', 'email' => 'audit@school.test',
+            'class_ids' => [$this->classOne->id, $this->classTwo->id],
+            // Not a field the API accepts: a client must never be able to set it.
+            'assigned_by_user_id' => $someoneElse->id,
+        ])->assertCreated()->json('data.id');
+
+        $this->assertSame(
+            [$this->classOne->id => $this->admin->id, $this->classTwo->id => $this->admin->id],
+            $this->assignedByPerClass(User::findOrFail($id))
+        );
+    }
+
+    #[Test]
+    public function a_class_added_on_edit_records_who_added_it_and_a_kept_class_keeps_its_original_assigner(): void
+    {
+        $teacher = $this->makeTeacher([$this->classOne->id]);
+        $earlier = User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)]);
+        GroupStaff::withoutMasjidScope()->where('user_id', $teacher->id)
+            ->update(['assigned_by_user_id' => $earlier->id]);
+
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => $teacher->name,
+            'class_ids' => [$this->classOne->id, $this->classTwo->id],
+            'assigned_by_user_id' => $earlier->id,
+        ])->assertOk();
+
+        $this->assertSame(
+            [$this->classOne->id => $earlier->id, $this->classTwo->id => $this->admin->id],
+            $this->assignedByPerClass($teacher)
+        );
+    }
+
+    #[Test]
+    public function a_row_written_with_nobody_signed_in_records_no_assigner_rather_than_a_guess(): void
+    {
+        $teacher = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $this->app['auth']->forgetGuards();
+
+        $this->classOne->staff()->attach($teacher->id, [
+            'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
+        ]);
+
+        $this->assertSame([$this->classOne->id => null], $this->assignedByPerClass($teacher));
+    }
+
     // ------------------------------------------------------------- helpers
 
     private function base(): string
@@ -256,6 +311,15 @@ class TeacherProvisioningTest extends TestCase
         }
 
         return $teacher;
+    }
+
+    /** group_id => assigned_by_user_id for a teacher's rows, read straight from the table. */
+    private function assignedByPerClass(User $teacher): array
+    {
+        return GroupStaff::withoutMasjidScope()->where('user_id', $teacher->id)->orderBy('group_id')
+            ->pluck('assigned_by_user_id', 'group_id')
+            ->mapWithKeys(fn ($by, $group): array => [(int) $group => $by === null ? null : (int) $by])
+            ->all();
     }
 
     private function subjectsOf(User $teacher, Group $class): ?array
