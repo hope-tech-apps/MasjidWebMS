@@ -1834,7 +1834,7 @@ not on listing.
   two unique keys (one per principal column; NULLs partition them on both drivers). The set is
   the PHP constant `GroupMessageReaction::REACTIONS`; the server 422s anything else and the
   model refuses it too. PUT adds, DELETE removes — two idempotent verbs rather than a toggle,
-  so a double tap or a second tab cannot flip the answer back. No notification.
+  so a double tap or a second tab cannot flip the answer back. No notification. **(The "no notification" was reversed 2026-09-29: see "Class story engagement" at the end of this file — a tap still sends nothing, but the author gets a content-free hourly digest.)**
 - **The gate is replying's gate.** Route write gate (`permission:manage contacts` / 
   `teacher.leads` / family guard) → `mayReceiveThread()` → not closed; the message is resolved
   through the thread, so another family's message id is a 404 even from a thread you may read.
@@ -4794,3 +4794,48 @@ this school"; `last_sign_in_at` is removed from the Team payload (the SPA was it
   4. **Tests no longer depend on the process's memory.** `StudioDraftFixtures::setUpStudio` (which `ProvisionsStudioDrafts::setUpProvisioning` and the draft tests call) sets `LogoDerivatives::$headroomBytes` to 512 MiB and resets it to null with `beforeApplicationDestroyed`. `StudioProvisionLogoTest::the_real_memory_path_reads_the_ini_limit_minus_what_the_process_holds` keeps the real `memory_limit` minus usage path, with a limit the test sets (10 MiB above what it holds, then 512 MiB) and restores.
   5. **The draft-logo upload runs the same check** (Point's requirement). `LogoDerivatives::assertFits` is public and `StoreStudioDraftLogoRequest::after()` calls it on the uploaded file once the type and size rules have passed. A `LogoTooLarge` becomes an error on `logo` with its own sentence, so the answer is the legacy 422 `{status:'failed', data:{logo:[sentence]}}` and nothing is stored (the request fails before the controller opens its transaction). Provisioning keeps its own run, since the headroom there can differ. **The upload's `dimensions` rule lost its maximum**: with it, a 20000x20000 logo got Laravel's generic sentence before this check ran, not provisioning's. The maximum edge is `LogoDerivatives::MAX_EDGE`, checked by `assertFits`, and `StudioSpaSourceTest` now reads that constant for the SPA's `LOGO_LARGEST_EDGE` pin. Tests in `StudioDraftLogoTest`: a crafted 20000x20000 header (valid signature, IHDR with its CRC, IEND) gets the sentence and is not stored; a 3000x3000 header under a 40 MiB seam gets the memory sentence, keeps the draft's earlier logo, and is taken once the room is given.
   6. **Not done, on purpose.** No log line for a refused upload: the user sees the 422, and the hooks log only because they skip silently. Not run: `StudioProvisionLogoTest` and the suites on SQLite versus MySQL on the CI droplet.
+
+## 2026-09-29: Class story engagement — reactions, read receipts, the reaction digest (W2)
+
+**Asked (owner):** reactions on class stories, read receipts on class stories, and notifications for reactions
+(the school-list items T-002.1, T-002.3, T-002.2). Built on branch `feat/school-w2-stories` off `19c0f4d1`.
+
+**Reversed rule.** 2026-09-21 said reactions notify nobody. "Add notifications for reactions" is the owner's own
+instruction, so the rule is reversed; what survives is its reason (a push per 👍 buries the replies). A tap still
+dispatches nothing; the AUTHOR gets ONE content-free email per class per hour at most (`groups:notify-reactions`).
+`GroupMessageReactionsTest` still pins "a tap sends nothing".
+
+**Owner-driven changes to the plan:**
+- **No staff push.** The staff app is parked (S1), so reaction notifications are the email digest only. When the
+  staff app resumes, push plugs into `GroupPushChannel`.
+- **Read receipts are built but OFF by default** (`groups.story_reads.enabled`, env `GROUP_STORY_READS_ENABLED`).
+  The privacy notice's ar / ur / ps / fa-AF (and es) copy is machine-drafted and needs a human review BEFORE any
+  read is recorded in production. The switch gates recording, the parent-facing notice and the staff "Seen by"
+  line together, from one config value (`meta.story_reads`), so they go live together.
+
+**Decisions taken here (each defensible, none asked):**
+1. **Shared `App\Support\Reactions`** for the four keys and the naming rule, used by message and story reactions.
+2. **Reactions gate = the FEED read gate**, not the media gate: a reaction is to the words.
+3. **Audience for "Seen by n of m"** = `GroupAudience::storyGuardianContacts()` (consented, current, live login), and
+   the story email fan-out now reads the same method, so the two cannot drift. The count is per parent (guardian
+   contact), not per family. `unreachable_count` reports consented, current parents with no portal login.
+4. **Receipts omitted, not zeroed, while off**: a staff screen never shows "0 of 7" for a receipt nobody keeps.
+5. **The digest re-checks both ends at send time** (reactor in the command, recipient in the job) and claims rows
+   with an `UPDATE ... WHERE notified_at IS NULL` before sending: at most once, crash loses rather than repeats.
+6. **Settle window 10 minutes** (`groups.reactions.settle_minutes`): an ESTIMATE, there is no data (0 reactions).
+7. **`SendGroupNotificationJob` fix**: the sign-in URL follows the recipient's realm (`/auth/sign-in` for staff),
+   not always the family portal. Pre-existing bug, found in the recon and fixed here.
+
+**Counted lists:** teacher write verbs +2 (story reaction PUT/DELETE); family write verbs +3 (story reaction
+PUT/DELETE and `POST .../posts/seen`). `TeacherMultiSchoolTest`'s sweep, `MemberAccountDeletionCoverageTest` and
+`TenantScopingCoverageTest` were updated on purpose. No permission was added.
+
+**Held for the owner:** the human review of the five machine-drafted `story_seen_notice` strings
+(`familyI18n.ts` ar, `locales/{es,ur,ps,fa-AF}.ts`); then set `GROUP_STORY_READS_ENABLED=true`. Also the settle window
+(an estimate). BISS reach is 0 today (no consented guardians, staff or family logins there).
+
+**Migrations (all additive, deploy-order safe):** `2026_10_02_100000_create_group_post_reactions_table`,
+`2026_10_02_110000_create_group_post_reads_table`, `2026_10_02_120000_add_notified_at_to_group_reaction_tables`. New
+code reads none of the new tables from a request that runs before the migration, except the story list, which reads
+`group_post_reactions`: deploy after hours or run the migration first (the deploy script checks out PHP before it
+migrates). Run each up, `migrate:rollback --step=3`, up again on staging MySQL before production.
