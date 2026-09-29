@@ -16,11 +16,14 @@ use App\Models\DonationReceipt;
  * its donation. Issuing is settlement's; e-mailing the receipt is the webhook
  * controller's existing delivery (StripeWebhookController::deliverReceipt), which is
  * once-only on `receipt_delivered_at` and stays where it is rather than being copied here.
+ * Each receipt carries the id of the order line that claimed its delivery, so the controller
+ * can give the claim back when the send fails (CartSettlementService::releaseReceiptClaim()).
  */
 final readonly class CartSettlementResult
 {
     /**
-     * @param  list<array{0: Donation, 1: DonationReceipt}>  $receipts
+     * @param  list<array{0: Donation, 1: DonationReceipt, 2: int}>  $receipts  each with the id of the
+     *                                                                            order line whose claim it holds
      */
     public function __construct(
         public bool $settled = false,

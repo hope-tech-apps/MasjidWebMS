@@ -839,8 +839,15 @@ class CartSettlementService
      * event's step needs. A claim that ends with no contact or no receipt, or with a failure,
      * is released for the next step.
      *
+     * A claim that reaches delivery is kept only if the delivery worked. deliverReceipt() is
+     * best-effort (a mail failure is logged and `receipt_delivered_at` stays null), so the
+     * step hands back the line's id with the receipt and the controller, which delivers,
+     * releases the claim when the gift is still undelivered afterwards
+     * (`releaseReceiptClaim()`); otherwise a failed send would leave the line claimed and
+     * every later step would get 0 rows.
+     *
      * @param  array<string,mixed>  $details
-     * @return Closure(): ?array
+     * @return Closure(): ?array{0: Donation, 1: \App\Models\DonationReceipt, 2: int}
      */
     private function donorAndReceiptStep(int $orderItemId, int $donationId, array $details, bool $noteArrival = false): Closure
     {
@@ -874,7 +881,7 @@ class CartSettlementService
                 $this->donorContacts->linkFromCheckoutSession($donation, ['customer_details' => $details]);
                 $receipt = $this->receipts->issueFor($donation->refresh());
             } catch (Throwable $e) {
-                $this->releaseReceiptClaim($orderItemId);
+                self::releaseReceiptClaim($orderItemId);
 
                 throw $e;
             }
@@ -882,17 +889,21 @@ class CartSettlementService
             // Nothing to deliver (no contact could be made, or the gift takes no receipt): give
             // the claim back and hand nothing on, so no delivery can race a later step's.
             if ($receipt === null || $donation->contact_id === null) {
-                $this->releaseReceiptClaim($orderItemId);
+                self::releaseReceiptClaim($orderItemId);
 
                 return null;
             }
 
-            return [$donation, $receipt];
+            return [$donation, $receipt, $orderItemId];
         };
     }
 
-    /** Give the claim back: nothing was delivered, so a later step may still try. */
-    private function releaseReceiptClaim(int $orderItemId): void
+    /**
+     * Give the claim back: nothing was delivered, so a later step may still try. Public and
+     * static because the controller, which delivers the receipt, is the one that learns the
+     * send failed.
+     */
+    public static function releaseReceiptClaim(int $orderItemId): void
     {
         OrderItem::withoutMasjidScope()->whereKey($orderItemId)->update(['receipt_claimed_at' => null]);
     }
@@ -1014,7 +1025,7 @@ class CartSettlementService
      * Protected so a test can observe that it runs with the transaction closed.
      *
      * @param  list<Closure(): ?array>  $steps
-     * @return list<array{0: Donation, 1: \App\Models\DonationReceipt}>
+     * @return list<array{0: Donation, 1: \App\Models\DonationReceipt, 2: int}>
      */
     protected function afterCommit(int $orderId, array $steps): array
     {

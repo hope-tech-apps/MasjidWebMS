@@ -586,7 +586,10 @@ Direct charge on the ONE connected account, exactly the rules above.
   `donorAndReceiptStep()`): both success events queue the step for one gift and the controller's
   `deliverReceipt()` is check-then-send, so only the step that changed 1 row links the donor and hands
   the receipt on. A step with no address and no contact yet claims nothing (it only issues the receipt);
-  a claim that delivers nothing, or fails, is released.
+  a claim that delivers nothing, or fails, is released. `deliverReceipt()` is best-effort, so the step
+  hands the line's id back with the receipt and `StripeWebhookController::handleCartEvent()` releases
+  the claim (`CartSettlementService::releaseReceiptClaim()`) when `receipt_delivered_at` is still null
+  after the send; a delivered receipt keeps its claim. `deliverReceipt()` itself is unchanged.
 - **A linked basket's form row is pinned** in the settlement transaction: `charge_account_id` =
   the order's pin, `charge_masjid_id` = the organisation holding that account, as
   `FormResponseCheckoutService` pins a linked row. The pin gives staff the right refund instruction
@@ -601,6 +604,10 @@ Direct charge on the ONE connected account, exactly the rules above.
   `orders.charge_flag` (`refunded` | `partially_refunded` | `disputed`; a dispute is never downgraded),
   `charge_refunded_minor` (the latest amount, never added to) and `charge_flagged_at`, and logs a WARNING
   naming the order number and saying the lines cannot be attributed automatically, so staff reconcile it.
+  An order that names the payment but is NOT PAID yet is flagged all the same, with a WARNING saying it
+  was flagged before settlement recorded it (Stripe does not redeliver a refund or dispute); a charge no
+  order carries writes nothing and logs at INFO. The holder of `event.account` is the LIVE organisation,
+  a trashed one only when none is live (`CartPaymentService::accountHolder()`, shared with settlement).
   Idempotent, never throws. `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
   `order_items` line points at (`record_type='form_response'`); every other row is one per payment intent
   and behaves exactly as before.

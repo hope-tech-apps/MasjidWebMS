@@ -5472,3 +5472,26 @@ amount is the largest figure seen (Stripe's is cumulative), so a late event cann
 `tests/Feature/Cart/CartSettlementRound2Test.php`. One existing assertion changed:
 `CartSettlementReviewFixesTest::a_linked_baskets_registration_is_pinned_to_the_holder_so_its_refund_flags_it`
 now expects the order flagged and the row not (that is the design change). ASSUMPTIONS #28, #30-#32.
+
+## 2026-09-29 — Cart settlement review fixes, round 3 (slice 4b): a failed send, an early refund, a trashed holder
+Decision: the check of ba50f193 found three minors; all fixed in `feat/universal-cart`. (1) A receipt could
+be left unsent: the step that wins the line's claim keeps it, `deliverReceipt()` is best-effort, and a
+failed send leaves `receipt_delivered_at` null with the claim still held, so every later step gets 0 rows.
+The step now hands the line's id back with the receipt, and the controller's cart path releases the claim
+when the gift is still undelivered after the send. `deliverReceipt()` is unchanged, and so are its other
+callers. (2) A refund or dispute that names an order found by its payment intent but not yet paid was
+acked in silence, and Stripe does not redeliver: it is now flagged (flag and amount) with a WARNING naming
+the order and saying it was flagged before settlement recorded it; a charge no order carries still writes
+nothing but leaves an INFO line. (3) `flagOrder()` resolved the account holder with `withTrashed()->first()`,
+which can name a trashed organisation that shares the account id with a live one (the unique index covers
+live rows only): it now uses one `accountHolder()` lookup, live first and trashed only as a fallback, shared
+with settlement's `resolve()`.
+Deferred on purpose: `closeCart`'s match does not include quantity. No endpoint edits a line in place yet,
+so it is latent; it belongs to the add-to-basket slice.
+Alternatives: release the claim inside `deliverReceipt()` (rejected: the brief keeps it unchanged and other
+paths call it); hand the controller a release callback (rejected: the line id is data, and a static release
+on the service is the same one the step already uses); ignore an unpaid order's flag until it settles
+(rejected: the event is never redelivered).
+Rationale: money is mailed for once, but a receipt that failed to send is not lost, and a dispute is never
+dropped for arriving early. Pinned by `tests/Feature/Cart/CartSettlementRound3Test.php`; no existing test
+changed. ASSUMPTIONS #33, #34.

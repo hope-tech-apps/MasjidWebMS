@@ -190,9 +190,15 @@ class CartPaymentService
      * that account resolves to. A holder's account is the one exception to "the organisation
      * holding the account": a linked basket's order belongs to the CHILD, so an order that
      * carries a `charge_ref` is accepted on its pinned account alone. Metadata never decides.
-     * A charge that is no basket's (every donation, lunch and registration refund) is acked
-     * silently, exactly as before this arm existed. It never throws: a 500 would only make
-     * Stripe retry, and a lost flag is logged at error.
+     * The organisation holding the account is the same one settlement resolves (a live one
+     * before a trashed one: `accountHolder()`).
+     *
+     * An order that names the payment but is NOT PAID yet is flagged all the same, with a
+     * warning that it was flagged before settlement recorded it: Stripe does not redeliver a
+     * refund or dispute, so ignoring it would lose it. A charge that is no basket's (every
+     * donation, lunch and registration refund) writes nothing, exactly as before this arm
+     * existed, and is logged at info so there is a trace. It never throws: a 500 would only
+     * make Stripe retry, and a lost flag is logged at error.
      *
      * The form registrations such a basket settled are the cart's, not the form arm's
      * (FormResponsePaymentService::handleChargeFlag skips them).
@@ -224,10 +230,19 @@ class CartPaymentService
         $candidates = Order::withoutMasjidScope()->where('stripe_payment_intent_id', $intentId)->get();
 
         if ($candidates->isEmpty()) {
+            // Nearly every charge that lands here is not a basket's (a donation, a lunch order, a
+            // registration). Nothing is written, as before; the line is the trace that this arm
+            // looked and found no order carrying the payment.
+            Log::info('A refund or dispute names a payment that no cart order carries; it is not a basket\'s charge, so no order was flagged.', [
+                'flag' => $flag,
+                'account' => $account,
+                'payment_intent' => $intentId,
+            ]);
+
             return;
         }
 
-        $holder = Masjid::withTrashed()->where('stripe_account_id', $account)->first();
+        $holder = $this->accountHolder($account);
 
         $order = $candidates->first(fn (Order $o): bool => hash_equals((string) $o->charge_account_id, $account)
             && ($o->charge_ref !== null || ($holder !== null && (int) $o->masjid_id === (int) $holder->id)));
@@ -245,9 +260,9 @@ class CartPaymentService
         DB::transaction(function () use ($order, $object, $flag): void {
             $locked = Order::withoutMasjidScope()->whereKey($order->id)->lockForUpdate()->firstOrFail();
 
-            if (! $locked->isPaid()) {
-                return;
-            }
+            // An order that names this payment but is not paid yet is flagged all the same: Stripe
+            // will not deliver the event again, so returning quietly would lose a dispute for good.
+            $beforeSettlement = ! $locked->isPaid();
 
             $recorded = (int) $locked->charge_refunded_minor;
             $refunded = $flag === Order::CHARGE_FLAG_DISPUTED ? null : $this->refundedMinor($object, $locked);
@@ -284,11 +299,15 @@ class CartPaymentService
             Log::warning(
                 'A cart basket\'s charge was ' . ($flag === Order::CHARGE_FLAG_DISPUTED ? 'disputed' : 'refunded') . ' on Stripe. '
                 . "The order {$locked->order_number} is flagged, but a basket has one charge and Stripe does not say which line was refunded or disputed, "
-                . 'so the lines cannot be attributed automatically: staff must reconcile the order\'s lines by hand.',
+                . 'so the lines cannot be attributed automatically: staff must reconcile the order\'s lines by hand.'
+                . ($beforeSettlement
+                    ? " The order is {$locked->status}, not paid: it was flagged before settlement recorded it, so check that payment as well."
+                    : ''),
                 [
                     'order_id' => (int) $locked->id,
                     'order_number' => (string) $locked->order_number,
                     'masjid_id' => (int) $locked->masjid_id,
+                    'status' => (string) $locked->status,
                     'flag' => $locked->charge_flag,
                     'refunded_minor' => (int) $locked->charge_refunded_minor,
                     'total_minor' => (int) $locked->total_minor,
@@ -308,6 +327,19 @@ class CartPaymentService
         }
 
         return $amount;
+    }
+
+    /**
+     * The organisation holding a connected account: a LIVE one when there is one, else a
+     * trashed one (an offboarded organisation's money is still recorded). A soft-deleted and a
+     * live organisation can share an account id (the unique index covers live rows only), so
+     * "the first of either" could name the trashed one; one lookup, used by settlement's
+     * `resolve()` and by a refund's `flagOrder()`, keeps the two answering alike.
+     */
+    private function accountHolder(string $account): ?Masjid
+    {
+        return Masjid::where('stripe_account_id', $account)->first()
+            ?? Masjid::onlyTrashed()->where('stripe_account_id', $account)->first();
     }
 
     /**
@@ -338,8 +370,7 @@ class CartPaymentService
             return null;
         }
 
-        $masjid = Masjid::where('stripe_account_id', $account)->first()
-            ?? Masjid::onlyTrashed()->where('stripe_account_id', $account)->first();
+        $masjid = $this->accountHolder($account);
 
         if ($masjid === null) {
             Log::warning('A cart payment event is for a connected account no organisation holds; nothing was recorded.', [

@@ -11,6 +11,7 @@ use App\Models\Masjid;
 use App\Models\Order;
 use App\Models\StripeWebhookEvent;
 use App\Services\Cart\CartSettlementResult;
+use App\Services\Cart\CartSettlementService;
 use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\Letterhead;
@@ -368,7 +369,8 @@ class StripeWebhookController extends Controller
      * whether it is paid; CartSettlementService records it). The donation receipts a paid
      * basket issued after its commit are e-mailed here, by the same once-only delivery every
      * donation receipt uses (deliverReceipt(), guarded by receipt_delivered_at), so the
-     * receipt e-mail is not a second implementation.
+     * receipt e-mail is not a second implementation. A receipt still undelivered afterwards
+     * (the send failed) has its line's delivery claim released, so a later step can retry.
      *
      * A refusal returns normally (logged at warning inside); a genuine failure to record a
      * paid basket throws out of CartSettlementService with everything rolled back, and the
@@ -389,8 +391,20 @@ class StripeWebhookController extends Controller
             return;
         }
 
-        foreach ($result->receipts as [$donation, $receipt]) {
-            $this->deliverReceipt($donation->refresh(), $receipt);
+        foreach ($result->receipts as [$donation, $receipt, $orderItemId]) {
+            $donation = $donation->refresh();
+
+            $this->deliverReceipt($donation, $receipt);
+
+            // deliverReceipt() is best-effort: a failed send is logged and leaves
+            // receipt_delivered_at null. The step that handed this receipt on holds the line's
+            // claim (CartSettlementService::donorAndReceiptStep), and while it is held every
+            // later step gets 0 rows and delivers nothing, so an undelivered receipt would
+            // never be tried again. Give the claim back so the next step can. Only the cart
+            // path does this; deliverReceipt() and its other callers are unchanged.
+            if ($donation->refresh()->receipt_delivered_at === null) {
+                CartSettlementService::releaseReceiptClaim((int) $orderItemId);
+            }
         }
     }
 
