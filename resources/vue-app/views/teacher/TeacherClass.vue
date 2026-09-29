@@ -2440,7 +2440,7 @@ import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel }
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
     averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
-    mayChangeWeights, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
+    mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
@@ -3608,10 +3608,15 @@ const gradeContext = computed(() => ({
 }));
 const workReady = computed(() => workFormReady(assignmentForm.value, gradeContext.value));
 const untypedNoteText = untypedNote;
-/** Work in the list that a weighted class would leave out of its average: no type and no weight of its own. */
-const untypedInList = computed(() => assignments.value.filter((a) => !a.type && (a.weight === null || a.weight === undefined)).length);
+/**
+ * Work in the list that a weighted class would leave out of its average for want of a type: no type and no
+ * weight of its own. Simple-scale work is never averaged whatever it is given, so a type would not help it
+ * and it is not counted here (the server leaves it out of `untyped_excluded` the same way).
+ */
+const untypedInList = computed(() => assignments.value.filter((a) => a.scale !== SIMPLE_SCALE && !a.type && (a.weight === null || a.weight === undefined)).length);
 /** What a blank weight box inherits, said in the box so leaving it blank is a decision a teacher can read. */
 const inheritedWeightText = computed(() => {
+    if (assignmentForm.value.scale === SIMPLE_SCALE) return NOT_AVERAGED.replace(/^./, (c) => c.toUpperCase());
     const w = effectiveWeight({ type: assignmentForm.value.type || null }, classWeights.value, weightingEnabled.value);
     return w === null ? 'Type sets it' : `Counts ${w}`;
 });

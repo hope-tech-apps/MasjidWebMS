@@ -5197,3 +5197,11 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   here. Unknown, needs investigation: whether any live class has only limited teachers (BISS is on simple marking, which is never averaged, so
   weights matter to it only for points work; whether Al-Razi's teachers carry a subject list was not read from production). Open question for
   the point: an admin-realm `PUT` for the weights (`permission:manage contacts`), or leave it.
+
+- **2026-09-29 (W3/W4 folds, F6): simple-scale work says "not averaged", and a weighted class with only such marks says why it has no weighted figure.**
+  The server never averages or weights Excellent / Good / Needs work (`GradeRecord::weighted` skips the scale, and leaves it out of
+  `untyped_excluded`), but the teacher's and the office's screens badged a typed simple piece "counts 40" and gave a BISS class that set
+  weights and typed its work no figure and no reason. `weightNote()` / `effectiveWeight()` now read the piece's `scale`: a simple piece in
+  a weighted class is "not averaged" (and no weight), the blank weight box on a simple form says so, the "no type" warning no longer counts
+  work a type could not help, and `averageLines()` adds one explanatory line where a weighted class has simple marks and nothing else to
+  average. Teacher and office screens only; the family screen still shows the three words and no figure. No family copy.

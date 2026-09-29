@@ -16,6 +16,8 @@ import {
     firstFieldError,
     isCombinedGuideColumn,
     mayChangeWeights,
+    NOT_AVERAGED,
+    NOT_AVERAGED_WHY,
     percentText,
     subjectLine,
     untypedNote,
@@ -292,4 +294,56 @@ test('the weights panel is read-only for a limited teacher and offers no save or
     assert.match(source, /only a\s+teacher of all the subjects in this class, or the office, can change them/);
     // The button no longer invites a limited teacher to "Set weights".
     assert.match(source, /weightingEnabled \|\| !canChangeWeights \? 'Weights' : 'Set weights'/);
+});
+
+// ---------------------------------------------------------------- review F6: simple-scale work is never averaged
+
+const weightsOn = { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 };
+
+test('a simple-scale piece in a weighted class says it is not averaged, not "counts N"', () => {
+    for (const work of [{ scale: 'simple', type: 'test' }, { scale: 'simple', type: null }, { scale: 'simple', type: 'test', weight: 30 }]) {
+        assert.equal(weightNote(work, weightsOn, true), NOT_AVERAGED, JSON.stringify(work));
+        assert.equal(effectiveWeight(work, weightsOn, true), null, JSON.stringify(work));
+    }
+    assert.equal(NOT_AVERAGED, 'not averaged');
+
+    // Points and levels work count as they did.
+    assert.equal(weightNote({ scale: 'points', type: 'test' }, weightsOn, true), 'counts 40');
+    assert.equal(weightNote({ scale: 'levels', type: 'quiz' }, weightsOn, true), 'counts 20');
+    assert.equal(weightNote({ scale: 'points', type: 'test', weight: 30 }, weightsOn, true), 'counts 30 (this work)');
+    // No scale on the payload (an older client's work) reads as it always did.
+    assert.equal(weightNote({ type: 'homework' }, weightsOn, true), 'counts 10');
+    // An unweighted class has no weight to note for anyone.
+    assert.equal(weightNote({ scale: 'simple', type: 'test' }, {}, false), '');
+    assert.equal(weightNote({ scale: 'points', type: 'test' }, {}, false), '');
+});
+
+test('a weighted class with only simple marks says why there is no weighted figure', () => {
+    const summary = {
+        points_counted: 0, points_earned: 0, points_possible: 0, levels: { counted: 0, mean: null },
+        simple: { recorded: 3, counted: 3, missing: 0 },
+        weighting: { enabled: true, percent: null, level_mean: null, points_pieces: 0, untyped_excluded: 0 },
+    };
+
+    assert.deepEqual(averageLines(summary), [{ label: 'Weighted average', value: '—', note: NOT_AVERAGED_WHY }]);
+    assert.match(NOT_AVERAGED_WHY, /never averaged/);
+    assert.match(NOT_AVERAGED_WHY, /no weighted figure/);
+
+    // It follows the figure's own label when fenced, like every other headline line.
+    assert.equal(averageLines(summary, true)[0].label, 'Weighted average (your subjects)');
+
+    // Said only where it is the reason: a weighted figure that exists, no simple marks, or an unweighted class say nothing of it.
+    const notes = (s: any) => averageLines(s).map((l) => l.note);
+    assert.equal(notes({ ...summary, weighting: { ...summary.weighting, percent: 80, points_pieces: 2 }, points_counted: 2, points_earned: 8, points_possible: 10 }).includes(NOT_AVERAGED_WHY), false);
+    assert.deepEqual(averageLines({ ...summary, simple: { recorded: 0 } }), []);
+    assert.deepEqual(averageLines({ ...summary, weighting: { ...summary.weighting, enabled: false } }), []);
+});
+
+test('the work list and the blank weight box word simple-scale work the same way', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+
+    // The untyped warning does not count work a type could not help.
+    assert.match(source, /assignments\.value\.filter\(\(a\) => a\.scale !== SIMPLE_SCALE && !a\.type/);
+    // The blank weight box on a simple-scale form says so instead of "Type sets it".
+    assert.match(source, /if \(assignmentForm\.value\.scale === SIMPLE_SCALE\) return NOT_AVERAGED/);
 });

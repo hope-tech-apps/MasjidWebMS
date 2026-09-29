@@ -119,15 +119,25 @@ export function firstFieldError(e: any, fallback: string): string {
  * average however many pieces are in it, and a piece with an override is a slot
  * of its own (App\Support\GradeRecord).
  */
-export function effectiveWeight(work: { weight?: number | null; type?: string | null }, weights: Record<string, number>, enabled: boolean): number | null {
+export function effectiveWeight(work: { weight?: number | null; type?: string | null; scale?: string | null }, weights: Record<string, number>, enabled: boolean): number | null {
     if (!enabled) return null;
+    // Excellent / Good / Needs work is never averaged, so nothing it carries (its type, or a weight typed
+    // against it) is a weight: it is in no weighted figure (GradeRecord::weighted skips the scale).
+    if (work.scale === SIMPLE_SCALE) return null;
     if (work.weight !== null && work.weight !== undefined) return work.weight;
     if (work.type && Object.prototype.hasOwnProperty.call(weights, work.type)) return weights[work.type];
     return null;
 }
 
-/** "counts 40", "counts 30 (this work)", or "" when nothing is known. */
-export function weightNote(work: { weight?: number | null; type?: string | null }, weights: Record<string, number>, enabled: boolean): string {
+/** The scale whose marks are the three words. Never averaged, so never weighted. */
+export const SIMPLE_SCALE = 'simple';
+
+/** What a piece of simple-scale work says where a weighted class would say "counts N". */
+export const NOT_AVERAGED = 'not averaged';
+
+/** "counts 40", "counts 30 (this work)", "not averaged" (simple-scale work in a weighted class), or "" when nothing is known. */
+export function weightNote(work: { weight?: number | null; type?: string | null; scale?: string | null }, weights: Record<string, number>, enabled: boolean): string {
+    if (enabled && work.scale === SIMPLE_SCALE) return NOT_AVERAGED;
     const w = effectiveWeight(work, weights, enabled);
     if (w === null) return '';
     return work.weight !== null && work.weight !== undefined ? `counts ${w} (this work)` : `counts ${w}`;
@@ -214,9 +224,19 @@ export function averageLines(summary: any, fenced = false): AverageLine[] {
     return fenced ? lines.map((l) => ({ ...l, label: `${l.label} (your subjects)` })) : lines;
 }
 
+/** Said where a weighted class has no weighted figure for a child because the marks it has are simple-scale ones. */
+export const NOT_AVERAGED_WHY = 'Excellent / Good / Needs work marks are never averaged, so they carry no weight and there is no weighted figure for them.';
+
 function averageLinesUnfenced(summary: any): AverageLine[] {
     const lines: AverageLine[] = [];
     const w = summary?.weighting;
+
+    // A weighted class with simple marks and nothing else to average: no weighted figure appears, and a
+    // teacher who set weights and typed the work would otherwise wonder where it went.
+    const noWeightedFigure = w?.enabled && (w.percent === null || w.percent === undefined) && (w.level_mean === null || w.level_mean === undefined);
+    if (noWeightedFigure && Number(summary?.simple?.recorded ?? 0) > 0) {
+        lines.push({ label: 'Weighted average', value: '—', note: NOT_AVERAGED_WHY });
+    }
 
     if (w?.enabled && w.percent !== null && w.percent !== undefined) {
         lines.push({
