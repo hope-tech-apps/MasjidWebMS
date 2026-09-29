@@ -79,6 +79,12 @@
                     </div>
                 </div>
 
+                <!-- The school's own list of subjects (T-001.3): schools only, and a
+                     card of its own so this view gains one line. -->
+                <div v-if="masjidStore.orgType === 'school'" class="row mb-4">
+                    <div class="col-12"><SchoolSubjectsCard /></div>
+                </div>
+
                 <!-- Loading State -->
                 <div v-if="loading" class="text-center py-5">
                     <div class="spinner-border text-primary" role="status">
@@ -230,6 +236,7 @@
 <script setup lang="ts">
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
+import SchoolSubjectsCard from '@/views/dashboard/groups/SchoolSubjectsCard.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { Group, GroupKind, GroupPayload } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
