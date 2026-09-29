@@ -72,7 +72,33 @@ test('a request carries the token of the school its URL names, never the other',
     assert.equal(tokenForUrl(s, '/api/family/masjids/7/groups'), 'tok-7');
     assert.equal(tokenForUrl(s, '/api/family/masjids/9/groups/3/threads?page=2'), 'tok-9');
     assert.equal(tokenForUrl(s, '/api/family/masjids/9'), 'tok-9');
-    assert.equal(tokenForUrl(s, 'https://school.example.test/api/family/masjids/7/me'), 'tok-7');
+    assert.equal(tokenForUrl(s, 'https://school.example.test/api/family/masjids/7/me', 'https://school.example.test'), 'tok-7');
+});
+
+test('an absolute URL carries a token only when its PARSED origin is the portal\'s', () => {
+    const s = memoryStorage();
+    putSlot(s, 7, slot(7));
+    const portal = 'https://app.example.org';
+
+    assert.equal(tokenForUrl(s, `${portal}/api/family/masjids/7/me`, portal), 'tok-7');
+    assert.equal(tokenForUrl(s, `${portal}:443/api/family/masjids/7/me`, portal), 'tok-7', 'a default port is the same origin');
+
+    // Family-shaped paths on somebody else's server.
+    assert.equal(tokenForUrl(s, 'https://evil.example/api/family/masjids/7/me', portal), null);
+    // A text-prefix test passes both of these; a parsed origin does not.
+    assert.equal(tokenForUrl(s, 'https://app.example.org.evil.com/api/family/masjids/7/me', portal), null);
+    assert.equal(tokenForUrl(s, 'https://app.example.org@evil.com/api/family/masjids/7/me', portal), null);
+    assert.equal(tokenForUrl(s, 'http://app.example.org/api/family/masjids/7/me', portal), null, 'another scheme is another origin');
+    assert.equal(tokenForUrl(s, '//evil.example/api/family/masjids/7/me', portal), null, 'a protocol-relative URL is not a path');
+});
+
+test('with no known portal origin, no absolute URL is the portal\'s (relative paths still are)', () => {
+    const s = memoryStorage();
+    putSlot(s, 7, slot(7));
+
+    assert.equal(tokenForUrl(s, 'https://evil.example/api/family/masjids/7/me'), null);
+    assert.equal(tokenForUrl(s, 'https://evil.example/api/family/masjids/7/me', null), null);
+    assert.equal(tokenForUrl(s, '/api/family/masjids/7/me'), 'tok-7');
 });
 
 test('a school the parent has not signed in to gets no token, and no other school lends one', () => {
@@ -187,15 +213,46 @@ test('a session stored before this change is adopted into its school and the old
     assert.deepEqual(s.keys(), [FAMILY_SESSIONS_KEY], 'the legacy triple is gone');
 });
 
-test('a legacy session does not overwrite a slot already stored for that school', () => {
+test('a legacy triple written AFTER the slot (a pre-deploy tab signing in again) replaces that school\'s stale slot', () => {
+    // The slot holds a revoked token; a tab still on the previous bundle signed
+    // in again and wrote a fresh legacy triple. Keeping the slot would sign the
+    // next request with the revoked token and bounce the parent to sign-in.
     const s = memoryStorage({
-        [FAMILY_SESSIONS_KEY]: JSON.stringify({ '7': slot(7, 'newer') }),
-        [LEGACY_FAMILY_KEYS.token]: 'legacy-tok',
+        [FAMILY_SESSIONS_KEY]: JSON.stringify({ '7': slot(7, 'revoked'), '9': slot(9) }),
+        [LEGACY_FAMILY_KEYS.token]: 'fresh-legacy',
         [LEGACY_FAMILY_KEYS.contact]: JSON.stringify(contact(7)),
         [LEGACY_FAMILY_KEYS.masjid]: '7',
     });
 
-    assert.equal(readSlots(s)['7'].token, 'newer');
+    const slots = readSlots(s);
+
+    assert.equal(slots['7'].token, 'fresh-legacy');
+    assert.equal(slots['9'].token, 'tok-9', 'the other school is untouched');
+    assert.equal(tokenForUrl(s, '/api/family/masjids/7/me'), 'fresh-legacy');
+    assert.deepEqual(s.keys(), [FAMILY_SESSIONS_KEY], 'the legacy triple is gone');
+});
+
+test('a legacy triple with the slot\'s own token changes nothing but is removed', () => {
+    const s = memoryStorage({
+        [FAMILY_SESSIONS_KEY]: JSON.stringify({ '7': slot(7, 'same') }),
+        [LEGACY_FAMILY_KEYS.token]: 'same',
+        [LEGACY_FAMILY_KEYS.contact]: JSON.stringify(contact(7)),
+        [LEGACY_FAMILY_KEYS.masjid]: '7',
+    });
+
+    assert.equal(readSlots(s)['7'].token, 'same');
+    assert.deepEqual(s.keys(), [FAMILY_SESSIONS_KEY]);
+});
+
+test('an unusable legacy triple never replaces a good slot', () => {
+    const s = memoryStorage({
+        [FAMILY_SESSIONS_KEY]: JSON.stringify({ '7': slot(7, 'good') }),
+        [LEGACY_FAMILY_KEYS.token]: 'half',
+        [LEGACY_FAMILY_KEYS.contact]: 'not json',
+        [LEGACY_FAMILY_KEYS.masjid]: '7',
+    });
+
+    assert.equal(readSlots(s)['7'].token, 'good');
     assert.deepEqual(s.keys(), [FAMILY_SESSIONS_KEY]);
 });
 

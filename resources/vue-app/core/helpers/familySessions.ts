@@ -95,8 +95,14 @@ function writeSlots(storage: StorageLike, slots: FamilySlots): void {
 
 /**
  * Move a legacy single session into its slot, then remove the legacy keys.
- * A slot already stored for that school wins: it is newer than the legacy keys
- * by construction, since the legacy keys are no longer written.
+ *
+ * When a slot is already stored for that school, the legacy keys are still
+ * adopted if their token differs from it. The migration removes the legacy keys
+ * and this bundle never writes them, so a legacy triple that is present again
+ * was written since — by a tab still running the previous bundle, signing in
+ * again (after a revoked token, say). That sign-in is newer than the stored
+ * slot; keeping the slot would sign the next request with the revoked token and
+ * bounce the parent to sign-in. The same token needs no rewrite.
  */
 function adoptLegacy(storage: StorageLike, slots: FamilySlots): FamilySlots {
     const token = safeGet(storage, LEGACY_FAMILY_KEYS.token);
@@ -111,7 +117,7 @@ function adoptLegacy(storage: StorageLike, slots: FamilySlots): FamilySlots {
         const contact = contactRaw ? JSON.parse(contactRaw) : null;
         const candidate = { token: token ?? '', contact };
 
-        if (masjid && isMasjidKey(masjid) && isSlot(candidate) && !slots[masjid]) {
+        if (masjid && isMasjidKey(masjid) && isSlot(candidate) && slots[masjid]?.token !== candidate.token) {
             next = { ...slots, [masjid]: candidate };
             writeSlots(storage, next);
         }
@@ -170,12 +176,49 @@ export function masjidIdOfUrl(url: string | undefined | null): string | null {
     return m ? m[1] : null;
 }
 
+/** The origin of an absolute http(s) URL, or null for anything else. */
+export function originOf(value: string | undefined | null): string | null {
+    if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return null;
+
+    try {
+        return new URL(value).origin;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a URL points at the portal's own server. A path (`/api/...`) is
+ * relative to it by construction; an absolute URL is the portal's only when its
+ * PARSED origin equals `portalOrigin`. Parsed, not compared as text: a prefix
+ * test calls `https://app.example.org.evil.com/...` and
+ * `https://app.example.org@evil.com/...` local when the portal is
+ * `https://app.example.org`. When the portal's origin is not known, no absolute
+ * URL is local.
+ */
+function isPortalUrl(url: string, portalOrigin: string | null): boolean {
+    if (url.startsWith('/') && !url.startsWith('//')) return true;
+
+    const origin = originOf(url);
+
+    return origin !== null && portalOrigin !== null && origin === portalOrigin;
+}
+
 /**
  * The bearer token a request may carry: the token of the school its URL names,
  * and nothing otherwise. A public directory read, or an address that is not a
- * family route, gets none; so does a school the parent has not signed in to.
+ * family route, gets none; so does a school the parent has not signed in to; so
+ * does any absolute URL that is not on `portalOrigin`, however family-shaped its
+ * path, so a URL handed to the client by a response can never take a token off
+ * the portal's own server.
  */
-export function tokenForUrl(storage: StorageLike, url: string | undefined | null): string | null {
+export function tokenForUrl(
+    storage: StorageLike,
+    url: string | undefined | null,
+    portalOrigin: string | null = null,
+): string | null {
+    if (typeof url !== 'string' || !isPortalUrl(url, portalOrigin)) return null;
+
     const id = masjidIdOfUrl(url);
 
     return id ? (readSlots(storage)[id]?.token ?? null) : null;

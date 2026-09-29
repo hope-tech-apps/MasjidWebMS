@@ -1,6 +1,6 @@
 import axios from "axios";
 import type { AxiosInstance, AxiosResponse } from "axios";
-import { tokenForUrl } from "@/core/helpers/familySessions";
+import { originOf, tokenForUrl } from "@/core/helpers/familySessions";
 
 /**
  * The parent portal's own HTTP client — deliberately NOT ApiService.
@@ -56,10 +56,17 @@ class FamilyApiService {
         // none. The API refuses a token from the wrong school anyway
         // (`family.tenant`), but the client should not author the attempt, and a
         // family token should not travel to an address that is not a family route.
+        //
+        // The portal's own origin is the API base when one is configured and the
+        // page's origin when it is not (relative calls). An absolute URL on any
+        // other origin gets no token, by PARSED origin: a text-prefix test would
+        // also pass `https://<portal>.evil.com/...`.
+        const portalOrigin = baseUrl
+            ? originOf(baseUrl)
+            : (typeof location !== 'undefined' ? originOf(location.origin) : null);
+
         FamilyApiService.client.interceptors.request.use((config) => {
-            const url = config.url ?? '';
-            const foreign = /^https?:\/\//i.test(url) && !!baseUrl && !url.startsWith(baseUrl);
-            const token = foreign ? null : tokenForUrl(localStorage, url);
+            const token = tokenForUrl(localStorage, config.url ?? '', portalOrigin);
 
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;

@@ -92,6 +92,7 @@ import { useFamilyLang } from '@/views/family/familyI18n';
 import '@/views/family/urduFont.css';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { FAMILY_SESSIONS_KEY, familyRouteRedirect } from '@/core/helpers/familySessions';
+import { loadCalendarFlagFor } from '@/views/family/calendarFlag';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -194,26 +195,13 @@ watch([masjidId, signedInIds], () => { schoolsOpen.value = false; });
  */
 const calendarPublished = ref(false);
 
-const loadCalendarFlag = async () => {
-    const id = masjidId.value;
-
-    if (!signedInHere.value || !id) {
-        calendarPublished.value = false;
-        return;
-    }
-
-    try {
-        const res = await FamilyApiService.get(`/api/family/masjids/${id}/me`);
-
-        // A slow answer for the school the parent has since left must not set
-        // the link for the one they are on now.
-        if (id === masjidId.value) {
-            calendarPublished.value = res.data?.data?.school_calendar_published === true;
-        }
-    } catch {
-        if (id === masjidId.value) calendarPublished.value = false;
-    }
-};
+const loadCalendarFlag = () => loadCalendarFlagFor({
+    id: masjidId.value,
+    signedIn: signedInHere.value,
+    current: () => masjidId.value,
+    get: (url) => FamilyApiService.get(url),
+    set: (published) => { calendarPublished.value = published; },
+});
 
 watch([signedInHere, masjidId], loadCalendarFlag, { immediate: true });
 
