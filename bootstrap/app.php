@@ -183,6 +183,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // SuperAdmins pass. Runs after `tenant`, like `crm`. The SuperAdmin
             // toggle that sets them (PATCH .../capabilities/{key}) is NOT gated.
             'capability' => \App\Http\Middleware\EnsureOrgCapability::class,
+            // The universal cart's public routes (routes/api_v1.php): the same 404 an
+            // unknown route gets until config/cart.php switches the basket on, and for
+            // any organisation its allowlist leaves out. See EnsureCartEnabled.
+            'cart.enabled' => \App\Http\Middleware\EnsureCartEnabled::class,
             // After a successful write, purge the organisation's pages from the
             // public renderer's cache so the save is live at once. Works in
             // terminate(), after the response; no-op when unconfigured. On the
