@@ -5146,3 +5146,13 @@ Decision: the point's review of the follow-ups found that the fix for a look-ali
 Minors left open, in ASSUMPTIONS: ForgotPassword's 429 shown as success (34, deliberate), the IP ceilings counting successful sign-ins (35), and the two already recorded, punycode consistency across writers (33) and `RegistrationsController::createContact` (29).
 
 Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The CI droplet must run `EmailSuppressionLookAlikeAddressTest`, `StaffLoginLookAlikeAddressTest`, `ProfileEmailChangeTest`, `MigrationsBootTest`, `Broadcasts/EmailUnsubscribeTest`, `Broadcasts/ContactEmailConsentTest`, `WixOrderHistoryImportTest`, `StagingScrubCoverageTest`, `TenantScopingCoverageTest`, and the staff sign-in suites (`TwoFactorTest`, `SecondAdministratorLoginTest`, `StaffAuthGuardPinTest`, `AccountAccessTest`, `StaffLoginThrottleTest`), and the MySQL migrations job must run the new migration up, down and up again.
+
+- **2026-09-29 (W3/W4 folds, F1): a family sees a week only where its own switch is on.** The point's review found the portal's
+  "This week" block and the weekly report page showing for every school, although the `points_weekly_report` grant is documented as
+  OFF meaning nothing visible. Two surfaces, two gates, because they answer to two different choices: the report page and every link
+  to it need the SCHOOL's grant; the class's "This week" line needs the CLASS's opt-in (`points_period = weekly`, the teacher's
+  choice). The family class payload gains `weekly_report` (the grant) and the awards endpoints enforce the same rule on `?week=`
+  (a school with the grant: any week; otherwise `current` for a weekly class; anything else 404 before the value is read as a date),
+  so a hand-typed request gets no more than the screen shows. Alternative: hide it in the SPA only. Rejected: the data is the
+  parent's own child's, but "off means off" is a claim about the API too, and the point asked for the server side checked.
+  A non-weekly class no longer asks for a week at all. `PointsWeekTest` pins both sides; `points-week.test.ts` pins the views.

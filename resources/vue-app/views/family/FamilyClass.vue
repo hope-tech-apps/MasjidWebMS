@@ -364,12 +364,13 @@
 
                         <!-- THIS WEEK (T-003.2). The figure and the week are the
                              server's, on the SCHOOL's clock; nothing is summed
-                             here. A weekly class leads with the week and keeps
-                             every earlier week under History; every other class
-                             shows the week as a second line under its running
-                             record. A failed read hides the figure rather than
+                             here. Shown ONLY for a class whose teacher has opted in
+                             to the weekly view: it leads with the week and keeps
+                             every earlier week under History. Any other class reads
+                             its running total and is not asked for a week (review F1).
+                             A failed read hides the figure rather than
                              printing a 0 that says the child did nothing. -->
-                        <div v-if="points[child.membership_id]?.week" class="mb-3">
+                        <div v-if="showsThisWeek(group) && points[child.membership_id]?.week" class="mb-3">
                             <div class="d-flex justify-content-between align-items-baseline">
                                 <span class="small fw-semibold">
                                     {{ t('points_this_week') }}
@@ -377,12 +378,15 @@
                                 </span>
                                 <span class="fw-semibold" dir="ltr">{{ signedPoints(points[child.membership_id].week.totals?.points) }}</span>
                             </div>
-                            <div v-if="group.points_period === 'weekly' && points[child.membership_id]?.all"
+                            <div v-if="points[child.membership_id]?.all"
                                  class="d-flex justify-content-between align-items-baseline small text-muted">
                                 <span>{{ t('points_all_weeks') }}</span>
                                 <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
                             </div>
-                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                            <!-- The weekly report page: only where the school has the report
+                                 on (`points_weekly_report`), the same switch the Friday email
+                                 answers to. Off means no link and no page (review F1). -->
+                            <router-link v-if="weeklyReportOn(group)" :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
                                 {{ t('weekly_report_open') }}
                             </router-link>
                         </div>
@@ -1017,7 +1021,7 @@
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
-import { signedPoints, weekRangeLabel } from '@/core/helpers/pointsWeek';
+import { showsThisWeek, signedPoints, weekRangeLabel, weeklyReportOn } from '@/core/helpers/pointsWeek';
 import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
 import { percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
@@ -1566,7 +1570,9 @@ const loadChildRecords = (run = beginRun()) => loadChildRecordsFor(run, group.va
     setRecords: (id, value) => { records.value[id] = value; },
     setLetters: (id, tracks) => { letters.value[id] = tracks; },
     setArabicNotes: (id, notes) => { arabicDayNotes.value[id] = notes; },
-    setPoints: (id, value) => { points.value[id] = value; },
+    // Asked for only by a class that has opted in to the weekly view: the week is not
+    // requested for a class that will not show it (the server would refuse it anyway).
+    setPoints: showsThisWeek(group.value) ? (id, value) => { points.value[id] = value; } : undefined,
 });
 
 // ---------- report cards ----------

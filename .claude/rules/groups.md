@@ -961,6 +961,12 @@ positioning, not its configuration.
     running figures (`week_points`, `week_awards`, and the class's).
   - **The figure a class leads with follows `points_period`; both are always served.**
     Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
+  - **A family sees a week only where its switch is on (review F1, 2026-09-29).** The portal's "This
+    week" line is for a class that opted in to `points_period = weekly`; the weekly REPORT page and every
+    link to it are for a school holding `points_weekly_report`. The family class payload carries
+    `weekly_report` (the school's answer) beside `points_period`, and the family awards endpoints agree:
+    a `?week=` is served when the school has the report on (any week), or as `current` for a weekly class,
+    and is a plain 404 otherwise, before the value is read as a date. No `?week=` is unchanged.
 - **The Friday report is a notice and a link, off by default, once per class and week
   (T-003.3, 2026-09-29; owner B5).** `points:weekly-report` runs hourly and, for a school
   holding the `points_weekly_report` grant (OFF for every organisation until a SuperAdmin

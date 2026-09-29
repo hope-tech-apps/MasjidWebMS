@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '../core/helpers/pointsWeek.ts';
+import { isWeekly, pointsHeadline, showsThisWeek, signedPoints, weekFromQuery, weekRangeLabel, weeklyReportOn } from '../core/helpers/pointsWeek.ts';
 
 test('only the word weekly makes a class weekly', () => {
     assert.equal(isWeekly('weekly'), true);
@@ -84,4 +84,39 @@ test('the teacher\'s Points tab opens on the week the email reported and loads o
     assert.match(view, /linkedPointsWeek = route\.query\.tab === 'points' \? weekFromQuery\(route\.query\.week\) : null/);
     // Landing on the tab is not a tab change, so the watch never fires for it: the mount hook loads it.
     assert.match(view, /onMounted\(\(\) => \{\s*if \(activeTab\.value !== 'points'\) return;\s*loadSkills\(\);\s*loadPointsTotals\(linkedPointsWeek\);\s*\}\);/);
+});
+
+// ---------------------------------------------------------------- review F1: capability off = nothing visible
+
+test('the "This week" line is for a class that opted in to the weekly view and no other', () => {
+    assert.equal(showsThisWeek({ points_period: 'weekly' }), true);
+
+    for (const group of [{ points_period: 'running' }, { points_period: null }, {}, null, undefined, { points_period: 'WEEKLY' }]) {
+        assert.equal(showsThisWeek(group as any), false, JSON.stringify(group));
+    }
+});
+
+test('the weekly report is there only where the school says it is on; an older or failed payload reads as off', () => {
+    assert.equal(weeklyReportOn({ weekly_report: true }), true);
+
+    for (const group of [{ weekly_report: false }, { weekly_report: null }, {}, null, undefined, { weekly_report: 'true' }, { weekly_report: 1 }]) {
+        assert.equal(weeklyReportOn(group as any), false, JSON.stringify(group));
+    }
+});
+
+test('the class screen and the report page go through those two answers', () => {
+    const cls = readFileSync(new URL('../views/family/FamilyClass.vue', import.meta.url), 'utf8');
+    const report = readFileSync(new URL('../views/family/FamilyWeeklyReport.vue', import.meta.url), 'utf8');
+
+    // The block needs the class's opt-in; the link to the report needs the school's switch.
+    assert.match(cls, /<div v-if="showsThisWeek\(group\) && points\[child\.membership_id\]\?\.week"/);
+    assert.match(cls, /<router-link v-if="weeklyReportOn\(group\)" :to="`\/family\/\$\{masjidId\}\/classes\/\$\{groupId\}\/report`"/);
+    // A class that will not show the week is not asked for one.
+    assert.match(cls, /setPoints: showsThisWeek\(group\.value\) \?/);
+    // No other link to the report anywhere on the screen.
+    assert.equal((cls.match(/\/report`/g) ?? []).length, 1);
+
+    // The page itself: off means back to the class screen, before any week is read.
+    assert.match(report, /if \(!weeklyReportOn\(group\.value\)\) \{\s*router\.replace\(`\/family\/\$\{masjidId\.value\}\/classes\/\$\{groupId\.value\}`\);\s*return;\s*\}/);
+    assert.ok(report.indexOf('weeklyReportOn(group.value)') < report.indexOf('await loadWeek(run'), 'checked before the first read');
 });
