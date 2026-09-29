@@ -5575,8 +5575,29 @@ Rationale: a date sold twice is not a count to put right afterwards, and a quant
 what was never paid for. ASSUMPTIONS #36 closed. Tests: `FormLineSourceTest` (both date cases),
 `CartAddItemTest` (the refusal and the payable line), `CartSettlementRound2Test` (the quantity race).
 
-## 2026-09-29 — Universal cart, slice 5 fix round 2: the venue shares one address
-Decision: (5) the `cart-create` allowance (`config/cart.php` `throttle.create_per_hour`, `CART_CREATE_PER_HOUR`)
+## 2026-09-29 — Universal cart, slice 5 fix round 2: dark means first, and what the shopper typed is what is used
+Decision: (1) `bootstrap/app.php` ranks `EnsureCartEnabled` ahead of `ThrottleRequests` in the middleware
+priority list (`prependToPriorityList`). Laravel re-sorts a route's middleware by that list, and
+`ThrottleRequests` outranks the `api` group's `SubstituteBindings`, so the unranked gate ran LAST: a dark cart
+still ran the limiter closures (database reads), wrote rate-limit rows, carried `X-RateLimit-*` headers on its
+404 and answered 429 to the 21st `POST /carts` of an hour, so "switched off" was distinguishable from "never
+built". `CartEndpointsGateTest` now reads the SORTED stack (`Router::gatherRouteMiddleware`) and has two
+behavioural tests with the cart off (no limiter closure runs; 22 starts are 22 identical bare 404s).
+(2) `CartCheckoutService::reuseOpenPage()` hands an open page back only when the buyer email ALSO matches the
+order's (`usableEmail`, lower-cased); otherwise the page is closed as for a changed basket and a new one opens
+with the new email. The email is locked into the Stripe page and is where settlement sends the receipt, so a
+corrected typo used to keep the typo. The existing "page handed back takes the phone typed last" test used a
+corrected email to prove the old behaviour; its second call now uses the same address.
+(3) Checkout's and a stale acknowledge's 409 body is the priced view exactly as `GET /cart` returns it, with
+`notices` and `view_fingerprint` inside it: `CartCheckoutRefused::basketChanged()` takes the `PricedBasket`.
+A notice is a sentence with no amount, and acknowledging adopts the new price and quantity, so the shopper must
+be shown them first. (4) `checkout()` takes `requirePhoneForMeals`, which the endpoint always passes, and
+refuses under the basket lock a basket that prices a payable dish when the phone is empty
+(`CartCheckoutService::PHONE_REQUIRED`, a 422). The controller's rule is unchanged; its `hasMeal` read precedes
+the lock, so a dish another tab added in between was charged with no phone to ring. It is opt-in (ASSUMPTIONS
+#45) because the settlement and buyer-identity tests open dish orders through `checkout()` with no phone on
+purpose (the documented legacy state, #25).
+(5) the `cart-create` allowance (`config/cart.php` `throttle.create_per_hour`, `CART_CREATE_PER_HOUR`)
 is 200 an hour per IP|masjid, up from 20. The limiter is keyed by connection and organisation, and MEC's
 festival is one venue Wi-Fi network: every phone in the hall reaches the API from one public address, so 20
 starts an hour locked the 21st shopper out of opening a basket at all, and one script on the same network
@@ -5584,10 +5605,32 @@ could do it in 20 requests. What a start costs is one cheap row (a basket with n
 and an abandoned one is deleted by `cart:prune` a day after its week is up, so a higher number costs storage
 for a few days and nothing else. The limit stays per connection: an anonymous door with no limit lets one
 caller fill the table.
-Alternatives: keying `cart-create` by something finer than the address (rejected: an anonymous caller has
-nothing finer that it cannot mint fresh, which is why the per-basket limiters key by a token that already
-exists); lifting the limit for one organisation (rejected: an allowlist of addresses is operations work and
-one more thing to forget on the day); leaving 20 and telling MEC to raise `CART_CREATE_PER_HOUR` (rejected:
-the default is what ships, and the failure lands on the shoppers at the event).
-Rationale: the 20 in the brief was sized for one person; the deployment is a room. Overridable by env either
-way. `CartConfigTest` pins the new default; `CartThrottleTest` sets its own small numbers and is unchanged.
+(6) `cart:prune` also deletes an order whose status is `expired` once its `checkout_expires_at` is more than 7
+days past (`cart.prune.expired_order_days`, `CART_PRUNE_EXPIRED_ORDER_DAYS`, floor 1), with its lines: the
+frozen copy of the shopper's details (`order_items.payload`, `orders.buyer_name`, `buyer_phone`,
+`buyer_email`) outlived the basket the sweep deleted for holding the same data. An expired order is a payment
+page that was never completed. Never `pending` (a delayed payment can still settle it) and never `paid`. The
+lines go through `order_items.order_id`'s `cascadeOnDelete` (checked in the orders migration), in the same
+statement; the delete names the status again so an order that settled between the read and the delete is not
+taken. ASSUMPTIONS #46. (7) `cart:prune` `Log::info`s its counts (baskets and orders, zeros included) as
+`groups:purge-feed` does, because `schedule:run` discards stdout (routes/console.php). (8) Tests only: a
+required file question is refused at add with the one sentence and not a field bag; the same
+`client_line_key` with other form answers, another meal quantity or another pickup is a 409; at 25 lines a
+replay of the 25th key returns that line; a confirmed `masjid_domains` host of this organisation is the return
+base with an empty env allowlist, and another organisation's is refused.
+Alternatives: (1) reading the gate from a controller or a `Route::middleware` order (rejected: the priority
+list, not the listed order, decides; a test of the listed order is what missed this); (2) updating the email on
+the reused order and page (rejected: Stripe's page cannot be edited, and a receipt for a page opened with the
+typo would still be mailed to the typo); (3) binding acknowledge to a `GET /cart` view (rejected: the 409
+already has the priced basket in hand, and one more round trip is one more place for it to differ); (4) a
+strict default (rejected for now, see above); (5) keying `cart-create` by something finer than the address
+(rejected: an anonymous caller has nothing finer that it cannot mint fresh, which is why the per-basket
+limiters key by a token that already exists), lifting the limit for one organisation (rejected: an allowlist of
+addresses is operations work and one more thing to forget on the day), or leaving 20 and telling MEC to raise
+`CART_CREATE_PER_HOUR` (rejected: the default is what ships, and the failure lands on the shoppers at the
+event); (6) deleting `pending` orders too (rejected: an order whose page lapsed but whose webhook never came
+is not provably unpaid).
+Rationale: dark has to mean first, a corrected address has to be the address used, the shopper has to see what
+they are asked to accept, and a number that decides who the kitchen rings has to be checked where the basket
+cannot change under it. The 20 in the brief was sized for one person; the deployment is a room.
+`CartConfigTest` pins the new defaults; `CartThrottleTest` sets its own small numbers and is unchanged.

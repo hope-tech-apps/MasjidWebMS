@@ -569,9 +569,10 @@ Direct charge on the ONE connected account, exactly the rules above.
   email for nothing.
 - **A paid basket is closed, but only of what it paid for.** Settlement locks the cart BEFORE the order
   (checkout's order, so no deadlock) and, after the lines are recorded, removes from the cart ONLY the
-  lines this order paid for (matched by `buyable_type`, `buyable_id` and the canonical hash of the
-  line's payload, `order_items.cart_payload_hash`, stamped at checkout; one order line removes one cart
-  line), then sets `Cart::STATUS_CHECKED_OUT` only when nothing is left. A line added after the page
+  lines this order paid for (matched by `buyable_type`, `buyable_id`, the canonical hash of the
+  line's payload, `order_items.cart_payload_hash`, stamped at checkout, AND the quantity, because
+  `POST /cart/acknowledge` edits a line's quantity in place and the payload hash does not see it; one
+  order line removes one cart line; ASSUMPTIONS #36 is closed), then sets `Cart::STATUS_CHECKED_OUT` only when nothing is left. A line added after the page
   opened (page A paid as it expired, page B opened for X + Y) is never dropped unpaid. After the commit
   it expires the cart's OTHER still-pending pages through `CartCheckoutService::closeOtherPages()` (the
   checkout's own `closePage()`), so a page holding paid lines can never charge them again; a Stripe
@@ -637,7 +638,13 @@ services, called as they are. Rules a change here must keep:
   (`CART_MASJID_IDS`; empty = every organisation once on; a malformed list fails CLOSED to
   nobody). Off, or off for the header's organisation, is the router's own not-found exception:
   the same bytes as an unknown route, before any throttle or query. The routes are registered
-  either way, so the route cache is the same.
+  either way, so the route cache is the same. **The gate is FIRST in the SORTED stack:** Laravel
+  re-sorts a route's middleware by its priority list, where `ThrottleRequests` outranks the `api`
+  group's `SubstituteBindings`, so `bootstrap/app.php` ranks `EnsureCartEnabled` ahead of
+  `ThrottleRequests` (`prependToPriorityList`). Without that a dark cart ran the limiter closures
+  (database reads), wrote rate-limit rows, carried `X-RateLimit-*` on its 404 and answered 429 to the
+  21st `POST /carts` of an hour. `CartEndpointsGateTest` reads the sorted stack
+  (`Router::gatherRouteMiddleware`), never the order a route lists it in.
 - **The house `/api/v1` idiom.** Organisation = the `masjid-id` header int-cast (`<= 0` is
   400), then `PublicTenant::exists()`. The routes bind no tenant, so EVERY query filters
   `masjid_id` by hand (scope bypassed with `withoutMasjidScope()` on purpose) and every create
@@ -663,13 +670,25 @@ services, called as they are. Rules a change here must keep:
   `website` honeypot is a fake 200 that writes nothing.
 - **The door gates live in the line sources**, so checkout re-asks them: the `giving` module off
   (`DonationLineSource`), the `jummah_lunch` capability off (`MealLineSource`), a form that
-  asks for a file (`FormLineSource`). `canAcceptDonations()` is the payee rule
-  (`CartPricer::ownAccount()`), not repeated.
+  asks for a file (`FormLineSource`), and a form line whose answers reserve a date
+  (`FormLineSource::RESERVES_A_DATE`, `Form::reservedDateIn()`): the form door claims that date
+  under the form's lock and a basket settles with no hold, so the line is `gone` ("book that
+  date on the form's own page"), a 422 at add and a notice at checkout, while a line on the same
+  form that reserves nothing (the choice-priced "Individual Iftar") stays payable.
+  `canAcceptDonations()` is the payee rule (`CartPricer::ownAccount()`), not repeated.
 - **Checkout** takes `{buyer:{name,email,phone}, return_path, website}`: name
   `required|max:120`, email `required|email:rfc|max:190`, phone `required|max:32` when the
-  basket has a dish, else optional. The return base is `FormPaymentReturn::base()` exactly as the
-  form door builds it; a refusal is its one message. A changed basket is a 409 with `notices`
-  and `view_fingerprint` (acknowledge, then pay); any other refusal is a 422 sentence. The buyer
+  basket has a dish, else optional. That read precedes the basket lock, so the endpoint also passes
+  `requirePhoneForMeals: true` and `CartCheckoutService::checkout()` asks it again UNDER the lock
+  (`PHONE_REQUIRED`, a 422): a dish another tab added in between is otherwise charged with no
+  number for the kitchen to ring. The return base is `FormPaymentReturn::base()` exactly as the
+  form door builds it; a refusal is its one message. A changed basket is a 409 whose body is the
+  priced view exactly as `GET /cart` returns it (each line's quantity, unit price and status, the
+  total, `notices` and `view_fingerprint`), so the page shows what it is asked to accept before
+  it acknowledges; any other refusal is a 422 sentence. An open page is handed back only for the
+  same basket AND the same buyer email (trimmed, case-insensitive): a corrected address closes
+  the old page as a changed basket does and opens a new one, so the page and the receipt carry
+  what was typed last. A page handed back still takes the name and phone typed last. The buyer
   is frozen on `orders.buyer_name` / `buyer_phone` / `buyer_email`: settlement records a meal
   order under them (over Stripe's, and over the `Online order N` placeholder, which stays the
   fallback) and a gift's donor falls back to them when Stripe's `customer_details` lack them.
@@ -681,19 +700,22 @@ services, called as they are. Rules a change here must keep:
   sit on a per-IP limiter, so they are NOT the pattern.
 - **The view says only what the page draws.** Never a line's payload (the answers), the payee
   account, or any fingerprint but the one `acknowledge` needs.
-- **Throttles** (`AppServiceProvider`, limits in `config/cart.php`): `cart-create` 20/h per
-  IP|masjid; `cart-write` (add, remove, acknowledge) 120/h, `cart-read` 600/h and
+- **Throttles** (`AppServiceProvider`, limits in `config/cart.php`): `cart-create` 200/h per
+  IP|masjid (a festival venue is one Wi-Fi address, and an abandoned basket is one cheap row
+  `cart:prune` removes; `CART_CREATE_PER_HOUR`); `cart-write` (add, remove, acknowledge) 120/h, `cart-read` 600/h and
   `cart-checkout` 20/h per token DIGEST, with a token that names no live basket sent to a
   per-connection bucket of the same size instead; a 429 says the wait in its body.
 - **Retention.** `cart:prune` (daily 03:41) deletes OPEN baskets whose expiry is more than a
   day past, lines and answers with them, unless a PENDING order's page could still be paid. A
   payment that lands for an order whose basket is gone still settles and records every line:
   settlement writes from `order_items`, never the basket, and `orders.cart_id` is nullOnDelete
-  (`CartPruneTest` proves it). Adding a line never edits one in place, but
-  `CartCheckoutService::acknowledge()` (exposed by `POST /cart/acknowledge`) takes a repriced
-  line's new quantity in place, so `closeCart()`'s match, which leaves quantity out, is now
-  reachable in one rare race (a page paid as it lapses after the shopper acknowledged a
-  different quantity of the same line). Not changed here; ASSUMPTIONS #28 and #36.
+  (`CartPruneTest` proves it). It also deletes an order whose status is `expired`, with its
+  lines (`order_items.order_id` cascades), once its `checkout_expires_at` is more than 7 days
+  past (`cart.prune.expired_order_days`): a payment page that was never completed, still holding
+  the buyer's name, phone and email and the attendee names in its lines. NEVER a `pending` order
+  (a delayed payment can still settle it) and never a `paid` one. It prints its counts and logs
+  them (`Log::info`, "Cart retention sweep completed.", zeros included), because `schedule:run`
+  discards stdout (`routes/console.php`).
 
 ## Tenancy note
 
