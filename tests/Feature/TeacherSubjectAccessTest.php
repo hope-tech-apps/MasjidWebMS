@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
+use App\Models\ClassGradeWeight;
 use App\Models\Contact;
 use App\Models\CurriculumWeek;
 use App\Models\Group;
@@ -14,6 +15,7 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\SchoolSubject;
 use App\Models\User;
+use App\Support\SubjectFence;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -534,6 +536,151 @@ class TeacherSubjectAccessTest extends TestCase
         $this->getJson($this->url('/assignments'))->assertOk()->assertJsonCount(0, 'data');
     }
 
+    #[Test]
+    public function a_quran_teacher_cannot_refile_another_subjects_work_into_their_own_subject(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $arabic = $this->work('Arabic quiz', 'Arabic Language');
+        $url = $this->url("/assignments/{$arabic->id}");
+
+        // The subject it is BECOMING is one they teach, so the only thing between
+        // them and Arabic's work is the fence on the work AS IT IS.
+        $this->putJson($url, $this->body(['title' => 'Hijacked', 'subject' => "Qur'an", 'points_possible' => 99]))
+            ->assertForbidden()
+            ->assertJsonPath('message', 'You do not teach Arabic Language in this class.');
+        // Naming no subject keeps the existing one, which is Arabic.
+        $this->putJson($url, $this->body(['title' => 'Hijacked', 'points_possible' => 99]))->assertForbidden();
+
+        $arabic->refresh();
+        $this->assertSame('Arabic quiz', $arabic->title);
+        $this->assertSame('Arabic Language', $arabic->subject);
+        $this->assertSame(10, (int) $arabic->points_possible, 'a refused edit writes nothing');
+    }
+
+    #[Test]
+    public function two_teachers_in_one_class_are_each_fenced_by_their_own_row_whichever_row_came_first(): void
+    {
+        $free = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        MasjidUser::create(['masjid_id' => $this->school->id, 'user_id' => $free->id, 'role' => 'teacher', 'is_default' => true]);
+
+        foreach ([true, false] as $limitedFirst) {
+            $class = Group::factory()->create([
+                'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+                'name' => 'Order '.($limitedFirst ? 'A' : 'B'), 'slug' => 'order-'.($limitedFirst ? 'a' : 'b'),
+            ]);
+            $attach = fn (User $u, ?array $subjects) => $class->staff()->attach($u->id, [
+                'masjid_id' => $this->school->id, 'role' => GroupStaff::ROLE_TEACHER,
+                'subjects' => $subjects, 'assigned_at' => now(),
+            ]);
+
+            // One class, two staff rows: Qur'an only, and everything.
+            if ($limitedFirst) {
+                $attach($this->teacher, [GroupStaff::SUBJECT_QURAN]);
+                $attach($free, null);
+            } else {
+                $attach($free, null);
+                $attach($this->teacher, [GroupStaff::SUBJECT_QURAN]);
+            }
+
+            foreach ([["Qur'an", 'Qur an work'], ['Arabic Language', 'Arabic work']] as [$subject, $title]) {
+                ClassAssignment::create([
+                    'masjid_id' => $this->school->id, 'group_id' => $class->id, 'title' => $title,
+                    'points_possible' => 10, 'scale' => 'points', 'subject' => $subject, 'assigned_on' => now()->toDateString(),
+                ]);
+            }
+
+            $this->assertSame([GroupStaff::SUBJECT_QURAN], SubjectFence::assigned($class->id, $this->teacher->id));
+            $this->assertNull(SubjectFence::assigned($class->id, $free->id), 'the other row is not this teacher\'s limit');
+
+            $list = function (User $as) use ($class): array {
+                \Illuminate\Support\Facades\Auth::forgetGuards();
+                app(\App\Support\TenantContext::class)->forgetTenant();
+                Sanctum::actingAs($as, ['staff']);
+
+                return collect($this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$class->id}/assignments")
+                    ->assertOk()->json('data'))->pluck('title')->all();
+            };
+
+            $this->assertSame(['Qur an work'], $list($this->teacher), 'the limited teacher reads only Qur\'an, whichever row is first');
+            $this->assertEqualsCanonicalizing(['Qur an work', 'Arabic work'], $list($free), 'the unrestricted teacher is not locked to the other row\'s subjects');
+        }
+    }
+
+    #[Test]
+    public function a_limited_teachers_summary_says_it_counts_only_their_subjects_and_an_unrestricted_one_does_not(): void
+    {
+        $this->mark($this->work("Qur'an recitation", "Qur'an"), 8);
+        $this->mark($this->work('Arabic dictation', 'Arabic Language'), 2);
+        $grades = fn () => $this->getJson($this->url("/members/{$this->student->id}/grades"))->assertOk()->json('data');
+
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->assertTrue($grades()['fenced'], 'the family sees Arabic too, so this teacher\'s figures are a subset and must say so');
+
+        GroupStaff::query()->where('group_id', $this->class->id)->update(['subjects' => null]);
+        $this->assertFalse($grades()['fenced']);
+    }
+
+    #[Test]
+    public function a_limited_teacher_cannot_clear_the_weights_while_another_subjects_work_carries_a_weight_of_its_own(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        $mine = $this->work("Qur'an project", "Qur'an");
+        $arabic = $this->work('Arabic project', 'Arabic Language');
+        $mine->update(['weight' => 20]);
+        $arabic->update(['weight' => 60]);
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])
+            ->assertForbidden();
+
+        $this->assertSame(60, $arabic->fresh()->weight, "the Arabic teacher's weight is not the Qur'an teacher's to erase");
+        $this->assertSame(20, $mine->fresh()->weight);
+        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count(), 'a refused clear writes nothing at all');
+    }
+
+    #[Test]
+    public function untagged_work_with_a_weight_also_blocks_a_limited_teachers_clear(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        // Invisible to this teacher (a 404), so not theirs to un-weight.
+        $this->work('Old work', null)->update(['weight' => 5]);
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])->assertForbidden();
+
+        $this->assertSame(5, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function a_limited_teacher_can_clear_the_weights_when_only_their_own_subjects_work_has_one(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $this->weigh();
+        $mine = $this->work("Qur'an project", "Qur'an");
+        $mine->update(['weight' => 20]);
+        $this->work('Arabic project', 'Arabic Language');
+
+        $this->putJson($this->url('/grade-weights'), ['clear' => true])
+            ->assertOk()
+            ->assertJsonPath('data.cleared_overrides', 1)
+            ->assertJsonPath('data.weighting_enabled', false);
+
+        $this->assertNull($mine->fresh()->weight);
+        $this->assertSame(0, ClassGradeWeight::query()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function setting_the_weights_is_still_open_to_a_limited_teacher(): void
+    {
+        // A class with a teacher per subject (BISS) would otherwise have nobody
+        // who could set them (DECISIONS W3-3e).
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+
+        $this->putJson($this->url('/grade-weights'), ['weights' => [
+            'test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10,
+        ]])->assertOk()->assertJsonPath('data.weighting_enabled', true);
+    }
+
     private function plan(string $day, ?string $subject): LessonPlan
     {
         return LessonPlan::create([
@@ -566,6 +713,16 @@ class TeacherSubjectAccessTest extends TestCase
         return $over + [
             'title' => 'Work', 'scale' => 'points', 'points_possible' => 10, 'assigned_on' => now()->toDateString(),
         ];
+    }
+
+    private function weigh(): void
+    {
+        foreach (['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10] as $type => $weight) {
+            ClassGradeWeight::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'assignment_type' => $type, 'weight' => $weight,
+            ]);
+        }
     }
 
     private function assign(?array $subjects): void

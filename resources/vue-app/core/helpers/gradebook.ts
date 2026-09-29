@@ -113,7 +113,12 @@ export function firstFieldError(e: any, fallback: string): string {
 
 // ---------------------------------------------------------------- weights
 
-/** How much one piece of work counts: its own override, else its type's weight, else nothing. */
+/**
+ * How much one piece of work is worth: its own override, else its type's weight,
+ * else nothing. The server reads the two differently: a type is ONE slot in the
+ * average however many pieces are in it, and a piece with an override is a slot
+ * of its own (App\Support\GradeRecord).
+ */
 export function effectiveWeight(work: { weight?: number | null; type?: string | null }, weights: Record<string, number>, enabled: boolean): number | null {
     if (!enabled) return null;
     if (work.weight !== null && work.weight !== undefined) return work.weight;
@@ -176,13 +181,29 @@ export function untypedNote(n: number): string {
 
 export interface AverageLine { label: string; value: string; note: string }
 
+/** Said under the figures of a teacher limited to some subjects: a parent's screen counts them all. */
+export const FENCED_NOTE = 'These figures count only the subjects you teach in this class. A parent sees every subject, so their figures can differ.';
+
+/** The note for a child's figures, or '' when they cover every subject. */
+export function fencedNote(fenced: boolean | null | undefined): string {
+    return fenced ? FENCED_NOTE : '';
+}
+
 /**
  * A child's headline figures, worded. The weighted average leads where the class
  * has weights and produced one; the plain pooled figure is always shown too, so
  * a teacher can see both and never wonders which one a parent is reading.
  * Levels are a MEAN LEVEL with its word and never a percentage.
+ *
+ * `fenced` is true for a teacher limited to some subjects: every label then says
+ * so, because the figure is over their subjects only and the family's is not.
  */
-export function averageLines(summary: any): AverageLine[] {
+export function averageLines(summary: any, fenced = false): AverageLine[] {
+    const lines = averageLinesUnfenced(summary);
+    return fenced ? lines.map((l) => ({ ...l, label: `${l.label} (your subjects)` })) : lines;
+}
+
+function averageLinesUnfenced(summary: any): AverageLine[] {
     const lines: AverageLine[] = [];
     const w = summary?.weighting;
 

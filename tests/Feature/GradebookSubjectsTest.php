@@ -190,4 +190,28 @@ class GradebookSubjectsTest extends TestCase
         $this->putJson("{$url}/{$id}", ['title' => 'Renamed'] + $base + ['subject' => 'Science'])->assertOk();
         $this->postJson($url, $base + ['subject' => 'Science'])->assertStatus(422);
     }
+
+    #[Test]
+    public function existing_work_cannot_be_refiled_under_a_subject_the_school_never_listed(): void
+    {
+        $this->enrol('2nd');
+        $this->subject('Science');
+        $this->subject('Art');
+        Sanctum::actingAs($this->teacher, ['staff']);
+        $url = "/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}/assignments";
+        $base = ['title' => 'W', 'scale' => 'points', 'points_possible' => 10, 'assigned_on' => now()->toDateString()];
+
+        $id = $this->postJson($url, $base + ['subject' => 'Science'])->assertCreated()->json('data.id');
+
+        // A typo or a made-up subject on work that already exists: refused, and
+        // the work keeps the subject it had. (Only an UNCHANGED subject is exempt,
+        // which is what the retired-subject test above pins.)
+        $this->putJson("{$url}/{$id}", $base + ['subject' => 'Maths '])
+            ->assertStatus(422)
+            ->assertJsonPath('data.subject.0', "That subject is not on this school's list. Choose one from the list.");
+        $this->assertSame('Science', \App\Models\ClassAssignment::query()->find($id)->subject);
+
+        // A listed subject is a fine thing to move it to.
+        $this->putJson("{$url}/{$id}", $base + ['subject' => 'Art'])->assertOk()->assertJsonPath('data.subject', 'Art');
+    }
 }

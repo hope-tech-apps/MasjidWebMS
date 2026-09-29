@@ -441,6 +441,10 @@ class GradebookController extends TeacherController
                 'student' => $this->student($membership),
                 // Aggregated over the whole term, never over the page below.
                 'summary' => $summary,
+                // TRUE when the summary above counts only the subjects this
+                // teacher teaches in the class. The family and the office read
+                // every subject, so the screen must say the two can differ.
+                'fenced' => $subjectKeys !== null,
                 // THE KEY, served with the data rather than hardcoded on each
                 // screen, so "what does a 3 mean?" is answerable everywhere in
                 // the school's own words. See App\Support\PerformanceLevel.
@@ -553,13 +557,41 @@ class GradebookController extends TeacherController
      * transaction, so a weight typed against a weighted class cannot lie dormant
      * and come back to life the day weights are turned on again.
      *
-     * Any teacher who leads the class may set them: they are a policy of the class,
+     * Any teacher who leads the class may SET them: they are a policy of the class,
      * not of a subject, and a class with a teacher per subject (BISS) would
      * otherwise have nobody who could.
+     *
+     * CLEARING is the one verb that reaches per-work fields, and a per-work weight
+     * belongs to a piece of work a subject-limited teacher may not even list. So a
+     * limited teacher's clear is refused (403, nothing written) while any work
+     * outside their subjects still carries a weight of its own; it cannot be
+     * narrowed to their own work, because the class's weights would go while the
+     * others' overrides stayed, which is the dormant override that clearing exists
+     * to prevent. An unrestricted teacher of the class clears everything.
      */
     public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+
+        $limits = $this->limits($group);
+
+        if ($limits !== null && $request->boolean('clear')) {
+            $allowed = SubjectFence::allowedKeys($limits);
+
+            $others = ClassAssignment::query()
+                ->where('group_id', $group->id)
+                ->whereNotNull('weight')
+                ->where(fn ($q) => $q->whereNotIn('subject_key', $allowed)->orWhereNull('subject_key'))
+                ->count();
+
+            if ($others > 0) {
+                abort(
+                    Response::HTTP_FORBIDDEN,
+                    'Work in subjects you do not teach has a weight of its own, so the weights cannot be cleared from here. '
+                    .'Ask the teacher of that work, who can clear them.'
+                );
+            }
+        }
 
         $cleared = 0;
 

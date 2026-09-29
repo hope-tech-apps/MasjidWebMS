@@ -1560,10 +1560,12 @@
                         <div class="card-body">
                             <div class="fw-semibold mb-1">How much each type of work counts</div>
                             <p class="text-muted small mb-2">
-                                Each piece of work counts by the weight of its type: a Test at 40 counts as much as
-                                four Homework at 10. Weights are relative, so they do not have to add up to 100, and a
-                                type nobody has been marked on yet changes nothing. You can give one piece of work its
-                                own weight when you set it. Leave the weights unset for a plain average.
+                                Each type of work counts by its weight, however many pieces of it there are: with Test at
+                                40 and Homework at 10, Tests make up four fifths of the average whether a child has done
+                                one Homework or ten. Weights are relative, so they do not have to add up to 100, and a
+                                type nobody has been marked on yet changes nothing. Give one piece of work its own weight
+                                when you set it and it counts on its own, beside the types. Leave the weights unset for
+                                a plain average.
                             </p>
                             <div class="row g-2 align-items-end">
                                 <div v-for="t in workTypes" :key="t.key" class="col-6 col-sm-auto">
@@ -1580,8 +1582,8 @@
                                 </div>
                             </div>
                             <div v-if="confirmClearWeights" class="alert alert-warning small mt-3 mb-0">
-                                Clear the weights? Every average goes back to the plain one, and any weight you gave
-                                one piece of work is removed too.
+                                Clear the weights? Every average goes back to the plain one, and any weight given to
+                                one piece of work is removed too, including work another teacher of this class set.
                                 <div class="mt-2 d-flex gap-2">
                                     <button class="btn btn-sm btn-danger" :disabled="savingWeights" @click="clearWeights">Clear them</button>
                                     <button class="btn btn-sm btn-light" @click="confirmClearWeights = false">Keep them</button>
@@ -1749,6 +1751,7 @@
                                                     <dd class="col-sm-8">{{ line.value }} <span class="text-muted">{{ line.note }}</span></dd>
                                                 </template>
                                             </dl>
+                                            <p v-if="studentFencedNote" class="text-muted small mb-2">{{ studentFencedNote }}</p>
                                             <p v-if="studentGrades.summary.weighting.untyped_excluded" class="text-warning-emphasis small mb-2">
                                                 {{ untypedNoteText(studentGrades.summary.weighting.untyped_excluded) }}, so
                                                 {{ studentGrades.summary.weighting.untyped_excluded === 1 ? 'it is' : 'they are' }} left out of the weighted average.
@@ -2382,7 +2385,7 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    averageLines, blankWorkForm, effectiveWeight, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
+    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
     weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
@@ -3699,7 +3702,9 @@ const openStudentId = ref<number | null>(null);
 const studentGrades = ref<any>(null);
 const studentLoading = ref(false);
 const studentError = ref('');
-const studentLines = computed(() => averageLines(studentGrades.value?.summary));
+const studentLines = computed(() => averageLines(studentGrades.value?.summary, !!studentGrades.value?.fenced));
+/** Said under the figures when this teacher teaches only some subjects of the class. */
+const studentFencedNote = computed(() => fencedNote(studentGrades.value?.fenced));
 
 const showStudentsView = () => {
     gradesView.value = 'students';

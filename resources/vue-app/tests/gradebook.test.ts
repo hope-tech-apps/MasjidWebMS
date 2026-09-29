@@ -12,6 +12,7 @@ import {
     averageLines,
     blankWorkForm,
     effectiveWeight,
+    fencedNote,
     firstFieldError,
     isCombinedGuideColumn,
     percentText,
@@ -191,6 +192,38 @@ test('a class with weights and a weighted level says so', () => {
         levels: { counted: 2, mean: 3, mean_label: 'Meets' },
     });
     assert.deepEqual(lines, [{ label: 'Weighted level', value: '3.3', note: 'Meets' }]);
+});
+
+test('a teacher limited to some subjects reads figures labelled as theirs, and the note says a parent sees more', () => {
+    const summary = {
+        points_counted: 1, points_earned: 9, points_possible: 10,
+        weighting: { enabled: true, percent: 90, points_pieces: 1, untyped_excluded: 0, level_mean: 3.3, level_mean_label: 'Meets' },
+        levels: { counted: 1, mean: 3, mean_label: 'Meets' },
+    };
+    // Unfenced, and the second argument left out, are the same thing.
+    assert.deepEqual(averageLines(summary).map((l) => l.label), ['Weighted average', 'Total points', 'Weighted level']);
+    assert.deepEqual(averageLines(summary, false).map((l) => l.label), ['Weighted average', 'Total points', 'Weighted level']);
+    // Fenced: EVERY headline label says whose subjects it covers, so no figure reads as the whole child.
+    assert.deepEqual(averageLines(summary, true).map((l) => l.label), [
+        'Weighted average (your subjects)', 'Total points (your subjects)', 'Weighted level (your subjects)',
+    ]);
+    // The note appears only when fenced.
+    assert.equal(fencedNote(false), '');
+    assert.equal(fencedNote(undefined), '');
+    assert.match(fencedNote(true), /only the subjects you teach/);
+    assert.match(fencedNote(true), /A parent sees every subject/);
+});
+
+test('the Students view passes the fence to the figures and prints the note', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    assert.match(source, /averageLines\(studentGrades\.value\?\.summary, !!studentGrades\.value\?\.fenced\)/);
+    assert.match(source, /v-if="studentFencedNote"/);
+});
+
+test('the weights panel says a type is one share of the average, not a per-piece multiplier', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    assert.match(source, /however many pieces of it there are/);
+    assert.doesNotMatch(source, /counts as much as\s+four Homework/);
 });
 
 test('a child with no marks has no figures', () => {

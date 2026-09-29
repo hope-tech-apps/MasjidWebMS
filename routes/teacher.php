@@ -214,15 +214,15 @@ Route::prefix('teacher')
                         Route::put('/assignments/{assignment_id}', [GradebookController::class, 'update']);
                         Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
                         Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
-                        // How much one piece of work of each type counts for in
-                        // THIS class (T-001.2): all five types, or clear them. A
-                        // class-level setting, so it is not subject-fenced (see
-                        // GradebookController::saveWeights).
-                        Route::put('/grade-weights', [GradebookController::class, 'saveWeights']);
-                        // How much one piece of work of each type counts for in
-                        // THIS class (T-001.2), all five types or clear them. A
-                        // class-level setting, so it is not subject-fenced: see
-                        // GradebookController::saveWeights.
+                        // How much each TYPE of work counts for in THIS class
+                        // (T-001.2), all five types or clear them. A class-level
+                        // setting, so setting it is not subject-fenced; clearing
+                        // is refused a limited teacher while other subjects' work
+                        // carries a weight of its own: see
+                        // GradebookController::saveWeights. Registered ONCE: the
+                        // router keeps one route per verb and URI, so a second
+                        // copy is invisible to every test but the source scan in
+                        // TeacherRoutesRegisteredOnceTest.
                         Route::put('/grade-weights', [GradebookController::class, 'saveWeights']);
                         Route::get('/members/{membership_id}/grades', [GradebookController::class, 'forMember']);
 
