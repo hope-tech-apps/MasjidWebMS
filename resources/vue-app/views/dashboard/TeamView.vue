@@ -62,6 +62,8 @@
                                 </td>
                                 <td class="small">
                                     <span v-if="p.last_sign_in_at">{{ formatDate(p.last_sign_in_at) }}</span>
+                                    <span v-else-if="signInColumn(p).kind === 'shared'" class="text-muted"
+                                          title="This teacher also belongs to another school, so their sign-ins are not shown here.">Shared login</span>
                                     <span v-else class="text-warning-emphasis">Not signed in yet</span>
                                 </td>
                                 <td class="text-end text-nowrap">
@@ -147,6 +149,7 @@ import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
+import { signInColumn } from '@/core/helpers/teamSignIn';
 import { CapabilityInfo, TeamAccess, TeamMember } from '@/core/types/data/Capability';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';

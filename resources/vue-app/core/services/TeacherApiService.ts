@@ -6,6 +6,7 @@ import {
     stampTenantEpoch,
 } from "@/core/tenancy/tenantRequests";
 import { checkTeacherSchoolEcho, handleTeacherSchoolRefusal } from "@/core/tenancy/teacherSchoolGuard";
+import { createTeacherResponseHandlers } from "@/core/tenancy/teacherSchoolGuardCore";
 
 /**
  * The teacher shell's own HTTP client.
@@ -65,45 +66,32 @@ class TeacherApiService {
         // Centralized 401 handling: a teacher whose token is no longer good is
         // sent back to the single staff sign-in. The dynamic import keeps the
         // router out of this module's static dependency graph.
-        TeacherApiService.client.interceptors.response.use(
-            (res) => {
-                // Staleness BEFORE the echo: a response from the school just left
-                // still names it, and must not be read as the server disagreeing.
-                if (isFromSupersededEpoch(res.config)) {
-                    return dropSupersededResponse(`${res.config?.url ?? 'a response'}`);
-                }
-
-                checkTeacherSchoolEcho(res);
-
-                return res;
-            },
-            async (error) => {
-                // Includes the abort the switch itself fires.
-                if (isFromSupersededEpoch(error?.config)) {
-                    return dropSupersededResponse(`${error?.config?.url ?? 'a failed request'}`);
-                }
-
-                // 403 "outside memberships": the teacher's school list changed
-                // while this tab was open. Refetch, rehydrate, reload — and still
-                // reject, so the caller's own error handling runs if the reload
-                // does not (it is guarded against looping).
-                handleTeacherSchoolRefusal(error);
-
-                if (error?.response?.status === 401) {
-                    try {
-                        const { default: router } = await import("@/router/router");
-                        if (router.currentRoute.value.path !== "/auth/sign-in") {
-                            router.push("/auth/sign-in");
-                        }
-                    } catch {
-                        // If the router cannot be reached (very early boot), fall
-                        // back to a hard redirect.
-                        window.location.assign("/auth/sign-in");
+        //
+        // The ORDER of the steps (drop a superseded response before reading its
+        // echo; handle a refused school, then still reject) lives in
+        // createTeacherResponseHandlers, where it is tested.
+        const handlers = createTeacherResponseHandlers({
+            isFromSupersededEpoch,
+            dropSupersededResponse,
+            checkEcho: checkTeacherSchoolEcho,
+            // 403 "outside memberships": the teacher's school list changed while
+            // this tab was open. Refetch, rehydrate, reload (loop-guarded).
+            handleRefusal: handleTeacherSchoolRefusal,
+            onUnauthorized: async () => {
+                try {
+                    const { default: router } = await import("@/router/router");
+                    if (router.currentRoute.value.path !== "/auth/sign-in") {
+                        router.push("/auth/sign-in");
                     }
+                } catch {
+                    // If the router cannot be reached (very early boot), fall
+                    // back to a hard redirect.
+                    window.location.assign("/auth/sign-in");
                 }
-                return Promise.reject(error);
-            }
-        );
+            },
+        });
+
+        TeacherApiService.client.interceptors.response.use(handlers.onFulfilled, handlers.onRejected);
     }
 
     private static instance(): AxiosInstance {

@@ -147,6 +147,8 @@ export type TeamMember = {
     is_you: boolean;
     classes: number | null;
     last_sign_in_at: string | null;
+    /** A teacher who also belongs to another school: phone and last sign-in are withheld, not absent. Missing on an older backend. */
+    shared?: boolean;
     removable: boolean;
 };
 

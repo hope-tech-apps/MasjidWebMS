@@ -87,6 +87,26 @@ export function landingSchoolId(stored: unknown, choices: SchoolChoice[]): numbe
 }
 
 /**
+ * The school a teacher lands in right after SIGNING IN.
+ *
+ * `browserStored` is what this browser last used (localStorage survives an expired
+ * token, which sends the teacher to sign-in without signing them out). If the
+ * server still grants that school it wins, so a two-school teacher who was working
+ * in their second school is not thrown back to the default one by a 401. Otherwise
+ * the login's own default (`user.masjid`), which is what sign-in always used. A
+ * stored id the server does not grant, another person's left in a shared browser,
+ * is never honoured (landingSchoolId).
+ */
+export function signInSchoolId(browserStored: unknown, memberships: unknown, defaultSchoolId: unknown): number | null {
+    const landing = landingSchoolId(browserStored, schoolChoices(memberships));
+    if (landing !== null) return landing;
+
+    const own = Number(defaultSchoolId);
+
+    return Number.isInteger(own) && own > 0 ? own : null;
+}
+
+/**
  * The id to switch to, or null when there is nothing to do: not one of the
  * granted schools (fail closed, the server would refuse it anyway) or already
  * the current one.

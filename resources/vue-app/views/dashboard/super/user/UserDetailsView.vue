@@ -139,6 +139,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { useTwoFactorStore } from '@/stores/twoFactorStore';
 import { CAPABILITY_LABELS, TeamAccess, UserOrganisation } from '@/core/types/data/Capability';
 import { accessBadge, accessLabel, adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
+import { removalWarning } from '@/core/helpers/userRemoval';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { computed, onBeforeMount, ref } from 'vue';
@@ -305,7 +306,7 @@ const openTeam = async (masjidId: number) => {
 
 // Functions
 const deleteUser = async () => {
-    QSwal.fire("Warning", 'You are going to delete this user !', 'warning')
+    QSwal.fire("Warning", removalWarning('delete', user.value?.name ?? '', user.value?.organisations, escapeHtml), 'warning')
         .then(async (result) => {
             if (result.isConfirmed) {
 
@@ -347,7 +348,7 @@ const deleteUser = async () => {
 }
 
 const archiveUser = async () => {
-    QSwal.fire("Warning", 'You are going to archive this user !', 'warning')
+    QSwal.fire("Warning", removalWarning('archive', user.value?.name ?? '', user.value?.organisations, escapeHtml), 'warning')
         .then(async (result) => {
             if (result.isConfirmed) {
 

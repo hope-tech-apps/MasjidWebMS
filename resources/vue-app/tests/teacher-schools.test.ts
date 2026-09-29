@@ -15,6 +15,7 @@ import {
     mayReloadAfterRefusal,
     schoolChoices,
     schoolMismatch,
+    signInSchoolId,
     switchTarget,
     TENANT_FORBIDDEN_MESSAGE,
 } from '../core/helpers/teacherSchools.ts';
@@ -71,6 +72,73 @@ test('with no default the lowest id is used, and with nothing there is nothing t
     const noDefault = schoolChoices([{ ...biss, is_default: false }, { ...alrazi, is_default: false }]);
     assert.equal(landingSchoolId(null, noDefault), 14);
     assert.equal(landingSchoolId('5', []), null);
+});
+
+test('the default school wins over a LOWER id: default is not "lowest id"', () => {
+    // Al-Razi (14) is the lowest id, BISS (18) is this teacher's default.
+    const choices = schoolChoices([{ ...alrazi, is_default: false }, { ...biss, is_default: true }]);
+
+    assert.equal(landingSchoolId(null, choices), 18);
+    assert.equal(landingSchoolId('99', choices), 18, 'a stale stored id falls back to the DEFAULT, not to 14');
+});
+
+test('is_default arrives as 1 or true, and both count', () => {
+    const numeric = schoolChoices([{ ...alrazi, is_default: 0 }, { ...biss, is_default: 1 }]);
+
+    assert.deepEqual(numeric.map((c) => c.isDefault), [false, true]);
+    assert.equal(landingSchoolId(null, numeric), 18);
+});
+
+test('with no default the lowest id is used whatever the names sort like', () => {
+    // Sorted by name the list is [Alpha #30, Beta #20]; "lowest id" is 20, not the first row.
+    const choices = schoolChoices([
+        { masjid_id: 30, is_default: false, masjid: { name: 'Alpha' } },
+        { masjid_id: 20, is_default: false, masjid: { name: 'Beta' } },
+    ]);
+
+    assert.deepEqual(choices.map((c) => c.id), [30, 20]);
+    assert.equal(landingSchoolId(null, choices), 20);
+});
+
+test('two schools with the same name are ordered by id, so the menu is stable', () => {
+    const choices = schoolChoices([
+        { masjid_id: 30, masjid: { name: 'Same' } },
+        { masjid_id: 20, masjid: { name: 'Same' } },
+    ]);
+
+    assert.deepEqual(choices.map((c) => c.id), [20, 30]);
+});
+
+// ------------------------------------------------------ landing at sign-in
+
+test('signing in lands in the school this browser last used, when it is still granted', () => {
+    const memberships = [alrazi, biss];
+
+    assert.equal(signInSchoolId('18', memberships, 14), 18, 'an expired token must not throw them back to the default');
+    assert.equal(signInSchoolId(18, memberships, 14), 18);
+});
+
+test('signing in falls back to the login\'s own school for a stale, foreign or absent stored id', () => {
+    const memberships = [alrazi, biss];
+
+    assert.equal(signInSchoolId(null, memberships, 14), 14);
+    assert.equal(signInSchoolId('99', memberships, 14), 14, 'another person\'s id in a shared browser is never honoured');
+    assert.equal(signInSchoolId('garbage', memberships, 14), 14);
+});
+
+test('sign-in with no memberships (an older backend) keeps the old rule: the login\'s own school', () => {
+    assert.equal(signInSchoolId('18', undefined, 14), 14);
+    assert.equal(signInSchoolId('18', [], 14), 14);
+    assert.equal(signInSchoolId(null, undefined, undefined), null);
+    assert.equal(signInSchoolId(null, [], 'x'), null);
+});
+
+test('the sign-in screen asks the helper for a teacher\'s school', () => {
+    const view = readFileSync(new URL('../views/auth/SignIn.vue', import.meta.url), 'utf8');
+    const teacher = view.slice(view.indexOf("type === 'Teacher'"), view.indexOf("type === 'LunchStaff'"));
+
+    assert.match(teacher, /signInSchoolId\(lastUsed, authStore\.user\.memberships, authStore\.user\.masjid\?\.id\)/);
+    assert.doesNotMatch(teacher, /saveDashboardMasjidId\(authStore\.user\.masjid\.id\)/, 'the unconditional default is gone');
 });
 
 // ------------------------------------------------------------- switching
@@ -155,8 +223,9 @@ test('the teacher client stamps the epoch and handles a refused school', () => {
 
     assert.match(service, /interceptors\.request\.use\(stampTenantEpoch\)/);
     assert.match(service, /isFromSupersededEpoch/);
-    assert.match(service, /checkTeacherSchoolEcho\(res\)/);
-    assert.match(service, /handleTeacherSchoolRefusal\(error\)/);
+    // The order those steps run in is executed, not read: teacher-school-guard.test.ts.
+    assert.match(service, /checkEcho: checkTeacherSchoolEcho/);
+    assert.match(service, /handleRefusal: handleTeacherSchoolRefusal/);
 });
 
 test('the switch opens a new epoch and empties the stores before it moves the selection', () => {
@@ -171,11 +240,26 @@ test('the switch opens a new epoch and empties the stores before it moves the se
     assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the steps must run in this order');
 });
 
-test('the echo guard compares against this tab\'s own selection, not the shared localStorage copy', () => {
-    const guard = readFileSync(new URL('../core/tenancy/teacherSchoolGuard.ts', import.meta.url), 'utf8');
+test('the shell registers this tab\'s own selection with the guard (behaviour: teacher-school-guard.test.ts)', () => {
+    const layout = readFileSync(new URL('../layouts/TeacherLayout.vue', import.meta.url), 'utf8');
+    const wiring = readFileSync(new URL('../core/tenancy/teacherSchoolGuard.ts', import.meta.url), 'utf8');
+
+    assert.match(layout, /provideSelectedSchool\(\(\) => authStore\.dashboardMasjidId\)/);
+    assert.match(wiring, /export const provideSelectedSchool = guard\.provideSelectedSchool/);
+});
+
+test('the header prints no new name label for a single-school teacher', () => {
     const layout = readFileSync(new URL('../layouts/TeacherLayout.vue', import.meta.url), 'utf8');
 
-    assert.match(guard, /export function provideSelectedSchool/);
-    assert.match(guard, /if \(selectionProvider\) \{/, 'the provider must be read before localStorage');
-    assert.match(layout, /provideSelectedSchool\(\(\) => authStore\.dashboardMasjidId\)/);
+    // `users` has no first_name/last_name, so this stays blank. Reading `data.name` put a new
+    // label on every teacher's header, which was not asked for.
+    assert.doesNotMatch(layout, /teacherName\.value = data\.name/);
+    assert.match(layout, /teacherName\.value = \[data\.first_name, data\.last_name\]/);
+});
+
+test('the add form says the list shows the name on an existing login, without naming any address', () => {
+    const view = readFileSync(new URL('../views/dashboard/TeachersView.vue', import.meta.url), 'utf8');
+
+    assert.match(view, /If this person already has a Manara login, the name on that login is the one shown in your list\./);
+    assert.match(view, /v-else-if="!isEditing" class="form-text"/, 'shown on every add, so it reveals nothing about one address');
 });

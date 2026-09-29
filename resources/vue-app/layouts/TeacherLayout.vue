@@ -68,7 +68,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
 import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/teacherSchools';
-import { provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
+import { clearTeacherSchoolNotices, provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
 import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
 import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
 
@@ -203,6 +203,10 @@ async function loadSchoolHeader(): Promise<void> {
 }
 
 onMounted(async () => {
+    // A notice left over from the last session on this tab (sign-out is an SPA
+    // navigation, no reload) must not block this one's screens.
+    clearTeacherSchoolNotices();
+
     // The echo guard compares what the server bound with THIS tab's selection.
     provideSelectedSchool(() => authStore.dashboardMasjidId);
 
@@ -213,7 +217,11 @@ onMounted(async () => {
             const res = await TeacherApiService.get('/api/teacher/user');
             const data = res.data?.data ?? null;
             if (data) {
-                teacherName.value = data.name || [data.first_name, data.last_name].filter(Boolean).join(' ');
+                // Unchanged from before multi-school: `users` has no first_name/last_name,
+                // so this stays blank and the header prints no name. Showing `data.name`
+                // would put a new label on every single-school teacher's header; that is
+                // a product change for the owner to ask for, not a side effect here.
+                teacherName.value = [data.first_name, data.last_name].filter(Boolean).join(' ');
             }
         } catch {
             teacherName.value = '';

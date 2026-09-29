@@ -174,6 +174,12 @@
                                             required
                                         >
                                         <div v-if="fieldErrors.name" class="invalid-feedback">{{ fieldErrors.name }}</div>
+                                        <!-- True for every add, so it says nothing about any one address: a person
+                                             who already has a Manara login keeps the name on it, and the list shows
+                                             that name, not the one typed here. -->
+                                        <div v-else-if="!isEditing" class="form-text">
+                                            If this person already has a Manara login, the name on that login is the one shown in your list.
+                                        </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">

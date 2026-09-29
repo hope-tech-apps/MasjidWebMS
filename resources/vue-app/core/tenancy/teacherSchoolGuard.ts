@@ -7,6 +7,7 @@ import {
     mayReloadAfterRefusal,
     schoolMismatch,
 } from "@/core/helpers/teacherSchools";
+import { createTeacherSchoolGuard, SchoolMismatch } from "@/core/tenancy/teacherSchoolGuardCore";
 
 /**
  * What the teacher shell does when the server disagrees with it about which
@@ -29,10 +30,17 @@ import {
  *    `/api/teacher/user`, lets `rehydrateOrganisation` drop the school the server
  *    no longer grants, and reloads. A refusal that is about a CLASS (`teacher.leads`)
  *    is a different 403 and is left alone, or this would loop.
+ *
+ * The logic lives in teacherSchoolGuardCore.ts with its dependencies injected, so
+ * it is tested under node; this file only wires it to the browser. Both notices are
+ * module state, and sign-out is an SPA navigation with no reload, so
+ * `resetTeacherSchoolGuard()` is called from `removeAuth()`: without it the notice's
+ * own remedy ("sign out and sign in again") would leave the next sign-in stuck
+ * behind the same notice.
  */
 
 /** Set when the server bound a school other than the selected one. Read by TeacherLayout. */
-export const teacherSchoolMismatch = ref<{ server: number; selected: number } | null>(null);
+export const teacherSchoolMismatch = ref<SchoolMismatch | null>(null);
 
 /**
  * The server keeps refusing the school this tab selected and one refetch-and-reload
@@ -42,94 +50,49 @@ export const teacherSchoolRefused = ref<boolean>(false);
 
 const RELOADED_AT_KEY = 'MANARA_TEACHER_SCHOOL_RELOAD_AT';
 
-let selectionProvider: (() => unknown) | null = null;
+const guard = createTeacherSchoolGuard({
+    mismatch: teacherSchoolMismatch,
+    refused: teacherSchoolRefused,
+    echoedSchoolId,
+    schoolMismatch,
+    isOutsideMembershipsRefusal,
+    mayReloadAfterRefusal,
+    readStoredSelection: () => localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id),
+    reloadStamp: {
+        read: () => sessionStorage.getItem(RELOADED_AT_KEY),
+        write: (ms) => sessionStorage.setItem(RELOADED_AT_KEY, String(ms)),
+        clear: () => sessionStorage.removeItem(RELOADED_AT_KEY),
+    },
+    now: () => Date.now(),
+    refetchUser: async () => {
+        // A dynamic import keeps the store graph out of this module's static
+        // dependencies (authStore imports the api services that import this).
+        const { useAuthStore } = await import("@/stores/authStore");
+        await useAuthStore().fetchAuthUser();
+    },
+    reload: () => window.location.reload(),
+    warn: (...args) => console.warn(...args),
+});
 
 /**
  * Tell the guard where THIS tab's selection lives (the auth store's in-memory
- * `dashboardMasjidId`), registered by TeacherLayout.
- *
- * It matters with two tabs open. The localStorage copy is shared and last-write-wins,
- * so a teacher who opens BISS in a second tab (to compare it with Al-Razi, say)
- * changes it under the first tab, whose requests still name Al-Razi and are still
- * correctly served Al-Razi. Comparing the echo with the shared copy would flag that
- * first tab as a mismatch on every request. What matters is whether the server bound
- * the school THIS tab asked for, so the in-memory selection is the one compared.
- * (Not a static import of the store: it would close a cycle through the api services.)
+ * `dashboardMasjidId`), registered by TeacherLayout. See the core for why the
+ * shared localStorage copy is not the one compared.
  */
-export function provideSelectedSchool(provider: () => unknown): void {
-    selectionProvider = provider;
-}
-
-/** The school this tab selected: its in-memory selection, else what `saveDashboardMasjidId` wrote. */
-function selectedSchoolId(): number | null {
-    if (selectionProvider) {
-        const chosen = Number(selectionProvider());
-        return Number.isInteger(chosen) && chosen > 0 ? chosen : null;
-    }
-
-    try {
-        const stored = Number(localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id));
-        return Number.isInteger(stored) && stored > 0 ? stored : null;
-    } catch {
-        return null;
-    }
-}
+export const provideSelectedSchool = guard.provideSelectedSchool;
 
 /** Compare a settled response's echo with the selection. Called for current-epoch responses only. */
 export function checkTeacherSchoolEcho(response: AxiosResponse): void {
-    const mismatch = schoolMismatch(echoedSchoolId(response?.headers), selectedSchoolId());
-
-    if (mismatch) {
-        teacherSchoolMismatch.value = mismatch;
-    }
+    guard.checkEcho(response);
 }
 
-let refreshing: Promise<void> | null = null;
-
-/**
- * Handle a refused school: refetch, rehydrate, reload. One at a time — a screen
- * fires a dozen requests, and every one of them 403s together.
- */
+/** Handle a refused school: refetch, rehydrate, reload. One at a time. */
 export function handleTeacherSchoolRefusal(error: any): Promise<void> | null {
-    const status = error?.response?.status;
-    const message = error?.response?.data?.message;
-
-    if (!isOutsideMembershipsRefusal(status, message)) return null;
-
-    if (refreshing) return refreshing;
-
-    refreshing = (async () => {
-        try {
-            let last: unknown = null;
-            try {
-                last = sessionStorage.getItem(RELOADED_AT_KEY);
-            } catch { /* private window: no guard, single attempt below */ }
-
-            if (!mayReloadAfterRefusal(last, Date.now())) {
-                // We already reloaded a moment ago and the server still refuses the
-                // school it was just given. Stop; the notice tells the teacher.
-                teacherSchoolRefused.value = true;
-                return;
-            }
-
-            // Dynamic imports keep the store graph out of this module's static
-            // dependencies (authStore imports the api services that import this).
-            const { useAuthStore } = await import("@/stores/authStore");
-            await useAuthStore().fetchAuthUser();
-
-            try {
-                sessionStorage.setItem(RELOADED_AT_KEY, String(Date.now()));
-            } catch { /* see above */ }
-
-            window.location.reload();
-        } catch (e) {
-            // fetchAuthUser failed: a 401 has already sent them to sign in; anything
-            // else leaves the shell as it was. Never throw out of an interceptor.
-            console.warn('[teacher] could not refresh the school list after a refusal', e);
-        } finally {
-            refreshing = null;
-        }
-    })();
-
-    return refreshing;
+    return guard.handleRefusal(error);
 }
+
+/** Clear the two notices only (TeacherLayout, on mount). The reload-loop stamp stays. */
+export const clearTeacherSchoolNotices = guard.clearNotices;
+
+/** Forget the last session's notices AND the reload stamp (sign-out). */
+export const resetTeacherSchoolGuard = guard.reset;
