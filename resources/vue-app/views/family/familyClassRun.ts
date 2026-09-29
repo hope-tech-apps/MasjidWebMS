@@ -1,4 +1,6 @@
 import FamilyApiService, { rowsOf } from "@/core/services/FamilyApiService";
+import { nextTick, watch } from "vue";
+import type { Ref } from "vue";
 
 /**
  * The class screen's per-child fetch loops, as one run that belongs to the
@@ -258,7 +260,7 @@ export const STORIES_SEEN_CHUNK = 50;
  * (T-002.3, "Seen by 4 of 7 parents").
  *
  * The caller has already decided this is the moment: the Story tab is showing
- * these posts, the school has switched read receipts on (`meta.story_reads`) and
+ * these posts, the school has switched read receipts on (`meta.story_reads.enabled`) and
  * the page is visible. It must NEVER be called from the fetch that loads the
  * posts — the portal fetches them on page load whatever tab is open, so a
  * fetch-side call would mark the 15 newest stories "seen" for a parent who only
@@ -292,4 +294,72 @@ export async function recordStoriesSeenFor(run: ClassRun, ids: number[]): Promis
     }
 
     return !run.stale();
+}
+
+/**
+ * What the class screen holds that decides whether a story read may be sent.
+ * Refs and getters, not values, so the decision is always taken on the state as
+ * it stands when the report runs.
+ */
+export interface StoryReadsSource {
+    tab: Ref<string>;
+    posts: Ref<{ id: number }[]>;
+    /** The school's `groups.story_reads` switch, as the server reported it. */
+    enabled: Ref<boolean>;
+    /** True until the screen's load chain has finished, success or failure. */
+    loading: Ref<boolean>;
+    /** Set when the load chain failed and the screen shows its error alert. */
+    error: Ref<unknown>;
+    mayReceiveFeed: () => boolean;
+    /** True while the page is in front of the parent. */
+    visible: () => boolean;
+    begin: () => ClassRun;
+}
+
+/**
+ * Report the class stories this parent is actually looking at, and only then.
+ *
+ * "Looking at" means the Story section has been DRAWN: the Story tab is the open
+ * one, the switch is on, the page is visible, and the load chain has finished
+ * without failing. While `loading` is true the screen shows a spinner and neither
+ * the privacy notice nor a single story is in the page; if the chain then fails
+ * the parent sees an error alert and never sees either. The posts arrive in the
+ * middle of that chain, so reacting to `posts` alone recorded fifteen reads for a
+ * parent who was still looking at a spinner. After the decision the report also
+ * waits for the next render, so the notice is in the DOM before the request goes.
+ *
+ * Returns the function to call from any other trigger (the page becoming visible
+ * again); it is safe to call at any time, it decides for itself.
+ */
+export function watchStoriesSeen(src: StoryReadsSource): () => Promise<void> {
+    /** Stories already reported this visit, so a re-render does not ask again. */
+    const reported = new Set<number>();
+
+    const ready = () =>
+        src.tab.value === 'story'
+        && src.enabled.value
+        && src.mayReceiveFeed()
+        && !src.loading.value
+        && !src.error.value
+        && src.visible();
+
+    const report = async () => {
+        if (!ready()) return;
+        await nextTick();
+        // A render, or a failure, may have landed while waiting.
+        if (!ready()) return;
+
+        const ids = src.posts.value.map((p) => p.id).filter((id) => !reported.has(id));
+        if (!ids.length) return;
+
+        // Claimed first, so two triggers in the same tick send once; given back
+        // on failure so the next time the tab is shown it tries again.
+        ids.forEach((id) => reported.add(id));
+        const ok = await recordStoriesSeenFor(src.begin(), ids);
+        if (!ok) ids.forEach((id) => reported.delete(id));
+    };
+
+    watch([src.tab, src.posts, src.enabled, src.loading, src.error], report);
+
+    return report;
 }

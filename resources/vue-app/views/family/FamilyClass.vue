@@ -144,7 +144,7 @@
                 <div v-else class="d-flex flex-column gap-3">
                     <!-- The disclosure that the school can see who has opened a story.
                          Drawn from the SAME server value that lets the portal record
-                         a read (`meta.story_reads`), so the notice and the recording
+                         a read (`meta.story_reads.enabled`), so the notice and the recording
                          go live together and never one without the other. -->
                     <p v-if="storyReadsEnabled" class="text-muted small mb-0" dir="auto" data-test="story-seen-notice">
                         <i class="bi bi-eye me-1" aria-hidden="true"></i>{{ t('story_seen_notice') }}
@@ -924,7 +924,7 @@ import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
-import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, recordStoriesSeenFor } from '@/views/family/familyClassRun';
+import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, watchStoriesSeen } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -1403,30 +1403,22 @@ const storyReactionError = ref<FamilyMessage | null>(null);
 // The school's `groups.story_reads` switch, as the server reports it. It gates
 // the notice above AND the recording below, so the two go live together.
 const storyReadsEnabled = ref(false);
-/** Stories already reported this visit, so a re-render does not ask again. */
-const storiesReported = new Set<number>();
-
 /**
- * Tell the school which stories this parent has the Story tab open on.
- *
- * Called ONLY when the tab is actually showing the posts (a watch on the tab and
- * the list, and on the page becoming visible) — never from the fetch that loads
- * them, which runs on page load whatever tab is open and returns the newest 15.
+ * The decision (Story tab open, switch on, page visible, load finished without
+ * failing, the notice drawn) lives in `watchStoriesSeen`, where SPA tests drive it.
+ * It is never called from the fetch that loads the posts, which runs on page load
+ * whatever tab is open and returns the newest 15.
  */
-const reportStoriesSeen = async () => {
-    if (tab.value !== 'story' || !storyReadsEnabled.value || !group.value?.may_receive_feed) return;
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-
-    const ids = posts.value.map((p: any) => p.id).filter((id: number) => !storiesReported.has(id));
-    if (!ids.length) return;
-
-    // Claimed first, so two triggers in the same tick send once; given back on
-    // failure so the next time the tab is shown it tries again.
-    ids.forEach((id: number) => storiesReported.add(id));
-    const ok = await recordStoriesSeenFor(beginRun(), ids);
-    if (!ok) ids.forEach((id: number) => storiesReported.delete(id));
-};
-watch([tab, posts, storyReadsEnabled], reportStoriesSeen);
+const reportStoriesSeen = watchStoriesSeen({
+    tab,
+    posts,
+    enabled: storyReadsEnabled,
+    loading,
+    error,
+    mayReceiveFeed: () => !!group.value?.may_receive_feed,
+    visible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+    begin: () => beginRun(),
+});
 // A tab that was in the background when the stories loaded reports them the
 // moment it is looked at.
 onMounted(() => document.addEventListener('visibilitychange', reportStoriesSeen));
@@ -2006,7 +1998,7 @@ onMounted(async () => {
             const p = await FamilyApiService.get(`${run.base}/posts`);
             if (run.stale()) return;
             posts.value = rowsOf(p.data?.data);
-            storyReadsEnabled.value = p.data?.meta?.story_reads === true;
+            storyReadsEnabled.value = p.data?.meta?.story_reads?.enabled === true;
         }
 
         const refreshed = await FamilyApiService.get(`${run.base}/threads`);

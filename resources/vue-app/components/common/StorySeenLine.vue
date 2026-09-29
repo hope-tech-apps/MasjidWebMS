@@ -7,9 +7,14 @@
 
         Rendered only while the school has switched read receipts on
         (`meta.story_reads.enabled`); while off the server omits the fields, so a
-        receipt nobody is keeping is never shown as "0 of 7".
+        receipt nobody is keeping is never shown as "0 of 7". The same goes for a
+        story older than the day recording began: the server sends `seen_tracked:
+        false` and this draws "Not tracked before <date>".
     -->
-    <div v-if="enabled && audienceCount !== null" class="small text-muted mt-2" data-test="story-seen">
+    <div v-if="enabled && untracked" class="small text-muted mt-2" data-test="story-seen-untracked">
+        <i class="bi bi-eye-slash me-1" aria-hidden="true"></i>{{ notTrackedLabel(since) }}
+    </div>
+    <div v-else-if="enabled && audienceCount !== null" class="small text-muted mt-2" data-test="story-seen">
         <i class="bi me-1" :class="seenCount ? 'bi-eye text-success' : 'bi-eye-slash'" aria-hidden="true"></i>
         <details v-if="seenBy.length" class="d-inline">
             <summary class="d-inline" style="cursor: pointer;">Seen by {{ seenCount }} of {{ audienceCount }} {{ audienceCount === 1 ? 'parent' : 'parents' }}</summary>
@@ -27,6 +32,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { notTrackedLabel } from '@/core/helpers/storySeen';
 
 export type StorySeenPerson = { name: string; seen_at?: string | null };
 
@@ -38,8 +44,13 @@ const props = defineProps<{
     audienceCount?: number | null;
     /** `meta.story_reads.unreachable_count`. */
     unreachable?: number | null;
+    /** The post's `seen_tracked`: false means it predates recording. Absent means tracked. */
+    tracked?: boolean | null;
+    /** The post's `seen_since`: the school-local `Y-m-d` recording began. */
+    since?: string | null;
 }>();
 
+const untracked = computed(() => props.tracked === false);
 const seenBy = computed(() => props.seenBy ?? []);
 const seenCount = computed(() => props.seenCount ?? 0);
 const audienceCount = computed<number | null>(() => (typeof props.audienceCount === 'number' ? props.audienceCount : null));

@@ -90,6 +90,13 @@ export type GroupPost = {
     seen_by?: { name: string; seen_at: string | null }[];
     seen_count?: number;
     audience_count?: number;
+    /**
+     * `false` (with `seen_since`, a school-local `Y-m-d`) on a story that predates
+     * recording and has no read on it: it was not tracked, which is not the same
+     * as nobody opening it. The three fields above are omitted for it.
+     */
+    seen_tracked?: boolean;
+    seen_since?: string | null;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */

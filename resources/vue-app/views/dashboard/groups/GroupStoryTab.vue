@@ -143,6 +143,7 @@
                     <StorySeenLine :enabled="feedStore.feedMeta?.story_reads?.enabled"
                                    :seen-by="post.seen_by" :seen-count="post.seen_count"
                                    :audience-count="post.audience_count"
+                                   :tracked="post.seen_tracked" :since="post.seen_since"
                                    :unreachable="feedStore.feedMeta?.story_reads?.unreachable_count" />
                 </div>
             </div>

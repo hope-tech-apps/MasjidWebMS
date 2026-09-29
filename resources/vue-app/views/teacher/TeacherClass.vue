@@ -966,6 +966,7 @@
                             <!-- "Seen by 4 of 7 parents" — only while the school has receipts on. -->
                             <StorySeenLine :enabled="storyReads.enabled" :seen-by="post.seen_by"
                                            :seen-count="post.seen_count" :audience-count="post.audience_count"
+                                           :tracked="post.seen_tracked" :since="post.seen_since"
                                            :unreachable="storyReads.unreachable_count" />
                         </div>
                     </article>

@@ -252,7 +252,7 @@ export const PS: Record<string, string> = {
     reaction_question: "پوښتنه",
     reaction_failed: "دا غبرگون خوندي نه شو.",
     // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts are switched on.
-    story_seen_notice: "ښوونځی لیدلی شي چې کومو کورنیو د ټولګي هر خبر پرانیستی دی. نورې کورنۍ دا نشي لیدلی.",
+    story_seen_notice: "ښوونځی لیدلی شي چې کوم والدینو د ټولګي هر خبر پرانیستی دی، او کله. نور والدین دا نشي لیدلی.",
     // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
     marks_section_simple: "ډېر ښه / ښه / لا کار ته اړتیا لري",
     simple_mark_3: "ډېر ښه",
