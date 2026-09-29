@@ -18,7 +18,8 @@ use Tests\TestCase;
  *
  * THE DEFECT (the point's review of b9f11d4c, 2026-09-29). `suppress()` and
  * `release()` found the row with `where('email_normalized', $address)->first()`.
- * `email_normalized` is utf8mb4_unicode_ci on production (read 2026-09-29), where
+ * `email_normalized` is utf8mb4_unicode_ci like production's other email columns
+ * (read 2026-09-29; this column was not read on its own, ASSUMPTIONS 30), where
  * `victim@gmail.com` = `victim@gmaíl.com`. A resubscribe link minted for the
  * look-alike spelling therefore RELEASED the real person's unsubscribe, and an
  * opt-out for one spelling rewrote, re-dated or re-suppressed the other's row.

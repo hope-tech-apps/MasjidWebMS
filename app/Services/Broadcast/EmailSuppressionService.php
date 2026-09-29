@@ -680,13 +680,15 @@ class EmailSuppressionService
     /**
      * The row for EXACTLY this address, or null. The query only shortlists.
      *
-     * `email_normalized` is utf8mb4_unicode_ci on production (read 2026-09-29),
-     * where `victim@gmail.com` = `victim@gmaíl.com`. A lookup by the address a
-     * link or an import names therefore also returns the row of a look-alike
-     * spelling, and acting on it would rewrite, re-date or RELEASE another
-     * mailbox's opt-out: a resubscribe link minted for the look-alike would lift
-     * the real person's unsubscribe. The row is used only when its key is the
-     * address, byte for byte (`normalize()` already lower-cased and trimmed both).
+     * `email_normalized` is utf8mb4_unicode_ci like production's other email
+     * columns (read 2026-09-29; this table's own column was not read on its own,
+     * see ASSUMPTIONS 30), where `victim@gmail.com` = `victim@gmaíl.com`. A
+     * lookup by the address a link or an import names therefore also returns the
+     * row of a look-alike spelling, and acting on it would rewrite, re-date or
+     * RELEASE another mailbox's opt-out: a resubscribe link minted for the
+     * look-alike would lift the real person's unsubscribe. The row is used only
+     * when its key is the address, byte for byte (`normalize()` already
+     * lower-cased and trimmed both).
      *
      * `$normalizedAddress` is the output of `normalize()`.
      *
