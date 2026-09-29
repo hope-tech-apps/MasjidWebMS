@@ -5103,3 +5103,51 @@ answers; each carries its alternative.
   - **Left as they were.** The resolver's own `->current()` on the ward query is redundant with the command's (defence in depth; the
     review marked the mutant equivalent). The `familyLoginIsActive` and `PointsWeek::containing` time-zone mutants that survived the command
     test file alone are covered elsewhere or unconfirmed; not re-litigated here.
+
+- **2026-09-29 (school side quest W6-A, T-003.4): the class store is an append-only ledger of Manara Bucks minted from positive points, behind a capability that is OFF for every organisation.**
+  Owner B6 (2026-09-29): "points convert to Manara Bucks (1 point = 1 buck, weekly); students spend them in a class store the teacher runs; the app
+  keeps each balance; paper Bucks are the physical version" (R1 to R6 defaults). The physical Manara Bucks are PAUSED (owner, 2026-09-29), so the
+  paper cash-out is built and OFF. Nothing here touches the `bucks/` design folder (W6-B).
+  - **Points stay the record; bucks are a ledger.** `prize_ledger_entries` is append-only in the application (the model throws on update and delete,
+    no route exists, a test scans the route list). A balance is the SUM of a child's rows. Alternative: a stored `balance` column on the roster row.
+    Rejected: a second number that can disagree with its own history, and a correction that has to edit it. Alternative: DB triggers for
+    append-only. Rejected: erasure and the retention purge must still be able to remove a child's whole ledger (the rows go as a set).
+  - **Once is a database fact.** A nullable UNIQUE `dedupe_key` (`earned:{membership}:{week}` and four siblings), because MySQL has no partial indexes
+    and SQLite's FK rebuild drops them. Every index is hand-named under 64 characters (a test asserts it). `week_start` is a plain `Y-m-d` string, not a
+    `date` cast: the cast stores a timestamp on SQLite and an exact match would silently miss there (found by the minting tests).
+  - **What earns a buck.** `floor(P / points_per_buck)` per child and week, `P` = live awards that week whose skill is not negative AND whose points
+    are above zero. Alternative in the plan: `ABS(points)`. Rejected: a positive skill docked with a negative override (a real use, see
+    `BehaviorAward::signedPointsSql`) would MINT bucks. A negative award neither mints nor subtracts (R2). Whole bucks per week, so a dearer rate
+    drops a week's remainder (said in the docs; at the default rate nothing is lost). A child who left the class is not minted for (ASSUMPTIONS W6-A2).
+  - **Minting and late changes.** `bucks:mint` hourly: closed weeks from `bucks_from` mint once; only the LAST TWO closed weeks are re-read, and a
+    late change is an `adjusted` delta clamped at a zero balance. **`week_basis`** (what the week's points came to, after each row) makes a clamped
+    clawback forgiven once; without it the shortfall would be taken back out of a later week's earnings the next time the window found the gap.
+    Alternative: carry the shortfall as debt. Rejected: a child's balance is never negative, and R-defaults say "clamped at 0".
+  - **Nothing retroactive by surprise.** `masjid_points_settings.bucks_from` is set to the start of the week in progress the first time a school with
+    the store on is seen. Alternative: mint every closed week in the points history the day the grant is switched on. Rejected: it pays a term of
+    history nobody expected. A SuperAdmin can move the date earlier on purpose.
+  - **Redemption.** Locks the student's roster row and the prize row (`lockForUpdate`) inside one transaction; SQLite has no row locks, so the
+    invariant is also checked after the write and rolled back, and a test proves it with a simulated concurrent spend. A `request_id` per click makes a
+    double-tap a replay. The prize must be this school's and school-wide or this class's own (checked in `ClassStore` too, because a console
+    caller is unbound). Stock: optional, blank = unlimited, decremented with the redemption, given back by a reversal. Reversal: a new row, once per
+    entry (`reversal:{entry}`), only of a redemption or a cash-out, refused after an expiry.
+  - **Expiry and retention.** `bucks:expire` writes one `expired` row per child and cutoff at `groups.ends_on` and at each calendar year's
+    `last_day`, taking only what was minted before the cutoff. The retention purge removes a child's ledger as a SET, only when every row is due,
+    re-decided inside a transaction holding the roster row. Both are logged on the `monitors` channel, one line per run.
+  - **Privacy.** Every balance is read through `GroupAudience::readablePrizeLedgerQuery` (the awards' audience: the class's teachers, the student, that
+    student's own guardians). Roster order, no rank, no class total, no prize wall. The family payload is the narrow one. **The office reads class
+    totals only** (`mayReceiveClassStoreTotals`): no child, no roster id, no per-student figure; an office-run school-wide store that reads every child's
+    balance stays not built (RECON section 6). Alternative: let the reconciliation list students with a balance below zero. Rejected: the count is enough,
+    and a list is a child's balance for an administrator who stands nowhere in that class.
+  - **The capability.** `class_store`, a grant in group `school`, OFF for masjid, school and community. Studio owner's three conditions: the mobile
+    `/features` and `tv-config` are byte for byte identical on or off (test); it is writable through `CapabilityWriter::apply` and appears in the catalogue
+    (test); the snapshot fixtures differ only by the key. The class payloads carry `class_store: true` only when on.
+  - **Verbs.** Teacher +5 (`POST prizes`, `PUT prizes/{id}`, `POST members/{id}/prizes/redeem`, `POST members/{id}/prizes/cash-out`,
+    `POST prize-entries/{id}/reverse`), family +0. The office gets the school-wide prize routes and the reconciliation in the admin realm; a
+    SuperAdmin gets `PUT class-store-settings`.
+  - **Not done, on purpose.** A SuperAdmin settings screen (API only, like the Friday report's schedule); a push or email to a family when they earn
+    or spend (the digest and the staff app are separate items); the physical Manara Bucks print run (paused); an office-run school-wide store; a
+    raffle (B6 option c).
+  - **Unknown, needs investigation.** How MySQL behaves under two simultaneous taps (ASSUMPTIONS W6-A8); whether Al-Razi wants a departed child to
+    keep the week's bucks (W6-A2); the year and class end dates Al-Razi has entered (W6-A3).
+
