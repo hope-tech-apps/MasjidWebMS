@@ -36,7 +36,9 @@ use Illuminate\Support\Facades\Cache;
  * expected fails the whole decode and silently drops the board back to
  * defaults, which is the failure mode this endpoint exists to end. `header_title`,
  * `donate_url` and `announcement_ids` are Swift optionals and may be null.
- * Unknown keys are ignored by `Codable`, so this payload can grow later.
+ * Unknown keys are ignored by `Codable`, so this payload can grow later. It has
+ * grown once: `website_locale` (optional in the decoder), sent only when the
+ * organisation chose a website language (W2 S12), which the board's labels follow.
  *
  * ## Where the values come from
  *
@@ -110,7 +112,7 @@ class TvConfigController extends Controller
                 $donateUrl = trim((string) ($masjid->donationLink->link ?? ''));
                 $donateUrl = $donateUrl === '' ? null : $donateUrl;
 
-                return [
+                $payload = [
                     // No pause switch exists yet. `false` here blanks a live
                     // lobby screen down to the paused board, so it is not
                     // something to default to on a guess.
@@ -126,6 +128,18 @@ class TvConfigController extends Controller
                     'announcement_ids' => null,
                     'theme' => self::THEME,
                 ];
+
+                // The board's language follows the organisation's website
+                // language (owner, 2026-09-28; W2 S12's masjids.website_locale).
+                // Sent ONLY when the organisation chose one of the known values,
+                // as the renderer lookup does, so every organisation without a
+                // choice (all the live ones) keeps its exact bytes and its board
+                // stays English. Installed boards ignore unknown keys (Codable).
+                if (in_array($masjid->website_locale, Masjid::WEBSITE_LOCALES, true)) {
+                    $payload['website_locale'] = $masjid->website_locale;
+                }
+
+                return $payload;
             }
         );
 
