@@ -731,6 +731,13 @@ Route::prefix('admin')->group(function () {
             // live page sections show it, and the last changes. Same in-controller
             // 403 as the writers above.
             Route::get('{masjid_id}/capabilities', [MasjidsController::class, 'capabilities']);
+            // SuperAdmin-only: WHEN the school's weekly points report goes out
+            // (T-003.3): a weekday and a time on the school's clock, default Friday
+            // 15:00. Whether it goes out at all is the `points_weekly_report`
+            // capability above. GET checks in the controller, PUT in the request's
+            // authorize(), so a non-super never sees validation output.
+            Route::get('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'show']);
+            Route::put('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'update']);
             // SuperAdmin-only: rebuild the favicon, touch icon and share image
             // from the current logo (Studio W2 S8, BrandAssets). A per-org
             // decision on a live organisation: it adds three keys to its

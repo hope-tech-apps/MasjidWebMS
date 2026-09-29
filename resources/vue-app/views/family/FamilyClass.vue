@@ -359,7 +359,7 @@
                             <div class="d-flex justify-content-between align-items-baseline">
                                 <span class="small fw-semibold">
                                     {{ t('points_this_week') }}
-                                    <span class="text-muted fw-normal" dir="ltr">· {{ pointsWeekLabel(points[child.membership_id].week) }}</span>
+                                    <span class="text-muted fw-normal">· {{ pointsWeekLabel(points[child.membership_id].week) }}</span>
                                 </span>
                                 <span class="fw-semibold" dir="ltr">{{ signedPoints(points[child.membership_id].week.totals?.points) }}</span>
                             </div>
@@ -368,6 +368,9 @@
                                 <span>{{ t('points_all_weeks') }}</span>
                                 <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
                             </div>
+                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                                {{ t('weekly_report_open') }}
+                            </router-link>
                         </div>
 
                         <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">

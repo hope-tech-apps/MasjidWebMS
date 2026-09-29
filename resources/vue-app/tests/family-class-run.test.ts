@@ -405,3 +405,131 @@ test('a run remembers the class it began at, not only its base path', async () =
     assert.equal(started.school, '7');
     assert.equal(started.group, '3');
 });
+
+// ---------------------------------------------------------------- points totals (T-003.2)
+
+test('records loop: the points totals are asked for the week in progress and the whole record, per child', async () => {
+    const s = screen();
+    const { got, sinks } = recordSinks();
+    const points: Record<string, any> = {};
+
+    respond = (url) => url.includes('/awards/summary')
+        ? { status: 200, data: { data: { totals: { points: url.includes('week=current') ? 4 : 13 }, week: url.includes('week=current') ? { start: '2026-10-04' } : null } } }
+        : { status: 200, data: { data: [] } };
+
+    await run.loadChildRecordsFor(s.begin(), [children[0]], { ...sinks, setPoints: (id: number, v: any) => { points[id] = v; } });
+
+    assert.equal(points[101].week.totals.points, 4);
+    assert.equal(points[101].all.totals.points, 13);
+    assert.equal(sent.filter((r) => r.url.includes('/awards/summary?week=current')).length, 1);
+    assert.equal(sent.filter((r) => r.url.endsWith('/members/101/awards/summary')).length, 1);
+    assert.deepEqual(Object.keys(got.records), ['101']);
+});
+
+test('records loop: a failed points read is null, never a made-up zero, and the awards above it survive', async () => {
+    const s = screen();
+    const { got, sinks } = recordSinks();
+    const points: Record<string, any> = {};
+
+    respond = (url) => url.includes('/awards/summary') ? { status: 500 } : { status: 200, data: { data: [] } };
+
+    await run.loadChildRecordsFor(s.begin(), [children[0]], { ...sinks, setPoints: (id: number, v: any) => { points[id] = v; } });
+
+    assert.equal(points[101], null);
+    assert.deepEqual(Object.keys(got.records), ['101'], 'the log is still shown');
+});
+
+test('a screen that does not show the week asks for no totals at all', async () => {
+    const s = screen();
+    const { sinks } = recordSinks();
+
+    await run.loadChildRecordsFor(s.begin(), [children[0]], sinks);
+
+    assert.equal(sent.some((r) => r.url.includes('/awards/summary')), false);
+});
+
+// ------------------------------------------------- the weekly report's loop (T-003.3)
+
+const reportSinks = () => {
+    const got: { reports: Record<string, any>; weeks: any[] } = { reports: {}, weeks: [] };
+
+    return {
+        got,
+        sinks: {
+            setReport: (id: number, v: any) => { got.reports[id] = v; },
+            setWeek: (w: any) => { got.weeks.push(w); },
+        },
+    };
+};
+
+test('weekly report loop: each of THIS parent\'s children is asked for the named week, and only them', async () => {
+    const s = screen();
+    const { got, sinks } = reportSinks();
+
+    respond = (url) => url.includes('/awards/summary')
+        ? { status: 200, data: { data: { totals: { points: 4 }, week: { start: '2026-10-04', end: '2026-10-10', is_current: false } } } }
+        : { status: 200, data: { data: { data: [{ id: 1 }, { id: 2 }], total: 2 } } };
+
+    await run.loadWeeklyReportFor(s.begin(), [children[0], children[1]], '2026-10-04', sinks);
+
+    assert.deepEqual(Object.keys(got.reports).sort(), ['101', '102']);
+    assert.equal(got.reports[101].awards.length, 2);
+    assert.equal(got.reports[101].truncated, false);
+    assert.equal(got.weeks[0].start, '2026-10-04');
+    assert.equal(sent.length, 4);
+    assert.equal(sent.every((r) => r.url.includes('week=2026-10-04')), true);
+    assert.equal(sent.every((r) => /\/members\/10[12]\//.test(r.url)), true, 'no class-wide call');
+    assert.equal(sent.filter((r) => r.url.includes('per_page=100')).length, 2);
+});
+
+test('weekly report loop: a list shorter than the week says so instead of passing for the whole week', async () => {
+    const s = screen();
+    const { got, sinks } = reportSinks();
+
+    respond = (url) => url.includes('/awards/summary')
+        ? { status: 200, data: { data: { totals: { points: 4 }, week: { start: 'w' } } } }
+        : { status: 200, data: { data: { data: [{ id: 1 }], total: 250 } } };
+
+    await run.loadWeeklyReportFor(s.begin(), [children[0]], 'current', sinks);
+
+    assert.equal(got.reports[101].truncated, true);
+});
+
+test('weekly report loop: a failed read is null, not an empty week', async () => {
+    const s = screen();
+    const { got, sinks } = reportSinks();
+
+    respond = () => ({ status: 500 });
+
+    await run.loadWeeklyReportFor(s.begin(), [children[0]], 'current', sinks);
+
+    assert.equal(got.reports[101], null);
+});
+
+test('weekly report loop: a school switch after child 1 sends nothing to school B', async () => {
+    const s = screen();
+    const { got, sinks } = reportSinks();
+
+    respond = (url) => url.includes('/awards/summary')
+        ? { status: 200, data: { data: { totals: { points: 1 }, week: { start: 'w' } } } }
+        : { status: 200, data: { data: { data: [], total: 0 } } };
+    onRequest = (n) => { if (n === 2) s.route.value = { masjidId: '9', groupId: '5' }; };
+
+    await run.loadWeeklyReportFor(s.begin(), children, 'current', sinks);
+
+    assert.equal(toSchool9().length, 0);
+    assert.equal(sent.some((r) => r.url.includes('/members/102/')), false);
+    assert.deepEqual(Object.keys(got.reports), [], 'nothing is written for the screen that is gone');
+});
+
+test('weekly report loop: a 403 for a school left behind neither ends a session nor redirects', async () => {
+    const s = screen();
+    const { sinks } = reportSinks();
+
+    onRequest = (n) => { if (n === 1) s.route.value = { masjidId: '9', groupId: '5' }; };
+    respond = () => ({ status: 403 });
+
+    await run.loadWeeklyReportFor(s.begin(), children, 'current', sinks);
+
+    assert.equal(s.state.failed.length, 0);
+});

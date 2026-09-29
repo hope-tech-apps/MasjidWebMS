@@ -697,7 +697,7 @@
                             <span>{{ signedPoints(selectedHeadline.other.points) }}</span>
                         </div>
                         <div class="d-flex justify-content-between align-items-baseline small text-muted">
-                            <span>Whole class {{ pointsWeekly ? 'this week' : '' }}</span>
+                            <span>Whole class</span>
                             <span>{{ signedPoints(classHeadline.points) }}</span>
                         </div>
                         <details class="mt-1">
@@ -2228,7 +2228,9 @@ const base = computed(() => `/api/teacher/masjids/${masjidId.value}/groups/${gro
 const group = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
-const activeTab = ref<TabKey>('roster');
+// `?tab=points` is what the weekly class-summary email links to (T-003.3). The one tab a
+// link may open, so an arbitrary query value can never select a tab the screen hides.
+const activeTab = ref<TabKey>(route.query.tab === 'points' ? 'points' : 'roster');
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },

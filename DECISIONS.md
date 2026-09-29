@@ -4815,3 +4815,53 @@ this school"; `last_sign_in_at` is removed from the Team payload (the SPA was it
   printable report page (T-003.3). Non-English copy for the new portal words is machine-drafted like the rest of those files (es, ur,
   ps, fa-AF), flagged in each file's own banner. Unknown, needs investigation: Al-Razi's dismissal time and whether a Monday-start week
   is wanted (the start day is one argument).
+
+- **2026-09-29 (school side quest W4, T-003.3): the Friday points report is a notice and a link, OFF by default, claimed once per class and week.**
+  Owner (2026-09-28): the weekly report goes to parents (their own child's week) and to the teacher (the class summary), Friday
+  afternoon in the school's time zone, BISS (Sundays only) Sunday evening. Owner B5 (2026-09-29): "your child's weekly report is ready"
+  with a link to the printable portal report, nothing about the child in the email. Built as `points:weekly-report` (hourly,
+  `withoutOverlapping`, one line per run on the `monitors` channel because production's LOG_LEVEL=warning drops an info line on the
+  default one), behind a new `points_weekly_report` grant that is OFF for every organisation, Al-Razi included: turning it on for
+  Al-Razi on production is the owner's call at ship (B4).
+  - **When.** Each school's moment is `PointsReportSchedule`: Friday 15:00 on the school's own clock unless `masjid_points_settings`
+    says otherwise (a SuperAdmin-only `PUT /api/admin/masjids/{id}/points-report-schedule`; GET shows what is set and what is default).
+    BISS is Sunday 18:00, given by a guarded, idempotent, inert data migration (org 18, a school whose name says "Sunday School", the
+    same guard as 2026_09_21_120000; it only says WHEN, the grant stays off). Deliberately NOT derived from the school calendar: a year
+    models one weekly meeting day, so an Al-Razi that later entered a calendar would have had its report silently move. A run sends only
+    inside CATCH_UP_HOURS (12) after the moment, so a missed hour still goes and a report is never days late because the grant was
+    switched on afterwards. Al-Razi's dismissal time is Unknown, needs investigation, which is why the time is settable.
+  - **Which week.** The points week containing the SCHEDULED instant, up to that instant (not the moment the run started, so a catch-up at
+    16:10 decides as 15:00 would have). A child is in the report only with a live award in that span, so an award after the send shows in
+    the portal only and never makes a second email (test). BISS's Sunday 18:00 falls in the week that STARTED that Sunday, and BISS meets
+    on Sundays, so the report covers that day's points; the recon note that it would be "usually nothing" assumed a Monday-to-Friday
+    school. Pinned by DST tests for both schools on both change weekends (2026-11-01 and 2027-03-14, and the Fridays 2026-11-06 and
+    2027-03-19). A week the school calendar marks closed (a closure on any day of it) is skipped; no calendar reads as never closed.
+  - **Who.** Families: a current ward, a confirmed, current guardian edge holding feed consent, a live family login
+    (`GroupNotificationRecipientResolver::weeklyReportGuardians`, which checks the ward's and the guardian's `left_on` itself rather than
+    trusting the model hook that ends a guardian edge with the child; tests write the rows around the hook). Consent is required although
+    groups.md says consent gates broadcasts and not a parent's own child's record: this is an email to an address the school holds, so the
+    cautious direction was taken, and the portal report itself is readable without consent (unchanged). One notice per address, so a parent
+    with two children in the class gets one whose link shows both. Teachers: the class's `group_staff` logins only, when a current child
+    has a week to summarise; a legacy Contact leader reached through a family login is excluded because the link is the teacher's sign-in.
+    No staff push: the staff app is parked, so there is no seam to call (the resolver already names the right people when it returns).
+  - **At most once.** `behavior_weeks` holds the claim: insert-or-ignore then `UPDATE ... WHERE report_sent_at IS NULL`; only the process
+    that changed the row sends (unique `(group_id, week_start)`). A crash between the claim and the mail loses that class's notice for
+    that week rather than repeating it (the portal report is there either way). A run that finds nobody to tell claims nothing, so a
+    guardian whose login comes back that afternoon is picked up by the next hourly run inside the window.
+  - **What is in the email.** School, class, a link. No child's name, figure, skill, note or count (tests use distinctive values and search
+    the rendered HTML and subject); a generic subject identical for every family. `WeeklyPointsReportMail` is its own mailable and the
+    sweep its own path: SendGroupNotificationJob is untouched (W2 fixes its URL for User recipients). The family link is
+    `/family/{school}/sign-in?next=/family/{school}/classes/{class}/report`; sign-in follows `next` only for that one path shape for THIS
+    school (`familyNextPath`, allowlist, tested against open-redirect shapes), and a signed-out parent opening the report directly is sent
+    to sign in and back. The teacher's link is `/teacher/classes/{class}?tab=points`.
+  - **The portal page.** `FamilyWeeklyReport.vue` (route `classes/:groupId/report`, family guard): each of the parent's own children for the
+    week (positives first, then the awards with dates and notes), week navigation by the server's own neighbours (never the browser's
+    clock), a Print button with a print sheet, and a sentence when a read fails (never a zero). It calls the existing ward-edge-gated
+    `/awards` and `/awards/summary` with `?week=`: no new family endpoint, so the family write list is unchanged (the teacher realm has only
+    the +1 verb of T-003.2). No leaderboard or ranking anywhere.
+  - **Capability files.** `points_weekly_report` is in group `school`, which already exists, so `config/capability_groups.php` needs no
+    edit. `Capability.ts`, `OrganisationModulesTest`, `CapabilityCatalogueEndpointTest` SCHOOL_KEYS, the three provision-snapshot fixtures and
+    `set-capability-responses.json` (which records the whole capabilities object byte for byte) gain the key. The Studio session is paused,
+    so there is no collision; the integrator should expect the same five files to conflict with any other wave that adds a grant.
+  - **Not done, on purpose.** The child's week inside the email (a template-only follow-up if the owner reverses B5). Reach is limited: only
+    guardians with a live family login are reachable, about 10 at Al-Razi and 0 at BISS on 2026-09-28 (to tell the owner at ship).

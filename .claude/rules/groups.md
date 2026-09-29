@@ -39,6 +39,12 @@ paths:
   - "app/Support/PointsWeek.php"
   - "app/Support/SchoolPointsWeek.php"
   - "app/Http/Controllers/Teacher/PointsPeriodController.php"
+  - "app/Console/Commands/SendWeeklyPointsReports.php"
+  - "app/Mail/WeeklyPointsReportMail.php"
+  - "app/Models/BehaviorWeek.php"
+  - "app/Models/MasjidPointsSetting.php"
+  - "app/Support/PointsReportSchedule.php"
+  - "app/Services/Groups/GroupNotificationRecipientResolver.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorSkillsController.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
   - "database/migrations/*_create_behavior_skills_table.php"
@@ -839,6 +845,30 @@ positioning, not its configuration.
     running figures (`week_points`, `week_awards`, and the class's).
   - **The figure a class leads with follows `points_period`; both are always served.**
     Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
+- **The Friday report is a notice and a link, off by default, once per class and week
+  (T-003.3, 2026-09-29; owner B5).** `points:weekly-report` runs hourly and, for a school
+  holding the `points_weekly_report` grant (OFF for every organisation until a SuperAdmin
+  decides), emails each family "your child's weekly report is ready" and each class's teachers
+  their summary. **Nothing about a child is in the email** (`WeeklyPointsReportMail`): the numbers
+  live behind the portal's ward-edge gate, where consent and identity are checked, not in an inbox
+  that forwards and previews on a lock screen.
+  - **Recipients are the strictest of the four notifier shapes**
+    (`GroupNotificationRecipientResolver::weeklyReportGuardians`): a CURRENT ward, and a
+    confirmed, CURRENT, feed-consented guardian edge with a live family login. The resolver checks
+    both `left_on` columns itself; the model hook that ends a guardian edge with the child is not
+    relied on. Consent is required here although a parent may always READ their child's record,
+    because this is a mail to an address the school holds. Teachers are `group_staff` logins only.
+  - **The week is the one holding the SCHEDULED instant, up to that instant.** A later award shows in
+    the portal and never makes a second email. The moment is the school's (Friday 15:00 unless
+    `masjid_points_settings` says otherwise, SuperAdmin-only), never derived from the calendar; a
+    week with a calendar closure is skipped.
+  - **`behavior_weeks` is the atomic claim** (insert-or-ignore, then `UPDATE ... WHERE report_sent_at
+    IS NULL`): at most once by design, and a run with nobody to tell claims nothing. It holds no child
+    data, so it has no retention, erasure or RESTRICT (cascades to the school and class).
+  - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
+    with `?week=`, for the parent's own children only, printable, and says so when a read fails.
+    Sign-in follows `?next=` only for that one path shape for the same school
+    (`familyNextPath`).
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 

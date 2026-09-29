@@ -66,6 +66,16 @@ const familyRoutes: RouteRecordRaw[] = [
                 meta: { pageTitle: "Class", family: true },
             },
             {
+                // The printable weekly points report (T-003.3): the page the Friday
+                // email links to. Read-only, behind the parent guard, and it asks the
+                // same ward-edge-gated endpoints the class screen does. A parent with
+                // no session is sent to sign in and then back here.
+                path: 'classes/:groupId(\\d+)/report',
+                name: 'familyWeeklyReport',
+                component: () => import("@/views/family/FamilyWeeklyReport.vue"),
+                meta: { pageTitle: "Weekly Report", family: true, returnAfterSignIn: true },
+            },
+            {
                 // Read-only, behind the parent guard like every other screen
                 // that calls an authenticated family endpoint.
                 path: 'calendar',
@@ -89,7 +99,10 @@ const familyRoutes: RouteRecordRaw[] = [
             // not author. FamilyLayout re-runs the same check when the parent
             // moves between schools without leaving this route record, which
             // `beforeEnter` does not see.
-            return familyRouteRedirect(familyStore.slots, to.params.masjidId as string, !!to.meta?.family);
+            return familyRouteRedirect(familyStore.slots, to.params.masjidId as string, !!to.meta?.family,
+                // The weekly report is what the Friday email links to: a parent with no
+                // session signs in and comes back to it (see familyNextPath).
+                to.meta?.returnAfterSignIn ? to.path : undefined);
         },
     },
 ];

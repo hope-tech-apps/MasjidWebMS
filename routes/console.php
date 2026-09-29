@@ -828,3 +828,15 @@ Schedule::command('backup:check --json')->dailyAt('14:20')->withoutOverlapping(3
 | whole slice of work exists to end.
 */
 Schedule::command('backup:drill --json')->weeklyOn(0, '04:20')->withoutOverlapping(120);
+
+// The Friday points report (T-003.3): an hourly sweep that, for each school with the
+// `points_weekly_report` grant, asks whether that school's scheduled moment (Friday
+// 15:00 on its own clock unless set) has just passed, and if so tells each family with
+// a portal login that their child's weekly report is ready and each class's teachers
+// that their summary is. Never the numbers, only a notice and a link. The moment is
+// evaluated in the school's zone and claimed per class and week in behavior_weeks, so an
+// overlapping or repeated run sends nothing twice; a missed hour catches up for
+// CATCH_UP_HOURS. The grant is OFF for every school, so until a SuperAdmin switches one
+// on this runs and does nothing. One line per run on the `monitors` channel is the proof
+// it ran. Same system cron as everything above (`schedule:run` every minute).
+Schedule::command('points:weekly-report')->hourly()->withoutOverlapping(50);

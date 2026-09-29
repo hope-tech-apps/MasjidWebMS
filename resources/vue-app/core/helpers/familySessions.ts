@@ -248,8 +248,33 @@ export function familyRouteRedirect(
     slots: FamilySlots,
     masjidId: string | number,
     requiresFamily: boolean,
+    intended?: string,
 ): true | string {
     if (!requiresFamily) return true;
 
-    return slots[String(masjidId)] ? true : `/family/${masjidId}/sign-in`;
+    if (slots[String(masjidId)]) return true;
+
+    // A parent who opened a link to one specific page (the weekly report) and has no
+    // session is sent to sign in and then back to it. Only the pages FAMILY_NEXT_PAGES
+    // names are carried; anything else is dropped, never echoed into the query.
+    const next = intended !== undefined && familyNextPath(masjidId, intended) === intended ? intended : null;
+
+    return next ? `/family/${masjidId}/sign-in?next=${encodeURIComponent(next)}` : `/family/${masjidId}/sign-in`;
+}
+
+/**
+ * The pages a sign-in may hand a parent on to. ONE: the printable weekly report the Friday
+ * email links to (T-003.3). It is an allowlist of PATH SHAPES for THIS school on purpose:
+ * `?next=` is user-controlled input, and a redirect target read straight from a query is an
+ * open redirect and a way to land a parent on another school's screen with this one's
+ * session. Nothing else is ever accepted, so nothing else needs to be checked.
+ */
+export function familyNextPath(masjidId: string | number, next: unknown): string {
+    const home = `/family/${masjidId}`;
+
+    if (typeof next !== 'string') return home;
+
+    const m = /^\/family\/(\d+)\/classes\/(\d+)\/report$/.exec(next);
+
+    return m && m[1] === String(masjidId) ? next : home;
 }

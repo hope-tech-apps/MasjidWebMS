@@ -276,3 +276,61 @@ export async function handOverFor(run: ClassRun, child: any, sinks: HandOverSink
         sinks.failed();
     }
 }
+
+export interface WeeklyReportSinks {
+    /** `null` means "we could not ask", which is NOT "no points this week". */
+    setReport: (membershipId: number, report: { summary: any; awards: any[]; truncated: boolean } | null) => void;
+    /** The week the server says it answered for (its dates, neighbours, is_current). */
+    setWeek: (week: any) => void;
+}
+
+/**
+ * The printable weekly report's per-child reads (T-003.3): each of THIS parent's own
+ * children's totals and awards for one points week, through the same ward-edge-gated
+ * endpoints the class screen uses.
+ *
+ * `weekParam` is `current` (the school's week in progress, which the browser cannot know)
+ * or a week's first day taken from the server's own `previous` / `next`. A run, like the
+ * fetch loops above: it takes its base once, and stops the moment the parent is at another
+ * school or the screen is gone, so a slow read never fires a request for the NEW school's
+ * route under this child's membership id.
+ *
+ * The list is asked for its page maximum (100); if the week holds more than came back,
+ * `truncated` says so, because a silently short list beside totals that count everything
+ * would read as an error in the school's arithmetic.
+ */
+export async function loadWeeklyReportFor(
+    run: ClassRun,
+    children: any[],
+    weekParam: string,
+    sinks: WeeklyReportSinks,
+): Promise<void> {
+    const q = encodeURIComponent(weekParam);
+
+    for (const child of children) {
+        if (run.stale()) return;
+
+        try {
+            const [summary, awards] = await Promise.all([
+                FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary?week=${q}`),
+                FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards?week=${q}&per_page=100`),
+            ]);
+
+            if (run.stale()) return;
+
+            const s = summary.data?.data ?? null;
+            const rows = rowsOf(awards.data?.data);
+
+            if (s?.week) sinks.setWeek(s.week);
+
+            sinks.setReport(
+                child.membership_id,
+                s ? { summary: s, awards: rows, truncated: Number(awards.data?.data?.total ?? rows.length) > rows.length } : null,
+            );
+        } catch (e) {
+            if (run.stale()) return;
+            if (run.fail(e)) return;
+            sinks.setReport(child.membership_id, null);
+        }
+    }
+}

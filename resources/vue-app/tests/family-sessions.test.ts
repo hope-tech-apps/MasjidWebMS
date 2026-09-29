@@ -12,6 +12,7 @@ import {
     LEGACY_FAMILY_KEYS,
     authFailureMasjidId,
     dropSlot,
+    familyNextPath,
     familyRouteRedirect,
     masjidIdOfUrl,
     putSlot,
@@ -288,4 +289,49 @@ test('a session without a token, contact or school id is refused, not stored', (
     assert.throws(() => putSlot(s, 7, { token: 't', contact: null as any }));
     assert.throws(() => putSlot(s, 'seven', slot(7)));
     assert.deepEqual(s.keys(), []);
+});
+
+test('sign-in hands a parent on to the weekly report of THIS school and nothing else', () => {
+    assert.equal(familyNextPath('7', '/family/7/classes/3/report'), '/family/7/classes/3/report');
+    assert.equal(familyNextPath(7, '/family/7/classes/31/report'), '/family/7/classes/31/report');
+
+    // Everything else lands on the home screen: another school's screen, another page, a query
+    // string, an off-site or protocol-relative target, a traversal, a non-string.
+    const home = '/family/7';
+    for (const bad of [
+        '/family/9/classes/3/report',
+        '/family/7/classes/3',
+        '/family/7/classes/3/report?x=1',
+        '/family/7/classes/3/report/../../..',
+        '/family/7/classes/x/report',
+        '//evil.example/family/7/classes/3/report',
+        'https://evil.example/family/7/classes/3/report',
+        'javascript:alert(1)',
+        '/family/7/classes/3/report\n',
+        '',
+        null,
+        undefined,
+        ['/family/7/classes/3/report'],
+        42,
+    ]) {
+        assert.equal(familyNextPath('7', bad), home, JSON.stringify(bad));
+    }
+});
+
+test('a signed-out parent opening the report is sent to sign in and back to it; nothing else is carried', () => {
+    const report = '/family/7/classes/3/report';
+
+    assert.equal(
+        familyRouteRedirect({}, '7', true, report),
+        `/family/7/sign-in?next=${encodeURIComponent(report)}`,
+    );
+    // A session for THIS school stays put, and one for another school does not open it.
+    assert.equal(familyRouteRedirect({ '7': slot(7) }, '7', true, report), true);
+    assert.equal(familyRouteRedirect({ '9': slot(9) }, '7', true, report), `/family/7/sign-in?next=${encodeURIComponent(report)}`);
+    // An intended path that is not on the allowlist is dropped rather than echoed into the query.
+    assert.equal(familyRouteRedirect({}, '7', true, '/family/7/classes/3'), '/family/7/sign-in');
+    assert.equal(familyRouteRedirect({}, '7', true, '/family/9/classes/3/report'), '/family/7/sign-in');
+    assert.equal(familyRouteRedirect({}, '7', true, 'https://evil.example/'), '/family/7/sign-in');
+    // Without an intended path, as before.
+    assert.equal(familyRouteRedirect({}, '7', true), '/family/7/sign-in');
 });
