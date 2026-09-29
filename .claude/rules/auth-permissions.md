@@ -415,8 +415,18 @@ keep them generous: one shared address can be a whole office (DECISIONS.md
 
 `POST /admin/profile` does NOT change `users.email`: the address is an identity
 (`GroupAudience::identitiesFor()` reads a staff login as the contact holding it),
-so the request refuses any address other than the one the account holds. A change
-of sign-in address is an office act until a verified flow exists.
+so the request refuses any address other than the one the account holds (a
+non-string `email` is a 422 like any other bad value: `bail` and `string` come
+before the refusal). Until a verified flow exists, only a platform SuperAdmin can
+change `users.email`, through the `super`-only users routes, and the refusal says
+so: an organisation's administrator cannot, and must not be named as who to ask.
+
+The staff sign-in lookup takes the typed address through
+`ContactIdentity::submittedAddress()`, the same form the throttle keys on, and
+keeps only a user whose address is exactly it (`AuthController::staffUserAt()`).
+`users.email` is `utf8mb4_unicode_ci`, so `LoginRequest`'s `exists:users,email`
+still passes a look-alike spelling; the controller is where it stops, as the same
+answer as a wrong password.
 
 ## `users.type` is the source of truth — spatie roles are a bridge
 
