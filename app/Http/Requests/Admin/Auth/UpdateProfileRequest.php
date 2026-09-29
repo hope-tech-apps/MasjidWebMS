@@ -21,13 +21,15 @@ use Illuminate\Support\Facades\Auth;
  * form), so it is required and must be the address the account already holds,
  * case aside; anything else is refused and nothing is written.
  *
- * A change of sign-in address is an office act until the owner decides on a
- * verified flow (mail a link to the NEW address, confirm, then switch): see
- * DECISIONS.md 2026-09-29, follow-ups.
+ * Until the owner decides on a verified flow (mail a link to the NEW address,
+ * confirm, then switch), only a platform SuperAdmin can change `users.email`,
+ * through the `super`-only users routes (`UsersController::update`). An
+ * organisation's administrator cannot, so the refusal names the SuperAdmin and
+ * not the administrator: see DECISIONS.md 2026-09-29, follow-ups.
  */
 class UpdateProfileRequest extends BaseFormRequest
 {
-    public const EMAIL_CHANGE_REFUSED = 'Your sign-in email cannot be changed here. Ask your organisation\'s administrator to change it.';
+    public const EMAIL_CHANGE_REFUSED = 'Your sign-in email cannot be changed here. Only a platform SuperAdmin can change it.';
 
     public function rules(): array
     {

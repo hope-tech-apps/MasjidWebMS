@@ -63,6 +63,15 @@ class ProfileEmailChangeTest extends TestCase
 
         $response->assertStatus(422)->assertJsonPath('status', 'failed');
         $this->assertContains(UpdateProfileRequest::EMAIL_CHANGE_REFUSED, $response->json('data.email'));
+        // The wording is pinned, not just the constant: staff read this sentence
+        // and act on it, and only a platform SuperAdmin can change `users.email`
+        // (the users routes are `super`-only), so it must not send them to their
+        // organisation's administrator, who cannot.
+        $this->assertContains(
+            'Your sign-in email cannot be changed here. Only a platform SuperAdmin can change it.',
+            $response->json('data.email'),
+        );
+        $this->assertStringNotContainsString('administrator', UpdateProfileRequest::EMAIL_CHANGE_REFUSED);
 
         $stored = User::findOrFail($user->id);
         $this->assertSame('staff@example.test', $stored->email, 'The sign-in address was changed.');
