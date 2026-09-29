@@ -70,12 +70,13 @@ class OnesignalInAppMessageService
     /**
      * Where a splash's in-app message lives, and how to authenticate there.
      *
-     * An organisation with its own OneSignal app (W2 S14) has its devices in THAT
-     * app, so its in-app messages are managed there, with the Organization API key
-     * and the `Key` scheme OneSignal's current API documents. Every other
-     * organisation is on the shared app, exactly as before (same URL, same
-     * `Basic` header). The shared configuration still gates everything
-     * (isConfigured), as it gates every send in OnesignalService.
+     * An organisation whose app Studio provisioned (W2 S14) has its devices in
+     * THAT app, so its in-app messages are managed there, with the Organization
+     * API key (ONESIGNAL_ORG_API_KEY) and the `Key` scheme OneSignal's current API
+     * documents. Every other organisation, a dedicated row the pre-S14 route wrote
+     * included, is on the shared app exactly as before (same URL, same `Basic`
+     * header). The shared configuration still gates everything (isConfigured), as
+     * it gates every send in OnesignalService.
      *
      * An in-app message created on the shared app before the organisation got its
      * own is not moved; Studio creates the app before the organisation has devices.
@@ -85,8 +86,8 @@ class OnesignalInAppMessageService
     protected function targetFor(SplashAnnouncement $splash): ?array
     {
         $publishing = $splash->masjid?->appPublishing()->first();
-        if ($publishing !== null && $publishing->hasOwnOnesignalApp()) {
-            $orgKey = config('onesignal.user_auth_key');
+        if ($publishing !== null && $publishing->hasStudioProvisionedOnesignalApp()) {
+            $orgKey = config('services.onesignal.org_api_key');
             if (empty($orgKey)) {
                 return null;
             }
@@ -176,7 +177,7 @@ class OnesignalInAppMessageService
 
         $target = $this->targetFor($splash);
         if ($target === null) {
-            Log::warning('OneSignal IAM sync skipped — the organisation has its own app but no Organization API key is configured', [
+            Log::warning('OneSignal IAM sync skipped — the organisation has its own app but ONESIGNAL_ORG_API_KEY is not configured', [
                 'splash_id' => $splash->id,
             ]);
             return $splash->onesignal_iam_id;

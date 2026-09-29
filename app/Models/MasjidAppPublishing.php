@@ -83,9 +83,9 @@ class MasjidAppPublishing extends Model
         'asc_issuer_id',
         'play_service_account_json',
         'onesignal_rest_api_key',
-        // Not secrets. Hidden so the payloads that serialize this row whole (the
-        // provision response) stay exactly as they were; the OneSignal endpoint
-        // returns the ones it needs explicitly.
+        // Not secrets. Hidden so a payload that serializes this row whole keeps
+        // the shape it had before these columns; the OneSignal controller builds
+        // an explicit array of the fields it returns.
         'ios_bundle_id',
         'android_application_id',
         'onesignal_provisioned_at',
@@ -154,5 +154,18 @@ class MasjidAppPublishing extends Model
     {
         return filled($this->onesignal_app_id)
             && filled($this->getRawOriginal('onesignal_rest_api_key'));
+    }
+
+    /**
+     * An own app that Studio provisioned (W2 S14): OneSignalProvisioningService
+     * created or adopted it and minted the key held here, so `Key` is the scheme
+     * that key takes and the Organization key manages its in-app messages. A row
+     * with an own app but no onesignal_provisioned_at is one the pre-S14 route
+     * wrote: its key keeps the `Basic` scheme it was always sent with, and
+     * everything else about it is as it was.
+     */
+    public function hasStudioProvisionedOnesignalApp(): bool
+    {
+        return $this->hasOwnOnesignalApp() && $this->onesignal_provisioned_at !== null;
     }
 }

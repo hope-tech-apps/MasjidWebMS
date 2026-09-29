@@ -4478,3 +4478,100 @@ Review fixes (2026-09-28):
   way before refusing a host that serves its own organisation.
 - **The ledger keeps a released row's id without a foreign key**, so the record of a release
   outlives the row it released.
+
+## 2026-09-28 — A new organisation gets a OneSignal app of its own; a live one is never handed an empty one (Studio W2 S14)
+
+Until now `POST /api/admin/masjids/{id}/onesignal/provision` created a OneSignal app for any
+organisation a SuperAdmin named, Burlington included. The app had no subscribers, and from that
+moment the organisation's sends went to it: its pushes stopped. A second call created a second
+app and orphaned the first (apps-plane recon R1).
+
+- **One entry point with its guards in a fixed order.** `OneSignalProvisioningService::ensureApp`
+  (used by the route and by `php artisan onesignal:ensure-app {masjid_id} {--platform=*}
+  {--bundle-id=} {--pretend}`) checks: (1) the organisation is not on
+  `services.onesignal.never_provision` (Burlington 1, NAFIS 5, MEC 13, whose shipped builds carry
+  the shared app id); (2) `ONESIGNAL_ORG_API_KEY` and `ONESIGNAL_ORG_ID` are set; (3) no other call
+  for the organisation is running (the lock, below); (4) the APNs or FCM material for each
+  platform asked for is set; (5) an app that has its key and every platform asked for is left
+  alone; (6) no device of the organisation has a OneSignal subscription, counted across every
+  scope, **when the call would move the organisation's sends**: before creating an app, and before
+  minting a key for an app that has none. Adding a platform to an app that already has its key
+  moves nothing (its sends already go through it), so it is not refused. Only then does it store
+  the bundle id and call OneSignal. A refused call writes nothing, not even the bundle id.
+- **A key of its own: `ONESIGNAL_ORG_API_KEY`.** Everything S14 sends to OneSignal's apps API
+  (list, create, mint a key, add a platform) and a Studio app's in-app messages use
+  `Authorization: Key <that key>`. `ONESIGNAL_USER_AUTH_KEY` is not read by S14 at all and stays
+  as it was for the shared app's paths, so the shared app's `Basic` requests are byte-identical
+  whatever the owner sets. Not reusing it: nothing guarantees it is an Organization key, and
+  putting one there would change the shared app's own requests.
+- **At most one app per organisation, even across a failed create.** With an app on file it only
+  completes it: mints a missing REST key, or adds a missing platform to the same app with
+  `PUT /apps/{id}`. With none on file it first reads `GET /apps` and looks for an app named for
+  this organisation in this environment, because a create whose answer never arrived (a timeout, a
+  dropped connection) may have made one that nothing recorded. Exactly one: it is **adopted** (id
+  stored, key minted, requested platforms set; outcome `adopted`, 200). More than one:
+  `ambiguous_app`, 409, naming the app ids for an operator, nothing stored. The list cannot be read
+  (429, 5xx, no answer: `transient`; any other refusal: `rejected`): nothing is created.
+- **The app's name carries the environment.** `Manara · {name} · #{id}` in production,
+  `Manara [{env}] · {name} · #{id}` elsewhere, cut to 128 characters in the name part only. The
+  adopt match is that environment prefix and the `#{id}` suffix, not the display name, so a rename
+  between attempts does not hide the app, and staging (a copy of production: same organisation ids,
+  possibly the same OneSignal organisation) never adopts production's app or the reverse.
+- **One call per organisation at a time.** The work runs under
+  `Cache::lock("onesignal:ensure-app:{id}", 120)`, waiting up to 15 seconds, and reads the row again
+  inside the lock. A call that cannot get it is `transient` ("another provisioning call for this
+  organisation is running"). Pretending takes no lock: it writes nothing.
+- **The key is minted, not read from the create response.** `POST /apps` no longer returns a REST
+  key; `POST /apps/{id}/auth/tokens` returns it once. It is stored encrypted and hidden. A mint that
+  fails after the app exists is `key_pending`, **not a success**: the route answers 503 (the app
+  exists; the same call again mints its key) and the command exits 1. The app id stays stored, so
+  the next call mints instead of creating, and sends stay on the shared app until the key exists.
+- **`Key` only for apps Studio provisioned.** `onesignal_provisioned_at` is set when Studio creates
+  an app and, if still null, when it mints a key. `OnesignalService::resolveConfig` returns the
+  `Key` scheme only for a row with its own app id and key AND that timestamp. A dedicated row the
+  pre-S14 route wrote (a key, no timestamp) keeps `Basic`, byte-identical to before S14. In-app
+  messages go to a dedicated app's own `/apps/{id}/in_app_messages`, with the Organization key,
+  only for the same rows; every other organisation, such a legacy row included, keeps the shared
+  app and its `Basic` header exactly as before. The shared app's `Basic` requests are unchanged.
+- **Bundle and application ids are unique columns** (`ios_bundle_id`, `android_application_id` on
+  `masjid_app_publishing`), so two organisations cannot claim one app; the route and the command
+  (`--bundle-id`, which fills an organisation that has none, as the route's `bundle_id` does)
+  refuse a bundle id another organisation holds before calling the service (the route with a 422).
+  No further column was needed: the four added are enough.
+- **Outcomes are told apart.** 201 created; 200 adopted, exists, platform added or key minted; 409 a
+  live organisation, one with an audience, or an ambiguous app; 422 not configured, missing
+  APNs/FCM or refused by OneSignal (4xx); 503 a OneSignal outage (429, 5xx, no answer), a call held
+  by the lock, or a key pending. A 503 is meant to be retried: the app on file, the list lookup and
+  the lock keep a retry from making a second app. One gap remains: if OneSignal's list lags an app
+  it has just made, a retry within seconds of an unanswered create could miss it and make another
+  (an orphan to delete by hand; the organisation still ends with exactly one on file). Log lines carry the organisation id,
+  outcome and HTTP status only, never a key. The command exits 0 only for an outcome after which
+  the organisation has its app.
+- **Alternatives.** Keep the old route and document "never on a live org": the route is one click
+  from the SuperAdmin UI. Delete a live organisation's orphaned app automatically: moving a live
+  organisation is its own planned change, with its builds. Reuse `ONESIGNAL_USER_AUTH_KEY` for the
+  provisioning calls: its type is not guaranteed and the shared app's requests would depend on it.
+- **Evidence (2026-09-29, droplet runner).** The S14 and OneSignal tests (`OneSignalAppProvisioningTest`,
+  `OnesignalDedicatedAppRoutingTest`, `MasjidOneSignalRouteTest`, every other OneSignal and splash test)
+  with the provisioning snapshot, migration and scrub suites: 116 passed, OneSignal faked with stray
+  requests refused. The full suite on the same code: 5397 passed, 1 skipped (a seat-concurrency test,
+  skipped before this change too), and 2 failed that were the test's own request count (a request the
+  fake answers with a dropped connection is not in `Http::recorded()`; the fake now counts what it
+  sees), green in the 116 above. The provisioning snapshots were re-recorded: the only difference is
+  the four new columns, null, in the written `masjid_app_publishing` rows. Nothing was sent to
+  OneSignal.
+
+**Owner actions** (nothing here works until they are done; the values go in the droplet's `.env`,
+never in this repo):
+1. Create an **Organization API key** in OneSignal (Organization → Keys & IDs) and set it as
+   `ONESIGNAL_ORG_API_KEY`. Leave `ONESIGNAL_USER_AUTH_KEY` alone: the shared app's in-app
+   messages authenticate with it (`Basic`).
+2. `ONESIGNAL_ORG_ID`: that OneSignal organisation's id.
+3. `ONESIGNAL_APNS_P8` / `ONESIGNAL_APNS_KEY_ID` / `ONESIGNAL_APNS_TEAM_ID`: the managed Apple
+   team's APNs key.
+4. `ONESIGNAL_FCM_V1_SERVICE_ACCOUNT_JSON`: the Firebase project's service account.
+5. `php artisan config:cache`.
+6. Check, before any real call:
+   `php artisan onesignal:ensure-app 1 --pretend` (must print `refused_live_org`, exit 1), then
+   `php artisan onesignal:ensure-app <a new organisation> --platform=ios --bundle-id=<its bundle id> --pretend`
+   (must print `created`, exit 0).

@@ -48,7 +48,8 @@ return [
     |
     | The Super-Admin "Generate apps" action fires a GitHub repository_dispatch
     | (App\Services\GithubDispatchService) to a mobile repo, whose workflow runs
-    | on a self-hosted runner to scaffold + build + upload a masjid's app.
+    | on GitHub-hosted runners to scaffold and build a masjid's app, and never
+    | signs or uploads it (W2 S16).
     |
     |  - dispatch_token : org/fine-grained PAT authorizing POST .../dispatches on
     |    the two mobile repos. An org secret the operator wires; NEVER hardcoded
@@ -276,17 +277,25 @@ return [
     | Distinct from config/onesignal.php: that file holds the runtime SEND
     | credentials for the current SHARED app (app id + app-scoped REST key) used
     | by OnesignalService. THIS block holds the credentials needed to MINT new
-    | apps and seed their push certificates. `user_auth_key` intentionally reads
-    | the same env var as config('onesignal.user_auth_key') — it is one org key.
+    | apps and seed their push certificates. `org_api_key` is its own env var,
+    | never the shared app's ONESIGNAL_USER_AUTH_KEY (W2 S14): that key, and the
+    | `Basic` requests the shared app sends with it, stay exactly as they were.
     |
     | All optional: when unset, provisioning returns a clear error instead of
     | crashing, and the fleet keeps using the shared app unchanged.
     |
     */
     'onesignal' => [
-        // Org/account-scoped "User Auth Key" (a.k.a. "Organization REST API
-        // Key"). Authorizes POST https://api.onesignal.com/apps. Same key as
-        // config('onesignal.user_auth_key').
+        // An Organization API key (OneSignal → Organization → Keys & IDs), sent as
+        // `Authorization: Key …`. Authorizes everything Studio does with the apps
+        // API: list, create, mint an app's REST key, add a platform; and the
+        // in-app messages of an organisation whose app Studio provisioned.
+        // Studio W2 S14.
+        'org_api_key' => env('ONESIGNAL_ORG_API_KEY'),
+
+        // The shared app's account-scoped key (config('onesignal.user_auth_key')),
+        // sent as `Basic`. Not read by S14 at all: kept as it was so nothing that
+        // sends through the shared app changes whatever ONESIGNAL_ORG_API_KEY holds.
         'user_auth_key' => env('ONESIGNAL_USER_AUTH_KEY'),
 
         // The OneSignal organisation new apps are created in (`organization_id`,

@@ -7,6 +7,7 @@ use App\Models\MasjidAppPublishing;
 use App\Models\MobileAppUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
@@ -24,6 +25,9 @@ class MasjidOneSignalRouteTest extends TestCase
 
     private const APP_ID = '6f1e2d3c-4b5a-4968-8776-655443322110';
 
+    /** What the faked POST /apps/{id}/auth/tokens answers; a test changes it between calls. */
+    private int $tokenStatus = 200;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -36,7 +40,8 @@ class MasjidOneSignalRouteTest extends TestCase
             'foreign_key_constraints' => true,
         ]]);
         config([
-            'services.onesignal.user_auth_key' => 'org-key-test',
+            'services.onesignal.org_api_key' => 'org-key-test',
+            'services.onesignal.user_auth_key' => 'user-auth-key-test',
             'services.onesignal.org_id' => 'org-id-test',
             'services.onesignal.apps_api_url' => 'https://api.onesignal.com/apps',
             'services.onesignal.apns_p8' => "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----",
@@ -46,10 +51,22 @@ class MasjidOneSignalRouteTest extends TestCase
         ]);
 
         Http::preventStrayRequests();
-        Http::fake([
-            'https://api.onesignal.com/apps/'.self::APP_ID.'/auth/tokens' => Http::response(['formatted_token' => 'os_v2_app_route_test']),
-            'https://api.onesignal.com/apps' => Http::response(['id' => self::APP_ID, 'organization_id' => 'org-id-test']),
-        ]);
+        // One closure, so a test can change what the next call gets. The list of apps is empty:
+        // no earlier attempt made one.
+        Http::fake(function (Request $request) {
+            if ($request->url() === 'https://api.onesignal.com/apps/'.self::APP_ID.'/auth/tokens') {
+                return $this->tokenStatus === 200
+                    ? Http::response(['formatted_token' => 'os_v2_app_route_test'])
+                    : Http::response(['errors' => ['no']], $this->tokenStatus);
+            }
+            if ($request->url() === 'https://api.onesignal.com/apps') {
+                return $request->method() === 'GET'
+                    ? Http::response([])
+                    : Http::response(['id' => self::APP_ID, 'organization_id' => 'org-id-test']);
+            }
+
+            return null; // a stray request, which preventStrayRequests fails
+        });
     }
 
     private function org(int $id): Masjid
@@ -124,13 +141,38 @@ class MasjidOneSignalRouteTest extends TestCase
         $this->postJson('/api/admin/masjids/42/onesignal/provision', ['bundle_id' => 'com.hopetechapps.org42'])
             ->assertStatus(200)
             ->assertJsonPath('outcome', 'exists');
-        Http::assertSentCount(2); // one create, one mint
+        Http::assertSentCount(3); // the list, one create, one mint
 
         $this->getJson('/api/admin/masjids/42/onesignal')
             ->assertOk()
             ->assertJsonPath('data.has_onesignal_key', true)
             ->assertJsonPath('data.onesignal_platforms', ['ios'])
             ->assertJsonMissingPath('data.onesignal_rest_api_key');
+    }
+
+    #[Test]
+    public function a_failed_mint_answers_503_key_pending_and_the_same_call_again_mints_it(): void
+    {
+        $this->org(42);
+        $this->actingAsSuperAdmin();
+        $this->tokenStatus = 500;
+
+        $this->postJson('/api/admin/masjids/42/onesignal/provision', ['bundle_id' => 'com.hopetechapps.org42'])
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('outcome', 'key_pending');
+        $this->assertSame(self::APP_ID, MasjidAppPublishing::where('masjid_id', 42)->value('onesignal_app_id'));
+        $this->getJson('/api/admin/masjids/42/onesignal')
+            ->assertOk()
+            ->assertJsonPath('data.onesignal_app_id', self::APP_ID)
+            ->assertJsonPath('data.has_onesignal_key', false);
+
+        $this->tokenStatus = 200;
+        $this->postJson('/api/admin/masjids/42/onesignal/provision', ['bundle_id' => 'com.hopetechapps.org42'])
+            ->assertStatus(200)
+            ->assertJsonPath('outcome', 'key_minted')
+            ->assertJsonPath('data.has_onesignal_key', true);
+        $this->assertSame(1, Http::recorded(fn (Request $r) => $r->method() === 'POST' && $r->url() === 'https://api.onesignal.com/apps')->count(), 'no second app');
     }
 
     #[Test]

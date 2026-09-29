@@ -7,8 +7,9 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Sends a GitHub `repository_dispatch` — the portal's half of the app-provisioning
- * contract. A dispatch triggers the matching workflow in a mobile repo (running
- * on a self-hosted runner) to scaffold + build + upload a masjid's app.
+ * contract. A dispatch triggers the matching workflow in a mobile repo (on
+ * GitHub-hosted runners) to scaffold and build a masjid's app and, when asked,
+ * leave it as a pull request. It never signs or uploads (W2 S16).
  *
  * Contract (the workflows consume exactly this):
  *   POST https://api.github.com/repos/{owner}/{repo}/dispatches

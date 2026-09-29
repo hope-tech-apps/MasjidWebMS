@@ -5,7 +5,6 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Onesignal\ProvisionOnesignalAppRequest;
 use App\Models\Masjid;
-use App\Models\MasjidAppPublishing;
 use App\Services\OneSignalProvisioningService;
 use App\Services\OneSignalResult;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,9 +18,12 @@ use Symfony\Component\HttpFoundation\Response;
  *                        which platforms it is configured for. The REST key is
  *                        NEVER returned.
  *   - provision() POST — OneSignalProvisioningService::ensureApp (W2 S14): the
- *                        same guards as Studio, so this route can no longer cut a
- *                        live organisation's pushes off, and a second call makes
- *                        no second app.
+ *                        same guards as Studio. Before any request it refuses an
+ *                        organisation on the never-provision list (the live apps
+ *                        on the shared app) and, when the call would move the
+ *                        organisation's sends, one with a subscribed device. It
+ *                        makes no second app for an organisation that has one on
+ *                        file or whose earlier app OneSignal still lists.
  *
  * Tenant safety: the masjid is ALWAYS resolved from the route {masjid_id}
  * (server-derived) — never from the request body. The route sits behind the
@@ -32,16 +34,20 @@ class MasjidOneSignalController extends Controller
     /** How each outcome answers. */
     private const STATUS = [
         OneSignalResult::CREATED => Response::HTTP_CREATED,
+        OneSignalResult::ADOPTED => Response::HTTP_OK,
         OneSignalResult::EXISTS => Response::HTTP_OK,
         OneSignalResult::PLATFORM_ADDED => Response::HTTP_OK,
         OneSignalResult::KEY_MINTED => Response::HTTP_OK,
         OneSignalResult::REFUSED_LIVE_ORG => Response::HTTP_CONFLICT,
         OneSignalResult::HAS_AUDIENCE => Response::HTTP_CONFLICT,
+        OneSignalResult::AMBIGUOUS_APP => Response::HTTP_CONFLICT,
         OneSignalResult::NOT_CONFIGURED => Response::HTTP_UNPROCESSABLE_ENTITY,
         OneSignalResult::MISSING_APNS => Response::HTTP_UNPROCESSABLE_ENTITY,
         OneSignalResult::MISSING_FCM => Response::HTTP_UNPROCESSABLE_ENTITY,
         OneSignalResult::REJECTED => Response::HTTP_UNPROCESSABLE_ENTITY,
         OneSignalResult::TRANSIENT => Response::HTTP_SERVICE_UNAVAILABLE,
+        // The app exists and its id is stored: the same call again mints the key.
+        OneSignalResult::KEY_PENDING => Response::HTTP_SERVICE_UNAVAILABLE,
     ];
 
     /**
@@ -86,9 +92,7 @@ class MasjidOneSignalController extends Controller
             // Read-only here: the service stores the bundle id only once its guards
             // pass, so a refused call writes nothing to a live organisation's row.
             $bundleId = (string) $request->input('bundle_id');
-            $taken = MasjidAppPublishing::where('ios_bundle_id', $bundleId)
-                ->where('masjid_id', '!=', $masjid->id)->exists();
-            if ($taken) {
+            if ($provisioner->bundleIdIsTakenByAnother($bundleId, $masjid)) {
                 return response()->json([
                     'status' => 'error',
                     'data' => 'That bundle id belongs to another organisation.',

@@ -15,7 +15,9 @@ use App\Http\Requests\BaseFormRequest;
  *   - platforms: optional, the platforms to configure ("ios", "android");
  *                defaults to iOS, which is what a bundle id is for.
  *   - name:      accepted for compatibility and ignored: the app is named
- *                "Manara · <organisation> · #<id>" so it is findable in the dashboard.
+ *                "Manara · <organisation> · #<id>" ("Manara [<env>] · …" outside
+ *                production) so it is findable in the dashboard, and a retry
+ *                finds it again by that name.
  *
  * Authorization is enforced by route middleware (auth:sanctum + super).
  */

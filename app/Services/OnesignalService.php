@@ -107,8 +107,10 @@ class OnesignalService
      * app.
      *
      * The auth scheme travels with the key (W2 S14): the shared app's key is sent
-     * as `Basic`, exactly as before, and a dedicated app's key, minted through
-     * OneSignal's current API, as `Key`, the scheme that API documents.
+     * as `Basic`, exactly as before. The key of an app Studio provisioned, minted
+     * through OneSignal's current API, is sent as `Key`, the scheme that API
+     * documents. A dedicated row the pre-S14 route wrote (no
+     * onesignal_provisioned_at) keeps `Basic`, byte for byte.
      *
      * @return array{0:string,1:string,2:string,3:bool} [appId, restKey, scheme, isDedicated]
      */
@@ -121,7 +123,9 @@ class OnesignalService
 
             if ($config && $config->hasOwnOnesignalApp()) {
                 // onesignal_rest_api_key is transparently decrypted by the cast.
-                return [$config->onesignal_app_id, $config->onesignal_rest_api_key, 'Key', true];
+                $scheme = $config->hasStudioProvisionedOnesignalApp() ? 'Key' : 'Basic';
+
+                return [$config->onesignal_app_id, $config->onesignal_rest_api_key, $scheme, true];
             }
         }
 
