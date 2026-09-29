@@ -12,6 +12,7 @@ use App\Http\Requests\Admin\Auth\UpdateProfileRequest;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\TwoFactorService;
+use App\Support\ContactIdentity;
 use App\Support\TenantResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -46,7 +47,7 @@ class AuthController extends Controller
 
     public function login(LoginRequest $request)
     {
-        $user = User::where('email', $request->input('email'))->with('avatar')->first();
+        $user = $this->staffUserAt((string) $request->input('email'));
 
         // No user is a WRONG PASSWORD, not a 500. LoginRequest's `exists` rule
         // catches an unknown address, but it does not exclude SOFT-DELETED rows —
@@ -212,6 +213,35 @@ class AuthController extends Controller
                 'token' => $token,
             ]
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * The staff account whose address is the one that was TYPED, or null.
+     *
+     * Looked up in the form the throttle keys it in (`ContactIdentity::submittedAddress()`,
+     * through `AppServiceProvider::bucketAddress()`), so the per-address bucket
+     * and this lookup agree about which mailbox an attempt is for. The query
+     * only shortlists: `users.email` is utf8mb4_unicode_ci, where `sara@gmail.com`
+     * = `sara@gmaíl.com`, so a look-alike spelling returns the real account and
+     * `keepExactMatches()` then refuses it. A look-alike is therefore the same
+     * answer as a wrong password, never a session, even when the password is
+     * right. `LoginRequest`'s `exists:users,email` still lets the look-alike reach
+     * this method (it is the collation's own comparison); this is where it stops.
+     * Pinned by `StaffLoginLookAlikeAddressTest`.
+     */
+    private function staffUserAt(string $typed): ?User
+    {
+        $address = ContactIdentity::submittedAddress($typed);
+
+        if ($address === null) {
+            return null;
+        }
+
+        return ContactIdentity::keepExactMatches(
+            User::whereEmailIs($address)->with('avatar')->get(),
+            'email',
+            $address,
+        )->first();
     }
 
     /**
