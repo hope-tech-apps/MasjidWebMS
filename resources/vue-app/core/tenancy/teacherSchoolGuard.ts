@@ -42,8 +42,31 @@ export const teacherSchoolRefused = ref<boolean>(false);
 
 const RELOADED_AT_KEY = 'MANARA_TEACHER_SCHOOL_RELOAD_AT';
 
-/** The school this tab selected: what `authStore.saveDashboardMasjidId` wrote. */
+let selectionProvider: (() => unknown) | null = null;
+
+/**
+ * Tell the guard where THIS tab's selection lives (the auth store's in-memory
+ * `dashboardMasjidId`), registered by TeacherLayout.
+ *
+ * It matters with two tabs open. The localStorage copy is shared and last-write-wins,
+ * so a teacher who opens BISS in a second tab (to compare it with Al-Razi, say)
+ * changes it under the first tab, whose requests still name Al-Razi and are still
+ * correctly served Al-Razi. Comparing the echo with the shared copy would flag that
+ * first tab as a mismatch on every request. What matters is whether the server bound
+ * the school THIS tab asked for, so the in-memory selection is the one compared.
+ * (Not a static import of the store: it would close a cycle through the api services.)
+ */
+export function provideSelectedSchool(provider: () => unknown): void {
+    selectionProvider = provider;
+}
+
+/** The school this tab selected: its in-memory selection, else what `saveDashboardMasjidId` wrote. */
 function selectedSchoolId(): number | null {
+    if (selectionProvider) {
+        const chosen = Number(selectionProvider());
+        return Number.isInteger(chosen) && chosen > 0 ? chosen : null;
+    }
+
     try {
         const stored = Number(localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id));
         return Number.isInteger(stored) && stored > 0 ? stored : null;

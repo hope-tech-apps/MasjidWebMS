@@ -68,7 +68,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
 import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/teacherSchools';
-import { teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
+import { provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
 import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
 import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
 
@@ -203,6 +203,9 @@ async function loadSchoolHeader(): Promise<void> {
 }
 
 onMounted(async () => {
+    // The echo guard compares what the server bound with THIS tab's selection.
+    provideSelectedSchool(() => authStore.dashboardMasjidId);
+
     // The teacher's own name, from their own self endpoint — the shell never
     // reaches into the admin masjid store, which a teacher token cannot read.
     const identity = (async () => {

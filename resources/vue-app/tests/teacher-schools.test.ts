@@ -170,3 +170,12 @@ test('the switch opens a new epoch and empties the stores before it moves the se
     assert.ok(order.every((at) => at >= 0), 'a step of the switch is missing');
     assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the steps must run in this order');
 });
+
+test('the echo guard compares against this tab\'s own selection, not the shared localStorage copy', () => {
+    const guard = readFileSync(new URL('../core/tenancy/teacherSchoolGuard.ts', import.meta.url), 'utf8');
+    const layout = readFileSync(new URL('../layouts/TeacherLayout.vue', import.meta.url), 'utf8');
+
+    assert.match(guard, /export function provideSelectedSchool/);
+    assert.match(guard, /if \(selectionProvider\) \{/, 'the provider must be read before localStorage');
+    assert.match(layout, /provideSelectedSchool\(\(\) => authStore\.dashboardMasjidId\)/);
+});
