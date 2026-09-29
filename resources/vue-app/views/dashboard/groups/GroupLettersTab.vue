@@ -96,20 +96,30 @@
                      argument, which is why the direction cannot stay a constant
                      in the template — the server says which way its alphabet
                      goes, and every row below asks it. -->
-                <div class="d-flex flex-wrap gap-2 mb-3" :dir="dir">
-                    <button v-for="l in tracker?.letters" :key="l.id" type="button"
-                            class="letter-tile" :class="`letter-tile--${l.status}`"
-                            @click="openLetter = openLetter === l.id ? null : l.id">
-                        <span class="letter-tile__glyph">{{ l.glyph }}</span>
-                        <span class="letter-tile__name">{{ l.transliteration }}</span>
-                    </button>
+                <!-- English is two runs (Capitals, then Lower case), each with
+                     its own count; Arabic is one run. The server says which
+                     through `tracker.sets`. -->
+                <div v-for="run in letterRunsOf" :key="run.id" class="mb-3">
+                    <div v-if="run.label" class="d-flex justify-content-between align-items-baseline small mb-1" dir="ltr">
+                        <span class="fw-semibold">{{ run.label }}</span>
+                        <span class="text-muted">{{ run.mastered }} / {{ run.total }}</span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2" :dir="dir">
+                        <button v-for="tile in run.tiles" :key="tile.key" type="button"
+                                class="letter-tile" :class="`letter-tile--${tile.status}`"
+                                :title="tile.title"
+                                @click="openTile = toggledTileKey(openTile, tile)">
+                            <span class="letter-tile__glyph">{{ tile.text }}</span>
+                            <span class="letter-tile__name">{{ tile.name }}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <div v-if="letter" class="card border-0 shadow-sm">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-baseline mb-2">
                             <h6 class="mb-0">{{ letterHeading }}</h6>
-                            <button class="btn-close" @click="openLetter = null"></button>
+                            <button class="btn-close" @click="openTile = null"></button>
                         </div>
 
                         <!-- Joining is a fact about ARABIC letters. Every English
@@ -164,6 +174,7 @@
 <script setup lang="ts">
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
+import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import { computed, onMounted, ref } from 'vue';
 
 const props = defineProps<{ groupId: number; masjidId: number }>();
@@ -174,7 +185,8 @@ const marking = ref<string | null>(null);
 const overview = ref<any>(null);
 const tracker = ref<any>(null);
 const selected = ref<any>(null);
-const openLetter = ref<string | null>(null);
+// The open tile's KEY (a drill id for English, a letter id for Arabic); the card's letter is derived from it.
+const openTile = ref<string | null>(null);
 const stageNote = ref('');
 const stageFailed = ref(false);
 const letterError = ref('');
@@ -206,7 +218,14 @@ const ALPHABETS = [
 const alphabet = ref<string>('arabic');
 
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);
-const letter = computed(() => tracker.value?.letters?.find((l: any) => l.id === openLetter.value) ?? null);
+// The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.
+const letterRunsOf = computed(() => letterRuns(tracker.value));
+
+const letter = computed(() => {
+    const id = letterIdOfTile(letterRunsOf.value, openTile.value);
+
+    return id === null ? null : tracker.value?.letters?.find((l: any) => String(l.id) === id) ?? null;
+});
 
 /**
  * Which way this alphabet is laid out, as the payload declares it.
@@ -300,7 +319,7 @@ onMounted(async () => {
  */
 const open = async (student: any, which: string = alphabet.value) => {
     selected.value = student;
-    openLetter.value = null;
+    openTile.value = null;
     letterError.value = '';
 
     try {
@@ -338,7 +357,7 @@ const open = async (student: any, which: string = alphabet.value) => {
 const switchAlphabet = async (next: string) => {
     if (next === alphabet.value) return;
 
-    openLetter.value = null;
+    openTile.value = null;
     letterError.value = '';
     stageNote.value = '';
     stageFailed.value = false;

@@ -19,6 +19,7 @@ use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
 use App\Models\User;
+use App\Support\BrandAssets;
 use App\Support\CapabilityLedger;
 use App\Support\CapabilityWriter;
 use App\Support\MobileCache;
@@ -570,6 +571,13 @@ class MasjidsController extends Controller
             // A name and a logo are printed in the PARENT's switcher and in its
             // drawer profile list, so renaming a school has to reach both.
             MobileCache::flushFamily($masjid);
+
+            // An organisation that already has a favicon, touch icon and share
+            // image (a Studio one) gets them rebuilt from the new logo; every
+            // other one is untouched. Never throws, never changes this answer.
+            if ($request->hasFile('logo')) {
+                BrandAssets::afterLogoUpload($masjid, Auth::id() !== null ? (int) Auth::id() : null);
+            }
 
             return response()->json([
                 'status' => 'success',

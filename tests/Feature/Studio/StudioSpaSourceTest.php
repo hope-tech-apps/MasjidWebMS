@@ -5,6 +5,7 @@ namespace Tests\Feature\Studio;
 use App\Http\Requests\Admin\Studio\StoreStudioDraftLogoRequest;
 use App\Models\StudioDraft;
 use App\Support\AppMenu;
+use App\Support\Studio\LogoDerivatives;
 use App\Support\Studio\StudioPreview;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\ReadsStudioSource;
@@ -47,7 +48,9 @@ class StudioSpaSourceTest extends TestCase
         'components/super/studio',
         'core/studio',
         'stores/super/studioDraftStore.ts',
+        'stores/super/studioOrganisationStore.ts',
         'core/types/data/Studio.ts',
+        'core/types/data/StudioOrganisation.ts',
         'core/helpers/prepareLogo.ts',
         'core/helpers/extractPalette.ts',
     ];
@@ -389,9 +392,10 @@ class StudioSpaSourceTest extends TestCase
         parse_str(str_replace(',', '&', substr($dimensions, strlen('dimensions:'))), $limits);
 
         $this->assertSame((int) config('studio.logo.min_px'), (int) $limits['min_width']);
-        $this->assertSame((int) $limits['max_width'], (int) $limits['max_height']);
         $this->assertStringContainsString('export const LOGO_MIN_EDGE = ' . (int) $limits['min_width'] . ';', $prepare);
-        $this->assertStringContainsString('export const LOGO_LARGEST_EDGE = ' . (int) $limits['max_width'] . ';', $prepare);
+        // The maximum is no longer a `dimensions` rule: the request checks it in
+        // after(), through LogoDerivatives::assertFits, so the constant is the source.
+        $this->assertStringContainsString('export const LOGO_LARGEST_EDGE = ' . LogoDerivatives::MAX_EDGE . ';', $prepare);
     }
 
     #[Test]
@@ -419,6 +423,86 @@ class StudioSpaSourceTest extends TestCase
         $this->assertMatchesRegularExpression('/function reset\(\) \{\s*generation\+\+;\s*armed\.value = false;\s*autosave\.reset\(\);/', $store);
     }
 
+    #[Test]
+    public function the_live_organisation_route_exists(): void
+    {
+        $routes = $this->read(self::SPA . '/router/routes/superDashboardRoutes.ts');
+        $path = "path: 'studio/organisations/:id(\\\\d+)'";
+        $component = 'views/dashboard/super/studio/StudioOrganisationView.vue';
+
+        $this->assertMatchesRegularExpression(
+            '/\{\s*' . preg_quote($path, '/') . ',\s*name: \'studio\.organisation\',\s*meta: \{[^}]*allowedUsers: \[\'SuperAdmin\'\][^}]*pageTitle: \'Manara Studio\'[^}]*dashboardType: \'super\'[^}]*\},\s*component: \(\) => import\("@\/' . preg_quote($component, '/') . '"\)/s',
+            $routes,
+            'the route studio.organisation is missing, or is not SuperAdmin-only'
+        );
+        $this->assertFileExists(base_path(self::SPA . '/' . $component));
+
+        // Right after the draft's route, where W2 S9 put it.
+        $this->assertGreaterThan(strpos($routes, "name: 'studio.draft',"), strpos($routes, "name: 'studio.organisation',"));
+
+        // The Organisations tab opens it by name, and the screen goes back by name.
+        $files = $this->studioFiles();
+        $this->assertStringContainsString(":to=\"{ name: 'studio.organisation', params: { id: org.id } }\"", $files['views/dashboard/super/studio/StudioDraftsView.vue']);
+        $this->assertStringContainsString("{ name: 'studio.drafts', query: { tab: 'organisations' } }", $files['views/dashboard/super/studio/StudioOrganisationView.vue']);
+    }
+
+    #[Test]
+    public function the_live_features_card_posts_only_changed_capability_writer_keys_to_the_bulk_route(): void
+    {
+        $files = $this->studioFiles();
+        $store = $files['stores/super/studioOrganisationStore.ts'] ?? null;
+        $card = $files['components/super/studio/live/LiveFeaturesCard.vue'] ?? null;
+        $this->assertNotNull($store, 'the live organisation store is missing');
+        $this->assertNotNull($card, 'the live Features card is missing');
+
+        // S7's bulk PATCH, form-encoded: one `capabilities[<key>]` per key, as
+        // '1'/'0' (.claude/rules/shipping.md), never 'true'/'false' and never JSON.
+        $save = $this->functionBody($store, 'saveFeatures');
+        // One PATCH to the capabilities; the store has other writers (S12's website language).
+        $this->assertSame(1, preg_match_all('/ApiService\.patch\(`[^`]*\/capabilities`/', $store), 'the store PATCHes the capabilities in exactly one place');
+        $this->assertMatchesRegularExpression('/ApiService\.patch\(`\/api\/admin\/masjids\/\$\{[^}`]+\}\/capabilities`, body\)/', $save);
+        $this->assertStringContainsString('const body = new URLSearchParams();', $save);
+        $this->assertMatchesRegularExpression('/body\.append\(`capabilities\[\$\{entry\.key\}\]`, on \? \'1\' : \'0\'\)/', $save);
+        $this->assertDoesNotMatchRegularExpression('/[\'"]true[\'"]|[\'"]false[\'"]/', $store, 'a boolean must go as 1/0, never the strings the boolean rule refuses');
+
+        // The store re-checks what it is handed: a key goes only when its writer
+        // is `capability` and its value moves (every key sent writes a ledger row).
+        $this->assertMatchesRegularExpression(
+            '/for \(const entry of featureEntries\.value\) \{\s*const on = changes\[entry\.key\];\s*if \(entry\.writer !== \'capability\' \|\| typeof on !== \'boolean\' \|\| on === entry\.enabled\) continue;\s*body\.append\(/',
+            $save
+        );
+
+        // The card sends only its `changes`: capability-writer entries whose
+        // pending value differs from the live one.
+        $this->assertMatchesRegularExpression(
+            '/const changes = computed<Record<string, boolean>>\(\(\) => \{.*?if \(entry\.writer === \'capability\' && typeof pending === \'boolean\' && pending !== entry\.enabled\) \{\s*out\[entry\.key\] = pending;/s',
+            $card
+        );
+        $this->assertMatchesRegularExpression('/const sent = \{ \.\.\.changes\.value \};.*?await store\.saveFeatures\(sent\)/s', $card);
+        $this->assertStringNotContainsString('ApiService', $card, 'the card saves through the store');
+
+        // Column-backed entries are read-only, in the switch panel's words, and
+        // neither file names one: their writer comes from the catalogue.
+        $this->assertStringContainsString("Change on the organisation's details screen", $card);
+        foreach (['crm', 'assistant'] as $key) {
+            $this->assertFalse($this->namesKey($card, $key), "the Features card names '{$key}'; the catalogue's writer decides");
+            $this->assertFalse($this->namesKey($store, $key), "the live organisation store names '{$key}'; the catalogue's writer decides");
+        }
+
+        // Step 1's row and layout, reused rather than copied.
+        $this->assertStringContainsString("import FeatureRow from '@/components/super/studio/steps/FeatureRow.vue';", $card);
+        $this->assertStringContainsString('featureGroups(', $card);
+    }
+
+    /** The body of `async function NAME(` … up to the next function at the same indent. */
+    private function functionBody(string $code, string $name): string
+    {
+        $this->assertMatchesRegularExpression('/\n    (?:async )?function ' . $name . '\(/', $code, "no function {$name}()");
+        preg_match('/\n    (?:async )?function ' . $name . '\(.*?\n    \}\n/s', $code, $match);
+
+        return $match[0];
+    }
+
     /** The keys of `export const NAME ... = { ... };` in core/studio/appLabels.ts. */
     private function objectKeys(string $constant): array
     {
@@ -439,6 +523,39 @@ class StudioSpaSourceTest extends TestCase
         preg_match('/export const ' . $constant . ' = \'([^\']*)\';/', $source, $match);
 
         return $match[1];
+    }
+
+    #[Test]
+    public function a_live_card_dialog_never_puts_data_in_a_sweetalert_title_or_unescaped_html(): void
+    {
+        // SweetAlert2 parses `title` and `html` as HTML, and the SPA's CSP allows inline script, so an
+        // organisation name such as <img onerror=...> would run in a SuperAdmin's session (S9-3). Data goes
+        // through `titleText`, or through dialogHtml, which escapes every piece.
+        $folder = base_path(self::SPA . '/components/super/studio/live');
+        $this->assertDirectoryExists($folder);
+        $cards = glob($folder . '/*.vue');
+        $this->assertNotEmpty($cards);
+
+        $dialogs = 0;
+
+        foreach ($cards as $card) {
+            $code = $this->withoutComments(file_get_contents($card));
+            $name = basename($card);
+
+            preg_match_all('/(?<![\w.$-])title\s*:\s*(`[^`]*`|[^\n]*)/', $code, $titles);
+            foreach ($titles[1] as $value) {
+                $this->assertStringNotContainsString('${', $value, "{$name} interpolates data into a dialog `title`, which SweetAlert2 renders as HTML; use `titleText`");
+            }
+
+            preg_match_all('/(?<![\w.$-])html\s*:\s*([^\n]*)/', $code, $bodies);
+            foreach ($bodies[1] as $value) {
+                $this->assertStringStartsWith('dialogHtml(', trim($value), "{$name} builds a dialog `html` body without dialogHtml, which escapes every piece");
+            }
+
+            $dialogs += substr_count($code, 'QSwal.fire(');
+        }
+
+        $this->assertGreaterThan(0, $dialogs, 'the guard found no live dialog to check');
     }
 
     /** @return array<string, string> relative path => code with comments removed */

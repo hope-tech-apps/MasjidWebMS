@@ -32,6 +32,26 @@
         <template v-else>
             <p v-if="panel.domains.length === 0" class="text-muted small mb-0">This organisation has no web address yet.</p>
 
+            <div v-if="detachNotice" class="alert py-2 px-3 mb-0 small" role="status"
+                :class="detachNotice.outcome === 'detached' ? 'alert-success' : 'alert-warning'">
+                <div v-if="detachNotice.outcome === 'detached'">
+                    {{ detachNotice.host }} is detached and no longer served.
+                </div>
+                <div v-else>
+                    {{ detachNotice.host }} is no longer served. Studio stopped part-way removing it from Cloudflare
+                    and tries again every five minutes<template v-if="detachNotice.error">: {{ detachNotice.error }}</template>
+                </div>
+                <ul v-if="detachNotice.removed.length" class="mb-0 mt-1 ps-3">
+                    <li v-for="(object, index) in detachNotice.removed" :key="index">Removed {{ object }}.</li>
+                </ul>
+                <template v-if="detachNotice.manual_steps.length">
+                    <div class="mt-2 fw-semibold">Left for you to do by hand:</div>
+                    <ol class="mb-0 ps-3">
+                        <li v-for="(step, index) in detachNotice.manual_steps" :key="index">{{ step }}</li>
+                    </ol>
+                </template>
+            </div>
+
             <div v-if="actionError" class="alert alert-danger py-2 px-3 mb-0 small" role="alert">
                 <div>{{ actionError }}</div>
                 <ol v-if="actionSteps.length" class="mb-0 mt-2 ps-3">
@@ -49,7 +69,10 @@
                         <i class="bi bi-clipboard me-1" aria-hidden="true"></i>{{ copied === domain.id ? 'Copied' : 'Copy' }}
                     </button>
 
-                    <span v-if="isConfirmedServing(domain) && domain.status === 'active'" class="badge text-bg-success">
+                    <span v-if="domain.role === 'redirect' && domain.status === 'manual' && domain.verified_at" class="badge text-bg-success">
+                        <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i>Redirecting (301, confirmed by visiting it)
+                    </span>
+                    <span v-else-if="isConfirmedServing(domain) && domain.status === 'active'" class="badge text-bg-success">
                         <i class="bi bi-check-circle me-1" aria-hidden="true"></i>Serving (verified by Cloudflare and confirmed by visiting it)
                     </span>
                     <span v-else-if="isConfirmedServing(domain)" class="badge text-bg-success">
@@ -58,6 +81,9 @@
                     <span v-else-if="domain.status === 'reserved'" class="badge text-bg-secondary">
                         Held for this organisation; not served
                     </span>
+                    <span v-else-if="domain.status === 'detaching'" class="badge text-bg-secondary">
+                        Being detached: no longer served
+                    </span>
                     <span v-else-if="domain.status === 'failed'" class="badge text-bg-danger">Setting up failed</span>
                     <span v-else-if="!tokenConfigured" class="badge text-bg-warning">
                         Waiting for the Cloudflare token: nothing has been sent to Cloudflare
@@ -65,6 +91,9 @@
                     <span v-else class="badge text-bg-warning">{{ waitingLabel(domain) }}</span>
 
                     <span v-if="domain.source === 'imported'" class="badge text-bg-light border">Imported from the live map</span>
+                    <span v-if="domain.role === 'redirect'" class="badge text-bg-light border">
+                        Redirects to {{ redirectTarget(domain) }}
+                    </span>
                 </div>
 
                 <p v-if="domain.last_error && domain.status !== 'failed'" class="small text-muted mb-0">
@@ -94,7 +123,7 @@
 
                 <div class="d-flex flex-wrap gap-2">
                     <button type="button" class="btn btn-sm btn-outline-primary"
-                        :disabled="store.busy !== null || domain.status === 'reserved'"
+                        :disabled="store.busy !== null || domain.status === 'reserved' || domain.status === 'detaching'"
                         @click="checkNow(domain)">
                         <span v-if="store.busy === domain.id" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
                         Check now
@@ -111,6 +140,12 @@
                     <button v-if="domain.deletable" type="button" class="btn btn-sm btn-outline-danger"
                         :disabled="store.busy !== null" @click="removeDomain(domain)">
                         Remove
+                    </button>
+
+                    <button v-if="domain.detachable" type="button" class="btn btn-sm btn-outline-danger"
+                        :disabled="store.busy !== null" @click="detachDomain(domain)">
+                        <span v-if="store.busy === domain.id" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        {{ domain.status === 'detaching' ? 'Detach (try again)' : 'Detach' }}
                     </button>
                 </div>
             </article>
@@ -132,8 +167,9 @@
  */
 import { computed, onBeforeMount, ref, watch } from 'vue';
 import Swal from 'sweetalert2';
+import { escapeHtml } from '@/core/plugins/swalSanitize';
 import { useMasjidDomainsStore } from '@/stores/super/masjidDomainsStore';
-import { isConfirmedServing, MasjidDomain } from '@/core/types/data/MasjidDomain';
+import { isConfirmedServing, MasjidDomain, MasjidDomainDetachResult } from '@/core/types/data/MasjidDomain';
 
 const props = defineProps<{ masjidId: number | string }>();
 
@@ -143,10 +179,12 @@ const tokenConfigured = computed(() => panel.value?.cloudflare.configured ?? fal
 const copied = ref<number | null>(null);
 const actionError = ref('');
 const actionSteps = ref<string[]>([]);
+const detachNotice = ref<MasjidDomainDetachResult | null>(null);
 
 const load = async (): Promise<void> => {
     actionError.value = '';
     actionSteps.value = [];
+    detachNotice.value = null;
     try {
         await store.list(props.masjidId);
     } catch {
@@ -163,9 +201,15 @@ const waitingLabel = (domain: MasjidDomain): string => {
         case 'nameservers': return 'Waiting for the registrar to switch nameservers';
         case 'certificate': return 'Waiting for Cloudflare to issue the certificate';
         case 'capacity': return 'The Pages project is at its custom-domain limit';
+        case 'canonical': return 'Waiting for the address it redirects to';
+        case 'rule_cleanup': return 'Taking out a redirect rule a collapse left behind';
         default: return domain.status === 'active' ? 'Attached; not yet seen serving' : 'Being attached';
     }
 };
+
+/** The host a redirect row points at, from the same list, or a plain description. */
+const redirectTarget = (domain: MasjidDomain): string =>
+    panel.value?.domains.find(row => row.id === domain.redirect_to_id)?.host ?? 'its canonical address';
 
 /** Clipboard write; says so when the browser refuses (insecure context, denied). */
 const copyHost = async (domain: MasjidDomain): Promise<void> => {
@@ -214,6 +258,54 @@ const removeDomain = async (domain: MasjidDomain): Promise<void> => {
         await store.remove(props.masjidId, domain.id);
     } catch (e) {
         const failure = failureOf(e, `Could not remove ${domain.host}.`);
+        actionError.value = failure.message;
+        actionSteps.value = failure.steps;
+    }
+};
+
+/**
+ * The confirm dialog lists what the server says a detach would do
+ * (`detach_plan`, MasjidDomain::detachPlan()). Every piece of data in it (the
+ * host, each object, each step) goes through escapeHtml, so it reads as
+ * written, and the whole string then passes the global dialog sanitiser
+ * (core/plugins/swalSanitize.ts), which keeps only inline formatting.
+ */
+const detachDialog = (domain: MasjidDomain): string => {
+    const section = (title: string, lines: string[], ordered: boolean): string => {
+        if (!lines.length) return '';
+        const tag = ordered ? 'ol' : 'ul';
+        const items = lines.map(line => `<li>${escapeHtml(line)}</li>`).join('');
+        return `<p class="fw-semibold mb-1 mt-2">${escapeHtml(title)}</p><${tag} class="ps-3 mb-0">${items}</${tag}>`;
+    };
+    const removes = domain.detach_plan?.would_remove ?? [];
+
+    return '<div class="text-start small">'
+        + `<p class="mb-0">${escapeHtml(domain.host)} stops being served for this organisation at once.</p>`
+        + section('Studio removes from Cloudflare what it created:', removes, false)
+        + section('Studio did not create these, so it leaves them for you:', domain.detach_plan?.manual_steps ?? [], true)
+        + (removes.length ? '' : '<p class="mt-2 mb-0">Studio created nothing in Cloudflare for this address, so it removes nothing there.</p>')
+        + '</div>';
+};
+
+const detachDomain = async (domain: MasjidDomain): Promise<void> => {
+    const confirmed = await Swal.fire({
+        icon: 'warning',
+        titleText: `Detach ${domain.host}?`,
+        html: detachDialog(domain),
+        showCancelButton: true,
+        confirmButtonText: 'Detach',
+        cancelButtonText: 'Keep it',
+    });
+
+    if (!confirmed.isConfirmed) return;
+
+    actionError.value = '';
+    actionSteps.value = [];
+    detachNotice.value = null;
+    try {
+        detachNotice.value = await store.detach(props.masjidId, domain.id);
+    } catch (e) {
+        const failure = failureOf(e, `Could not detach ${domain.host}.`);
         actionError.value = failure.message;
         actionSteps.value = failure.steps;
     }

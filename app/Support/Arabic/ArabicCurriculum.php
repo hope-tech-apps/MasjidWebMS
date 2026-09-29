@@ -343,6 +343,21 @@ class ArabicCurriculum implements LetterCurriculum
 
     // -------------------------------------------------------------- identity
 
+    /**
+     * Arabic has no sets. Its four letter FORMS are `positionsFor()`, a separate
+     * idea from English's two cases, and the tracker must not turn them into
+     * separate drills or a separate denominator (T-004.2, L6).
+     */
+    public static function sets(): array
+    {
+        return [];
+    }
+
+    public static function set(string $drillId): ?string
+    {
+        return null;
+    }
+
     public static function alphabetId(): string
     {
         return self::ALPHABET;

@@ -11,6 +11,10 @@
         </div>
 
         <p v-if="error" class="studio-error">{{ error }}</p>
+        <p v-if="report && stale" class="studio-error" role="status">
+            Out of date. This is the last check that came back, for earlier colours. It does not describe the colours
+            now in the fields.
+        </p>
         <p v-if="!report" class="studio-hint">The check runs once all four colours are chosen.</p>
 
         <template v-else>
@@ -60,24 +64,13 @@
  * The server's palette report (PaletteContrast::report, R16), shown as it is.
  * The ratios are the server's, from the same WcagColor the gate at Step 3 uses,
  * so this screen never judges contrast itself and can never disagree with the
- * gate. The pair keys are the server's; only their names in English are here.
+ * gate. The pair keys are the server's; only their names in English are
+ * (core/studio/paletteLabels.ts, shared with the live Brand card's dialog).
  */
+import { pairLabel } from '@/core/studio/paletteLabels';
 import { StudioPaletteReport, StudioPalettePair } from '@/core/types/data/Studio';
 
-defineProps<{ report: StudioPaletteReport | null; loading?: boolean; error?: string | null }>();
-
-const PAIR_LABELS: Record<string, string> = {
-    text_on_background: 'Body text on the background',
-    on_primary: 'Text on the primary colour',
-    on_secondary: 'Text on the secondary colour',
-    on_accent: 'Text on the accent colour',
-    primary_on_background: 'Primary colour on the background',
-    accent_on_background: 'Accent colour on the background',
-};
-
-function pairLabel(key: string): string {
-    return PAIR_LABELS[key] ?? key;
-}
+defineProps<{ report: StudioPaletteReport | null; loading?: boolean; error?: string | null; stale?: boolean }>();
 
 function inkSourceLabel(source: NonNullable<StudioPalettePair['ink_source']>): string {
     switch (source) {

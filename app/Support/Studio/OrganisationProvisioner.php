@@ -401,16 +401,27 @@ final class OrganisationProvisioner
         ])];
 
         if ($request->filled('web_domain.custom_host')) {
-            $rows[] = MasjidDomain::create([
+            $custom = fn (string $host, array $extra = []) => MasjidDomain::create([
                 'masjid_id' => $masjid->id,
-                'host' => (string) $request->input('web_domain.custom_host'),
+                'host' => $host,
                 'kind' => MasjidDomain::KIND_CUSTOM,
                 'zone_apex' => (string) $request->input('web_domain.custom_zone_apex'),
                 'status' => MasjidDomain::STATUS_PENDING,
                 'waiting_on' => $waitingOn,
                 'source' => MasjidDomain::SOURCE_STUDIO,
                 'created_by_user_id' => $actor,
-            ]);
+            ] + $extra);
+
+            // W2 S5: with `web_domain.canonical`, the canonical host serves and
+            // the other redirects to it; without, W1's one host.
+            $pair = $request->webDomainPair();
+
+            if ($pair === null) {
+                $rows[] = $custom((string) $request->input('web_domain.custom_host'));
+            } else {
+                $rows[] = $serving = $custom($pair['serving']);
+                $rows[] = $custom($pair['redirect'], ['role' => MasjidDomain::ROLE_REDIRECT, 'redirect_to_id' => $serving->id]);
+            }
         }
 
         return $rows;

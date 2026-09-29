@@ -17,6 +17,7 @@ use App\Models\LessonPlan;
 use App\Models\Masjid;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
+use App\Support\Letters\EnglishCurriculum;
 use App\Support\PerformanceLevel;
 use App\Support\SchoolRecordsCsv as Csv;
 use Illuminate\Http\Request;
@@ -483,12 +484,19 @@ class SchoolRecordsExportController extends Controller
      * at the end, the existing positions are exactly what they were and the new
      * field is additive: an old reader ignores it, a new one asks for it by name.
      *
+     * 'Letter' IS APPENDED after 'Alphabet' on the same reasoning (T-004.2). An
+     * English drill id is now `a.upper` / `a.lower`, which a receiving school can
+     * decode but should not have to; 'Letter' spells it out ("Capital A",
+     * "Lower case a") for English rows and is blank for Arabic, whose ids the
+     * school already reads. 'Drill id' keeps the stored value: it is the row's
+     * identity, and a consumer joining on it must keep matching.
+     *
      * @param  resource  $out
      */
     private function writeArabicProgress($out): void
     {
         Csv::row($out, ['Row id', 'Class id', 'Membership id', 'Student name',
-            'Drill id', 'Status', 'Mastered at', 'Alphabet']);
+            'Drill id', 'Status', 'Mastered at', 'Alphabet', 'Letter']);
 
         Csv::each(
             ArabicLetterProgress::whereIn('group_id', $this->schoolGroupIds())
@@ -498,8 +506,23 @@ class SchoolRecordsExportController extends Controller
                 Csv::text($this->nameOf($r->membership?->contact)),
                 Csv::text($r->drill_id), Csv::text($r->status),
                 Csv::num($r->mastered_at), Csv::text($r->alphabet),
+                Csv::text($this->readableDrill($r->alphabet, $r->drill_id)),
             ])
         );
+    }
+
+    /** "Capital A" / "Lower case a" for an English drill; '' for anything else. */
+    private function readableDrill(?string $alphabet, string $drillId): string
+    {
+        if ($alphabet !== EnglishCurriculum::ALPHABET) {
+            return '';
+        }
+
+        if (EnglishCurriculum::isLegacyDrillId($drillId)) {
+            return "Letter {$drillId} (recorded before capitals and lower case were tracked separately)";
+        }
+
+        return EnglishCurriculum::describeDrill($drillId)['label'] ?? '';
     }
 
     /**

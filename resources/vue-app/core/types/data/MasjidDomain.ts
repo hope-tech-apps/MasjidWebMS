@@ -1,6 +1,7 @@
 // One organisation web address, as the SuperAdmin domain routes return it
 // (Manara Studio W1, S7): GET/POST /api/admin/masjids/{masjid_id}/domains,
-// POST .../{domain_id}/refresh and DELETE .../{domain_id}.
+// POST .../{domain_id}/refresh, DELETE .../{domain_id} and (W2 S3)
+// POST .../{domain_id}/detach.
 //
 // Mirrors App\Models\MasjidDomain::toAdminArray(). Everything a screen needs to
 // decide is computed on the server and read here as it arrives: `live_url`
@@ -15,10 +16,11 @@ export type MasjidDomainStatus =
     | 'active'
     | 'manual'
     | 'failed'
-    | 'reserved';
+    | 'reserved'
+    | 'detaching';
 
 /** MasjidDomain::WAITING_ON */
-export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity';
+export type MasjidDomainWaitingOn = 'token' | 'token_scope' | 'nameservers' | 'certificate' | 'capacity' | 'canonical' | 'rule_cleanup';
 
 export type MasjidDomainKind = 'managed_subdomain' | 'custom';
 
@@ -27,6 +29,9 @@ export interface MasjidDomain {
     masjid_id: number;
     host: string;
     kind: MasjidDomainKind;
+    /** W2 S5: a `redirect` host answers 301 to the serving host `redirect_to_id` names. */
+    role: 'serving' | 'redirect';
+    redirect_to_id: number | null;
     zone_apex: string;
     status: MasjidDomainStatus;
     waiting_on: MasjidDomainWaitingOn | null;
@@ -38,11 +43,30 @@ export interface MasjidDomain {
     verified_at: string | null;
     verified_by: 'cloudflare' | 'probe' | null;
     serving_confirmed_at: string | null;
+    /** W2 S4: the daily re-probe's last match, and the current run of misses. */
+    serving_last_seen_at: string | null;
+    serving_missed_since: string | null;
+    serving_miss_count: number;
     /** https://<host>, only once our site was seen answering on it. */
     live_url: string | null;
     manual_steps: string[];
     /** Whether DELETE would answer 204 rather than 409 (R28). */
     deletable: boolean;
+    /** Whether the screen offers Detach (W2 S3): a Studio row Cloudflare holds something for. */
+    detachable: boolean;
+    /** What Detach would do, from MasjidDomain::detachPlan(); null when not detachable. */
+    detach_plan: { would_remove: string[]; manual_steps: string[] } | null;
+}
+
+/** POST .../domains/{domain_id}/detach, `data.result` (App\Services\Domains\DetachResult). */
+export interface MasjidDomainDetachResult {
+    outcome: 'detached' | 'pending';
+    host: string;
+    /** What Studio removed from Cloudflare, in words. */
+    removed: string[];
+    /** What Studio did not create and so left, for a person to remove. */
+    manual_steps: string[];
+    error: string | null;
 }
 
 /** What the list says about the platform's Cloudflare connection. */
@@ -62,7 +86,7 @@ export interface MasjidDomainsPanel {
 /** The body of POST .../domains and of POST /api/admin/studio/domains/check. */
 export type MasjidDomainRequest =
     | { kind: 'managed_subdomain'; label: string }
-    | { kind: 'custom'; host: string; zone_apex: string };
+    | { kind: 'custom'; host: string; zone_apex: string; canonical?: 'www' | 'apex' };
 
 /** POST /api/admin/studio/domains/check. `zone_status` is present only with a token. */
 export interface MasjidDomainCheck {
@@ -79,9 +103,11 @@ export interface MasjidDomainCheck {
 /**
  * The only two states the panel may show a green tick for: Cloudflare verified
  * the host and our site was seen on it, or the probe itself confirmed it with
- * no token. Anything else is not live, whatever else it says.
+ * no token. Anything else is not live, whatever else it says. Since W2 S4 a
+ * host that stops answering loses `serving_confirmed_at` while keeping its
+ * status and `verified_at`, so both states require it.
  */
 export function isConfirmedServing(domain: MasjidDomain): boolean {
     return (domain.status === 'active' && domain.serving_confirmed_at !== null)
-        || (domain.status === 'manual' && domain.verified_at !== null);
+        || (domain.status === 'manual' && domain.verified_at !== null && domain.serving_confirmed_at !== null);
 }

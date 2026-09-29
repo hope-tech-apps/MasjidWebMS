@@ -143,8 +143,62 @@ export function canSavePlan(saving: boolean, body: string | null | undefined, cl
     return !saving && String(body ?? '').trim() !== '' && clash === null;
 }
 
+/** A file listed under a plan's Activities, as the plan payload carries it (no url). */
+export interface PlanAttachment {
+    id: number;
+    title?: string;
+    original_name?: string;
+    size_bytes?: number;
+}
+
 export interface CopyablePlan extends DayPlan {
     body?: string | null;
+    attachments?: PlanAttachment[];
+}
+
+/** The ids the plan save takes as `resource_ids`, in the order the plan lists them. */
+export function attachmentIds(plan: { attachments?: PlanAttachment[] | null } | null | undefined): number[] {
+    return (plan?.attachments ?? []).map((a) => Number(a.id));
+}
+
+/**
+ * Attach one more file, keeping the list distinct and within `max`. Returns the
+ * SAME list when nothing changes, so a caller can tell a refusal from an add.
+ * The server is the authority (a 422 over `max`, or for a file that is not in
+ * this class); this only stops the screen offering what it will refuse.
+ */
+export function withAttachment<T extends PlanAttachment>(list: readonly T[], file: T, max: number): readonly T[] {
+    if (list.some((a) => Number(a.id) === Number(file.id)) || list.length >= max) {
+        return list;
+    }
+
+    return [...list, file];
+}
+
+/**
+ * The most files one plan lists. Mirrors `groups.lessons.max_attachments`
+ * (config/groups.php, default 10); the server is the authority, and
+ * tests/lesson-plans.test.ts fails when the two defaults drift apart.
+ */
+export const MAX_PLAN_FILES = 10;
+
+/** True when the plan lists as many files as it may, so the screen stops offering more. */
+export function planFilesFull(list: readonly PlanAttachment[] | null | undefined): boolean {
+    return (list?.length ?? 0) >= MAX_PLAN_FILES;
+}
+
+/** This class's files that the open plan does not list yet: what the "Add from this class's files" picker offers. */
+export function unattachedFiles<T extends PlanAttachment>(
+    files: readonly T[], attached: readonly PlanAttachment[] | null | undefined,
+): T[] {
+    const taken = new Set((attached ?? []).map((a) => Number(a.id)));
+
+    return files.filter((f) => !taken.has(Number(f.id)));
+}
+
+/** Detach one file from the form's list. The file itself stays in the class's Files. */
+export function withoutAttachment<T extends PlanAttachment>(list: readonly T[], id: number): T[] {
+    return list.filter((a) => Number(a.id) !== Number(id));
 }
 
 /**
@@ -163,9 +217,21 @@ export interface CopyablePlan extends DayPlan {
  */
 export function copyRequest<T extends CopyablePlan>(
     base: string, plans: T[], source: T, iso: string,
-): { method: 'post' | 'put'; url: string; payload: T } {
+): { method: 'post' | 'put'; url: string; payload: T & { resource_ids: number[] } } {
     const same = subjectClash(plans, iso, source.subject, null);
-    const payload = { ...source, session_date: iso, body: same?.body || source.body };
+    // The files travel with the activities they sit under (T-004.1, "the
+    // Activities rule"): a day that keeps its own activities keeps its own files,
+    // and a day that takes the source's activities takes the source's files. Never
+    // a mix, which would list a worksheet under words that do not mention it.
+    // `attachments` (display objects) is dropped from the payload; the API reads
+    // `resource_ids`.
+    const { attachments: _display, ...rest } = source;
+    const payload = {
+        ...rest,
+        session_date: iso,
+        body: same?.body || source.body,
+        resource_ids: same?.body ? attachmentIds(same) : attachmentIds(source),
+    } as unknown as T & { resource_ids: number[] };
 
     return same
         ? { method: 'put', url: `${base}/lesson-plans/${same.id}`, payload }

@@ -38,8 +38,8 @@ export const LOGO_MAX_EDGE = 2048;
 
 /**
  * The server's shortest and longest accepted edge: `config('studio.logo.min_px')`
- * and the `max_width`/`max_height` of StoreStudioDraftLogoRequest. Held equal to
- * them by tests/Feature/Studio/StudioSpaSourceTest.php.
+ * and LogoDerivatives::MAX_EDGE, which the upload enforces through its shared size
+ * and memory check. Held equal to them by tests/Feature/Studio/StudioSpaSourceTest.php.
  */
 export const LOGO_MIN_EDGE = 96;
 export const LOGO_LARGEST_EDGE = 8000;

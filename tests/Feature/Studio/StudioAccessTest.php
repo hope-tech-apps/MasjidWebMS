@@ -41,6 +41,11 @@ class StudioAccessTest extends TestCase
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
 
         Storage::fake((string) config('studio.logo.disk'));
+
+        // The draft-logo upload runs the shared size and memory check; give it
+        // room so this test does not depend on what the process has built up.
+        \App\Support\Studio\LogoDerivatives::$headroomBytes = 512 * 1024 * 1024;
+        $this->beforeApplicationDestroyed(fn () => \App\Support\Studio\LogoDerivatives::$headroomBytes = null);
     }
 
     /**
@@ -68,6 +73,8 @@ class StudioAccessTest extends TestCase
             'GET ' . self::PREFIX . '/layout-presets' => ['GET', '/' . self::PREFIX . '/layout-presets?org_type=community', []],
             'POST ' . self::PREFIX . '/drafts/{draft_id}/preview' => ['POST', "{$drafts}/{$f['working']}/preview", ['answers' => ['layout' => ['preset' => 'masjid.essentials']]]],
             'POST ' . self::PREFIX . '/drafts/{draft_id}/provision' => ['POST', "{$drafts}/{$f['provisionable']}/provision", []],
+            'GET ' . self::PREFIX . '/organisations/{organisation_id}' => ['GET', '/' . self::PREFIX . "/organisations/{$f['organisation']}", []],
+            'POST ' . self::PREFIX . '/organisations/{organisation_id}/preview' => ['POST', '/' . self::PREFIX . "/organisations/{$f['organisation']}/preview", ['capabilities' => ['events' => '0']]],
         ];
     }
 
@@ -76,7 +83,7 @@ class StudioAccessTest extends TestCase
      * state, so the order the routes are walked in cannot matter (DELETE sorts
      * before GET). Made once per test.
      *
-     * @return array{working: int, discard: int, with_logo: int, with_logo_to_remove: int, upload: UploadedFile}
+     * @return array{working: int, discard: int, with_logo: int, with_logo_to_remove: int, upload: UploadedFile, provisionable: int, organisation: int}
      */
     private function fixtures(): array
     {
@@ -104,6 +111,11 @@ class StudioAccessTest extends TestCase
             'with_logo_to_remove' => $withLogo(),
             'upload' => new UploadedFile($upload, 'logo.png', null, null, true),
             'provisionable' => $this->provisionableDraft(),
+            'organisation' => (int) \App\Models\Masjid::create([
+                'name' => 'Access Check Live Org', 'email' => 'access-live@example.test', 'phone' => '+15550199001',
+                'country_id' => '1', 'city_id' => '1', 'address' => '1 Access St', 'latitude' => 0.0, 'longitude' => 0.0,
+                'org_type' => 'masjid',
+            ])->id,
         ];
     }
 

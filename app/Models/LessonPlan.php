@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * What a class is going to cover on one day, in one subject. One per class, per
@@ -18,6 +19,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * deliberately does NOT store, and why).
  *
  * `body` is the template's ACTIVITIES field and is the one required section.
+ *
+ * Files under Activities are links to `group_resources` (see `attachments()`); the
+ * plan itself owns no bytes and this table is never altered for them.
  *
  * DELIBERATELY NO `membership()` RELATION. GroupAudience reaches for that name
  * to decide who may read a record ABOUT A CHILD; a lesson plan is about a room,
@@ -156,5 +160,15 @@ class LessonPlan extends Model
     public function author(): BelongsTo
     {
         return $this->belongsTo(User::class, 'author_user_id');
+    }
+
+    /**
+     * The files listed under this plan's Activities, in the teacher's order.
+     * Links to the class's Files, never bytes of their own: see
+     * LessonPlanResource. Staff payloads only.
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(LessonPlanResource::class)->orderBy('position')->orderBy('id');
     }
 }

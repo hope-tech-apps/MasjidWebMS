@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Relations\Pivot;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * A staff User's assignment to a class (`group_staff`).
@@ -14,23 +15,26 @@ use Illuminate\Database\Eloquent\Relations\Pivot;
  * global scope hides another masjid's staff rows from every such query, and the
  * `masjid()` relation and the tenant creating-hook come with it.
  *
- * ## The attach() footgun
+ * ## How attach() writes a row (Laravel 12)
  *
- * The `BelongsToMasjid` creating hook stamps `masjid_id` from the bound tenant — but
- * ONLY on a model `create()`. `attach()` / `sync()` insert through the query builder
- * and never instantiate the model, so the hook does not fire even with
- * `->using(self::class)`. A row attached without an explicit `masjid_id` therefore
- * lands with `masjid_id = NULL/0` and the tenant scope silently hides it — the teacher
- * would see zero classes. Every attach MUST pass masjid_id explicitly:
+ * Because `Group::staff()` / `User::groupsLed()` are `->using(self::class)`, attach()
+ * and sync() first pass the extra attributes through `(new GroupStaff)->fill()`
+ * (InteractsWithPivotTable::castAttributes), then save a GroupStaff instance, so the
+ * model's casts and creating hooks DO run. Two consequences:
+ *
+ * - An attribute outside `$fillable` is silently dropped by that fill(). This is why
+ *   `assigned_by_user_id`, once passed at the call site, was never stored (NULL on
+ *   rows written through TeachersController until 2026-09-29). The actor is now set
+ *   by the `creating` hook in booted(), never by a caller.
+ * - Still pass `masjid_id` explicitly on every attach: the tenant hook only stamps it
+ *   when a tenant is bound, and a row with no `masjid_id` is hidden by the tenant
+ *   scope (the teacher would see zero classes). `GroupStaffTenantIsolationTest` pins it.
  *
  *   $group->staff()->attach($userId, [
  *       'masjid_id' => $group->masjid_id,
  *       'role' => GroupStaff::ROLE_TEACHER,
- *       'assigned_by_user_id' => Auth::id(),
  *       'assigned_at' => now(),
  *   ]);
- *
- * `GroupStaffTenantIsolationTest` pins this.
  */
 class GroupStaff extends Pivot
 {
@@ -90,9 +94,9 @@ class GroupStaff extends Pivot
     }
 
     /**
-     * `assigned_by_user_id` is deliberately NOT fillable — it is a server-derived
-     * audit field set from Auth::id() at the assignment call site, never from a
-     * client payload.
+     * `assigned_by_user_id` is deliberately NOT fillable: it is the signed-in user
+     * at the moment the row is created, set by the `creating` hook in booted(),
+     * never a value from a payload or a caller.
      */
     protected $fillable = [
         'masjid_id',
@@ -102,6 +106,21 @@ class GroupStaff extends Pivot
         'subjects',
         'assigned_at',
     ];
+
+    /**
+     * Who made the assignment: the staff User signed in when the row is created. A
+     * row written with nobody signed in (a console command, a seeder), or while the
+     * signed-in principal is not a User (a family login is a Contact, and its id is
+     * not a users.id), keeps NULL rather than a guess or a foreign id. Set here, not
+     * at call sites, because attach() drops it there.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $row): void {
+            $actor = Auth::user();
+            $row->assigned_by_user_id = $actor instanceof User ? $actor->getKey() : null;
+        });
+    }
 
     protected function casts(): array
     {

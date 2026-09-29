@@ -7,7 +7,9 @@ use App\Http\Requests\Admin\MasjidDetails\UpdateGeneralSettingsRequest;
 use App\Http\Requests\Admin\MasjidDetails\UpdateMasjidDetailsRequest;
 use App\Models\Masjid;
 use App\Models\MasjidSocialMediaLink;
+use App\Support\BrandAssets;
 use App\Support\MobileCache;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -86,6 +88,13 @@ class MasjidDetailsController extends Controller
             // PARENT's switcher and drawer profile list, which are cached under
             // the parent's id and not this one's.
             MobileCache::flushFamily($masjid);
+
+            // Committed. An organisation that already has a favicon, touch icon
+            // and share image (a Studio one) gets them rebuilt from the new logo;
+            // every other one is untouched. Never throws, never changes this answer.
+            if ($request->hasFile('logo')) {
+                BrandAssets::afterLogoUpload($masjid, Auth::id() !== null ? (int) Auth::id() : null);
+            }
 
             return response()->json([
                 'status' => 'success',

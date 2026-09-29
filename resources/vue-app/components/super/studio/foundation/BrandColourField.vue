@@ -4,17 +4,17 @@
         <div class="d-flex align-items-center gap-2">
             <label class="swatch" :class="{ empty: !modelValue }" :style="modelValue ? { backgroundColor: modelValue } : undefined"
                 :title="modelValue ? `Pick ${label.toLowerCase()}` : `Choose ${label.toLowerCase()}`">
-                <input type="color" class="swatch-input" :value="modelValue ?? '#000000'" :disabled="disabled"
+                <input type="color" class="swatch-input" :value="pickerValue" :disabled="disabled"
                     :aria-label="`${label} colour picker`" @input="pick" />
             </label>
             <input :id="textId" type="text" class="dashboard-input hex-input" :value="text" :disabled="disabled"
-                placeholder="#RRGGBB" maxlength="7" spellcheck="false" autocapitalize="off" @input="type" @blur="settle" />
+                placeholder="#RRGGBB" :maxlength="anyThemeForm ? 9 : 7" spellcheck="false" autocapitalize="off" @input="type" @blur="settle" />
             <button v-if="clearable && modelValue" type="button" class="btn btn-sm btn-link text-muted px-1" :disabled="disabled"
                 @click="emit('update:modelValue', null)">
                 Clear
             </button>
         </div>
-        <p v-if="invalid" class="studio-error">Use six hex digits, like #0A3D62.</p>
+        <p v-if="invalid" class="studio-error">{{ anyThemeForm ? 'Use a hex colour, like #0A3D62.' : 'Use six hex digits, like #0A3D62.' }}</p>
         <p v-else-if="!modelValue && emptyNote" class="studio-hint">{{ emptyNote }}</p>
         <div v-if="candidates.length" class="d-flex flex-wrap gap-1 mt-1" role="group" :aria-label="`Logo colours for ${label.toLowerCase()}`">
             <button v-for="colour in candidates" :key="colour" type="button" class="candidate"
@@ -33,9 +33,13 @@
  * picker's black, so an unchosen colour cannot pass for a chosen one. Only a
  * complete #RRGGBB reaches the draft, the one form the server accepts; half a
  * hex code stays in the field until it is finished or put back.
+ *
+ * A live organisation may already store a #RGB or #RRGGBBAA (the theme save
+ * takes both), so `anyThemeForm` accepts those too and shows the stored value
+ * as it is; the picker, which only speaks six digits, gets a display copy.
  */
-import { isHex6 } from '@/core/studio/foundationGate';
-import { ref, watch } from 'vue';
+import { isCompleteWhileTyping, isHex6, isThemeHex } from '@/core/studio/foundationGate';
+import { computed, ref, watch } from 'vue';
 
 const props = withDefaults(defineProps<{
     id: string;
@@ -45,13 +49,25 @@ const props = withDefaults(defineProps<{
     clearable?: boolean;
     disabled?: boolean;
     emptyNote?: string;
-}>(), { candidates: () => [], clearable: false, disabled: false, emptyNote: '' });
+    anyThemeForm?: boolean;
+}>(), { candidates: () => [], clearable: false, disabled: false, emptyNote: '', anyThemeForm: false });
 
 const emit = defineEmits<{ (event: 'update:modelValue', value: string | null): void }>();
 
 const textId = `studio-colour-${props.id}`;
 const text = ref(props.modelValue ?? '');
 const invalid = ref(false);
+
+const accepts = (value: string): boolean => (props.anyThemeForm ? isThemeHex(value) : isHex6(value));
+
+/** The colour picker's own value: always #rrggbb (3 digits expanded, an alpha pair dropped). */
+const pickerValue = computed(() => {
+    const value = props.modelValue ?? '';
+    if (isHex6(value)) return value;
+    if (/^#[0-9a-fA-F]{3}$/.test(value)) return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`.toLowerCase();
+    if (/^#[0-9a-fA-F]{8}$/.test(value)) return value.slice(0, 7).toLowerCase();
+    return '#000000';
+});
 
 watch(() => props.modelValue, (value) => {
     text.value = value ?? '';
@@ -68,17 +84,23 @@ function type(event: Event) {
     if (value === '') {
         invalid.value = false;
         emit('update:modelValue', null);
-    } else if (isHex6(value)) {
+    } else if (props.anyThemeForm ? isCompleteWhileTyping(value) : isHex6(value)) {
         invalid.value = false;
         emit('update:modelValue', value.toLowerCase());
     } else {
-        invalid.value = value.length >= 7;
+        invalid.value = value.length >= 7 && !(props.anyThemeForm && value.length < 9);
     }
 }
 
 /** Leaving an unfinished code shows the error, then the field goes back to the saved colour. */
 function settle() {
-    if (text.value !== '' && !isHex6(text.value)) {
+    // A three-digit code is only a choice once the field is left (typing it passes through it on the way to six).
+    if (props.anyThemeForm && /^#[0-9a-fA-F]{3}$/.test(text.value)) {
+        // Blurring an untouched stored #RGB must not rewrite it (its case included).
+        if (text.value.toLowerCase() !== (props.modelValue ?? '').toLowerCase()) emit('update:modelValue', text.value.toLowerCase());
+        return;
+    }
+    if (text.value !== '' && !accepts(text.value)) {
         invalid.value = true;
         text.value = props.modelValue ?? '';
     }

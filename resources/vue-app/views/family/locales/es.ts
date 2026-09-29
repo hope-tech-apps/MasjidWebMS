@@ -181,6 +181,8 @@ export const ES: Record<string, string> = {
     section_letters: "Letras",
     alphabet_arabic: "Letras árabes",
     alphabet_english: "Letras en inglés",
+    letters_set_upper: "Mayúsculas",
+    letters_set_lower: "Minúsculas",
     stage_letters: "Las letras",
     stage_short_vowels: "Vocales cortas",
     stage_sukun_shadda: "Sukun y Shadda",

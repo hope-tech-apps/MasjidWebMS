@@ -472,15 +472,17 @@ Route::prefix('admin')->group(function () {
             // with days of latency, and this records its outcome so the sending
             // path can refuse until it says `approved`.
             // The organisation's web addresses (Manara Studio W1, S7): list, add,
-            // "Check now" and remove. SuperAdmin-only: attaching a host acts on
-            // the platform's Cloudflare account, and the host -> organisation map
-            // it writes is what the renderer's lookup (and, from S9, CORS) reads.
+            // "Check now" and remove, and (W2 S3) detach from Cloudflare.
+            // SuperAdmin-only: attaching a host acts on the platform's
+            // Cloudflare account, and the host -> organisation map it writes is
+            // what the renderer's lookup (and, from S9, CORS) reads.
             // MasjidDomainsAdminRoutesTest walks these for the refusals.
             Route::prefix('{masjid_id}/domains')->middleware('super')->controller(\App\Http\Controllers\AdminDashboard\MasjidDomainsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::post('/{domain_id}/refresh', 'refresh')->whereNumber('domain_id');
                 Route::delete('/{domain_id}', 'destroy')->whereNumber('domain_id');
+                Route::post('/{domain_id}/detach', 'detach')->whereNumber('domain_id');
             });
 
             Route::prefix('{masjid_id}/sms-sender')->middleware('super')
@@ -728,6 +730,11 @@ Route::prefix('admin')->group(function () {
             // live page sections show it, and the last changes. Same in-controller
             // 403 as the writers above.
             Route::get('{masjid_id}/capabilities', [MasjidsController::class, 'capabilities']);
+            // SuperAdmin-only: rebuild the favicon, touch icon and share image
+            // from the current logo (Studio W2 S8, BrandAssets). A per-org
+            // decision on a live organisation: it adds three keys to its
+            // /api/v1/settings. Purges the renderer itself, after commit.
+            Route::post('{masjid_id}/brand-assets/regenerate', [\App\Http\Controllers\AdminDashboard\BrandAssetsController::class, 'regenerate']);
             // SuperAdmin-only: charge a child program org's FORM card payments
             // through its parent's Connect account (DECISIONS.md 2026-09-15). The
             // SuperAdmin check is SetFormsCardAccountRequest::authorize(), so a
@@ -1730,6 +1737,16 @@ Route::prefix('admin')->group(function () {
 
             // Step 3 (S8): the draft becomes an organisation, once.
             Route::post('/drafts/{draft_id}/provision', [StudioProvisionController::class, 'provision'])->whereNumber('draft_id');
+
+            // W2 S9: an organisation that already exists, seen through Studio's
+            // sections. Read-only, whatever the verb: its writers are the bulk
+            // capability PATCH, the theme save and brand-asset regeneration.
+            // `{organisation_id}`, not `{masjid_id}`: the `tenant` middleware binds
+            // from a route parameter named masjid_id and would answer a non-member
+            // 403 before `super` answers 401, the contract every Studio route keeps
+            // (StudioAccessTest).
+            Route::get('/organisations/{organisation_id}', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'show'])->whereNumber('organisation_id');
+            Route::post('/organisations/{organisation_id}/preview', [\App\Http\Controllers\AdminDashboard\StudioOrganisationsController::class, 'preview'])->whereNumber('organisation_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

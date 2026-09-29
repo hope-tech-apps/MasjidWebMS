@@ -4,15 +4,19 @@ namespace App\Http\Controllers\Teacher;
 
 use App\Http\Requests\Teacher\SaveLessonPlanRequest;
 use App\Models\Group;
+use App\Models\GroupResource;
 use App\Models\LessonPlan;
+use App\Models\LessonPlanResource;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -67,6 +71,7 @@ class LessonPlanController extends TeacherController
             // alphabetically — the same order on every screen that lists them.
             ->orderBy('subject_key')
             ->orderBy('id')
+            ->with('attachments.groupResource')
             ->get();
 
         return response()->json([
@@ -256,8 +261,25 @@ class LessonPlanController extends TeacherController
             return $this->clash($clash->subject);
         }
 
+        // Resolved BEFORE the plan is written, like every other refusal here: a
+        // 422 that arrives after the save leaves a plan the teacher was told
+        // failed. `null` = the request did not speak about files (see
+        // SaveLessonPlanRequest), so the plan keeps the ones it has.
+        $attachmentIds = $request->has('resource_ids')
+            ? $this->resolveAttachments($group, (array) $request->validated('resource_ids', []))
+            : null;
+
         try {
-            $plan->save();
+            if ($attachmentIds === null) {
+                $plan->save();
+            } else {
+                // Plan and files together: a plan is never left saved with only
+                // some of the files the teacher listed.
+                DB::transaction(function () use ($plan, $attachmentIds): void {
+                    $plan->save();
+                    $this->syncAttachments($plan, $attachmentIds);
+                });
+            }
         } catch (UniqueConstraintViolationException) {
             return $this->clash(LessonPlan::cleanSubject($plan->subject));
         }
@@ -266,6 +288,87 @@ class LessonPlanController extends TeacherController
             'status' => 'success',
             'data' => $this->plan($plan),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Every id in `$ids`, confirmed to be a file of THIS class in THIS school.
+     *
+     * The whole request is refused when any one id fails, rather than the bad ids
+     * being dropped: a teacher who attached three files and is told "saved" must
+     * not have saved two. The refusal names no id it did not receive, so it is
+     * not an existence oracle for another class's or another school's files.
+     *
+     * The class AND the school are both stated in the query. The tenant scope on
+     * GroupResource already hides another school's rows on this route; asking for
+     * `masjid_id` explicitly as well means the rule does not depend on which
+     * caller reached here with the tenant bound. The order the client sent is the
+     * order kept.
+     *
+     * @param  array<int,mixed>  $ids
+     * @return array<int,int>
+     */
+    private function resolveAttachments(Group $group, array $ids): array
+    {
+        $wanted = collect($ids)->map(fn ($id): int => (int) $id)->unique()->values();
+
+        if ($wanted->isEmpty()) {
+            return [];
+        }
+
+        $found = GroupResource::query()
+            ->where('group_id', $group->id)
+            ->where('masjid_id', $group->masjid_id)
+            ->whereIn('id', $wanted->all())
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id);
+
+        if ($found->count() !== $wanted->count()) {
+            throw new HttpResponseException(response()->json([
+                'status' => 'failed',
+                'message' => 'One of the files chosen is not in this class\'s Files. Reload the class and try again.',
+                'data' => ['resource_ids' => [
+                    'One of the files chosen is not in this class\'s Files. Reload the class and try again.',
+                ]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY));
+        }
+
+        return $wanted->all();
+    }
+
+    /**
+     * Make `$ids` the plan's files, exactly and in that order. Removing a link
+     * never removes the file: it stays in the class's Files.
+     *
+     * @param  array<int,int>  $ids
+     */
+    private function syncAttachments(LessonPlan $plan, array $ids): void
+    {
+        // A plain query, not `$plan->attachments()`: that relation carries an
+        // ORDER BY, which a DELETE has no use for and some drivers refuse.
+        $links = LessonPlanResource::query()->where('lesson_plan_id', $plan->id);
+
+        (clone $links)->whereNotIn('group_resource_id', $ids ?: [0])->delete();
+
+        $existing = (clone $links)->pluck('id', 'group_resource_id');
+
+        foreach (array_values($ids) as $position => $resourceId) {
+            if ($existing->has($resourceId)) {
+                LessonPlanResource::query()->whereKey($existing[$resourceId])->update(['position' => $position]);
+
+                continue;
+            }
+
+            LessonPlanResource::create([
+                // From the PLAN, never from the route: the route's id is the
+                // caller's and the plan's is the server's.
+                'masjid_id' => (int) $plan->masjid_id,
+                'lesson_plan_id' => (int) $plan->id,
+                'group_resource_id' => $resourceId,
+                'position' => $position,
+            ]);
+        }
+
+        $plan->unsetRelation('attachments');
     }
 
     /**
@@ -324,6 +427,8 @@ class LessonPlanController extends TeacherController
             ->mapWithKeys(fn (string $f) => [$f => $plan->{$f}])
             ->all();
 
+        $plan->loadMissing('attachments.groupResource');
+
         return $template + [
             'id' => (int) $plan->id,
             'session_date' => $plan->session_date->toDateString(),
@@ -331,6 +436,15 @@ class LessonPlanController extends TeacherController
             // The template's ACTIVITIES, and the one required section.
             'body' => $plan->body,
             'prefill_source' => $plan->prefill_source,
+            // The files listed under Activities, in the teacher's order: staff
+            // information, served to the teacher and the office (the same
+            // payload) and to NO family payload. The file shape carries no url;
+            // the bytes are only reachable through the Files download route.
+            'attachments' => $plan->attachments
+                ->map(fn (LessonPlanResource $link) => $link->groupResource?->toAudienceArray())
+                ->filter()
+                ->values()
+                ->all(),
             'updated_at' => optional($plan->updated_at)->toIso8601String(),
         ];
     }
