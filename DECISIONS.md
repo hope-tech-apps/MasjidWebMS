@@ -4527,13 +4527,28 @@ Rationale and the calls made while building:
   belongs nowhere makes no cross-organisation grant). Removal never asks the flag: the rollback is
   "delete the extra memberships first", so that door must work with the gate shut.
 - **What another school may see of a shared teacher (owner: added straight away).** For a Teacher
-  with a live membership elsewhere (`User::belongsOutside`), every school's Teachers and Team
-  screens show name and email only: no stored phone and no last-sign-in (a sign-in at ANY school).
-  It is symmetric on purpose: `users` carries no provenance, so the school that first entered the
-  phone loses sight of it too. The reply to "add" carries what the inviter typed, and its message
-  and data shape are identical whether the address was new or existing, so it cannot say. The
-  refusals (gate shut, another type, already here) still reveal that the address has a login; that
-  is the accepted residual, equal to today's `unique` rule.
+  with a live membership elsewhere (`User::belongsOutside`), the Teachers and Team screens withhold
+  the stored phone and the last sign-in (a sign-in at ANY school). They still show the STORED name
+  and the email: `TeachersController::index` reads `users.name`, which the first school entered, so
+  a school that adds an existing login sees that name in its list and NOT the one its own office
+  typed (`TeacherAttachTest.php:362` pins `Stored Name` in the list). The owner accepted seeing the
+  other school's name. The withholding is symmetric on purpose: `users` carries no provenance, so
+  the school that first entered the phone loses sight of it too. *(Corrected in the review fixes:
+  this bullet, and the owner-answers note in the workspace folder, first said the second school's
+  screens show only the name and email it typed. That is false.)*
+- **What the add itself discloses, stated exactly.** A successful add answers with the same message
+  and the same data shape whether the address was new or existing, and the data is what the inviter
+  typed (`TeacherAttachTest::the_create_and_attach_replies_are_indistinguishable_by_message_and_by_data`),
+  so that reply alone cannot say. Three things can: (1) the list read above shows the stored name;
+  (2) with `tenancy.multi_membership` shut, which production is today, an address that is a live
+  Teacher with a membership elsewhere is refused with "Adding an existing login to a second school is
+  switched off." (`TeacherAttachTest.php:225`), which no other address is told, so the office learns
+  the address is a live teacher at another school; (3) a login of another type, or a teacher a
+  SuperAdmin trashed on purpose, gets `CANNOT_ADD` ("already has a Manara login that can't be added as
+  a teacher"), and a teacher already at this school gets its own line (`TeacherAttachTest.php:309`).
+  So the refusals distinguish the KIND of login. They are not "equal to today's `unique` rule", which
+  says only that the address is taken. The owner accepted the name; whether he accepts the "switched
+  off" wording is Unknown, needs the owner's call. Recorded as a known residual, not as settled.
 - **A shared teacher's name and phone are read-only from any school** (update refuses a different
   name and ANY phone; it does not compare phones, which would let an office guess the hidden one).
   Classes stay editable. Resending the set-password link is refused for a shared teacher
