@@ -4436,8 +4436,8 @@ Rationale and the calls made while building:
 - **The notice mail is sent synchronously, like `AccountAccessMail`** (the design said "queued";
   neither implements `ShouldQueue` and the suite asserts with `Mail::fake`), and a transport failure
   after commit is reported, not thrown: a completed attach must not turn into a 500 the office retries.
-- The teacher header now shows the teacher's name on wider screens: it read `first_name`/`last_name`,
-  columns `users` does not have, so it had always been blank. Falls back to those if ever present.
+- ~~The teacher header now shows the teacher's name on wider screens.~~ **Reverted in the review fixes below**:
+  it was a visible change for every single-school teacher that nobody asked for.
 - **Not done here, on purpose:** lunch staff (Phase 1b: same branch table, `EchoResolvedTenant` on the
   lunch group, its picker); `OrganisationProvisioner`'s existing-admin attach (Studio's lane);
   `LunchStaffController`/`AdministratorsController` still hardcode `is_default = true`; whether Sanctum
@@ -4453,3 +4453,44 @@ Rationale and the calls made while building:
   with the literal `unbound` (which the SPA already reads as "no echo"). Measured on the teacher
   group; the comments are corrected and the test asserts what matters, that a refusal never names a
   school. Nothing about the header's behaviour changed.
+
+## 2026-09-29 — Multi-org users, Phase 1: review fixes (opus + sonnet lens findings, all confirmed)
+Each fix has a test that fails without it (mutation-proved, see the build report).
+- **`AdministratorsController::destroy` removes MasjidAdmins only.** It only checked for a `masjid_user` row, so a crafted
+  request could remove a Teacher or LunchStaff there: their tokens are global, so it signed them out of every other school,
+  left this school's `group_staff` rows behind, and never re-picked a default. A Teacher or LunchStaff is now a 422 that
+  names their own screen (same rule as `TeamController::destroy`); an administrator's removal re-picks the default (lowest
+  live school id, as `MasjidAdminsController::revokeMembership` does). There was no test for this door at all.
+- **SuperAdmin delete and archive name every organisation** (DESIGN section 8, Phase 3 item 2 -- the OPEN GAP recorded
+  above is now closed): `core/helpers/userRemoval.ts` builds the confirmation from `user.organisations`
+  (`OrganisationAccess::forUsers`), saying "removes them from all N organisations: A, B" and pointing at the per-school
+  screens. It is UI wording only: the endpoints still act on every school at once, by design; the SuperAdmin now knows.
+- **The teacher shell's "can't open this school" and "wrong school" notices no longer outlive a sign-out.** They are
+  module state and sign-out is an SPA navigation, so the notice's own remedy left the next sign-in stuck behind it.
+  `removeAuth()` calls `resetTeacherSchoolGuard()` (notices and reload stamp); the shell clears the notices (not the
+  stamp, which is what stops a reload loop) on mount. The guard's logic moved to `core/tenancy/teacherSchoolGuardCore.ts`
+  with its browser dependencies injected, so it is now executed by `npm run test:spa` instead of regex-matched.
+- **Sign-in lands a teacher in the school this browser last used** when the server still grants it
+  (`signInSchoolId`), else the default. Before, a 401 sent a two-school teacher back to the default school.
+- **Team & Access says "Shared login", not "Not signed in yet"**, for a teacher whose last sign-in is withheld: the
+  payload now carries `shared`, and `last_sign_in_at` stays null as before (privacy unchanged).
+- **The teacher header prints no name** again (the unrequested change is reverted; if the owner wants it, it is one line).
+- **The typed-name mitigation is partial, and said so in the UI.** `store()` returns what the inviter typed, but the next
+  list read shows the stored name (the owner accepted seeing the other school's name). The add form now says, for every
+  add and so without hinting at any address, that a person who already has a login shows under the name on it.
+- **The attach lookup no longer locks a scan.** `LOWER(email)` cannot use `users_email_unique` on MySQL, so the old
+  `... FOR UPDATE` took locks on every row it scanned, and a locking read that matches nothing takes gap locks that
+  deadlock two concurrent adds of different new people. `User::scopeWhereEmailIs` uses plain equality on MySQL/MariaDB
+  (utf8mb4_unicode_ci is already case-insensitive) and `LOWER()` only on SQLite; the lookup takes no lock, then the ONE
+  row found is locked by key (the L1 lock is unchanged for an existing person). A deadlock victim (SQLSTATE 40001, or
+  Laravel's `DeadlockException` from a nested transaction) is retried once, like the unique-index loser.
+  **Unknown, needs investigation:** none of this could be observed on MySQL here (the suite is SQLite, which ignores
+  locks); the SQL shape is pinned per driver, the retry is exercised by simulating the exception, and the rest is
+  reasoned from InnoDB's documented behaviour. Verify on the staging MySQL before relying on it.
+- **Test gaps closed** (mutants that survived): `resolveTeacher`'s Teacher-type filter, the three-school default re-pick
+  (archived school, lowest id, non-default removal), both halves of the "already here" check, default derivation for a
+  person with memberships but no default, the post-commit mail failure, the unique-index retry, the `email` rule,
+  `belongsOutside`'s archived-school rule, the name trim, and that a two-office administrator is NOT treated as shared.
+  `DualMembershipIsolationTest`'s write recogniser now also knows `MasjidUser::query()->create`, `withoutGlobalScopes()`
+  hops, `firstOrNew`, `new MasjidUser`, and `memberships()->firstOrNew`; the sweep still reads controllers only (a write
+  from `app/Services` or `app/Support` is outside it and belongs to its own lane).
