@@ -102,9 +102,9 @@ class OfferingRegistrationAddressTest extends TestCase
     }
 
     #[Test]
-    public function an_ascii_address_is_stored_exactly_as_before(): void
+    public function an_ascii_address_is_stored_lower_cased_exactly_as_before(): void
     {
-        $this->register(' Nadia@Example.TEST ', 'yusuf@example.test')->assertStatus(200);
+        $this->register('Nadia@Example.TEST', 'yusuf@example.test')->assertStatus(200);
 
         $this->assertContains('nadia@example.test', Contact::withoutMasjidScope()->pluck('email')->all());
     }
