@@ -85,6 +85,9 @@ class CartCheckoutService
 
     private const PAID_MESSAGE = 'This basket has already been paid for.';
 
+    /** The kitchen rings the buyer about a dish; both meal doors refuse an order with no phone. */
+    public const PHONE_REQUIRED = 'Please add a phone number so the kitchen can reach you about your meal order.';
+
     /** The width of orders.buyer_name and orders.buyer_phone. */
     private const BUYER_NAME_MAX = 120;
     private const BUYER_PHONE_MAX = 32;
@@ -99,6 +102,12 @@ class CartCheckoutService
      * @param  string|null  $buyerName  what the shopper typed; kept on the order for the office and for
      *                                  settlement (a meal order's name, a gift's donor)
      * @param  string|null  $buyerPhone  likewise (a meal order's phone)
+     * @param  bool  $requirePhoneForMeals  the public door's rule, decided HERE under the basket lock: refuse
+     *                                      a basket that prices a payable dish when `$buyerPhone` is empty.
+     *                                      The endpoint checks the same before the lock, from a read that a
+     *                                      dish added by another tab can overtake; this is the check that
+     *                                      holds. Off for a caller that collects no buyer details (an order
+     *                                      opened without a phone settles under the placeholder).
      * @return array{order: Order, url: string}
      */
     public function checkout(
@@ -107,8 +116,9 @@ class CartCheckoutService
         ?string $buyerEmail = null,
         ?string $buyerName = null,
         ?string $buyerPhone = null,
+        bool $requirePhoneForMeals = false,
     ): array {
-        return DB::transaction(function () use ($cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone): array {
+        return DB::transaction(function () use ($cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone, $requirePhoneForMeals): array {
             // Re-read under a lock: two tabs pressing "pay" must not open two pages.
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
 
@@ -126,6 +136,15 @@ class CartCheckoutService
 
             if (! $priced->isPayable()) {
                 throw new CartCheckoutRefused('Your basket has nothing to pay for.');
+            }
+
+            // Asked of the basket AS PRICED under the lock, never of a read taken before it: a
+            // dish another tab added in between is in `$priced`, and without this it would be
+            // charged with no number for the kitchen to ring.
+            if ($requirePhoneForMeals
+                && self::hasPayableMeal($priced)
+                && self::usableText($buyerPhone, self::BUYER_PHONE_MAX) === null) {
+                throw new CartCheckoutRefused(self::PHONE_REQUIRED);
             }
 
             // Belt and braces for a cart left open with a paid order behind it (one paid
@@ -262,6 +281,18 @@ class CartCheckoutService
             ->where('status', Order::STATUS_PAID)
             ->where('basket_fingerprint', $priced->chargeFingerprint())
             ->exists();
+    }
+
+    /** Whether the basket, as priced, has a dish that would be charged for. */
+    private static function hasPayableMeal(PricedBasket $priced): bool
+    {
+        foreach ($priced->lines as ['item' => $item, 'outcome' => $outcome]) {
+            if ($item->buyable_type === CartItem::TYPE_MEAL && $outcome->isPayable()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** The platform's cut, on the charged total. Present only when above zero. */

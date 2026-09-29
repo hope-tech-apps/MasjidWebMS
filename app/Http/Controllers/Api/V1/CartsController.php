@@ -330,6 +330,9 @@ class CartsController extends Controller
                 (string) $buyer['email'],
                 (string) $buyer['name'],
                 isset($buyer['phone']) ? (string) $buyer['phone'] : null,
+                // The rule above was decided from a read taken before the basket's lock; the
+                // service asks it again under the lock, so a dish added in between is refused.
+                requirePhoneForMeals: true,
             );
         } catch (CartCheckoutRefused $refused) {
             return $this->refusedCheckout($refused);

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Cart\Endpoints;
 
+use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Contact;
 use App\Models\Donation;
@@ -245,6 +246,67 @@ class CartCheckoutEndpointTest extends TestCase
         $this->checkout($giftOrg, $gifts, $noPhone)->assertOk();
 
         $this->assertNull(Order::withoutMasjidScope()->where('masjid_id', $giftOrg->id)->sole()->buyer_phone);
+    }
+
+    #[Test]
+    public function a_dish_added_after_the_phone_rule_was_read_is_still_refused_under_the_lock(): void
+    {
+        // Tab 1 posts checkout for a basket that holds only a gift, so the controller's read says
+        // the phone is optional. Tab 2's dish lands before checkout takes the basket lock. The
+        // service prices the basket as it stands under the lock, dish included, and refuses.
+        [$org, $token] = $this->giftBasket();
+        $dish = $this->dish($org);
+        $cart = $this->basketOf($token);
+
+        $service = new class(new StripeClient('sk_test_offline')) extends CartCheckoutService {
+            public ?\Closure $beforeLock = null;
+
+            public array $created = [];
+
+            public function checkout(
+                Cart $cart,
+                string $returnBase,
+                ?string $buyerEmail = null,
+                ?string $buyerName = null,
+                ?string $buyerPhone = null,
+                bool $requirePhoneForMeals = false,
+            ): array {
+                // Once: the other tab's add happens the first time only.
+                $other = $this->beforeLock;
+                $this->beforeLock = null;
+
+                if ($other !== null) {
+                    $other();
+                }
+
+                return parent::checkout($cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone, $requirePhoneForMeals);
+            }
+
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                $this->created[] = $params;
+
+                return ['id' => 'cs_race_1', 'url' => 'https://checkout.stripe.test/race', 'payment_intent' => null];
+            }
+        };
+        $service->beforeLock = fn () => $this->add($cart, CartItem::TYPE_MEAL, $dish->id, 1200, 1);
+        $this->app->instance(CartCheckoutService::class, $service);
+
+        $body = $this->checkoutBody();
+        unset($body['buyer']['phone']);
+
+        $this->checkout($org, $token, $body)
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', CartCheckoutService::PHONE_REQUIRED);
+
+        $this->assertSame(2, CartItem::withoutMasjidScope()->where('cart_id', $cart->id)->count(), 'premise: the dish did land');
+        $this->assertSame([], $service->created, 'no page was opened for a dish nobody can ring about');
+        $this->assertSame(0, Order::withoutMasjidScope()->count());
+
+        // With a phone the same basket opens.
+        $this->checkout($org, $token)->assertOk();
+        $this->assertCount(1, $service->created);
     }
 
     // ------------------------------------------------------------------ return base

@@ -301,6 +301,53 @@ class CartCheckoutServiceTest extends TestCase
         $this->assertCount(2, $svc->created, 'the tickets would be issued in the wrong names on the old page');
     }
 
+    // ---- the buyer's phone, asked of the basket as priced under the lock ----
+
+    #[Test]
+    public function a_basket_with_a_dish_is_refused_when_the_door_asks_for_a_phone_and_there_is_none(): void
+    {
+        $org = $this->org();
+        $cart = $this->cart($org);
+        $this->add($cart, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200, 2);
+        $svc = $this->service();
+
+        foreach ([null, '', '   '] as $empty) {
+            try {
+                $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org', 'Buyer', $empty, requirePhoneForMeals: true);
+                $this->fail('a dish with no phone to ring must be refused (' . var_export($empty, true) . ')');
+            } catch (CartCheckoutRefused $refused) {
+                $this->assertSame(CartCheckoutService::PHONE_REQUIRED, $refused->getMessage());
+                $this->assertNull($refused->priced(), 'a sentence, not a changed basket: no 409');
+            }
+        }
+
+        $this->assertSame([], $svc->created, 'no page was opened');
+        $this->assertSame(0, Order::withoutMasjidScope()->count(), 'and no order was left behind');
+
+        $order = $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org', 'Buyer', '+1 555 010 0100', requirePhoneForMeals: true)['order'];
+
+        $this->assertSame('+1 555 010 0100', $order->fresh()->buyer_phone, 'with a phone it opens');
+    }
+
+    #[Test]
+    public function a_basket_with_no_dish_never_needs_a_phone_and_a_caller_that_does_not_ask_is_not_refused(): void
+    {
+        [, $gifts] = $this->fullBasket();
+        $svc = $this->service();
+
+        $svc->checkout($gifts, self::RETURN_BASE, 'buyer@example.org', 'Buyer', null, requirePhoneForMeals: true);
+        $this->assertCount(1, $svc->created, 'tickets and a gift: no phone asked');
+
+        // The office and legacy orders collect no buyer details: they were never refused, and
+        // settlement falls back to the placeholder for them (ASSUMPTIONS #25).
+        $org = $this->org();
+        $meals = $this->cart($org);
+        $this->add($meals, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200);
+        $svc->checkout($meals, self::RETURN_BASE, 'buyer@example.org');
+        $this->assertCount(2, $svc->created);
+        $this->assertNull(Order::withoutMasjidScope()->where('cart_id', $meals->id)->sole()->buyer_phone);
+    }
+
     #[Test]
     public function a_page_already_paid_is_never_offered_again(): void
     {
