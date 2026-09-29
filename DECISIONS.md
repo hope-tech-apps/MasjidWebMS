@@ -4844,8 +4844,8 @@ cross-tenant tests in `GroupPostReactionsTest` and `GroupPostReadsTest` satisfy 
    The day is `groups.story_reads.since` if the owner sets it, else the school's earliest recorded read (no setting
    needed); until either exists nothing is marked. A read that was recorded on an old story still shows.
 12. **An archived staff member is nobody** to the digest (author and reactor), as a trashed guardian already was.
-13. **Not changed on purpose:** the `seen_by` id tie-break (`orderBy('id')`) is kept but cannot be pinned on SQLite
-   (see the test's comment); the `first_seen_at` order is pinned. Unknown, needs investigation on staging MySQL.
+13. **`seen_by` order is pinned** on both keys (`first_seen_at`, then `id`), each with a mutation proof on SQLite.
+   Unknown, needs investigation: that MySQL breaks the tie the same way, since the tie-break test ran on SQLite only.
 
 **Held for the owner:** the human review of the five machine-drafted `story_seen_notice` strings
 (`familyI18n.ts` ar, `locales/{es,ur,ps,fa-AF}.ts`); then set `GROUP_STORY_READS_ENABLED=true` (and, if wanted,

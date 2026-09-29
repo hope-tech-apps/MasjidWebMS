@@ -548,13 +548,16 @@ class GroupPostReactionsTest extends TestCase
         $admin = $this->makeLeadingAdmin();
         $ameen = "/posts/{$post->id}/reactions/ameen";
 
-        // Everybody holds 🤲; parent A also holds 💯.
+        // Everybody holds 🤲; parent A, the teacher and the office also hold 💯.
         $this->asParent($this->parentA)->putJson($this->familyUrl($ameen))->assertOk();
         $this->asParent($this->parentB)->putJson($this->familyUrl($ameen))->assertOk();
         $this->asTeacher()->putJson($this->teacherUrl($ameen))->assertOk();
         $this->asTeacher($colleague)->putJson($this->teacherUrl($ameen))->assertOk();
         $this->asUser($admin)->putJson($this->adminUrl($ameen))->assertOk();
         $this->asParent($this->parentA)->putJson($this->familyUrl("/posts/{$post->id}/reactions/hundred"))->assertOk();
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}/reactions/hundred"))->assertOk();
+        $this->asUser($admin)->putJson($this->adminUrl("/posts/{$post->id}/reactions/hundred"))->assertOk();
+        $hundred = ['c'.$this->parentA->id, 'u'.$this->teacher->id, 'u'.$admin->id];
 
         $all = ['c'.$this->parentA->id, 'c'.$this->parentB->id, 'u'.$this->teacher->id, 'u'.$colleague->id, 'u'.$admin->id];
         $this->assertSame($all, $this->holders($post));
@@ -563,7 +566,7 @@ class GroupPostReactionsTest extends TestCase
         // and so does the same parent's OTHER reaction.
         $this->asParent($this->parentA)->deleteJson($this->familyUrl($ameen))->assertOk();
         $this->assertSame(array_values(array_diff($all, ['c'.$this->parentA->id])), $this->holders($post));
-        $this->assertSame(['c'.$this->parentA->id], $this->holders($post, 'hundred'), 'their 💯 is a different reaction');
+        $this->assertSame($hundred, $this->holders($post, 'hundred'), 'taking back 🤲 leaves every 💯 alone');
 
         // A teacher takes theirs back: a colleague, the office and the parent stay.
         $this->asTeacher()->deleteJson($this->teacherUrl($ameen))->assertOk();
@@ -572,6 +575,7 @@ class GroupPostReactionsTest extends TestCase
         // The office takes theirs back: the colleague and the parent stay.
         $this->asUser($admin)->deleteJson($this->adminUrl($ameen))->assertOk();
         $this->assertSame(['c'.$this->parentB->id, 'u'.$colleague->id], $this->holders($post));
+        $this->assertSame($hundred, $this->holders($post, 'hundred'), 'and the same people still hold their 💯 after all three took 🤲 back');
     }
 
     // ------------------------------------------------------------ staff: `mine` survives a reload and an edit
