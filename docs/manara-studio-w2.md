@@ -553,9 +553,14 @@ exactly what it created in Cloudflare and nothing else.
     a held lock. `DELETE` keeps its exact behaviour, so a row with no
     Cloudflare state still deletes with 204.
   - Imported and adopted rows are never detachable here. S6 is their tool.
-- **Command `domains:release {masjid_id} {--execute}`.** It detaches every
-  Studio row of one organisation. It is a dry run unless `--execute` is given.
-  S2's force-delete guard names it.
+- **Command `domains:release {masjid_id} {--execute} {--operator=} {--reason=} {--force}`.**
+  It detaches every Studio row of one organisation. It is a dry run unless
+  `--execute` is given. As built (2026-09-28, after point's security review):
+  `--execute` needs `--operator` and `--reason`, which go into the
+  `masjid_domain_changes` ledger with each detach, and a live (untrashed)
+  organisation also needs `--force`. It takes redirect rows first, because a
+  serving host an alias still redirects to is refused, and it exits non-zero
+  when any detach does not finish. S2's force-delete guard names it.
 - **SPA.** `StudioDomainAttachPanel.vue` shows "Detach" on Studio rows that
   carry Cloudflare state, with a confirm dialog listing what will be removed:
   the Pages domain, the DNS record, and the redirect rule if any. For a zone
@@ -737,8 +742,11 @@ host uses a Pages slot (R9).
      match sets `verified_at` and `verified_by = probe`.
 - **Refusals.** An **allowlist**, not a denylist:
   - S5 writes a redirect rule or placeholder record only in a zone Studio
-    created (`cf_zone_created`), or in a zone the owner has added to
-    `config('cloudflare.redirect_zones')`, which ships empty.
+    created for the same organisation (`cf_zone_created` on one of its own
+    rows), or in a zone the owner has listed in `CLOUDFLARE_REDIRECT_ZONES`
+    (comma-separated, read into `config('cloudflare.redirect_zones')`), which
+    ships blank. As built: the list lives in production's `.env`, never in this
+    public repository.
   - Every zone already in the account when S5 ships is therefore refused
     unless the owner lists it. That includes `burlingtonmasjid.com`,
     `alrazischool.org` and the owner's other product zones
@@ -749,17 +757,25 @@ host uses a Pages slot (R9).
 - **The placeholder record's id** is stored in `cf_dns_record_id`, with
   `cf_dns_record_created` set only when S5's own POST made it. So S3's
   `removeDnsRecord` removes it by its expected shape (`A`, `192.0.2.1`).
-- **Command `domains:collapse-alias {domain_id} {--execute}`** converts an
-  existing Studio `serving` row whose sibling is its canonical into a
-  `redirect` row. It adds the rule, verifies the 301, then removes the Pages
-  domain through `CloudflareRemover::removePagesDomain`. It is a dry run by
-  default. S1's runbook step 1 is this command.
+- **Command `domains:collapse-alias {domain_id} {--execute} {--operator=} {--reason=}`**
+  converts an existing Studio `serving` row whose sibling is its canonical
+  into a `redirect` row. It adds the rule, verifies the 301, then removes the
+  Pages domain through `CloudflareRemover::removePagesDomain`. It is a dry run
+  by default. S1's runbook step 1 is this command. As built: `--execute`
+  needs `--operator` and `--reason` (ledgered); the row becomes a redirect
+  only after the 301 is seen and its sibling, re-read under its own lock, is
+  still serving; otherwise the rule is taken out again, and a rule that cannot
+  be is parked (`waiting_on = rule_cleanup`) for `domains:reconcile` to
+  remove.
 - `CloudflareRemover::removeRedirectRule` deletes the rule by id only when its
   `ref` equals `manara-studio-redirect-{row id}`.
 
-**Owner action (not a slice).** Add "Zone › Dynamic URL Redirects: Edit" to the
-Studio token, limited to this account. Until then S5 ships inert: rows wait on
-`token_scope` and show the manual steps.
+**Owner action (not a slice).** Add "Zone › Single Redirect › Edit" (called
+"Dynamic URL Redirects Write" in the API) to the Studio token, limited to this
+account, and list each zone Studio may write redirects in (other than zones it
+created for that organisation) in `CLOUDFLARE_REDIRECT_ZONES` in production's
+`.env`. Until then S5 ships inert: rows wait on `token_scope` or are refused,
+and show the manual steps.
 
 **Tests.**
 
@@ -782,7 +798,8 @@ Studio token, limited to this account. Until then S5 ships inert: rows wait on
 allowlist, and Studio did not create them.
 
 **Verify in production.** With the owner's go, on a **dedicated, empty test
-zone** the owner adds to the account and to `redirect_zones` for the purpose.
+zone** the owner adds to the account and to `CLOUDFLARE_REDIRECT_ZONES` in
+production's `.env` for the purpose.
 Never use a live client's zone or one of the owner's product zones.
 
 1. Attach `www.<zone>` as serving and `<zone>` as redirect.
@@ -823,9 +840,12 @@ owner's go.
 
 **Contract.**
 
-- **Command `domains:imported {action} {--id=*} {--operator=} {--reason=} {--execute}`.**
+- **Command `domains:imported {action} {--id=*} {--operator=} {--reason=} {--i-checked} {--execute}`.**
   It is a dry run unless `--execute` is given. `--execute` requires both
-  `--operator` and `--reason`.
+  `--operator` and `--reason`; as built, `release --execute` also requires
+  `--i-checked`, a person's word that each host no longer serves its
+  organisation, since the one-shot probe is the check reserved rows already
+  failed.
   - **`list`**: every imported row with its host, organisation, status, last
     probe, and whether a probe matches now.
   - **`release`**: deletes an imported `reserved` row, so the host is free to
