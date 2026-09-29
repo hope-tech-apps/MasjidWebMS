@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -50,6 +51,64 @@ class Cart extends Model
         return [
             'expires_at' => 'datetime',
         ];
+    }
+
+    /**
+     * The digest that is stored for a basket token: HMAC-SHA256 keyed on the application key,
+     * the construction FamilyInviteService::hash() and FamilyLoginService::hash() use. The
+     * token is 32 random bytes as hex, so a keyed digest looked up by indexed equality is
+     * enough (no constant-time compare: the lookup is the comparison, on a 2^256 secret).
+     * The key is read through config('app.key') and never handled beyond this line.
+     */
+    public static function hashToken(string $token): string
+    {
+        return hash_hmac('sha256', $token, (string) config('app.key'));
+    }
+
+    /**
+     * The basket this token opens at this organisation, or null.
+     *
+     * The public basket routes run UNBOUND, so the organisation is filtered by hand (and the
+     * scope bypassed on purpose): a token belonging to another organisation's basket is not
+     * found, exactly like a token that never existed. An expired basket is not found either;
+     * a basket with no expiry (one not made by the public endpoint) never expires. Anything
+     * that is not the 64 lower-case hex characters a token is never reaches the database.
+     */
+    public static function findLiveByToken(string $token, int $masjidId): ?self
+    {
+        if ($masjidId <= 0 || preg_match('/\A[a-f0-9]{64}\z/', $token) !== 1) {
+            return null;
+        }
+
+        return static::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('token_hash', self::hashToken($token))
+            ->where(function (Builder $q): void {
+                $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->first();
+    }
+
+    /**
+     * The stored digest of the basket this token opens, or null when it opens none. Asked by
+     * the basket's own rate limiters, which key on the digest (never on the token, a bearer
+     * secret that would otherwise sit in the cache) and send a token that names no live
+     * basket to the per-connection bucket instead.
+     */
+    public static function liveTokenHash(mixed $token, int $masjidId): ?string
+    {
+        if (! is_string($token)) {
+            return null;
+        }
+
+        $cart = static::findLiveByToken($token, $masjidId);
+
+        return $cart === null ? null : (string) $cart->token_hash;
+    }
+
+    public function isOpen(): bool
+    {
+        return $this->status === self::STATUS_OPEN;
     }
 
     public function items(): HasMany

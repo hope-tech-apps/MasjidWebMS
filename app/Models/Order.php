@@ -97,4 +97,32 @@ class Order extends Model
     {
         return $this->status === self::STATUS_PAID;
     }
+
+    /**
+     * Resolve an order by its public uuid within one organisation. The payment-state read
+     * runs UNBOUND (the `masjid-id` header, no tenant middleware), so the organisation is
+     * filtered by hand and the scope bypassed on purpose: another organisation's uuid misses.
+     */
+    public static function findByUuidForMasjid(string $uuid, int $masjidId): ?self
+    {
+        return static::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('uuid', $uuid)
+            ->first();
+    }
+
+    /**
+     * Whether $uuid names an order of this organisation: what the payment-state read's route
+     * limiter asks before the controller runs (`cart-order-status`), so a made-up uuid meets a
+     * per-connection guard and a real order only its own allowance. One query, on the unique
+     * uuid index.
+     */
+    public static function isPaymentHandle(string $uuid, int $masjidId): bool
+    {
+        return $masjidId > 0
+            && static::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('uuid', $uuid)
+                ->exists();
+    }
 }

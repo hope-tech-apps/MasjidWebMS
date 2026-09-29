@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Listeners\ResetTenantContextBetweenJobs;
 use App\Mail\Transport\ResendWithTimeouts;
+use App\Models\Cart;
 use App\Models\FormResponse;
+use App\Models\Order;
 use App\Models\User;
 use App\Observers\UserObserver;
 use App\Support\ContactIdentity;
@@ -424,6 +426,68 @@ class AppServiceProvider extends ServiceProvider
             return FormResponse::isPaymentHandle((string) $request->route('uuid'), (int) $request->header('masjid-id'))
                 ? Limit::perHour(20)->by('form-checkout:' . strtolower((string) $request->route('uuid')))->response($tooMany)
                 : Limit::perHour(120)->by('form-checkout-ip:' . $request->ip() . '|' . (string) $request->header('masjid-id'))->response($tooMany);
+        });
+
+        // The universal basket's public endpoints (routes/api_v1.php; DECISIONS.md 2026-09-29).
+        // Every 429 says how long to wait in its BODY: CORS exposes no response header
+        // (config/cors.php exposed_headers is empty), so a page cannot read Retry-After.
+        // Limits live in config/cart.php.
+        //
+        // `cart-create` is per connection AND organisation, as the appointment request is, and
+        // keyed on the header cast the way the controller casts it.
+        //
+        // The three that act on ONE basket (`cart-write`: add, remove, acknowledge;
+        // `cart-read`; `cart-checkout`) are keyed by the HMAC of its token, never the token
+        // itself (a bearer secret must not sit in the cache), so every phone at a venue behind
+        // one address has its own allowance. A token that names no live basket at the header's
+        // organisation meets a per-connection bucket of the same size INSTEAD, so a caller
+        // spraying junk tokens cannot mint a fresh allowance for each, and a real basket never
+        // meets that bucket: the junk that fills it never stops a shopper behind the same
+        // address. Each limit runs an hour from the basket's first request, and the answer
+        // says how much of it is left.
+        //
+        // `cart-order-status` is the form status read's design exactly (`form-status` above):
+        // keyed by the order's uuid, with a made-up uuid meeting a per-connection guard.
+        $cartTooMany = fn (string $what) => function (Request $request, array $headers) use ($what) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Too many {$what}. " . TryAgainIn::fromHeaders($headers),
+            ], 429, $headers);
+        };
+
+        RateLimiter::for('cart-create', function (Request $request) use ($cartTooMany) {
+            return Limit::perHour(max(1, (int) config('cart.throttle.create_per_hour', 20)))
+                ->by('cart-create:' . $request->ip() . '|' . (int) $request->header('masjid-id'))
+                ->response($cartTooMany('baskets started from this connection'));
+        });
+
+        $perBasket = function (string $bucket, string $configKey, string $what) use ($cartTooMany): \Closure {
+            return function (Request $request) use ($bucket, $configKey, $what, $cartTooMany) {
+                $masjidId = (int) $request->header('masjid-id');
+                $digest = Cart::liveTokenHash($request->header('Cart-Token'), $masjidId);
+                $key = $digest !== null
+                    ? "{$bucket}:{$digest}"
+                    : "{$bucket}-connection:" . $request->ip() . '|' . $masjidId;
+
+                return Limit::perHour(max(1, (int) config("cart.throttle.{$configKey}", 60)))
+                    ->by($key)
+                    ->response($cartTooMany($what));
+            };
+        };
+
+        RateLimiter::for('cart-write', $perBasket('cart-write', 'write_per_hour', 'changes to this basket'));
+        RateLimiter::for('cart-read', $perBasket('cart-read', 'read_per_hour', 'requests for this basket'));
+        RateLimiter::for('cart-checkout', $perBasket('cart-checkout', 'checkout_per_hour', 'payment attempts'));
+
+        RateLimiter::for('cart-order-status', function (Request $request) use ($cartTooMany) {
+            $uuid = strtolower((string) $request->route('uuid'));
+            $tooMany = $cartTooMany('requests');
+
+            return Order::isPaymentHandle($uuid, (int) $request->header('masjid-id'))
+                ? Limit::perHour(max(1, (int) config('cart.throttle.order_status_per_hour', 30)))
+                    ->by('cart-order-status:' . $uuid)->response($tooMany)
+                : Limit::perMinute(max(1, (int) config('cart.throttle.order_status_guard_per_minute', 300)))
+                    ->by('cart-order-status-connection:' . $request->ip())->response($tooMany);
         });
 
         // Public appointment requests (Community vertical, T-021). Same shape as

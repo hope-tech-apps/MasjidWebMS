@@ -23,9 +23,13 @@ use Illuminate\Support\Facades\Schema;
  *   A shopper is a `contact_id` once signed in, and a `token` before that. All
  *   685 Wix orders were placed without an account, so guest baskets are the
  *   normal case, not an edge: the token is the only handle a guest has. It is
- *   stored as a SHA-256 hash, never in the clear, because anybody holding the
- *   value can read and edit that basket — the same reason
- *   `contact_portal_invites` hashes its token.
+ *   stored only as a KEYED digest — HMAC-SHA256 over the application key, the
+ *   construction FamilyInviteService and FamilyLoginService use, not a bare
+ *   SHA-256 — never in the clear, because anybody holding the value can read and
+ *   edit that basket, and the same reason `contact_portal_invites` hashes its
+ *   token. The token is 32 random bytes as hex (2^256), so the lookup is the
+ *   indexed equality `where token_hash = HMAC(submitted)` and needs no
+ *   constant-time compare (Cart::hashToken, Cart::findLiveByToken).
  *
  *   `expires_at` bounds how long an abandoned basket is kept. Nothing in a
  *   basket is reserved (see cart_items), so expiry costs the shopper nothing but
@@ -48,6 +52,15 @@ use Illuminate\Support\Facades\Schema;
  *   established — `donation`, `registration`, `order_only` — so a receipt can
  *   separate a gift from a purchase without a second vocabulary, and so imported
  *   and new orders can be listed together.
+ *
+ *   `client_line_key` / `client_line_hash` are the add endpoint's replay guard, as
+ *   `form_responses.client_submission_key` / `client_payload_hash` are the form
+ *   door's: the page mints a key per "add" press, a retry of the same press sends
+ *   it again, and the unique (cart_id, client_line_key) index means a double tap can
+ *   never put two lines in the basket. The hash is a KEYED digest of the request
+ *   (it is derived from the answers, which are personal data), so the same key with a
+ *   different body can be told apart from a retry without keeping the body twice.
+ *   Both are NULL for a line added without a key (unique indexes admit many NULLs).
  *
  * Index names are written by hand (MySQL caps an identifier at 64 characters).
  */
@@ -101,10 +114,15 @@ return new class extends Migration
 
             $table->json('payload')->nullable();
 
+            // The add endpoint's replay guard (see the docblock above).
+            $table->string('client_line_key', 64)->nullable();
+            $table->char('client_line_hash', 64)->nullable();
+
             $table->timestamps();
 
             $table->index(['cart_id'], 'cart_items_cart_index');
             $table->index(['buyable_type', 'buyable_id'], 'cart_items_buyable_index');
+            $table->unique(['cart_id', 'client_line_key'], 'cart_items_client_line_key_unique');
         });
     }
 

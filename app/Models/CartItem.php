@@ -49,7 +49,12 @@ class CartItem extends Model
         'unit_amount_shown_minor',
         'currency',
         'payload',
+        'client_line_key',
+        'client_line_hash',
     ];
+
+    /** The replay guard's digest is derived from the answers, and nothing serialises it. */
+    protected $hidden = ['client_line_hash'];
 
     protected function casts(): array
     {
