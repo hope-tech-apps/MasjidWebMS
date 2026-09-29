@@ -91,7 +91,7 @@ class GradebookSchemaTest extends TestCase
             Schema::getColumnListing('class_grade_weights')
         );
         $this->assertSame(
-            ['id', 'masjid_id', 'name', 'name_key', 'grade_labels', 'position', 'created_at', 'updated_at'],
+            ['id', 'masjid_id', 'name', 'name_key', 'grade_labels', 'position', 'seeded_by', 'created_at', 'updated_at'],
             Schema::getColumnListing('school_subjects')
         );
 

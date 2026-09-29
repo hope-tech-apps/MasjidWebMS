@@ -26,9 +26,13 @@ class SchoolSubject extends Model
         'position',
     ];
 
-    /** `name_key` is derived on every save (App\Support\SubjectKey) and never sent. */
+    /**
+     * `name_key` is derived on every save (App\Support\SubjectKey) and never
+     * sent; `seeded_by` is the seed migration's own mark (not fillable either).
+     */
     protected $hidden = [
         'name_key',
+        'seeded_by',
     ];
 
     protected static function booted(): void

@@ -52,18 +52,24 @@ use Illuminate\Support\Facades\Log;
  *
  * ## Reversible, and it refuses to lose what the office typed
  *
- * `down()` deletes only the rows this migration wrote AND nobody has since
- * touched: the seeded name, position and NULL grades, with `updated_at` still
- * equal to `created_at` (an edit through the Subjects screen moves it). An edited
- * or office-created row is left, which is also what makes the create-table
- * migration's `down()` refuse: rolling back the whole W3 batch stops rather than
- * destroying the office's list.
+ * `down()` deletes only the rows this migration wrote (`seeded_by` carries its
+ * name; every row the office types leaves it NULL) AND nobody has since touched
+ * (`updated_at` still equal to `created_at`: an edit through the Subjects screen
+ * moves it). The mark matters because a comparison of the columns alone cannot
+ * tell the seed's "Qur'an" from an office "Qur'an" added at the defaults, and
+ * when the office row exists first the seed skips that subject, so the seed never
+ * owned it. An edited or office-created row is left, which is also what makes the
+ * create-table migration's `down()` refuse: rolling back the whole W3 batch stops
+ * rather than destroying the office's list.
  *
  * Ships only after the owner's yes (B3). Hold it out of a deploy that has not had
  * one; the code around it works with an empty list.
  */
 return new class extends Migration
 {
+    /** What `school_subjects.seeded_by` says for a row this migration wrote. */
+    private const MARK = '2026_10_03_100300_seed_school_subjects_for_alrazi_and_biss';
+
     /** [masjid id, a word its name must contain]. */
     private const SCHOOLS = [
         14 => 'razi',
@@ -118,6 +124,7 @@ return new class extends Migration
                         'name_key' => $key,
                         'grade_labels' => null,
                         'position' => $position,
+                        'seeded_by' => self::MARK,
                         // One instant for both: `down()` reads "still equal" as "not edited since".
                         'created_at' => $now,
                         'updated_at' => $now,
@@ -133,22 +140,10 @@ return new class extends Migration
 
     public function down(): void
     {
-        foreach (self::SCHOOLS as $id => $word) {
-            if (! $this->isSchool($id, $word)) {
-                continue;
-            }
-
-            foreach ($this->planFor($id) as $name => $position) {
-                DB::table('school_subjects')
-                    ->where('masjid_id', $id)
-                    ->where('name_key', SubjectKey::for($name))
-                    ->where('name', $name)
-                    ->where('position', $position)
-                    ->whereNull('grade_labels')
-                    ->whereColumn('updated_at', 'created_at')
-                    ->delete();
-            }
-        }
+        DB::table('school_subjects')
+            ->where('seeded_by', self::MARK)
+            ->whereColumn('updated_at', 'created_at')
+            ->delete();
     }
 
     /**

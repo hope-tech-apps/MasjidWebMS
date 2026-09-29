@@ -238,6 +238,84 @@ class SeedSchoolSubjectsMigrationTest extends TestCase
     }
 
     #[Test]
+    public function down_leaves_an_office_row_the_seed_skipped_even_though_it_reads_exactly_like_the_seed(): void
+    {
+        $this->makeMasjid('Burlington Islamic Sunday School', 18);
+
+        // The code deploys first and the seed waits for the owner's yes. Meanwhile
+        // the office adds "Qur'an" at the Subjects screen's defaults: position 0,
+        // every grade, created and updated in the same instant. Column for column
+        // that is the seed's own row, and the seed skips it because it exists.
+        SchoolSubject::withoutMasjidScope()->create(['masjid_id' => 18, 'name' => "Qur'an", 'grade_labels' => null, 'position' => 0]);
+
+        $this->migration()->up();
+        $this->assertSame(["Qur'an", 'Islamic Studies', 'Arabic Language'], $this->names(18));
+
+        // A rollback (a staging up/down/up rehearsal, or a real one) removes what
+        // the seed wrote and never the row the office typed.
+        $this->migration()->down();
+
+        $this->assertSame(["Qur'an"], $this->names(18), "the seed never owned the office's Qur'an");
+    }
+
+    #[Test]
+    public function down_leaves_a_seeded_name_the_office_deleted_and_typed_again_at_the_defaults(): void
+    {
+        $this->makeMasjid('Burlington Islamic Sunday School', 18);
+        $this->migration()->up();
+
+        SchoolSubject::withoutMasjidScope()->where('masjid_id', 18)->where('name', 'Arabic Language')->first()->delete();
+        SchoolSubject::withoutMasjidScope()->create(['masjid_id' => 18, 'name' => 'Arabic Language', 'position' => 2]);
+
+        $this->migration()->down();
+
+        $this->assertSame(['Arabic Language'], $this->names(18), 'the re-typed row is the office\'s, whatever the seed once wrote');
+    }
+
+    #[Test]
+    public function the_seed_marks_every_row_it_writes_and_the_office_screen_never_sends_the_mark(): void
+    {
+        $this->makeMasjid('Burlington Islamic Sunday School', 18);
+        $this->migration()->up();
+
+        $this->assertSame(
+            ['2026_10_03_100300_seed_school_subjects_for_alrazi_and_biss'],
+            SchoolSubject::withoutMasjidScope()->where('masjid_id', 18)->pluck('seeded_by')->unique()->values()->all()
+        );
+        $this->assertArrayNotHasKey('seeded_by', SchoolSubject::withoutMasjidScope()->where('masjid_id', 18)->first()->toArray());
+
+        $office = SchoolSubject::withoutMasjidScope()->create(['masjid_id' => 18, 'name' => 'Seerah']);
+        $this->assertNull($office->fresh()->seeded_by, 'a row typed in the Subjects screen carries no mark');
+    }
+
+    #[Test]
+    public function another_orgs_guide_never_adds_a_subject_to_al_razi(): void
+    {
+        $this->makeMasjid('Al-Razi School', 14);
+        $this->makeMasjid('Another School', 22);
+        $this->guide(14, 'Grade 3', 'Mathematics');
+        $this->guide(22, 'Grade 3', 'Woodwork');
+
+        $this->migration()->up();
+
+        $this->assertSame(["Qur'an", 'Islamic Studies', 'Arabic Language', 'Mathematics'], $this->names(14));
+        $this->assertSame(0, SchoolSubject::withoutMasjidScope()->where('masjid_id', 22)->count());
+    }
+
+    #[Test]
+    public function a_trashed_organisation_is_never_seeded(): void
+    {
+        $razi = $this->makeMasjid('Al-Razi School', 14);
+        $biss = $this->makeMasjid('Burlington Islamic Sunday School', 18);
+        $razi->delete();
+        $biss->delete();
+
+        $this->migration()->up();
+
+        $this->assertSame(0, SchoolSubject::withoutMasjidScope()->count());
+    }
+
+    #[Test]
     public function rolling_the_whole_batch_back_refuses_while_the_office_keeps_a_list(): void
     {
         $this->makeMasjid('Burlington Islamic Sunday School', 18);
