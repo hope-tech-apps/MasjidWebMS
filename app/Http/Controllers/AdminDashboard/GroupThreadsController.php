@@ -16,6 +16,7 @@ use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
 use App\Models\Masjid;
 use App\Models\User;
+use App\Services\Groups\GroupThreadWriter;
 use App\Support\Errors;
 use App\Support\GroupAudience;
 use App\Support\GroupMedia;
@@ -67,7 +68,7 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class GroupThreadsController extends Controller
 {
-    public function __construct(private GroupAudience $audience)
+    public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer)
     {
     }
 
@@ -147,13 +148,10 @@ class GroupThreadsController extends Controller
     {
         $group = Group::findOrFail($group_id);
 
-        $aboutMembershipId = null;
-        $aboutContactId = null;
+        $about = null;
 
         if ($request->input('scope') === GroupThread::SCOPE_PARTICIPANT) {
-            $about = $group->memberships()
-                ->participants()->current()
-                ->find($request->integer('about_membership_id'));
+            $about = $this->writer->aboutMembership($group, $request->integer('about_membership_id'));
 
             if ($about === null) {
                 return response()->json([
@@ -161,58 +159,22 @@ class GroupThreadsController extends Controller
                     'message' => 'That id names no participant of this group, so no conversation can be opened about them.',
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
-
-            $aboutMembershipId = $about->id;
-            $aboutContactId = $about->contact_id;
         }
 
-        $uploads = $this->uploads($request);
-        $hasFirstMessage = $request->filled('body') || $uploads !== [];
-
         try {
-            $thread = DB::transaction(function () use ($request, $group, $aboutMembershipId, $uploads, $hasFirstMessage) {
-                $thread = GroupThread::create([
-                    'group_id' => $group->id,
-                    // The AUTHENTICATED account, never a client-supplied name.
-                    'created_by_user_id' => $request->user()?->id,
-                    'subject' => $request->input('subject'),
-                    'scope' => $request->input('scope'),
-                    'about_membership_id' => $aboutMembershipId,
-                    'retained_until' => $request->input('retained_until'),
-                ]);
-
-                if ($hasFirstMessage) {
-                    $message = $thread->messages()->create([
-                        'author_user_id' => $request->user()?->id,
-                        // A photo-only message stores an empty body; the column
-                        // is NOT NULL and "no text" is what was sent.
-                        'body' => (string) ($request->input('body') ?? ''),
-                    ]);
-
-                    GroupMessageAttachments::store($message, $uploads);
-
-                    // The opener has read what they just wrote; without this,
-                    // their own first message would greet them as "unread".
-                    $this->markRead($thread, $request->user(), (int) $message->id);
-                }
-
-                return $thread;
-            });
-
-            // A thread opened WITH a first message notifies like a reply would;
-            // an empty thread shell notifies no one. A participant thread reaches
-            // the ward's guardian(s); a group-wide thread reaches the feed audience
-            // (the job decides from aboutContactId). afterCommit + fail-soft.
-            if ($hasFirstMessage) {
-                SendGroupNotificationJob::dispatch(
-                    (int) $group->masjid_id,
-                    (int) $group->id,
-                    GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
-                    aboutContactId: $aboutContactId,
-                    authorUserId: $request->user()?->id,
-                    authorContactId: null,
-                )->afterCommit();
-            }
+            // The write itself is GroupThreadWriter's, shared with the scheduled
+            // send: the thread, the first message, its photos, the opener's read
+            // marker and the email to the people it reaches.
+            [$thread] = $this->writer->open(
+                $group,
+                $request->user()?->id,
+                (string) $request->input('subject'),
+                (string) $request->input('scope'),
+                $about,
+                $request->input('body') !== null ? (string) $request->input('body') : null,
+                $this->uploads($request),
+                $request->input('retained_until'),
+            );
 
             return response()->json([
                 'status' => 'success',
