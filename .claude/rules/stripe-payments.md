@@ -9,6 +9,10 @@ paths:
   - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
   - "app/Services/Forms/**"
   - "app/Services/Cart/**"
+  - "app/Http/Controllers/Api/V1/CartsController.php"
+  - "app/Http/Controllers/Api/V1/CartOrdersController.php"
+  - "app/Http/Middleware/EnsureCartEnabled.php"
+  - "app/Console/Commands/PruneCarts.php"
 ---
 # Stripe payments (CRM donations — Connect Standard + direct charges)
 
@@ -617,10 +621,79 @@ Direct charge on the ONE connected account, exactly the rules above.
 - **Adaptive Pricing is off on every cart page** (`adaptive_pricing => ['enabled' => false]`, own
   and linked). A `payment_intent.succeeded` in another currency than the order's is skipped at INFO
   and left to the session event; only the session event may warn "did not match ... refund it".
-- Known limits: a meal line is one meal order per dish (one confirmation e-mail each); a basket
-  collects no name or phone, so a meal order takes the buyer's contact, else the payer's
-  Stripe details, else a plain label; an unknown line type or a form/fund/menu hard-deleted
-  since checkout fails the settlement loudly (retried, never half-recorded).
+- Known limits: a meal line is one meal order per dish (one confirmation e-mail each); an
+  order opened without a buyer name or phone (a late or legacy one) takes the buyer's contact,
+  else the payer's Stripe details, else a plain label; an unknown line type or a form/fund/menu
+  hard-deleted since checkout fails the settlement loudly (retried, never half-recorded).
+
+### The public basket endpoints (slice 5, DECISIONS.md 2026-09-29)
+
+`CartsController` and `CartOrdersController` (routes/api_v1.php, prefix /api/v1) EXPOSE the
+services above. `CartLineAdder` adds a line; pricing, checkout and acknowledge are the
+services, called as they are. Rules a change here must keep:
+
+- **Dark by default.** Every route is behind the `cart.enabled` middleware
+  (`EnsureCartEnabled`): `config/cart.php` `enabled` (`CART_ENABLED`, false) and `masjid_ids`
+  (`CART_MASJID_IDS`; empty = every organisation once on; a malformed list fails CLOSED to
+  nobody). Off, or off for the header's organisation, is the router's own not-found exception:
+  the same bytes as an unknown route, before any throttle or query. The routes are registered
+  either way, so the route cache is the same.
+- **The house `/api/v1` idiom.** Organisation = the `masjid-id` header int-cast (`<= 0` is
+  400), then `PublicTenant::exists()`. The routes bind no tenant, so EVERY query filters
+  `masjid_id` by hand (scope bypassed with `withoutMasjidScope()` on purpose) and every create
+  stamps it. Envelope `{status, message, data}`; a validation error is 422
+  `{status:'failed', data:{field:[...]}}` (form-encoded booleans coerced first).
+- **The token.** `POST /carts` returns 32 random bytes as hex ONCE, in the JSON body (CORS
+  exposes no response header) and never again. The database keeps `Cart::hashToken()`:
+  HMAC-SHA256 on `APP_KEY` (the FamilyInviteService construction, not a bare SHA-256), looked
+  up by indexed equality AND the header's organisation. A wrong token, another organisation's
+  basket, an expired one, a missing header and an offboarded organisation are ONE 404, byte for
+  byte. Sliding expiry: every successful write pushes `expires_at` `cart.ttl_days` out.
+- **A line is validated as its own door validates it, then PRICED before it is kept.** Form:
+  `withoutUnusedPriceAnswers`, `FormSchema::validator`, `only()` (the payload is the validated
+  answers); a form with `fileFields() !== []` is refused (422, one sentence). Meal: quantity
+  1..99, a catalogue line's pickup read in the ORGANISATION's timezone and stored as an
+  absolute instant. Donation: `amount_minor` 100..99999999, `zakat` only when the giver
+  answered, `recurring` refused. The line is inserted under the basket's row lock, the whole
+  basket is priced by `CartPricer`, and a line that comes back `gone` is rolled back and
+  refused with the source's own reason. At most `cart.max_lines` (25) lines.
+- **`client_line_key` is the replay guard** (`^[A-Za-z0-9_-]{8,64}$`, unique per basket): the
+  same key and request returns the line it made without validating or pricing again; the same
+  key with a different request (compared by the keyed `client_line_hash`) is a 409. A filled
+  `website` honeypot is a fake 200 that writes nothing.
+- **The door gates live in the line sources**, so checkout re-asks them: the `giving` module off
+  (`DonationLineSource`), the `jummah_lunch` capability off (`MealLineSource`), a form that
+  asks for a file (`FormLineSource`). `canAcceptDonations()` is the payee rule
+  (`CartPricer::ownAccount()`), not repeated.
+- **Checkout** takes `{buyer:{name,email,phone}, return_path, website}`: name
+  `required|max:120`, email `required|email:rfc|max:190`, phone `required|max:32` when the
+  basket has a dish, else optional. The return base is `FormPaymentReturn::base()` exactly as the
+  form door builds it; a refusal is its one message. A changed basket is a 409 with `notices`
+  and `view_fingerprint` (acknowledge, then pay); any other refusal is a 422 sentence. The buyer
+  is frozen on `orders.buyer_name` / `buyer_phone` / `buyer_email`: settlement records a meal
+  order under them (over Stripe's, and over the `Online order N` placeholder, which stays the
+  fallback) and a gift's donor falls back to them when Stripe's `customer_details` lack them.
+  Staging anonymises both columns; `MemberAccountDeletion` clears them on an unpaid order.
+- **The status read is payment state ONLY** (`GET /cart-orders/{uuid}`, `whereUuid`):
+  `{status: pending|paid|expired, order_number, total_minor, currency}`, built field by field.
+  The uuid is a bearer; the limiter is keyed by it (30/h) with a 300/min per-connection guard
+  for a made-up uuid, as the form status read is. The lunch and kitchen reads return a name and
+  sit on a per-IP limiter, so they are NOT the pattern.
+- **The view says only what the page draws.** Never a line's payload (the answers), the payee
+  account, or any fingerprint but the one `acknowledge` needs.
+- **Throttles** (`AppServiceProvider`, limits in `config/cart.php`): `cart-create` 20/h per
+  IP|masjid; `cart-write` (add, remove, acknowledge) 120/h, `cart-read` 600/h and
+  `cart-checkout` 20/h per token DIGEST, with a token that names no live basket sent to a
+  per-connection bucket of the same size instead; a 429 says the wait in its body.
+- **Retention.** `cart:prune` (daily 03:41) deletes OPEN baskets whose expiry is more than a
+  day past, lines and answers with them, unless a PENDING order's page could still be paid. A
+  payment that lands for an order whose basket is gone still settles and records every line:
+  settlement writes from `order_items`, never the basket, and `orders.cart_id` is nullOnDelete
+  (`CartPruneTest` proves it). Adding a line never edits one in place, but
+  `CartCheckoutService::acknowledge()` (exposed by `POST /cart/acknowledge`) takes a repriced
+  line's new quantity in place, so `closeCart()`'s match, which leaves quantity out, is now
+  reachable in one rare race (a page paid as it lapses after the shopper acknowledged a
+  different quantity of the same line). Not changed here; ASSUMPTIONS #28 and #36.
 
 ## Tenancy note
 

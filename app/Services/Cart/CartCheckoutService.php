@@ -65,7 +65,9 @@ use Throwable;
  * whose fingerprint already has a paid order on this cart, so a page for the same lines
  * can never be opened after they were paid for, even on a cart that was left open.
  *
- * Reachable from no endpoint until the public cart endpoints exist.
+ * Reached from CartsController (the public basket endpoints, POST /api/v1/cart/checkout and
+ * /cart/acknowledge), which is behind the `cart.enabled` gate and dark until config/cart.php
+ * switches it on.
  */
 class CartCheckoutService
 {

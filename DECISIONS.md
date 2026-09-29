@@ -5495,3 +5495,60 @@ on the service is the same one the step already uses); ignore an unpaid order's 
 Rationale: money is mailed for once, but a receipt that failed to send is not lost, and a dispute is never
 dropped for arriving early. Pinned by `tests/Feature/Cart/CartSettlementRound3Test.php`; no existing test
 changed. ASSUMPTIONS #33, #34.
+
+## 2026-09-29 — Universal cart public endpoints (slice 5): dark by default, the house idiom, priced before it is kept
+Decision: the basket is exposed over HTTP (`CartsController`, `CartOrdersController`, `CartLineAdder`,
+routes in `routes/api_v1.php`) and INERT until the owner switches it on. (0) `config/cart.php`
+`enabled` (`CART_ENABLED`, false) and `masjid_ids` (`CART_MASJID_IDS`; empty = every organisation once
+on; anything malformed becomes `[0]`, nobody, never "everyone"). One middleware, `cart.enabled`,
+throws the router's own not-found exception with the router's own message, so an off cart is the same
+bytes as an unknown route in debug and out of it, before any throttle or query; the routes are
+registered either way, so the route cache is stable. (1) The `/api/v1` house idiom: `masjid-id` header
+int-cast, `<= 0` 400, `PublicTenant::exists()`, every query hand-filtered and every create stamped, the
+`{status, message, data}` envelope, a 422 `{status:'failed', data:{field:[...]}}`. The token is 32 random
+bytes as hex, returned once in the JSON body and stored as `Cart::hashToken()` = HMAC-SHA256 on
+`APP_KEY` (the FamilyInviteService construction; the migration comment that said plain SHA-256 is
+fixed); a wrong token, another organisation's, an expired, offboarded or missing basket are one 404
+(`This basket is not available.`, the same sentence for the organisation half). Expiry slides 7 days on
+every SUCCESSFUL write. A paid (`checked_out`) basket still reads and answers 422 to every write.
+Each line is validated as its own door validates it (form: `withoutUnusedPriceAnswers`, `FormSchema`
+validator, `only()`; a form with file fields refused in one sentence; meal 1..99, a catalogue pickup read
+in the ORGANISATION's timezone and stored as an absolute instant because the pricer and settlement
+parse it without a zone, and required as the kitchen door requires it; donation 100..99999999, `zakat`
+only when answered, `recurring` refused), then inserted under the basket's row lock and PRICED by the
+unchanged `CartPricer` over the whole basket; a line that comes back `gone` rolls back and is refused
+with the source's own reason. A form line's price and place count come from `FormLineSource`, a dish's
+price from the dish. `client_line_key` (unique per basket) makes an add idempotent; the same key with a
+different request is a 409, told apart by a second column, `client_line_hash` (the keyed
+`FormResponse::payloadHash` of what was asked for, taken BEFORE validation), so a retry is recognised as
+itself whatever has changed since (a form that closed, numbers encoded as strings). The add answer is
+the priced basket plus `line_id`. (2) The doors' gates the cart services lacked now sit in the line
+SOURCES, so checkout re-asks them: `giving` off (`DonationLineSource`, the door's sentence verbatim),
+`jummah_lunch` off (`MealLineSource`), a form with file fields (`FormLineSource`); each `reprice()` gained
+an optional trailing `?Masjid $org`, passed by `CartPricer`, loaded from the model when omitted so the
+gate can never be skipped; `canAcceptDonations()` stays the payee rule. (3) `orders.buyer_name` and
+`buyer_phone` (unshipped orders migration, edited in place); checkout's signature gained two optional
+arguments; settlement records a meal order under buyer name/phone first (then contact, then Stripe,
+then the placeholder), and `detailsWithBuyer` generalises from email to name and phone; a page handed
+back takes the name and phone typed last but keeps the email it was opened with. Staging anonymises both
+columns; `MemberAccountDeletion` clears them on unpaid orders. (4) Five named limiters beside the
+form's: per token DIGEST for `cart-write`/`cart-read`/`cart-checkout`, and a token that names no live
+basket meets a per-connection bucket of the same size instead (the brief's "falling back to IP|masjid",
+widened from "no header" to "no live basket" so junk tokens cannot mint a fresh allowance); a 429 says
+the wait in its body in the form's shape. (5) `cart:prune`, daily 03:41: OPEN baskets whose expiry is more
+than a day past, unless a PENDING order's page could still be paid (`checkout_expires_at` less than an
+hour behind); lines cascade. Settlement needed NO change to settle a pruned basket's order: it writes
+from `order_items` and `orders.cart_id` is nullOnDelete (`CartPruneTest`).
+Alternatives: a per-route feature check in each controller (rejected: one middleware is one place, and it
+runs before the throttles); validating and pricing a single line without the whole basket (rejected: a
+second copy of the pricer's payee and currency rules, in code the brief says to leave alone); comparing a
+replay with the stored line instead of a stored hash (rejected: it would need the request re-validated,
+and a retry after a form closed would fail); a `Cart-Token` cookie (rejected: CORS carries no
+credentials); putting the giving and lunch checks in the endpoint (rejected: checkout would not re-ask
+them, and a basket sits for days).
+Rationale: production ships from `main`, so nothing here may be reachable until the owner says so, and
+once it is, it must be the doors' floor at least: tenancy by hand, a uniform 404, no answers in any
+response, the door's own validation, and money never opened for what a door would refuse. Every rule
+has a test in `tests/Feature/Cart/Endpoints/`; no existing test changed. ASSUMPTIONS #25 (closed),
+#35-#44 (open ones name what the owner must check before `CART_ENABLED`: MEC's return origin and its
+capabilities).
