@@ -3,10 +3,12 @@
 namespace App\Services\Domains;
 
 use App\Models\MasjidDomain;
+use App\Models\MasjidDomainChange;
 use App\Services\Cloudflare\CloudflareRemover;
 use App\Services\Cloudflare\CloudflareResult;
 use App\Services\Cloudflare\CloudflareService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -45,7 +47,11 @@ class DomainDetacher
     ) {
     }
 
-    public function detach(MasjidDomain $row, ?int $actor = null): DetachResult
+    /**
+     * @param  string|null  $operator  who, for the ledger row a started detach writes (defaults to the actor's id)
+     * @param  string|null  $reason  why, for the same row
+     */
+    public function detach(MasjidDomain $row, ?int $actor = null, ?string $operator = null, ?string $reason = null): DetachResult
     {
         $host = $row->host;
 
@@ -70,6 +76,16 @@ class DomainDetacher
                 return $this->refused($row);
             }
 
+            // A serving host an alias still redirects to: detaching it would
+            // leave the alias's rule sending visitors to an address that no
+            // longer answers. The alias goes first (domains:release orders them
+            // so).
+            if ($row->status !== MasjidDomain::STATUS_DETACHING && ($aliases = $row->aliasHosts()) !== []) {
+                return new DetachResult(DetachResult::REFUSED, $host,
+                    manualSteps: array_map(fn (string $alias) => "Detach {$alias} first: it redirects to {$host}.", $aliases),
+                    error: 'Detach ' . implode(' and ', $aliases) . " first: it redirects to {$host}, and its rule would go on sending visitors to an address that no longer answers. Nothing was changed.");
+            }
+
             // Without the token Studio could stop serving the host but never
             // remove what it made, so a detach that has something to remove
             // does not start (one already under way keeps waiting on the token).
@@ -80,22 +96,30 @@ class DomainDetacher
                     error: "CLOUDFLARE_STUDIO_TOKEN is not set, so Studio cannot remove what it created in Cloudflare for {$host}. Nothing was changed.");
             }
 
-            return $this->run($row, $actor);
+            return $this->run($row, $actor, $operator ?? ($actor !== null ? "user #{$actor}" : 'unattributed'), $reason ?? 'Detached through Studio.');
         } finally {
             $lock->release();
         }
     }
 
-    private function run(MasjidDomain $row, ?int $actor): DetachResult
+    private function run(MasjidDomain $row, ?int $actor, string $operator, string $reason): DetachResult
     {
+        // A detach that starts is ledgered with who asked and why (review
+        // follow-up 10); a retry of one already under way is not a new act.
         if ($row->status !== MasjidDomain::STATUS_DETACHING) {
-            $row->forceFill([
-                'status' => MasjidDomain::STATUS_DETACHING,
-                'waiting_on' => null,
-                'last_error' => null,
-                'stage_started_at' => null,
-                'next_check_at' => null,
-            ])->save();
+            $before = $row->ledgerShape();
+
+            DB::transaction(function () use ($row, $before, $operator, $reason) {
+                $row->forceFill([
+                    'status' => MasjidDomain::STATUS_DETACHING,
+                    'waiting_on' => null,
+                    'last_error' => null,
+                    'stage_started_at' => null,
+                    'next_check_at' => null,
+                ])->save();
+
+                $row->recordChange(MasjidDomainChange::ACTION_DETACH, $before, $operator, $reason);
+            });
         }
 
         $removed = [];
@@ -213,6 +237,18 @@ class DomainDetacher
             default => null,
         };
 
+        // Said once per change of state, not on every five-minute retry: a
+        // detach that keeps failing the same way is one warning, and a new way
+        // of failing is another (review follow-up 7).
+        if ($row->waiting_on !== $waitingOn || $row->last_error !== $result->error) {
+            Log::warning('Studio could not finish detaching a web address; it will try again.', [
+                'masjid_domain_id' => $row->id,
+                'host' => $row->host,
+                'waiting_on' => $waitingOn,
+                'error' => $result->error,
+            ]);
+        }
+
         $row->forceFill([
             'waiting_on' => $waitingOn,
             'last_error' => $result->error,
@@ -220,6 +256,66 @@ class DomainDetacher
         ])->save();
 
         return new DetachResult(DetachResult::PENDING, $row->host, $removed, $manual, $result->error);
+    }
+
+    /**
+     * A redirect rule left on a SERVING row, which only a collapse whose undo
+     * failed leaves (review follow-up 4): the host redirects while the row
+     * says it serves. Taken out by `domains:reconcile` until it is gone, by
+     * its id and only while it carries this row's own ref, like any detach.
+     * False when another writer holds the row.
+     */
+    public function removeStrayRedirectRule(MasjidDomain $row): bool
+    {
+        $lock = DomainAttacher::lockFor($row->id);
+
+        if (! $lock->get()) {
+            return false;
+        }
+
+        try {
+            try {
+                $row->refresh();
+            } catch (ModelNotFoundException) {
+                return true;
+            }
+
+            if ($row->isRedirect() || $row->cf_redirect_rule_id === null) {
+                return true;
+            }
+
+            $result = $this->remover->removeRedirectRule($row);
+
+            if ($result->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
+                $row->forceFill([
+                    'cf_redirect_rule_id' => null,
+                    'waiting_on' => $row->waiting_on === 'rule_cleanup' ? null : $row->waiting_on,
+                    'last_error' => null,
+                ])->save();
+
+                Log::warning('Studio removed a leftover redirect rule from a serving web address.', ['masjid_domain_id' => $row->id, 'host' => $row->host]);
+
+                return true;
+            }
+
+            if ($row->last_error !== $result->error) {
+                Log::warning('Studio could not remove a leftover redirect rule; it will try again.', [
+                    'masjid_domain_id' => $row->id,
+                    'host' => $row->host,
+                    'error' => $result->error,
+                ]);
+            }
+
+            $row->forceFill([
+                'waiting_on' => 'rule_cleanup',
+                'last_error' => $result->error,
+                'next_check_at' => now()->addMinutes(30),
+            ])->save();
+
+            return false;
+        } finally {
+            $lock->release();
+        }
     }
 
     /** Whether Cloudflare holds anything for the row that Studio itself made. */

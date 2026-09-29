@@ -76,9 +76,9 @@ class ReconcileDomains extends Command
         $rows = self::selection($configured, $ids !== [] ? $ids : null)->orderBy('id')->get();
 
         // A confirmed host's daily re-probe needs no token, so it is not
-        // "waiting on" one and is not counted here (W2 S4).
-        $waiting = $rows->reject(fn (MasjidDomain $row) => $row->underReconfirmation()
-            || $row->status === MasjidDomain::STATUS_DETACHING);
+        // "waiting on" one and is not counted here (W2 S4). A detach that
+        // cannot finish without the token is (review follow-up 7).
+        $waiting = $rows->reject(fn (MasjidDomain $row) => $row->underReconfirmation());
 
         if (! $configured && $waiting->isNotEmpty()
             && Cache::add(self::NO_TOKEN_WARNING_KEY, true, now()->addHour())) {
@@ -89,11 +89,33 @@ class ReconcileDomains extends Command
         }
 
         $results = [];
+        $reprobeCap = max(1, (int) config('cloudflare.reconfirm.per_run', 20));
+        $reprobes = 0;
+        $deferred = 0;
 
         foreach ($rows as $row) {
             $before = $row->status;
 
+            // Re-probes are spread across runs: at most `reconfirm.per_run` a
+            // run, so a first deploy (every confirmed host due at once) is not
+            // one burst of requests. The rest stay due and go on the next run.
+            if ($row->underReconfirmation() && $row->cf_redirect_rule_id === null) {
+                if ($reprobes >= $reprobeCap) {
+                    $deferred++;
+
+                    continue;
+                }
+
+                $reprobes++;
+            }
+
             try {
+                // A rule a failed collapse left on a serving host (review
+                // follow-up 4) goes first; the row then advances as usual.
+                if (! $row->isRedirect() && $row->cf_redirect_rule_id !== null) {
+                    $detacher->removeStrayRedirectRule($row);
+                }
+
                 if ($row->status === MasjidDomain::STATUS_DETACHING) {
                     $gone = $detacher->detach($row)->outcome === DetachResult::DETACHED;
                     $results[] = [
@@ -127,10 +149,12 @@ class ReconcileDomains extends Command
             $this->line((string) json_encode([
                 'token_configured' => $configured,
                 'selected' => count($results),
+                'reprobes_deferred' => $deferred,
                 'rows' => $results,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         } else {
-            $this->info(($configured ? 'Token configured.' : 'No token: nothing is sent to Cloudflare.') . ' Selected ' . count($results) . ' row(s).');
+            $this->info(($configured ? 'Token configured.' : 'No token: nothing is sent to Cloudflare.') . ' Selected ' . count($results) . ' row(s).'
+                . ($deferred > 0 ? " {$deferred} re-probe(s) left for the next run." : ''));
 
             foreach ($results as $result) {
                 $this->line("  #{$result['id']} {$result['host']}: {$result['status_before']} -> " . ($result['status'] ?? 'error: ' . ($result['error'] ?? '')));
@@ -182,6 +206,8 @@ class ReconcileDomains extends Command
             ->where(fn (Builder $q) => $q
                 // What the detacher finishes (W2 S3), whatever the organisation's state.
                 ->where(fn (Builder $detaching) => $due($detaching->where('status', MasjidDomain::STATUS_DETACHING)))
+                // A redirect rule left on a serving host by a failed collapse.
+                ->orWhere(fn (Builder $stray) => $due($stray->where('role', MasjidDomain::ROLE_SERVING)->whereNotNull('cf_redirect_rule_id')))
                 ->orWhere($attaching));
     }
 }

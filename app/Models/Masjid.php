@@ -747,7 +747,8 @@ class Masjid extends Model implements HasMedia
                 ->where(fn ($q) => $q->where('cf_zone_created', true)
                     ->orWhereNotNull('cf_zone_id')
                     ->orWhereNotNull('cf_dns_record_id')
-                    ->orWhereNotNull('cf_pages_domain_id'))
+                    ->orWhereNotNull('cf_pages_domain_id')
+                    ->orWhereNotNull('cf_redirect_rule_id'))
                 ->orderBy('id')
                 ->get();
 

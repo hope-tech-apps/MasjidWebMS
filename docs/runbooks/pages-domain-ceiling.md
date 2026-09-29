@@ -54,16 +54,17 @@ domain. Clients attached before S5 may still hold two until step 1 below.
    other becomes a Cloudflare redirect rule and uses no slot. This frees one
    slot per two-host client and changes nothing a visitor sees. Tool:
    `php artisan domains:collapse-alias {domain_id}` (W2 S5; dry run unless
-   `--execute`). It needs the token's redirect scope (Zone › Single Redirect:
-   Edit) and writes only in a zone Studio created or one listed in
-   `cloudflare.redirect_zones`; live clients attached before Studio (imported
+   `--execute --operator=... --reason=...`, which are ledgered). It needs the
+   token's redirect scope (Zone › Single Redirect: Edit) and writes only in a
+   zone Studio created for that organisation or one listed in
+   `CLOUDFLARE_REDIRECT_ZONES`; live clients attached before Studio (imported
    rows) are refused.
 2. **Detach the hosts of trashed or departed organisations**, each with the
    owner's go. Tool: `php artisan domains:release {masjid_id}` (W2 S3; dry run
-   unless `--execute`). It removes only the Cloudflare objects Studio itself
-   created. Until S3 ships, remove them by hand with the steps the Studio
-   domain screen shows for that row (`MasjidDomain::removalSteps()`), then ask
-   the platform owner to remove the row.
+   unless `--execute --operator=... --reason=...`, which are ledgered; a live,
+   untrashed organisation also needs `--force`). It removes only the
+   Cloudflare objects Studio itself created, and exits non-zero if any detach
+   did not finish.
 3. **Upgrade the Cloudflare plan.** Pro allows 250 custom domains per project.
    This is a cost decision for the owner. After the upgrade, set
    `CLOUDFLARE_PAGES_DOMAIN_CEILING=250` in production's `.env` (parse-check it,

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Services\Cloudflare\CloudflareService;
+use App\Services\Domains\DetachResult;
 use App\Services\Domains\DomainDetacher;
 use Illuminate\Console\Command;
 
@@ -30,6 +31,9 @@ class ReleaseDomains extends Command
     protected $signature = 'domains:release
         {masjid_id : The organisation, trashed or not}
         {--execute : Detach for real; without it nothing is sent or changed}
+        {--operator= : Who is running it, for the ledger (required with --execute)}
+        {--reason= : Why, for the ledger (required with --execute)}
+        {--force : Also detach a LIVE (not trashed) organisation\'s addresses}
         {--json : Print the run as JSON}';
 
     protected $description = 'Detach every web address Studio attached for one organisation, removing only what Studio created in Cloudflare. A dry run unless --execute.';
@@ -45,6 +49,24 @@ class ReleaseDomains extends Command
         }
 
         $execute = (bool) $this->option('execute');
+        $operator = trim((string) $this->option('operator'));
+        $reason = trim((string) $this->option('reason'));
+
+        // Each detach started here is ledgered, like S6's actions (review
+        // follow-up 10), so an executed run needs both.
+        if ($execute && ($operator === '' || $reason === '')) {
+            $this->error('--execute needs --operator and --reason: they go into the ledger with each detach. Nothing was changed.');
+
+            return self::FAILURE;
+        }
+
+        // A live organisation's addresses are its website. Taking them all down
+        // is for a trashed or departed one; anything else needs --force.
+        if ($execute && ! $masjid->trashed() && ! $this->option('force')) {
+            $this->error("Organisation #{$masjid->id} is live, not trashed: detaching every address takes its website down. Trash it first, or add --force if that is really meant. Nothing was changed.");
+
+            return self::FAILURE;
+        }
 
         if ($execute && ! $cloudflare->isConfigured()) {
             $this->error('CLOUDFLARE_STUDIO_TOKEN is not set, so nothing can be detached from Cloudflare. Nothing was changed.');
@@ -52,8 +74,15 @@ class ReleaseDomains extends Command
             return self::FAILURE;
         }
 
-        $rows = MasjidDomain::query()->where('masjid_id', $masjid->id)->orderBy('id')->get();
+        // Redirect rows first: a serving host is refused while an alias still
+        // points at it (review follow-up 2).
+        $rows = MasjidDomain::query()
+            ->where('masjid_id', $masjid->id)
+            ->orderByRaw('CASE WHEN role = ? THEN 0 ELSE 1 END', [MasjidDomain::ROLE_REDIRECT])
+            ->orderBy('id')
+            ->get();
         $report = [];
+        $failed = false;
 
         foreach ($rows as $row) {
             if (! $row->ownedByStudio()) {
@@ -68,7 +97,9 @@ class ReleaseDomains extends Command
                 continue;
             }
 
-            $report[] = ['id' => $row->id] + $detacher->detach($row)->toArray();
+            $result = $detacher->detach($row, null, $operator, $reason);
+            $report[] = ['id' => $row->id] + $result->toArray();
+            $failed = $failed || $result->outcome !== DetachResult::DETACHED;
         }
 
         $out = [
@@ -105,6 +136,8 @@ class ReleaseDomains extends Command
             }
         }
 
-        return self::SUCCESS;
+        // A run that did not finish every detach says so in its exit code, so
+        // a script or an operator cannot read a partial release as done.
+        return $failed ? self::FAILURE : self::SUCCESS;
     }
 }

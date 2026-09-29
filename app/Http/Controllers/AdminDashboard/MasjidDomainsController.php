@@ -219,7 +219,14 @@ class MasjidDomainsController extends Controller
     public function detach($masjid_id, $domain_id, DomainDetacher $detacher)
     {
         $domain = $this->domain($masjid_id, $domain_id);
-        $result = $detacher->detach($domain, Auth::id());
+        $user = Auth::user();
+        // The ledger records who pressed Detach (review follow-up 10).
+        $result = $detacher->detach(
+            $domain,
+            Auth::id(),
+            $user ? "user #{$user->id} {$user->email}" : null,
+            'Detached from the Studio domain panel.',
+        );
 
         if ($result->outcome === DetachResult::REFUSED || $result->outcome === DetachResult::BUSY) {
             return response()->json([

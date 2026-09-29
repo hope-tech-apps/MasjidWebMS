@@ -774,7 +774,10 @@ class DomainAttacher
             return;
         }
 
-        $domain->next_check_at = now()->addHours($every);
+        // Each host a fixed offset of up to an hour past the day, its own, so
+        // hosts confirmed together are not re-probed together every day
+        // (review follow-up 9). The marker has gone well before either.
+        $domain->next_check_at = now()->addHours($every)->addMinutes(crc32($domain->host) % 60);
 
         $wasConfirmed = $domain->serving_confirmed_at !== null;
         // A confirmed row keeps the time it was first confirmed; only a

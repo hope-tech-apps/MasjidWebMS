@@ -42,6 +42,7 @@ class ImportedDomains extends Command
         {--id=* : The masjid_domains ids to release or adopt}
         {--operator= : Who is running it, for the ledger (required with --execute)}
         {--reason= : Why, for the ledger (required with --execute)}
+        {--i-checked : For release: a person has checked the host no longer serves its organisation}
         {--execute : Make the change; without it nothing is changed}
         {--json : Print the result as JSON}';
 
@@ -74,6 +75,16 @@ class ImportedDomains extends Command
 
         if ($execute && ($operator === '' || $reason === '')) {
             $this->error('--execute needs --operator and --reason: they go into the ledger with the change. Nothing was changed.');
+
+            return self::FAILURE;
+        }
+
+        // One probe missing is weak evidence: reserved rows are the hosts the
+        // probe already failed to confirm at import. Releasing one hands a host
+        // to whoever asks next, so a person says they checked (review
+        // follow-up 11), and the probe must still not match.
+        if ($execute && $action === 'release' && ! $this->option('i-checked')) {
+            $this->error('release --execute needs --i-checked: confirm a person has checked each host no longer serves its organisation (DNS, the site itself). Nothing was changed.');
 
             return self::FAILURE;
         }

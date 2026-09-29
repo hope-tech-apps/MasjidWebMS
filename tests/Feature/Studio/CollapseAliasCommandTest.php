@@ -54,6 +54,8 @@ class CollapseAliasCommandTest extends TestCase
         $this->assertSame($expect, Artisan::call('domains:collapse-alias', array_filter([
             'domain_id' => $row->id,
             '--execute' => $execute,
+            '--operator' => $execute ? 'owner' : null,
+            '--reason' => $execute ? 'free a Pages slot' : null,
             '--json' => true,
         ])));
 

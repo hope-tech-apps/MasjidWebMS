@@ -38,6 +38,14 @@ class DomainProbe
 {
     public const TIMEOUT_SECONDS = 5;
 
+    /**
+     * The most of a body a probe will take (review follow-up 6). Only the
+     * status and the headers decide anything; the renderer's /api/tenant and a
+     * redirect are a few hundred bytes. A host that sends more is cut off,
+     * which reads as "no answer", a miss.
+     */
+    public const MAX_BODY_BYTES = 65536;
+
     public const HEADER = 'x-manara-tenant';
 
     public function __construct(private readonly HostResolver $resolver)
@@ -126,7 +134,14 @@ class DomainProbe
         $resolve = $host . ':443:' . (str_contains($pinned, ':') ? "[{$pinned}]" : $pinned);
 
         try {
-            $response = Http::withOptions(['curl' => [CURLOPT_RESOLVE => [$resolve]]])
+            $response = Http::withOptions(['curl' => [
+                CURLOPT_RESOLVE => [$resolve],
+                // Refused up front when the length is declared, and cut off
+                // mid-transfer when it is not.
+                CURLOPT_MAXFILESIZE => self::MAX_BODY_BYTES,
+                CURLOPT_NOPROGRESS => false,
+                CURLOPT_XFERINFOFUNCTION => static fn ($curl, int $downloadTotal, int $downloaded): int => $downloaded > self::MAX_BODY_BYTES ? 1 : 0,
+            ]])
                 ->withoutRedirecting()
                 ->timeout(self::TIMEOUT_SECONDS)
                 ->connectTimeout(self::TIMEOUT_SECONDS)
@@ -180,6 +195,34 @@ class DomainProbe
         return $result;
     }
 
+    /** The IPv4 address an IPv6 address carries in one of the forms above, or null. */
+    private static function embeddedIpv4(string $address): ?string
+    {
+        if (! str_contains($address, ':')) {
+            return null;
+        }
+
+        $bytes = @inet_pton($address);
+
+        if ($bytes === false || strlen($bytes) !== 16) {
+            return null;
+        }
+
+        $v4 = match (true) {
+            // ::/96 (IPv4-compatible) and ::ffff:0:0/96 (IPv4-mapped); not ::
+            // or ::1, which filter_var already refuses as reserved.
+            str_starts_with($bytes, str_repeat("\0", 10) . "\xff\xff") => substr($bytes, 12, 4),
+            str_starts_with($bytes, str_repeat("\0", 12)) && substr($bytes, 12, 4) !== "\0\0\0\0" && substr($bytes, 12, 4) !== "\0\0\0\1" => substr($bytes, 12, 4),
+            // NAT64 well-known prefix 64:ff9b::/96.
+            str_starts_with($bytes, "\x00\x64\xff\x9b" . str_repeat("\0", 8)) => substr($bytes, 12, 4),
+            // 6to4 2002::/16: the IPv4 address is the next 32 bits.
+            str_starts_with($bytes, "\x20\x02") => substr($bytes, 2, 4),
+            default => null,
+        };
+
+        return $v4 === null ? null : inet_ntop($v4);
+    }
+
     /**
      * Whether an address is one the probe may connect to: globally routable,
      * so not loopback, private (RFC 1918, fc00::/7), link-local, CGNAT or any
@@ -190,6 +233,14 @@ class DomainProbe
     {
         if (preg_match('/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i', $address, $m) === 1) {
             $address = $m[1];
+        }
+
+        // IPv6 forms that carry an IPv4 address and reach it (review
+        // follow-up 5): IPv4-mapped ::ffff:0:0/96 and IPv4-compatible ::/96
+        // written in hex, NAT64 64:ff9b::/96 and 6to4 2002::/16. Each is
+        // public only if the address it carries is.
+        if (($embedded = self::embeddedIpv4($address)) !== null) {
+            return self::isPublicAddress($embedded);
         }
 
         return filter_var(

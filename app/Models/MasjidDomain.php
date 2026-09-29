@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -112,7 +113,7 @@ class MasjidDomain extends Model
     public const VERIFIED_BY_PROBE = 'probe';
 
     /** What a row is waiting on (`waiting_on`), set by App\Services\Domains\DomainAttacher. */
-    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity', 'canonical'];
+    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity', 'canonical', 'rule_cleanup'];
 
     /**
      * ONE fixed key for the CORS origin list. Production's cache store is the
@@ -288,6 +289,24 @@ class MasjidDomain extends Model
         return $this->belongsTo(self::class, 'redirect_to_id');
     }
 
+    /**
+     * The redirect rows that send visitors here (W2 S5). While any exists this
+     * row is neither deleted nor detached: the alias's rule would go on sending
+     * people to an address that no longer answers.
+     */
+    public function redirectsHere(): HasMany
+    {
+        return $this->hasMany(self::class, 'redirect_to_id');
+    }
+
+    /** @return list<string> the hosts that still redirect here */
+    public function aliasHosts(): array
+    {
+        return $this->exists
+            ? $this->redirectsHere()->orderBy('host')->pluck('host')->all()
+            : [];
+    }
+
     public function isRedirect(): bool
     {
         return $this->role === self::ROLE_REDIRECT;
@@ -300,9 +319,11 @@ class MasjidDomain extends Model
 
     /**
      * Whether Studio may write a redirect rule or placeholder record in this
-     * row's zone (W2 S5): a zone Studio itself created, recorded on any row of
-     * it, or one the owner listed in `cloudflare.redirect_zones`. Everything
-     * else, including every zone in the account before S5, is refused.
+     * row's zone (W2 S5): a zone Studio itself created FOR THIS ORGANISATION,
+     * recorded on one of its own rows, or one the owner listed in
+     * `cloudflare.redirect_zones`. Everything else, including every zone in the
+     * account before S5 and a zone Studio created for another organisation,
+     * is refused.
      */
     public function redirectZoneAllowed(): bool
     {
@@ -310,7 +331,11 @@ class MasjidDomain extends Model
             return true;
         }
 
-        return self::query()->where('zone_apex', $this->zone_apex)->where('cf_zone_created', true)->exists();
+        return self::query()
+            ->where('masjid_id', $this->masjid_id)
+            ->where('zone_apex', $this->zone_apex)
+            ->where('cf_zone_created', true)
+            ->exists();
     }
 
     public function createdBy(): BelongsTo
@@ -600,7 +625,8 @@ class MasjidDomain extends Model
             && $this->cf_zone_id === null
             && $this->cf_dns_record_id === null
             && $this->cf_pages_domain_id === null
-            && $this->cf_redirect_rule_id === null;
+            && $this->cf_redirect_rule_id === null
+            && $this->aliasHosts() === [];
     }
 
     /**
@@ -644,6 +670,10 @@ class MasjidDomain extends Model
 
         $steps = [];
 
+        foreach ($this->aliasHosts() as $alias) {
+            $steps[] = "Detach {$alias} first: it redirects to {$this->host}, and its rule would go on sending visitors to an address that no longer answers.";
+        }
+
         if ($this->cf_pages_domain_id !== null && ! $this->cf_pages_domain_created) {
             $steps[] = $this->pagesDomainRemovalStep();
         }
@@ -683,6 +713,10 @@ class MasjidDomain extends Model
     {
         $remove = [];
         $manual = [];
+
+        foreach ($this->aliasHosts() as $alias) {
+            $manual[] = "Detach {$alias} first: it redirects to {$this->host}. Studio refuses to detach {$this->host} until it has gone.";
+        }
 
         if ($this->cf_redirect_rule_id !== null) {
             $remove[] = "the redirect rule for {$this->host} in the {$this->zone_apex} zone, if it is still Studio's";
@@ -816,14 +850,43 @@ class MasjidDomain extends Model
         ]);
     }
 
+    /**
+     * One ledger row for a change the caller has just made to this row, in the
+     * caller's transaction (W2 S3 detach, S5 collapse), and a warning, which
+     * production logs.
+     *
+     * @param  array<string, mixed>|null  $before  ledgerShape() as it was
+     */
+    public function recordChange(string $action, ?array $before, string $operator, string $reason): void
+    {
+        MasjidDomainChange::create([
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'action' => $action,
+            'before' => $before,
+            'after' => $this->exists ? $this->ledgerShape() : null,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+
+        Log::warning("A web address was changed: {$action}.", [
+            'masjid_domain_id' => $this->id,
+            'host' => $this->host,
+            'masjid_id' => (int) $this->masjid_id,
+            'operator' => $operator,
+            'reason' => $reason,
+        ]);
+    }
+
     /** @return array<string, mixed> what the ledger records of a row */
-    private function ledgerShape(): array
+    public function ledgerShape(): array
     {
         return [
             'masjid_id' => (int) $this->masjid_id,
             'host' => $this->host,
             'status' => $this->status,
             'source' => $this->source,
+            'role' => $this->role,
             'adopted_from_import_at' => $this->adopted_from_import_at?->toIso8601String(),
         ];
     }

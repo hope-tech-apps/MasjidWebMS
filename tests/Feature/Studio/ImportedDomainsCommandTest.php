@@ -121,7 +121,7 @@ class ImportedDomainsCommandTest extends TestCase
         $row = $this->reserved($org);
         $this->hostsAnswer(['meccharlotte.org' => $org->id]);
 
-        [$code, $out] = $this->imported('release', ['--id' => [$row->id], '--execute' => true, '--operator' => 'owner', '--reason' => 'test']);
+        [$code, $out] = $this->imported('release', ['--id' => [$row->id], '--execute' => true, '--i-checked' => true, '--operator' => 'owner', '--reason' => 'test']);
 
         $this->assertSame(1, $code);
         $this->assertSame('refused', $out['rows'][0]['outcome']);
@@ -140,7 +140,7 @@ class ImportedDomainsCommandTest extends TestCase
         $this->assertSame(0, $dry);
         $this->assertNotNull(MasjidDomain::find($row->id), 'the dry run changed nothing');
 
-        [$code, $out] = $this->imported('release', ['--id' => [$row->id], '--execute' => true, '--operator' => 'owner', '--reason' => 'MEC chose a new domain']);
+        [$code, $out] = $this->imported('release', ['--id' => [$row->id], '--execute' => true, '--i-checked' => true, '--operator' => 'owner', '--reason' => 'MEC chose a new domain']);
 
         $this->assertSame(0, $code);
         $this->assertSame('released', $out['rows'][0]['outcome']);
@@ -247,7 +247,7 @@ class ImportedDomainsCommandTest extends TestCase
         $this->hostsAnswer(['new.burlingtonmasjid.com' => null, 'meccharlotte.org' => null]);
         Log::spy();
 
-        $this->imported('release', ['--id' => [$release->id], '--execute' => true, '--operator' => 'Moneeb', '--reason' => 'not a custom domain on the project']);
+        $this->imported('release', ['--id' => [$release->id], '--execute' => true, '--i-checked' => true, '--operator' => 'Moneeb', '--reason' => 'not a custom domain on the project']);
         $this->imported('adopt', ['--id' => [$adopt->id], '--execute' => true, '--operator' => 'Moneeb', '--reason' => 'MEC go, 2026-10-01']);
 
         $ledger = MasjidDomainChange::query()->orderBy('id')->get();

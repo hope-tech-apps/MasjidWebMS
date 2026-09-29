@@ -74,9 +74,17 @@ return [
     // itself (`cf_zone_created` on a row of that zone) or in a zone listed
     // here. An allowlist, not a denylist, and it ships EMPTY: every zone that
     // was in the account before S5 (burlingtonmasjid.com, alrazischool.org,
-    // the owner's product zones) is refused unless the owner adds it. Apexes,
-    // lower case, e.g. ['test-zone.example'].
-    'redirect_zones' => [],
+    // the owner's product zones) is refused unless the owner adds it.
+    //
+    // From the environment, never from this file: this repository is public,
+    // and a client's zone listed here would be published with it. A
+    // comma-separated list of apexes in CLOUDFLARE_REDIRECT_ZONES, e.g.
+    // "test-zone.example,other.example"; case and spaces are ignored, and
+    // blank (what the staging deny-list leaves) is none.
+    'redirect_zones' => array_values(array_unique(array_filter(array_map(
+        fn (string $zone) => strtolower(trim($zone)),
+        explode(',', (string) env('CLOUDFLARE_REDIRECT_ZONES', '')),
+    )))),
 
     // What a redirect host's DNS record points at: the IPv4 documentation
     // address (RFC 5737) that Cloudflare's own redirect examples use. The
@@ -94,10 +102,16 @@ return [
     // days after the first: one blip, a Cloudflare outage or a 5-second
     // timeout never withdraws it (domains recon R3). An imported or adopted
     // host is never demoted; the owner is emailed at the third miss instead.
+    // `per_run` bounds the re-probes one five-minute reconcile run sends (review
+    // follow-up 9): the first run after deploy finds every confirmed host due,
+    // and twenty a run spreads a hundred hosts over twenty-five minutes. Each
+    // host's next re-probe also lands up to an hour later than the day, by a
+    // fixed offset of its own, so they stay spread.
     'reconfirm' => [
         'every_hours' => 24,
         'demote_after_misses' => 3,
         'demote_after_hours' => 72,
+        'per_run' => 20,
     ],
 
     'api_base' => 'https://api.cloudflare.com/client/v4',
