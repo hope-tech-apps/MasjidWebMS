@@ -1200,7 +1200,7 @@
                                              subject per day. -->
                                         <option v-for="s in curriculum.subjects" :key="s" :value="s"
                                                 :disabled="takenSubjects.has(subjectKey(s))">
-                                            {{ s }}{{ takenSubjects.has(subjectKey(s)) ? ' — already planned' : '' }}
+                                            {{ s }}{{ isCombinedGuideColumn(s) ? ' (school pacing-guide column)' : '' }}{{ takenSubjects.has(subjectKey(s)) ? ' — already planned' : '' }}
                                         </option>
                                         <option :value="SUBJECT_OTHER">Other…</option>
                                     </select>
@@ -2382,7 +2382,7 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    averageLines, blankWorkForm, effectiveWeight, firstFieldError, percentText, subjectLine, untypedNote,
+    averageLines, blankWorkForm, effectiveWeight, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
     weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
@@ -2903,6 +2903,9 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
         const q = new URLSearchParams();
         if (grade) q.set('grade', grade);
         if (subject) q.set('subject', subject);
+        // Names the class so the server can limit the subject list to what THIS
+        // teacher teaches here (the same fence the plan's save enforces).
+        q.set('group_id', groupId.value);
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum${q.toString() ? '?' + q : ''}`
         );

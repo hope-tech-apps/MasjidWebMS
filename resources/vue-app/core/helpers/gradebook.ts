@@ -231,3 +231,22 @@ export function subjectLine(block: any): string {
     }
     return parts.join(' · ');
 }
+
+// ---------------------------------------------------------------- subjects
+
+/** The folded key App\Support\SubjectKey gives a name: lower case, apostrophes dropped, spacing collapsed. */
+function foldedSubject(name: string | null | undefined): string {
+    return String(name ?? '').replace(/\s+/gu, ' ').trim().replace(/['\u2018\u2019\u02BB\u02BC\u02BE\u02BF]/g, '').toLowerCase();
+}
+
+/**
+ * The school's weekly guide carries ONE column for "Qur'an & Islamic Studies".
+ * It stays exactly as the school wrote it (splitting it would be authoring Islamic
+ * content, RECON-PLAN section 6.1), so the plan picker lists it beside the three
+ * separate subjects, labelled as what it is: the guide's column, not a subject.
+ * It has to stay visible, because the standards search only works under it.
+ */
+export function isCombinedGuideColumn(name: string | null | undefined): boolean {
+    const key = foldedSubject(name);
+    return key === 'quran & islamic studies' || key === 'quran and islamic studies';
+}

@@ -284,6 +284,37 @@ class SchoolSubjectsTest extends TestCase
     }
 
     #[Test]
+    public function a_school_with_no_guide_still_gets_its_list_in_the_lesson_plan_picker_without_a_grade(): void
+    {
+        // BISS: no pacing guide, so no grade to choose, and the list is the answer.
+        foreach (['Islamic Studies', "Qur'an", 'Arabic Language'] as $i => $name) {
+            SchoolSubject::create(['masjid_id' => $this->school->id, 'name' => $name, 'position' => $i]);
+        }
+        Sanctum::actingAs($this->teacher, ['staff']);
+
+        $body = $this->getJson("/api/teacher/masjids/{$this->school->id}/curriculum")->assertOk()->json('data');
+
+        $this->assertSame([], $body['grades']);
+        $this->assertEqualsCanonicalizing(['Arabic Language', 'Islamic Studies', "Qur'an"], $body['subjects']);
+        $this->assertSame([], $body['weeks'], 'no guide, so no weeks and no standards');
+    }
+
+    #[Test]
+    public function a_school_with_a_guide_still_chooses_a_grade_before_it_sees_subjects(): void
+    {
+        CurriculumWeek::create([
+            'masjid_id' => $this->school->id, 'grade_label' => '2nd', 'subject' => 'Science', 'week_no' => 1, 'focus' => 'x',
+        ]);
+        SchoolSubject::create(['masjid_id' => $this->school->id, 'name' => 'Art']);
+        Sanctum::actingAs($this->teacher, ['staff']);
+
+        $body = $this->getJson("/api/teacher/masjids/{$this->school->id}/curriculum")->assertOk()->json('data');
+
+        $this->assertSame(['2nd'], $body['grades']);
+        $this->assertSame([], $body['subjects'], 'unchanged: subjects follow the grade for a school with a guide');
+    }
+
+    #[Test]
     public function arabic_has_no_standards_and_the_search_never_makes_one_up(): void
     {
         CurriculumWeek::create([

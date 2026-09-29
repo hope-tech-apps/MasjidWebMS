@@ -37,7 +37,13 @@ class CurriculumController extends TeacherController
         $grades = CurriculumWeek::query()
             ->distinct()->orderBy('grade_label')->pluck('grade_label');
 
-        $subjects = $grade ? $this->subjectsFor($request, (string) $grade) : collect();
+        // With a grade: that grade's subjects. With none, only where the school has
+        // NO guide (BISS teaches from none): there is no grade to choose, and the
+        // school's own list is the whole answer. A school with a guide still
+        // chooses a grade first, exactly as it always did.
+        $subjects = $grade
+            ? $this->subjectsFor($request, (string) $grade)
+            : ($grades->isEmpty() ? $this->subjectsFor($request, null) : collect());
 
         $weeks = ($grade && $subject)
             ? CurriculumWeek::query()
@@ -110,19 +116,22 @@ class CurriculumController extends TeacherController
      *
      * @return \Illuminate\Support\Collection<int, string>
      */
-    private function subjectsFor(Request $request, string $grade): \Illuminate\Support\Collection
+    private function subjectsFor(Request $request, ?string $grade): \Illuminate\Support\Collection
     {
         $out = [];
 
-        $guide = CurriculumWeek::query()->where('grade_label', $grade)
-            ->distinct()->orderBy('subject')->pluck('subject');
+        $guide = $grade === null
+            ? collect()
+            : CurriculumWeek::query()->where('grade_label', $grade)
+                ->distinct()->orderBy('subject')->pluck('subject');
 
         foreach ($guide as $name) {
             $out[SubjectKey::for($name)] ??= $name;
         }
 
         foreach (SchoolSubject::query()->orderBy('position')->orderBy('name')->get() as $subject) {
-            if ($subject->appliesToGrade($grade)) {
+            // No grade named (a school with no guide): every subject on its list.
+            if ($grade === null || $subject->appliesToGrade($grade)) {
                 $out[SubjectKey::for($subject->name)] ??= $subject->name;
             }
         }

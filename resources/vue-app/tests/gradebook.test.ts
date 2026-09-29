@@ -13,6 +13,7 @@ import {
     blankWorkForm,
     effectiveWeight,
     firstFieldError,
+    isCombinedGuideColumn,
     percentText,
     subjectLine,
     untypedNote,
@@ -215,4 +216,19 @@ test('the first field the server refused is the message the teacher reads', () =
 test('the tab wires the helpers and never divides a levels mark itself', () => {
     const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
     assert.match(source, /from '@\/core\/helpers\/gradebook'/);
+});
+
+test('the combined weekly column of the guide is recognised by any spelling and nothing else is', () => {
+    for (const s of ["Qur\u2019an & Islamic Studies", "Qur'an & Islamic Studies", 'Quran and Islamic Studies', '  QURAN  &  ISLAMIC STUDIES ']) {
+        assert.equal(isCombinedGuideColumn(s), true, s);
+    }
+    for (const s of ["Qur'an", 'Islamic Studies', 'Arabic Language', 'Mathematics', '', null, undefined]) {
+        assert.equal(isCombinedGuideColumn(s as any), false, String(s));
+    }
+});
+
+test('the lesson plan names the class when it asks for subjects, and labels the combined column', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    assert.match(source, /q\.set\('group_id', groupId\.value\)/);
+    assert.match(source, /isCombinedGuideColumn\(s\) \? ' \(school pacing-guide column\)'/);
 });
