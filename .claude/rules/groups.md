@@ -673,7 +673,7 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   helper: the school and class are read once when the run begins, the request is signed
   with that school's token by its URL, and a run that went stale sends nothing.
 
-**The reaction digest** (`groups:notify-reactions`, hourly at :20, `withoutOverlapping`).
+**The reaction digest** (`groups:notify-reactions`, hourly at :20, `withoutOverlapping(55)`: a killed run must not hold the mutex for the 24 h default).
 
 - **A tap dispatches nothing** (`GroupMessageReactionsTest`, `GroupPostReactionsTest`).
   The sweep emails the AUTHOR of the story or message, once, "You have new reactions":

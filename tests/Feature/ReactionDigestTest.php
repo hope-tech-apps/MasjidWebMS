@@ -714,6 +714,11 @@ class ReactionDigestTest extends TestCase
         $event = $events->first();
         $this->assertTrue($event->withoutOverlapping);
         $this->assertSame('20 * * * *', $event->expression);
+        // Not the 24 h default: a killed run never releases its mutex, and one dead
+        // run would then silence the digest for a day. 55 minutes lapses before the
+        // next :20, so a killed run costs only its own hour.
+        $this->assertSame(55, $event->expiresAt);
+        $this->assertLessThan(60, $event->expiresAt, 'a lock that outlives the hour would skip the next run');
     }
 
     // ------------------------------------------------------------ the job's sign-in address
