@@ -219,6 +219,25 @@ class SeedSchoolSubjectsMigrationTest extends TestCase
     }
 
     #[Test]
+    public function down_leaves_a_row_the_office_touched_even_if_it_looks_like_the_seed_again(): void
+    {
+        $this->makeMasjid('Burlington Islamic Sunday School', 18);
+        $this->migration()->up();
+
+        // The office limits a subject to a grade, then thinks better of it and
+        // puts it back: the row is identical to the seed, but somebody decided
+        // something about it, and the only trace is updated_at.
+        $this->travel(1)->minute();
+        $subject = SchoolSubject::withoutMasjidScope()->where('masjid_id', 18)->where('name', 'Arabic Language')->first();
+        $subject->update(['grade_labels' => ['3rd']]);
+        $subject->update(['grade_labels' => null]);
+
+        $this->migration()->down();
+
+        $this->assertSame(['Arabic Language'], $this->names(18), 'a touched row is not the migration\'s to delete');
+    }
+
+    #[Test]
     public function rolling_the_whole_batch_back_refuses_while_the_office_keeps_a_list(): void
     {
         $this->makeMasjid('Burlington Islamic Sunday School', 18);
