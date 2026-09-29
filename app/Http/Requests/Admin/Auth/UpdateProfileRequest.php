@@ -35,8 +35,13 @@ class UpdateProfileRequest extends BaseFormRequest
 
         return [
             'name' => 'required|string',
+            // `bail` and `string` come BEFORE the refusal: a rule after a failed one
+            // still runs unless the chain stops, and `email[]=x` reached the closure
+            // as an array, whose `(string)` cast is an ErrorException (a 500).
             'email' => [
+                'bail',
                 'required',
+                'string',
                 'email',
                 function (string $attribute, mixed $value, Closure $fail): void {
                     if (! ContactIdentity::sameAddress($this->user()?->email, (string) $value)) {

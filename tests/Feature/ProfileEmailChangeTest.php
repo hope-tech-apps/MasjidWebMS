@@ -69,6 +69,40 @@ class ProfileEmailChangeTest extends TestCase
         $this->assertSame('Original Name', $stored->name, 'A refused profile edit wrote to the account.');
     }
 
+    /** @return array<string, array{0: mixed}> */
+    public static function addressesThatAreNotAString(): array
+    {
+        return [
+            'a list' => [['staff@example.test']],
+            'a list of one word' => [['x']],
+            'a nested list' => [['a' => ['b' => 'staff@example.test']]],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('addressesThatAreNotAString')]
+    public function an_email_that_is_not_a_string_is_a_422_and_not_a_500(mixed $requested): void
+    {
+        $user = $this->staff();
+        Sanctum::actingAs($user);
+
+        $response = $this->post('/api/admin/profile', [
+            'name' => 'Renamed Person',
+            'email' => $requested,
+            'phone' => '+15550001111',
+        ], ['Accept' => 'application/json']);
+
+        // `email[]=x` used to reach the refusal closure as an array and its
+        // `(string)` cast threw: a 500 with nothing written, where every other
+        // bad value is a 422 that names the field.
+        $response->assertStatus(422)->assertJsonPath('status', 'failed');
+        $this->assertNotEmpty($response->json('data.email'));
+
+        $stored = User::findOrFail($user->id);
+        $this->assertSame('staff@example.test', $stored->email);
+        $this->assertSame('Original Name', $stored->name, 'A refused profile edit wrote to the account.');
+    }
+
     #[Test]
     public function the_profile_screen_posting_the_current_address_still_saves_the_rest(): void
     {
