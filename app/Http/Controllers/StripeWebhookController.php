@@ -9,10 +9,12 @@ use App\Models\DonationReceipt;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Models\StripeWebhookEvent;
+use App\Services\Cart\CartSettlementResult;
 use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\Letterhead;
 use App\Services\Receipts\ReceiptService;
+use App\Services\Stripe\CartPaymentService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\FormResponsePaymentService;
 use App\Services\Stripe\MealOrderPaymentService;
@@ -79,6 +81,17 @@ use Symfony\Component\HttpFoundation\Response;
  * seat), so it is acked and ignored exactly as before, and every other event takes
  * the route it took yesterday. Pinned by FormPaymentWebhookTest.
  *
+ * THE UNIVERSAL CART (slice 4b, owner decision 2026-09-28: records are created only once
+ * paid) adds the LAST question before the donation default: an object carrying
+ * `metadata.cart_order_uuid` (a basket paid on the organisation's own account) or
+ * `metadata.cart_charge_ref` (paid on a holder's account) goes to CartPaymentService,
+ * which settles the whole basket in one transaction (CartSettlementService). Without
+ * this arm a cart event would fall to the donation default and be silently booked as a
+ * donation. It is asked after every older question, and only when none of them matched,
+ * so the two families of key can never both route one event, and no payload that took an
+ * older route yesterday takes this one today. Pinned by CartWebhookRoutingTest and
+ * CartSettlementTest.
+ *
  * LUNCH TOP-UPS (owner, 2026-09-24) are asked about FIRST, before orders. A paid
  * order's customer pays the difference for a bigger order on its own Checkout
  * Session, whose metadata carries `kind` = MealOrderTopUp::STRIPE_KIND AND the
@@ -107,6 +120,7 @@ class StripeWebhookController extends Controller
         private MealOrderPaymentService $mealOrderPayments,
         private FormResponsePaymentService $formResponsePayments,
         private MealOrderTopUpPaymentService $mealOrderTopUps,
+        private CartPaymentService $cartPayments,
     ) {
     }
 
@@ -231,6 +245,9 @@ class StripeWebhookController extends Controller
         $isOrder = ! $isTopUp && MealOrderPaymentService::isOrderEvent($object);
         $isRegistration = ! $isTopUp && ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
         $isFormResponse = ! $isTopUp && ! $isOrder && ! $isRegistration && FormResponsePaymentService::isFormResponseEvent($object);
+        // Last, and only when no older question matched: a cart's keys are new, so this
+        // never changes where an event that used to route elsewhere goes.
+        $isCart = ! $isTopUp && ! $isOrder && ! $isRegistration && ! $isFormResponse && CartPaymentService::isCartEvent($object);
 
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
@@ -238,6 +255,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
             // A delayed payment method (a bank debit) completes the page with
@@ -250,6 +268,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
             // ...and this when it never does. Nothing was booked on the unpaid
@@ -266,6 +285,7 @@ class StripeWebhookController extends Controller
                     'checkout_session_id' => $object['id'] ?? null,
                     'account' => $account,
                 ]),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleAsyncPaymentFailed($object, $account),
             },
             'payment_intent.succeeded' => match (true) {
@@ -274,6 +294,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
                 $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
                 $isFormResponse => $this->formResponsePayments->handlePaymentIntentSucceeded($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handlePaymentIntentSucceeded($object, $account),
             },
             // New event type for this slice: the seat-release trigger. A
@@ -283,6 +304,8 @@ class StripeWebhookController extends Controller
             'checkout.session.expired' => match (true) {
                 $isTopUp => $this->mealOrderTopUps->handleCheckoutExpired($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutExpired($object, $account),
+                // A basket's page expiring closes its order (pending to expired) and nothing else.
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => null,
             },
             // Shared with the recurring-DONATION path, which owns this event
@@ -319,6 +342,37 @@ class StripeWebhookController extends Controller
             'account.application.deauthorized' => $this->handleAccountDeauthorized($account, $event),
             default => null, // unhandled event types are acked and ignored.
         };
+    }
+
+    /**
+     * One of the universal cart's events (CartPaymentService decides whose order it is and
+     * whether it is paid; CartSettlementService records it). The donation receipts a paid
+     * basket issued after its commit are e-mailed here, by the same once-only delivery every
+     * donation receipt uses (deliverReceipt(), guarded by receipt_delivered_at), so the
+     * receipt e-mail is not a second implementation.
+     *
+     * A refusal returns normally (logged at warning inside); a genuine failure to record a
+     * paid basket throws out of CartSettlementService with everything rolled back, and the
+     * webhook answers 500 so Stripe retries it.
+     */
+    private function handleCartEvent(string $type, array $object, ?string $account): void
+    {
+        $result = match ($type) {
+            'checkout.session.completed',
+            'checkout.session.async_payment_succeeded' => $this->cartPayments->handleCheckoutCompleted($object, $account),
+            'payment_intent.succeeded' => $this->cartPayments->handlePaymentIntentSucceeded($object, $account),
+            'checkout.session.expired' => $this->cartPayments->handleCheckoutExpired($object, $account),
+            'checkout.session.async_payment_failed' => $this->cartPayments->handleAsyncPaymentFailed($object, $account),
+            default => null,
+        };
+
+        if (! $result instanceof CartSettlementResult) {
+            return;
+        }
+
+        foreach ($result->receipts as [$donation, $receipt]) {
+            $this->deliverReceipt($donation->refresh(), $receipt);
+        }
     }
 
     /**

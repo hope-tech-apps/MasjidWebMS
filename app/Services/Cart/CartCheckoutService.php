@@ -3,7 +3,10 @@
 namespace App\Services\Cart;
 
 use App\Models\Cart;
+use App\Models\CartItem;
+use App\Models\Form;
 use App\Models\Masjid;
+use App\Models\MealMenuItem;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Services\Stripe\FormChargeAccount;
@@ -48,7 +51,13 @@ use Throwable;
  *     A different $50 must never be sent to the old $50's page.
  *   - Stripe's charge bounds are checked before anything is written.
  *
- * Reachable from no endpoint until the webhook half (4b) exists.
+ * Records are created ONLY ONCE PAID (owner decision, design §12), by the webhook
+ * (CartSettlementService). So checkout also FREEZES what settlement will need onto each
+ * order item (`payload`, `price_snapshot` — see snapshotFor()): the webhook never
+ * re-quotes, because a quote depends on the date and on the card switch, and one that
+ * came back null would throw AFTER the money was taken.
+ *
+ * Reachable from no endpoint until the public cart endpoints exist.
  */
 class CartCheckoutService
 {
@@ -225,6 +234,13 @@ class CartCheckoutService
 
     private function createPendingOrder(Cart $cart, PricedBasket $priced, string $account, ?string $buyerEmail): Order
     {
+        // Frozen BEFORE anything is written: a line that cannot be frozen refuses the
+        // whole checkout, and there is then no order to clean up.
+        $snapshots = [];
+        foreach ($priced->lines as $index => ['item' => $item, 'outcome' => $outcome]) {
+            $snapshots[$index] = $this->snapshotFor($cart, $item, $outcome, $priced->currency);
+        }
+
         $uuid = (string) Str::uuid();
 
         $order = Order::withoutMasjidScope()->create([
@@ -246,7 +262,7 @@ class CartCheckoutService
             'checkout_expires_at' => now()->addSeconds(self::PAGE_LIFETIME_SECONDS),
         ]);
 
-        foreach ($priced->lines as ['item' => $item, 'outcome' => $outcome]) {
+        foreach ($priced->lines as $index => ['item' => $item, 'outcome' => $outcome]) {
             OrderItem::withoutMasjidScope()->create([
                 'order_id' => $order->id,
                 'masjid_id' => $order->masjid_id,
@@ -258,10 +274,89 @@ class CartCheckoutService
                 'unit_amount_minor' => $outcome->unitAmountMinor,
                 'total_minor' => $outcome->totalMinor(),
                 'currency' => $priced->currency,
+                'payload' => $snapshots[$index]['payload'],
+                'price_snapshot' => $snapshots[$index]['price_snapshot'],
             ]);
         }
 
         return $order;
+    }
+
+    /**
+     * What settlement will write this line from, frozen at the moment the page is
+     * opened (CartSettlementService reads these and asks nothing else about the line).
+     *
+     *  - form: `payload` is the line's answers. `price_snapshot` is
+     *    FormPayment::quote() as it stands NOW, in the exact shape FormResponseWriter is
+     *    handed. Its total must equal what the page will charge for the line, or the
+     *    checkout is refused: a row written from a snapshot that disagrees with the
+     *    charge would state the wrong amount for a ticket already paid for.
+     *  - meal: `payload` is {menu_item_id, meal_menu_id, name, pickup_at} — the menu id is
+     *    kept because a deleted dish leaves nothing to find it from — and
+     *    `price_snapshot` is the line in LunchOrderLines::price()'s shape, at the price
+     *    charged.
+     *  - donation: `price_snapshot` is {intended_minor}; `payload` carries the giver's
+     *    zakat answer only when they gave one (ZakatDesignation stays the one place
+     *    that is decided).
+     *
+     * @return array{payload: ?array<string,mixed>, price_snapshot: ?array<string,mixed>}
+     *
+     * @throws CartCheckoutRefused
+     */
+    private function snapshotFor(Cart $cart, CartItem $item, CartLineOutcome $outcome, string $currency): array
+    {
+        $answers = (array) ($item->payload ?? []);
+
+        switch ($item->buyable_type) {
+            case CartItem::TYPE_FORM:
+                $form = Form::query()->where('masjid_id', $cart->masjid_id)->find($item->buyable_id);
+
+                // online=true, coverFees=false: a basket is a card payment, and a form
+                // that requires the payer to cover the fee is refused by the source.
+                $quote = $form === null ? null : FormPayment::quote($form, $answers, false, true);
+
+                if ($quote === null
+                    || (int) $quote['total_minor'] !== $outcome->totalMinor()
+                    || strtolower((string) $quote['currency']) !== strtolower($currency)) {
+                    throw new CartCheckoutRefused('This basket could not be priced just now. Please try again.');
+                }
+
+                return ['payload' => $answers, 'price_snapshot' => $quote];
+
+            case CartItem::TYPE_MEAL:
+                $dish = MealMenuItem::withoutMasjidScope()->where('masjid_id', $cart->masjid_id)->find($item->buyable_id);
+
+                if ($dish === null) {
+                    throw new CartCheckoutRefused('This basket could not be priced just now. Please try again.');
+                }
+
+                $pickup = $answers['pickup_at'] ?? null;
+
+                return [
+                    'payload' => [
+                        'menu_item_id' => (int) $dish->id,
+                        'meal_menu_id' => (int) $dish->meal_menu_id,
+                        'name' => (string) $dish->name,
+                        'pickup_at' => is_string($pickup) && $pickup !== '' ? $pickup : null,
+                    ],
+                    'price_snapshot' => [
+                        'meal_menu_item_id' => (int) $dish->id,
+                        'item_name' => (string) $dish->name,
+                        'unit_price_minor' => $outcome->unitAmountMinor,
+                        'quantity' => $outcome->quantity,
+                        'line_total_minor' => $outcome->totalMinor(),
+                    ],
+                ];
+
+            case CartItem::TYPE_DONATION:
+                return [
+                    'payload' => is_bool($answers['zakat'] ?? null) ? ['zakat' => $answers['zakat']] : null,
+                    'price_snapshot' => ['intended_minor' => $outcome->totalMinor()],
+                ];
+        }
+
+        // The pricer never lets an unknown type through as payable; this is the backstop.
+        throw new CartCheckoutRefused('This basket could not be priced just now. Please try again.');
     }
 
     private function openPage(Order $order, PricedBasket $priced, string $account, string $returnBase, ?string $buyerEmail): string

@@ -5396,3 +5396,25 @@ Rationale: behaviour-preserving move; pinned by `tests/Feature/Cart/PendingDonat
 untouched `DonationFlowTest`. Settlement (`markSucceeded` with the cart's own PI and this line's own
 fee/net, then the receipt) is a separate task; `markSucceeded` has no status guard, so the cart must
 check `pending` itself.
+
+## 2026-09-28 — Cart settlement (slice 4b): records exist only once paid
+Decision: the universal cart's one webhook creates each line's real record, already paid, in ONE
+transaction (`CartSettlementService`), routed by a cart question asked LAST in
+`StripeWebhookController::dispatch()` (`cart_order_uuid` on the org's own account,
+`cart_charge_ref` on a holder's). It calls the three extracted writers unchanged and asks no gate,
+so a payment after a form closed, a menu closed or a fund was deactivated is still recorded and
+logged. What settlement needs is FROZEN at checkout on `order_items.payload` / `price_snapshot`
+(the unshipped orders migration was edited, no new one): a form's `FormPayment::quote()`, a
+meal's frozen line, a donation's `{intended_minor}`; nothing is re-quoted at webhook time.
+Emails, the lunch confirmation and the donation receipt run after the commit and only for a line
+whose settle call returned true. Donation `fee`/`net` stay null: the basket's one fee cannot be
+split honestly per line.
+Alternatives: create pending records at checkout and settle them (rejected 2026-09-28: unpaid food
+on the kitchen board, and a second payment page per ticket); re-quote at webhook time (a tier
+boundary or the card switch can null the quote after the money is taken); email inside the
+transaction (a rollback would leave an email for nothing).
+Rationale: money already taken must always be recorded, and nothing may be visible before it is.
+A genuine failure to record a paid basket rolls back everything and is rethrown so Stripe retries
+(refusals, which no retry could fix, return 200 with a warning). Pinned by
+`tests/Feature/Cart/CartSettlementTest.php` and `CartWebhookRoutingTest.php`; every older webhook
+test passes untouched.

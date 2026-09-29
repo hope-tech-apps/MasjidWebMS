@@ -334,6 +334,13 @@ return [
             'stripe_payment_intent_id',
         ],
 
+        'order_items' => [
+            // The answers a paid basket line will be recorded from — on MEC's festival
+            // ticket form, the name of every attendee (slice 4b). Frozen at checkout,
+            // so it outlives the basket; the sale's amounts and labels do not need it.
+            'payload',
+        ],
+
         'orders' => [
             // A cart checkout's page and payment on the organisation's LIVE account,
             // nulled as meal_orders null theirs so staging never asks a test-mode
@@ -617,6 +624,7 @@ return [
         'app_version_settings.maintenance_message' => 'The maintenance banner copy shown to every app user.',
         'meal_menu_items.name' => 'A dish on a public lunch menu.',
         'meal_menu_items.name_ar' => 'The same dish in Arabic.',
+        'order_items.price_snapshot' => 'What settlement records the line from: amounts and tier labels (form), a menu item name and its frozen price (meal), the intended gift (donation). The answers themselves live in `payload`, which is nulled beside it.',
         'meal_order_items.item_name' => 'A snapshot of the menu item at order time — what was bought, not who bought it. The buyer\'s name, phone and email on meal_orders are all anonymised.',
         'meal_menus.notes' => 'Operational notes on a public menu ("collect at the side door"). Kept because the pickup flow reads it; if a tenant is ever found using it for customer names, move it to `anonymise` with `free_text`.',
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',

@@ -40,6 +40,19 @@ use Illuminate\Support\Facades\Schema;
  *   donation), and `recorded_as` keeps the historical_orders vocabulary so a
  *   receipt can separate a gift from a purchase.
  *
+ *   `payload` and `price_snapshot` are what SETTLEMENT will need, frozen at
+ *   checkout (slice 4b). Records are created only once the payment lands, from the
+ *   webhook, and by then the form may have a new price tier, the dish a new price
+ *   or no row at all, and the card switch may have moved. So the webhook never
+ *   re-asks any of it: it writes each line from these two columns.
+ *     form     payload = the line's answers; price_snapshot = FormPayment::quote()
+ *              as worked out at checkout (the shape FormResponseWriter is handed).
+ *     meal     payload = {menu_item_id, meal_menu_id, name, pickup_at}; price_snapshot
+ *              = the frozen line in LunchOrderLines::price()'s shape.
+ *     donation payload = the giver's zakat answer when they gave one;
+ *              price_snapshot = {intended_minor}.
+ *   `payload` holds attendee names, so the staging scrub nulls it.
+ *
  * Index names are written by hand (MySQL caps an identifier at 64 characters).
  */
 return new class extends Migration
@@ -107,6 +120,10 @@ return new class extends Migration
             $table->unsignedBigInteger('unit_amount_minor');
             $table->unsignedBigInteger('total_minor');
             $table->char('currency', 3)->default('usd');
+
+            // What settlement writes the record from, frozen at checkout (see above).
+            $table->json('payload')->nullable();
+            $table->json('price_snapshot')->nullable();
 
             // The real record the line's own service created for it.
             $table->string('record_type', 64)->nullable();

@@ -8,6 +8,7 @@ paths:
   - "app/Http/Controllers/Api/V1/FormSubmissionsController.php"
   - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
   - "app/Services/Forms/**"
+  - "app/Services/Cart/**"
 ---
 # Stripe payments (CRM donations — Connect Standard + direct charges)
 
@@ -510,6 +511,62 @@ and every money path treats them as someone else's record:
   spelling: DonationMetrics and the ledger/CSV apply it when no `source` is chosen, annual
   statements and ModuleFacts always. A new report of money received must start from it.
 - The webhook never sees them (no Stripe ids, `hist_…` idempotency keys).
+
+## The universal cart settles from the webhook — records exist ONLY ONCE PAID (DECISIONS.md 2026-09-28)
+
+One Checkout Session for a whole basket (`CartCheckoutService`), one signed webhook to
+settle it (`CartPaymentService` inbound, `CartSettlementService` in one transaction).
+Direct charge on the ONE connected account, exactly the rules above.
+
+- **Nothing is written for a line until the payment lands.** No pending form response, meal
+  order or donation exists while the shopper is on the card screen. The webhook creates
+  each record already paid, through the three writers, called unchanged and asking no
+  question: `FormResponseWriter::write()`, `MealOrderCreator::create()`,
+  `DonationService::createPendingDonation()`. A payment after a form closed or filled, a
+  menu closed or a fund was deactivated is STILL recorded (logged at warning). Do not add a
+  gate to a writer or to settlement.
+- **Snapshot at checkout, never re-ask at settlement.** `order_items.payload` and
+  `price_snapshot` are written when the page opens. A form's snapshot is
+  `FormPayment::quote($form, $answers, false, true)` and its total must equal the line's
+  charge or the checkout is refused. Settlement never re-quotes: a quote depends on the date
+  (tiers) and the card switch, and a null one would throw after the money was taken.
+  `payload` holds attendee names and is nulled by the staging scrub.
+- **Routing.** `metadata.cart_order_uuid` (the org's own account) or `metadata.cart_charge_ref`
+  (a holder's account). `StripeWebhookController::dispatch()` asks the cart question LAST,
+  only when no older question matched, so a cart event never books a Donation, a
+  registration, a meal order or a form response through an old arm, and no old payload routes
+  differently. Tenancy is `event.account`: own account = the masjid holding it, then the order
+  by uuid WITHIN that masjid; linked = the order by `charge_ref`, then `hash_equals` of the
+  pinned `charge_account_id` and of the recorded session id.
+- **Paid means `payment_status === 'paid'`.** `checkout.session.completed` and
+  `checkout.session.async_payment_succeeded` share a handler; `payment_intent.succeeded`
+  settles idempotently if the session event has not; `checkout.session.expired` moves
+  pending to expired only. Refusals (no account, unknown account, foreign uuid, amount or
+  currency mismatch) are logged at warning and return 200: a retry could never succeed.
+- **Settlement is one `DB::transaction` on the default connection.** Lock the order row (paid:
+  return; a DIFFERENT payment intent on a paid order is a logged double charge, never recorded
+  over the first). Amount and currency must equal `orders.total_minor` / `currency`, else the
+  order stays pending and nothing is settled. Mark paid, then per line WITHOUT a `record_id`
+  (the per-line idempotency; keys `cart_item_<id>`): write, settle, link. A failure on any
+  line rolls back EVERYTHING and is rethrown, so the webhook answers 500 and Stripe retries a
+  paid basket that could not be recorded; that is the one place settlement throws.
+- **Forms:** lock the form row, `earlier()` then `write(..., LEG_ONLINE, $snapshot, [], key)`
+  with NO `reserveOn`, catching `UniqueConstraintViolationException` to answer with the first
+  row; `markPaid($pi)`. **Meals:** the menu is read `withTrashed`; a deleted dish keeps its
+  snapshot name and loses only its item id; `markPaid($pi)` under a row lock. **Donations:**
+  `markSucceeded()` with the basket's payment intent and `fee`/`net` left NULL (the basket's
+  one fee cannot be split honestly per line); the pending check is ours because
+  `markSucceeded()` has no guard; the donation's charged amount must equal the line's charge
+  so the receipt's gross is right; `ZakatDesignation` is still the only place zakat is decided.
+- **Emails and receipts go AFTER the commit, only for a line whose settle call returned
+  true**: `FormNotifier::submitted`, `LunchOrderMailer::confirmation` (claims its own send),
+  and the donation receipt through `ReceiptService` (delivered by the controller's existing
+  once-only `deliverReceipt`). Never from inside the transaction: a rollback would leave an
+  email for nothing.
+- Known limits: a meal line is one meal order per dish (one confirmation e-mail each); a basket
+  collects no name or phone, so a meal order takes the buyer's contact, else the payer's
+  Stripe details, else a plain label; an unknown line type or a form/fund/menu hard-deleted
+  since checkout fails the settlement loudly (retried, never half-recorded).
 
 ## Tenancy note
 
