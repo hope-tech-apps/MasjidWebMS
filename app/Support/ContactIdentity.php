@@ -57,11 +57,11 @@ use Illuminate\Support\Str;
  * lives in a paragraph is a rule the next writer can contradict without
  * noticing. So the rule is enforced by the SHAPE of this type instead:
  *
- *  - the address never leaves the object. There is no getter, no
+ *  - the address never leaves an identity object. There is no getter, no
  *    `__toString()`, no `label()` — nothing that hands back a scalar which
  *    could be compared with `===`, and therefore nothing that can make two
  *    absences equal;
- *  - the ONLY comparison is `isTheSamePersonAs()`, which is `false` unless BOTH
+ *  - the ONLY comparison of two identities is `isTheSamePersonAs()`, which is `false` unless BOTH
  *    sides resolve to something. Two unresolvable identities are not equal —
  *    not to each other, and not to themselves;
  *  - a reader who ignores all of that and writes `ContactIdentity::of($a) !== ContactIdentity::of($b)`
