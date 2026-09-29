@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Family;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Http\Requests\Concerns\NormalisesSubmittedAddress;
 
 /**
  * POST /api/family/masjids/{masjid_id}/auth/password.
@@ -22,14 +23,29 @@ use App\Http\Requests\BaseFormRequest;
  */
 class PasswordSignInRequest extends BaseFormRequest
 {
+    use NormalisesSubmittedAddress;
+
+    protected function prepareForValidation(): void
+    {
+        $this->normaliseSubmittedAddress();
+    }
+
     /**
      * @return array<string, mixed>
      */
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email', 'max:255'],
+            'email' => ['required', 'string', 'email', 'ascii', 'max:255'],
             'password' => ['required', 'string', 'max:255'],
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return ['email.ascii' => self::asciiAddressMessage()];
     }
 }
