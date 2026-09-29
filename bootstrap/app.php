@@ -228,10 +228,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // Runs AFTER any renderer below has built the response. It changes
-        // nothing except refusals from the member routes an app calls to leave
-        // (DELETE .../me and .../me/device), which gain an empty `data` object
-        // so the iPhone app can decode the 401, 403 or 429 it is given. See
-        // App\Support\MobileErrorEnvelope.
+        // nothing except refusals from the member routes named
+        // `mobile.member.me.*` (an app leaving: DELETE .../me and .../me/device;
+        // the member portal's orders, gifts and receipts), which gain an empty
+        // `data` object so the iPhone app can decode the 401, 403 or 429 it is
+        // given. See App\Support\MobileErrorEnvelope.
         $exceptions->respond(function (Response $response, Throwable $e, Request $request) {
             return \App\Support\MobileErrorEnvelope::withDataKey($response, $request);
         });

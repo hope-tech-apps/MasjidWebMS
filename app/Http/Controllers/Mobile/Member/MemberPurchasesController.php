@@ -83,6 +83,9 @@ class MemberPurchasesController extends Controller
      * GET me/orders — every purchase of this member, newest first, one page at a time.
      *
      * Paginated the way the admin lists are: `data` is the paginator, `data.data` the rows.
+     * The page links keep the query string (`per_page` above all): a client that follows
+     * `next_page_url` after asking for 50 must get page 2 of 50, not page 2 of the default 15,
+     * which would repeat rows.
      */
     public function orders(Request $request): JsonResponse
     {
@@ -105,7 +108,7 @@ class MemberPurchasesController extends Controller
             ->filter()
             ->values();
 
-        return $this->ok($page->setCollection($rows));
+        return $this->ok($page->setCollection($rows)->withQueryString());
     }
 
     /**
@@ -146,6 +149,7 @@ class MemberPurchasesController extends Controller
             ->with(['fund', 'receipt'])
             ->orderByRaw('COALESCE(donations.donated_at, donations.created_at) DESC, donations.id DESC')
             ->paginate($this->perPage($request))
+            ->withQueryString()
             ->through(fn (Donation $gift) => $this->projector->gift($gift, $timezone));
 
         return $this->ok($page);

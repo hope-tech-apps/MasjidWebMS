@@ -9,6 +9,7 @@ use App\Models\MealOrder;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\Member\MemberPurchaseProjector;
+use App\Support\MobileErrorEnvelope;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -643,6 +644,37 @@ class MemberOrdersTest extends TestCase
         $this->assertSame(15, $this->orders(null, '?per_page[]=3')->json('data.per_page'), 'an array is not a number');
     }
 
+    #[Test]
+    public function the_page_links_keep_the_page_size_that_was_asked_for(): void
+    {
+        $numbers = [];
+
+        foreach (['05', '04', '03', '02', '01'] as $day) {
+            $numbers[] = $this->cartOrder($this->a, ['buyer_email' => 'amina@example.test', 'paid_at' => "2026-09-{$day} 12:00:00"])->order_number;
+        }
+
+        $first = $this->orders(null, '?per_page=2')->assertOk();
+
+        foreach (['first_page_url', 'last_page_url', 'next_page_url'] as $key) {
+            $this->assertStringContainsString('per_page=2', (string) $first->json("data.{$key}"), $key);
+        }
+
+        foreach ($first->json('data.links') as $link) {
+            if ($link['url'] !== null) {
+                $this->assertStringContainsString('per_page=2', $link['url'], 'the link ' . $link['label']);
+            }
+        }
+
+        // Followed as a client follows it: page 2 of the SAME size, so no row is shown twice.
+        $second = $this->asMember($this->me)->getJson($first->json('data.next_page_url'))->assertOk();
+
+        $this->assertSame(2, $second->json('data.current_page'));
+        $this->assertSame(2, $second->json('data.per_page'));
+        $this->assertSame(array_slice($numbers, 2, 2), array_column($second->json('data.data'), 'number'));
+        $this->assertStringContainsString('per_page=2', (string) $second->json('data.next_page_url'));
+        $this->assertStringContainsString('per_page=2', (string) $second->json('data.prev_page_url'));
+    }
+
     private function assertPageShape(TestResponse $response): void
     {
         $response->assertJsonStructure([
@@ -652,6 +684,48 @@ class MemberOrdersTest extends TestCase
                 'links', 'next_page_url', 'path', 'per_page', 'prev_page_url', 'to', 'total',
             ],
         ]);
+    }
+
+    // ============================================================ refusals
+
+    #[Test]
+    public function the_routes_are_named_under_the_prefix_the_error_envelope_matches(): void
+    {
+        $expected = [
+            'mobile.member.me.orders.index' => '/me/orders',
+            'mobile.member.me.orders.show' => '/me/orders/{source}/{id}',
+        ];
+
+        foreach ($expected as $name => $suffix) {
+            $route = Route::getRoutes()->getByName($name);
+
+            $this->assertNotNull($route, "{$name} does not exist");
+            $this->assertStringEndsWith($suffix, '/' . $route->uri());
+            $this->assertTrue(Str::is(MobileErrorEnvelope::ROUTES, $name));
+        }
+    }
+
+    #[Test]
+    public function every_refusal_at_the_door_carries_an_empty_data_object(): void
+    {
+        $url = $this->portalUrl($this->a, 'orders');
+
+        // No token: the guard's 401. The iPhone app decodes every body through a `Response<T>`
+        // whose `data` is not optional, so a refusal without the key fails on the device.
+        $anonymous = $this->getJson($url)->assertStatus(401);
+        $this->assertSame('{"status":"error","message":"Unauthenticated.","data":{}}', $anonymous->getContent());
+
+        // The same contact's FAMILY-portal token: `member.token`'s 403.
+        Auth::forgetGuards();
+        $this->unbound();
+        $familyOnly = $this->withHeader('Authorization', 'Bearer ' . $this->me->createFamilyToken()->plainTextToken)
+            ->getJson($url)
+            ->assertStatus(403);
+        $this->assertStringContainsString('"data":{}', $familyOnly->getContent());
+
+        // A member's token pointed at another organisation's path: `family.tenant`'s 403.
+        $foreign = $this->orders($this->me, '', $this->b)->assertStatus(403);
+        $this->assertStringContainsString('"data":{}', $foreign->getContent());
     }
 
     // ================================================================ limiter
@@ -665,7 +739,8 @@ class MemberOrdersTest extends TestCase
             $this->getJson($this->portalUrl($this->a, 'orders'))->assertOk();
         }
 
-        $this->getJson($this->portalUrl($this->a, 'orders'))->assertStatus(429);
+        $limited = $this->getJson($this->portalUrl($this->a, 'orders'))->assertStatus(429);
+        $this->assertStringContainsString('"data":{}', $limited->getContent(), 'a rapid refresh meets a 429 the app can decode');
 
         // The screen beside it is untouched: no commitments, so nothing is asked of Stripe.
         $this->getJson($this->portalUrl($this->a, 'recurring-giving'))->assertOk();

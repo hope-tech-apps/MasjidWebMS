@@ -10,6 +10,7 @@ use App\Models\Masjid;
 use App\Services\Member\MemberPurchaseProjector;
 use App\Services\Receipts\ReceiptService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
@@ -156,6 +157,33 @@ class MemberGiftsAndReceiptsTest extends TestCase
             $this->assertContains($limiters[$suffix], $middleware, "{$suffix} lacks its own limiter");
             $this->assertSame(['GET', 'HEAD'], $route->methods(), 'nothing here writes');
         }
+    }
+
+    #[Test]
+    public function the_routes_are_named_under_the_prefix_the_error_envelope_matches_and_their_refusals_carry_data(): void
+    {
+        $expected = [
+            'mobile.member.me.gifts.index' => '/me/gifts',
+            'mobile.member.me.receipts.pdf' => '/me/receipts/{id}/pdf',
+        ];
+
+        foreach ($expected as $name => $suffix) {
+            $route = Route::getRoutes()->getByName($name);
+
+            $this->assertNotNull($route, "{$name} does not exist");
+            $this->assertStringEndsWith($suffix, '/' . $route->uri());
+        }
+
+        // The refusals of both doors, without a token: the app cannot decode a body with no `data`.
+        $gift = $this->gift($this->a, $this->fund, $this->me);
+        $this->issue($gift);
+
+        $list = $this->getJson($this->portalUrl($this->a, 'gifts'))->assertStatus(401);
+        $this->assertSame('{"status":"error","message":"Unauthenticated.","data":{}}', $list->getContent());
+
+        Auth::forgetGuards();
+        $pdf = $this->getJson($this->portalUrl($this->a, "receipts/{$gift->uuid}/pdf"))->assertStatus(401);
+        $this->assertSame('{"status":"error","message":"Unauthenticated.","data":{}}', $pdf->getContent());
     }
 
     #[Test]
@@ -380,6 +408,37 @@ class MemberGiftsAndReceiptsTest extends TestCase
 
         $this->assertSame(50, $this->gifts(null, '?per_page=1000')->json('data.per_page'));
         $this->assertSame(15, $this->gifts(null, '?per_page=abc')->json('data.per_page'));
+    }
+
+    #[Test]
+    public function the_page_links_keep_the_page_size_that_was_asked_for(): void
+    {
+        $uuids = [];
+
+        foreach (['2026-03-05', '2026-03-04', '2026-03-03', '2026-03-02', '2026-03-01'] as $day) {
+            $uuids[] = $this->gift($this->a, $this->fund, $this->me, 1000, ['donated_at' => $day])->uuid;
+        }
+
+        $first = $this->gifts(null, '?per_page=2')->assertOk();
+
+        foreach (['first_page_url', 'last_page_url', 'next_page_url'] as $key) {
+            $this->assertStringContainsString('per_page=2', (string) $first->json("data.{$key}"), $key);
+        }
+
+        foreach ($first->json('data.links') as $link) {
+            if ($link['url'] !== null) {
+                $this->assertStringContainsString('per_page=2', $link['url'], 'the link ' . $link['label']);
+            }
+        }
+
+        // Followed as a client follows it: page 2 of the SAME size, so no gift is shown twice.
+        $second = $this->asMember($this->me)->getJson($first->json('data.next_page_url'))->assertOk();
+
+        $this->assertSame(2, $second->json('data.current_page'));
+        $this->assertSame(2, $second->json('data.per_page'));
+        $this->assertSame(array_slice($uuids, 2, 2), $this->ids($second));
+        $this->assertStringContainsString('per_page=2', (string) $second->json('data.next_page_url'));
+        $this->assertStringContainsString('per_page=2', (string) $second->json('data.prev_page_url'));
     }
 
     #[Test]

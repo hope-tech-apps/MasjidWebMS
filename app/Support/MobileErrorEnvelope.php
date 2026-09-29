@@ -8,8 +8,10 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Puts an empty `data` object on every refusal from the member routes the apps
- * call to LEAVE: `DELETE .../me` and `DELETE .../me/device` (route names
- * `mobile.member.me.*`).
+ * call to LEAVE, `DELETE .../me` and `DELETE .../me/device`, and from the member
+ * portal's reads (`GET .../me/orders`, `.../me/orders/{source}/{id}`,
+ * `.../me/gifts`, `.../me/receipts/{id}/pdf`): every route named
+ * `mobile.member.me.*`.
  *
  * The iPhone app decodes every mobile body, errors included, through one
  * `Response<T>` envelope whose `data` is non-optional. A refusal without the key

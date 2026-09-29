@@ -5773,3 +5773,22 @@ tax receipt has been issued" would be untrue of it. The PDF is the same one 404 
 Tests: `MemberGiftsAndReceiptsTest::a_voided_receipt_is_neither_advertised_on_the_gift_nor_served_as_a_pdf` (issued, then
 voided: the row loses `receipt` and gains the note, the PDF goes 200 to 404) and a voided gift added to
 `every_way_of_not_being_entitled_to_a_receipt_is_one_and_the_same_404`.
+(5) PAGE LINKS KEEP THE QUERY STRING, AND THE ROUTES ARE NAMED INTO THE ERROR ENVELOPE (m9, m10). The paginators were built
+with no `withQueryString()`, so `GET me/orders?per_page=50` answered `next_page_url` `...?page=2` and a client that
+followed it got page 2 at the default 15: rows 16-30 again, 51 onward missed. Both lists now call `withQueryString()`
+(the admin lists' precedent, `FormResponsesController`), so `first_page_url`, `last_page_url`, `next_page_url`,
+`prev_page_url` and every `links[].url` carry `per_page`. The shape stays the admin lists' (`data` is the paginator);
+the Mobile realm's `{items, pagination}` shape that `HadithsController` uses is not adopted (DECISIONS (6) of slice 6
+chose the admin shape and nothing new argues against it: an owner question if the apps want the other).
+The four routes were unnamed, so `MobileErrorEnvelope::ROUTES` (`mobile.member.me.*`) did not apply: a 401, 403 or 429
+from the stack or the limiter had no `data` object, the iPhone app's `Response<T>` cannot decode that, and a member who
+refreshed the orders list past 30 a minute would have seen a generic error. They are now `mobile.member.me.orders.index`,
+`.orders.show`, `.gifts.index` and `.receipts.pdf` (one `->name('mobile.member.me.')` on the `/me` group), and the
+envelope's docblock, the `respond()` comment in bootstrap/app.php and `.claude/rules/auth-permissions.md` say the prefix
+covers the portal's reads.
+Tests: `MemberOrdersTest::the_page_links_keep_the_page_size_that_was_asked_for` and the same in
+`MemberGiftsAndReceiptsTest` (every link carries `per_page=2`, and following `next_page_url` gives page 2 of 2, not of 15);
+`MemberOrdersTest::every_refusal_at_the_door_carries_an_empty_data_object` (the exact 401 body, the family-token 403 and the
+foreign-organisation 403) and a `"data":{}` assertion on the 429 in the limiter test;
+`MemberGiftsAndReceiptsTest::the_routes_are_named_under_the_prefix_the_error_envelope_matches_and_their_refusals_carry_data`
+(the four names exist; the 401 of the gifts door and of the PDF door).

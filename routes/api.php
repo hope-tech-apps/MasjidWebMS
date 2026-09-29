@@ -315,14 +315,20 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                 |
                 | The gifts and the receipt PDF are in the same group: a gift is the member's
                 | by `contact_id`, and its receipt by the gift it belongs to.
+                |
+                | Named `mobile.member.me.*`, like the leaving routes above, so that a 401, 403
+                | or 429 from the stack or the limiter carries the empty `data` object the
+                | iPhone app's `Response<T>` decoder needs (App\Support\MobileErrorEnvelope,
+                | matched on the route name). A new route in this realm needs that prefix.
                 */
                 Route::prefix('/me')
+                    ->name('mobile.member.me.')
                     ->controller(MemberPurchasesController::class)
                     ->group(function () {
                         Route::middleware('throttle:30,1,member-portal')->group(function () {
-                            Route::get('/orders', 'orders');
-                            Route::get('/orders/{source}/{id}', 'order');
-                            Route::get('/gifts', 'gifts');
+                            Route::get('/orders', 'orders')->name('orders.index');
+                            Route::get('/orders/{source}/{id}', 'order')->name('orders.show');
+                            Route::get('/gifts', 'gifts')->name('gifts.index');
                         });
 
                         // The receipt PDF is the heavy read (dompdf renders it on every
@@ -330,7 +336,8 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                         // a bucket of its own: fetching a few receipts must not lock the
                         // screens that list them.
                         Route::middleware('throttle:20,1,member-receipt')
-                            ->get('/receipts/{id}/pdf', 'receiptPdf');
+                            ->get('/receipts/{id}/pdf', 'receiptPdf')
+                            ->name('receipts.pdf');
                     });
             });
 
