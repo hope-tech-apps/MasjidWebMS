@@ -157,6 +157,22 @@ class CartCheckoutEndpointTest extends TestCase
     }
 
     #[Test]
+    public function pressing_pay_again_with_a_corrected_email_opens_a_page_for_the_new_address(): void
+    {
+        [$org, $token] = $this->giftBasket();
+
+        $first = $this->checkout($org, $token, $this->checkoutBody(['email' => 'zaynab@exmaple.org']))->assertOk();
+        $again = $this->checkout($org, $token, $this->checkoutBody(['email' => 'zaynab@example.org']))->assertOk();
+
+        $this->assertNotSame($first->json('data.order_uuid'), $again->json('data.order_uuid'));
+        $this->assertNotSame($first->json('data.checkout_url'), $again->json('data.checkout_url'));
+        $this->assertCount(2, $this->stripe->created);
+        $this->assertSame('zaynab@example.org', $this->stripe->created[1]['params']['customer_email']);
+        $this->assertSame('zaynab@example.org', $this->orderOf($again->json('data.order_uuid'))->buyer_email);
+        $this->assertSame(Order::STATUS_EXPIRED, $this->orderOf($first->json('data.order_uuid'))->status, 'the page of the typo is closed');
+    }
+
+    #[Test]
     public function an_empty_basket_has_nothing_to_pay_for(): void
     {
         $org = $this->org();

@@ -107,7 +107,7 @@ class CartBuyerIdentityTest extends TestCase
         $service = $this->checkoutService();
 
         $first = $service->checkout($cart, self::RETURN_BASE, self::EMAIL, self::NAME, '+1 555 000 0000');
-        $again = $service->checkout($cart, self::RETURN_BASE, 'corrected@example.org', null, self::PHONE);
+        $again = $service->checkout($cart, self::RETURN_BASE, self::EMAIL, null, self::PHONE);
 
         $this->assertSame($first['order']->id, $again['order']->id, 'premise: the same page was handed back');
         $this->assertCount(1, $service->created, 'and no second page was opened');
@@ -115,7 +115,7 @@ class CartBuyerIdentityTest extends TestCase
         $order = $first['order']->fresh();
         $this->assertSame(self::PHONE, $order->buyer_phone, 'the corrected phone is what the office rings');
         $this->assertSame(self::NAME, $order->buyer_name, 'a field the shopper did not send is never blanked');
-        $this->assertSame(self::EMAIL, $order->buyer_email, 'the email is the one the Stripe page was opened with');
+        $this->assertSame(self::EMAIL, $order->buyer_email);
     }
 
     // ------------------------------------------------------------ settlement: meals

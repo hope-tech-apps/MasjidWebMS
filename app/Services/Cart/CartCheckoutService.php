@@ -50,8 +50,11 @@ use Throwable;
  *     named, with a fingerprint of what they were shown. acknowledge() applies the
  *     changes only while the basket still prices that way.
  *   - An open page is handed back only for the SAME basket — same lines, answers,
- *     prices and payee (PricedBasket::chargeFingerprint), not merely the same total.
- *     A different $50 must never be sent to the old $50's page.
+ *     prices and payee (PricedBasket::chargeFingerprint), not merely the same total —
+ *     and the SAME buyer email. A different $50 must never be sent to the old $50's page,
+ *     and neither may a corrected address: the email is locked into the Stripe page and
+ *     is where settlement mails the receipt, so a page opened for the typo is closed and a
+ *     new one is opened for what the shopper typed last.
  *   - Stripe's charge bounds are checked before anything is written.
  *
  * Records are created ONLY ONCE PAID (owner decision, design §12), by the webhook
@@ -143,12 +146,12 @@ class CartCheckoutService
             $account = (string) $priced->destinationAccountId;
             self::assertConnectedAccount($account);
 
-            $reused = $this->reuseOpenPage($locked, $priced, $account);
+            $reused = $this->reuseOpenPage($locked, $priced, $account, $buyerEmail);
             if ($reused !== null) {
                 // The same page, but the shopper may have corrected a phone number or a name on
                 // the way back to it: the office rings what they typed LAST. Neither is on the
-                // Stripe page. The email is, locked at the address the page opened with, so the
-                // order keeps that one and it is left alone here, as it always was.
+                // Stripe page. The email is, so a different one never gets here: reuseOpenPage()
+                // closed that page and this call opened a new one for it.
                 $this->refreshBuyer($reused['order'], $buyerName, $buyerPhone);
 
                 return $reused;
@@ -284,7 +287,7 @@ class CartCheckoutService
     }
 
     /** @return array{order: Order, url: string}|null */
-    private function reuseOpenPage(Cart $cart, PricedBasket $priced, string $account): ?array
+    private function reuseOpenPage(Cart $cart, PricedBasket $priced, string $account, ?string $buyerEmail): ?array
     {
         $open = Order::withoutMasjidScope()
             ->where('masjid_id', $cart->masjid_id)
@@ -313,7 +316,12 @@ class CartCheckoutService
             && hash_equals($open->basket_fingerprint, $priced->chargeFingerprint())
             && hash_equals((string) $open->charge_account_id, $account);
 
-        if (! $sameBasket) {
+        // The same basket for a different address is a changed basket too: the page is locked
+        // to the address it opened with, and the order's is where the receipt goes, so a
+        // corrected one must not be answered with the page (and the receipt) of the typo.
+        $sameBuyer = self::emailKey($open->buyer_email) === self::emailKey($buyerEmail);
+
+        if (! $sameBasket || ! $sameBuyer) {
             $this->closePage($open);
 
             return null;
@@ -696,6 +704,16 @@ class CartCheckoutService
         $text = is_string($text) ? trim($text) : '';
 
         return $text === '' ? null : mb_substr($text, 0, $max);
+    }
+
+    /**
+     * What an address is compared by: the one the page would carry, trimmed and lower-cased, or
+     * an empty string when there is none. Both sides go through it, so an order opened with no
+     * usable address matches a call that has none.
+     */
+    private static function emailKey(?string $email): string
+    {
+        return strtolower((string) self::usableEmail($email));
     }
 
     /** A plausible address, or null — an obviously bad one would make Stripe refuse the page. */

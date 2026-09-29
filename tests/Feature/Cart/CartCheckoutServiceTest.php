@@ -226,6 +226,43 @@ class CartCheckoutServiceTest extends TestCase
     }
 
     #[Test]
+    public function the_same_basket_with_a_corrected_email_opens_a_new_page_for_it(): void
+    {
+        // The shopper mistyped the address, went back, fixed it and pressed Pay again. The email
+        // is locked into the Stripe page and is where settlement sends the receipt, so the page
+        // of the typo must not be handed back.
+        [, $cart] = $this->fullBasket();
+        $svc = $this->service(['status' => 'open', 'url' => 'https://checkout.stripe.test/1']);
+
+        $old = $svc->checkout($cart, self::RETURN_BASE, 'alice@gmial.com', 'Alice', '+1 555 010 0100')['order'];
+        $new = $svc->checkout($cart, self::RETURN_BASE, 'alice@gmail.com', 'Alice', '+1 555 010 0100');
+
+        $this->assertNotSame($old->id, $new['order']->id, 'a new order for the corrected address');
+        $this->assertCount(2, $svc->created, 'a new page was opened');
+        $this->assertSame('alice@gmial.com', $svc->created[0]['params']['customer_email']);
+        $this->assertSame('alice@gmail.com', $svc->created[1]['params']['customer_email'], 'the new page is locked to what was typed last');
+        $this->assertSame('https://checkout.stripe.test/2', $new['url']);
+        $this->assertSame(['cs_test_1'], $svc->expired, 'the old page was closed');
+        $this->assertSame(Order::STATUS_EXPIRED, $old->fresh()->status);
+        $this->assertSame('alice@gmail.com', $new['order']->fresh()->buyer_email, 'the order carries the new email');
+        $this->assertSame(2, Order::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function the_same_email_in_another_case_or_with_spaces_is_still_the_same_page(): void
+    {
+        [, $cart] = $this->fullBasket();
+        $svc = $this->service(['status' => 'open', 'url' => 'https://checkout.stripe.test/1']);
+
+        $first = $svc->checkout($cart, self::RETURN_BASE, 'Buyer@Example.org');
+        $second = $svc->checkout($cart, self::RETURN_BASE, '  buyer@EXAMPLE.org ');
+
+        $this->assertSame($first['order']->id, $second['order']->id);
+        $this->assertCount(1, $svc->created, 'no second page for the same address');
+        $this->assertSame([], $svc->expired);
+    }
+
+    #[Test]
     public function a_different_basket_with_the_same_total_never_gets_the_old_page(): void
     {
         // The review's blocker: reuse matched only total and account, so swapping a $50
