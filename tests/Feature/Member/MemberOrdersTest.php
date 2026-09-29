@@ -534,7 +534,12 @@ class MemberOrdersTest extends TestCase
     {
         $this->wixOrder($this->a, $this->me, ['status' => 'refunded']);
 
-        $this->assertSame('unknown', $this->orders()->assertOk()->json('data.data.0.status'));
+        $row = $this->orders()->assertOk()->json('data.data.0');
+        $detail = $this->detail($row)->assertOk()->json('data');
+
+        $this->assertSame('unknown', $row['status']);
+        $this->assertSame(MemberPurchaseProjector::RECEIPT_NOTE_WIX_UNKNOWN, $detail['receipt_note']);
+        $this->assertStringContainsString('not shown as paid', $detail['receipt_note']);
     }
 
     #[Test]

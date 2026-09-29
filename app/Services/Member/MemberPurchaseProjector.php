@@ -48,6 +48,8 @@ class MemberPurchaseProjector
 
     public const RECEIPT_NOTE_WIX_UNPAID = 'This order was canceled or declined at the organisation\'s old Wix checkout, so no payment was taken for it.';
 
+    public const RECEIPT_NOTE_WIX_UNKNOWN = 'The organisation\'s old Wix checkout did not record whether this order was paid, so it is not shown as paid.';
+
     public const RECEIPT_NOTE_GIFT_WIX = 'This gift was made at the organisation\'s old Wix checkout, before it moved to this system, so no tax receipt is issued for it here.';
 
     public const RECEIPT_NOTE_GIFT_NONE = 'No tax receipt has been issued for this gift.';
@@ -238,9 +240,11 @@ class MemberPurchaseProjector
             'lines' => $lines,
             'discount_minor' => (int) $order->discount_minor,
             'total_minor' => (int) $order->total_minor,
-            'receipt_note' => $status === HistoricalOrder::STATUS_PAID
-                ? self::RECEIPT_NOTE_WIX_PAID
-                : self::RECEIPT_NOTE_WIX_UNPAID,
+            'receipt_note' => match ($status) {
+                HistoricalOrder::STATUS_PAID => self::RECEIPT_NOTE_WIX_PAID,
+                HistoricalOrder::STATUS_CANCELED, HistoricalOrder::STATUS_DECLINED => self::RECEIPT_NOTE_WIX_UNPAID,
+                default => self::RECEIPT_NOTE_WIX_UNKNOWN,
+            },
         ];
     }
 
