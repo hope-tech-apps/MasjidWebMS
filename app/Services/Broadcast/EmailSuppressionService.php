@@ -9,11 +9,9 @@ use App\Support\SiteUrl;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Every read and write of the broadcast-email opt-out goes through here
@@ -153,6 +151,15 @@ class EmailSuppressionService
      *
      * Returns null for anything that is not an address at all, so a blank or
      * malformed value can never become a key that matches other rows.
+     *
+     * This string IS the key. `email_normalized` is utf8mb4_bin (the migration
+     * `make_email_suppression_key_byte_exact`), so two addresses are one row only
+     * when this returns the same bytes for both, and a look-alike spelling
+     * (`gmaíl.com` for `gmail.com`) is a row of its own. Every reader and the
+     * writer must reach the column through this function and nowhere else, and
+     * must compare it with PHP values only: a JOIN, subquery or `whereColumn`
+     * against a unicode_ci email column fails on MySQL with "Illegal mix of
+     * collations" (see `suppressedAmong()` for the shape that avoids it).
      */
     public static function normalize(?string $raw): ?string
     {
@@ -335,6 +342,17 @@ class EmailSuppressionService
      * `held_since`. The row only ever gets stricter this way, never released.
      * A hold arriving over a hold changes nothing. Pinned by
      * `ContactEmailConsentTest::an_unsubscribe_on_a_held_address_replaces_the_hold_and_staff_can_no_longer_lift_it`.
+     *
+     * ## A person who asked to stop is always recorded
+     *
+     * The row is found by the exact normalised address and, when there is none,
+     * CREATED. The unique index is byte-exact too (the column is utf8mb4_bin), so
+     * another spelling's row cannot stand in its way: both hold a row and each
+     * is left exactly as it is. Nothing here catches a unique-key violation and
+     * carries on. That is deliberate: an opt-out that could not be stored must
+     * fail loudly (the caller's page must not say "done"), never return null and
+     * let the page say so. The one null this returns is for a value that is not an
+     * address at all, which a link that parsed can never carry.
      */
     public function suppress(
         int $masjidId,
@@ -388,27 +406,12 @@ class EmailSuppressionService
             // bound code, and a suppression written into the wrong organisation
             // is an unhonoured opt-out in one place and a silenced congregant in
             // another. The documented bypass makes the explicit id always win.
-            try {
-                $suppression = app(TenantContext::class)->runWithout(
-                    fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
-                        'masjid_id' => $masjidId,
-                        'email_normalized' => $address,
-                    ])),
-                );
-            } catch (UniqueConstraintViolationException) {
-                // The `(masjid_id, email_normalized)` unique index is
-                // utf8mb4_unicode_ci too, so it refuses this address when a row
-                // for a look-alike spelling of it exists (see `rowForExactly()`).
-                // That row belongs to another address and is left exactly as it
-                // is; this address cannot be given a row of its own beside it,
-                // and nothing is written. The log names the organisation only:
-                // an address in a log is a disclosure.
-                Log::warning('email suppression not recorded: another spelling of the address holds the row', [
+            $suppression = app(TenantContext::class)->runWithout(
+                fn () => EmailSuppression::withoutMasjidScope()->create(array_merge($attributes, [
                     'masjid_id' => $masjidId,
-                ]);
-
-                return null;
-            }
+                    'email_normalized' => $address,
+                ])),
+            );
         }
 
         // The mirror carries the row's OWN date, not "now": a badge that says
@@ -459,9 +462,11 @@ class EmailSuppressionService
 
         $suppression = ContactIdentity::keepExactMatches($candidates, 'email_normalized', $address)->first();
 
-        // A row found ONLY through the collation is another address's opt-out. A
-        // resubscribe link minted for a look-alike spelling must not lift it, so
-        // nothing is released and the mirror is not touched.
+        // The column is byte-exact, so no candidate is another address's row and
+        // this cannot fire. It stays as the guard for the day the column is
+        // compared loosely again: a row found ONLY through a collation is another
+        // address's opt-out, a resubscribe link minted for a look-alike spelling
+        // must not lift it, so nothing is released and the mirror is not touched.
         if ($suppression === null && $candidates->isNotEmpty()) {
             return null;
         }
@@ -545,11 +550,13 @@ class EmailSuppressionService
             return null;
         }
 
-        return EmailSuppression::withoutMasjidScope()
-            ->where('masjid_id', $masjidId)
-            ->where('email_normalized', $address)
-            ->whereNull('released_at')
-            ->value('reason');
+        return $this->rowForExactly(
+            $address,
+            EmailSuppression::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('email_normalized', $address)
+                ->whereNull('released_at'),
+        )?->reason;
     }
 
     /**
@@ -596,11 +603,13 @@ class EmailSuppressionService
             return null;
         }
 
-        $suppression = EmailSuppression::withoutMasjidScope()
-            ->where('masjid_id', $masjidId)
-            ->where('email_normalized', $address)
-            ->whereNull('released_at')
-            ->first();
+        $suppression = $this->rowForExactly(
+            $address,
+            EmailSuppression::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->where('email_normalized', $address)
+                ->whereNull('released_at'),
+        );
 
         if ($suppression === null) {
             return null;
@@ -640,12 +649,17 @@ class EmailSuppressionService
             return [];
         }
 
-        return EmailSuppression::withoutMasjidScope()
+        $keys = EmailSuppression::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
             ->whereIn('email_normalized', $normalized)
             ->whereNull('released_at')
             ->pluck('email_normalized')
             ->all();
+
+        // The column is byte-exact, so the query already returns only the keys it
+        // was given. Kept as the belt to that brace: a key that is not one of the
+        // normalised addresses asked about is never reported as suppressed.
+        return array_values(array_filter($keys, fn ($key) => in_array($key, $normalized, true)));
     }
 
     /**
@@ -678,17 +692,19 @@ class EmailSuppressionService
     }
 
     /**
-     * The row for EXACTLY this address, or null. The query only shortlists.
+     * The row for EXACTLY this address, or null.
      *
-     * `email_normalized` is utf8mb4_unicode_ci like production's other email
-     * columns (read 2026-09-29; this table's own column was not read on its own,
-     * see ASSUMPTIONS 30), where `victim@gmail.com` = `victim@gmaíl.com`. A
-     * lookup by the address a link or an import names therefore also returns the
-     * row of a look-alike spelling, and acting on it would rewrite, re-date or
-     * RELEASE another mailbox's opt-out: a resubscribe link minted for the
-     * look-alike would lift the real person's unsubscribe. The row is used only
-     * when its key is the address, byte for byte (`normalize()` already
-     * lower-cased and trimmed both).
+     * `email_normalized` is utf8mb4_bin (the migration
+     * `make_email_suppression_key_byte_exact`), so the query already returns only
+     * the row whose key is the address, byte for byte, and a look-alike spelling
+     * (`victim@gmaíl.com` for `victim@gmail.com`) is a row of its own. This
+     * re-check is kept as the belt to that brace: it decides on the same
+     * comparison every other sign-in door uses (`ContactIdentity::sameAddress()`),
+     * so a row is acted on only when its key is the address, and a column that
+     * were ever compared loosely again (a rollback, a restore from a dump made
+     * before the migration) could not make one mailbox's opt-out rewrite,
+     * re-date or RELEASE another's. `normalize()` already lower-cased and
+     * trimmed both sides.
      *
      * `$normalizedAddress` is the output of `normalize()`.
      *

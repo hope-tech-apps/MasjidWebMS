@@ -112,6 +112,34 @@ trait FoldsAccentsLikeUnicodeCi
     {
         $this->registerUnicodeCiCollation();
 
+        $this->recollateEmptyColumn($table, $column, 'UNICODE_CI_LIKE');
+    }
+
+    /**
+     * Give a column the collation `utf8mb4_bin` has: byte for byte, so a
+     * look-alike spelling is a different value and the unique index over the
+     * column lets both spellings hold a row. This is what production's
+     * `email_suppressions.email_normalized` is after the
+     * `make_email_suppression_key_byte_exact` migration. SQLite's own default is
+     * already BINARY, so the rebuild changes nothing today; it is done anyway so
+     * the test states the shape it depends on instead of inheriting it, and so a
+     * change to the suite's default cannot move it silently.
+     *
+     * On MySQL the migration has made the column byte-exact, so there is nothing
+     * to rebuild: the test's own premise check then reads the real column.
+     */
+    protected function collateColumnLikeUtf8mb4Bin(string $table, string $column): void
+    {
+        if (! $this->onSqlite()) {
+            return;
+        }
+
+        $this->recollateEmptyColumn($table, $column, 'BINARY');
+    }
+
+    /** Drop and recreate an EMPTY table from its own DDL with `$collation` on `$column`, indexes included. */
+    private function recollateEmptyColumn(string $table, string $column, string $collation): void
+    {
         $this->assertSame(0, DB::table($table)->count(), "{$table} must be empty before its column is re-collated.");
 
         $create = (string) DB::selectOne('select sql from sqlite_master where type = ? and name = ?', ['table', $table])->sql;
@@ -120,7 +148,9 @@ trait FoldsAccentsLikeUnicodeCi
             DB::select('select sql from sqlite_master where type = ? and tbl_name = ? and sql is not null', ['index', $table]),
         );
 
-        $collated = preg_replace('/"' . preg_quote($column, '/') . '"\s+varchar/i', '$0 collate UNICODE_CI_LIKE', $create, 1, $replaced);
+        // An existing `collate` on the column is replaced, not added to: SQLite
+        // accepts two, and which one wins is not something a test should rely on.
+        $collated = preg_replace('/("' . preg_quote($column, '/') . '"\s+varchar)(?:\s+collate\s+\w+)?/i', '$1 collate ' . $collation, $create, 1, $replaced);
 
         $this->assertSame(1, $replaced, "Could not find the {$table}.{$column} column definition in: {$create}");
 
