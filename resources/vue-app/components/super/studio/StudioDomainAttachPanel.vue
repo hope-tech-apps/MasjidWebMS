@@ -202,6 +202,7 @@ const waitingLabel = (domain: MasjidDomain): string => {
         case 'certificate': return 'Waiting for Cloudflare to issue the certificate';
         case 'capacity': return 'The Pages project is at its custom-domain limit';
         case 'canonical': return 'Waiting for the address it redirects to';
+        case 'rule_cleanup': return 'Taking out a redirect rule a collapse left behind';
         default: return domain.status === 'active' ? 'Attached; not yet seen serving' : 'Being attached';
     }
 };

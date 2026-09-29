@@ -41,7 +41,8 @@ class DomainsStillAttached extends RuntimeException
 
         if ($studio->isNotEmpty()) {
             $lines[] = "Studio attached {$studio->pluck('host')->implode(', ')}: run `php artisan domains:release {$masjidId}` to see what it would remove"
-                . ' (a dry run), then again with --execute. It removes only what Studio created and lists the rest.';
+                . ' (a dry run), then again with --execute --operator=... --reason=... (and --force while the organisation is not trashed).'
+                . ' It removes only what Studio created and lists the rest.';
         }
 
         foreach ($other as $domain) {

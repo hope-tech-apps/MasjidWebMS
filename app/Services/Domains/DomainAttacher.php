@@ -143,7 +143,7 @@ class DomainAttacher
      * reach the row a moment before the marker expires, and the probe would
      * slip a whole day.
      */
-    private const REPROBE_MARGIN_MINUTES = 30;
+    private const REPROBE_MARGIN_MINUTES = 90;
 
     /** Per row: when a zone POST went out whose answer never came back. */
     private const ZONE_CREATE_SENT_KEY = 'masjid-domain:zone-create-sent:';
@@ -774,7 +774,13 @@ class DomainAttacher
             return;
         }
 
-        $domain->next_check_at = now()->addHours($every);
+        // A day on, at a minute of the hour that is the host's own (review
+        // follow-up 9), so hosts confirmed together are not re-probed together
+        // every day. Anchored to the hour, the offset does not add up day
+        // after day: the next check is 23 to 25 hours out, 24 on average, and
+        // always after the marker (every_hours less REPROBE_MARGIN_MINUTES)
+        // has gone.
+        $domain->next_check_at = now()->addHours($every)->startOfHour()->addMinutes(crc32($domain->host) % 60);
 
         $wasConfirmed = $domain->serving_confirmed_at !== null;
         // A confirmed row keeps the time it was first confirmed; only a

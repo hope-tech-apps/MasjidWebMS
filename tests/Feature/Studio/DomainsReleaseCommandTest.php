@@ -35,9 +35,15 @@ class DomainsReleaseCommandTest extends TestCase
     /** @return array<string, mixed> */
     private function release(Masjid $org, bool $execute = false): array
     {
+        // An executed run is ledgered and, for a live organisation, forced
+        // (review follow-ups 10); the tests below that are about those
+        // refusals call the command themselves.
         $this->assertSame(0, Artisan::call('domains:release', array_filter([
             'masjid_id' => $org->id,
             '--execute' => $execute,
+            '--operator' => $execute ? 'owner' : null,
+            '--reason' => $execute ? 'the organisation left' : null,
+            '--force' => $execute,
             '--json' => true,
         ])));
 
@@ -122,7 +128,7 @@ class DomainsReleaseCommandTest extends TestCase
         config(['cloudflare.studio_token' => null]);
         $this->fakeCloudflare([]);
 
-        $this->assertSame(1, Artisan::call('domains:release', ['masjid_id' => $org->id, '--execute' => true]));
+        $this->assertSame(1, Artisan::call('domains:release', ['masjid_id' => $org->id, '--execute' => true, '--operator' => 'owner', '--reason' => 'test']));
         $this->assertStringContainsString('CLOUDFLARE_STUDIO_TOKEN', Artisan::output());
         $this->assertSame(MasjidDomain::STATUS_ACTIVE, $studio->fresh()->status);
         $this->assertSame([], $this->sent());

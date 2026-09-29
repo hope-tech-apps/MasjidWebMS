@@ -3,12 +3,14 @@
 namespace App\Console\Commands;
 
 use App\Models\MasjidDomain;
+use App\Models\MasjidDomainChange;
 use App\Services\Cloudflare\CloudflareRemover;
 use App\Services\Cloudflare\CloudflareResult;
 use App\Services\Cloudflare\CloudflareService;
 use App\Services\Domains\DomainAttacher;
 use App\Services\Domains\DomainProbe;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Sleep;
 
@@ -43,6 +45,8 @@ class CollapseAlias extends Command
     protected $signature = 'domains:collapse-alias
         {domain_id : The masjid_domains id of the host that should redirect}
         {--execute : Do it; without it nothing is sent or changed}
+        {--operator= : Who is running it, for the ledger (required with --execute)}
+        {--reason= : Why, for the ledger (required with --execute)}
         {--json : Print the result as JSON}';
 
     protected $description = 'Make one host of an apex/www pair redirect to the other, freeing its Pages custom-domain slot. A dry run unless --execute.';
@@ -78,6 +82,13 @@ class CollapseAlias extends Command
             return $this->finish($plan + ['outcome' => 'would_collapse'], self::SUCCESS);
         }
 
+        $operator = trim((string) $this->option('operator'));
+        $reason = trim((string) $this->option('reason'));
+
+        if ($operator === '' || $reason === '') {
+            return $this->finish($plan + ['outcome' => 'refused', 'reason' => '--execute needs --operator and --reason: they go into the ledger with the change. Nothing was changed.'], self::FAILURE);
+        }
+
         if (! $cloudflare->isConfigured()) {
             return $this->finish($plan + ['outcome' => 'refused', 'reason' => 'CLOUDFLARE_STUDIO_TOKEN is not set. Nothing was changed.'], self::FAILURE);
         }
@@ -89,14 +100,14 @@ class CollapseAlias extends Command
         }
 
         try {
-            return $this->collapse($row->refresh(), $sibling, $plan, $cloudflare, $remover, $probe);
+            return $this->collapse($row->refresh(), $sibling, $plan, $cloudflare, $remover, $probe, $operator, $reason);
         } finally {
             $lock->release();
         }
     }
 
     /** @param  array<string, mixed>  $plan */
-    private function collapse(MasjidDomain $row, MasjidDomain $sibling, array $plan, CloudflareService $cloudflare, CloudflareRemover $remover, DomainProbe $probe): int
+    private function collapse(MasjidDomain $row, MasjidDomain $sibling, array $plan, CloudflareService $cloudflare, CloudflareRemover $remover, DomainProbe $probe, string $operator, string $reason): int
     {
         $rule = $cloudflare->ensureRedirectRule((string) $row->cf_zone_id, $row->redirectRuleRef(), $row->host, $sibling->host);
 
@@ -133,6 +144,21 @@ class CollapseAlias extends Command
 
             if ($undo->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
                 $row->forceFill(['cf_redirect_rule_id' => null])->save();
+            } else {
+                // The rule stands on a row that still serves (review follow-up
+                // 4). Parked for domains:reconcile, which takes it out until it
+                // is gone (DomainDetacher::removeStrayRedirectRule).
+                $row->forceFill([
+                    'waiting_on' => 'rule_cleanup',
+                    'last_error' => 'A redirect rule from a collapse that did not verify is still in Cloudflare: ' . $undo->error,
+                    'next_check_at' => now()->addMinutes(30),
+                ])->save();
+
+                Log::warning('A collapse did not verify and its redirect rule could not be taken out; reconcile will retry.', [
+                    'masjid_domain_id' => $row->id,
+                    'host' => $row->host,
+                    'error' => $undo->error,
+                ]);
             }
 
             return $this->finish($plan + [
@@ -142,20 +168,69 @@ class CollapseAlias extends Command
             ], self::FAILURE);
         }
 
-        $row->forceFill([
-            'role' => MasjidDomain::ROLE_REDIRECT,
-            'redirect_to_id' => $sibling->id,
-            'status' => MasjidDomain::STATUS_MANUAL,
-            'verified_by' => MasjidDomain::VERIFIED_BY_PROBE,
-            'verified_at' => now(),
-            'serving_confirmed_at' => null,
-            'serving_last_seen_at' => null,
-            'serving_missed_since' => null,
-            'serving_miss_count' => 0,
-            'waiting_on' => null,
-            'last_error' => null,
-            'next_check_at' => null,
-        ])->save();
+        // The sibling was judged before this command took any lock, and a
+        // detach of it may have started since (review of the follow-ups). Held
+        // under its own lock and judged again before this row points at it;
+        // otherwise the rule comes out again and nothing else changes.
+        $siblingLock = DomainAttacher::lockFor($sibling->id);
+        $siblingHeld = $siblingLock->get();
+
+        try {
+            $sibling = $siblingHeld ? MasjidDomain::find($sibling->id) : null;
+
+            if ($sibling === null || $sibling->isRedirect()
+                || ! in_array($sibling->status, MasjidDomain::TRUSTED, true) || $sibling->serving_confirmed_at === null) {
+                $undo = $remover->removeRedirectRule($row);
+
+                if ($undo->is(CloudflareResult::OK, CloudflareResult::ABSENT)) {
+                    $row->forceFill(['cf_redirect_rule_id' => null])->save();
+                } else {
+                    $row->forceFill([
+                        'waiting_on' => 'rule_cleanup',
+                        'last_error' => 'A redirect rule from a collapse that did not finish is still in Cloudflare: ' . $undo->error,
+                        'next_check_at' => now()->addMinutes(30),
+                    ])->save();
+                }
+
+                return $this->finish($plan + [
+                    'outcome' => 'failed',
+                    'reason' => $siblingHeld
+                        ? 'The host it would redirect to is no longer serving (it may be being detached). The rule was taken out again' . ($undo->ok ? '' : ' (not yet: domains:reconcile will)') . ' and nothing else changed.'
+                        : 'Studio is working on the host it would redirect to. The rule was taken out again' . ($undo->ok ? '' : ' (not yet: domains:reconcile will)') . '; try again in a minute or two.',
+                ], self::FAILURE);
+            }
+
+            return $this->commitCollapse($row, $sibling, $plan, $remover, $operator, $reason);
+        } finally {
+            if ($siblingHeld) {
+                $siblingLock->release();
+            }
+        }
+    }
+
+    /** @param  array<string, mixed>  $plan */
+    private function commitCollapse(MasjidDomain $row, MasjidDomain $sibling, array $plan, CloudflareRemover $remover, string $operator, string $reason): int
+    {
+        $before = $row->ledgerShape();
+
+        DB::transaction(function () use ($row, $sibling, $before, $operator, $reason) {
+            $row->forceFill([
+                'role' => MasjidDomain::ROLE_REDIRECT,
+                'redirect_to_id' => $sibling->id,
+                'status' => MasjidDomain::STATUS_MANUAL,
+                'verified_by' => MasjidDomain::VERIFIED_BY_PROBE,
+                'verified_at' => now(),
+                'serving_confirmed_at' => null,
+                'serving_last_seen_at' => null,
+                'serving_missed_since' => null,
+                'serving_miss_count' => 0,
+                'waiting_on' => null,
+                'last_error' => null,
+                'next_check_at' => null,
+            ])->save();
+
+            $row->recordChange(MasjidDomainChange::ACTION_COLLAPSE, $before, $operator, $reason);
+        });
 
         $manual = [];
         $removed = [];
