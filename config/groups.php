@@ -204,6 +204,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Manara Bucks — the class store (T-003.4, W6)
+    |--------------------------------------------------------------------------
+    |
+    | The ledger is a record about a child (what they earned and what they spent),
+    | so it carries the same default-bounded retention as an award, with one
+    | difference: the sweep removes a child's WHOLE ledger together, and only once
+    | every row of it is due (PrizeLedgerEntry::purgeDueSets), so it can never
+    | leave a redemption without the earnings that paid for it.
+    */
+
+    'bucks' => [
+
+        /*
+         * Days after a ledger row's own date that it may be swept, applied to a row
+         * that does not carry an explicit `retained_until`. A child's newest row sets
+         * when their whole set goes. 0 (or less) keeps the ledger indefinitely.
+         */
+        'retention_days' => (int) env('GROUP_BUCKS_RETENTION_DAYS', 365),
+
+        /* Ceiling on the note a teacher may attach to a redemption or a reversal. */
+        'max_note_length' => 255,
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Qur'an memorization — hifz tracking (T-014)
     |--------------------------------------------------------------------------
     |

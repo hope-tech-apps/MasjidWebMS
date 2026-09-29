@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\BehaviorAward;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
+use App\Models\PrizeLedgerEntry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -57,7 +58,7 @@ use Illuminate\Support\Facades\Log;
 class PurgeGroupFeed extends Command
 {
     protected $signature = 'groups:purge-feed
-                            {--before= : Purge posts/threads/awards retained only until this date (default: today)}
+                            {--before= : Purge posts/threads/awards/ledgers retained only until this date (default: today)}
                             {--masjid= : Limit the sweep to one organization}
                             {--dry-run : Report what would go without deleting anything}';
 
@@ -153,6 +154,13 @@ class PurgeGroupFeed extends Command
             }
         });
 
+        // The Manara Bucks ledger (T-003.4) joins the same sweep, with one difference: it goes
+        // as a SET. A child's rows are removed together, and only once EVERY one of them has
+        // passed its retention date (PrizeLedgerEntry::purgeDueSets), so the sweep can never
+        // delete what a child earned and leave the redemption that spent it, or the reverse:
+        // either would leave a negative or unexplained balance. Rows only, no bytes.
+        $ledgerRows = PrizeLedgerEntry::purgeDueSets($before, $narrowToMasjid ? (int) $masjidId : null, $dryRun);
+
         // VIDEO (2026-09-24). A fourth sweep, over the ATTACHMENT rows rather
         // than their parents, because video carries its own shorter window (90
         // days against the post's or thread's 365) and the parent sweeps above
@@ -199,7 +207,7 @@ class PurgeGroupFeed extends Command
         // with the student. See config/groups.php and .claude/rules/groups.md.
 
         $this->info(sprintf(
-            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s), %d video(s)%s.',
+            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s), %d video(s), %d bucks ledger row(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
             $posts,
             $images,
@@ -207,6 +215,7 @@ class PurgeGroupFeed extends Command
             $messages,
             $awards,
             $videos,
+            $ledgerRows,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
 
@@ -229,6 +238,7 @@ class PurgeGroupFeed extends Command
             // post standing, so rolling the two together would make a working
             // video sweep indistinguishable from a post sweep that got busier.
             'videos' => $videos,
+            'bucks_ledger_rows' => $ledgerRows,
         ]);
 
         return self::SUCCESS;

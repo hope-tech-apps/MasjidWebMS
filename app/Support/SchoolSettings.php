@@ -9,7 +9,8 @@ use App\Models\Masjid;
  * THE ONE READER of the per-organisation school settings.
  *
  * Grants in config/capabilities.php (the first three are the weekly-school settings;
- * `points_weekly_report`, T-003.3, is the Friday points report and is for any school),
+ * `points_weekly_report`, T-003.3, is the Friday points report and `class_store`, T-003.4,
+ * is the Manara Bucks class store; both are for any school),
  * all OFF for every organisation until
  * a SuperAdmin switches one on (PATCH .../capabilities/{key}, SuperAdmin only,
  * audited in masjid_capability_changes). Off is exactly what every school did
@@ -42,6 +43,8 @@ final class SchoolSettings
     public const SIMPLE_MARKING = 'simple_marking';
     /** The weekly points report (T-003.3): families and teachers are emailed. Off for everyone until a SuperAdmin decides. */
     public const POINTS_WEEKLY_REPORT = 'points_weekly_report';
+    /** The class store (T-003.4): points become Manara Bucks a class store spends. Off for everyone until a SuperAdmin decides. */
+    public const CLASS_STORE = 'class_store';
 
     /**
      * What the shorter lesson plan leaves out (owner, 2026-09-21: "Differentiation
@@ -114,6 +117,17 @@ final class SchoolSettings
     public static function pointsWeeklyReport(?Masjid $masjid): bool
     {
         return (bool) $masjid?->hasCapability(self::POINTS_WEEKLY_REPORT);
+    }
+
+    /**
+     * Does this organisation run the class store (Manara Bucks minted from points, a store
+     * the teachers run, a balance families read)? Fails closed like every other grant: an
+     * unknown organisation, or a stale config cache during a deploy, reads as OFF, which
+     * mints nothing and answers no store route.
+     */
+    public static function classStore(?Masjid $masjid): bool
+    {
+        return (bool) $masjid?->hasCapability(self::CLASS_STORE);
     }
 
     /**

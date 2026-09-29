@@ -8,6 +8,7 @@ use App\Models\AttendanceRecord;
 use App\Models\BehaviorAward;
 use App\Models\GroupMembership;
 use App\Models\HifzEntry;
+use App\Models\PrizeLedgerEntry;
 use App\Models\ReportCard;
 
 /**
@@ -18,8 +19,9 @@ use App\Models\ReportCard;
  * WHY THIS IS A CLASS AND NOT A PRIVATE METHOD
  * ---------------------------------------------------------------------------
  *
- * Six tables hang off `group_memberships.id`: the register, assignment scores,
- * report cards, ḥifẓ entries, behaviour awards and Arabic letter progress. Until
+ * Seven tables hang off `group_memberships.id`: the register, assignment scores,
+ * report cards, ḥifẓ entries, behaviour awards, Arabic letter progress and (since T-003.4,
+ * created RESTRICT from the start) the Manara Bucks ledger. Until
  * 2026_09_09_040000 those foreign keys were ON DELETE CASCADE, so any verb that
  * removed a roster row also destroyed a term of a child's academic history —
  * reproduced on a seeded child: one attendance row and one report card, one
@@ -57,6 +59,8 @@ final class AcademicRecordsHeld
             'ḥifẓ entries' => HifzEntry::where('group_membership_id', $id)->count(),
             'behaviour points' => BehaviorAward::where('group_membership_id', $id)->count(),
             'letter progress' => ArabicLetterProgress::where('group_membership_id', $id)->count(),
+            // T-003.4: what a child earned and spent is theirs too. RESTRICT in the database.
+            'Manara Bucks' => PrizeLedgerEntry::where('group_membership_id', $id)->count(),
         ];
     }
 
