@@ -117,7 +117,7 @@ class PruneCarts extends Command
         $lapsedBefore = now()->subDays($orderDays);
 
         // An `expired` order with NO payment intent on record: a payment page that was never
-        // completed, and no payment event ever named it.
+        // completed, and neither its own page's session event nor a settlement recorded a payment.
         $orderCount = $this->sweepWithoutIntent(Order::STATUS_EXPIRED, $lapsedBefore, $dryRun);
 
         // A `pending` order with no payment intent on record: nothing was ever paid or attempted
