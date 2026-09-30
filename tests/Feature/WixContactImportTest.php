@@ -14,6 +14,7 @@ use App\Models\SmsSuppression;
 use App\Services\Broadcast\BroadcastAudienceResolver;
 use App\Services\Broadcast\EmailSuppressionService;
 use App\Services\Sms\SmsConsentService;
+use App\Support\CartTables;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -22,7 +23,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -57,6 +60,10 @@ class WixContactImportTest extends TestCase
 
         app(TenantContext::class)->forgetTenant();
 
+        // The cart-table guard remembers what it saw for the life of the process; the tests that
+        // drop the tables or break the check must start and end with nothing remembered.
+        CartTables::forget();
+
         $this->masjid = $this->makeMasjid();
         $this->other = $this->makeMasjid();
     }
@@ -66,6 +73,8 @@ class WixContactImportTest extends TestCase
         foreach ($this->files as $file) {
             @unlink($file);
         }
+
+        CartTables::forget();
 
         parent::tearDown();
     }
@@ -1079,6 +1088,94 @@ Called about the fall festival."])->save();
         $this->assertSame(1, $code);
         $this->assertStringContainsString("contact {$paid->id}: orders", $output);
         $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
+    }
+
+    /** What migrate has not done yet. SQLite rolls the DDL back with the test's own transaction. */
+    private function dropTheCartTables(): void
+    {
+        foreach (CartTables::NAMES as $table) {
+            Schema::dropIfExists($table);
+        }
+
+        CartTables::forget();
+
+        foreach (CartTables::NAMES as $table) {
+            $this->assertFalse(Schema::hasTable($table), "premise: {$table} does not exist");
+        }
+    }
+
+    #[Test]
+    public function undo_in_the_deploy_window_removes_what_the_run_created_exactly_as_before_the_cart(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'one@example.test']),
+            $this->wix('w2', ['email' => 'two@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+        $this->assertSame(2, $this->contacts()->count(), 'premise');
+
+        // bin/deploy makes this code live before `migrate`: the undo's look at `orders` used to fail.
+        $this->dropTheCartTables();
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(0, $this->contacts()->count(), 'the created contacts are erased');
+        $this->assertSame(0, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->count());
+    }
+
+    #[Test]
+    public function undo_in_the_deploy_window_is_still_refused_for_a_contact_the_office_holds(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'kept@example.test']),
+            $this->wix('w2', ['email' => 'other@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $kept = $this->contactWithEmail('kept@example.test');
+        ContactTag::withoutMasjidScope()->create(['masjid_id' => $this->masjid->id, 'name' => 'Donor'])->contacts()->attach([$kept->id]);
+
+        $this->dropTheCartTables();
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$kept->id}: contact_tag_links", $output);
+        $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
+    }
+
+    #[Test]
+    public function an_undo_whose_orders_check_cannot_be_answered_stops_and_removes_nothing(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'paid@example.test']),
+            $this->wix('w2', ['email' => 'clean@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $paid = $this->contactWithEmail('paid@example.test');
+        $order = $this->orderFor($paid, Order::STATUS_PAID);
+
+        // The database cannot answer "does `orders` exist?": the SQL Laravel 12.64's SQLite grammar writes for `hasTable`.
+        DB::listen(function ($query): void {
+            if (str_contains((string) $query->sql, 'sqlite_master') && str_contains((string) $query->sql, "name = 'orders'")) {
+                throw new RuntimeException('the schema is unavailable');
+            }
+        });
+
+        $thrown = null;
+
+        try {
+            $this->import(null, ['--undo' => 'b1']);
+        } catch (RuntimeException $e) {
+            $thrown = $e;
+        }
+
+        app(TenantContext::class)->forgetTenant();
+
+        // A fail-safe "absent" would skip the paid-order look, judge both contacts removable and delete them.
+        $this->assertNotNull($thrown, 'a check that cannot be answered stops the undo');
+        $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
+        $this->assertSame(2, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->count());
+        $this->assertSame($paid->id, Order::withoutMasjidScope()->findOrFail($order->id)->contact_id, 'the sale still names its buyer');
     }
 
     #[Test]

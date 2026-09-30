@@ -12,6 +12,7 @@ use App\Services\Broadcast\EmailSuppressionService;
 use App\Services\Member\MemberAccountDeletion;
 use App\Services\Sms\PhoneNumber;
 use App\Services\Sms\SmsConsentService;
+use App\Support\CartTables;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -1213,6 +1214,16 @@ final class WixContactImport
             // An unpaid basket is the shopper's half-finished choice, not a record: its foreign
             // key cascades, so the undo removes it with the contact, as an account deletion does.
             if (in_array($table, self::GONE_WITH_THE_CONTACT, true)) {
+                continue;
+            }
+
+            // bin/deploy makes this code live before `migrate`: a cart table that is not there yet
+            // holds nothing, and asking would fail the undo with a query error, so the undo
+            // behaves exactly as it did before the cart. Only a table that genuinely is not there
+            // skips. The strict question, because this judgement decides whether a contact may be
+            // DELETED: a check that could not be answered must stop the undo, never read as "no
+            // orders" and let it remove a contact a paid order still names (CartTables).
+            if (in_array($table, CartTables::NAMES, true) && ! CartTables::existsOrFail($table)) {
                 continue;
             }
 
