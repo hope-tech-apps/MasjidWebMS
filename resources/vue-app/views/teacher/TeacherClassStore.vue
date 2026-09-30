@@ -23,17 +23,19 @@
                 <div class="col-lg-5">
                     <h2 class="h6 text-uppercase text-muted small">Students</h2>
                     <p v-if="!students.length" class="text-muted small">No students in this class yet.</p>
-                    <ul class="list-group">
-                        <li v-for="s in students" :key="s.membership_id"
-                            class="list-group-item list-group-item-action d-flex align-items-center gap-2"
-                            :class="{ active: selectedId === s.membership_id }"
-                            role="button" @click="select(s.membership_id)">
+                    <!-- Real buttons, so a keyboard reaches every student (Tab, then Enter or Space). -->
+                    <div class="list-group">
+                        <button v-for="s in students" :key="s.membership_id" type="button"
+                                class="list-group-item list-group-item-action d-flex align-items-center gap-2 text-start"
+                                :class="{ active: selectedId === s.membership_id }"
+                                :aria-pressed="selectedId === s.membership_id ? 'true' : 'false'"
+                                @click="select(s.membership_id)">
                             <PersonAvatar :avatar="s.contact?.avatar" :first-name="s.contact?.first_name"
                                           :last-name="s.contact?.last_name" :size="32" />
                             <span class="flex-grow-1">{{ name(s.contact) }}</span>
                             <span class="fw-semibold">{{ bucksLabel(s.balance) }}</span>
-                        </li>
-                    </ul>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="col-lg-7">
@@ -88,6 +90,11 @@
                                         :disabled="busy" @click="undo(e)">Undo</button>
                             </li>
                         </ul>
+                        <!-- Older lines, 25 at a time, as the family screen pages them: an older prize
+                             can still be undone from here. -->
+                        <button v-if="historyHasMore" type="button" class="btn btn-link btn-sm p-0 text-decoration-none"
+                                :disabled="historyMoreBusy" @click="loadEarlier">Show earlier</button>
+                        <p v-if="historyMoreError" class="text-danger small mb-0">{{ historyMoreError }}</p>
                     </template>
                     <p v-else class="text-muted small mt-4">Choose a student to give a prize or see their history.</p>
                 </div>
@@ -175,8 +182,8 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import {
-    blankPrizeForm, breakdownLine, bucksLabel, createRequestIds, entryText, prizeFormFrom, prizeFormReady, prizeRequest,
-    shelfFor, signedBucks, stockNote,
+    appendPage, blankPrizeForm, breakdownLine, bucksLabel, createRequestIds, entryText, prizeEditRequest, prizeFormFrom,
+    prizeFormReady, prizeRequest, shelfFor, signedBucks, stockNote,
 } from '@/core/helpers/classStore';
 import type { PrizeForm, StorePrize } from '@/core/helpers/classStore';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
@@ -205,12 +212,18 @@ const prizes = ref<StorePrize[]>([]);
 const selectedId = ref<number | null>(null);
 const history = ref<any[]>([]);
 const historyError = ref('');
+const historyPage = ref(1);
+const historyLastPage = ref(1);
+const historyMoreBusy = ref(false);
+const historyMoreError = ref('');
 const balance = ref<number | null>(null);
 const busy = ref(false);
 const giveError = ref('');
 const prizeError = ref('');
 const form = ref<PrizeForm>(blankPrizeForm());
 const editingId = ref<number | null>(null);
+/** The prize as it was when the edit form opened: its stock is what a changed count is checked against. */
+const editingFrom = ref<StorePrize | null>(null);
 const cashAmount = ref('');
 const handoutDate = ref('');
 const handout = ref<any>(null);
@@ -225,6 +238,7 @@ const name = (c: any) => [c?.first_name, c?.last_name].filter(Boolean).join(' ')
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
 const selected = computed(() => students.value.find((s) => s.membership_id === selectedId.value) ?? null);
+const historyHasMore = computed(() => historyPage.value < historyLastPage.value);
 const offered = computed(() => shelfFor(prizes.value, balance.value));
 const pointsPerBuckText = computed(() => {
     const n = settings.value?.points_per_buck ?? 1;
@@ -259,20 +273,50 @@ async function load() {
     }
 }
 
-async function select(id: number) {
+/**
+ * Open a student: their balance and the newest page of their history. A teacher's own pick clears
+ * the last message; the reload after a write passes `keepMessage`, because that message (a refused
+ * prize: not enough Bucks, out of stock, retired) is the answer to what the teacher just did, and
+ * clearing it on the way back is how a refusal used to show no message at all.
+ */
+async function select(id: number, keepMessage = false) {
     selectedId.value = id;
     const seq = ++pickSeq;
     history.value = [];
     historyError.value = '';
-    giveError.value = '';
+    historyMoreError.value = '';
+    historyPage.value = 1;
+    historyLastPage.value = 1;
+    if (!keepMessage) giveError.value = '';
     balance.value = students.value.find((s) => s.membership_id === id)?.balance ?? null;
     try {
-        const res = await TeacherApiService.get(`${props.base}/members/${id}/bucks`);
+        const res = await TeacherApiService.get(`${props.base}/members/${id}/bucks?page=1&per_page=25`);
         if (!alive || seq !== pickSeq) return;
         history.value = rowsOf(res.data?.data);
+        historyPage.value = Number(res.data?.data?.current_page ?? 1);
+        historyLastPage.value = Number(res.data?.data?.last_page ?? 1);
         balance.value = res.data?.meta?.balance ?? balance.value;
     } catch (e) {
         if (alive && seq === pickSeq) { historyError.value = apiErrorText(e, 'The history could not be loaded.'); balance.value = null; }
+    }
+}
+
+/** The next 25 older lines of the open student's history, added under the ones shown. */
+async function loadEarlier() {
+    if (selectedId.value === null || historyMoreBusy.value || !historyHasMore.value) return;
+    const seq = pickSeq;
+    historyMoreBusy.value = true;
+    historyMoreError.value = '';
+    try {
+        const res = await TeacherApiService.get(`${props.base}/members/${selectedId.value}/bucks?page=${historyPage.value + 1}&per_page=25`);
+        if (!alive || seq !== pickSeq) return;
+        history.value = appendPage(history.value, rowsOf(res.data?.data));
+        historyPage.value = Number(res.data?.data?.current_page ?? historyPage.value + 1);
+        historyLastPage.value = Number(res.data?.data?.last_page ?? historyLastPage.value);
+    } catch (e) {
+        if (alive && seq === pickSeq) historyMoreError.value = apiErrorText(e, 'The earlier lines could not be loaded.');
+    } finally {
+        historyMoreBusy.value = false;
     }
 }
 
@@ -285,7 +329,7 @@ async function refresh() {
     if (!alive) return;
     students.value = rowsOf(bucks.data?.data?.students);
     prizes.value = rowsOf(shelf.data?.data) as StorePrize[];
-    if (selectedId.value !== null) await select(selectedId.value);
+    if (selectedId.value !== null) await select(selectedId.value, true);
 }
 
 async function give(p: StorePrize) {
@@ -355,21 +399,28 @@ async function cashOut() {
     }
 }
 
-function resetForm() { editingId.value = null; form.value = blankPrizeForm(); prizeError.value = ''; }
-function editPrize(p: StorePrize) { editingId.value = p.id; form.value = prizeFormFrom(p); prizeError.value = ''; }
+function resetForm() { editingId.value = null; editingFrom.value = null; form.value = blankPrizeForm(); prizeError.value = ''; }
+function editPrize(p: StorePrize) { editingId.value = p.id; editingFrom.value = { ...p }; form.value = prizeFormFrom(p); prizeError.value = ''; }
 
 async function savePrize() {
     if (!prizeFormReady(form.value) || busy.value) return;
     busy.value = true;
     prizeError.value = '';
     try {
-        const body = prizeRequest(form.value);
-        if (editingId.value === null) await TeacherApiService.post(`${props.base}/prizes`, body);
-        else await TeacherApiService.put(`${props.base}/prizes/${editingId.value}`, body);
+        if (editingId.value === null) await TeacherApiService.post(`${props.base}/prizes`, prizeRequest(form.value));
+        else await TeacherApiService.put(`${props.base}/prizes/${editingId.value}`, prizeEditRequest(form.value, editingFrom.value ?? { stock: null }));
         resetForm();
         await refresh();
     } catch (e) {
         prizeError.value = apiErrorText(e, 'That prize could not be saved.');
+        // The count moved under the form (a prize was given): the message says so, and the form now
+        // compares against the count as it is, so the teacher's next Save is checked against that.
+        if ((e as any)?.response?.data?.reason === 'stock_changed' && editingId.value !== null) {
+            try {
+                await refresh();
+                editingFrom.value = prizes.value.find((p) => p.id === editingId.value) ?? editingFrom.value;
+            } catch { /* the message above already says what happened */ }
+        }
     } finally {
         busy.value = false;
     }

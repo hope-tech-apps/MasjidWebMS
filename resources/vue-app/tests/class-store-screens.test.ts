@@ -81,9 +81,18 @@ test('the office screen reads class totals and carries no child anywhere', () =>
     assert.doesNotMatch(body, /membership|\.students\b|\bcontact\b|first_name|last_name|avatar/i, 'no child appears on the office screen');
 });
 
-test('the office sends a blank stock as the empty string, because a null is dropped from a form body', () => {
-    assert.match(code(officeView), /stock: body\.stock === null \? '' : body\.stock/);
+test('the office sends a blank stock (and the count it opened at) as the empty string, because a null is dropped from a form body', () => {
+    assert.match(code(officeView), /out\.stock = body\.stock === null \|\| body\.stock === undefined \? '' : body\.stock/);
+    assert.match(code(officeView), /out\.expected_stock = body\.expected_stock === null \|\| body\.expected_stock === undefined \? '' : body\.expected_stock/);
     assert.match(code(officeView), /is_active: body\.is_active \? '1' : '0'/);
+});
+
+test('the Arabic Manara Bucks lines are marked MACHINE-DRAFTED for a fluent reader, as W2\'s were', () => {
+    const i18n = read('views/family/familyI18n.ts');
+    const ar = i18n.slice(i18n.indexOf('\n    ar: {'));
+    const marker = ar.indexOf('MACHINE-DRAFTED', ar.indexOf("The class store's Manara Bucks"));
+    assert.ok(marker > 0 && marker < ar.indexOf('bucks_section:'), 'the marker sits directly above the bucks_* block');
+    assert.match(ar.slice(marker, ar.indexOf('bucks_section:')), /human review before the class\s+\/\/ store is switched on/);
 });
 
 test('the office menu item, route and capability are the same key', () => {

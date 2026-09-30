@@ -788,6 +788,8 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_type_other: "أخرى",
         marks_standard_source: "من الدليل الزمني للمنهج في المدرسة",
         // The class store's Manara Bucks (T-003.4, 2026-09-29).
+        // MACHINE-DRAFTED 2026-09-29 — every bucks_* line below needs a human review before the class
+        // store is switched on for a school (the language's `reviewed` flag does not cover it).
         bucks_section: "عملات منارة",
         bucks_balance: "الرصيد",
         bucks_none: "لا شيء بعد.",

@@ -114,7 +114,15 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="c in recon.classes" :key="c.group_id">
+                                    <template v-for="c in recon.classes" :key="c.group_id">
+                                    <!-- A class too small to show: in it a total IS a child's balance. -->
+                                    <tr v-if="c.suppressed" class="text-muted">
+                                        <td dir="auto">{{ c.name }}</td>
+                                        <td :colspan="recon.settings.paper_bucks_enabled ? 7 : 6" class="small">
+                                            Fewer than {{ recon.min_class_size }} students: not shown, so no child's balance can be read from it.
+                                        </td>
+                                    </tr>
+                                    <tr v-else>
                                         <td dir="auto">{{ c.name }}</td>
                                         <td class="text-end">{{ c.minted }}</td>
                                         <td class="text-end">{{ c.redeemed }}</td>
@@ -127,10 +135,11 @@
                                             <span v-else class="text-warning-emphasis">{{ differenceText(c.window_difference) }}</span>
                                         </td>
                                     </tr>
+                                    </template>
                                 </tbody>
                                 <tfoot>
                                     <tr class="fw-semibold">
-                                        <td>All classes</td>
+                                        <td>{{ recon.suppressed_classes ? 'Classes shown' : 'All classes' }}</td>
                                         <td class="text-end">{{ recon.totals.minted }}</td>
                                         <td class="text-end">{{ recon.totals.redeemed }}</td>
                                         <td class="text-end">{{ recon.totals.reversed }}</td>
@@ -160,8 +169,8 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import ApiService from '@/core/services/ApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
-import { blankPrizeForm, bucksLabel, prizeFormFrom, prizeFormReady, prizeRequest } from '@/core/helpers/classStore';
-import type { PrizeForm, StorePrize } from '@/core/helpers/classStore';
+import { blankPrizeForm, bucksLabel, prizeEditRequest, prizeFormFrom, prizeFormReady, prizeRequest } from '@/core/helpers/classStore';
+import type { PrizeEditBody, PrizeForm, StorePrize } from '@/core/helpers/classStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 
@@ -189,6 +198,8 @@ const loadError = ref('');
 const prizes = ref<StorePrize[]>([]);
 const form = ref<PrizeForm>(blankPrizeForm());
 const editingId = ref<number | null>(null);
+/** The prize as it was when the edit form opened: its stock is what a changed count is checked against. */
+const editingFrom = ref<StorePrize | null>(null);
 const busy = ref(false);
 const formError = ref('');
 const weeks = ref(8);
@@ -223,18 +234,27 @@ async function loadReconciliation() {
     }
 }
 
-function reset() { editingId.value = null; form.value = blankPrizeForm(); formError.value = ''; }
-function edit(p: StorePrize) { editingId.value = p.id; form.value = prizeFormFrom(p); formError.value = ''; }
+function reset() { editingId.value = null; editingFrom.value = null; form.value = blankPrizeForm(); formError.value = ''; }
+function edit(p: StorePrize) { editingId.value = p.id; editingFrom.value = { ...p }; form.value = prizeFormFrom(p); formError.value = ''; }
 
-/** The form-encoded body the admin PUT needs (see the note above). */
-function encoded(body: ReturnType<typeof prizeRequest>) {
-    return {
+/**
+ * The form-encoded body the admin PUT needs (see the note above). A stock is sent only when it was
+ * changed, and then with the count the form loaded (`expected_stock`, '' for no limit), which the
+ * server checks under the prize's lock: a 409 means a prize was given meanwhile.
+ */
+function encoded(body: PrizeEditBody) {
+    const out: Record<string, string | number> = {
         title: body.title,
         description: body.description ?? '',
         cost_bucks: body.cost_bucks,
-        stock: body.stock === null ? '' : body.stock,
         is_active: body.is_active ? '1' : '0',
     };
+    if ('stock' in body) {
+        out.stock = body.stock === null || body.stock === undefined ? '' : body.stock;
+        out.expected_stock = body.expected_stock === null || body.expected_stock === undefined ? '' : body.expected_stock;
+    }
+
+    return out;
 }
 
 async function save() {
@@ -242,13 +262,20 @@ async function save() {
     busy.value = true;
     formError.value = '';
     try {
-        const body = prizeRequest(form.value);
-        if (editingId.value === null) await ApiService.post(url('prizes'), body);
-        else await ApiService.put(url(`prizes/${editingId.value}`), encoded(body));
+        if (editingId.value === null) await ApiService.post(url('prizes'), prizeRequest(form.value));
+        else await ApiService.put(url(`prizes/${editingId.value}`), encoded(prizeEditRequest(form.value, editingFrom.value ?? { stock: null })));
         reset();
         await load();
     } catch (e) {
         formError.value = apiErrorText(e, 'That prize could not be saved.');
+        // The count moved under the form: the next Save is checked against the count as it is now.
+        if ((e as any)?.response?.data?.reason === 'stock_changed' && editingId.value !== null) {
+            try {
+                const res = await ApiService.get(url('prizes'));
+                prizes.value = (res.data?.data ?? []) as StorePrize[];
+                editingFrom.value = prizes.value.find((p) => p.id === editingId.value) ?? editingFrom.value;
+            } catch { /* the message above already says what happened */ }
+        }
     } finally {
         busy.value = false;
     }

@@ -203,6 +203,33 @@ export function prizeRequest(f: PrizeForm): { title: string; description: string
     };
 }
 
+export type PrizeEditBody = Omit<ReturnType<typeof prizeRequest>, 'stock'> & { stock?: number | null; expected_stock?: number | null };
+
+/**
+ * The body for EDITING a prize. Every field goes, except the stock: that goes only when the editor
+ * changed it, and then with `expected_stock`, the count the form was LOADED with. The server
+ * compares it with the row under a lock and answers 409 when a prize was given meanwhile, so a
+ * number typed on a stale screen can never put a given prize back on the shelf. `loaded` must be
+ * the prize as it was when the form opened, not a later reload of the list.
+ */
+export function prizeEditRequest(f: PrizeForm, loaded: Pick<StorePrize, 'stock'>): PrizeEditBody {
+    const { stock, ...rest } = prizeRequest(f);
+    const was = loaded.stock ?? null;
+
+    return stock === was ? rest : { ...rest, stock, expected_stock: was };
+}
+
+/**
+ * One more page of a newest-first history appended to what is shown, without showing a line
+ * twice: a line written since the first page was read pushes the pages along by one, and the
+ * next page then starts with a line already on screen.
+ */
+export function appendPage<T extends { id: number }>(shown: T[], page: T[]): T[] {
+    const seen = new Set(shown.map((e) => e.id));
+
+    return shown.concat(page.filter((e) => !seen.has(e.id)));
+}
+
 /** "2 x 20, 1 x 5, 2 x 1" for the paper notes, zeros left out; "none" for an empty set. */
 export function breakdownLine(b: Record<string, number> | null | undefined): string {
     const parts = Object.entries(b ?? {})

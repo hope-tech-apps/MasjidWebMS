@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
     LEDGER_KINDS, blankPrizeForm, breakdownLine, bucksLabel, createRequestIds, dayLabel, entryText, keepsRequestId, kindLabel, newRequestId,
-    prizeFormFrom, prizeFormReady, prizeRequest, shelfFor, signedBucks, stockNote,
+    prizeFormFrom, prizeFormReady, prizeRequest, shelfFor, signedBucks, stockNote, prizeEditRequest, appendPage,
 } from '../core/helpers/classStore.ts';
 
 const prize = (over: Record<string, unknown> = {}) => ({
@@ -172,4 +172,32 @@ test('the helper file has no sort, no rank and no total: there is no leaderboard
 
     assert.doesNotMatch(source, /\.sort\(\s*\(?\s*[a-z]\w*\s*,\s*[a-z]\w*\s*\)?\s*=>[^)]*balance/i, 'no sort by balance');
     assert.doesNotMatch(source, /\brank\b|\bleaderboard\b|\btotalBucks\b|\bclassTotal\b/i);
+});
+
+test('an edit sends the stock only when it changed, and then with the count the form was opened at', () => {
+    const loaded = prize({ stock: 4 });
+    const same = prizeEditRequest({ ...prizeFormFrom(loaded), cost: '7' }, loaded);
+    assert.equal('stock' in same, false);
+    assert.equal('expected_stock' in same, false);
+    assert.equal(same.cost_bucks, 7);
+
+    assert.deepEqual(
+        (({ stock, expected_stock }) => ({ stock, expected_stock }))(prizeEditRequest({ ...prizeFormFrom(loaded), stock: '9' }, loaded)),
+        { stock: 9, expected_stock: 4 },
+    );
+    // To and from "no limit": null on both sides of the compare.
+    assert.deepEqual(
+        (({ stock, expected_stock }) => ({ stock, expected_stock }))(prizeEditRequest({ ...prizeFormFrom(loaded), stock: '' }, loaded)),
+        { stock: null, expected_stock: 4 },
+    );
+    const unlimited = prize({ stock: null });
+    assert.deepEqual(
+        (({ stock, expected_stock }) => ({ stock, expected_stock }))(prizeEditRequest({ ...prizeFormFrom(unlimited), stock: '3' }, unlimited)),
+        { stock: 3, expected_stock: null },
+    );
+});
+
+test('a further page of history never draws a line twice', () => {
+    assert.deepEqual(appendPage([{ id: 9 }, { id: 8 }], [{ id: 8 }, { id: 7 }]).map((e) => e.id), [9, 8, 7]);
+    assert.deepEqual(appendPage([], [{ id: 3 }]).map((e) => e.id), [3]);
 });
