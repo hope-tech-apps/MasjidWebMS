@@ -16,6 +16,9 @@ use App\Services\Groups\GroupNotificationRecipientResolver;
 use App\Services\Groups\GroupPushChannel;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Mail\Events\MessageSending;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -206,6 +209,35 @@ class GroupNotificationTest extends TestCase
             $this->assertArrayNotHasKey('childName', $vars);
             return true;
         });
+    }
+
+    #[Test]
+    public function a_failed_nudge_is_logged_by_contact_id_with_no_address_anywhere_in_the_line(): void
+    {
+        // The real array mailer, made to fail the way an SMTP server does: with an
+        // error text that repeats the recipient's address.
+        Event::listen(MessageSending::class, function (MessageSending $event) {
+            throw new \RuntimeException('550 mailbox unavailable: '.$event->message->getTo()[0]->getAddress());
+        });
+
+        $warnings = new \ArrayObject();
+        Log::spy();
+        Log::shouldReceive('warning')->andReturnUsing(function ($message, array $context = []) use ($warnings) {
+            $warnings[] = ['message' => (string) $message, 'context' => $context];
+        });
+
+        $this->runJob(GroupNotificationEvent::CLASS_STORY, authorUserId: $this->teacher->id);
+
+        $this->assertCount(2, $warnings, 'each failed guardian is logged once, and the rest still ran');
+        $this->assertEqualsCanonicalizing(
+            [(int) $this->gA1->id, (int) $this->gB->id],
+            array_map(fn ($w) => $w['context']['contact_id'] ?? null, $warnings->getArrayCopy()),
+        );
+        foreach ($warnings as $w) {
+            $text = $w['message'].' '.json_encode($w['context']);
+            $this->assertStringNotContainsString('@', $text, 'a log line carries no address: '.$text);
+            $this->assertStringContainsString('[address]', $w['context']['error']);
+        }
     }
 
     // ---------------------------------------------------------- helpers
