@@ -1556,7 +1556,10 @@ const signalLabels = computed(() => ({
     seenBy: t('seen_by'),
     notSeen: t('not_seen'),
     others: t('reaction_others'),
-    and: isAr.value ? '، ' : ', ',
+    // The Arabic comma for every right-to-left portal language (Arabic, Urdu, Pashto, Dari):
+    // `isRtl` is what this screen takes from useFamilyLang. `isAr` was never taken, so opening
+    // a conversation threw a ReferenceError from 2026-09-21 (f0cace12) until this fix.
+    and: isRtl.value ? '، ' : ', ',
     reactionsGroup: t('reactions_group'),
     reactionNames: {
         ameen: t('reaction_ameen'),
