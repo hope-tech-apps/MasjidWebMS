@@ -10,8 +10,12 @@
  * matches /Qur|Islamic/, because the guide had one combined "Qur'an & Islamic
  * Studies" column. The school's separated plan (Pre-K to Grade 2, Quarter 1) has
  * Qur'an and Islamic Studies as two subjects, so:
- *   - exactly one Islamic sibling: its focus alone, exactly as before (with its
- *     Objective after it when it has one, which only the separated weeks do);
+ *   - exactly one Islamic sibling that IS the combined column: its focus alone,
+ *     exactly as before;
+ *   - exactly one that is a separated subject ("Qur'an", "Islamic Studies"): its
+ *     `Subject: focus` line, so a teacher can tell which subject it came from
+ *     (with its Objective after the focus when it has one, which only the
+ *     separated weeks do);
  *   - several: one `Subject: focus` line each, so neither is dropped;
  *   - Arabic Language stays with the other subjects (it is not Islamic Studies).
  *
@@ -36,9 +40,12 @@ const siblingText = (s: GuideSibling): string =>
 /** The test the form has always used for "this subject is Islamic". */
 const ISLAMIC = /Qur|Islamic/i;
 
+/** The school's combined "Qur’an & Islamic Studies" column, in either apostrophe. */
+const COMBINED = /^Qur.{0,2}an\s*(&|and)\s*Islamic\s+Studies$/i;
+
 export function islamicIntegration(siblings: GuideSibling[]): { islamic: string; others: string } {
     const hits = siblings.filter((s) => ISLAMIC.test(s.subject));
-    const islamic = hits.length === 1
+    const islamic = hits.length === 1 && COMBINED.test(hits[0].subject.trim())
         ? siblingText(hits[0])
         : hits.map((s) => `${s.subject}: ${siblingText(s)}`).join('\n');
     const others = siblings.filter((s) => !hits.includes(s))

@@ -56,7 +56,8 @@ class CurriculumWeek extends Model
     {
         $cell = [
             'standard_code' => $this->standard_code,
-            'objective' => $this->objective ?? $this->focus,
+            // An empty Objective is an absent one, here and in every read path.
+            'objective' => filled($this->objective) ? $this->objective : $this->focus,
             'assessment_formative' => $this->assessment_note,
             'curriculum_week_no' => (int) $this->week_no,
             'subject' => $this->subject,
@@ -64,7 +65,7 @@ class CurriculumWeek extends Model
             'prefill_source' => $this->source_label,
         ];
 
-        if ($this->learning_outcome !== null) {
+        if (filled($this->learning_outcome)) {
             $cell['learning_outcome'] = $this->learning_outcome;
         }
 

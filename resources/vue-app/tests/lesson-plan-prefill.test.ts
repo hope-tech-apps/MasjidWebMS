@@ -39,13 +39,30 @@ test('Qur’an and Islamic Studies as two subjects give one line each, and Arabi
     assert.equal(others, 'Arabic Language: Greetings\nScience: Senses');
 });
 
-test('exactly one separated Islamic sibling gives its focus alone', () => {
+test('exactly one separated Islamic sibling is labelled with its subject', () => {
     const { islamic, others } = islamicIntegration([
         { subject: "Qur'an", focus: 'Memorization' },
         { subject: 'Arabic Language', focus: 'Greetings' },
     ]);
-    assert.equal(islamic, 'Memorization');
+    assert.equal(islamic, "Qur'an: Memorization");
     assert.equal(others, 'Arabic Language: Greetings');
+
+    // On an Islamic Studies plan the only Islamic sibling is Qur'an, and the other way round.
+    assert.equal(
+        islamicIntegration([{ subject: 'Islamic Studies', focus: 'Manners', objective: 'Practice kindness' }]).islamic,
+        'Islamic Studies: Manners — Practice kindness',
+    );
+});
+
+test('the combined column stays bare in either apostrophe and however it is spaced', () => {
+    for (const subject of ['Qur’an & Islamic Studies', "Qur'an & Islamic Studies", 'Qur’an and Islamic Studies', ' Qur’an & Islamic Studies ']) {
+        assert.equal(islamicIntegration([{ subject, focus: 'Wudu' }]).islamic, 'Wudu', subject);
+    }
+    // Two Islamic siblings are labelled even when one is the combined column.
+    assert.equal(
+        islamicIntegration([{ subject: 'Qur’an & Islamic Studies', focus: 'Wudu' }, { subject: 'Islamic Studies', focus: 'Manners' }]).islamic,
+        'Qur’an & Islamic Studies: Wudu\nIslamic Studies: Manners',
+    );
 });
 
 test('no Islamic sibling leaves the box empty and every subject in the others', () => {
@@ -61,7 +78,7 @@ test('a separated week’s Objective follows its Focus Skill, so the surah reach
         { subject: 'Arabic Language', focus: 'Greetings', objective: 'Say hello' },
         { subject: 'Science', focus: 'Senses', objective: null },
     ]);
-    assert.equal(islamic, 'Memorization — Memorize Surah Al-Ikhlāṣ');
+    assert.equal(islamic, "Qur'an: Memorization — Memorize Surah Al-Ikhlāṣ");
     assert.equal(others, 'Arabic Language: Greetings — Say hello\nScience: Senses');
 });
 
@@ -146,4 +163,22 @@ test('the week select shows the objective when the row has one', () => {
 test('the week control offers a way to a week past the list', () => {
     assert.match(teacherClass, /<option :value="WEEK_OTHER">Another week…<\/option>/);
     assert.match(teacherClass, /weekOutsideGuide\(planForm\.value\.curriculum_week_no, curriculum\.value\.weeks\)/);
+});
+
+test('the prefill names the class and labels a combined guide line', () => {
+    assert.match(teacherClass, /week: String\(asked\.week\),[\s\S]{0,300}group_id: String\(groupId\.value\)/);
+    assert.match(teacherClass, /prefillCombined\.value = cell\.from_combined_guide \? String\(cell\.guide_subject \?\? ''\) : ''/);
+    assert.match(teacherClass, /The school has not separated this week yet: filled from its combined/);
+});
+
+test('the standards searches name the class so the server can fence them', () => {
+    assert.match(teacherClass, /params\.set\('group_id', String\(groupId\.value\)\)/);
+    assert.match(picker, /if \(props\.groupId\) params\.set\('group_id', String\(props\.groupId\)\)/);
+    assert.match(teacherClass, /:group-id="groupId"/);
+});
+
+test('the week-select docblock sits above onWeekPick and WEEK_OTHER has its own', () => {
+    assert.match(teacherClass, /\*\/\nconst onWeekPick = \(\) => \{/);
+    assert.match(teacherClass, /Picking a week fills the plan[\s\S]{0,400}\*\/\nconst onWeekPick/);
+    assert.match(teacherClass, /\/\*\* The week select's last option[^\n]*\*\/\nconst WEEK_OTHER/);
 });

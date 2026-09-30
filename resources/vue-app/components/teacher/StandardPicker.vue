@@ -91,6 +91,8 @@ const props = defineProps<{
     grade?: string | null;
     /** The subject the work is filed under; ranks that subject's rows first. */
     subject?: string | null;
+    /** The class, so the server limits the search to the subjects this teacher teaches in it. */
+    groupId?: number | string | null;
     inputId?: string;
     disabled?: boolean;
 }>();
@@ -105,6 +107,7 @@ const search = createStandardSearch(state, {
         const params = new URLSearchParams({ q });
         if (props.grade) params.set('grade', props.grade);
         if (props.subject) params.set('subject', props.subject);
+        if (props.groupId) params.set('group_id', String(props.groupId));
         const res = await TeacherApiService.get(`/api/teacher/masjids/${props.masjidId}/curriculum/standards?${params}`);
         return (res.data?.data?.matches ?? []) as StandardMatch[];
     },

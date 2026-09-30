@@ -301,4 +301,178 @@ class TeacherCurriculumSplitGuideTest extends TestCase
 
         $this->assertSame(1, ClassAssignment::query()->count());
     }
+
+    // ------------------------------------------------------------------ weeks past the split
+
+    #[Test]
+    public function a_separated_subject_asked_for_a_week_past_the_split_gets_the_combined_line_labelled_as_such(): void
+    {
+        $rowsBefore = CurriculumWeek::query()->count();
+        $combined = CurriculumWeek::query()->where('grade_label', 'Grade 1')->where('subject', self::COMBINED)->where('week_no', 12)->firstOrFail();
+
+        foreach (["Qur'an", 'Islamic Studies', 'Arabic Language'] as $subject) {
+            $cell = $this->guide(['grade' => 'Grade 1', 'subject' => $subject, 'week' => 12])['cell'];
+
+            $this->assertNotNull($cell, $subject);
+            $this->assertTrue($cell['from_combined_guide'], $subject);
+            $this->assertSame(self::COMBINED, $cell['guide_subject'], $subject);
+            $this->assertSame(self::COMBINED, $cell['subject'], "{$subject}: the row is the combined one, never a split row");
+            $this->assertSame($combined->focus, $cell['objective'], $subject);
+            $this->assertSame($combined->assessment_note, $cell['assessment_formative'], $subject);
+            $this->assertSame(12, $cell['curriculum_week_no'], $subject);
+            $this->assertArrayNotHasKey('learning_outcome', $cell, $subject);
+
+            $siblings = array_column($cell['siblings'], 'subject');
+            $this->assertNotContains(self::COMBINED, $siblings, "{$subject}: the combined line is the cell, not its own sibling");
+            $this->assertContains('Mathematics', $siblings, $subject);
+        }
+
+        // Week 9 is the first week the split has no row for; week 8 is the last it has.
+        $this->assertTrue($this->guide(['grade' => 'Kindergarten', 'subject' => "Qur'an", 'week' => 9])['cell']['from_combined_guide']);
+        $eight = $this->guide(['grade' => 'Kindergarten', 'subject' => "Qur'an", 'week' => 8])['cell'];
+        $this->assertArrayNotHasKey('from_combined_guide', $eight);
+        $this->assertSame("Qur'an", $eight['subject']);
+
+        $this->assertSame($rowsBefore, CurriculumWeek::query()->count(), 'no row was invented');
+    }
+
+    #[Test]
+    public function other_subjects_and_weeks_the_guide_lacks_still_answer_nothing(): void
+    {
+        $this->assertNull($this->guide(['grade' => 'Grade 1', 'subject' => 'Mathematics', 'week' => 99])['cell']);
+        $this->assertNull($this->guide(['grade' => 'Grade 1', 'subject' => "Qur'an", 'week' => 99])['cell'], 'no combined line that week either');
+
+        // A July cell keeps the exact shape it always had: no label keys.
+        $july = $this->guide(['grade' => 'Grade 1', 'subject' => self::COMBINED, 'week' => 12])['cell'];
+        $this->assertArrayNotHasKey('from_combined_guide', $july);
+        $this->assertArrayNotHasKey('guide_subject', $july);
+    }
+
+    // ------------------------------------------------------------------ the fence on the guide reads
+
+    private function limitTo(array $subjects): void
+    {
+        $this->class->staff()->detach($this->teacher->id);
+        $this->class->staff()->attach($this->teacher->id, [
+            'masjid_id' => 14, 'role' => GroupStaff::ROLE_TEACHER, 'subjects' => $subjects, 'assigned_at' => now(),
+        ]);
+    }
+
+    /** @return list<string> */
+    private function searchSubjects(string $q, string $grade = 'Pre-Kindergarten'): array
+    {
+        $matches = $this->search(['q' => $q, 'grade' => $grade, 'group_id' => $this->class->id]);
+
+        return array_values(array_unique(array_column($matches, 'subject')));
+    }
+
+    #[Test]
+    public function a_quran_only_teacher_reads_quran_and_the_combined_column_and_nothing_else(): void
+    {
+        $this->limitTo(['quran']);
+        $g = ['grade' => 'Pre-Kindergarten', 'group_id' => $this->class->id];
+
+        // The standards search: the Qur'an codes answer, the Arabic and Islamic Studies codes do not.
+        $this->assertSame(["Qur'an"], $this->searchSubjects('PK.QUR'));
+        $this->assertSame([], $this->searchSubjects('PK.AAL'));
+        $this->assertSame([], $this->searchSubjects('PK.IS'));
+        $this->assertSame([self::COMBINED], $this->searchSubjects('Bismillah'));
+
+        // The weeks and the cell.
+        $this->assertSame(range(1, 8), array_column($this->guide($g + ['subject' => "Qur'an"])['weeks'], 'week_no'));
+        $this->assertSame(range(9, 36), array_column($this->guide($g + ['subject' => self::COMBINED])['weeks'], 'week_no'));
+
+        foreach (['Arabic Language', 'Islamic Studies'] as $refused) {
+            $payload = $this->guide($g + ['subject' => $refused, 'week' => 3]);
+            $this->assertSame([], $payload['weeks'], "{$refused}: no weeks");
+            $this->assertNull($payload['cell'], "{$refused}: no cell");
+        }
+
+        // The siblings of a Qur'an cell are the subjects this teacher teaches: neither
+        // Arabic Language nor Islamic Studies (nor Mathematics), so their objectives never
+        // reach the integration boxes.
+        $cell = $this->guide($g + ['subject' => "Qur'an", 'week' => 4])['cell'];
+        $this->assertSame("Qur'an", $cell['subject']);
+        $this->assertSame([], $cell['siblings']);
+
+        // A week past the split: the combined line, which this teacher teaches.
+        $late = $this->guide($g + ['subject' => "Qur'an", 'week' => 12])['cell'];
+        $this->assertTrue($late['from_combined_guide']);
+        $this->assertNotContains('Arabic Language', array_column($late['siblings'], 'subject'));
+    }
+
+    #[Test]
+    public function an_islamic_studies_only_teacher_reads_islamic_studies_and_the_combined_column_and_nothing_else(): void
+    {
+        $this->limitTo(['islamic_studies']);
+        $g = ['grade' => 'Pre-Kindergarten', 'group_id' => $this->class->id];
+
+        $this->assertSame(['Islamic Studies'], $this->searchSubjects('PK.IS'));
+        $this->assertSame([], $this->searchSubjects('PK.QUR'));
+        $this->assertSame([], $this->searchSubjects('PK.AAL'));
+        $this->assertSame([self::COMBINED], $this->searchSubjects('Bismillah'));
+
+        $this->assertSame(range(1, 8), array_column($this->guide($g + ['subject' => 'Islamic Studies'])['weeks'], 'week_no'));
+        $this->assertSame(range(9, 36), array_column($this->guide($g + ['subject' => self::COMBINED])['weeks'], 'week_no'));
+
+        foreach (["Qur'an", 'Arabic Language'] as $refused) {
+            $payload = $this->guide($g + ['subject' => $refused, 'week' => 3]);
+            $this->assertSame([], $payload['weeks'], "{$refused}: no weeks");
+            $this->assertNull($payload['cell'], "{$refused}: no cell");
+        }
+
+        $cell = $this->guide($g + ['subject' => 'Islamic Studies', 'week' => 4])['cell'];
+        $this->assertSame('Respect others', $cell['objective']);
+        $this->assertSame([], $cell['siblings']);
+    }
+
+    #[Test]
+    public function an_arabic_only_teacher_reads_arabic_language_and_nothing_else(): void
+    {
+        $this->limitTo(['arabic']);
+        $g = ['grade' => 'Pre-Kindergarten', 'group_id' => $this->class->id];
+
+        $this->assertSame(['Arabic Language'], $this->searchSubjects('PK.AAL'));
+        $this->assertSame([], $this->searchSubjects('PK.QUR'));
+        $this->assertSame([], $this->searchSubjects('PK.IS'));
+        $this->assertSame([], $this->searchSubjects('Bismillah'), 'the combined column is not Arabic');
+
+        $this->assertSame(range(1, 8), array_column($this->guide($g + ['subject' => 'Arabic Language'])['weeks'], 'week_no'));
+
+        foreach ([["Qur'an", 3], ['Islamic Studies', 3], [self::COMBINED, 12]] as [$refused, $week]) {
+            $payload = $this->guide($g + ['subject' => $refused, 'week' => $week]);
+            $this->assertSame([], $payload['weeks'], "{$refused}: no weeks");
+            $this->assertNull($payload['cell'], "{$refused}: no cell");
+        }
+
+        $cell = $this->guide($g + ['subject' => 'Arabic Language', 'week' => 4])['cell'];
+        $this->assertSame('Learn 3 colors', $cell['objective']);
+        $this->assertSame([], $cell['siblings']);
+
+        // Week 12: the combined line is not this teacher's to read, so there is no fallback.
+        $this->assertNull($this->guide($g + ['subject' => 'Arabic Language', 'week' => 12])['cell']);
+    }
+
+    #[Test]
+    public function an_unlimited_teacher_and_a_request_without_a_class_are_not_fenced(): void
+    {
+        $this->assertContains('Arabic Language', $this->searchSubjects('PK.AAL'), 'no subjects listed means all');
+
+        $this->limitTo(['quran']);
+        $matches = $this->search(['q' => 'PK.AAL', 'grade' => 'Pre-Kindergarten']);
+        $this->assertNotEmpty($matches, 'no group_id: the search is the whole guide, as it always was');
+
+        $cell = $this->guide(['grade' => 'Pre-Kindergarten', 'subject' => "Qur'an", 'week' => 4])['cell'];
+        $this->assertContains('Arabic Language', array_column($cell['siblings'], 'subject'));
+    }
+
+    #[Test]
+    public function in_scope_compares_subjects_by_key_so_the_curly_apostrophe_still_ranks_the_quran_rows_first(): void
+    {
+        $curly = "Qur\u{2019}an";
+        $matches = $this->search(['q' => 'K.QUR.MEM.1', 'grade' => 'Kindergarten', 'subject' => $curly]);
+
+        $this->assertSame([true, true, false], array_column($matches, 'in_scope'));
+        $this->assertSame([[4], [7]], array_column(array_slice($matches, 0, 2), 'weeks'));
+    }
 }

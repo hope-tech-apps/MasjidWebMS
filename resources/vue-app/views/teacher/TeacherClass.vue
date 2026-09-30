@@ -1306,6 +1306,10 @@
                                 <span v-if="planForm.prefill_source" class="badge bg-success-subtle text-success-emphasis fw-normal">
                                     from the pacing guide
                                 </span>
+                                <span v-if="prefillCombined" class="text-muted small" dir="auto">
+                                    The school has not separated this week yet: filled from its combined
+                                    “{{ prefillCombined }}” guide line.
+                                </span>
                                 <span v-if="prefillKept" class="text-muted small">
                                     Kept what this plan already says. Clear a field to fill it from the guide.
                                 </span>
@@ -1732,7 +1736,7 @@
                                     <label class="form-label small text-muted mb-1" for="work-standard">Standard</label>
                                     <StandardPicker v-model="assignmentForm.standard" :masjid-id="masjidId"
                                                     :grade="singleGrade" :subject="assignmentForm.subject || null"
-                                                    input-id="work-standard" />
+                                                    :group-id="groupId" input-id="work-standard" />
                                 </div>
                                 <div class="col-auto ms-auto d-flex gap-2">
                                     <button v-if="editingId !== null" class="btn btn-sm btn-light" :disabled="creatingAssignment"
@@ -3118,12 +3122,7 @@ const openFilledSections = () => {
     }
 };
 
-/**
- * Picking a week fills the plan — teachers read a week picker as the fill, and
- * a separate button they did not press left them typing out the guide. Only
- * empty fields and the guide's own earlier writes change; the button stays for
- * refilling after a teacher clears something.
- */
+/** The week select's last option: swaps in the number input for a week the list lacks. */
 const WEEK_OTHER = '__other_week__';
 
 /** True while the teacher types a week the guide's list does not carry. */
@@ -3134,6 +3133,12 @@ const useGuideWeeks = () => {
     planForm.value.curriculum_week_no = null;
 };
 
+/**
+ * Picking a week fills the plan — teachers read a week picker as the fill, and
+ * a separate button they did not press left them typing out the guide. Only
+ * empty fields and the guide's own earlier writes change; the button stays for
+ * refilling after a teacher clears something.
+ */
 const onWeekPick = () => {
     if ((planForm.value.curriculum_week_no as unknown) === WEEK_OTHER) {
         cancelPrefill();
@@ -3156,11 +3161,19 @@ const onWeekPick = () => {
  */
 let prefillSeq = 0;
 
+/**
+ * The combined guide column ("Qur’an & Islamic Studies") the last prefill was
+ * taken from, or '' when it came from the subject's own row. Set only for a
+ * separated subject asked for a week the school's separated plan does not have.
+ */
+const prefillCombined = ref('');
+
 /** Drop a prefill in flight and the "Filling…" and "Kept" states with it. */
 function cancelPrefill() {
     prefillSeq++;
     prefilling.value = false;
     prefillKept.value = false;
+    prefillCombined.value = '';
 }
 
 /**
@@ -3182,12 +3195,16 @@ const prefillFromGuide = async (auto = false) => {
     };
     prefilling.value = true;
     prefillKept.value = false;
+    prefillCombined.value = '';
     planError.value = '';
     try {
         const q = new URLSearchParams({
             grade: asked.grade,
             subject: asked.subject,
             week: String(asked.week),
+            // Names the class, so the guide answers only with the subjects THIS
+            // teacher teaches here (the same fence the subject list and the save use).
+            group_id: String(groupId.value),
         });
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum?${q}`
@@ -3205,6 +3222,10 @@ const prefillFromGuide = async (auto = false) => {
             return;
         }
 
+        // A separated subject asked for a week past the school's separated plan
+        // (weeks 9 on) is answered with the combined guide line; `prefillCombined`
+        // (set below, when something is written) says so, so it is never mistaken
+        // for a week of its own.
         // Every call runs: `||` after the call, never before it.
         let wrote = autoFill('standard_code', cell.standard_code);
         wrote = autoFill('objective', cell.objective) || wrote;
@@ -3221,6 +3242,7 @@ const prefillFromGuide = async (auto = false) => {
         // A saved plan's fields are the teacher's, so a week pick on it can
         // change nothing — then say so, rather than badge it "from the guide".
         if (wrote) {
+            prefillCombined.value = cell.from_combined_guide ? String(cell.guide_subject ?? '') : '';
             planForm.value.prefill_source = cell.prefill_source ?? 'pacing guide';
             openFilledSections();
         } else {
@@ -3298,6 +3320,8 @@ const searchStandards = async (field: string, q: string, typed = true) => {
         if (planForm.value.grade_label) params.set('grade', planForm.value.grade_label);
         if (planForm.value.subject) params.set('subject', planForm.value.subject);
         if (planForm.value.curriculum_week_no) params.set('week', String(planForm.value.curriculum_week_no));
+        // The class, so a teacher limited to some subjects searches only those.
+        params.set('group_id', String(groupId.value));
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum/standards?${params}`
         );
