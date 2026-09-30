@@ -10,6 +10,7 @@ use App\Models\GroupResource;
 use App\Models\GroupStaff;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
+use App\Models\PrizeLedgerEntry;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
@@ -709,6 +710,71 @@ class GroupAudience
     public function readableHifzQuery(?Authenticatable $principal, Group $group): ?Builder
     {
         return $this->constrainToOwnStudents($principal, $group, $group->hifzEntries()->getQuery());
+    }
+
+    /**
+     * The Manara Bucks ledger rows of `$group` this user may read, as a constrained query, or
+     * null when they have no standing in the class at all (T-003.4). EVERY balance and every
+     * history line is read through this, so a balance is exactly as private as an award:
+     *
+     *   - a leader of the class (the teacher who runs its store) -> every row;
+     *   - anyone else -> only rows whose subject is the caller's own participant row or one
+     *     of their own wards.
+     *
+     * ANOTHER GUARDIAN IN THE SAME CLASS IS EXACTLY WHO THIS EXCLUDES, and it is what keeps
+     * a child's balance from becoming a public tally. The SAME decision as an award and a
+     * ḥifẓ entry (constrainToOwnStudents), not a second one that agrees today: the query is
+     * constrained BEFORE any row is fetched, so a forbidden row cannot surface in a page, a
+     * total or a SUM. Consent is not consulted, for the reason an award's is not: a parent
+     * reading their own child's record is not a broadcast.
+     *
+     * The rows are only those of THIS group, so a class's balance is a class's balance: a
+     * child in two classes has two ledgers, each read through its own group.
+     */
+    public function readablePrizeLedgerQuery(?Authenticatable $principal, Group $group): ?Builder
+    {
+        return $this->constrainToOwnStudents(
+            $principal,
+            $group,
+            PrizeLedgerEntry::query()->where('group_id', $group->getKey())
+        );
+    }
+
+    /**
+     * May this principal read the CLASS-LEVEL totals of the class store (what the class earned,
+     * spent and holds, with no child named) (T-003.4)?
+     *
+     * The class's teachers, and the school's own administrators (the office's reconciliation
+     * view). It is a decision about TOTALS ONLY: an administrator who is not on the roster
+     * still cannot read one child's balance, because that goes through
+     * readablePrizeLedgerQuery() and the office holds no standing there. (An office-run
+     * school-wide store, which would let an administrator read every child's balance, is
+     * deliberately not built: RECON-PLAN section 6.)
+     *
+     * THE TENANT IS CHECKED HERE, like every other decision in this class, not assumed from the
+     * route: the group must belong to the school this request bound (the resolver binds a
+     * MasjidAdmin only to a school they hold a membership in, and a SuperAdmin to the one in
+     * the URL), and an unbound request grants nothing. A caller that hands this method another
+     * school's group, from any route, gets false rather than that school's totals on the
+     * strength of a `users.type`.
+     */
+    public function mayReceiveClassStoreTotals(?Authenticatable $principal, Group $group): bool
+    {
+        if (! $principal instanceof User) {
+            return false;
+        }
+
+        $tenant = $this->tenant->get();
+
+        if ($tenant === null || (int) $group->masjid_id !== (int) $tenant) {
+            return false;
+        }
+
+        if ($this->isLeaderOf($principal, $group)) {
+            return true;
+        }
+
+        return in_array($principal->type, ['MasjidAdmin', 'SuperAdmin'], true);
     }
 
     /**

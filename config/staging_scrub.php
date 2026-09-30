@@ -528,6 +528,12 @@ return [
         'behavior_awards' => [
             'note' => 'free_text',
         ],
+        // T-003.4, the Manara Bucks ledger: a teacher's note on a redemption or a reversal
+        // ("gave her the pencil for helping Yusuf") names a child. The amounts and dates are KEPT
+        // for the same reason marks and attendance counts are: they are why staging exists.
+        'prize_ledger_entries' => [
+            'note' => 'free_text',
+        ],
         // The two teacher-note columns added 2026-09-16. `free_text`, exactly as
         // every sibling note in this module is handled: these are sentences a
         // teacher wrote about a NAMED child's Arabic — "reverses sīn and shīn

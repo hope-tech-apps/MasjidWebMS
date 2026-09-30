@@ -57,11 +57,14 @@ use Symfony\Component\HttpFoundation\Response;
  * what they wrote.
  *
  * BY DAY, a limited teacher reaches only plans in THEIR OWN subjects (review G2,
- * 2026-09-29). The general plan is open to them by id, where they open it on
- * purpose, but the by-day address names a plan by day and subject only, and
- * "the day's plan" must never resolve to the class's shared general plan or to
- * another subject's: their save upserts on the subject they sent, and their
- * delete removes only what is filed under their subjects.
+ * 2026-09-29), with one accepted exception. The general plan is open to them by
+ * id, where they open it on purpose, and "the day's plan" must never RESOLVE to
+ * the class's shared general plan or to another subject's: their save upserts on
+ * the subject they sent, and their delete removes only what is filed under their
+ * subjects. A by-day PUT that names NO subject is the explicit way to write the
+ * general plan (it upserts on the empty subject), the same access they already
+ * have by id, so it edits the general plan rather than being refused; that is
+ * decided, not a leak (DECISIONS.md, G2 entry).
  *
  * `teacher.leads` has already answered "may this teacher touch this class"
  * before any method here runs. A plan id is always resolved THROUGH that class

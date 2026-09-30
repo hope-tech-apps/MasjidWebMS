@@ -159,6 +159,22 @@ class TeacherRealmTest extends TestCase
             // A view choice on the class: it changes no award, and it applies to
             // every teacher of the class. Not roster mutation.
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/points-period',
+            // THE CLASS STORE (T-003.4, W6, 2026-09-29): five verbs, all behind
+            // `capability:class_store` (OFF for every organisation until a SuperAdmin decides), and
+            // all inside `teacher.leads`, so a teacher runs the store of a class they lead and no
+            // other. None is roster mutation and none touches a point: bucks are a ledger that a
+            // week of positive points is turned into.
+            //   - a class prize (create) and its edit or retirement: this class's own shelf; the
+            //     school-wide list is the office's;
+            //   - redeem: a prize given to one current student (locks the student and the prize);
+            //   - reverse: the ONLY way to undo a ledger entry, and it is a new entry;
+            //   - cash-out to paper: built and OFF behind the school's `paper_bucks_enabled`.
+            // There is deliberately no route that edits or deletes a ledger entry.
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/prizes',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/prizes/{prize_id}',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/prizes/redeem',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/prizes/cash-out',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/prize-entries/{entry_id}/reverse',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',

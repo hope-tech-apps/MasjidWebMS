@@ -128,6 +128,11 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/offerings/${string}/registrations/${string}` |
     `/api/admin/masjids/${string}/behavior-skills` |
     `/api/admin/masjids/${string}/behavior-skills?${string}` |
+    // The class store (T-003.4): the school-wide prize list, and the office's reconciliation of the
+    // store's class totals (never a child).
+    `/api/admin/masjids/${string}/prizes` |
+    `/api/admin/masjids/${string}/prizes/${string}` |
+    `/api/admin/masjids/${string}/prize-reconciliation?${string}` |
     // The impact report (T-024) — READ-ONLY, and the only call the screen
     // makes. The `?${string}` is not optional decoration: impactReportStore
     // always appends the serialized `from`/`to` bounds, and an all-time report

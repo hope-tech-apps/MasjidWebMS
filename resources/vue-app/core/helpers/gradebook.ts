@@ -114,6 +114,27 @@ export function firstFieldError(e: any, fallback: string): string {
 // ---------------------------------------------------------------- weights
 
 /**
+ * What the office reads when the server refuses a weights change with a 403. The route asks for
+ * `manage contacts` (routes/admin.php, grade-weights) and the tab itself only needs `view contacts`,
+ * so a custom role that can read the gradebook but not manage the class gets a refusal whose raw
+ * message is not written for a person deciding what to do next.
+ */
+export const WEIGHTS_NOT_PERMITTED = 'Your role can read this gradebook but not change how the class is weighted. Ask an administrator who manages this class.';
+
+/** Why a weights save or clear failed, in words: the permission sentence for a 403, else what the server said. */
+export function weightsFailure(e: any, fallback: string): string {
+    return e?.response?.status === 403 ? WEIGHTS_NOT_PERMITTED : firstFieldError(e, fallback);
+}
+
+/**
+ * Whether the Weights button is offered. After a failed first load the panel would open on no types
+ * at all, and Save would answer "At least one type of work has to count" for a class nobody has read.
+ */
+export function mayOfferWeights(loadError: string, types: readonly unknown[]): boolean {
+    return !loadError && types.length > 0;
+}
+
+/**
  * How much one piece of work is worth: its own override, else its type's weight,
  * else nothing. The server reads the two differently: a type is ONE slot in the
  * average however many pieces are in it, and a piece with an override is a slot

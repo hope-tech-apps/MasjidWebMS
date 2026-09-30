@@ -369,6 +369,22 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'school_calendar'
     },
     {
+        // The class store (T-003.4): the school-wide prize list and the class totals of Manara
+        // Bucks. Shown once the organisation HAS `class_store` (OFF for every organisation until a
+        // SuperAdmin decides); the server's gate is the boundary. Plain title, no terminology key.
+        title: "Class Store",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 9L5.5 4.5H18.5L20 9" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                <path d="M4 9C4 10.4 5 11.5 6.3 11.5C7.6 11.5 8.6 10.4 8.6 9C8.6 10.4 9.6 11.5 12 11.5C14.4 11.5 15.4 10.4 15.4 9C15.4 10.4 16.4 11.5 17.7 11.5C19 11.5 20 10.4 20 9" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                <path d="M5.5 11.5V19.5H18.5V11.5" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                <path d="M10 19.5V15H14V19.5" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+                `,
+        to: '/masjid/class-store',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCapability: 'class_store'
+    },
+    {
         // The attendance log — the office's read of the register the class
         // teachers take. Under School Calendar because the calendar decides
         // which days are columns, and above the money screens because this is

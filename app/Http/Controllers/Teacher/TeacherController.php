@@ -7,6 +7,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
+use App\Support\SchoolSettings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 
@@ -101,7 +102,19 @@ abstract class TeacherController extends Controller
             'my_subjects' => $this->mySubjects($group),
             'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
             'students' => $students->map(fn (GroupMembership $m): array => $this->student($m))->values(),
-        ];
+        ] + $this->classStoreFlag($group);
+    }
+
+    /**
+     * `['class_store' => true]` when this school runs the class store (T-003.4), else NOTHING:
+     * the key is added only when on, so a school without the grant gets exactly the payload it
+     * always got. The screen shows the Store tab only when it reads `true`.
+     *
+     * @return array<string,bool>
+     */
+    private function classStoreFlag(Group $group): array
+    {
+        return SchoolSettings::classStore(SchoolSettings::org($group->masjid_id)) ? ['class_store' => true] : [];
     }
 
     /** @return list<string>|null */

@@ -332,6 +332,20 @@
 
             <!-- -------------------------------------------------- children -->
             <section v-else-if="tab === 'children'">
+                <!-- The weekly report page: only where the school has the report
+                     on (`points_weekly_report`), the same switch the Friday email
+                     answers to. Off means no link and no page (review F1). Off the
+                     class's own opt-in (the "This week" figure in each child's card):
+                     the email goes to every class in a granted school, so a family
+                     whose class has not opted in still gets a link to the page the
+                     email is about (review G1). One link for the class, here above
+                     the children: the page is the class's, not a child's, so it is
+                     not repeated in every card. -->
+                <div v-if="weeklyReportOn(group)" class="mb-3">
+                    <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                        {{ t('weekly_report_open') }}
+                    </router-link>
+                </div>
                 <div v-for="child in group.children" :key="child.membership_id" class="card border-0 shadow-sm mb-3">
                     <div class="card-body">
                         <div class="d-flex align-items-center gap-3 mb-3">
@@ -385,19 +399,6 @@
                             </div>
                         </div>
 
-                        <!-- The weekly report page: only where the school has the report
-                             on (`points_weekly_report`), the same switch the Friday email
-                             answers to. Off means no link and no page (review F1). Kept
-                             OUT of the "This week" block above and off the class's own
-                             opt-in: the email goes to every class in a granted school, so
-                             a family whose class has not opted in still gets a link to the
-                             page the email is about (review G1). -->
-                        <div v-if="weeklyReportOn(group)" class="mb-3">
-                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
-                                {{ t('weekly_report_open') }}
-                            </router-link>
-                        </div>
-
                         <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">
                             {{ t('nothing_recorded') }}
                         </p>
@@ -414,6 +415,11 @@
                                 </span>
                             </li>
                         </ul>
+
+                        <!-- MANARA BUCKS (T-003.4): only where this school runs the class store
+                             (the payload carries `class_store: true` then and no key otherwise).
+                             This child's balance and history, read-only, from their own endpoint. -->
+                        <FamilyBucks v-if="group.class_store === true" :base="base" :member-id="child.membership_id" />
 
                         <h3 class="text-uppercase text-muted small">{{ t('section_letters') }}</h3>
                         <!-- EVERY TRACK THIS CLASS USES, one under the other,
@@ -1037,6 +1043,7 @@ import { familySeesWeighted, percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
+import FamilyBucks from '@/views/family/FamilyBucks.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';

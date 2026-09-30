@@ -19,6 +19,8 @@ use App\Models\GroupThread;
 use App\Models\HifzEntry;
 use App\Models\LessonPlan;
 use App\Models\Masjid;
+use App\Models\Prize;
+use App\Models\PrizeLedgerEntry;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
 use App\Models\User;
@@ -74,6 +76,10 @@ final class TeacherRealmWorld
     public GroupMessageAttachment $messageAttachment;
     /** A NEW conversation waiting for its time (T-002.4): its words are in no thread yet. */
     public GroupMessageSchedule $schedule;
+    /** This class's own prize (T-003.4). */
+    public Prize $prize;
+    /** A redemption of it, so the reversal route has a real entry to name. */
+    public PrizeLedgerEntry $ledgerEntry;
 
     /**
      * @param BehaviorSkill $skill the school's skill, shared by every class of that school
@@ -186,6 +192,23 @@ final class TeacherRealmWorld
             'body' => "MARK-{$tag}-SCHEDULED", 'send_at' => now()->addDays(3),
         ]);
 
+        // The class store (T-003.4): a class prize, 50 bucks earned, and one redemption of the
+        // prize. Marked like every other string a response could echo.
+        $w->prize = Prize::create([
+            'masjid_id' => $masjid, 'group_id' => $group, 'title' => "MARK-{$tag}-PRIZE",
+            'cost_bucks' => 2, 'stock' => null, 'is_active' => true, 'created_by_user_id' => $teacher->id,
+        ]);
+        PrizeLedgerEntry::create([
+            'masjid_id' => $masjid, 'group_id' => $group, 'group_membership_id' => $w->student->id,
+            'kind' => PrizeLedgerEntry::KIND_EARNED, 'amount' => 50, 'occurred_at' => now(),
+        ]);
+        $w->ledgerEntry = PrizeLedgerEntry::create([
+            'masjid_id' => $masjid, 'group_id' => $group, 'group_membership_id' => $w->student->id,
+            'kind' => PrizeLedgerEntry::KIND_REDEEMED, 'amount' => -2, 'prize_id' => $w->prize->id,
+            'prize_title' => "MARK-{$tag}-PRIZE", 'prize_cost' => 2, 'note' => "MARK-{$tag}-LEDGER-NOTE",
+            'created_by_user_id' => $teacher->id, 'occurred_at' => now(),
+        ]);
+
         return $w;
     }
 
@@ -207,7 +230,11 @@ final class TeacherRealmWorld
             'plan_id' => (string) $this->plan->id,
             'assignment_id' => (string) $this->assignment->id,
             'resource_id' => (string) $this->resource->id,
-            'entry_id' => (string) $this->hifz->id,
+            // `entry_id` is a Hifdh entry, except under /prize-entries/ where it is a ledger row.
+            'entry_id' => str_contains($uri, '/prize-entries/')
+                ? (string) $this->ledgerEntry->id
+                : (string) $this->hifz->id,
+            'prize_id' => (string) $this->prize->id,
             'post_id' => (string) $this->post->id,
             'thread_id' => (string) $this->thread->id,
             'message_id' => (string) $this->message->id,

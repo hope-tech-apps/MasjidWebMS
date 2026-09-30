@@ -497,6 +497,23 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_type_classwork: "Classwork",
         mark_type_other: "Other",
         marks_standard_source: "From the school's pacing guide",
+        // The class store's Manara Bucks (T-003.4, 2026-09-29).
+        bucks_section: "Manara Bucks",
+        bucks_balance: "Balance",
+        bucks_none: "Nothing yet.",
+        bucks_kind_earned: "Earned",
+        bucks_kind_adjusted: "Adjusted",
+        bucks_kind_redeemed: "Prize",
+        bucks_kind_reversal: "Given back",
+        bucks_kind_cashed_out: "Paid out on paper",
+        bucks_kind_expired: "Expired",
+        bucks_undone: "Undone",
+        bucks_week_of: "Week of {x}",
+        bucks_explain: "Each week's positive points become Manara Bucks, which your child can spend in their class store.",
+        bucks_rate_one: "Every point earns 1 Buck.",
+        bucks_rate_many: "Every {x} points earn 1 Buck.",
+        bucks_failed: "Manara Bucks could not be loaded. Please try again.",
+        bucks_more: "Show earlier",
     },
     ar: {
         // ------------------------------------------------------------ shared
@@ -770,6 +787,25 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_type_classwork: "عمل صفي",
         mark_type_other: "أخرى",
         marks_standard_source: "من الدليل الزمني للمنهج في المدرسة",
+        // The class store's Manara Bucks (T-003.4, 2026-09-29).
+        // MACHINE-DRAFTED 2026-09-29 — every bucks_* line below needs a human review before the class
+        // store is switched on for a school (the language's `reviewed` flag does not cover it).
+        bucks_section: "عملات منارة",
+        bucks_balance: "الرصيد",
+        bucks_none: "لا شيء بعد.",
+        bucks_kind_earned: "مكتسبة",
+        bucks_kind_adjusted: "تعديل",
+        bucks_kind_redeemed: "جائزة",
+        bucks_kind_reversal: "أُعيدت",
+        bucks_kind_cashed_out: "صُرفت ورقيًا",
+        bucks_kind_expired: "انتهت صلاحيتها",
+        bucks_undone: "أُلغيت",
+        bucks_week_of: "أسبوع {x}",
+        bucks_explain: "تتحول النقاط الإيجابية في كل أسبوع إلى عملات منارة، ويستطيع طفلك إنفاقها في متجر صفّه.",
+        bucks_rate_one: "كل نقطة تمنح عملة واحدة.",
+        bucks_rate_many: "كل {x} نقاط تمنح عملة واحدة.",
+        bucks_failed: "تعذّر تحميل عملات منارة. يرجى المحاولة مرة أخرى.",
+        bucks_more: "عرض الأقدم",
     },
 };
 

@@ -26,7 +26,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
     private const URL = '/api/admin/studio/catalogue';
 
-    private const SCHOOL_KEYS = ['school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report'];
+    private const SCHOOL_KEYS = ['school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report', 'class_store'];
 
     protected function setUp(): void
     {

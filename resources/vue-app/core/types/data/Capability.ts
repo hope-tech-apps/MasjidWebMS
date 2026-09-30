@@ -28,7 +28,9 @@ export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' |
     // The weekly-school settings (App\Support\SchoolSettings), SuperAdmin-only like every grant.
     | 'report_card_core_subjects' | 'short_lesson_plan' | 'simple_marking'
     // The Friday points report (T-003.3): families and teachers are emailed. A grant, off for everyone.
-    | 'points_weekly_report';
+    | 'points_weekly_report'
+    // The class store (T-003.4): points become Manara Bucks that a class store spends. A grant, off for everyone.
+    | 'class_store';
 
 /** The modules, in catalogue order (Masjid::MODULE_KEYS). CapabilityTsMirrorTest pins it. */
 export const MODULE_KEYS = [
@@ -170,6 +172,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     short_lesson_plan: 'Shorter lesson plan',
     simple_marking: 'Mark work Excellent, Good or Needs work',
     points_weekly_report: 'Weekly points report',
+    class_store: 'Class store (Manara Bucks)',
 };
 
 /** One organisation a login belongs to, as the SuperAdmin's user screens see it. */

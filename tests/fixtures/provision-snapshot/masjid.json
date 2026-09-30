@@ -44,7 +44,8 @@
                     "report_card_core_subjects": false,
                     "short_lesson_plan": false,
                     "simple_marking": false,
-                    "points_weekly_report": false
+                    "points_weekly_report": false,
+                    "class_store": false
                 },
                 "modules_off": [],
                 "modules_on": [],

@@ -1115,6 +1115,140 @@ positioning, not its configuration.
   - **A send in which every email failed is given back** (`BehaviorWeek::release`), so the next run
     inside the 12-hour window retries; a partial send keeps its claim (a retry would double-send).
 
+## Class store — Manara Bucks (T-003.4, W6, 2026-09-29; owner B6)
+
+A week's POSITIVE points become Manara Bucks; each class's teachers run a store where students
+spend them; the app keeps each balance. **Points stay the record.** Bucks are a separate,
+APPEND-ONLY ledger (`prize_ledger_entries`) that a week of points is turned into, and a child's
+balance is the SUM of their rows, never a stored figure that can drift from its history.
+The whole feature is behind the `class_store` capability, a grant, **OFF for every
+organisation** (Al-Razi included) until a SuperAdmin switches it on.
+
+- **OFF means untouched.** Every store route is behind `capability:class_store` (403), `bucks:mint`
+  and `bucks:expire` skip a school without it, the mobile `/features` and `tv-config` are byte for
+  byte the same on or off (test), and the teacher and family CLASS payloads gain a `class_store: true`
+  key only when it is on (no key at all otherwise). The five capability files (`config/capabilities.php`,
+  `Capability.ts`, `OrganisationModulesTest`, the Studio catalogue test, the three provision snapshots and
+  `set-capability-responses.json`) differ only by that key.
+- **The ledger is append-only in the application.** `PrizeLedgerEntry` throws on `updating` and
+  `deleting`, and no route edits or deletes a row (a test scans the route list). A correction is a NEW
+  `reversal` row that points at the old one. No SoftDeletes and no triggers, so erasure and retention
+  still work. `dedupe_key` is a nullable UNIQUE string (NULLs are distinct on both engines; there are no
+  partial indexes) and is how "once" is a database fact: `earned:{membership}:{week_start}`,
+  `adjusted:{membership}:{week}:{n}`, `reversal:{entry}`, `redeemed:{membership}:{request_id}`,
+  `expired:{membership}:{cutoff}:{n}` (`n` counts that cutoff's earlier write-offs). **The key is BYTE-EXACT on
+  MySQL** (`utf8mb4_bin`, declared in the table's own CREATE): under the default `utf8mb4_unicode_ci` two request
+  ids differing only in case were one key there and the second redemption a false replay, which SQLite never shows
+  (`ClassStoreSchemaTest` compiles the MySQL statement and pins it). **Only a duplicate is swallowed** anywhere a
+  store write races (`markPrizesConverted` inserts and catches `UniqueConstraintViolationException`, like the
+  report's `claim()`; never `insertOrIgnore`, which is MySQL's INSERT IGNORE). **The W6 migrations after the
+  ledger's own (100200, 100300, 100400) refuse to roll back while a ledger row exists**, as 100100 does. `week_start` is a plain `Y-m-d` string, NOT a `date` cast: the cast stores a
+  timestamp on SQLite, and an exact match would silently miss there.
+  `group_membership_id` is RESTRICT like every academic record, and `AcademicRecordsHeld` tells the office
+  ("N Manara Bucks") before the database refuses.
+- **What earns a buck (R1, R2).** `floor(P / points_per_buck)` per child per week, where `P` is the sum of the
+  child's live awards that week whose skill is not negative AND whose points are above zero. A negative
+  award never takes bucks away (it is not in `P`); a positive skill a teacher docked with a negative
+  override does not mint either (`ABS(points)` would have). A revoked award is not live. Whole bucks per
+  child and week: at one point a buck (the default) nothing is lost; at a dearer rate the remainder of a week
+  is not carried over. Weeks are Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock (`PointsWeek`, DST tested).
+  A child who has left the class is not minted for.
+- **When.** `bucks:mint` runs hourly (for a school with the grant): every closed week from `bucks_from` with
+  no `earned` row mints; the LAST TWO closed weeks are re-read and a late change becomes an `adjusted` delta
+  clamped so no balance goes below zero. `week_basis` records what the week's points came to after each
+  row, so a clamped clawback is forgiven ONCE and never collected out of a later week's earnings. Older
+  weeks are frozen. **A week keeps the rate it was minted at:** every `earned` and `adjusted` row also keeps
+  `week_rate` (and `week_points`, what the basis was worked out from), a week is re-priced at ITS OWN rate, so a
+  SuperAdmin changing `points_per_buck` moves nothing already minted (the first
+  version compared today's rate with a basis worked out at yesterday's and clawed back a fifth of two weeks).
+  The adjustment is decided again under the student's lock, so two overlapping runs cannot write one late
+  change twice. **`bucks_from` is a DAY, not a week:** points awarded before its midnight on the school's clock
+  never mint, even inside the same Sunday-to-Sunday week. **A class that has ended** (`groups.ends_on`) mints
+  nothing for a week that opens after its last day. **Nothing retroactive by surprise:** the first time a school
+  with the store on is seen, `masjid_points_settings.bucks_from` is set to the start of the week in progress; a
+  SuperAdmin may move it earlier on purpose (only the last 60 closed weeks are minted in one run). **A pause is
+  not history:** every sweep that finds the store on leaves `bucks_swept_at`; a sweep that finds it OFF for a
+  school with that mark clears `bucks_from` and the mark, so switching the store back on counts from the week in
+  progress and the weeks it was off are not paid in one hourly run (a start day chosen by a SuperAdmin after
+  that is theirs, and a school that never ran keeps a start day set in advance). `behavior_weeks.prizes_converted_at`
+  records a processed class-week (a saving of work; the dedupe key is what makes minting once-only) and never
+  touches the Friday report's `report_sent_at` claim.
+- **Every write locks the student first.** `App\Support\ClassStore` is the only writer of a person's ledger
+  action: the student's roster row (and the prize row for a redemption) is locked with `lockForUpdate` inside one
+  transaction, and because SQLite has no row locks the invariant is ALSO checked after the write and rolled
+  back: **a balance never goes below zero, with or without the lock**, and a refused redemption writes
+  nothing. A `request_id` is REQUIRED on a redemption and a cash-out (422 without one) and makes a double-tap or
+  a retry a replay; **a replay answers with the first row only when it asks for the same thing**: the same id with
+  another prize (or another cash-out amount) is a 409 `request_id_reused`, never the first row passed off as the
+  second's. A child who has LEFT the class is refused with `student_left` and a sentence saying their Bucks stay on
+  their record (what happens to them on a move or withdrawal is owner question W6-C1). **The prize must be this
+  school's and either school-wide or this class's own** (`Prize::availableTo`, checked again in the service
+  because a console caller runs unbound). Stock is optional (blank = unlimited), taken in the same
+  transaction and given back by a reversal. The locks cannot be seen by a SQLite test, so
+  `ClassStoreLedgerTest::every_ledger_write_takes_its_row_locks_and_takes_them_first` pins the source (four in
+  `ClassStore`, one in the retention purge, each before the read it protects). The screen keeps ONE request id per
+  write (student and prize, or student and amount) across a retry after a dropped response, and forgets it only
+  on success or a definitive 4xx, so a lost response is a replay and not a second deduction. Reversal is once per entry, only of a redemption or a cash-out, and refused after
+  an expiry (an expired balance stays ended).
+- **Cash-out to paper is BUILT AND OFF** (`masjid_points_settings.paper_bucks_enabled`, default false, SuperAdmin
+  only): the owner paused the physical Manara Bucks until the admin team decides. It is refused in `ClassStore`
+  itself, not only in a controller, and the screen hides it. It writes a `cashed_out` row with the 20/10/5/1
+  breakdown, and `GET .../bucks/handout` is the printable class hand-out for a day.
+- **Expiry (R5).** `bucks:expire` writes an `expired` row per child and cutoff at the end of a class
+  (`groups.ends_on`) and of each school-calendar year: what the child still holds that was minted before the
+  cutoff, never below zero. **A cutoff waits `groups.bucks.expiry_grace_days` (default 7) before it acts**, because
+  the dates come from office screens that accept any date, and **a write-off whose date later disappears (corrected,
+  or moved later) is given back** by a `reversal` row pointing at the `expired` one (`reversal:{entry}`, once, under the
+  student's lock); a date moved later is written off again when the new one is due, and a date that still exists but
+  is not yet due is left alone. A reversal of a prize is refused only across an expiry that still stands. **It is re-runnable per cutoff:** the week that holds the cutoff is minted only
+  after it closes, so bucks for a pre-cutoff week can arrive after the first write-off; every run works the sum
+  out again and writes a further `expired:{m}:{cutoff}:{n}` for what is left (nothing left, nothing written).
+  Tests drive the real `bucks:mint` then `bucks:expire` order across that week. **The retention purge removes a child's ledger as a SET**
+  (`PrizeLedgerEntry::purgeDueSets`, inside `groups:purge-feed`): only when EVERY row is due, decided again inside a
+  transaction that holds the roster row, so it can never leave a redemption without what paid for it. **And only a
+  set worth nothing that belongs to nobody still here:** the rows must sum to ZERO and the child must no longer be
+  enrolled (`left_on` set, or the class's `ends_on` before the purge date). A still-enrolled child's history and any
+  balance that is not zero stay, however old: in a school with no calendar and no end date a balance never expires.
+- **Privacy: exactly as private as an award.** Every balance is read through
+  `GroupAudience::readablePrizeLedgerQuery` (the class's teachers, the student, that student's own guardians,
+  nobody else; null, not an empty page, for a stranger), constrained at QUERY level so a forbidden row cannot
+  surface in a page, a paginator total or a SUM. The endpoint 403 (`subject()` on the family side, the audience on
+  the teacher side) and the query constraint are BOTH required, and each has its own test. Consent is not
+  consulted (a parent reading their own child's record is not a broadcast). Roster order, **no rank, no class
+  total, no prize wall**; the family payload is the narrow one (no teacher note, author, prize id or paper breakdown).
+  **The office reads CLASS TOTALS ONLY** (`mayReceiveClassStoreTotals`, the reconciliation view): no child's name,
+  roster id or per-student figure, because the office administers the store but does not stand in a class.
+  `mayReceiveClassStoreTotals` checks the BOUND TENANT like every other decision (the group must be the bound
+  school's; unbound grants nothing), never `users.type` alone. **A class with fewer current students than
+  `groups.bucks.reconciliation_min_class_size` (default 5) shows no figures** (listed by name, `suppressed: true`)
+  and is left out of the school totals, because in a one-student class the class total IS a child's balance and a
+  total that included it would give it back by subtraction. An
+  office-run school-wide store that lets an administrator read every child's balance is deliberately not built.
+- **Who sets what.** The office keeps the school-wide prize list (`/api/admin/masjids/{id}/prizes`, create, edit,
+  retire; never delete); a teacher keeps their class's own list; the ROUTE decides the shelf, never the body.
+  **An edit locks the prize row and compares the stock** (`ClassStore::updatePrize`): a `stock` must come with
+  `expected_stock`, the count the form was opened at, and a mismatch is a 409 `stock_changed` that writes nothing,
+  so a stale screen never puts a given prize back on the shelf; the screens send the stock only when it was changed.
+  **An absent, null or empty `is_active` means no change** (filter_var reads null and '' as false, which used to
+  retire the prize). A
+  SuperAdmin alone sets `points_per_buck`, `paper_bucks_enabled` and `bucks_from`
+  (`PUT .../class-store-settings`, audited at WARNING). There is no settings screen yet: API only, like the
+  Friday report's schedule.
+- **Teacher write verbs: +5** (`TeacherRealmTest`): `POST prizes`, `PUT prizes/{id}`, `POST members/{id}/prizes/redeem`,
+  `POST members/{id}/prizes/cash-out`, `POST prize-entries/{id}/reverse`. Family write verbs: 0 (a GET only).
+  `TeacherMultiSchoolTest`'s route-list sweep is taught the five and runs with the store ON for both schools.
+- **The records export carries the ledger** (`SchoolRecordsExportController`, dataset `bucks_ledger`, W6-C2): entry,
+  class, membership, kind, amount, week, prize title, what it corrects and when; never the teacher's note.
+- **The screens** (W6 point review): a refused prize keeps its message through the reload that follows it (the
+  reload passes `keepMessage`); the teacher's history pages 25 at a time with "Show earlier", as the family's does,
+  so an older prize can still be undone; the student list is real buttons (keyboard). The Arabic `bucks_*` lines are
+  MACHINE-DRAFTED and marked so. Each of the three screens is MOUNTED in `npm run test:spa`
+  (`tests/class-store-mounted.test.ts` through `tests/support/mountSfc.ts`: the project's own compiler and Vue's
+  `createRenderer`, no DOM and no new dependency) and driven through a refusal and its busy guard.
+- **T-040 PII inventory:** the ledger's `note` is scrubbed (`free_text`) in `config/staging_scrub.php`; nothing else
+  on either table is personal data (a prize title is a shelf item). `prize_ledger_entries` has no `contact_id`, so
+  `MemberAccountDeletion` classifies nothing new.
+
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 
 `hifz_entries` is one recitation heard from ONE student, on the same primitive:

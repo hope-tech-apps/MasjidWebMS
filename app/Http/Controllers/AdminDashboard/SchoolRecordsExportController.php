@@ -103,6 +103,7 @@ class SchoolRecordsExportController extends Controller
         'attendance', 'assignments', 'assignment_scores',
         'report_cards', 'report_card_marks',
         'hifz', 'behaviour', 'behaviour_skills', 'arabic_progress', 'lesson_plans',
+        'bucks_ledger',
     ];
 
     /**
@@ -227,6 +228,7 @@ class SchoolRecordsExportController extends Controller
             'behaviour_skills' => [BehaviorSkill::count(), 'The behaviour vocabulary'],
             'arabic_progress' => [ArabicLetterProgress::whereIn('group_id', $gids)->count(), 'Letter drills, Arabic and English (see the Alphabet column)'],
             'lesson_plans' => [LessonPlan::whereIn('group_id', $gids)->count(), 'Lesson plans'],
+            'bucks_ledger' => [\App\Models\PrizeLedgerEntry::whereIn('group_id', $gids)->count(), 'Manara Bucks: every line of each child\'s class store ledger (no teacher notes)'],
         ];
     }
 
@@ -452,6 +454,30 @@ class SchoolRecordsExportController extends Controller
                 Csv::text($a->skill_label), Csv::text($a->skill_polarity),
                 Csv::num($a->points), Csv::text($a->note),
                 Csv::num($a->awarded_at), Csv::num($a->retained_until),
+            ])
+        );
+    }
+
+    /**
+     * The Manara Bucks ledger (T-003.4). AcademicRecordsHeld counts it as the child's record, so a
+     * departing school takes it too (owner question W6-C2; the point's recommendation): what
+     * happened, to whom, how many Bucks and when. NOT the teacher's note, which is free text about
+     * a child written for the class, and not the author or the paper breakdown. A balance is the
+     * SUM of a membership's rows, so the file is enough to carry every balance over.
+     *
+     * @param resource $out
+     */
+    private function writeBucksLedger($out): void
+    {
+        Csv::row($out, ['Entry id', 'Class id', 'Membership id', 'Kind', 'Amount', 'Week start',
+            'Prize', 'Corrects entry id', 'Occurred at']);
+
+        Csv::each(
+            \App\Models\PrizeLedgerEntry::whereIn('group_id', $this->schoolGroupIds()),
+            fn (\App\Models\PrizeLedgerEntry $e) => Csv::row($out, [
+                Csv::num($e->id), Csv::num($e->group_id), Csv::num($e->group_membership_id),
+                Csv::text($e->kind), Csv::num($e->amount), Csv::text($e->week_start),
+                Csv::text($e->prize_title), Csv::num($e->reverses_entry_id), Csv::num($e->occurred_at),
             ])
         );
     }

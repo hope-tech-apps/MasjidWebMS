@@ -220,6 +220,24 @@ return [
         'listed_when_off' => false,
     ],
 
+    // The class store (T-003.4, owner B6 2026-09-29: "points convert to Manara Bucks
+    // (1 point = 1 buck, weekly); students spend them in a class store the teacher
+    // runs; the app keeps each balance"). A grant, OFF for every organisation, Al-Razi
+    // included: it starts turning a school's points into a balance that families see,
+    // so switching it on is a SuperAdmin's call, and an organisation that does not have
+    // it is byte for byte what it was (no route answers, no payload gains a key, and the
+    // mobile /features and tv-config are not touched at all).
+    // App\Support\SchoolSettings::classStore() is the reader; `capability:class_store`
+    // gates every store route; `bucks:mint` and `bucks:expire` skip a school without it.
+    'class_store' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Class store (Manara Bucks)',
+        'description' => 'Turn each week\'s positive points into Manara Bucks, let a class\'s teachers run a class store where students spend them, and let families see their own child\'s balance and history. Off: nothing is minted and no store screen appears.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     // ------------------------------------------------------------------
     // Modules — default ON; labels are the sidebar titles
     // ------------------------------------------------------------------

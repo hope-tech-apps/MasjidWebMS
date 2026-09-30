@@ -89,8 +89,9 @@
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
 
-                    <!-- Read only: the office reads the gradebook, the teacher
-                         writes it. No roster prop — the marks payload carries its
+                    <!-- The office reads the work and the marks; the teacher writes
+                         them. The one thing the office sets here is the class's
+                         grade weights. No roster prop — the marks payload carries its
                          own students, live off the assignment rather than off
                          this page's copy of the roster. -->
                     <GroupGradesTab
@@ -201,7 +202,8 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
     { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
-    // The gradebook, read only — see GroupGradesTab.vue. It sits beside Letters
+    // The gradebook: work and marks are read only here, the class's grade weights are
+    // the one thing the office sets — see GroupGradesTab.vue. It sits beside Letters
     // because both answer the same question about a child (how are they doing?),
     // one in the qāʿidah and one in the work the class was set.
     { key: 'grades', label: 'Gradebook', icon: 'bi-clipboard-check' },

@@ -5199,6 +5199,89 @@ answers; each carries its alternative.
     `mayReadUnpublished` and `mayChange`); `authorizeSeeing` on update and destroy; `required_if` on the send-at rule (the lookup yields
     the same 422); the race-only claim guards on the `sent` stamp.
   - **Not fixed on purpose.** Nothing in the confirmed list was declined.
+- **2026-09-29 (school side quest W6-A, T-003.4): the class store is an append-only ledger of Manara Bucks minted from positive points, behind a capability that is OFF for every organisation.**
+  Owner B6 (2026-09-29): "points convert to Manara Bucks (1 point = 1 buck, weekly); students spend them in a class store the teacher runs; the app
+  keeps each balance; paper Bucks are the physical version" (R1 to R6 defaults). The physical Manara Bucks are PAUSED (owner, 2026-09-29), so the
+  paper cash-out is built and OFF. Nothing here touches the `bucks/` design folder (W6-B).
+  - **Points stay the record; bucks are a ledger.** `prize_ledger_entries` is append-only in the application (the model throws on update and delete,
+    no route exists, a test scans the route list). A balance is the SUM of a child's rows. Alternative: a stored `balance` column on the roster row.
+    Rejected: a second number that can disagree with its own history, and a correction that has to edit it. Alternative: DB triggers for
+    append-only. Rejected: erasure and the retention purge must still be able to remove a child's whole ledger (the rows go as a set).
+  - **Once is a database fact.** A nullable UNIQUE `dedupe_key` (`earned:{membership}:{week}` and four siblings), because MySQL has no partial indexes
+    and SQLite's FK rebuild drops them. Every index is hand-named under 64 characters (a test asserts it). `week_start` is a plain `Y-m-d` string, not a
+    `date` cast: the cast stores a timestamp on SQLite and an exact match would silently miss there (found by the minting tests).
+  - **What earns a buck.** `floor(P / points_per_buck)` per child and week, `P` = live awards that week whose skill is not negative AND whose points
+    are above zero. Alternative in the plan: `ABS(points)`. Rejected: a positive skill docked with a negative override (a real use, see
+    `BehaviorAward::signedPointsSql`) would MINT bucks. A negative award neither mints nor subtracts (R2). Whole bucks per week, so a dearer rate
+    drops a week's remainder (said in the docs; at the default rate nothing is lost). A child who left the class is not minted for (ASSUMPTIONS W6-A2).
+  - **Minting and late changes.** `bucks:mint` hourly: closed weeks from `bucks_from` mint once; only the LAST TWO closed weeks are re-read, and a
+    late change is an `adjusted` delta clamped at a zero balance. **`week_basis`** (what the week's points came to, after each row) makes a clamped
+    clawback forgiven once; without it the shortfall would be taken back out of a later week's earnings the next time the window found the gap.
+    Alternative: carry the shortfall as debt. Rejected: a child's balance is never negative, and R-defaults say "clamped at 0".
+  - **Nothing retroactive by surprise.** `masjid_points_settings.bucks_from` is set to the start of the week in progress the first time a school with
+    the store on is seen. Alternative: mint every closed week in the points history the day the grant is switched on. Rejected: it pays a term of
+    history nobody expected. A SuperAdmin can move the date earlier on purpose.
+  - **Redemption.** Locks the student's roster row and the prize row (`lockForUpdate`) inside one transaction; SQLite has no row locks, so the
+    invariant is also checked after the write and rolled back, and a test proves it with a simulated concurrent spend. A `request_id` per click makes a
+    double-tap a replay. The prize must be this school's and school-wide or this class's own (checked in `ClassStore` too, because a console
+    caller is unbound). Stock: optional, blank = unlimited, decremented with the redemption, given back by a reversal. Reversal: a new row, once per
+    entry (`reversal:{entry}`), only of a redemption or a cash-out, refused after an expiry.
+  - **Expiry and retention.** `bucks:expire` writes one `expired` row per child and cutoff at `groups.ends_on` and at each calendar year's
+    `last_day`, taking only what was minted before the cutoff. The retention purge removes a child's ledger as a SET, only when every row is due,
+    re-decided inside a transaction holding the roster row. Both are logged on the `monitors` channel, one line per run.
+  - **Privacy.** Every balance is read through `GroupAudience::readablePrizeLedgerQuery` (the awards' audience: the class's teachers, the student, that
+    student's own guardians). Roster order, no rank, no class total, no prize wall. The family payload is the narrow one. **The office reads class
+    totals only** (`mayReceiveClassStoreTotals`): no child, no roster id, no per-student figure; an office-run school-wide store that reads every child's
+    balance stays not built (RECON section 6). Alternative: let the reconciliation list students with a balance below zero. Rejected: the count is enough,
+    and a list is a child's balance for an administrator who stands nowhere in that class.
+  - **The capability.** `class_store`, a grant in group `school`, OFF for masjid, school and community. Studio owner's three conditions: the mobile
+    `/features` and `tv-config` are byte for byte identical on or off (test); it is writable through `CapabilityWriter::apply` and appears in the catalogue
+    (test); the snapshot fixtures differ only by the key. The class payloads carry `class_store: true` only when on.
+  - **Verbs.** Teacher +5 (`POST prizes`, `PUT prizes/{id}`, `POST members/{id}/prizes/redeem`, `POST members/{id}/prizes/cash-out`,
+    `POST prize-entries/{id}/reverse`), family +0. The office gets the school-wide prize routes and the reconciliation in the admin realm; a
+    SuperAdmin gets `PUT class-store-settings`.
+  - **Not done, on purpose.** A SuperAdmin settings screen (API only, like the Friday report's schedule); a push or email to a family when they earn
+    or spend (the digest and the staff app are separate items); the physical Manara Bucks print run (paused); an office-run school-wide store; a
+    raffle (B6 option c).
+  - **Unknown, needs investigation.** How MySQL behaves under two simultaneous taps (ASSUMPTIONS W6-A8); whether Al-Razi wants a departed child to
+    keep the week's bucks (W6-A2); the year and class end dates Al-Razi has entered (W6-A3).
+
+
+- **2026-09-29 (school side quest W6-A review fixes): what the review of the class store found, and how each was fixed.**
+  Every fix has a test that fails without it (mutation proofs in the closing report).
+  - **Expiry ran before the class's last week was minted, and its once-only key let those bucks escape.** The week that holds a cutoff is
+    minted only after it closes, so bucks for a pre-cutoff week can arrive after the first write-off, and `expired:{m}:{cutoff}` was already
+    taken. Chosen: the expiry is re-runnable per cutoff (`expired:{m}:{cutoff}:{n}`, `n` counted under the student's lock; the amount is
+    still `balance - minted from weeks on or after the cutoff`, so a run with nothing left writes nothing), and the minter stops minting a
+    class's weeks that open after its `ends_on`. Alternative: hold the cutoff back until the weeks around it have closed and left the
+    adjustment window (about three weeks). Rejected: bucks stay spendable for weeks after a class ended. Cost of the chosen way: for up to
+    30 minutes (between the hourly mint at :10 and the expire at :40) a late-minted pre-cutoff buck shows on the balance before it is
+    written off.
+  - **A change of `points_per_buck` re-rated the last two weeks.** Each `earned` and `adjusted` row now keeps `week_rate` (and `week_points`, the
+    audit record of what the basis was worked out from; the adjustment itself needs only the rate); a week is re-priced at its own rate, so a
+    new rate applies to weeks minted after it. Alternative: an
+    "effective from" date on the setting. Rejected: a second setting to keep in step, and a late award in an old week still has to be priced
+    at some rate. Migration `2026_10_04_100400` (nullable columns; an older row without them reads at the current rate).
+  - **Switching the store off and on paid the weeks it was off.** `bucks_swept_at` marks a sweep that found the store on; a sweep that finds it
+    off for a marked school clears `bucks_from` and the mark, so the next sweep with it on starts at the week in progress. Alternatives: hook the
+    capability writer (Studio's file, to be coordinated), or read `masjid_capability_changes` (a start day set by hand after a pause cannot be
+    told from an old one). A SuperAdmin's start day, set after the pause or before the store was ever on, is honoured. Migration
+    `2026_10_04_100500`.
+  - **`bucks_from` was documented as a day and worked as a week.** Kept as documented: the first week's window starts at that day's midnight on
+    the school's clock (BucksMinter, and the reconciliation's expected figure). Alternative: round it to the week start and echo that.
+    Rejected: it would credit the days the SuperAdmin meant to exclude.
+  - **Two overlapping mint runs could write one late change twice.** The delta is decided again under the student's lock from the newest row
+    as it is then (`settle`), not from the row read before the lock.
+  - **A lost response was a second deduction in the SPA.** One request id per write (student and prize, student and amount), kept across a
+    retry after no response, 408 or 5xx and dropped on success or any other 4xx. A reload failing after a successful write no longer says
+    the write failed (that would invite the second tap).
+  - **Tests only:** the row locks (source pin, SQLite cannot see them), the store gate on cash-out and the hand-out with paper ON, the
+    office's contacts permissions, replays of the last bucks and last stock, the layers of the replay and stock guards, a 1-buck overdraft,
+    the start-side week boundary, the frozen week, and a request id scoped to its kind.
+  - **Not fixed, on purpose.** The reconciliation's `expected` uses today's rate, so after a rate change it differs from `minted` for weeks
+    minted earlier: the view already calls a difference a question for the office, and its docblock now names the rate change as a reason.
+  - **Unknown, needs investigation.** The lock behaviour on MySQL with two connections (ASSUMPTIONS W6-A8) and the migrations on MySQL 8.4
+    (W6-A7) remain unrun by this fix, as before.
 ## 2026-09-29 (follow-ups) — The exact-address fix, second pass (fix/login-followups, off fix/login-address-exact-match @ 20a8f984)
 Decision: the point's opus review of b9f11d4c found six more places where a `utf8mb4_unicode_ci` email column lets a look-alike address (`victim@gmaíl.com` for `victim@gmail.com`) act as the real one. Each is fixed the same way as the first pass: the query keeps its SQL and only SHORTLISTS, then `ContactIdentity::keepExactMatches()` / `sameAddress()` decides, before any tie or ambiguity rule counts the rows, and with no `limit()` ahead of the filter. Basis: the brief states production's email columns were verified `utf8mb4_unicode_ci` read-only (2026-09-29); this branch did not read them itself (ASSUMPTIONS 25, 26, 30). Ships after the branch it is off; rebase onto main once that lands. Nothing here ships without the owner's yes.
 
@@ -5368,6 +5451,9 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   [Qur'an, general], which counted the general plan as the teacher's; the 409 now needs two plans under their own subjects, Qur'an and the combined
   "Qur'an & Islamic Studies"). Alternative: keep the rename for a limited teacher when the only plan they can see is a subject's, not the general one.
   Rejected: the point's rule is that a by-day save never retypes another subject's plan, and the old screen is not what the day view uses.
+  Accepted after the point's second-round review: a by-day PUT with NO subject edits the class's general plan for a limited teacher too (it upserts on the
+  empty subject key). That is the access they already have by id (a plan with no subject is shared), and the empty subject is an explicit choice, not a
+  resolution of "the day's plan"; the `LessonPlanController` docblock says so.
 
 - **W3/W4 folds (2026-09-29): F8 stays client-side, and any future native family grades screen must withhold the weighted figure while `untyped_excluded` > 0.**
   F8 hides a family's weighted figure in the SPA (`familySeesWeighted`), not in the payload: the family and teacher endpoints stay byte-identical
@@ -5527,6 +5613,45 @@ Reply-To bounces.
   connection is NOT pinned to +00:00 (a global config change); re-check this if the database's time zone ever changes.
 - **(9)** Rollback runbook: deploy/README.md, "Rolling back scheduled stories and conversations".
 
+- **2026-09-30 (school side quest W6 fold): main merged, and the point's review of the class store folded (Gate A, all fourteen of Gate B).**
+  Main 5ba2fae0 merged (three mechanical conflicts, both sides kept). Each fold has a test that fails without it (one mutant run with the
+  Gate A and B source reverted and the tests kept: 16 of 19 new PHP tests failed; the other 3 are the two HTTP tests B13 asked for (behaviour that already held) and a guard of B3's
+  boundary (a date that still exists is not given back); the SPA's
+  mounted tests fail against the pre-fold screens and against single-line mutants of the message and busy guards).
+  - **A1: `dedupe_key` is `utf8mb4_bin` on MySQL, set in the table's own CREATE.** Chosen over main's ALTER pattern because no W6
+    migration has run on any persistent database, so there is nothing to alter; SQLite keeps the plain column. Proven on MySQL 8.0.46 in a
+    throwaway database on staging: with the migration, `redeemed:1:abcDEF12` and `redeemed:1:ABCdef12` are two rows; with the column
+    ALTERed back to the table default the second is `ERROR 1062 Duplicate entry`. The suite pins the compiled MySQL statement.
+  - **A2: `markPrizesConverted` inserts and catches only the unique violation** (as main's `claim()`); **A3: 100200, 100300 and 100400
+    refuse to roll back while ledger rows exist** (100400 included: it holds each week's rate, which every adjustment reads).
+  - **Already fixed by the workflow's own fix stage (89452859, 9308902f), not redone:** B1 (the delta decided under the student's lock),
+    B2 (expiry re-runnable per cutoff), B6 (a week keeps its rate), and the SPA half of B5 (one request id per write). **B1 was proven on
+    MySQL 8.0 here:** two `bucks:mint` runs made to meet at the student's row lock (a third session held it, both runs had read the week
+    before it) wrote ONE `adjusted +3` with the current minter and TWO (balance 11 where 8 was owed) with the pre-fix minter of d2820e85.
+  - **B3: a cutoff waits `expiry_grace_days` (7) and a vanished cutoff is given back.** Alternative: make the office confirm an end date.
+    Rejected: the dates are already typed on screens that serve other features, and a confirm step does not help a date typed wrong with
+    confidence. The give-back is a `reversal` row pointing at the `expired` one (append-only both ways); a reversal of a prize is refused
+    only across an expiry that still stands.
+  - **B5 server: `request_id` REQUIRED on redeem and cash-out.** **B11: a replay with another prize or amount is a 409.** **B8: a prize edit
+    locks the row and compares `expected_stock`** (compare-and-set). Alternative: a delta from the loaded count. Rejected: it needs the same
+    loaded count and silently merges two people's intentions; a 409 with the current count lets the editor decide. The screens send the
+    stock only when it changed. **B10: an empty `is_active` is no change.**
+  - **B7: `mayReceiveClassStoreTotals` checks the bound tenant, and the reconciliation hides classes under 5 current students**, left out of
+    the totals too (a total that included them gives them back by subtraction). Alternative: merge small classes into an "other" row.
+    Rejected: with one small class, "other" is that class.
+  - **B9: the purge removes only a zero-sum set of a child no longer enrolled** (left, or the class ended). Cost: a withdrawn child's
+    positive balance is kept past 365 days until W6-C1 is decided (ASSUMPTIONS W6-A12).
+  - **B4, B12, B13, B14 (the screens):** the refusal message survives the reload; "Show earlier" and keyboard-operable students on the
+    teacher's screen; each screen MOUNTED in `npm run test:spa` by a small harness (`tests/support/mountSfc.ts`: the project's own
+    `@vue/compiler-sfc` and Vue's `createRenderer`, no DOM and no new dependency). Alternative: add jsdom and @vue/test-utils. Rejected
+    for this fold: two new dev dependencies and a lockfile change on a branch that must not touch main's toolchain; the harness can be
+    swapped for them later without changing a test's intent. HTTP tests added for the 409 `balance_changed` and the 422 `expired`.
+  - **Gate C.** C2 built as recommended and reversible (records export dataset `bucks_ledger`, no note). C1 only in part: a left child's
+    refusal now says why; the carry-over on a move and the 30-day office hold are an ENABLE BLOCKER (W6-C1). C3 is an ENABLE BLOCKER (no
+    settings screen). The Arabic and other machine-drafted parent copy is an ENABLE BLOCKER (W6-A13). The store and paper cash-out stay OFF.
+  - **Also checked on MySQL 8.0 while the throwaway database existed:** the expiry and its give-back (`expired -8` then `reversal +8`
+    after the end date moved, nothing on the third run), and the purge's grouped query (a left child's zero set removed, a left child's
+    8 Bucks and a current child's 5 kept). Database and user dropped and the copy deleted afterwards.
 ## 2026-09-28 — Donation row build extracted from the door: `DonationService::createPendingDonation`
 Decision: the `Donation::create` that `createDonationCheckout` ran before opening Stripe is now
 `DonationService::createPendingDonation`, and the door calls it and reads every value back off the

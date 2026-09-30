@@ -245,6 +245,21 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/SchoolCalendarView.vue")
             },
             {
+                // The class store (T-003.4): the school-wide prize list and the class totals of
+                // Manara Bucks. `requiresCapability`, not `requiresCrm`: the server's
+                // `capability:class_store` gate is the boundary (a SuperAdmin passes it), and
+                // the store is OFF for every organisation until a SuperAdmin switches it on.
+                path: 'class-store',
+                name: 'masjid.classStore',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    requiresCapability: 'class_store',
+                    pageTitle: 'Class Store'
+                },
+                component: () => import("@/views/dashboard/ClassStoreView.vue")
+            },
+            {
                 // The attendance log: the office's read of the register the
                 // class teachers take. Beside the School Calendar because the
                 // calendar decides which days are columns.

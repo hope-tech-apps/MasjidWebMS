@@ -10,6 +10,7 @@ use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\Teacher\AttendanceController;
+use App\Http\Controllers\Teacher\ClassStoreController;
 use App\Http\Controllers\Teacher\CurriculumController;
 use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
@@ -190,6 +191,33 @@ Route::prefix('teacher')
                         // award; it applies to every teacher of the class. The
                         // realm's +1 write verb for the points reset.
                         Route::put('/points-period', [PointsPeriodController::class, 'update']);
+
+                        // THE CLASS STORE (T-003.4, W6): Manara Bucks a week of positive points
+                        // turns into, spent on prizes the class's teachers give. Every route
+                        // here sits behind `capability:class_store`, OFF for every organisation
+                        // until a SuperAdmin decides, so a school without it answers 403 to all
+                        // of them and is otherwise unchanged. Reads (bucks, prizes, a student's
+                        // history, the paper hand-out) are GETs and add no write verb; the five
+                        // writes are the realm's +5. EVERY balance is read through GroupAudience.
+                        // There is NO route that edits or deletes a ledger entry: a correction
+                        // is a reversal, a new row. Cash-out to paper is built and OFF behind
+                        // the school's `paper_bucks_enabled` (refused in ClassStore as well).
+                        Route::middleware('capability:class_store')->group(function () {
+                            Route::get('/bucks', [ClassStoreController::class, 'index']);
+                            Route::get('/bucks/handout', [ClassStoreController::class, 'handout']);
+                            Route::get('/prizes', [ClassStoreController::class, 'prizes']);
+                            Route::get('/members/{membership_id}/bucks', [ClassStoreController::class, 'forMember']);
+                            // Write 1: this class's OWN prize (the school-wide list is the office's).
+                            Route::post('/prizes', [ClassStoreController::class, 'storePrize']);
+                            // Write 2: edit or retire this class's own prize.
+                            Route::put('/prizes/{prize_id}', [ClassStoreController::class, 'updatePrize']);
+                            // Write 3: give a student a prize (locks the student and the prize).
+                            Route::post('/members/{membership_id}/prizes/redeem', [ClassStoreController::class, 'redeem']);
+                            // Write 4: pay bucks out as paper notes (built, OFF).
+                            Route::post('/members/{membership_id}/prizes/cash-out', [ClassStoreController::class, 'cashOut']);
+                            // Write 5: correct a prize given or Bucks paid out, as a new entry.
+                            Route::post('/prize-entries/{entry_id}/reverse', [ClassStoreController::class, 'reverse']);
+                        });
 
                         // The class register. The teacher realm's OWN controller,
                         // not a reused admin one: taking a register is a teacher
