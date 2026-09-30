@@ -81,6 +81,9 @@ class CartPaymentService
             return CartSettlementResult::none();
         }
 
+        // Before anything that can refuse or throw: see recordPaymentIntent().
+        $this->recordPaymentIntent($order, $this->stringOrNull($session['payment_intent'] ?? null));
+
         // `payment_status`, never `status`: every completed session is `complete`.
         if (($session['payment_status'] ?? null) !== 'paid') {
             Log::warning(
@@ -113,6 +116,8 @@ class CartPaymentService
             return CartSettlementResult::none();
         }
 
+        $this->recordPaymentIntent($order, $this->stringOrNull($intent['id'] ?? null));
+
         [$currency, $amount] = $this->reportedTotal($intent, self::KIND_INTENT);
 
         // A payment intent in another currency than the order's is a localised one (Adaptive
@@ -139,6 +144,53 @@ class CartPaymentService
             $amount,
             $currency,
         );
+    }
+
+    /**
+     * Remember which payment an event says this order is, as soon as the event has identified
+     * the order and the page, and BEFORE settlement is tried.
+     *
+     * The intent used to be written only in the save that marks the order paid, inside the
+     * settlement transaction. A settlement that refused (an amount that did not match) or threw
+     * (a line that could not be recorded) left the order with no intent on record, so a
+     * `charge.refunded` or `charge.dispute.created` for that very payment found no order
+     * (flagOrder looks orders up by intent), was logged at info and lost: Stripe does not
+     * redeliver a refund or a dispute. Written here, outside the settlement's transaction, the
+     * intent survives whatever settlement does, and flagOrder finds the pending order and flags it.
+     *
+     * HAVING AN INTENT MEANS NOTHING ABOUT PAYMENT. Only `status` says an order is paid
+     * (Order::isPaid()), and only settlement moves it. Nothing reads this column as "paid":
+     * the portal, the payment-state read, checkout and the prune all test `status`, and the prune
+     * treats a pending order with an intent as a payment to reconcile, never as a sale.
+     *
+     * It is written once (`whereNull`, so a recorded intent is never replaced and two events
+     * cannot race each other's value), and a failure to write it is logged and swallowed: the
+     * settlement that follows is the more important write and reaches the same database.
+     */
+    private function recordPaymentIntent(Order $order, ?string $intentId): void
+    {
+        if ($intentId === null || $order->stripe_payment_intent_id !== null) {
+            return;
+        }
+
+        try {
+            $written = Order::withoutMasjidScope()
+                ->whereKey($order->id)
+                ->where('masjid_id', $order->masjid_id)
+                ->whereNull('stripe_payment_intent_id')
+                ->update(['stripe_payment_intent_id' => $intentId]);
+
+            if ($written === 1) {
+                $order->setAttribute('stripe_payment_intent_id', $intentId);
+                $order->syncOriginalAttribute('stripe_payment_intent_id');
+            }
+        } catch (Throwable $e) {
+            Log::warning('The payment intent of a cart order could not be recorded ahead of settlement; a refund that arrives before the order settles would not find it.', [
+                'order_id' => (int) $order->id,
+                'masjid_id' => (int) $order->masjid_id,
+                'exception' => $e::class,
+            ]);
+        }
     }
 
     /**
@@ -195,7 +247,9 @@ class CartPaymentService
      *
      * An order that names the payment but is NOT PAID yet is flagged all the same, with a
      * warning that it was flagged before settlement recorded it: Stripe does not redeliver a
-     * refund or dispute, so ignoring it would lose it. A charge that is no basket's (every
+     * refund or dispute, so ignoring it would lose it. An order names its payment from the first
+     * session or payment-intent event that identified it, before settlement is tried
+     * (recordPaymentIntent()), so a payment settlement refused or failed to record is still found. A charge that is no basket's (every
      * donation, lunch and registration refund) writes nothing, exactly as before this arm
      * existed, and is logged at info so there is a trace. It never throws: a 500 would only
      * make Stripe retry, and a lost flag is logged at error.

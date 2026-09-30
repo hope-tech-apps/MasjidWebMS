@@ -299,7 +299,10 @@ class CartSettlementTest extends TestCase
 
         $this->assertSame(Order::STATUS_PENDING, $order->fresh()->status);
         $this->assertNull($order->fresh()->paid_at);
-        $this->assertNull($order->fresh()->stripe_payment_intent_id);
+        // Pending, but the payment it was refused for is on record, so a refund of it is not lost
+        // (CartPreSettlementFlagTest). Having an intent is not being paid: the status says so.
+        $this->assertSame('pi_cart_1', $order->fresh()->stripe_payment_intent_id);
+        $this->assertFalse($order->fresh()->isPaid());
         $this->assertSame(['forms' => 0, 'meals' => 0, 'gifts' => 0], $this->recordCounts());
         $this->assertWarned('did not match the order');
         Mail::assertNothingSent();
