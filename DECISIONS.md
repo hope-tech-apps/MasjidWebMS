@@ -5383,10 +5383,9 @@ Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an 
 Reply-To bounces.
 
 ## 2026-09-29 — Guide split: the school's separated Qur'an, Arabic and Islamic Studies weeks replace the combined column for Pre-K to Grade 2, weeks 1-8 (feat/school-guide-split, off b5c2f808)
-Decision: the owner said the separated guide is already in the shared drive (RECON-PLAN B12 answered; the
-school's "First Semester / Quarter 1 suggested pacing for all subjects from Pre-k to Grade 2", Drive
-`1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys`, 2026-09-07). It supersedes W3-6's "T-001.4 is partial until B12" for these
-cells only. `curriculum:import` (extended) loads `database/curriculum/al-razi-qai-split-2026-27-q1.json`
+Decision: the school's separated guide ("First Semester / Quarter 1 suggested pacing for all subjects from Pre-k
+to Grade 2", dated 2026-09-07, pinned by the sha256 values in the data file's `source`) is in hand. It supersedes
+W3-6's "T-001.4 is partial until the school's revised weekly guide" for these cells only. `curriculum:import` (extended) loads `database/curriculum/al-razi-qai-split-2026-27-q1.json`
 after the base guide: 96 new rows (Pre-K, Kindergarten, Grade 1, Grade 2, times Qur'an, Arabic Language and
 Islamic Studies, times weeks 1-8) replace the 32 combined cells for the same grades and weeks, in one
 transaction. Masjid 14 goes from 1512 to 1576 rows. The combined column stays for weeks 9-36 in Pre-K to
@@ -5416,7 +5415,8 @@ The production apply is NOT part of this change and waits for the owner's yes on
 - **Teachers' records are never written.** Plans and assignments copy text and hold no key to the guide, so
   deleting a guide row changes none of them, and an assignment whose unchanged snapshot names a deleted cell still
   saves on edit. The dry run counts `plans_touching`, `assignments_touching` and `plans_combined_subject`, and
-  `--expect` pins the first two. Production on 2026-09-29: 0 plans, 0 assignments (GUIDE-MAP section 10).
+  `--expect` pins them. The owner approves counts from a dry run taken against production just before the apply,
+  never from an earlier count: teachers write plans every day.
 - **What people see.** The prefill and standards payloads carry `objective` and `learning_outcome` ONLY on rows
   that have them, so every July row answers byte for byte as before (the pin in
   `TeacherCurriculumStandardsTest` is unchanged). The standards de-duplication key includes the objective, since
@@ -5439,9 +5439,9 @@ The production apply is NOT part of this change and waits for the owner's yes on
 - **Not done (options, not built).** O-1: the plan's ELA, Math, Science, Social Studies and STEM are not
   imported (different code system from the live guide; Grade 2 Math absent, Grade 2 ELA overview only, Grade 2
   Science in two differing copies). F-1: a hint on a split subject's week list that weeks 9+ are still under the
-  combined column. F-3: B7 (which per-grade Arabic outcomes document is current) is NOT settled by the Drive
+  combined column. F-3: which per-grade Arabic outcomes document is current is NOT settled by the school's
   files; no outcomes list is imported.
-- **Correction.** `sidequest/RECON-PLAN.md:828` says the Drive document carries no Qur'an, Arabic or Islamic
+- **Correction.** An earlier planning note said the school's document carries no Qur'an, Arabic or Islamic
   Studies codes. It does: the 7 Sep plan has `PK.QUR.*`, `PK.AAL.*`, `PK.IS.*` and the K, 1 and 2 equivalents,
   school-authored, imported verbatim and never invented. `.claude/rules/groups.md` says so now.
 - **Faithfulness.** `database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt` is committed whole
@@ -5458,5 +5458,42 @@ names none, so an inverse is never unguarded; (2) an inverse row whose own `sour
 NULL (an explicit null in a row is kept, not replaced by the file's label); (3) the two safety files never
 overwrite an earlier pair made in the same second (`-1`, `-2` suffix); (4) `--verify` is also refused with
 `--fresh`; (5) under `--fresh` the plan reports delete = every existing row and insert = every file row, and
-the inverse restores all existing rows and removes only cells the file created; (6) the sidequest working files
-(design section 5.9, last bullet, and checklist step 13) were not updated by this build.
+the inverse restores all existing rows and removes only cells the file created.
+
+### 2026-09-30 — Guide split, second review folded (feat/school-guide-split)
+- **An apply refuses by default when it would leave something behind.** `plans_touching` or `assignments_touching`
+  above 0 (a teacher record copies a cell being deleted), or `delete_absent` above 0 (a cell the file replaces is
+  not there: the file's spelling is not the database's, so it would insert 96 rows beside 32 it meant to replace,
+  or the file was already applied), makes `curriculum:import` exit 1 and write nothing, with or without `--expect`,
+  unless `--allow-references` is given. `--expect` alone is not the yes: it pins numbers, the flag accepts them.
+  A dry run still prints all three counts and says an apply needs the flag. A second apply of the same file
+  therefore needs `--allow-references` too (delete_absent 32).
+- **Runbook, production.** (1) Dry run against production just before, read the counts. (2) The owner approves those
+  exact counts. (3) `sudo -u www-data php artisan curriculum:import 14 <file> --expect=<the approved counts>
+  --allow-references` (run as the web user, as `bin/deploy` runs migrate, so the log and the safety directory are
+  not left root-owned). (4) `--verify --expect=after=<the dry run's after>`: `--verify` compares only the file's
+  cells and the replaced keys, so a row nobody planned passes it; the total it prints next to the expected `after`
+  is the check on everything else, and a different total fails it.
+- **Rollback restores content, not ids or timestamps.** The inverse file re-creates a deleted cell through an
+  upsert, so it comes back with a new id and new `created_at` / `updated_at`. Nothing references a cell's id (plans
+  and work copy text), and every read orders by content, so nothing depends on them. It is "the same cells", not
+  "the same rows byte for byte".
+- **Public repository.** The data file, generator, tests and these notes carry no private document id, no
+  internal note field, and no reference to internal working notes or local paths. The source is pinned by `docx_sha256`
+  and `txt_sha256`, a title and `document_date`. The committed source `.txt` stays for now (whether the school's
+  text may be public is the owner's call); `CurriculumSplitSourceFaithfulnessTest` reads it when present and, when it
+  is absent, checks the data file's sha256 pins and skips the line-by-line comparison with a message, so dropping the
+  `.txt` later is a one-file deletion (the generator needs it to rebuild, which is not a test).
+- **Weeks past the split.** A plan for Qur'an, Islamic Studies or Arabic Language asking for a week the split has no
+  row for (weeks 9 on, and Grades 3-5) gets the combined "Qur’an & Islamic Studies" line for that week as the
+  prefill, marked `from_combined_guide` with `guide_subject`, and the plan form says so. No split row is invented,
+  and the combined line is not its own sibling. The fence applies: an Arabic-only teacher, who may not read the
+  combined column, gets no fallback.
+- **The subject fence covers the guide reads.** With `?group_id=` the week list, the cell, its siblings and the
+  standards search use the same `SubjectFence` limits `subjectsFor` uses, by subject key. Qur'an-only and
+  Islamic-Studies-only teachers still see the combined column; an Arabic-only teacher does not. The SPA now sends the
+  class on the prefill, the plan's standards search and the assignment picker. Without `group_id` nothing is fenced,
+  as before.
+- **Minors.** `in_scope` and the scope rank compare by subject key, not exact string. An empty Objective or Learning
+  Outcome is stored as NULL by the importer and read as absent everywhere. A single Islamic sibling that is not the
+  combined column carries its subject label; the combined column stays bare.

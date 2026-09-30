@@ -1203,6 +1203,11 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   plan or an assignment; the dry run counts the ones that copy a replaced cell. Re-running
   the base file after a file that replaces some of its cells re-creates them: re-run the
   replacing file.
+  An apply REFUSES (exit 1, nothing written) while `plans_touching`, `assignments_touching`
+  or `delete_absent` is above 0, with or without `--expect`, unless `--allow-references` is
+  given. The rollback restores content, not ids or timestamps. `--verify` checks only the
+  file's cells and the replaced keys, so pass `--verify --expect=after=<the dry run's
+  after>` and compare the tenant total it prints.
 - **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows
   means the class is unweighted and every average is byte for byte what it was. A TYPE is
   one slot in the weighted average, worth its class weight however many pieces are in it;
