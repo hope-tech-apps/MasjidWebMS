@@ -1075,6 +1075,12 @@ positioning, not its configuration.
     running figures (`week_points`, `week_awards`, and the class's).
   - **The figure a class leads with follows `points_period`; both are always served.**
     Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
+  - **A family sees a week only where its switch is on (review F1, 2026-09-29).** The portal's "This
+    week" line is for a class that opted in to `points_period = weekly`; the weekly REPORT page and every
+    link to it are for a school holding `points_weekly_report`. The family class payload carries
+    `weekly_report` (the school's answer) beside `points_period`, and the family awards endpoints agree:
+    a `?week=` is served when the school has the report on (any week), or as `current` for a weekly class,
+    and is a plain 404 otherwise, before the value is read as a date. No `?week=` is unchanged.
 - **The Friday report is a notice and a link, off by default, once per class and week
   (T-003.3, 2026-09-29; owner B5).** `points:weekly-report` runs hourly and, for a school
   holding the `points_weekly_report` grant (OFF for every organisation until a SuperAdmin
@@ -1092,8 +1098,9 @@ positioning, not its configuration.
     the portal and never makes a second email. The moment is the school's (Friday 15:00 unless
     `masjid_points_settings` says otherwise, SuperAdmin-only), never derived from the calendar; a
     week with a calendar closure is skipped.
-  - **`behavior_weeks` is the atomic claim** (insert-or-ignore, then `UPDATE ... WHERE report_sent_at
-    IS NULL`): at most once by design, and a run with nobody to tell claims nothing. It holds no child
+  - **`behavior_weeks` is the atomic claim** (an insert that swallows ONLY the unique violation, then
+    `UPDATE ... WHERE report_sent_at IS NULL`; never `insertOrIgnore`, which on MySQL turns any other
+    failure into a warning and reads as "already sent"): at most once by design, and a run with nobody to tell claims nothing. It holds no child
     data, so it has no retention, erasure or RESTRICT (cascades to the school and class).
   - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
     with `?week=`, for the parent's own children only, printable, and says so when a read fails.
@@ -1300,9 +1307,12 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   ("N pieces of work have no type"). Levels get a weighted mean LEVEL over the same slots,
   never a percentage; simple marks are never averaged. An override is refused (422) unless
   the class is weighted, and clearing the weights clears every override in the class in the
-  same transaction. A subject-limited teacher may SET the weights but not CLEAR them while
-  work outside their subjects carries a weight of its own (403, nothing written). The office
-  reads the weights and has no route to set them (`AdminGradebookReadTest`).
+  same transaction. Only a teacher NOT limited to some subjects may set or clear
+  them (403, nothing written, for a limited one: the weights move every subject's average, which
+  parents read; review F5, 2026-09-29, superseding W3-3(e)); the office sets and clears them through
+  its own route (`PUT admin/.../grade-weights`, `permission:manage contacts`, no subject fence), which runs the
+  same `ClassGradeWeightsService` the teacher's route does, so a class of only limited teachers is not stuck
+  (`AdminGradeWeightsTest`).
   `App\Support\GradeRecord` is the one copy of the arithmetic; the teacher's and the
   parent's endpoints both call it, and `weighting` / `by_subject` sit BESIDE the older
   summary keys, which are unchanged. The teacher's endpoint adds `data.fenced`.
@@ -1314,17 +1324,26 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   work into another subject. `SubjectKey::staffKeys()` is the map: the combined
   "Qur'an & Islamic Studies" column belongs to BOTH `quran` and `islamic_studies`;
   Mathematics belongs to none, so a limited teacher does not teach it. Work with NO subject
-  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse).
+  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse), and so is
+  ANOTHER subject's work or lesson plan (review F4, 2026-09-29): by id it answers the one plain
+  404 that untagged work (or a plan id that names nothing) answers, status and body alike, so a
+  refusal never names a subject and never confirms that something is there. The by-day lesson plan
+  address counts and touches only the plans the teacher may touch: their save on a day holding
+  only another subject's plan creates their own beside it, their delete never reaches the others,
+  and a day with nothing of theirs is a 404 whether it is empty or not. Only a subject the
+  teacher TYPES and does not teach is refused with a 403 in the words of `teacher.teaches:`
+  ("You do not teach X in this class.", X being what they wrote).
   A lesson plan with no subject (the day's general plan) stays open to every teacher of the
   class, because fencing it would strand every plan BISS has. Only a signed-in TEACHER is
   limited: the office reads the same controllers through the admin realm and is never
-  fenced, and the family endpoint has no fence at all. Refusals use the words of
-  `teacher.teaches:` ("You do not teach X in this class.").
+  fenced, and the family endpoint has no fence at all.
 - **Migrations.** `add_curriculum_fields_to_class_assignments_table` (one migration for all
   three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
   hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
   seed `seed_school_subjects_for_alrazi_and_biss` is guarded by org id AND name, insert-only,
-  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`), and its `down()`
+  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`, added by its own
+  guarded migration `add_seeded_by_to_school_subjects_table`, after the table and before the seed: an applied
+  migration is never edited), and its `down()`
   removes only marked rows that are still untouched (an office "Qur'an" it skipped is never its own). Deploy after
   hours (new code meets the old schema for a few seconds). Ship the seed only after the
   owner's yes (B3).

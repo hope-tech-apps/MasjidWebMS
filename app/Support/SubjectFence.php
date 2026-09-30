@@ -79,6 +79,19 @@ final class SubjectFence
         return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
     }
 
+    /**
+     * May `$user` change how much each type of work counts in `$groupId`?
+     *
+     * The weights are a policy of the whole class and move every subject's average,
+     * so only someone who is not limited to some subjects may: an unrestricted
+     * teacher of the class, or the office (anyone who is not a Teacher, which
+     * `limitsFor` never limits). A Teacher limited to some subjects may not.
+     */
+    public static function mayWeighClass(?User $user, int $groupId): bool
+    {
+        return self::limitsFor($user, $groupId) === null;
+    }
+
     /** May a teacher with these limits touch work whose subject key is `$subjectKey`? */
     public static function allows(?array $limits, ?string $subjectKey): bool
     {
@@ -101,8 +114,15 @@ final class SubjectFence
     }
 
     /**
-     * Refuse, in the words the `teacher.teaches:` middleware uses so a teacher
-     * hears one sentence for one rule.
+     * Refuse a subject the teacher TYPED and does not teach, in the words the
+     * `teacher.teaches:` middleware uses so a teacher hears one sentence for one rule.
+     *
+     * Only ever for a subject the caller wrote (a new piece of work, a plan being
+     * saved, work being moved): the sentence repeats their own words and reveals
+     * nothing. Work or a plan that ALREADY EXISTS in another subject is never
+     * refused with this, because naming its subject would confirm it is there: the
+     * controllers answer the plain 404 that work with no subject, or an id that
+     * names nothing, gets.
      */
     public static function refuse(?string $subjectName): never
     {

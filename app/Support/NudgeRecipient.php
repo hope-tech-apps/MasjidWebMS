@@ -17,6 +17,13 @@ final class NudgeRecipient
         public ?string $name,
         /** 'family' (a guardian) or 'staff' (a teacher) — which realm they sign into. */
         public string $realm,
+        /**
+         * Who this is, for a log line that must not carry the address: the guardian's
+         * `contacts.id` ('family') or the teacher's `users.id` ('staff'). Null where the
+         * caller never asked (an address is never a substitute in a log).
+         */
+        public ?int $contactId = null,
+        public ?int $userId = null,
     ) {
     }
 }

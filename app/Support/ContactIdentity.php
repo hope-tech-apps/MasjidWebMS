@@ -4,7 +4,6 @@ namespace App\Support;
 
 use App\Models\Contact;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 
 /**
  * ===========================================================================
@@ -138,10 +137,13 @@ final class ContactIdentity
      * The identity a contact is read through, or an unresolvable one.
      *
      * Normalised as `LOWER(TRIM(email))`, matching `GroupAudience::identitiesFor()`
-     * and `OfferingRegistrationsController::normaliseEmail()` — production is
-     * utf8mb4_bin (case-SENSITIVE) and the suite runs SQLite, and whether a
-     * de-duplication keeps somebody's authority must not depend on which one it
-     * is talking to.
+     * and `OfferingRegistrationsController::normaliseEmail()`: the suite runs
+     * SQLite and production compares these columns under utf8mb4_unicode_ci, and
+     * whether a de-duplication keeps somebody's authority must not depend on which
+     * one it is talking to. The comparison is made here in PHP, byte for byte after
+     * `foldCase()` (as `sameAddress()` does), so a non-ASCII letter such as U+212A
+     * KELVIN SIGN is never read as its ASCII look-alike: here that would carry a
+     * confirmed guardianship onto another person's contact.
      *
      * A null contact, a null email and an empty-or-whitespace email are ONE
      * state here on purpose. The database allows `''` as well as NULL — an
@@ -155,7 +157,7 @@ final class ContactIdentity
             return new self(null);
         }
 
-        $address = Str::lower(trim((string) $contact->email));
+        $address = self::foldCase(trim((string) $contact->email));
 
         return new self($address === '' ? null : $address);
     }
@@ -211,8 +213,15 @@ final class ContactIdentity
      * `utf8mb4_unicode_ci` column. That collation compares accents and expansions
      * as equal (`é` = `e`, `ß` = `ss`), so the query alone cannot tell the
      * address a person typed from a look-alike registered on a domain somebody
-     * else owns. `mb_strtolower()` on both sides and a strict `===` after `trim()`
-     * can: two different byte strings are two different mailboxes.
+     * else owns. Lower-casing both sides (`foldCase()`) and a strict `===` after
+     * `trim()` can: two different byte strings are two different mailboxes.
+     *
+     * NOT plain `mb_strtolower()`. Multibyte lower-casing maps a few non-ASCII
+     * characters onto ASCII ones (U+212A KELVIN SIGN becomes `k`), so a Kelvin
+     * sign in `vicKtim@example.com` would equal `victim@example.com`, and a
+     * character that merely looks like a letter would stand in for it. `foldCase()`
+     * lower-cases the ASCII capitals and lets a non-ASCII letter change only into
+     * another non-ASCII one, so nothing non-ASCII ever folds into ASCII here.
      *
      * An absent address is never a match, for the reason the class opens with:
      * null, `''` and whitespace on either side answer false, including against
@@ -224,8 +233,8 @@ final class ContactIdentity
             return false;
         }
 
-        $stored = mb_strtolower(trim($stored));
-        $submitted = mb_strtolower(trim($submitted));
+        $stored = self::foldCase(trim($stored));
+        $submitted = self::foldCase(trim($submitted));
 
         if ($stored === '' || $submitted === '') {
             return false;
@@ -271,7 +280,7 @@ final class ContactIdentity
      * is turned away, and an accent in front of the `@` can only be a look-alike.
      *
      * An address that is already plain ASCII is returned exactly as
-     * `mb_strtolower(trim())` would, so every address that signs in today
+     * `strtolower(trim())` would, so every address that signs in today
      * signs in as before. Nothing is done to an ASCII domain: no `idn_to_ascii`
      * rules are applied to it, so an old, unusual-looking but real address is not
      * newly refused.
@@ -282,7 +291,11 @@ final class ContactIdentity
      */
     public static function submittedAddress(string $typed): ?string
     {
-        $address = mb_strtolower(trim($typed));
+        // `foldCase()`, not `mb_strtolower()` (see `sameAddress()`): a non-ASCII
+        // letter that would fold onto an ASCII one, such as U+212A KELVIN SIGN,
+        // must stay non-ASCII here and be refused in a local part like any other
+        // accent. A non-ASCII domain is case-folded by IDNA itself.
+        $address = self::foldCase(trim($typed));
 
         if ($address === '') {
             return null;
@@ -312,5 +325,33 @@ final class ContactIdentity
         );
 
         return is_string($ascii) && $ascii !== '' ? $local . '@' . $ascii : null;
+    }
+
+    /**
+     * Lower-case for comparison, without letting anything non-ASCII become ASCII.
+     *
+     * The ASCII capitals are lower-cased by `strtr()` (byte for byte, unaffected
+     * by the process locale that `strtolower()` follows before PHP 8.2). Every
+     * other character is lower-cased with `mb_strtolower()` ONLY when the result
+     * is still non-ASCII: `É` becomes `é`, so `GMAÍL` and `gmaíl` are one
+     * spelling, but a character whose lower case is an ASCII letter (U+212A
+     * KELVIN SIGN, whose lower case is `k`) is left as it is. Text that is not
+     * valid UTF-8 keeps its non-ASCII bytes untouched.
+     */
+    private static function foldCase(string $value): string
+    {
+        $value = strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+
+        if (preg_match('/[^\x00-\x7F]/', $value) !== 1) {
+            return $value;
+        }
+
+        $folded = preg_replace_callback('/[^\x00-\x7F]/u', function (array $match): string {
+            $lower = mb_strtolower($match[0]);
+
+            return preg_match('/[\x00-\x7F]/', $lower) === 1 ? $match[0] : $lower;
+        }, $value);
+
+        return $folded ?? $value;
     }
 }

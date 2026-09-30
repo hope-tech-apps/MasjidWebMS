@@ -12,6 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Users\StoreUserRequest;
 use App\Http\Requests\Admin\Users\UpdateUserRequest;
 use App\Models\User;
+use App\Support\ContactIdentity;
 use App\Support\OrganisationAccess;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -124,7 +125,24 @@ class UsersController extends Controller
             // An archived (soft-deleted) user may already own this email. The store
             // validation ignores trashed users, so handle that case gracefully here by
             // restoring the archived account and updating it with the submitted details.
-            $archivedUser = User::onlyTrashed()->where('email', $data['email'])->first();
+            //
+            // `whereEmailIs()` returns CANDIDATES: `users.email` is utf8mb4_unicode_ci,
+            // where `sara@gmail.com` = `sara@gmaíl.com`, so an archived account at a
+            // look-alike spelling would be "restored" and re-addressed to the typed
+            // one, handing whoever types it that account's role, memberships and
+            // history. Only the archived user whose address IS the typed one (case
+            // aside) is restored. A candidate that matched only through the collation
+            // is refused: creating a user here would collide with it on the unique
+            // index, and a 500 would say nothing useful to the person typing.
+            $candidates = User::onlyTrashed()->whereEmailIs($data['email'])->get();
+            $archivedUser = ContactIdentity::keepExactMatches($candidates, 'email', $data['email'])->first();
+
+            if ($archivedUser === null && $candidates->isNotEmpty()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'An archived account holds an email address that reads almost the same as this one, so it cannot be used. Type the archived account\'s exact address to restore it, or use a different one.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
 
             $keptScope = false;
 

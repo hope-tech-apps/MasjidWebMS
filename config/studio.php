@@ -20,9 +20,10 @@ return [
          * public brand — the client may never sign — so it is kept the way the
          * other private uploads are (.claude/rules/private-uploads.md) and served
          * only through GET /api/admin/studio/drafts/{id}/logo. It is NOT put in
-         * medialibrary: that is the public-image mechanism, and Masjid's
-         * header_logo()/footer_logo() read the media table with no model_type
-         * filter, so a draft's row there could surface as a live org's logo.
+         * medialibrary: that is the public-image mechanism. (Until 2026-09-27
+         * Masjid's header_logo()/footer_logo() also read the media table with
+         * no model_type filter, so a draft's row there could have surfaced as a
+         * live org's logo. They filter it now, and the first reason stands.)
          *
          * Whatever this points at must stay a disk with no public URL.
          */

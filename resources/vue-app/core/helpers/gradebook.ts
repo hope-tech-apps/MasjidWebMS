@@ -119,18 +119,56 @@ export function firstFieldError(e: any, fallback: string): string {
  * average however many pieces are in it, and a piece with an override is a slot
  * of its own (App\Support\GradeRecord).
  */
-export function effectiveWeight(work: { weight?: number | null; type?: string | null }, weights: Record<string, number>, enabled: boolean): number | null {
+export function effectiveWeight(work: { weight?: number | null; type?: string | null; scale?: string | null }, weights: Record<string, number>, enabled: boolean): number | null {
     if (!enabled) return null;
+    // Excellent / Good / Needs work is never averaged, so nothing it carries (its type, or a weight typed
+    // against it) is a weight: it is in no weighted figure (GradeRecord::weighted skips the scale).
+    if (work.scale === SIMPLE_SCALE) return null;
     if (work.weight !== null && work.weight !== undefined) return work.weight;
     if (work.type && Object.prototype.hasOwnProperty.call(weights, work.type)) return weights[work.type];
     return null;
 }
 
-/** "counts 40", "counts 30 (this work)", or "" when nothing is known. */
-export function weightNote(work: { weight?: number | null; type?: string | null }, weights: Record<string, number>, enabled: boolean): string {
+/**
+ * Does a FAMILY see this child's weighted figures at all (review F8, 2026-09-29)? Only where the
+ * class is weighted AND nothing the child was marked on is left out of them. Once a class sets
+ * weights, older work with no type drops out of every weighted figure, so a child with nine older
+ * pieces and one new quiz would read "100% across 1 piece" above a plain total of 60 of 90, and the
+ * two would disagree with nothing to say why. Until the older work is typed, the family reads the
+ * plain total and the per-type rows and no weighted figure (headline, weighted level or per-subject),
+ * which needs no explanatory copy. Staff keep every figure and the untyped note that says what is left out.
+ */
+export function familySeesWeighted(weighting: { enabled?: boolean; untyped_excluded?: number | null } | null | undefined): boolean {
+    return !!weighting?.enabled && !(Number(weighting?.untyped_excluded ?? 0) > 0);
+}
+
+/** The scale whose marks are the three words. Never averaged, so never weighted. */
+export const SIMPLE_SCALE = 'simple';
+
+/** What a piece of simple-scale work says where a weighted class would say "counts N". */
+export const NOT_AVERAGED = 'not averaged';
+
+/**
+ * "counts 40", "counts 30 on its own", "not averaged" (simple-scale work in a weighted class), or "" when nothing is known.
+ * A weight typed on one piece makes it a slot of its own beside its type's, not a share of the type's weight, so
+ * it says "on its own": "(this work)" read as "30 of the type's 40".
+ */
+export function weightNote(work: { weight?: number | null; type?: string | null; scale?: string | null }, weights: Record<string, number>, enabled: boolean): string {
+    if (enabled && work.scale === SIMPLE_SCALE) return NOT_AVERAGED;
     const w = effectiveWeight(work, weights, enabled);
     if (w === null) return '';
-    return work.weight !== null && work.weight !== undefined ? `counts ${w} (this work)` : `counts ${w}`;
+    return work.weight !== null && work.weight !== undefined ? `counts ${w} on its own` : `counts ${w}`;
+}
+
+/**
+ * May this teacher change the class's weights? Only a teacher who is not limited to some
+ * subjects (`group.my_subjects` is null or empty: every full-time teacher). The weights move
+ * every subject's average, which families read, so a teacher limited to one subject reads them
+ * and cannot change them. This only decides what the screen offers; the server refuses the same
+ * request (review F5), which is the real boundary.
+ */
+export function mayChangeWeights(mySubjects: unknown): boolean {
+    return !Array.isArray(mySubjects) || mySubjects.length === 0;
 }
 
 export function weightsFormFrom(weights: Record<string, number>, types: WorkType[]): Record<string, string> {
@@ -164,6 +202,19 @@ export function weightsRequest(form: Record<string, string>, types: WorkType[], 
     return { ok: true, weights };
 }
 
+/** The two writes to a class's weights, as the office's Weights panel sends them (`base` is `/api/admin/masjids/{id}/groups/{id}`). */
+export type WeightsCall = { method: 'put'; url: string; payload: { weights: Record<string, number> } | { clear: true } };
+
+/** Set every type's weight: `weights` is what `weightsRequest` returned. */
+export function weightsSaveCall(base: string, weights: Record<string, number>): WeightsCall {
+    return { method: 'put', url: `${base}/grade-weights`, payload: { weights } };
+}
+
+/** Clear the class's weights, and with them every piece of work's own weight. */
+export function weightsClearCall(base: string): WeightsCall {
+    return { method: 'put', url: `${base}/grade-weights`, payload: { clear: true } };
+}
+
 // ---------------------------------------------------------------- figures
 
 /** 81.4 -> "81.4%"; whole numbers lose the decimal; null is a dash. Never used for a levels mean. */
@@ -173,10 +224,45 @@ export function percentText(n: number | null | undefined): string {
     return `${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)}%`;
 }
 
+/**
+ * A child's plain points as a percentage: "85%", "84.7%", or null when there is no denominator
+ * (a percentage over an empty total is a division by zero on a child's record). THE one
+ * place a points percentage is worked out in the browser, with `percentText`'s one rounding
+ * (one decimal, whole numbers lose it), so two screens showing the same child's points
+ * cannot say 85% and 84.7% beside each other (review F7). The server sends the plain figure only
+ * as earned and possible; the weighted, per-type and per-subject percentages are its own.
+ */
+export function pointsPercentText(earned: number | string | null | undefined, possible: number | string | null | undefined): string | null {
+    const out = Number(possible ?? 0);
+    if (!out || Number.isNaN(out)) return null;
+
+    return percentText((100 * Number(earned ?? 0)) / out);
+}
+
 /** "1 piece of work has no type" / "3 pieces of work have no type"; '' for none. */
 export function untypedNote(n: number): string {
     if (!n || n < 1) return '';
     return n === 1 ? '1 piece of work has no type' : `${n} pieces of work have no type`;
+}
+
+/**
+ * Would a weighted class leave this piece of work out of its average for want of a type: no type and no
+ * weight of its own? Simple-scale work is never averaged whatever it is given, so a type would not help it
+ * and it is not counted (the server leaves it out of `untyped_excluded` the same way).
+ */
+export function isUntyped(work: { type?: string | null; weight?: number | null; scale?: string | null } | null | undefined): boolean {
+    return work != null && work.scale !== SIMPLE_SCALE && !work.type && (work.weight === null || work.weight === undefined);
+}
+
+/** How many pieces of a class's work list `isUntyped` names. */
+export function untypedInWork(work: ReadonlyArray<{ type?: string | null; weight?: number | null; scale?: string | null }> | null | undefined): number {
+    return (work ?? []).filter((w) => isUntyped(w)).length;
+}
+
+/** The staff work list's note under the list, said where a class has weights: what is left out, and what fixes it. '' for none. */
+export function untypedListNote(n: number): string {
+    if (!n || n < 1) return '';
+    return `${untypedNote(n)}: ${n === 1 ? 'it is' : 'they are'} left out of weighted averages until given a type.`;
 }
 
 export interface AverageLine { label: string; value: string; note: string }
@@ -203,9 +289,26 @@ export function averageLines(summary: any, fenced = false): AverageLine[] {
     return fenced ? lines.map((l) => ({ ...l, label: `${l.label} (your subjects)` })) : lines;
 }
 
+/** Said where a weighted class has no weighted figure for a child because the marks it has are simple-scale ones. */
+export const NOT_AVERAGED_WHY = 'Excellent / Good / Needs work marks are never averaged, so they carry no weight and there is no weighted figure for them.';
+
 function averageLinesUnfenced(summary: any): AverageLine[] {
     const lines: AverageLine[] = [];
     const w = summary?.weighting;
+
+    // A weighted class with simple marks and nothing else to average: no weighted figure appears, and a
+    // teacher who set weights and typed the work would otherwise wonder where it went. "Never averaged" is
+    // the reason only when nothing is waiting for a type: work left out for want of one is the reason a
+    // fix is in the teacher's hands, so it is what is said while any is (review G5).
+    const noWeightedFigure = w?.enabled && (w.percent === null || w.percent === undefined) && (w.level_mean === null || w.level_mean === undefined);
+    if (noWeightedFigure && Number(summary?.simple?.recorded ?? 0) > 0) {
+        const untyped = Number(w.untyped_excluded ?? 0);
+        lines.push({
+            label: 'Weighted average',
+            value: '—',
+            note: untyped > 0 ? `${untypedNote(untyped)}, left out of the weighted average until given a type` : NOT_AVERAGED_WHY,
+        });
+    }
 
     if (w?.enabled && w.percent !== null && w.percent !== undefined) {
         lines.push({
@@ -219,7 +322,7 @@ function averageLinesUnfenced(summary: any): AverageLine[] {
         lines.push({
             label: w?.enabled ? 'Total points' : 'Points',
             value: `${summary.points_earned} of ${summary.points_possible}`,
-            note: percentText((100 * Number(summary.points_earned)) / Number(summary.points_possible)),
+            note: pointsPercentText(summary.points_earned, summary.points_possible) ?? '',
         });
     }
 

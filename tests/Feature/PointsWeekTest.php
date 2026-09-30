@@ -183,6 +183,12 @@ class PointsWeekTest extends TestCase
         return "/api/family/masjids/{$this->masjid->id}/groups/{$this->group->id}{$path}";
     }
 
+    /** Turn the school's weekly points report grant on or off (SuperAdmin's switch; off by default). */
+    private function weeklyReport(bool $on): void
+    {
+        $this->masjid->forceFill(['capability_overrides' => ['points_weekly_report' => $on]])->save();
+    }
+
     // --------------------------------------------------- the week itself
 
     #[Test]
@@ -611,6 +617,8 @@ class PointsWeekTest extends TestCase
     public function a_parent_reads_their_own_childs_week_and_the_whole_record(): void
     {
         $this->seedRecord();
+        // Any week, current or past, is the weekly REPORT's read: it exists where the school has the grant.
+        $this->weeklyReport(true);
 
         $week = $this->asParent($this->parent)
             ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=current"))->assertOk();
@@ -660,6 +668,7 @@ class PointsWeekTest extends TestCase
     public function a_week_can_never_widen_what_a_parent_may_read(): void
     {
         $this->seedRecord();
+        $this->weeklyReport(true);
 
         // Another family's child, with and without a week: refused both ways, and never counted.
         foreach (['', '?week=current', '?week=2026-10-04'] as $query) {
@@ -679,6 +688,7 @@ class PointsWeekTest extends TestCase
     public function a_bad_week_is_a_422_for_a_parent_too_never_this_weeks_figures_under_a_wrong_label(): void
     {
         $this->seedRecord();
+        $this->weeklyReport(true);
 
         $this->asParent($this->parent)
             ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=last-friday"))->assertStatus(422);
@@ -692,5 +702,83 @@ class PointsWeekTest extends TestCase
         Group::withoutMasjidScope()->whereKey($this->group->id)->update(['points_period' => 'weekly']);
 
         $this->asParent($this->parent)->getJson($this->familyUrl(''))->assertOk()->assertJsonPath('data.points_period', 'weekly');
+    }
+
+    // ---------- review F1 (2026-09-29): capability OFF means the family sees nothing of the weekly report
+
+    #[Test]
+    public function the_parent_portal_is_told_whether_the_school_has_the_weekly_report_on(): void
+    {
+        $this->asParent($this->parent)->getJson($this->familyUrl(''))->assertOk()->assertJsonPath('data.weekly_report', false);
+        $this->weeklyReport(true);
+
+        $this->asParent($this->parent)->getJson($this->familyUrl(''))->assertOk()->assertJsonPath('data.weekly_report', true);
+        $list = $this->asParent($this->parent)->getJson("/api/family/masjids/{$this->masjid->id}/groups")->assertOk();
+        $this->assertTrue($list->json('data.0.weekly_report'), 'the class list says it too');
+    }
+
+    #[Test]
+    public function with_the_report_off_a_running_class_serves_no_week_at_all_and_the_running_record_is_untouched(): void
+    {
+        $this->seedRecord();
+
+        foreach (["/awards/summary?week=current", "/awards?week=current", "/awards/summary?week=2026-10-04", "/awards?week=2026-10-04"] as $path) {
+            $this->asParent($this->parent)
+                ->getJson($this->familyUrl("/members/{$this->child->id}{$path}"))
+                ->assertNotFound();
+        }
+
+        // The gate comes before the date is read: a value that is no date is the same answer, not a 422.
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=last-friday"))->assertNotFound();
+
+        // Nothing changes without a ?week=: the whole record, as it always was.
+        $all = $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary"))->assertOk();
+        $this->assertSame(13, $all->json('data.totals.points'));
+        $this->assertNull($all->json('data.week'));
+        $this->asParent($this->parent)->getJson($this->familyUrl("/members/{$this->child->id}/awards"))->assertOk()
+            ->assertJsonPath('data.total', 5);
+    }
+
+    #[Test]
+    public function with_the_report_off_a_weekly_class_serves_the_week_in_progress_and_no_other_week(): void
+    {
+        $this->seedRecord();
+        Group::withoutMasjidScope()->whereKey($this->group->id)->update(['points_period' => 'weekly']);
+
+        // The class's own "This week" line: the teacher opted in, and it asks for `current` only.
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=current"))
+            ->assertOk()->assertJsonPath('data.totals.points', 4);
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards?week=current"))->assertOk();
+
+        // Paging back through weeks is the report's read, and the report is off.
+        foreach (['2026-10-04', '2026-09-27'] as $day) {
+            $this->asParent($this->parent)
+                ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week={$day}"))->assertNotFound();
+            $this->asParent($this->parent)
+                ->getJson($this->familyUrl("/members/{$this->child->id}/awards?week={$day}"))->assertNotFound();
+        }
+    }
+
+    #[Test]
+    public function with_the_report_on_every_class_serves_any_week_and_a_refused_child_is_still_a_403_first(): void
+    {
+        $this->seedRecord();
+        $this->weeklyReport(true);
+
+        // A running class: the report is the school's, not the class's opt-in.
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards/summary?week=2026-09-27"))
+            ->assertOk()->assertJsonPath('data.totals.points', 5);
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->child->id}/awards?week=current"))->assertOk();
+
+        // Another family's child is refused for who they are before the week is looked at, off or on.
+        $this->weeklyReport(false);
+        $this->asParent($this->parent)
+            ->getJson($this->familyUrl("/members/{$this->sibling->id}/awards/summary?week=current"))->assertForbidden();
     }
 }

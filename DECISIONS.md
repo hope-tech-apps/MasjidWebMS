@@ -5199,3 +5199,281 @@ answers; each carries its alternative.
     `mayReadUnpublished` and `mayChange`); `authorizeSeeing` on update and destroy; `required_if` on the send-at rule (the lookup yields
     the same 422); the race-only claim guards on the `sent` stamp.
   - **Not fixed on purpose.** Nothing in the confirmed list was declined.
+## 2026-09-29 (follow-ups) — The exact-address fix, second pass (fix/login-followups, off fix/login-address-exact-match @ 20a8f984)
+Decision: the point's opus review of b9f11d4c found six more places where a `utf8mb4_unicode_ci` email column lets a look-alike address (`victim@gmaíl.com` for `victim@gmail.com`) act as the real one. Each is fixed the same way as the first pass: the query keeps its SQL and only SHORTLISTS, then `ContactIdentity::keepExactMatches()` / `sameAddress()` decides, before any tie or ambiguity rule counts the rows, and with no `limit()` ahead of the filter. Basis: the brief states production's email columns were verified `utf8mb4_unicode_ci` read-only (2026-09-29); this branch did not read them itself (ASSUMPTIONS 25, 26, 30). Ships after the branch it is off; rebase onto main once that lands. Nothing here ships without the owner's yes.
+
+1. **Sign-in throttle keys** (`AppServiceProvider::familyLoginKey`, shared by `family-login`, `family-verify`, `member-login`, `member-verify` and the account-deletion page). The bucket keyed on `strtolower(trim(raw))`, and a limiter runs BEFORE the FormRequest normalises the address, so every UTS46-equivalent spelling (soft hyphen, ZWSP, fullwidth, math letters, U+3002) was a bucket of its own: the reviewer got a 200 on a variant after the plain address had hit 429. It now keys on `ContactIdentity::submittedAddress()` via `bucketAddress()`, and on `mb_strtolower(trim(raw))` when the door would refuse the address (a non-ASCII local part), which nothing can act on. Test: `SignInThrottleKeyTest`, every door by every spelling: exhaust the plain address, then the variant is 429.
+2. **Staff throttle** (`login` limiter, on `/admin/login`, `/admin/forgot-password`, `/admin/reset-password`). The per-address bucket (5 a minute per address + IP) now keys on the same normalised address, and the limiter ADDS two IP-only limits shared by the three routes: **60 a minute and 600 an hour** (`config('auth.admin_throttle')`, env `ADMIN_LOGIN_PER_IP_PER_MINUTE` / `_PER_HOUR`). Why those numbers: the address limit already allows 5 a minute for any one address, so the IP limit exists to stop one host multiplying that by spellings or by addresses. A shared office or school is one NAT address, and a Monday morning is thirty staff signing in inside a minute, some of them twice (60 requests): the per-minute figure is that plus nothing, so it is the smallest number that office never trips. The hourly figure is ten times the minute figure, so a busy hour of sign-ins, resets and typos never reaches it while a script at the per-minute rate still stops after ten minutes. Both are estimates, not measurements of any real office (ASSUMPTIONS 32), and both are env-tunable without a deploy. The staff key does NOT merge an ACCENTED spelling with the plain address: `submittedAddress()` turns an accented domain into punycode, which is a different string, and a non-ASCII local part falls back to the raw string. `users.email` calls those the same user, so each accented spelling still has its own five-a-minute bucket; the IP-only limits are what bound them, all together, per IP. Tests: `StaffLoginThrottleTest`.
+3. **Roster import** (`RosterImportService` preview at :322 and `apply()` at :407). The guardian match used `LOWER(email)` with no exact re-check, so a look-alike contact made through the anonymous offering-registration door became the staff-CONFIRMED guardian of the real parent's children on the next import. Both halves shortlist and then keep exact matches, so the preview and the write still ask one question. The importer's rule is unchanged, "the first contact holding the address" (`first()`, no explicit order), and now ranges over the exact holders only. Test: `RosterImportLookAlikeAddressTest`.
+4. **Staff-to-contact bridge** (`GroupAudience::identitiesFor`). (a) The candidates are filtered to the exact address before "two rows is no row" counts them, and the `limit(2)` ahead of the filter is gone. The exact comparison uses the user's own address, not the multibyte-lower-cased copy the shortlist uses. (b) `POST /admin/profile` no longer changes `users.email`: `UpdateProfileRequest` refuses any address other than the one the account holds (case aside; 422 on `email`, nothing written) and the controller no longer writes `email` at all. The profile screen posts the whole form, so the field stays required and the SPA shows it read-only. **The owner can decide later on a verified change flow** (mail a link to the NEW address, change it only when it is opened, and tell the old one); until then an address change is an office act through the users screen. Tests: `GroupAudienceLookAlikeAddressTest`, `ProfileEmailChangeTest`.
+5. **Donor contact** (`DonorContactService::findOrCreateForMasjid`). A public look-alike contact captured the real donor's later gifts and the receipts were mailed to it. Exact-matched; the oldest exact holder wins, and the order is now explicit (`orderBy('id')`), where before `first()` carried no order. Test: `DonorContactLookAlikeAddressTest`.
+6. **Minors.**
+   - `EmailSuppressionService::suppress()`, `release()` and `liftPrecaution()` act only on the row of the EXACT address. A resubscribe link minted for a look-alike spelling used to release the real person's opt-out. When the only row belongs to a look-alike, `release()` and `liftPrecaution()` do nothing (and `release()` leaves the mirror alone), and `suppress()` neither rewrites that row nor its hold or release, and cannot store its own beside it (the unique index is collation-equal too): it logs a warning naming the organisation only and returns null. Its callers already handle null. `liftPrecaution()` was added to the two the brief named because it is the same defect and a release. Test: `EmailSuppressionLookAlikeAddressTest`.
+   - `UsersController::store`: the archived-user restore is exact. A candidate that matched only through the collation is refused with a 422 and a sentence, not restored and not a unique-index 500. Test: `UsersStoreLookAlikeAddressTest`.
+   - `ContactIdentity::sameAddress()` (and `submittedAddress()`, and `of()`, the roster-merge identity, which had the same fold) no longer fold a non-ASCII letter into an ASCII one. `mb_strtolower()` maps U+212A KELVIN SIGN to `k`. The brief said to lower-case ASCII only; taken literally that would also stop `GMAÍL` equalling `gmaíl`, which the existing unit case `accented capitals fold to the same accented letters` requires, so `foldCase()` lower-cases the ASCII capitals by byte and lets any other letter change only into another NON-ASCII letter (`É` to `é`; the Kelvin sign stays). Nothing non-ASCII becomes ASCII, and that case still holds. Tests: new Kelvin cases in `ContactIdentityAddressTest` and `ContactIdentityTest`.
+   - `MemberSignupService::consume`, link path: adopting the typed address as `login_email` has the same unique-violation catch as the create path and is answered as the refused redeem (the one 410, nothing adopted, code spent, a warning with no address). Tests in `MemberSignInLookAlikeAddressTest`, for a look-alike holder and for a soft-deleted holder.
+   - `contacts.email` with a Unicode IDN domain is stored as punycode at the public doors. Member sign-up already did (its address is `submittedAddress()`'s output in both columns; pinned by a new test). The offering-registration door now does: `normaliseEmail()` runs `submittedAddress()` and falls back to lower-case for an address it refuses, so every comparison at that door is in the same form. Other writers found are listed in ASSUMPTIONS 33. Tests: `OfferingRegistrationAddressTest`.
+   - The office's enable-family-login refusal for an accented local part says "Remove the accents before the @" (a rule ahead of `email`, which refuses such an address first with its own generic sentence). The public doors keep the generic sentence on purpose. The existing test that asserted the old sentence for this case was changed to the new one.
+7. ASSUMPTIONS 29 is corrected to what this branch fixes and what is still office-side; 25 and 26 carry the brief's statement; 30 to 33 are new.
+
+Alternatives considered: folding accents in the staff throttle key with a transliteration table (a bigger, unrunnable fold for a key the IP limits already bound); a schema change to a binary collation on the address columns (production DDL; the owner's call, and the same review would need repeating for the next column); refusing instead of ignoring a look-alike opt-out in `suppress()` (it would drop a legitimate one).
+
+Not run: `php -l`, PHPUnit, or anything else (no PHP on this machine). The CI droplet must run the new files (`SignInThrottleKeyTest`, `StaffLoginThrottleTest`, `RosterImportLookAlikeAddressTest`, `GroupAudienceLookAlikeAddressTest`, `ProfileEmailChangeTest`, `DonorContactLookAlikeAddressTest`, `EmailSuppressionLookAlikeAddressTest`, `UsersStoreLookAlikeAddressTest`, `OfferingRegistrationAddressTest`), the changed ones (`ContactIdentityAddressTest`, `MemberSignInLookAlikeAddressTest`, `SignInAddressAtTheDoorTest`) and the suites for the touched doors (`ImportSchoolRosterTest`, `RosterImportTest`, `Broadcasts/EmailUnsubscribeTest`, `Broadcasts/ContactEmailConsentTest`, `UsersAccessListTest`, `AccountAccessTest`, `TwoFactorTest`, `HouseholdIdentityTest`, the family and app sign-in suites) on SQLite and MySQL. Two of the new tests rebuild a table's column with a SQLite collation (`contacts.email`, `email_suppressions.email_normalized`); if a table cannot be rebuilt on CI they fail at `collateColumnLikeUnicodeCi()` before they assert anything.
+
+## 2026-09-29 (follow-ups, round 3) — the suppression key is byte-exact, the staff door matches exactly (fix/offering-address-exact, off d6035bab)
+Decision: the point's review of the follow-ups found that the fix for a look-alike opt-out (item 6 of the entry above) traded one hole for another, and four smaller items. All four are folded into this branch, in small commits, and ride with the follow-ups in one owner yes. Nothing here ships without it.
+
+1. **`email_suppressions.email_normalized` is made `utf8mb4_bin` on MySQL** (migration `2026_10_01_130000_make_email_suppression_key_byte_exact.php`). The problem it fixes: the column and its unique index `(masjid_id, email_normalized)` were `utf8mb4_unicode_ci`, so once a look-alike spelling (`victim@gmaíl.com`) held a row, the real person's own unsubscribe (`victim@gmail.com`) hit the unique index. The previous round caught that, logged a warning and returned null, and `UnsubscribeController::store()` ignores `suppress()`'s return and renders "done": the page said the person was unsubscribed and they went on being mailed. A person who asked to stop must stop, and a check that can be defeated by another person's row cannot promise that.
+   - **The SQL, exactly.** Guarded by `in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)`, so SQLite is a no-op:
+     - `up()`: `ALTER TABLE email_suppressions MODIFY email_normalized VARCHAR(191) COLLATE utf8mb4_bin NOT NULL`
+     - `down()`: `ALTER TABLE email_suppressions MODIFY email_normalized VARCHAR(191) COLLATE utf8mb4_unicode_ci NOT NULL`
+   - **Why a MODIFY and no index work.** Type, length and nullability are the create migration's (`string('email_normalized', 191)`, not null, no default). MODIFY rebuilds the indexes over the column under the new collation and keeps their names, so nothing is re-created: `email_suppressions_tenant_address_unique` (39 characters; `email_normalized` is its second column) and `email_suppressions_address_index` (32) are both under MySQL's 64-character limit. The brief said to re-create the unique index with an explicit short name only if MySQL needed it; it does not.
+   - **Production facts** (read by the point, relayed by the coordinator 2026-09-29; this branch did not read them): 0 rows; `varchar(191) NOT NULL utf8mb4_unicode_ci`; the two indexes above; MySQL 8.4.8. On an empty table the rebuild is instant. `up()` is correct whatever the collation was; only `down()` assumes unicode_ci (ASSUMPTIONS 30).
+   - **SQLite** compares TEXT bytes, so the suite's table is already what production becomes. The look-alike tests now rebuild it with `collate BINARY` (`collateColumnLikeUtf8mb4Bin()`) so the shape they depend on is stated, and every one of them asserts the premise first: the plain address finds NO row and the accented one finds its own. On MySQL the helper does nothing and that premise reads the migrated column, so it fails there if the migration has not run.
+   - **The one rule the column adds** (written on the migration, on `normalize()` and in `.claude/rules/migrations.md`): a `utf8mb4_bin` column compared in SQL with a `utf8mb4_unicode_ci` one fails on MySQL with "Illegal mix of collations", and SQLite cannot show it. The audit for that, at this commit: every SQL touch of `email_normalized` compares it with a PHP-built literal and there is no JOIN, subquery, `whereColumn` or `EXISTS` against another table's email column. The sites: `EmailSuppressionService` `suppress()`, `release()`, `liftPrecaution()`, `activeReason()`, `suppressedAt()` (each `where('email_normalized', $literal)`) and `suppressedAmong()` (`whereIn('email_normalized', <array>)`, then filtered in PHP); `EmailSuppression::scopeForAddress()`; `WixContactImport` `plan()` (`->get([...])`, no comparison, keyed and compared in PHP) and `applyEmailSuppression()` (a literal); `WixOrderHistoryImporter` `createHeldContact()` (`forAddress(literal)`) and the undo check at `:~961` (`contacts.email` against a bound parameter that was read from a row, not a column). `mirrorOntoContacts()` compares `contacts.email LIKE <literal>` and touches no suppression column. The audience filter takes the suppressed keys out of SQL and compares in PHP (`BroadcastAudienceResolver::emailAudience()`).
+   - **The round-2 behaviour is reverted.** The `UniqueConstraintViolationException` catch that logged and returned null is gone from `suppress()`. Where the column can no longer produce that conflict (MySQL after the migration, and the byte-exact table the tests build) it cannot happen; where it still could (the column not yet migrated) the write now throws, so the request fails loudly instead of a page saying "done". A concurrent double click can still make the second insert throw: that is the behaviour before round 2 and it still leaves the one row in force. The one null `suppress()` returns is for a value that is not an address at all, which a link that parsed cannot carry, so `UnsubscribeController` was left as it is.
+   - **Every read looks the row up by the exact normalised address** (`EmailSuppressionService::normalize()`, the writer's own function): `suppress()`, `release()`, `liftPrecaution()`, `activeReason()`, `suppressedAt()`, and the send-time `suppressedAmong()`, which now also drops any key that is not one of the addresses asked about. The `keepExactMatches()` re-check stays as belt and braces on all of them.
+   - **Tests.** `EmailSuppressionLookAlikeAddressTest` (the existing tests moved to the byte-exact table, the round-2 "not written" assertion replaced by "written beside the look-alike's untouched row", plus: the real person unsubscribing through the public link beside a look-alike's row is written, the send-time audience then excludes them and still excludes the look-alike, and the look-alike's row is untouched; every read names only the exact address; and on a unicode_ci table the same opt-out throws rather than being dropped). `MigrationsBootTest` pins the two statements, the guard, the restated column and the two index names. `StagingScrubCoverageTest` and `TenantScopingCoverageTest` are unaffected: no column or model is added, and the one test name cited in `app/` (`StaffLoginLookAlikeAddressTest`, on `AuthController`) exists.
+   - Alternatives considered: keeping unicode_ci and finding the row by the exact address in PHP only (the unique index still refuses the second row: this is the defect); a second key column holding a hash or the punycoded, case-folded address (a wider change, and the writer would need a second normaliser); a query-time `COLLATE utf8mb4_bin` on the read (MySQL-only SQL, and it defeats the index).
+2. **The staff door matches the typed address exactly** (`AuthController::login()` through `staffUserAt()`). The limiter keys the per-address bucket on `ContactIdentity::submittedAddress()` while the lookup was `User::where('email', typed)` and `LoginRequest` validates `exists:users,email`, so on the unicode_ci `users.email` a look-alike was the same user to both queries and a different address to the limiter. The lookup now uses `submittedAddress()` (case and spaces folded, a Unicode domain converted to punycode, a non-ASCII local part refused), `User::whereEmailIs()` to shortlist, and `keepExactMatches()` on the found rows. A look-alike is answered exactly as a wrong password, whether or not its password is right (`{"message":"invalid credentials"}`, 200). `LoginRequest`'s `exists:users,email` is left alone, as its docblock says; it still lets a look-alike reach the controller, which is where it now stops. A consequence to know: an account stored at a non-ASCII address can no longer be reached by typing it (the typed form is converted or refused); production stores none (ASSUMPTIONS 28 has the count to run for `users`). Test: `StaffLoginLookAlikeAddressTest`, with the stand-in on `users.email` (column and unique index re-collated, `LOWER()` folding).
+3. **`UpdateProfileRequest`: `email[]=x` is a 422.** The refusal closure cast its value to a string and a rule after a failed one still runs without `bail`, so a list threw an ErrorException (a 500). The email rules are now `bail`, `required`, `string`, `email`, then the refusal. Test: `ProfileEmailChangeTest::an_email_that_is_not_a_string_is_a_422_and_not_a_500` (a list, a one-word list, a nested list).
+4. **The profile refusal names who can change it.** It sent staff to "your organisation's administrator", but `users.email` is changed only through the `super`-only users routes (`routes/admin.php`, `UsersController::update`), so it now says "Only a platform SuperAdmin can change it." This corrects the entry above, which called an address change an "office act": the office cannot do it. The test that pins the message now pins the sentence and not only the constant. `.claude/rules/auth-permissions.md` says the same.
+
+Minors left open, in ASSUMPTIONS: ForgotPassword's 429 shown as success (34, deliberate), the IP ceilings counting successful sign-ins (35), and the two already recorded, punycode consistency across writers (33) and `RegistrationsController::createContact` (29).
+
+Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The CI droplet must run `EmailSuppressionLookAlikeAddressTest`, `StaffLoginLookAlikeAddressTest`, `ProfileEmailChangeTest`, `MigrationsBootTest`, `Broadcasts/EmailUnsubscribeTest`, `Broadcasts/ContactEmailConsentTest`, `WixOrderHistoryImportTest`, `StagingScrubCoverageTest`, `TenantScopingCoverageTest`, and the staff sign-in suites (`TwoFactorTest`, `SecondAdministratorLoginTest`, `StaffAuthGuardPinTest`, `AccountAccessTest`, `StaffLoginThrottleTest`), and the MySQL migrations job must run the new migration up, down and up again.
+
+- **2026-09-29 (W3/W4 folds, F1): a family sees a week only where its own switch is on.** The point's review found the portal's
+  "This week" block and the weekly report page showing for every school, although the `points_weekly_report` grant is documented as
+  OFF meaning nothing visible. Two surfaces, two gates, because they answer to two different choices: the report page and every link
+  to it need the SCHOOL's grant; the class's "This week" line needs the CLASS's opt-in (`points_period = weekly`, the teacher's
+  choice). The family class payload gains `weekly_report` (the grant) and the awards endpoints enforce the same rule on `?week=`
+  (a school with the grant: any week; otherwise `current` for a weekly class; anything else 404 before the value is read as a date),
+  so a hand-typed request gets no more than the screen shows. Alternative: hide it in the SPA only. Rejected: the data is the
+  parent's own child's, but "off means off" is a claim about the API too, and the point asked for the server side checked.
+  A non-weekly class no longer asks for a week at all. `PointsWeekTest` pins both sides; `points-week.test.ts` pins the views.
+
+- **2026-09-29 (W3/W4 folds, F3): `school_subjects.seeded_by` is its own migration; 100200 is what it first said.** Commit 12ced552
+  put the column into the create-table migration `2026_10_03_100200` after 4ebd8d8d (also on the W5 and W6 branches) had written it
+  without, so a box that had already run the earlier 100200 would never get the column and the seed's insert would abort its migrate.
+  100200 is restored byte for byte (SHA-1 pinned in `SchoolSubjectsSeededByMigrationTest`) and `2026_10_03_100250_add_seeded_by_to_school_subjects_table`
+  adds the column behind a `hasColumn` guard, after the table and before the seed (`2026_10_03_100300`, the only other file that names it;
+  the test fails on any later file that reads it from before 100250). Proven both ways: a fresh `migrate:fresh` runs 100200, 100250,
+  100300 in that order; and a box built as the old 100200 left it (table without the column, 100250 and 100300 not yet run) gains the
+  column and then the seed runs, marking its rows. Rule restated: an applied migration is never edited, a new column is a new migration.
+  The staging check the review asked for (does `migrations` hold `2026_10_03_100200`?) is no longer needed for this: either answer is safe.
+
+- **2026-09-29 (W3/W4 folds, F4): another subject's work is not there for a limited teacher, and their by-day save makes their own plan.**
+  Two defects with one cause. (1) `PUT /lesson-plans` (the by-day address) falls back to "the day's only plan" for an older screen; on
+  a day whose only plan was another subject's, that fallback landed on it, `write()` fenced it and a Qur'an-only teacher got a 403 naming
+  Arabic Language instead of a plan of their own. (2) Work and plans that existed in another subject answered a 403 that said so, which
+  tells a teacher walking ids that the work is there (untagged work already answered 404). Decision: to a limited teacher another
+  subject's work or plan does not exist. By id it is the one plain 404 untagged work gets (gradebook: `abort(404)`, byte for byte the
+  same body; lesson plans: the same `ModelNotFoundException` a missing id raises, so the body cannot tell them apart). By day, "the
+  day's plans" are only those the teacher may touch: their save creates their own plan when none of the plans they may touch is the
+  one meant (an Arabic plan is never renamed under their label), their delete removes only their plan (a hidden plan no longer makes it
+  a 409) and a day with nothing of theirs is a 404, EMPTY OR NOT, so 404 versus 200 cannot reveal a hidden plan; an unrestricted
+  teacher's empty-day delete is still a harmless 200. The 403 stays for a subject the teacher TYPES and does not teach, in the words
+  they typed, before anything about the day is read, so it is the same sentence whether or not that subject has a plan. Alternative:
+  keep the 403s and only stop naming the subject. Rejected: a status that differs from "no such thing" still confirms the thing.
+
+- **2026-09-29 (W3/W4 folds, F5, the point's decision, superseding W3-3(e)): the class's weights are for a teacher of ALL subjects, and the office.**
+  W3-3(e) left `PUT grade-weights` unfenced so that a class with a teacher per subject (BISS) would not be left with nobody able to set
+  them, and refused a limited teacher only the CLEAR while other subjects' work carried a weight of its own. The point's review found
+  the cost: the weights are one policy for the whole class and they change the weighted average a parent reads for EVERY subject, so a
+  one-subject teacher (a Qur'an-only teacher) could re-weight what families see for Arabic and Mathematics, work they cannot even list.
+  New rule: a teacher limited to some subjects (`group_staff.subjects` a non-empty list, however long) is refused, setting or clearing,
+  with a 403 that writes nothing; a teacher with no list (or an empty one, "everything") and the office are not. `SubjectFence::mayWeighClass`
+  is the one answer; the clear-only special case is deleted with it, and the teacher's Weights panel is read-only for a limited teacher
+  (the server refuses either way). Alternative: refuse only the set, or only where the class already has weights. Rejected: the
+  point asked for the plain rule, and a half-fence would leave the same re-weighting one keystroke away.
+  Consequence to know, for the owner: a class whose EVERY teacher is limited (BISS, if each teacher is given a subject) now has nobody who can
+  set its weights, because the office has NO route to this verb (`GradebookWeightingTest::the_office_has_no_route_to_set_weights`, and
+  DECISIONS W3-3(e) said the office reads and does not set). The gate admits the office if a route is ever mounted, but none was added
+  here. Unknown, needs investigation: whether any live class has only limited teachers (BISS is on simple marking, which is never averaged, so
+  weights matter to it only for points work; whether Al-Razi's teachers carry a subject list was not read from production). Open question for
+  the point: an admin-realm `PUT` for the weights (`permission:manage contacts`), or leave it.
+
+- **2026-09-29 (W3/W4 folds, F6): simple-scale work says "not averaged", and a weighted class with only such marks says why it has no weighted figure.**
+  The server never averages or weights Excellent / Good / Needs work (`GradeRecord::weighted` skips the scale, and leaves it out of
+  `untyped_excluded`), but the teacher's and the office's screens badged a typed simple piece "counts 40" and gave a BISS class that set
+  weights and typed its work no figure and no reason. `weightNote()` / `effectiveWeight()` now read the piece's `scale`: a simple piece in
+  a weighted class is "not averaged" (and no weight), the blank weight box on a simple form says so, the "no type" warning no longer counts
+  work a type could not help, and `averageLines()` adds one explanatory line where a weighted class has simple marks and nothing else to
+  average. Teacher and office screens only; the family screen still shows the three words and no figure. No family copy.
+
+- **2026-09-29 (W3/W4 folds, F7): one helper, one rounding, for a child's plain points percentage.** The server sends the plain figure only as
+  earned and possible, and the browser worked the percentage out in two places: the office Grades tab's "Points work" block rounded to a whole
+  number (`Math.round`, "85%") while the new figures card beside it used `percentText` (one decimal, "84.7%"), so one child read two
+  different figures side by side. `pointsPercentText(earned, possible)` in `core/helpers/gradebook.ts` is now the only place, with
+  `percentText`'s rounding (one decimal, whole numbers lose it), and both places call it. Chosen: one decimal, because the weighted, per-type
+  and per-subject percentages the server sends are already to one decimal and this way the plain and weighted figures are comparable.
+  Alternative: whole numbers everywhere. Rejected: it would hide a real difference between two children at 84.7 and 85.3.
+
+- **2026-09-29 (W3/W4 folds, F8, orchestrator's call): a family sees no weighted figure while older work is left out of it.** Once a class sets
+  weights, work with no type (everything set before) drops out of every weighted figure and is counted in `untyped_excluded`, so a child with nine
+  older pieces and one new typed quiz read "100% across 1 piece" above a plain total of 60 of 90, and the family's screen carried its untyped note
+  only inside the weighted block. Decision: while `weighting.untyped_excluded > 0` the FAMILY screen shows the plain total (and the per-type rows,
+  which are plain figures over typed work) and NO weighted figure: not the headline, not the weighted level, not a subject's weighted percentage
+  (`familySeesWeighted` in `core/helpers/gradebook.ts`). It returns by itself when the older work is typed, and needs no new family copy, so the
+  block that explained what was left out is removed from the family view; its strings (`marks_untyped_*`, in all six word tables and pinned by
+  `family-marks-i18n.test.ts`) are kept for the day the point prefers the note to the silence. STAFF views are unchanged: they keep the weighted figure
+  and the untyped note. The decision is in the SPA, not the payload: the family and teacher endpoints stay byte-identical (`FamilyGradesTest`'s parity
+  test), and the family payload keeps carrying `untyped_excluded` for the screen to decide on. Alternative: show the untyped note to families beside
+  the weighted figure. Rejected by the orchestrator: a family has no way to act on it, and the note still leaves the two figures disagreeing.
+
+- **2026-09-29 (W3/W4 folds, the five cheap optional items): done, one skipped in part.**
+  (1) `2026_10_03_100000` `down()` now refuses over a row holding only `curriculum_week_no` (it drops that column too). down() only.
+  (2) `GradeRecord::weighted` counts `points_pieces` and `level_pieces` only for slots of weight above 0: "across N pieces" no longer counts a piece
+  whose type or own weight is 0 and shaped nothing (a subject of only weight-zero work read "across 2 pieces" beside no figure). This SUPERSEDES the
+  W3 line "an override of 0 keeps a piece out of the figure and still counts it in `points_pieces`" (DECISIONS W3-1 revised); the figure itself is unchanged.
+  (3) The per-piece override reads "counts 30 on its own" (`weightNote`), not "(this work)": an override is a slot beside its type's, not a share of it.
+  (4) `BehaviorWeek::claim` inserts plainly and catches ONLY `UniqueConstraintViolationException` (a duplicate is "already sent"); any other failure
+  is thrown, and the command's per-class handler logs it as a failure. Proven on SQLite with a table whose insert breaks NOT NULL, which
+  `INSERT OR IGNORE` skips silently (the SQLite mirror of MySQL's INSERT IGNORE). `.claude/rules/groups.md` said insert-or-ignore and is corrected.
+  (5) BISS schedule migration `2026_10_02_130000`, DOWN() ONLY: it now leaves a row that has been saved since (`updated_at` moved) and logs one warning naming what
+  it removed. NOT done, because it needs a mark on the row (a new column and a change to up(), the mistake F3 fixes): a row a SuperAdmin created
+  with exactly Sunday 18:00 and never touched still reads as the seed's and is removed by a rollback. Recorded in the migration's docblock; the report is
+  off by default and a rollback of this migration alone is unlikely, so the exposure is small.
+
+- **W3/W4 folds (point, 2026-09-29): office route for grade weights.** The point's reason: a class whose teachers are ALL limited to some subjects
+  (the common case at Al-Razi) could otherwise never set weights, because F5 refuses a limited teacher, setting or clearing, and the office had no
+  route to the verb. Decision: the office gets `PUT /api/admin/masjids/{masjid_id}/groups/{group_id}/grade-weights` (`AdminDashboard\GroupGradeWeightsController`),
+  behind `permission:manage contacts`, the gate the roster, letter tracker and class writes beside it carry. No new permission or capability. It takes
+  the same `SaveGradeWeightsRequest` and runs the same write as the teacher's route: the body of `Teacher\GradebookController::saveWeights` moved into
+  `Services\Schools\ClassGradeWeightsService::save` (set all five types or clear; a clear also removes every per-work override, in one transaction) and both
+  controllers call it, so only WHO may call differs. The teacher route keeps its `SubjectFence::mayWeighClass` gate untouched; the office route has no
+  subject fence, because the office is not subject-limited and is gated by the permission. The group is read through the tenant scope, so another
+  organisation's group is a 404 and writes nothing (`AdminGradeWeightsTest`). Supersedes the F5 "Consequence to know" above (the office has no route) and
+  W3-3(e)'s "the office reads and does not set"; the rest of F5 stands. The office Grades tab gets a Weights panel (a "Set weights" / "Weights" button
+  above the work list) built like the teacher's: the same five inputs and confirm-before-clear, never read-only, "Saved" or the server's words on failure. It
+  does not know whether the signed-in office user holds `manage contacts` (the admin SPA carries no permission list), so a user without it sees the panel and is
+  refused by the server with that message; the same is true of every other office write. Alternative: mount the teacher's `saveWeights` in the admin realm
+  as the gradebook reads are mounted. Rejected: it would route the office through a fence that is about subject-limited teachers, and the point asked for the
+  write to be shared, not the route. Resolves ASSUMPTIONS W3F-2. Also here: the teacher SPA treats a 404 from the plan removal as "nothing to delete" (no message,
+  and the screen ends as after a removal that worked). The screen removes a plan by id; `DELETE /lesson-plans?date=` has no caller in this app and stays for
+  older screens.
+
+- **W3/W4 folds (2026-09-29, G2): the by-day lesson-plan verbs never take over the shared general plan.** F4 made "the day's plan" mean the plans the
+  signed-in teacher may touch, and the general (untagged) plan counts as touchable, so on a day holding [general, Arabic] a Qur'an-only teacher's by-day
+  `PUT {subject: Qur'an}` found the general plan as "the day's only plan", retyped it to Qur'an and overwrote its body, and a by-day `DELETE` then
+  deleted it (it used to be a 409). Rule now: a by-day PUT with subject S updates only the day's plan filed under S, or creates one; a teacher LIMITED
+  to some subjects never renames "the day's only plan" by day (`onlyPlanOn` is null for them) and a limited teacher's by-day DELETE reaches only plans
+  filed under their own subjects: the general plan is neither counted (no 409 for it) nor deleted, and a day with nothing of theirs is the same plain
+  404 whether it is empty or holds the general plan or another subject's. The general plan stays open to a limited teacher BY ID, where they open it on
+  purpose. An unrestricted teacher's by-day behaviour is unchanged, including the old screen's rename of a day's only plan and the 409 for a day of
+  several. Two existing tests pinned the regression and were changed, one half each, in `TeacherSubjectAccessTest`:
+  `a_limited_teachers_by_day_save_ignores_every_plan_they_may_not_touch_however_many_there_are` (its second half asserted the general plan was renamed
+  to Qur'an) and `the_by_day_delete_removes_only_a_plan_the_teacher_may_touch_and_never_counts_a_hidden_one` (its second half asserted a 409 for
+  [Qur'an, general], which counted the general plan as the teacher's; the 409 now needs two plans under their own subjects, Qur'an and the combined
+  "Qur'an & Islamic Studies"). Alternative: keep the rename for a limited teacher when the only plan they can see is a subject's, not the general one.
+  Rejected: the point's rule is that a by-day save never retypes another subject's plan, and the old screen is not what the day view uses.
+
+- **W3/W4 folds (2026-09-29): F8 stays client-side, and any future native family grades screen must withhold the weighted figure while `untyped_excluded` > 0.**
+  F8 hides a family's weighted figure in the SPA (`familySeesWeighted`), not in the payload: the family and teacher endpoints stay byte-identical
+  (`FamilyGradesTest`'s parity test) and the family payload keeps carrying `weighting` and `untyped_excluded`. The delta review found no native app in
+  `~/Developer` that reads `weighting`, `by_type` or `untyped_excluded` or calls a grades endpoint, so the hide covers every current surface. Rule for the
+  day one does: a native family grades screen must not draw `summary.weighting.percent`, `level_mean` or a subject's `weighted_percent` while
+  `weighting.untyped_excluded > 0` (a family would read "100% across 1 piece" above a plain 60 of 90), or the server must stop sending the weighted figure
+  in that state. Alternative: move the rule into `Family\GradesController` now. Rejected for now: it breaks the parity test on purpose and there is
+  no client that needs it.
+
+- **W3/W4 folds (2026-09-29, second round G1, G3, G4, G5): four small ones.** G1: the family class screen's link to the weekly report page follows the
+  school's grant (`weekly_report`, `points_weekly_report`) alone and sits outside the "This week" block, which keeps the class's opt-in gate: the Friday
+  email goes to every class in a granted school, so a family whose class has not opted in still gets the page the email is about. G3: another subject's work
+  answers the `ModelNotFoundException` an id that names no work answers, so the body matches a missing id with debug on as well (it was a bare `abort(404)`).
+  G4: the BISS schedule seed `2026_10_02_130000` up() stamps `created_at` and `updated_at` from one `now()`, so down()'s "saved since" guard cannot skip the
+  row it wrote; this edits an applied migration's up(), allowed once because no persistent database has run it (staging was checked 2026-09-29 20:15 ET
+  and has none of W3/W4's migrations; production has none) and the change is the timing of one data row, not the schema. G5: one predicate (`isUntyped`)
+  decides which work "has no type", so simple-scale work is never badged or counted as waiting for one, in the teacher's list or the office's; the office
+  list shows "not averaged" for a bare simple piece and the untyped note under the list; and the reason for a missing weighted figure is "N pieces have no
+  type, left out" while any is waiting for a type, and "never averaged" only when none is.
+
+
+## 2026-09-27 — The canary attributes gallery rows through the `model` morph pair, not a new tenant key
+Decision: `config/canary.php` gains `tenant_morphs => ['model']`. For
+row-ownership attribution only, a relation keyed on `model_id` (Masjid::gallery)
+attributes a row to organisation `model_id` only when `model_type` is Masjid's
+morph class. TenancyCanary::ownerKeyFor() is the one rule, used by the lookup
+and by the `tables_available` inventory, and the lookup adds the type clause
+itself (TenancyCanary::ownerMap): a plain hasMany may carry no type clause, and
+Relation::noConstraints drops a morph relation's own.
+Alternatives: (a) add `model_id` to `canary.tenant_keys`. Rejected: tenant keys
+are also read out of response bodies, and the mobile services, announcements,
+features, about and donation-link endpoints serialize raw media rows
+(MobileMedia::envelope), as splash does with its image row, so a Service icon's
+`model_id` (the service's id) would read as a cross-tenant read on a correct
+answer. (b) Only put `where('model_type', …)` on
+Masjid::gallery() the way logo() has it. That is right for the app, and it
+ships beside this as its own change (next entry), but on its own it changes
+nothing for the canary, which still could not tell that `model_id` names an
+organisation. (c) Declare `items` a global
+bucket, or silence exit 3. Rejected: that stops watching the rows, the
+opposite of the fix.
+Rationale: since the MEC import at 2026-09-22 00:26 UTC (26 photos, Masjid 13,
+`galleries`, media ids 1000718-1000743), every hourly run exited 3 `partial`
+with `row_ownership_unplaced` on `api/v1/gallery`. The floor was right: rows
+were served and nothing could place them. The fix makes them placeable, so the
+floor (`unplaced === []`) stays exactly as strict. A gallery swapped between
+organisations now exits 1 (test pinned), and a Service's photo whose id equals
+a masjid's id is never attributed to that masjid (pinned on ownerMap() with a
+relation that carries no type clause, so it holds whatever Masjid::gallery()
+carries). With `tenant_morphs` emptied, the production symptom comes back
+(control test). Mutation runs on the droplet:
+- Against the pre-fix command, the four end-to-end gallery tests fail. MEC's
+  shape reproduces production's exact "NOT TRACED: items" line, and the swap
+  exits 3, not 1.
+- Before Masjid::gallery() carried the type half, removing only the canary's
+  type clause failed exactly the Service-photo test, with a false
+  foreign_rows accusation.
+- On the integrated tree (21e77c81), removing ownerMap()'s type clause fails
+  exactly the_ownership_lookup_adds_the_type_half_itself. The end-to-end
+  Service-photo test still passes there, because the relation now carries the
+  clause itself; that is why the ownerMap() pin exists.
+
+## 2026-09-27 — Masjid's gallery, header and footer logos read media by the whole key
+Decision: Masjid::gallery(), header_logo() and footer_logo() gain
+`->where('model_type', self::class)`, as logo() and brandDerivative() already
+had. Spatie's `media.model_id` is half a key.
+Alternatives: leave them, since production holds no colliding row. Rejected:
+nothing stops another model from writing a `galleries`, `header_logos` or
+`footer_logos` collection, and the gallery relation also DELETES
+(MasjidGalleryController::delete and the index's orphan cleanup), so a collision
+would let one organisation's admin screen delete another organisation's file.
+Rationale: measured read-only on production 2026-09-27, every media collection
+belongs to exactly one model type. `galleries` is 26 Masjid rows (masjid 13),
+`header_logos` and `footer_logos` are empty, so no served payload changes.
+tests/Feature/MasjidMediaModelTypeTest.php builds the collision (a Service,
+owned by the other organisation, whose id equals the masjid's id). It covers
+/api/v1/gallery (index and show), /api/mobile/masjids/{id}/gallery, the admin
+gallery index, its orphan cleanup and delete, /api/v1/settings header and
+footer logo urls, and the app's header_image_url. Against the old relations
+all six tests fail.
+
+## 2026-09-29 — Manara mail sends from manara.hopetechapps.com (branch feat/manara-sending-domain)
+Decision: Manara mail moves from `notifications@tapcraft.tech` to
+`notifications@manara.hopetechapps.com`, a Resend domain on the Manara platform host. The display
+name stays the organisation's. The switch is production's `MAIL_FROM_ADDRESS` plus a new Resend key
+scoped to the new domain, which is also the rotation the 2026-08-26 key exposure is owed. No mail
+class changes: every Mailable already reads `config('mail.from.address')`, now pinned by
+tests/Feature/MailSendingDomainTest.php. `send` and `rsend` join `cloudflare.reserved_labels`,
+because Resend's return paths (`send.manara` and `rsend.manara`, CNAMEs to `forge.rmta.net` that
+Resend's auto-configure created) sit in Studio's managed namespace, where an organisation's record
+would displace them.
+Alternatives: `notifications@hopetechapps.com`. Rejected: the root is Hope Tech's Zoho mailbox
+domain with no DMARC, so school volume and any complaint spike would land on the company's own
+mail, and adding DMARC there would govern Zoho too. A deeper name such as
+`mail.manara.hopetechapps.com`. Rejected: longer, and it isolates nothing more, because
+`manara.hopetechapps.com` sends no other mail. Keep tapcraft.tech. Rejected: another product's name
+on every parent email; it fails the Schools page check P5.
+Rationale and runbook (records, order, owner gates, rollback): docs/mail-sending-domain.md.
+`php artisan mail:test-send` proves a domain before and after the switch: one message to one named
+address, framed as the school mails are, with `--from` for a domain not yet in `.env` and
+`--prompt-key` for staging, whose `.env` keeps RESEND_KEY blank. A mailer that delivers nowhere
+(log, array) exits non-zero, so a send into the log file cannot read as a success.
+DMARC (owner, 2026-09-29: Cloudflare DMARC Management): that feature works on apex domains only, so
+it publishes `_dmarc.hopetechapps.com` at `p=none` and `manara.hopetechapps.com` inherits it by the
+organisational-domain fallback. No `_dmarc.manara` record, which would take its reports out of the
+dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
+Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
+Reply-To bounces.

@@ -27,6 +27,25 @@ export function isWeekly(period: string | null | undefined): boolean {
     return period === 'weekly';
 }
 
+/**
+ * The class screen's "This week" line: shown only for a class whose teacher has opted in to
+ * the weekly view (`points_period` = 'weekly'). A class that reads its running total shows
+ * nothing about weeks, and the portal does not ask the server for one (review F1).
+ */
+export function showsThisWeek(group: { points_period?: string | null } | null | undefined): boolean {
+    return isWeekly(group?.points_period);
+}
+
+/**
+ * The weekly report (its page, and every link to it) is there for a family only where the
+ * school has turned the report on. The class payload carries the school's answer as
+ * `weekly_report`; anything but `true` (an older payload, a failed read) reads as off, so a
+ * school that has not switched the report on is never shown a page it never emailed about.
+ */
+export function weeklyReportOn(group: { weekly_report?: boolean | null } | null | undefined): boolean {
+    return group?.weekly_report === true;
+}
+
 /** "+3", "-1", "0" - the same text `awardPointsLabel` gives a single award. */
 export function signedPoints(n: number | string | null | undefined): string {
     const value = Number(n ?? 0);

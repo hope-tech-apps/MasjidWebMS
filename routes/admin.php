@@ -33,6 +33,7 @@ use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
+use App\Http\Controllers\AdminDashboard\GroupGradeWeightsController;
 use App\Http\Controllers\AdminDashboard\AdministratorsController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
@@ -1151,7 +1152,8 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/members/{membership_id}/arabic-notes/{note_id}', 'deleteDailyNote')->middleware('permission:manage contacts');
                     });
 
-                // The gradebook, from the OFFICE's side — READ ONLY.
+                // The gradebook, from the OFFICE's side — READ ONLY, but for one
+                // class-level setting (the weights, below).
                 //
                 // Three GETs and no writes, mounting the teacher realm's own
                 // controller unchanged (the mirror of ArabicLettersController
@@ -1179,6 +1181,24 @@ Route::prefix('admin')->group(function () {
                         Route::get('/assignments/{assignment_id}', 'show')->middleware('permission:view contacts');
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
+
+                // THE CLASS'S GRADE WEIGHTS — the office's one gradebook write.
+                //
+                // How much each type of work counts is one policy for the whole
+                // class, not a judgement about a child: it stamps no marker's name
+                // and mails nobody, which is what keeps it out of the reasons
+                // above. It is here because a teacher limited to some subjects may
+                // not change it (SubjectFence::mayWeighClass), so a class whose
+                // every teacher is limited could otherwise never set weights. The
+                // office is not subject-limited and needs no fence.
+                //
+                // `manage contacts`, the gate every write in this block's
+                // neighbourhood carries (the roster, the letter tracker, the
+                // class itself): no new permission. It runs the same
+                // SaveGradeWeightsRequest and ClassGradeWeightsService as the
+                // teacher's `PUT grade-weights`, so the two cannot drift.
+                Route::put('{masjid_id}/groups/{group_id}/grade-weights', [GroupGradeWeightsController::class, 'update'])
+                    ->middleware('permission:manage contacts');
 
                 // LESSON PLANS, from the office's side — the READ, and only it.
                 //

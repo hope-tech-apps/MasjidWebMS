@@ -14,6 +14,7 @@ import {
     formTicket,
     jumpTarget,
     pickPlan,
+    planAlreadyGone,
     planDeleteUrl,
     planLabel,
     plansOn,
@@ -346,4 +347,83 @@ test('the day view wires attach, detach, upload and the picker through those hel
 test('the Files hint does not claim only staff can open a file the class already shares with families', () => {
     assert.doesNotMatch(view, /Only you and the office can open these/);
     assert.match(view, /Attaching a file here does not share it with families\. A file already shared from Files stays shared\./);
+});
+
+// ---------------------------------------------------------------- a removal that finds nothing
+
+test('only a 404 means there was nothing to remove', () => {
+    assert.equal(planAlreadyGone({ response: { status: 404 } }), true);
+    for (const status of [400, 401, 403, 409, 422, 500, 503]) {
+        assert.equal(planAlreadyGone({ response: { status } }), false, String(status));
+    }
+    // No answer at all (offline, a timeout) and things that are not an axios error are real failures.
+    for (const e of [new Error('Network Error'), {}, null, undefined, 'x', { response: {} }]) {
+        assert.equal(planAlreadyGone(e), false, String(e));
+    }
+});
+
+/**
+ * `deletePlan` as the component has it, run against stubs: the suite has no renderer, and the
+ * question is what the screen ends up holding, which is state and one message.
+ */
+async function runDeletePlan(outcome: unknown, current = true) {
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+    const state = { planId: { value: 5 as number | null }, planError: { value: '' }, planDeleting: { value: false } };
+    const calls: string[] = [];
+    const loads: unknown[] = [];
+    // The wrapper is itself async, so what it hands back is a promise of `deletePlan`.
+    const run = await new AsyncFunction(
+        'planId', 'planError', 'planDeleting', 'planForms', 'base', 'TeacherApiService', 'loadLessonPlans', 'planDeleteUrl', 'planAlreadyGone',
+        // fn() stops before the closing `};` of the arrow function, so it is put back.
+        `${fn('deletePlan')}\n}; return deletePlan;`
+    )(
+        state.planId, state.planError, state.planDeleting,
+        { current: () => 1, isCurrent: () => current },
+        { value: '/api/teacher/masjids/1/groups/2' },
+        { delete: async (url: string) => { calls.push(url); if (outcome !== null) throw outcome; return {}; } },
+        async (arg: unknown) => { loads.push(typeof arg === 'function' ? 'when-current' : arg); },
+        planDeleteUrl, planAlreadyGone
+    );
+
+    await run();
+
+    return { planId: state.planId.value, error: state.planError.value, deleting: state.planDeleting.value, calls, loads };
+}
+
+test('a 404 from the plan removal is nothing to delete: no message, and the screen ends as after a removal that worked', async () => {
+    const worked = await runDeletePlan(null);
+    const nothing = await runDeletePlan({ response: { status: 404 } });
+
+    assert.deepEqual(worked.calls, ['/api/teacher/masjids/1/groups/2/lesson-plans/5']);
+    assert.deepEqual(nothing.calls, worked.calls, 'the same request');
+    assert.equal(nothing.error, '', 'no message');
+    assert.equal(nothing.planId, null, 'the open plan is closed');
+    assert.deepEqual(nothing.loads, ['when-current'], 'and the week is read again, so the list shows what is there');
+    assert.deepEqual(nothing, worked, 'the same end state, field for field');
+    assert.equal(nothing.deleting, false);
+
+    // Moved on to another plan while it ran: she stays there, as after a removal that worked.
+    const away = await runDeletePlan({ response: { status: 404 } }, false);
+    const awayWorked = await runDeletePlan(null, false);
+    assert.deepEqual(away, awayWorked);
+    assert.equal(away.planId, 5);
+    assert.equal(away.error, '');
+});
+
+test('any other failure of the plan removal still says so, and touches nothing', async () => {
+    for (const outcome of [{ response: { status: 500 } }, { response: { status: 403 } }, { response: { status: 409 } }, new Error('Network Error')]) {
+        const failed = await runDeletePlan(outcome);
+
+        assert.equal(failed.error, 'That plan could not be removed.', JSON.stringify(outcome));
+        assert.equal(failed.planId, 5, 'the plan stays open');
+        assert.deepEqual(failed.loads, [], 'and nothing is reloaded over it');
+        assert.equal(failed.deleting, false, 'the button frees up');
+    }
+});
+
+test('the removal has no by-day caller: the plan is removed by its id', () => {
+    // DELETE /lesson-plans?date= is kept on the server for an older screen. Nothing in this app sends it.
+    assert.equal((view.match(/TeacherApiService\.delete\(planDeleteUrl\(/g) ?? []).length, 1);
+    assert.doesNotMatch(view, /lesson-plans\?date=/);
+    assert.doesNotMatch(view, /delete\([^)]*lesson-plans`/);
 });

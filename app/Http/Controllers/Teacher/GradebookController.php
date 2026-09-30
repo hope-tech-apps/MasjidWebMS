@@ -14,6 +14,7 @@ use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Http\Requests\Teacher\SaveGradeWeightsRequest;
+use App\Services\Schools\ClassGradeWeightsService;
 use App\Support\ClassSubjects;
 use App\Support\GradeRecord;
 use App\Support\PerformanceLevel;
@@ -21,6 +22,7 @@ use App\Support\SchoolSettings;
 use App\Support\SimpleMark;
 use App\Support\SubjectFence;
 use App\Support\SubjectKey;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -558,72 +560,41 @@ class GradebookController extends TeacherController
      * transaction, so a weight typed against a weighted class cannot lie dormant
      * and come back to life the day weights are turned on again.
      *
-     * Any teacher who leads the class may SET them: they are a policy of the class,
-     * not of a subject, and a class with a teacher per subject (BISS) would
-     * otherwise have nobody who could.
+     * WHO MAY CHANGE THEM (review F5, 2026-09-29, superseding DECISIONS W3-3(e)): a
+     * teacher who is NOT limited to some subjects, and the office. The weights are a
+     * policy of the whole class, and they change the averages a parent sees for EVERY
+     * subject, so a teacher limited to one (a Qur'an-only teacher) must not re-weight
+     * what families read for Arabic or Mathematics. Setting and clearing are one rule:
+     * a limited teacher is refused (403) and nothing is written. The old special case
+     * for clearing (refused only while another subject's work carried its own weight)
+     * is gone with it. `SubjectFence::mayWeighClass` is the one answer.
      *
-     * CLEARING is the one verb that reaches per-work fields, and a per-work weight
-     * belongs to a piece of work a subject-limited teacher may not even list. So a
-     * limited teacher's clear is refused (403, nothing written) while any work
-     * outside their subjects still carries a weight of its own; it cannot be
-     * narrowed to their own work, because the class's weights would go while the
-     * others' overrides stayed, which is the dormant override that clearing exists
-     * to prevent. An unrestricted teacher of the class clears everything.
+     * The office sets and clears them through its own route (PUT
+     * `admin/.../grade-weights`, AdminDashboard\GroupGradeWeightsController, behind
+     * `permission:manage contacts`), so a class whose every teacher is limited to some
+     * subjects is not left with nobody who can. What a set or a clear does is
+     * ClassGradeWeightsService's, shared, so only WHO may differs between the two.
      */
     public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
 
-        $limits = $this->limits($group);
-
-        if ($limits !== null && $request->boolean('clear')) {
-            $allowed = SubjectFence::allowedKeys($limits);
-
-            $others = ClassAssignment::query()
-                ->where('group_id', $group->id)
-                ->whereNotNull('weight')
-                ->where(fn ($q) => $q->whereNotIn('subject_key', $allowed)->orWhereNull('subject_key'))
-                ->count();
-
-            if ($others > 0) {
-                abort(
-                    Response::HTTP_FORBIDDEN,
-                    'Work in subjects you do not teach has a weight of its own, so the weights cannot be cleared from here. '
-                    .'Ask the teacher of that work, who can clear them.'
-                );
-            }
+        if (! SubjectFence::mayWeighClass(Auth::user(), (int) $group->id)) {
+            abort(
+                Response::HTTP_FORBIDDEN,
+                "The class's weights decide how much each type of work counts in every subject's average, "
+                .'so only a teacher of all the subjects in this class, or the office, can change them.'
+            );
         }
-
-        $cleared = 0;
-
-        DB::transaction(function () use ($request, $group, &$cleared): void {
-            if ($request->boolean('clear')) {
-                ClassGradeWeight::query()->where('group_id', $group->id)->delete();
-                $cleared = ClassAssignment::query()
-                    ->where('group_id', $group->id)
-                    ->whereNotNull('weight')
-                    ->update(['weight' => null]);
-
-                return;
-            }
-
-            foreach ($request->validated('weights') as $type => $weight) {
-                ClassGradeWeight::query()->updateOrCreate(
-                    ['group_id' => $group->id, 'assignment_type' => $type],
-                    ['masjid_id' => $group->masjid_id, 'weight' => (int) $weight, 'updated_by_user_id' => Auth::id()],
-                );
-            }
-        });
-
-        $weights = ClassGradeWeight::forGroup((int) $group->id);
 
         return response()->json([
             'status' => 'success',
-            'data' => [
-                'weights' => (object) $weights,
-                'weighting_enabled' => $weights !== [],
-                'cleared_overrides' => $cleared,
-            ],
+            'data' => app(ClassGradeWeightsService::class)->save(
+                $group,
+                $request->boolean('clear'),
+                (array) $request->validated('weights'),
+                Auth::id(),
+            ),
         ], Response::HTTP_OK);
     }
 
@@ -636,22 +607,26 @@ class GradebookController extends TeacherController
     }
 
     /**
-     * One piece of work of this class, by id, or a refusal.
+     * One piece of work of this class, by id, or a 404.
      *
-     * Work in a subject the teacher does not teach is a 403 in the words the
-     * `teacher.teaches:` fence uses. Work with NO subject is invisible to a
-     * limited teacher (a 404), since it is not any subject's to refuse.
+     * To a limited teacher, work in a subject they do not teach and work with NO
+     * subject are the same thing: not there. Both answer what an id that names no work
+     * answers (status and body alike, with debug on as well as off), so the refusal
+     * neither names a subject nor confirms that work exists behind the id (reviews F4
+     * and G3, 2026-09-29). It used to be a 403 that
+     * said "You do not teach Arabic Language in this class", which told a Qur'an
+     * teacher walking ids that Arabic work was there. The 403 stays for a subject
+     * the teacher TYPES (`refuseWork`), which reveals nothing they did not write.
      */
     private function work(Group $group, $assignmentId, ?array $limits): ClassAssignment
     {
         $assignment = $group->assignments()->findOrFail($assignmentId);
 
         if (! SubjectFence::allows($limits, $assignment->subject_key)) {
-            if ($assignment->subject_key === '') {
-                abort(Response::HTTP_NOT_FOUND);
-            }
-
-            SubjectFence::refuse($assignment->subject);
+            // The exception `findOrFail` above throws for an id that names nothing, not a bare
+            // abort(404): with debug on the body carries the model and the id, and a bare abort
+            // would answer differently to a missing id (review G3).
+            throw (new ModelNotFoundException())->setModel(ClassAssignment::class, [$assignmentId]);
         }
 
         return $assignment;

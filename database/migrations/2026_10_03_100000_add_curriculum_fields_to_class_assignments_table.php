@@ -72,7 +72,10 @@ return new class extends Migration
         $used = \Illuminate\Support\Facades\DB::table('class_assignments')
             ->where(function ($q) {
                 $q->whereNotNull('subject')->orWhereNotNull('type')->orWhereNotNull('weight')
-                    ->orWhereNotNull('standard_code')->orWhereNotNull('curriculum_focus');
+                    ->orWhereNotNull('standard_code')->orWhereNotNull('curriculum_focus')
+                    // The guide's week number is dropped with the rest, so a row holding only
+                    // that is data this rollback would destroy too (review, optional fold).
+                    ->orWhereNotNull('curriculum_week_no');
             })
             ->count();
 

@@ -90,6 +90,21 @@ the offending ids and the command that resolves them
 (`masjids:reconcile-owners`). Choosing which duplicate survives is an operator's
 decision, not a migration's.
 
+## A byte-exact column cannot meet a unicode_ci column in SQL
+
+`email_suppressions.email_normalized` is `utf8mb4_bin`
+(`make_email_suppression_key_byte_exact`), so that a look-alike spelling of an
+address holds a row of its own. Every other email column (`contacts.email`,
+`contacts.login_email`, `users.email`, a form response's address) is
+`utf8mb4_unicode_ci`. MySQL refuses to compare two columns of different collations
+without an explicit `COLLATE`: a JOIN ON, `WHERE x IN (SELECT email_normalized …)`,
+`whereColumn`, `EXISTS`, or a `NOT IN` subquery across them fails with "Illegal
+mix of collations", and SQLite cannot show it. Compare `email_normalized` only with
+PHP literals: pluck the keys, normalise with
+`EmailSuppressionService::normalize()`, and filter in PHP, as
+`BroadcastAudienceResolver::emailAudience()` does. An explicit `COLLATE` works only
+on MySQL, so it needs a driver guard, and it defeats the index.
+
 ## Portability
 
 - Guard MySQL-only column features (collation, `MODIFY`, fulltext) with

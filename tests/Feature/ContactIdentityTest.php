@@ -151,6 +151,19 @@ class ContactIdentityTest extends TestCase
     }
 
     #[Test]
+    public function a_letter_that_only_looks_like_an_ascii_one_is_not_the_same_person(): void
+    {
+        // U+212A KELVIN SIGN lower-cases to an ASCII `k` under mb_strtolower(), so
+        // a multibyte fold would make these two the same person and carry a
+        // confirmed guardianship onto the other contact.
+        $ascii = $this->contact('A', 'One', 'kevin@household.test');
+        $kelvin = $this->contact('B', 'Two', "\u{212A}evin@household.test");
+
+        $this->assertTrue(ContactIdentity::changed($ascii, $kelvin));
+        $this->assertFalse(ContactIdentity::of($ascii)->isTheSamePersonAs(ContactIdentity::of($kelvin)));
+    }
+
+    #[Test]
     public function two_different_real_addresses_are_two_people(): void
     {
         $this->assertTrue(ContactIdentity::changed(

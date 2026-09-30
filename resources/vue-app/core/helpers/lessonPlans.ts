@@ -136,6 +136,17 @@ export function planDeleteUrl(base: string, planId: number): string {
 }
 
 /**
+ * A removal the server answered with a 404 has nothing to remove: the plan is
+ * already gone (taken off another screen, or by the class's other teacher), or is
+ * not there for this teacher. It is the state the teacher asked for, so the screen
+ * finishes as it does after a removal that worked, and says nothing. Any other
+ * failure is a real one.
+ */
+export function planAlreadyGone(e: unknown): boolean {
+    return (e as { response?: { status?: number } } | null | undefined)?.response?.status === 404;
+}
+
+/**
  * Save is offered for a plan with activities whose subject the day does not
  * already have, and not while a save is in flight.
  */

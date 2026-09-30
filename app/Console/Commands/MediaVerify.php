@@ -80,8 +80,7 @@ use Illuminate\Support\Facades\Storage;
  * `model_type = Masjid::class AND collection_name = 'logos'`, which is strictly
  * narrower; the relation now carries the same predicate, so the check and the
  * thing it checks cannot drift apart. `header_logo()`, `footer_logo()` and
- * `galleries()` on the same model still lack it — latent, since nothing else
- * writes those collections, and out of this command's scope.
+ * `gallery()` on the same model carry it too since 2026-09-27.
  *
  * **4. The whole table being empty.** A DISTINCT and much louder condition than
  * "some rows are broken", and it gets its own status, its own exit code and its

@@ -159,6 +159,10 @@ never `permission:`.
   one 410. **Never add `exists:` to the request rules** — docs §11 names the
   staff login's `exists:users,email` as the oracle this realm must not copy. The
   throttles are keyed on the SUBMITTED address, so a 429 is not an oracle either.
+  "Submitted" means the address in the form the door will look it up in
+  (`ContactIdentity::submittedAddress()`, through `bucketAddress()`): a limiter
+  runs BEFORE the FormRequest normalises, and a key taken from the raw string
+  gave every UTS46-equivalent spelling of one mailbox its own allowance.
 - Three independent limits, and all three are required: `attempts` on the row (a
   DB column, because a cache flush must not re-arm an attacker four guesses in),
   the 10-minute TTL, and the rate limiters. `consumed_at` is written by a
@@ -396,6 +400,33 @@ DECISIONS.md 2026-09-17.
   without extra code, and `PasswordSetNoticeTest` shows the pattern for pinning it.
 
 Pinned by `tests/Feature/PasswordSetNoticeTest.php` and `tests/Feature/ResendTransportTimeoutTest.php`.
+
+## Staff sign-in is throttled per address AND per IP (2026-09-29)
+
+`throttle:login` covers `/admin/login`, `/admin/forgot-password` and
+`/admin/reset-password` as ONE allowance: 5 a minute per normalised address + IP,
+and 60 a minute / 600 an hour per IP alone (`config('auth.admin_throttle')`).
+`users.email` is `utf8mb4_unicode_ci`, so an accented spelling of an address is
+the same user to the database and a different key to a per-address limiter; the
+IP limits are what bound the guesses however the address is spelled. Do not
+remove the IP-only limits because the per-address one "already covers it", and
+keep them generous: one shared address can be a whole office (DECISIONS.md
+2026-09-29, follow-ups).
+
+`POST /admin/profile` does NOT change `users.email`: the address is an identity
+(`GroupAudience::identitiesFor()` reads a staff login as the contact holding it),
+so the request refuses any address other than the one the account holds (a
+non-string `email` is a 422 like any other bad value: `bail` and `string` come
+before the refusal). Until a verified flow exists, only a platform SuperAdmin can
+change `users.email`, through the `super`-only users routes, and the refusal says
+so: an organisation's administrator cannot, and must not be named as who to ask.
+
+The staff sign-in lookup takes the typed address through
+`ContactIdentity::submittedAddress()`, the same form the throttle keys on, and
+keeps only a user whose address is exactly it (`AuthController::staffUserAt()`).
+`users.email` is `utf8mb4_unicode_ci`, so `LoginRequest`'s `exists:users,email`
+still passes a look-alike spelling; the controller is where it stops, as the same
+answer as a wrong password.
 
 ## `users.type` is the source of truth — spatie roles are a bridge
 

@@ -329,7 +329,7 @@ class GroupNotificationRecipientResolver
 
         $name = trim(($contact->first_name ?? '').' '.($contact->last_name ?? ''));
 
-        return new NudgeRecipient($address, $name !== '' ? $name : null, 'family');
+        return new NudgeRecipient($address, $name !== '' ? $name : null, 'family', contactId: (int) $contact->id);
     }
 
     private function fromUser(User $user): ?NudgeRecipient
@@ -340,7 +340,7 @@ class GroupNotificationRecipientResolver
             return null;
         }
 
-        return new NudgeRecipient($address, $user->name, 'staff');
+        return new NudgeRecipient($address, $user->name, 'staff', userId: (int) $user->id);
     }
 
     /**

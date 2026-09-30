@@ -127,6 +127,12 @@ break.
 | `BACKUP_DESTINATION` at production's default | a staging `backup:run` pruning production's backup sets |
 | `CANARY_BASE_URL` unset | staging's hourly canary consuming production's rate-limit bucket |
 
+**The one sanctioned real send from staging** is `php artisan mail:test-send <your address>
+--prompt-key`. It sends one message to the address you name, with a Resend key typed at a hidden
+prompt and held by that process only. `.env` stays blank, so the deny-list stays true. It exists to
+prove a sending domain on the staging build before production (docs/mail-sending-domain.md). It
+reads no contact, so it cannot reach anyone you did not type.
+
 Env is only half the belt. The other half is the scrub NULLing the columns —
 `mobile_app_users.onesignal_subscription_id`, `masjids.stripe_account_id`,
 `masjid_app_publishing.onesignal_*`, `masjid_sms_senders` — so that even a
