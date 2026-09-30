@@ -5497,3 +5497,719 @@ the inverse restores all existing rows and removes only cells the file created.
 - **Minors.** `in_scope` and the scope rank compare by subject key, not exact string. An empty Objective or Learning
   Outcome is stored as NULL by the importer and read as absent everywhere. A single Islamic sibling that is not the
   combined column carries its subject label; the combined column stays bare.
+
+## 2026-09-28 — Donation row build extracted from the door: `DonationService::createPendingDonation`
+Decision: the `Donation::create` that `createDonationCheckout` ran before opening Stripe is now
+`DonationService::createPendingDonation`, and the door calls it and reads every value back off the
+returned row. It writes the row and nothing else: no Stripe call, no email, and NO gate (form or
+fund open, `canAcceptDonations`, giving switch, amount bounds stay in `DonationsController`). The
+universal cart calls it only AFTER the shopper has paid, so a gate here would turn taken money into
+an unrecorded payment. `application_fee_amount` and `idempotency_key` are optional inputs whose
+defaults are the door's; `is_zakat` and `zakat_source` are not inputs, only the giver's `zakat`
+answer is, and `ZakatDesignation::resolve` remains the one place it is decided.
+Alternatives: give the cart `Donation::create` of its own (a second zakat/gross-up implementation
+that drifts), or route the cart through `createDonationCheckout` (opens a Session per line).
+Rationale: behaviour-preserving move; pinned by `tests/Feature/Cart/PendingDonationTest.php` and the
+untouched `DonationFlowTest`. Settlement (`markSucceeded` with the cart's own PI and this line's own
+fee/net, then the receipt) is a separate task; `markSucceeded` has no status guard, so the cart must
+check `pending` itself.
+
+## 2026-09-28 — Cart settlement (slice 4b): records exist only once paid
+Decision: the universal cart's one webhook creates each line's real record, already paid, in ONE
+transaction (`CartSettlementService`), routed by a cart question asked LAST in
+`StripeWebhookController::dispatch()` (`cart_order_uuid` on the org's own account,
+`cart_charge_ref` on a holder's). It calls the three extracted writers unchanged and asks no gate,
+so a payment after a form closed, a menu closed or a fund was deactivated is still recorded and
+logged. What settlement needs is FROZEN at checkout on `order_items.payload` / `price_snapshot`
+(the unshipped orders migration was edited, no new one): a form's `FormPayment::quote()`, a
+meal's frozen line, a donation's `{intended_minor}`; nothing is re-quoted at webhook time.
+Emails, the lunch confirmation and the donation receipt run after the commit and only for a line
+whose settle call returned true. Donation `fee`/`net` stay null: the basket's one fee cannot be
+split honestly per line.
+Alternatives: create pending records at checkout and settle them (rejected 2026-09-28: unpaid food
+on the kitchen board, and a second payment page per ticket); re-quote at webhook time (a tier
+boundary or the card switch can null the quote after the money is taken); email inside the
+transaction (a rollback would leave an email for nothing).
+Rationale: money already taken must always be recorded, and nothing may be visible before it is.
+A genuine failure to record a paid basket rolls back everything and is rethrown so Stripe retries
+(refusals, which no retry could fix, return 200 with a warning). Pinned by
+`tests/Feature/Cart/CartSettlementTest.php` and `CartWebhookRoutingTest.php`; every older webhook
+test passes untouched.
+
+## 2026-09-29 — Cart settlement review fixes (slice 4b): close the basket, backfill the payer, pin the holder
+Decision: the settlement review confirmed five defects, all fixed in `feat/universal-cart`.
+(1) Settlement closes the basket in its transaction (`Cart::STATUS_CHECKED_OUT`, lines deleted; the
+cart is locked before the order, checkout's own order, so the two cannot deadlock) and
+`CartCheckoutService::checkout()` / `acknowledge()` refuse a closed cart; checkout also refuses a
+basket whose fingerprint already has a PAID order on the same cart. (2) A session event that
+finds the order already paid backfills what `payment_intent.succeeded` could not know (donation
+contact and session id; a meal order's placeholder name, phone and e-mail) and runs the steps that
+were skipped (donor link, receipt delivery, meal confirmation) through their once-only paths;
+nothing is re-settled. (3) A basket paid on a holder's account pins each form row
+(`charge_account_id`, `charge_masjid_id`) in the settlement transaction, so the holder's refund or
+dispute flags it. (4) The legacy `amount_due` and `entry_count` are frozen into the form line's
+`price_snapshot` at checkout and written over the writer's live figures. (5) Cart pages disable
+Adaptive Pricing, and a payment intent in another currency than its order's is skipped at info
+level; only the session event reports a refundable mismatch.
+Alternatives: leave the cart open and rely on the fingerprint alone (rejected: the same lines are
+one tab away from a second charge); have the intent defer to the session event (rejected: a lost
+session event would leave paid money unrecorded); stamp `charge_ref` on the row (rejected: unique
+per row, and a basket has one).
+Rationale: money is taken once and recorded once, and the record says who paid and on whose
+account. Pinned by `tests/Feature/Cart/CartSettlementReviewFixesTest.php`; the existing cart and
+webhook tests are unmodified. ASSUMPTIONS #28-#30.
+
+## 2026-09-29 — Cart settlement review fixes, round 2 (slice 4b): one receipt, refunds on the order, only paid lines leave the basket
+Decision: the check of bc4771df found one major, one design gap and two minors; all fixed in
+`feat/universal-cart`, in the still-unshipped `2026_09_28_090000` orders migration (no new one).
+(A) A donor receipt could be mailed twice when `payment_intent.succeeded` and
+`checkout.session.completed` arrive together: both queue `donorAndReceiptStep`, and the controller's
+`deliverReceipt()` is check-then-send. The step now claims the line first
+(`order_items.receipt_claimed_at`, `UPDATE ... WHERE receipt_claimed_at IS NULL`); only the process that
+changed one row links the donor and hands the receipt on. `deliverReceipt()` is untouched. A step with
+no address and no contact on the gift claims nothing (else the intent's step would use up the claim the
+session event's step needs); a claim that delivers nothing or fails is released. (B) A refund or dispute
+on a basket's charge is flagged on the ORDER (`orders.charge_flag`, `charge_refunded_minor`,
+`charge_flagged_at`) by a new cart arm that runs before the form arm, and `handleChargeFlag` skips every
+form row a cart settled. A basket's rows share one payment intent and the event names an amount, never a
+line, so any per-row flag was a guess (and flagged the first row only). Fix 3's pin stays: it still
+gives the refund instruction. (C) Settlement removes from the basket only the lines the order paid for
+(type, id and the canonical payload hash, stored at checkout as `order_items.cart_payload_hash`), closes
+the basket only when nothing is left, and after the commit expires the cart's other pending pages
+through `CartCheckoutService::closeOtherPages()`, so page B can no longer charge lines page A paid.
+Alternatives: dedupe the mail on `receipt_delivered_at` alone (rejected: it is written after the send, so
+it cannot be atomic; the brief also forbids changing `deliverReceipt()`); attribute a partial refund to a
+line by amount (rejected: a guess with money on it); match paid lines by comparing the order line's
+`payload` with the cart's (rejected: a meal's order payload is reshaped, so only a hash stored at
+checkout compares exactly).
+Rationale: money is mailed for once, flagged where the fact is, and never dropped unpaid. Two calls the
+brief left open: the cart arm accepts a linked basket's order (its masjid is the CHILD, not the account's
+holder) on its pinned account alone, since that is the motivating BISS case; and the recorded refunded
+amount is the largest figure seen (Stripe's is cumulative), so a late event cannot lower it. Pinned by
+`tests/Feature/Cart/CartSettlementRound2Test.php`. One existing assertion changed:
+`CartSettlementReviewFixesTest::a_linked_baskets_registration_is_pinned_to_the_holder_so_its_refund_flags_it`
+now expects the order flagged and the row not (that is the design change). ASSUMPTIONS #28, #30-#32.
+
+## 2026-09-29 — Cart settlement review fixes, round 3 (slice 4b): a failed send, an early refund, a trashed holder
+Decision: the check of ba50f193 found three minors; all fixed in `feat/universal-cart`. (1) A receipt could
+be left unsent: the step that wins the line's claim keeps it, `deliverReceipt()` is best-effort, and a
+failed send leaves `receipt_delivered_at` null with the claim still held, so every later step gets 0 rows.
+The step now hands the line's id back with the receipt, and the controller's cart path releases the claim
+when the gift is still undelivered after the send. `deliverReceipt()` is unchanged, and so are its other
+callers. (2) A refund or dispute that names an order found by its payment intent but not yet paid was
+acked in silence, and Stripe does not redeliver: it is now flagged (flag and amount) with a WARNING naming
+the order and saying it was flagged before settlement recorded it; a charge no order carries still writes
+nothing but leaves an INFO line. (3) `flagOrder()` resolved the account holder with `withTrashed()->first()`,
+which can name a trashed organisation that shares the account id with a live one (the unique index covers
+live rows only): it now uses one `accountHolder()` lookup, live first and trashed only as a fallback, shared
+with settlement's `resolve()`.
+Deferred on purpose: `closeCart`'s match does not include quantity. No endpoint edits a line in place yet,
+so it is latent; it belongs to the add-to-basket slice.
+Alternatives: release the claim inside `deliverReceipt()` (rejected: the brief keeps it unchanged and other
+paths call it); hand the controller a release callback (rejected: the line id is data, and a static release
+on the service is the same one the step already uses); ignore an unpaid order's flag until it settles
+(rejected: the event is never redelivered).
+Rationale: money is mailed for once, but a receipt that failed to send is not lost, and a dispute is never
+dropped for arriving early. Pinned by `tests/Feature/Cart/CartSettlementRound3Test.php`; no existing test
+changed. ASSUMPTIONS #33, #34.
+
+## 2026-09-29 — Universal cart public endpoints (slice 5): dark by default, the house idiom, priced before it is kept
+Decision: the basket is exposed over HTTP (`CartsController`, `CartOrdersController`, `CartLineAdder`,
+routes in `routes/api_v1.php`) and INERT until the owner switches it on. (0) `config/cart.php`
+`enabled` (`CART_ENABLED`, false) and `masjid_ids` (`CART_MASJID_IDS`; empty = every organisation once
+on; anything malformed becomes `[0]`, nobody, never "everyone"). One middleware, `cart.enabled`,
+throws the router's own not-found exception with the router's own message, so an off cart is the same
+bytes as an unknown route in debug and out of it, before any throttle or query; the routes are
+registered either way, so the route cache is stable. (1) The `/api/v1` house idiom: `masjid-id` header
+int-cast, `<= 0` 400, `PublicTenant::exists()`, every query hand-filtered and every create stamped, the
+`{status, message, data}` envelope, a 422 `{status:'failed', data:{field:[...]}}`. The token is 32 random
+bytes as hex, returned once in the JSON body and stored as `Cart::hashToken()` = HMAC-SHA256 on
+`APP_KEY` (the FamilyInviteService construction; the migration comment that said plain SHA-256 is
+fixed); a wrong token, another organisation's, an expired, offboarded or missing basket are one 404
+(`This basket is not available.`, the same sentence for the organisation half). Expiry slides 7 days on
+every SUCCESSFUL write. A paid (`checked_out`) basket still reads and answers 422 to every write.
+Each line is validated as its own door validates it (form: `withoutUnusedPriceAnswers`, `FormSchema`
+validator, `only()`; a form with file fields refused in one sentence; meal 1..99, a catalogue pickup read
+in the ORGANISATION's timezone and stored as an absolute instant because the pricer and settlement
+parse it without a zone, and required as the kitchen door requires it; donation 100..99999999, `zakat`
+only when answered, `recurring` refused), then inserted under the basket's row lock and PRICED by the
+unchanged `CartPricer` over the whole basket; a line that comes back `gone` rolls back and is refused
+with the source's own reason. A form line's price and place count come from `FormLineSource`, a dish's
+price from the dish. `client_line_key` (unique per basket) makes an add idempotent; the same key with a
+different request is a 409, told apart by a second column, `client_line_hash` (the keyed
+`FormResponse::payloadHash` of what was asked for, taken BEFORE validation), so a retry is recognised as
+itself whatever has changed since (a form that closed, numbers encoded as strings). The add answer is
+the priced basket plus `line_id`. (2) The doors' gates the cart services lacked now sit in the line
+SOURCES, so checkout re-asks them: `giving` off (`DonationLineSource`, the door's sentence verbatim),
+`jummah_lunch` off (`MealLineSource`), a form with file fields (`FormLineSource`); each `reprice()` gained
+an optional trailing `?Masjid $org`, passed by `CartPricer`, loaded from the model when omitted so the
+gate can never be skipped; `canAcceptDonations()` stays the payee rule. (3) `orders.buyer_name` and
+`buyer_phone` (unshipped orders migration, edited in place); checkout's signature gained two optional
+arguments; settlement records a meal order under buyer name/phone first (then contact, then Stripe,
+then the placeholder), and `detailsWithBuyer` generalises from email to name and phone; a page handed
+back takes the name and phone typed last but keeps the email it was opened with. Staging anonymises both
+columns; `MemberAccountDeletion` clears them on unpaid orders. (4) Five named limiters beside the
+form's: per token DIGEST for `cart-write`/`cart-read`/`cart-checkout`, and a token that names no live
+basket meets a per-connection bucket of the same size instead (the brief's "falling back to IP|masjid",
+widened from "no header" to "no live basket" so junk tokens cannot mint a fresh allowance); a 429 says
+the wait in its body in the form's shape. (5) `cart:prune`, daily 03:41: OPEN baskets whose expiry is more
+than a day past, unless a PENDING order's page could still be paid (`checkout_expires_at` less than an
+hour behind); lines cascade. Settlement needed NO change to settle a pruned basket's order: it writes
+from `order_items` and `orders.cart_id` is nullOnDelete (`CartPruneTest`).
+Alternatives: a per-route feature check in each controller (rejected: one middleware is one place, and it
+runs before the throttles); validating and pricing a single line without the whole basket (rejected: a
+second copy of the pricer's payee and currency rules, in code the brief says to leave alone); comparing a
+replay with the stored line instead of a stored hash (rejected: it would need the request re-validated,
+and a retry after a form closed would fail); a `Cart-Token` cookie (rejected: CORS carries no
+credentials); putting the giving and lunch checks in the endpoint (rejected: checkout would not re-ask
+them, and a basket sits for days).
+Rationale: production ships from `main`, so nothing here may be reachable until the owner says so, and
+once it is, it must be the doors' floor at least: tenancy by hand, a uniform 404, no answers in any
+response, the door's own validation, and money never opened for what a door would refuse. Every rule
+has a test in `tests/Feature/Cart/Endpoints/`; no existing test changed. ASSUMPTIONS #25 (closed),
+#35-#44 (open ones name what the owner must check before `CART_ENABLED`: MEC's return origin and its
+capabilities).
+
+## 2026-09-29 — Universal cart, slice 5 fix round 1: a basket never takes a reserved date, and closeCart matches on quantity
+Decision: (1) `FormLineSource::reprice()` returns `gone` (`FormLineSource::RESERVES_A_DATE`, "book that date on
+the form's own page") for a line whose answers reserve a date, `Form::reservedDateIn($payload) !== null`.
+The form door claims that date with `FormReservations::claim()` under the form lock and refuses the second
+payer (`FormDateTaken`); a basket line is settled with no `reserveOn` (`CartSettlementService::settleForm()`),
+so nothing held the date and two shoppers could pay for one Ramadan evening. The add endpoint needed no
+change: it already refuses a line that prices as `gone`, so the shopper gets the sentence as a 422, and a
+line already in a basket (or on a form that gained a date list later) is dropped and named at checkout. A
+line on the same form that reserves nothing, the choice-priced "Individual Iftar", stays payable; the door
+drops a date named beside it, so the stored answers hold none. (2) `closeCart()` also matches on quantity
+(`(int) $line->quantity === (int) $paid->quantity`), because `POST /cart/acknowledge` edits a line's
+quantity in place and the payload hash of a dish does not see it: page A paid for two after the shopper
+acknowledged three and opened page B must leave the line in the basket, and B is expired as before.
+Alternatives: taking a hold on the date from the basket (rejected: a hold needs an expiry that nothing in the
+payment path has, the same reason capacity is not held); refusing only when the date is already held
+(rejected: a date free at add and taken by checkout is the same race, and the answer would differ by luck);
+folding the quantity into `PricedBasket::payloadHash()` (rejected: it would change the `cart_payload_hash`
+already stamped on open orders, and the quantity is not part of the payload).
+Rationale: a date sold twice is not a count to put right afterwards, and a quantity edit must not delete
+what was never paid for. ASSUMPTIONS #36 closed. Tests: `FormLineSourceTest` (both date cases),
+`CartAddItemTest` (the refusal and the payable line), `CartSettlementRound2Test` (the quantity race).
+
+## 2026-09-29 — Universal cart, slice 5 fix round 2: dark means first, and what the shopper typed is what is used
+Decision: (1) `bootstrap/app.php` ranks `EnsureCartEnabled` ahead of `ThrottleRequests` in the middleware
+priority list (`prependToPriorityList`). Laravel re-sorts a route's middleware by that list, and
+`ThrottleRequests` outranks the `api` group's `SubstituteBindings`, so the unranked gate ran LAST: a dark cart
+still ran the limiter closures (database reads), wrote rate-limit rows, carried `X-RateLimit-*` headers on its
+404 and answered 429 to the 21st `POST /carts` of an hour, so "switched off" was distinguishable from "never
+built". `CartEndpointsGateTest` now reads the SORTED stack (`Router::gatherRouteMiddleware`) and has two
+behavioural tests with the cart off (no limiter closure runs; 22 starts are 22 identical bare 404s).
+(2) `CartCheckoutService::reuseOpenPage()` hands an open page back only when the buyer email ALSO matches the
+order's (`usableEmail`, lower-cased); otherwise the page is closed as for a changed basket and a new one opens
+with the new email. The email is locked into the Stripe page and is where settlement sends the receipt, so a
+corrected typo used to keep the typo. The existing "page handed back takes the phone typed last" test used a
+corrected email to prove the old behaviour; its second call now uses the same address.
+(3) Checkout's and a stale acknowledge's 409 body is the priced view exactly as `GET /cart` returns it, with
+`notices` and `view_fingerprint` inside it: `CartCheckoutRefused::basketChanged()` takes the `PricedBasket`.
+A notice is a sentence with no amount, and acknowledging adopts the new price and quantity, so the shopper must
+be shown them first. (4) `checkout()` takes `requirePhoneForMeals`, which the endpoint always passes, and
+refuses under the basket lock a basket that prices a payable dish when the phone is empty
+(`CartCheckoutService::PHONE_REQUIRED`, a 422). The controller's rule is unchanged; its `hasMeal` read precedes
+the lock, so a dish another tab added in between was charged with no phone to ring. It is opt-in (ASSUMPTIONS
+#45) because the settlement and buyer-identity tests open dish orders through `checkout()` with no phone on
+purpose (the documented legacy state, #25).
+(5) the `cart-create` allowance (`config/cart.php` `throttle.create_per_hour`, `CART_CREATE_PER_HOUR`)
+is 200 an hour per IP|masjid, up from 20. The limiter is keyed by connection and organisation, and MEC's
+festival is one venue Wi-Fi network: every phone in the hall reaches the API from one public address, so 20
+starts an hour locked the 21st shopper out of opening a basket at all, and one script on the same network
+could do it in 20 requests. What a start costs is one cheap row (a basket with no lines and a token digest),
+and an abandoned one is deleted by `cart:prune` a day after its week is up, so a higher number costs storage
+for a few days and nothing else. The limit stays per connection: an anonymous door with no limit lets one
+caller fill the table.
+(6) `cart:prune` also deletes an order whose status is `expired` once its `checkout_expires_at` is more than 7
+days past (`cart.prune.expired_order_days`, `CART_PRUNE_EXPIRED_ORDER_DAYS`, floor 1), with its lines: the
+frozen copy of the shopper's details (`order_items.payload`, `orders.buyer_name`, `buyer_phone`,
+`buyer_email`) outlived the basket the sweep deleted for holding the same data. An expired order is a payment
+page that was never completed. Never `pending` (a delayed payment can still settle it) and never `paid`. The
+lines go through `order_items.order_id`'s `cascadeOnDelete` (checked in the orders migration), in the same
+statement; the delete names the status again so an order that settled between the read and the delete is not
+taken. ASSUMPTIONS #46. (7) `cart:prune` `Log::info`s its counts (baskets and orders, zeros included) as
+`groups:purge-feed` does, because `schedule:run` discards stdout (routes/console.php). (8) Tests only: a
+required file question is refused at add with the one sentence and not a field bag; the same
+`client_line_key` with other form answers, another meal quantity or another pickup is a 409; at 25 lines a
+replay of the 25th key returns that line; a confirmed `masjid_domains` host of this organisation is the return
+base with an empty env allowlist, and another organisation's is refused.
+Alternatives: (1) reading the gate from a controller or a `Route::middleware` order (rejected: the priority
+list, not the listed order, decides; a test of the listed order is what missed this); (2) updating the email on
+the reused order and page (rejected: Stripe's page cannot be edited, and a receipt for a page opened with the
+typo would still be mailed to the typo); (3) binding acknowledge to a `GET /cart` view (rejected: the 409
+already has the priced basket in hand, and one more round trip is one more place for it to differ); (4) a
+strict default (rejected for now, see above); (5) keying `cart-create` by something finer than the address
+(rejected: an anonymous caller has nothing finer that it cannot mint fresh, which is why the per-basket
+limiters key by a token that already exists), lifting the limit for one organisation (rejected: an allowlist of
+addresses is operations work and one more thing to forget on the day), or leaving 20 and telling MEC to raise
+`CART_CREATE_PER_HOUR` (rejected: the default is what ships, and the failure lands on the shoppers at the
+event); (6) deleting `pending` orders too (rejected: an order whose page lapsed but whose webhook never came
+is not provably unpaid).
+Rationale: dark has to mean first, a corrected address has to be the address used, the shopper has to see what
+they are asked to accept, and a number that decides who the kitchen rings has to be checked where the basket
+cannot change under it. The 20 in the brief was sized for one person; the deployment is a room.
+`CartConfigTest` pins the new defaults; `CartThrottleTest` sets its own small numbers and is unchanged.
+
+## 2026-09-29 — Member portal, slice 6: a member's orders, gifts and receipts (API only)
+Decision: (1) REALM. The routes are in the MEMBER realm, `/api/mobile/masjids/{masjid_id}/me/...`, inside the
+existing `crm` member group beside recurring giving, with its full stack (`auth:family`, `member.active`,
+`member.token`, `family.tenant`, `crm`, on top of the file's `throttle:mobile`) and limiters of their own:
+`throttle:30,1,member-portal` for `GET me/orders`, `me/orders/{source}/{id}` and `me/gifts`, and
+`throttle:20,1,member-receipt` for `GET me/receipts/{id}/pdf` (dompdf renders on every call). The prefix is
+load-bearing: an inline throttle is keyed on the caller alone, so without one these reads would spend the
+monthly-giving screen's allowance and the other way round. The family portal was not used because
+`FamilyAccessService` admits only a confirmed guardian of a live ward, so the 64 Wix members and every
+festival ticket buyer cannot enter it; the member realm is the one a plain contact reaches with no office
+step (an e-mail code adopts `login_email` and sets `verified_at`). Nothing client-side was built: which client
+shows it (the MEC apps or a web page) is the owner's open question.
+(2) THE LINKING RULE. A member sees a purchase when it was confirmed to THEIR VERIFIED ADDRESS (`login_email`
+while `verified_at` is set, through `Contact::memberAccessIsActive()`), or, where the source carries a contact,
+when `contact_id` is theirs, always inside their own organisation: cart `orders` PAID with `contact_id` = them OR
+`buyer_email` is exactly the address (case and the spaces around it aside: fix round 1, below, item 1);
+`historical_orders` by `contact_id` (the importer's key; the table holds
+no e-mail); `form_responses` with a PAID money leg (`payment_method` set, `payment_status = paid`) whose
+`respondent_email` is exactly the address; `meal_orders` PAID whose `customer_email` is exactly the address or
+whose `contact_id` is theirs; donations
+by `contact_id`, status `succeeded`. A form response or meal order that an `order_items` row records
+(`record_type` + `record_id`, the type checked as well as the number) is left out, because the cart order already
+lists it. Without a verified address EVERY list is empty, the contact-keyed ones included (an unverified member
+never gets past `member.active`, so this is belt and braces). The confirmation e-mail already told the holder of
+the address, so the portal reveals nothing new, and someone who typed another person's address cannot see the
+order unless they own that inbox. `App\Services\Member\MemberPurchases` is the only place the rule lives: the
+list (a UNION of `{source, key, moment}` rows, ordered by moment, source, key so LIMIT/OFFSET pages are stable)
+and the detail are built from the same four per-source queries, and every query names `masjid_id` itself
+(`FormResponse` never had the tenant trait, the union runs on the base builder, and an unbound scope is no
+filter).
+(3) HANDLES. A cart order is addressed by its uuid; a Wix order, a form response and a meal order by their row
+number, ownership-checked on every lookup. The form response's and the meal order's uuids are NOT handed out,
+against the brief's "the uuid where there is one": they are bearer capabilities (a form response's opens its
+public payment page and `POST /form-responses/{uuid}/checkout`, a meal order's is the link that edits it,
+`PATCH /lunch-orders/{uuid}`, routes/api_v1.php), and a list that carried them would turn a stolen member token
+into the power to edit a lunch order. A donation's uuid was minted as the opaque external handle and unlocks
+nothing public; a receipt has no handle of its own and is one to one with its gift, so `receipt.id` and the
+`me/receipts/{id}/pdf` path use the GIFT's uuid.
+(4) ONE 404. A miss, another member's order, another organisation's, a form response or lunch the basket already
+lists, a handle of the wrong shape and an unknown source are one byte-identical body
+(`{status: error, message, data: {}}`), and none of them reaches a table before the shape is checked. The routes
+carry no `where` constraint because a router 404 has a different body. The receipt PDF is resolved through the
+caller's own succeeded gifts and refuses an imported Wix gift whatever a stray receipt row says.
+(5) WHAT IS SHOWN. Every row is built by hand (`MemberPurchaseProjector`); no model is serialised. List row:
+`source` (`manara` cart, `wix`, `form`, `meal`), `id`, `number`, `date`, `status`, `total_minor`, `currency`,
+`summary {labels (up to 3), count}`. Detail: the same identity, `lines [{label, quantity, unit_minor,
+line_minor}]`, `totals {subtotal_minor, discount_minor, total_minor}` and `receipt_note`. Gift: `id`, `date`,
+`fund_name`, `amount_minor` (the charged amount, which is the receipt's gross), `currency`, `is_zakat`,
+`receipt {id, serial} | null`, `receipt_note`. Statuses are one vocabulary: `paid`, `refunded`,
+`partially_refunded`, `disputed`, `canceled`, `declined`, and `unknown` for a Wix status the importer never
+writes; a canceled or declined Wix order keeps that word and a note that no money was taken, and a basket's
+refund or dispute flag is its status (the refunded AMOUNT is not shown). `fee_minor` is never shown (Manara's
+cut on `orders`, the fee Wix added on `historical_orders`), nor Stripe ids, accounts, fingerprints, payloads,
+answers, line options, the import batch, buyer names and phones, or what a Wix line was recorded as. A meal's
+donation and covered card fee are lines, so the lines add up. Dates are the calendar day in the ORGANISATION's
+timezone (`masjids.timezone`, UTC when it is not a real one), never a UTC instant rendered as a day. The
+receipt note for a cart, form or meal purchase is the brief's sentence; a Wix order and a Wix gift get their own
+(the organisation's old checkout, no receipt issued here).
+(6) The list is paginated as the admin lists are (`data` is the paginator, `data.data` the rows), 15 a page,
+at most 50, and `per_page[]` is not a number.
+Alternatives: (1) relaxing the guardian rule so the 64 members can use the family portal (rejected: the rule is
+what keeps a school's children's records to their guardians, and the member realm needs no office step);
+(2) matching orders to a contact at settlement on the typed `buyer_email` (rejected: unverified, so a mailbox
+owner could see an order a stranger typed their address into, and nothing there would ever change if the
+address moved); reading `contacts.email` instead of `login_email` (rejected: it is not proved); a signed
+link like `AccountAccessService` (rejected: typed to staff and one more emailed-secret channel for money);
+(3) the uuids the brief asked for (rejected as above); a `uuid` column on `donation_receipts` (rejected: a
+migration for a handle that already exists on the donation, and the receipt is one to one with it); an
+HMAC-derived handle per row (rejected: an ownership-checked row number discloses nothing a 404 does not, and
+inverting a derived handle means scanning the caller's rows); (4) a 403 for someone else's order (rejected:
+it confirms the handle is real, which is a disclosure about a named person's spending).
+Rationale: the address is what proves the person, the rule is asked in one place so the list and the detail
+cannot disagree, and the projection is an allowlist because `Order` hides four fields, `Donation` hides none and
+`fee_minor` means two opposite things. Nothing was RUN on the machine this was written on (no PHP there); the
+suites below then ran on the CI box on SQLite, 83/83 at 5690ed6f (the pre-rebase tip of this branch; the rebase changed no
+portal file), and have never executed on MySQL (ASSUMPTIONS #47, corrected in fix round 1).
+Tests: `tests/Feature/Member/MemberPurchasesTest.php` (the rule, clause by clause, asked of the service:
+isolation, no verified address, case and space, the cart-owned exclusion by record type, order and paging,
+`find()` returning null for every way of not having a row), `MemberOrdersTest.php` (the stack read from the
+router, the door, isolation over HTTP, one 404, exact keys plus canary values, statuses, dates, pagination, the
+limiter buckets), `MemberGiftsAndReceiptsTest.php` (the gifts, the receipt object and its note, the PDF's
+headers, its one 404, the house paginator).
+
+## 2026-09-29 — Member portal, slice 6, fix round 1 (review wf_97cdfff0-76f)
+Decision: (1) THE ADDRESS IS DECIDED IN PHP, THE SQL ONLY SHORTLISTS (major). `orders.buyer_email`,
+`form_responses.respondent_email` and `meal_orders.customer_email` set no collation of their own, so on production
+(verified read-only) they are `utf8mb4_unicode_ci`, and `LOWER(TRIM(col)) = ?` is TRUE for `victim@gmail.com` against
+`victim@gmaíl.com`. Somebody who owns the look-alike domain can redeem a member code at it and hold a verified
+`login_email` that the database calls equal to the victim's typed address, and then read the victim's baskets, festival
+tickets and lunches (lines and totals). SQLite compares bytes, so 83 green tests could not show it. Each address arm of
+`MemberPurchases` (cart `buyer_email`, form `respondent_email`, meal `customer_email`) now runs the `LOWER(TRIM())`
+query as a SHORTLIST (no LIMIT), keeps the rows whose stored address is exactly the proved one with
+`ContactIdentity::keepExactMatches()`, and hands the caller a builder that asks for those keys (`id IN (...)`, inlined
+as integers) beside the caller's own `contact_id` arm. The exact filter therefore runs before anything is counted,
+paginated or projected: the union's `COUNT` and its LIMIT/OFFSET page, `load()` and `find()` are all built on the same
+corrected builders, so the page count is right and no PHP filter is applied after a page is cut. The `contact_id` arms
+are untouched (an order keyed to the caller stays theirs whatever address was typed). Cost: one extra narrow query per
+address arm each time a builder is made (ASSUMPTIONS #60). ASSUMPTIONS #49 said the columns were `utf8mb4_bin`; it is
+rewritten. The same collation lets `MemberSignupService` (`LOWER(login_email) = ?`) resolve a contact for a look-alike;
+that lookup and its fix are on main already (`ContactIdentity`, `MemberSignInLookAlikeAddressTest`) and are not touched
+here.
+Alternatives: `COLLATE utf8mb4_bin` on the comparison (the reviewer's fix; rejected: MySQL-only, so SQLite needs a
+second branch the suite cannot show is equivalent, and the house already has one exact-address comparison,
+`ContactIdentity::sameAddress()`); filtering the union's rows in PHP after `paginate()` (rejected: the page would be
+short, `total` and `last_page` would count look-alikes, and a look-alike could push a real row off the page);
+paginating by hand in PHP (rejected: it reads every source's whole history to cut one page).
+Tests: `tests/Feature/Member/MemberPurchasesLookAlikeAddressTest.php`, one test per source (cart, form, meal) plus one
+across all three, built on `Tests\Support\FoldsAccentsLikeUnicodeCi`: a look-alike's purchase is in no builder, no
+`find()`, no page, and its detail is the one 404; the page count and last page are the exact rows'; the premise
+(the SQL cannot tell the rows apart) is asserted first.
+(2) A CONTACT MERGE MOVES BASKETS AND LUNCHES (m1). `ContactsController::merge` moved donations, Wix orders and imported
+seats to the survivor but not `orders.contact_id` or `meal_orders.contact_id`; both are `nullOnDelete`, so the
+`forceDelete()` at the end nulled them, and because the portal lists a cart order and a lunch by `contact_id` beside the
+typed address, the survivor lost every purchase whose typed address was not their own verified one while their gifts and
+Wix orders still showed. Both now move to the survivor inside the merge's transaction, scoped to the bound organisation
+like the moves beside them. Live registrations' payers are still not moved (unchanged, DECISIONS 2026-09-25).
+Tests: `tests/Feature/Member/MemberPurchasesSurviveAMergeTest.php`: a basket and a lunch keyed to the absorbed contact
+under a work address are the survivor's after the merge (and were not before), a neighbour's basket does not move.
+(3) GIFTS STAY LISTED BY `contact_id` ALONE, AND THAT IS AN OWNER QUESTION (m2). The review found that `donations.contact_id`
+is set at settlement from the address the giver typed, matched against the office's `contacts.email`, so the portal can
+show (and serve a receipt PDF for) a gift confirmed to a mailbox the member never proved. The fix the brief allows needs
+the payer's address on the donation, and `donations` has none: no `email` or payer column exists in its create migration
+or in any migration that alters it. So the rule was NOT changed and nothing was added to the schema (a migration on a
+money table, with a Stripe backfill, is not a fix-round item); the gap is ASSUMPTIONS #61, an owner question with the
+migration that would close it spelled out. The docblocks that say a gift is theirs by `contact_id` now point at it.
+Tests: none, because no behaviour changed; `MemberGiftsAndReceiptsTest` already pins "by their donation, never by an
+address".
+(4) ONLY AN `issued` RECEIPT IS SHOWN OR SERVED (m3). `donation_receipts.status` allows `issued` and `void`, and neither
+the receipt object on a gift row nor the PDF door looked at it; `DonationReceiptPdfService` renders a voided row exactly
+like a live one, with nothing on the page that says it was voided, so a receipt the office withdrew would have kept
+reaching the donor (latent today: no code path writes `void`). One rule now,
+`MemberPurchaseProjector::receiptOf()`, asked by the gift row and by `receiptPdf`, so the PDF is reachable for exactly the
+gifts whose row advertises a receipt: not an imported Wix gift, and only status `issued` (`DonationReceipt::STATUS_ISSUED`
+and `STATUS_VOID` are new constants). A gift whose receipt was voided carries `receipt: null` and its own note
+(`RECEIPT_NOTE_GIFT_VOID`, "The tax receipt issued for this gift was voided, so it is not available here."), because "No
+tax receipt has been issued" would be untrue of it. The PDF is the same one 404 as every other way of not being entitled.
+Tests: `MemberGiftsAndReceiptsTest::a_voided_receipt_is_neither_advertised_on_the_gift_nor_served_as_a_pdf` (issued, then
+voided: the row loses `receipt` and gains the note, the PDF goes 200 to 404) and a voided gift added to
+`every_way_of_not_being_entitled_to_a_receipt_is_one_and_the_same_404`.
+(5) PAGE LINKS KEEP THE QUERY STRING, AND THE ROUTES ARE NAMED INTO THE ERROR ENVELOPE (m9, m10). The paginators were built
+with no `withQueryString()`, so `GET me/orders?per_page=50` answered `next_page_url` `...?page=2` and a client that
+followed it got page 2 at the default 15: rows 16-30 again, 51 onward missed. Both lists now call `withQueryString()`
+(the admin lists' precedent, `FormResponsesController`), so `first_page_url`, `last_page_url`, `next_page_url`,
+`prev_page_url` and every `links[].url` carry `per_page`. The shape stays the admin lists' (`data` is the paginator);
+the Mobile realm's `{items, pagination}` shape that `HadithsController` uses is not adopted (DECISIONS (6) of slice 6
+chose the admin shape and nothing new argues against it: an owner question if the apps want the other).
+The four routes were unnamed, so `MobileErrorEnvelope::ROUTES` (`mobile.member.me.*`) did not apply: a 401, 403 or 429
+from the stack or the limiter had no `data` object, the iPhone app's `Response<T>` cannot decode that, and a member who
+refreshed the orders list past 30 a minute would have seen a generic error. They are now `mobile.member.me.orders.index`,
+`.orders.show`, `.gifts.index` and `.receipts.pdf` (one `->name('mobile.member.me.')` on the `/me` group), and the
+envelope's docblock, the `respond()` comment in bootstrap/app.php and `.claude/rules/auth-permissions.md` say the prefix
+covers the portal's reads.
+Tests: `MemberOrdersTest::the_page_links_keep_the_page_size_that_was_asked_for` and the same in
+`MemberGiftsAndReceiptsTest` (every link carries `per_page=2`, and following `next_page_url` gives page 2 of 2, not of 15);
+`MemberOrdersTest::every_refusal_at_the_door_carries_an_empty_data_object` (the exact 401 body, the family-token 403 and the
+foreign-organisation 403) and a `"data":{}` assertion on the 429 in the limiter test;
+`MemberGiftsAndReceiptsTest::the_routes_are_named_under_the_prefix_the_error_envelope_matches_and_their_refusals_carry_data`
+(the four names exist; the 401 of the gifts door and of the PDF door).
+(6) TEST GAPS CLOSED, NO CODE CHANGED (m4-m8, m14). Six rules were stated in DECISIONS and ASSUMPTIONS and had no test that
+fails without them; each is now pinned, and none exposed a bug (every one passed against the code as it stood, by
+reading it: nothing was run). `MemberPurchasesTest`: `a_paid_status_without_a_payment_method_is_not_a_money_leg` (m5: the
+existing row had BOTH columns null, so the `payment_status` clause excluded it on its own),
+`an_order_line_of_another_organisation_hides_none_of_this_ones_rows` (m6: a line of organisation B recording this
+organisation's row numbers, beside a same-organisation control that does hide), and
+`a_soft_deleted_member_gets_empty_lists_though_the_row_still_holds_a_verified_address` (m14, the liveness check
+`verifiedAddress()` leans on). `MemberOrdersTest`: `a_lunch_total_is_what_was_paid_not_what_the_order_is_now` (m4:
+`settled_total_minor` 2160 against a current total of 3000), `a_form_row_written_before_the_cents_columns_falls_back_to_its_decimal_amount_and_to_due_plus_fee`
+(m7: 30.29 is 3028.9999999999995 as a float, so a cast in place of `round()` shows 3028; and a NULL total shows due plus
+fee) and `every_source_dates_an_evening_purchase_at_the_organisations_calendar_day` (m8: 03:30 UTC on the 6th is the 5th
+in New York, for a form, a lunch and a Wix order). One observation, not changed: `FormResponse::owedMinor()` already
+turns the legacy decimal into cents without a float, and the projector re-does it with `round((float) ...)`; the two agree
+for every two-place decimal, so it is a house-fit point, not a defect.
+(7) DOCS CORRECTED (m11, m12, m13). m11: `LOWER(TRIM(col)) = ?` defeats an index on the column (`form_responses.respondent_email`
+is indexed; `orders.buyer_email` and `meal_orders.customer_email` are not), and the exact check in (1) adds one narrow query
+per address arm: recorded as a perf note, not changed, in ASSUMPTIONS #60 (written with (1)). m12: the docblocks said the
+admin receipt download "refuses" an imported Wix gift; it does not. `DonationsController::receiptPdf` 404s only when no
+receipt row exists, and only `issueReceipt` and `ReceiptService::issueFor` refuse a historical gift, so the portal's two
+refusals (a Wix gift, a voided receipt) are its own and stricter than the admin download's; the controller and projector
+docblocks now say so. m13: ASSUMPTIONS #47 and the "Nothing was RUN" sentence of the first entry said the suites had never
+executed. They ran on the CI box on SQLite, 83/83 at 5690ed6f (the pre-rebase tip; the rebase changed no portal file). What
+is still true, and is now what #47 says: CI's MySQL job runs migrations only, so the union, the shortlist keys and the
+`LOWER(TRIM())` comparisons have never executed on MySQL, and this fix round was written without PHP and has run on neither
+driver.
+
+## 2026-09-30 — Pre-merge fixes (group A)
+
+Off the ship-critic (`design/ship-critic-2026-09-30.json`), on `fix/cart-premerge-a` (base 3345ac28). Group B works the money path in a sibling worktree on disjoint files. Written without PHP: nothing here has run. Each fix has a NEW test that, read against the old code, fails without it; the last line of each says which.
+
+(A1) THE MEMBER PORTAL GOES DARK BEHIND A SWITCH, AND STAYS DARK UNTIL THE OWNER PICKS ITS CLIENT AND ANSWERS ASSUMPTIONS #61.
+`config/member_portal.php`: `enabled` (`MEMBER_PORTAL_ENABLED`, default false; a typo reads as off) and `masjid_ids`
+(`MEMBER_PORTAL_MASJID_IDS`; empty = every organisation once on; a malformed list becomes `[0]`, nobody, by the same parser
+as `config/cart.php`). `EnsureMemberPortalEnabled` (alias `member.portal`, on the `/me` group of `routes/api.php`) reads the
+ROUTE's `{masjid_id}` (these routes carry the organisation in the URL, unlike the cart's header) and throws the router's own
+404 with the router's own message, so a dark route is the same bytes as an unknown one. (Round 2, R2-2: as first written it was not,
+because the exception rendered on a MATCHED `mobile.member.me.*` route and `MobileErrorEnvelope` added `data:{}` to it. It is now a
+`DarkRouteException`, a `NotFoundHttpException` the envelope skips.) It is ranked ahead of authentication with
+`prependToPriorityList(before: AuthenticatesRequests::class, ...)`. The cart gate is only ranked ahead of `ThrottleRequests`, and
+authentication ranks ahead of the throttles, so a portal gate placed the same way would run behind `auth:family` and answer an
+unauthenticated probe with a 401 where a missing route answers 404. Alternatives: (a) unregister the routes when off, rejected because the route cache would
+then differ between states, as the cart's decision says; (b) a `crm`-style capability, rejected because the owner has not
+chosen a client and a per-organisation capability row is a production data change. The suites that drive the routes turn the
+portal on in their setUp (`BuildsMemberPortal::turnMemberPortalOn()`). Tests: `MemberPortalGateTest` (off is the router's 404
+with no token, a junk token and a real one; the token is never looked at (`last_used_at` stays null); the `mobile` limiter closure
+never runs; no rate-limit header; 35 calls never reach a 429; the SORTED stack from `Router::gatherRouteMiddleware` puts the gate
+before `Authenticate` and every `ThrottleRequests` on all four routes; the allowlist, the fail-closed `[0]`, the master switch over
+the allowlist, the route's id over a header), `MemberPortalConfigTest` (the env parser). Fails without the fix: the off tests, from
+round 2 on. As first written they did NOT: `BuildsMemberPortal::portalUrl()` already prefixed `me/`, and the test's paths did too, so every
+call went to `/me/me/...`, a route that does not exist, and the off tests passed with no gate at all. Only the calls to
+`enabledFor()` and the sorted-stack test depended on the gate. Round 2 (R2-1) removes the doubled prefix and makes each off test first assert
+that its URL is a real route (switched on, it answers the portal's 401); only then do the off assertions mean anything.
+(A2) A FUND CANNOT BE DELETED WHILE A BASKET LINE STILL NEEDS IT. `FundsController::destroy` answers 409 with one sentence while an
+`order_items` row of type `donation` for that fund sits on a `pending` order, or on a `paid` order with `record_id` null (the
+LINE's `record_id`: `orders` has none). Settlement of a gift line throws when the fund is gone, and for a paid basket that is a
+payment taken with no gift recorded and a webhook Stripe retries for ever. Funds stay hard-deleted; deactivating is the answer the
+sentence gives. The check skips itself when the cart tables do not exist yet (the deploy window before `migrate`). Alternative:
+soft-deleting funds, rejected as a schema change to a table that the mobile app, receipts and reports all read. Tests:
+`FundDeleteBasketGuardTest` (pending refused, paid-unrecorded refused, paid-recorded / expired / another fund's line / a meal line
+with the same number / no basket at all still delete). Fails without the fix: the two refusals.
+(A3) THE STAGING SCRUB NULLS `orders.basket_fingerprint`, an unsalted sha256 over the same answers as `order_items.cart_payload_hash`
+(which was already nulled): a short answer set can be guessed back from it. It is only compared for equality at checkout, so NULL
+costs staging nothing. Test: `StagingScrubTest::a_baskets_fingerprint_never_reaches_staging`; `StagingScrubCoverageTest` needs no change
+(the name matches no PII token) and still holds (the column exists). Fails without the fix.
+(A4) `StripeWebhookController::deliverReceipt` LOGS THE EXCEPTION CLASS, NOT ITS MESSAGE, for a failed send and for a failed PDF render.
+A transport's message quotes the recipient ("550 no such user donor@example.org"). The donation id stays in the context, which is what
+staff need. It is the live donation path too, and the change is an improvement there. Test:
+`DonationReceiptPdfTest::a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient` (a transport whose refusal quotes the
+address, a `MessageLogged` listener as the spy). Fails without the fix.
+(A5) TEST ONLY: `FormSubmissionTest` now asserts the public door stores `device_id`, the request IP and the (1000-character) user agent on the
+FormResponse. The writer's own test hands it a made-up origin; dropping the door's `$origin` array left every door suite green. Passes
+against the code as it stands (it pins a behaviour that exists); it fails if the door stops passing the origin.
+(A6) `bin/deploy`'s "every application class is loadable" regex allows any run of `final|abstract|readonly`. Before it, `final readonly class`
+(12 files: the cart's line outcomes and sources, the settlement result, the Studio value objects, `FormCharge`) was skipped, so a broken
+autoload entry for one passed the gate. `grep -rlE '^(final |abstract )?(class|interface|trait|enum) ' app | wc -l` = 939 (before);
+`grep -rlE '^((final|abstract|readonly) +)*(class|interface|trait|enum) ' app | wc -l` = 951 (after). Test: `DeployClassGateRegexTest`
+reads the regex OUT of `bin/deploy` (no copy to drift) and checks every declaration form plus that no file under `app/` is skipped. Fails without
+the fix (the readonly forms and the whole-tree walk).
+(A7) `WixContactImport`'s UNDO CHECK APPLIES THE SAME CONDITIONS DELETION USES. `heldBy()` walked `OFFICE_RECORDS + LOGIN_RECORDS` without
+`OFFICE_RECORD_CONDITIONS`, so once the cart is on an unpaid or expired order would hold a contact against an undo, and so would an
+abandoned basket. Now an order counts only when `paid`, and `carts` is skipped (it cascades away with the contact, and a signed-in shopper's
+login columns hold the undo on their own). Tests: `WixContactImportTest::undo_is_not_held_by_an_unpaid_checkout_or_an_abandoned_basket` (fails
+without the fix), `undo_is_still_refused_once_an_imported_contact_has_a_paid_order` (passes with or without it: it pins the other direction).
+(A8) DOCS. ASSUMPTIONS #61 now covers the imported Wix orders as well as the gifts (both listed by `contact_id` alone); ASSUMPTIONS "PM-A6" records
+the Connect endpoint's subscription list and recommends the owner/ops call to add `checkout.session.expired` and `payment_intent.payment_failed`,
+noting the code has no `payment_intent.payment_failed` arm today; `.claude/rules/stripe-payments.md` "Universal cart" carries the portal
+switch, the fund-delete guard, the scrub, the log line and the subscription fact.
+## 2026-09-30 — Pre-merge fixes (group B): money path, settlement, prune, deletion
+
+From the ship-critic's confirmed findings and minors (`design/ship-critic-2026-09-30.json`), base `feat/universal-cart` @ 3345ac28.
+Group A (portal switch, office side, tooling, docs) worked in a sibling worktree on disjoint files. NOTHING WAS RUN: there is no
+PHP here, so every test below was written by reading the code it exercises and none has been executed on either driver.
+
+(B1) `orders.charge_flag` is `string(32)`. 'partially_refunded' is 18 characters and the column was 16: MySQL in strict mode refuses
+it (error 1406), SQLite does not, so every partial refund of a basket would have failed to record and been swallowed by
+`handleChargeFlag`'s catch-all. The unshipped migration is edited in place (neither cart migration has run on staging or
+production, per the brief; if that is wrong for staging an ALTER migration is needed instead, ASSUMPTIONS B-5). THE AUDIT of every
+string column in `2026_09_27_090000_create_carts_table` and `2026_09_28_090000_create_orders_table` against everything the code
+writes found one more that was tight: `orders.charge_account_id` was `string(64)` and is copied from `masjids.stripe_account_id`,
+which is `string(255)`; it is now 255 too. Everything else fits, and the widths that decide it are: statuses 16 (longest 'checked_out',
+11; 'pending'/'expired', 7), `recorded_as` 16 ('registration', 12), `buyable_type` 64 ('meal_item', 9), `record_type` 64
+('form_response', 13), currency 3 ('usd'), `order_number` 32 (8), `idempotency_key` 64 ('cart_order_' + uuid = 47), `charge_ref` 40
+('cref_' + 32 = 37, the tightest), `buyer_email` 255 (the door caps it at 190), `buyer_name` 120 and `buyer_phone` 32 (both
+`mb_substr`'d to the column), `label` 255 (a form, fund or dish name, each a `string(255)`; the basket's own copy is `mb_substr`'d),
+`client_line_key` 64 (the door's regex), digests `char(64)` (hex SHA-256/HMAC). `CartColumnWidthsTest` reads the declared widths out
+of both migrations and compares them with the longest value the code writes (a map next to the constants), fails when a new string
+column has no recorded maximum, and reads every string in the rows a real paid and partly refunded basket leaves.
+
+(B2) A refund or dispute before settlement is no longer lost. `CartPaymentService::recordPaymentIntent()` writes
+`orders.stripe_payment_intent_id` (once, `whereNull`, outside any transaction) as soon as an event has
+resolved the order and matched its page, BEFORE settlement is tried, so it survives a refusal (amount mismatch) or a throw (a fund
+that vanished). (Round 2, R2-4: only a checkout SESSION event whose id is the order's recorded page does this now; a payment-intent
+event records its intent at settlement, as before.) `flagOrder` then finds the pending order and flags it with its "flagged before settlement recorded it" warning.
+HAVING AN INTENT IS NOT BEING PAID, proved by grep over `app/`: the only readers of `orders.stripe_payment_intent_id` are
+`flagOrder` (finds the order), `CartSettlementService` (writes it; `noteRepeat` reads it on an already PAID order) and now
+`PruneCarts` (treats pending-with-intent as a payment to reconcile); everything that decides "paid" reads `status`
+(`Order::isPaid()`, `MemberPurchases` `orders.status = paid`, `CartOrdersController`, `CartCheckoutService` PENDING/PAID reads).
+`CartPreSettlementFlagTest::having_an_intent_does_not_make_an_order_paid` pins the model, the payment-state read, the basket and the
+records. One consequence for settlement: an intent recorded early might not be the paying one (a holder's own users can write the
+metadata that identifies an order on their account), so step 3 now records the PAYING intent (`$paymentIntentId ?? recorded`); it
+used to keep whatever was there. CHANGED EXISTING TEST: `CartSettlementTest::an_amount_mismatch_settles_nothing_and_leaves_the_order_pending`
+asserted the intent stayed NULL after a refused settlement, which is the defect; it now asserts the intent is recorded and the order
+is still pending and not paid.
+
+(B3) A form line's record key is `cart:item:<order_item id>` (was `cart_item_<id>`), for tickets (`client_submission_key`, 64 wide)
+and gifts (`donations.idempotency_key`, 255). The public door accepts `^[A-Za-z0-9_-]{8,64}$`, so the old key could be submitted by
+anyone against the same form and settlement's `earlier()` would find THEIR row and mark it paid with the basket's payment; a colon is
+outside that alphabet. `CartSettlementService::lineKey()` is the one place the key is built. Tests: the door's own rule refuses
+`cart:item:42` and accepts `cart_item_42`; a decoy row written under `cart_item_<id>` is neither captured nor marked paid. Existing
+tests that spelled the old key were updated (`CartSettlementTest`, `FormResponseWriterTest`). `.claude/rules/stripe-payments.md` (group A's
+file) now says `cart:item:<id>`, which group A wrote against the brief and which round 2 (R2-7) checked against `CartSettlementService::lineKey()`.
+
+(B4) `cart:prune` also deletes `pending` orders, with their lines, because an order never becomes `expired` on production (the
+Connect endpoint does not subscribe to `checkout.session.expired`): with NO intent on record once `checkout_expires_at` is more than
+`expired_order_days` (7) past; WITH an intent once it is more than `cart.prune.pending_with_payment_days` (new, default 30, floor 7,
+env `CART_PRUNE_PENDING_WITH_PAYMENT_DAYS`) past, and those orders are logged at WARNING with each order's number, payment intent and
+amount (the rows are gone afterwards; no name, address or answer is logged). (Round 2, R2-3 and R2-6: an `expired` order follows the
+same rule, and the WARNING is one per chunk of 100 with every deleted order listed, not one capped at 100.) A debit that succeeded would have settled through
+`payment_intent.succeeded`, so a pending order with an intent this long after is a payment to reconcile in Stripe. `paid` is never
+touched; each delete names the status (and the missing intent) again so an order that settled or was named between read and delete
+is skipped. Boundaries tested (7 and 30 days exactly are kept), plus dry run, the config floor and the log. CHANGED EXISTING TEST:
+`CartPruneTest::an_expired_order_more_than_a_week_past_its_page_goes_...` kept a pending order 30 days old "however old"; it now
+keeps a pending order 3 days old and a pending-with-intent order exactly 30 days old.
+
+(B5) `CartRefundArmIsolationTest`: the cart arm's own first query throws (a `DB::listen` on `select * from "orders"`) and the form arm
+still flags the refund and the dispute, the webhook answers 200 and the cart arm logs the class only. It passes against the code as
+it stands (the try/catch exists); it fails if the try/catch is removed.
+
+(B6) `App\Support\CartTables::has($table)`: `Schema::hasTable` memoised per process (an existing table for good, a missing one for 30
+seconds so a long-lived worker recovers). Guards the form refund arm's `whereNotExists(order_items)`, the cart's own refund arm (it
+logged a false error line per refund), `MemberAccountDeletion`'s carts and orders steps and its `reasonsToKeep` read of `orders`.
+`CartDeployWindowTest` drops the four tables. Not guarded, outside group B's files or the brief: the `ContactsController` merge, the
+portal routes (dark behind group A's switch), and `WixContactImport`'s undo (a console command).
+
+(B7) `settleLocked`'s first read is MOVED OUT of the transaction, not made a locking read: `settle()` reads
+`(id, masjid_id, cart_id)` of the order before `DB::transaction` opens. Making it `FOR UPDATE` would lock the ORDER before the CART,
+the reverse of checkout's order, and invite the deadlock the cart-first order exists to avoid. Safe because that read only decides
+WHICH cart to lock, an order's `cart_id` never changes except to NULL when its basket is pruned (then there is no cart to lock and
+`closeCart` does nothing, exactly as before), and everything that matters (the cart, the order, the lines) is read afterwards under
+the locks; InnoDB's locking reads see the latest committed rows and do not fix the REPEATABLE READ snapshot, so the first plain read
+now comes after both locks. `CartSettlementLockOrderTest` pins the statement order (basket id before BEGIN, cart lock first inside).
+SQLite cannot show the anomaly; the concurrent case has not run on MySQL.
+
+(B8) `pinToHolder` asks `CartPaymentService::accountHolder()` (now `public static`; live before trashed, and the trashed lookup
+`orderBy('id')`) instead of an unordered `withTrashed()->pluck()->first()`; the link's own holder (`forms_card_via_masjid_id`)
+still wins while it holds the pinned account. `CartPinToHolderTest`.
+
+(B9) Delete account also clears the buyer's name, phone and address on UNPAID (pending or expired) orders in the member's
+organisation whose `buyer_email` is EXACTLY their `login_email` or `email` (`ContactIdentity::keepExactMatches`; the query is only
+`LOWER(buyer_email) = LOWER(?)`, a shortlist), because the public door always writes `contact_id` NULL. Paid orders are never
+touched. `order_items.payload` (attendee names) and `basket_fingerprint` are NOT cleared: a pending order can still be paid by a
+delayed method and settlement writes its records from the payload; `cart:prune` removes the whole order (B4). Tested including a
+look-alike under the `FoldsAccentsLikeUnicodeCi` stand-in, in both directions.
+
+## 2026-09-30 — Pre-merge fixes, round 2 (from the Opus checks of groups A and B)
+
+From `design/premerge-fixes-check-2026-09-30.json`, worked on `feat/universal-cart` @ 1aaae2ab (groups A and B merged on 3345ac28). Framework
+behaviour was read in `~/Developer/MasjidWebMS/vendor` (Laravel 12.64.0, the version `composer.lock` pins). NOTHING WAS RUN: there is no PHP here,
+so every test below was written by reading the code it exercises and none has been executed. "Fails without the fix" below means read against the
+code before the fix, not a run.
+
+(R2-1) `MemberPortalGateTest` WAS VACUOUS, AND IS NOT NOW. `ROUTES` and every literal passed `me/orders` and the like to `portalUrl()`, which already
+prefixes `me/`, so each HTTP call went to `/me/me/...`. The prefix is gone from the paths (no other suite had it). Each off test now first calls
+`assertTheRouteIsReal()`: with the switch ON for everyone, an unauthenticated call to the same URL must answer the portal's 401, which a path no route
+matches can never do (it answers the router's 404); the switch is put back as the test had it. The helper `bare()` drops sticky headers and the
+guard's memoised user first, because `withHeader()` STAYS on the test for every later call, so a "no token" call after `asMember()` had been a member's
+call. `on_an_unauthenticated_call_is_the_stacks_401_not_the_gates_404` now covers all four routes. Fails without the fix: nothing here is a code fix.
+The old paths made `switched_on_the_routes_answer` and the unauthenticated 401 test fail, and the off tests pass vacuously; the premise is what fails
+against a wrong URL.
+
+(R2-2) A DARK PORTAL ROUTE IS THE UNKNOWN ROUTE'S BYTES. `EnsureMemberPortalEnabled` throws after the route has matched, and the `exceptions->respond()`
+hook (`MobileErrorEnvelope::withDataKey`) then added `data:{}` to that 404, as it does to every JSON refusal on a route named `mobile.member.me.*`;
+a path that matches no route never reaches it, so a probe could tell "switched off" from "never built". Chosen: a dedicated
+`App\Exceptions\DarkRouteException extends NotFoundHttpException` (the router's own message, `forPath()`), which the gate throws and the envelope
+skips; `withDataKey()` takes the exception as an optional third argument and `bootstrap/app.php` passes it. Alternative: a request attribute the hook
+reads, rejected because the exception already carries the fact through the handler unchanged (`prepareException` returns an HttpException as it is) and a
+class cannot be forgotten to be set. Every other refusal on these routes, including a controller's own 404, keeps its envelope (the iPhone app decodes
+`data`). Tests: `MemberPortalGateTest::off_every_portal_route_is_the_same_404_as_a_route_that_does_not_exist` now compares the status, the body's bytes and
+every header but `Date` of the unknown route with the dark answer, for no token, a junk token and a real member's, on all four routes;
+`off_the_404_has_no_data_key_where_the_portals_own_refusals_keep_theirs` pins the key's absence on the dark 404 and its presence on the 401s;
+`MobileErrorEnvelopeTest` pins it without HTTP (an ordinary `NotFoundHttpException` is decorated, a `DarkRouteException` is not, another route is untouched).
+Fails without the fix: the first two (the body differs by `"data":{}`) and the unit test (no such class).
+
+(R2-3) THE EXPIRED SWEEP OF `cart:prune` FOLLOWS THE PENDING RULE. B2 records an intent early, and `markExpired` / `closePage` expire an order when the shopper
+checks out again, possibly while a delayed debit from the earlier page is still clearing; the expired sweep deleted such an order 7 days after its page
+closed, ahead of the 30 days B4 gives a pending order with an intent, and with no reconcile list. Now an `expired` or a `pending` order WITH an intent goes
+after `pending_with_payment_days` (30), and one WITHOUT after `expired_order_days` (7); the two statuses share `sweepWithoutIntent()` and
+`sweepWithIntent()` (each delete names the status and the intent condition again). The console prints and logs a third count
+(`expired_orders_with_payment`); existing keys and output strings are unchanged. Tests: `CartPruneTest::an_expired_order_with_a_payment_intent_waits_thirty_days_and_one_without_waits_a_week`
+(no intent: 8 days goes, exactly 7 stays; intent: 31 goes, exactly 30 and 8 stay; the WARNING lists the 31-day one) and
+`a_dry_run_counts_expired_orders_with_a_payment_intent_and_deletes_none`. Fails without the fix: the 8-day order with an intent was deleted.
+
+(R2-4) THE EARLY PAYMENT-INTENT RECORD CAN NO LONGER BE SQUATTED. `recordPaymentIntent()` wrote the first intent any resolved event named, before the
+amount and currency checks. On a holder's account the holder's own users can write `cart_charge_ref` metadata on a PaymentIntent, so a stray or forged
+one could take the write-once slot, keep the real payment's intent off the order, and (refunded) flag the order. Now it records ahead of settlement ONLY
+from a checkout SESSION event whose id equals the order's `stripe_checkout_session_id`: the page the app opened, so the intent Stripe made for it is the
+order's. `handlePaymentIntentSucceeded()` no longer calls it, so a payment-intent event records its intent only when it settles the order, as before B2. An
+order that has recorded no page yet records nothing early (there is no page to match). Alternative: keep trusting a payment-intent event and check the
+amount first, rejected because a forged event can carry the right amount and the slot is write-once. Cost, accepted (ASSUMPTIONS R2-4): a payment that
+reaches only a refused payment-intent event has no intent on the order, so an early refund or dispute of it is not found. Tests:
+`CartPreSettlementFlagTest::a_forged_payment_intent_event_does_not_take_the_slot_and_the_genuine_session_event_still_records_its_intent` (own account),
+`on_a_holders_account_a_forged_payment_intent_event_does_not_take_the_slot_either` (a `charge_ref` basket), `a_session_event_records_early_only_for_the_page_the_order_recorded`.
+CHANGED EXISTING TEST: `a_payment_intent_event_that_settlement_refuses_records_its_intent_too` asserted exactly the behaviour removed; it is replaced by the
+first of these. Fails without the fix: all three.
+
+(R2-5) `CartPaymentService::handleChargeFlag()`'S TABLE CHECK IS INSIDE ITS TRY. The `CartTables::has('orders')` guard sat above the try/catch, so a database that
+could not answer `Schema::hasTable` would have thrown ahead of the form refund arm that runs after it, which the method's "never throws" promise and B5 exist to
+prevent. It is now the first statement inside the try. Tests: `CartRefundArmIsolationTest::a_refund_still_flags_the_form_row_when_the_cart_arms_table_check_throws`
+and `a_dispute_...`, which break only the `orders` question (a `DB::listen` on the SQLite grammar's `sqlite_master ... name = 'orders'`, after `CartTables::forget()`), so
+the form arm's own `order_items` guard still answers. Fails without the fix: the form row was not flagged and the webhook answered 500.
+
+(R2-6) THE PRUNE'S RECONCILE LIST IS NOT CAPPED. The single WARNING sliced `listed` to 100, and it is the only record staff can reconcile from once the rows are
+deleted. `sweepWithIntent()` now reads and deletes 100 orders at a time (`RECONCILE_CHUNK`, `chunkById`, safe with deletes) and logs one WARNING per chunk
+listing every order that chunk deleted (number, organisation id, intent, amount, currency; no buyer). Alternative: one WARNING per order, rejected as noisier for the
+same information. Test: `CartPruneTest::every_deleted_order_with_an_intent_is_on_a_warning_however_many_there_are_and_none_carries_a_buyer` (250 orders, both statuses, each
+chunk's WARNING equals the expected list, three WARNINGs in all, no buyer name, email or phone in any). Fails without the fix: the list stopped at 100.
+
+(R2-7) DOCS made true on the merged branch: ASSUMPTIONS PM-A1 (what the dark 404 is, and what it is not), PM-A3 (the vendor source was read: index 5), B-4 and B-5 (edited
+for R2-3 and R2-4), a new "round 2" table (R2-0, and R2-2 to R2-6); (A1), (B2), (B3) and (B4) above carry an inline "Round 2" note; `.claude/rules/stripe-payments.md` (the key is
+`cart:item:<id>`, which was already true of `CartSettlementService::lineKey()`; its retention paragraph is rewritten for B4, R2-3 and R2-6, and the refund paragraph for R2-4 and R2-5);
+`config/staging_scrub.php` says `order_items.cart_payload_hash` is "(above)" the orders list, which it is.
+
+## 2026-09-30 — Pre-merge fixes, round 3 (the point's live-path review)
+
+From the point's review of the live paths: GO, with 0 blockers and 0 majors, once the deploy-window guards are folded in. Worked on `feat/universal-cart` @ aa05b84b.
+bin/deploy makes the new code live BEFORE `migrate`, so for that window the cart tables do not exist. NOTHING WAS RUN: there is no PHP here, so every test below was
+written by reading the code it exercises and none has been executed. "Fails without the fix" means read against the code before the fix, not a run.
+
+(R3-0) THE RULE FOR A TABLE CHECK: ONLY A GENUINELY MISSING TABLE SKIPS; A FAILED CHECK FAILS CLOSED ON ANY PATH THAT DELETES OR MOVES DATA. (A design correction from the
+point's review, applied in this round: item 4 of the brief, read as written, would have made `CartTables::has()` swallow a throwing check for every caller.) A check that throws means "I could not tell", which is a different thing
+from "the table is not there". Swallowing it as "absent" is right only where absent is harmless, and wrong where it skips a look at `orders`: a member holding paid orders
+would be erased, a merge would leave the source's paid orders to the foreign key's SET NULL, and an import's undo would delete a contact orders still name. So
+`App\Support\CartTables` has two questions. `has()` FAILS SAFE (catches, logs ONE warning per process by class, answers absent, never remembers a failure): the live form
+refund arm (R3-4) and `cart:prune` (R3-3) only. `existsOrFail()` FAILS CLOSED (false only for a table that genuinely does not exist; a failed check propagates, so the
+caller's transaction rolls back and the operator sees an error): `MemberAccountDeletion` (both steps and `reasonsToKeep`), `ContactsController::merge` (R3-1),
+`WixContactImport::heldBy` (R3-2), and `CartPaymentService::handleChargeFlag` (its catch logs the failure at error, as before, instead of reading it as "no orders table" and
+losing a flag on a real order in silence). Alternative for the strict question: trust a remembered absence like `has()` does; rejected, because the remembered absence can be
+up to 30 seconds stale and these paths delete data, so `existsOrFail()` asks again (one statement on a path that runs rarely). Tests: `CartDeployWindowTest`
+(`the_fail_safe_question_answers_absent_and_warns_once_and_a_failure_is_never_remembered`, `the_strict_question_lets_a_failed_check_propagate_and_says_false_only_for_a_table_that_is_missing`,
+`the_strict_question_does_not_trust_a_remembered_absence`, `what_an_account_deletion_keeps_a_member_for_is_not_decided_by_an_orders_check_that_threw`,
+`an_account_deletion_whose_baskets_check_threw_is_rolled_back_whole`, and, from c85b8bbb, `an_account_deletion_whose_unpaid_checkout_check_threw_is_rolled_back_whole`); the existing `CartRefundArmIsolationTest` is unchanged and still needs the cart arm to use the strict
+question (its check must reach the arm's catch and log at error). Fails without the fix: the last two fail if deletion used `has()` (the member is erased, or the
+deletion carries on past the failed step).
+
+(R3-1) THE CONTACT MERGE. `ContactsController::merge` moved `orders.contact_id` with no guard, so every admin merge answered 500 until migrate finished. The orders move now
+sits behind `CartTables::existsOrFail('orders')`; the `meal_orders` move stays unconditional (an old table). The brief said "and the carts move if one exists": the merge has NO
+carts move (an open basket is the shopper's half-finished choice; `carts.contact_id` cascades off the source's force-delete), so there was nothing to guard there. Tests:
+`CartDeployWindowMergeTest::a_merge_in_the_window_succeeds_and_moves_everything_that_is_not_a_cart_order` (tables dropped; gift, lunch and imported Wix order follow to the
+survivor) and `a_merge_whose_orders_check_cannot_be_answered_fails_whole_and_orphans_no_paid_order` (500, source kept, paid order neither moved nor nulled, earlier moves rolled
+back). Fails without the fix: the first (500 on the missing table); the second (the old code never asked, so the merge answered 200), and it also fails if the fail-safe `has()` were used.
+
+(R3-2) THE WIX IMPORT UNDO. `WixContactImport::heldBy` ran `DB::table('orders')` unguarded, so an undo in the window failed on a missing table. It now skips a cart table that
+`existsOrFail()` says is genuinely missing (`carts` was already skipped as `GONE_WITH_THE_CONTACT`). Tests (`WixContactImportTest`): `undo_in_the_deploy_window_removes_what_the_run_created_exactly_as_before_the_cart`,
+`undo_in_the_deploy_window_is_still_refused_for_a_contact_the_office_holds` (refusal text unchanged), `an_undo_whose_orders_check_cannot_be_answered_stops_and_removes_nothing`.
+Fails without the fix: all three.
+
+(R3-3) THE PRUNE COMMAND. `cart:prune` is scheduled daily at 03:41 and had no guard. With any of the four cart tables absent it prints and logs one info line ("cart tables
+not migrated yet; nothing to prune", with the missing names as context), exits 0, and issues no statement that names a cart table; `--dry-run` takes the same path. It uses the
+fail-safe `has()`: a check that cannot be answered also skips the night (the line then says "not migrated", which is a small untruth, and the one `has()` warning says why).
+Skipping is harmless for a sweep that runs again tomorrow. Tests (`CartDeployWindowTest`): `the_prune_in_the_window_logs_one_info_line_exits_zero_and_touches_no_cart_table`
+(a `DB::listen` collects any statement naming a cart table) and `the_prune_skips_the_night_and_deletes_nothing_when_the_table_check_itself_throws` (an expired basket stays).
+Fails without the fix: both.
+
+(R3-4) THE LIVE FORM REFUND ARM. `FormResponsePaymentService::handleChargeFlag` called `CartTables::has('order_items')` outside any try, on the live form refund path, so a
+database that could not answer the question turned a refund into a 500. `has()` itself now fails safe (R3-0), so the arm skips the cart exclusion and behaves exactly as before the
+cart. Test: `CartDeployWindowTest::a_live_form_refund_is_still_flagged_and_answered_200_when_the_order_items_check_itself_throws` (a `DB::listen` on the SQLite grammar's
+`sqlite_master ... name = 'order_items'` throws; the pinned row is flagged, the webhook answers 200, one warning by class, no error line). Fails without the fix: the exception left
+the arm, the row was not flagged and the webhook answered 500.
+
+(R3-5) A FAILED RECEIPT EMAIL LOGS A SCRUBBED REASON. `StripeWebhookController::deliverReceipt` logged the exception class only, which told staff nothing about why a receipt did not
+go. It still logs `error` (the class) and now also `reason`: the exception message with the recipient's address replaced by `[recipient]`, then any remaining text of the shape
+`[^\s@<>"']+@[^\s@<>"']+` by `[email]`, cut to 300 characters (the cut last, so it cannot leave half an address). Only the SEND failure: the PDF render failure stays class-only, because its
+message can quote the letter's names and no pattern finds a name. If the pattern itself fails, `reason` is empty rather than unscrubbed. Tests (`DonationReceiptPdfTest`): the send test now
+asserts `reason` is `550 5.1.1 no such user [recipient]` and that no line holds the address (the transport's own text may now appear); a new test with two more addresses (one in capitals, in angle
+brackets) and a 400-character tail asserts the exact scrubbed, 300-character reason. The render-failure test is unchanged. Fails without the fix: both (no `reason`). CHANGED EXISTING TEST:
+`a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient` no longer asserts the transport's text is absent.
+
+(R3-6) RECORDED, NOT CHANGED: A DARK ROUTE ANSWERS 405 FOR A WRONG METHOD, AND AN OPTIONS PREFLIGHT IS ANSWERED. Both reveal that the path exists, which the 404 of a switched-off portal
+route (R2-2) otherwise hides. Requests with a declared method are byte-identical to an unknown route's. Accepted, because the repository is public, so the route list is not a secret. No
+code change, no test.
+
+(R3-7) DOCS made true: the `CartTables` class comment (two questions, the rule, the memo), `.claude/rules/stripe-payments.md` (the cart arm asks the strict question), the `CartRefundArmIsolationTest`
+class comment, and ASSUMPTIONS "Pre-merge fixes (round 3)". B6 above says the merge and the undo were "not guarded"; R3-1 and R3-2 supersede that.

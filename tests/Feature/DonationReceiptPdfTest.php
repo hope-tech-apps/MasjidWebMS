@@ -12,9 +12,14 @@ use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Receipts\StatementLetterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\View;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mailer\Transport\AbstractTransport;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -247,6 +252,134 @@ class DonationReceiptPdfTest extends TestCase
         $this->assertNotNull($donation->fresh()->receipt_delivered_at);
         // Delivered exactly once — the second event must not re-send.
         $this->assertCount(1, app('mailer')->getSymfonyTransport()->messages());
+    }
+
+    /**
+     * A mail transport whose refusal is whatever $text makes of the addresses it was given, as a real
+     * SMTP server's quotes the address it refused.
+     *
+     * @param  \Closure(list<string>): string  $text
+     */
+    private function refuseEverySendWith(\Closure $text): void
+    {
+        Mail::extend('refusing', fn () => new class($text) extends AbstractTransport {
+            public function __construct(private readonly \Closure $text)
+            {
+                parent::__construct();
+            }
+
+            protected function doSend(SentMessage $message): void
+            {
+                $to = array_map(
+                    static fn ($address): string => $address->getAddress(),
+                    $message->getEnvelope()->getRecipients()
+                );
+
+                throw new \RuntimeException(($this->text)($to));
+            }
+
+            public function __toString(): string
+            {
+                return 'refusing';
+            }
+        });
+        config(['mail.default' => 'refusing', 'mail.mailers.refusing' => ['transport' => 'refusing']]);
+    }
+
+    #[Test]
+    public function a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient(): void
+    {
+        // A transport whose refusal quotes the address it was given, as real SMTP servers do.
+        $this->refuseEverySendWith(fn (array $to): string => '550 5.1.1 no such user ' . implode(',', $to));
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        // The failed send never fails the webhook, and the gift is not marked delivered.
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+        $this->assertNull($donation->fresh()->receipt_delivered_at);
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt email failed to send'));
+
+        $this->assertCount(1, $failures, 'the failed send is logged once');
+        $this->assertSame($donation->id, $failures[0]->context['donation_id']);
+        $this->assertSame(\RuntimeException::class, $failures[0]->context['error']);
+
+        // The transport's own words are kept, because they tell staff a mistyped address from an outage;
+        // the address in them is not.
+        $this->assertSame('550 5.1.1 no such user [recipient]', $failures[0]->context['reason']);
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsString('donor@test.local', $line, 'no log line quotes the recipient');
+        }
+    }
+
+    #[Test]
+    public function a_failed_receipt_sends_reason_scrubs_every_address_in_it_and_is_capped_at_300_characters(): void
+    {
+        // A refusal that quotes the recipient, two OTHER addresses (one in angle brackets, in capitals), and a long tail.
+        $this->refuseEverySendWith(fn (array $to): string => 'relay denied for ' . implode(',', $to)
+            . ' (bounces go to postmaster@mail.example.org and cc <Ops.Team@Example.ORG>) ' . str_repeat('x', 400));
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt email failed to send'));
+
+        $this->assertCount(1, $failures, 'premise: the failed send is logged once');
+
+        $scrubbed = 'relay denied for [recipient] (bounces go to [email] and cc <[email]>) ' . str_repeat('x', 400);
+
+        $this->assertSame(mb_substr($scrubbed, 0, 300), $failures[0]->context['reason'], 'recipient, then any other address, then the cut');
+        $this->assertSame(300, mb_strlen($failures[0]->context['reason']));
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsStringIgnoringCase('donor@test.local', $line);
+            $this->assertStringNotContainsStringIgnoringCase('postmaster@mail.example.org', $line);
+            $this->assertStringNotContainsStringIgnoringCase('Ops.Team@Example.ORG', $line);
+        }
+    }
+
+    #[Test]
+    public function a_failed_receipt_render_is_logged_by_class_and_never_quotes_the_letter(): void
+    {
+        // A renderer whose failure quotes the letter it was drawing, as a template or PDF engine can.
+        $this->mock(DonationReceiptPdfService::class, function ($mock): void {
+            $mock->shouldReceive('pdfFor')->andThrow(new \RuntimeException('could not render the letter for Donor Name, donor@test.local'));
+        });
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        // A failed render never fails the webhook: the receipt goes without its attachment.
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt PDF render failed; sending receipt without the attachment'));
+
+        $this->assertCount(1, $failures, 'premise: the render failed and was logged once');
+        $this->assertSame(\RuntimeException::class, $failures[0]->context['error']);
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsString('donor@test.local', $line, 'no log line quotes the recipient');
+            $this->assertStringNotContainsString('Donor Name', $line, 'nor the letter the renderer was drawing');
+        }
     }
 
     // ============================= helpers =============================

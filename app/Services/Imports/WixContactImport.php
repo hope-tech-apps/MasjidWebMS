@@ -12,6 +12,7 @@ use App\Services\Broadcast\EmailSuppressionService;
 use App\Services\Member\MemberAccountDeletion;
 use App\Services\Sms\PhoneNumber;
 use App\Services\Sms\SmsConsentService;
+use App\Support\CartTables;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -164,6 +165,13 @@ final class WixContactImport
      * written to the contact.
      */
     private const COLUMNS_THE_IMPORT_WRITES = ['first_name', 'last_name', 'email', 'phone', 'notes', 'import_batch'];
+
+    /**
+     * Tables in MemberAccountDeletion::LOGIN_RECORDS whose rows cascade away with the contact
+     * (carts.contact_id is cascadeOnDelete) and are never a record the office keeps, so an
+     * undo does not count them. A signed-in shopper's other login columns still hold the undo.
+     */
+    private const GONE_WITH_THE_CONTACT = ['carts'];
 
     public function __construct(
         private readonly EmailSuppressionService $emailSuppression,
@@ -1203,11 +1211,34 @@ final class WixContactImport
         }
 
         foreach (MemberAccountDeletion::OFFICE_RECORDS + MemberAccountDeletion::LOGIN_RECORDS as $table => $columns) {
+            // An unpaid basket is the shopper's half-finished choice, not a record: its foreign
+            // key cascades, so the undo removes it with the contact, as an account deletion does.
+            if (in_array($table, self::GONE_WITH_THE_CONTACT, true)) {
+                continue;
+            }
+
+            // bin/deploy makes this code live before `migrate`: a cart table that is not there yet
+            // holds nothing, and asking would fail the undo with a query error, so the undo
+            // behaves exactly as it did before the cart. Only a table that genuinely is not there
+            // skips. The strict question, because this judgement decides whether a contact may be
+            // DELETED: a check that could not be answered must stop the undo, never read as "no
+            // orders" and let it remove a contact a paid order still names (CartTables).
+            if (in_array($table, CartTables::NAMES, true) && ! CartTables::existsOrFail($table)) {
+                continue;
+            }
+
             $query = DB::table($table)->where(function ($q) use ($columns, $contact) {
                 foreach ($columns as $column) {
                     $q->orWhere($column, $contact->id);
                 }
             });
+
+            // The same conditions an account deletion applies (an order is a record only once
+            // it is PAID). Without them, an abandoned checkout would hold the contact against
+            // the undo of the import that created it.
+            if (isset(MemberAccountDeletion::OFFICE_RECORD_CONDITIONS[$table])) {
+                $query->where(MemberAccountDeletion::OFFICE_RECORD_CONDITIONS[$table]);
+            }
 
             if ($table === 'contact_tag_links') {
                 $query->whereNull('import_batch');

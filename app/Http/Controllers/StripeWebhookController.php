@@ -8,11 +8,15 @@ use App\Models\Donation;
 use App\Models\DonationReceipt;
 use App\Models\FormResponse;
 use App\Models\Masjid;
+use App\Models\Order;
 use App\Models\StripeWebhookEvent;
+use App\Services\Cart\CartSettlementResult;
+use App\Services\Cart\CartSettlementService;
 use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\Letterhead;
 use App\Services\Receipts\ReceiptService;
+use App\Services\Stripe\CartPaymentService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\FormResponsePaymentService;
 use App\Services\Stripe\MealOrderPaymentService;
@@ -79,6 +83,17 @@ use Symfony\Component\HttpFoundation\Response;
  * seat), so it is acked and ignored exactly as before, and every other event takes
  * the route it took yesterday. Pinned by FormPaymentWebhookTest.
  *
+ * THE UNIVERSAL CART (slice 4b, owner decision 2026-09-28: records are created only once
+ * paid) adds the LAST question before the donation default: an object carrying
+ * `metadata.cart_order_uuid` (a basket paid on the organisation's own account) or
+ * `metadata.cart_charge_ref` (paid on a holder's account) goes to CartPaymentService,
+ * which settles the whole basket in one transaction (CartSettlementService). Without
+ * this arm a cart event would fall to the donation default and be silently booked as a
+ * donation. It is asked after every older question, and only when none of them matched,
+ * so the two families of key can never both route one event, and no payload that took an
+ * older route yesterday takes this one today. Pinned by CartWebhookRoutingTest and
+ * CartSettlementTest.
+ *
  * LUNCH TOP-UPS (owner, 2026-09-24) are asked about FIRST, before orders. A paid
  * order's customer pays the difference for a bigger order on its own Checkout
  * Session, whose metadata carries `kind` = MealOrderTopUp::STRIPE_KIND AND the
@@ -107,6 +122,7 @@ class StripeWebhookController extends Controller
         private MealOrderPaymentService $mealOrderPayments,
         private FormResponsePaymentService $formResponsePayments,
         private MealOrderTopUpPaymentService $mealOrderTopUps,
+        private CartPaymentService $cartPayments,
     ) {
     }
 
@@ -231,6 +247,9 @@ class StripeWebhookController extends Controller
         $isOrder = ! $isTopUp && MealOrderPaymentService::isOrderEvent($object);
         $isRegistration = ! $isTopUp && ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
         $isFormResponse = ! $isTopUp && ! $isOrder && ! $isRegistration && FormResponsePaymentService::isFormResponseEvent($object);
+        // Last, and only when no older question matched: a cart's keys are new, so this
+        // never changes where an event that used to route elsewhere goes.
+        $isCart = ! $isTopUp && ! $isOrder && ! $isRegistration && ! $isFormResponse && CartPaymentService::isCartEvent($object);
 
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
@@ -238,6 +257,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
             // A delayed payment method (a bank debit) completes the page with
@@ -250,6 +270,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
             // ...and this when it never does. Nothing was booked on the unpaid
@@ -266,6 +287,7 @@ class StripeWebhookController extends Controller
                     'checkout_session_id' => $object['id'] ?? null,
                     'account' => $account,
                 ]),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handleAsyncPaymentFailed($object, $account),
             },
             'payment_intent.succeeded' => match (true) {
@@ -274,6 +296,7 @@ class StripeWebhookController extends Controller
                 $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
                 $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
                 $isFormResponse => $this->formResponsePayments->handlePaymentIntentSucceeded($object, $account),
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => $this->handlePaymentIntentSucceeded($object, $account),
             },
             // New event type for this slice: the seat-release trigger. A
@@ -283,6 +306,8 @@ class StripeWebhookController extends Controller
             'checkout.session.expired' => match (true) {
                 $isTopUp => $this->mealOrderTopUps->handleCheckoutExpired($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutExpired($object, $account),
+                // A basket's page expiring closes its order (pending to expired) and nothing else.
+                $isCart => $this->handleCartEvent($event['type'], $object, $account),
                 default => null,
             },
             // Shared with the recurring-DONATION path, which owns this event
@@ -311,14 +336,76 @@ class StripeWebhookController extends Controller
             // New for DECISIONS.md 2026-09-15, all three additive (each was `default`'s
             // null before). A refund or dispute only FLAGS a form registration whose charge
             // was pinned to the event's account; every other charge is acked as before.
-            'charge.refunded' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_REFUNDED),
-            'charge.dispute.created' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_DISPUTED),
+            // A basket's charge is asked about FIRST and flags its ORDER (a refund names an amount,
+            // never a line); the form arm then skips every registration a cart settled.
+            'charge.refunded' => $this->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_REFUNDED),
+            'charge.dispute.created' => $this->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_DISPUTED),
             // An organisation disconnected the platform from its Standard account. No
             // account.updated follows, so the stored flags would say "can take charges"
             // forever: cleared here, so every gate that reads them fails closed.
             'account.application.deauthorized' => $this->handleAccountDeauthorized($account, $event),
             default => null, // unhandled event types are acked and ignored.
         };
+    }
+
+    /**
+     * A refund or dispute: the universal cart's question first (a basket's one charge is
+     * flagged on its ORDER, CartPaymentService::handleChargeFlag, which never throws), then
+     * the form registrations' unchanged one, which leaves the rows a cart settled to the cart.
+     */
+    private function handleChargeFlag(array $object, ?string $account, string $formFlag): void
+    {
+        $this->cartPayments->handleChargeFlag(
+            $object,
+            $account,
+            $formFlag === FormResponse::CHARGE_FLAG_DISPUTED ? Order::CHARGE_FLAG_DISPUTED : Order::CHARGE_FLAG_REFUNDED,
+        );
+
+        $this->formResponsePayments->handleChargeFlag($object, $account, $formFlag);
+    }
+
+    /**
+     * One of the universal cart's events (CartPaymentService decides whose order it is and
+     * whether it is paid; CartSettlementService records it). The donation receipts a paid
+     * basket issued after its commit are e-mailed here, by the same once-only delivery every
+     * donation receipt uses (deliverReceipt(), guarded by receipt_delivered_at), so the
+     * receipt e-mail is not a second implementation. A receipt still undelivered afterwards
+     * (the send failed) has its line's delivery claim released, so a later step can retry.
+     *
+     * A refusal returns normally (logged at warning inside); a genuine failure to record a
+     * paid basket throws out of CartSettlementService with everything rolled back, and the
+     * webhook answers 500 so Stripe retries it.
+     */
+    private function handleCartEvent(string $type, array $object, ?string $account): void
+    {
+        $result = match ($type) {
+            'checkout.session.completed',
+            'checkout.session.async_payment_succeeded' => $this->cartPayments->handleCheckoutCompleted($object, $account),
+            'payment_intent.succeeded' => $this->cartPayments->handlePaymentIntentSucceeded($object, $account),
+            'checkout.session.expired' => $this->cartPayments->handleCheckoutExpired($object, $account),
+            'checkout.session.async_payment_failed' => $this->cartPayments->handleAsyncPaymentFailed($object, $account),
+            default => null,
+        };
+
+        if (! $result instanceof CartSettlementResult) {
+            return;
+        }
+
+        foreach ($result->receipts as [$donation, $receipt, $orderItemId]) {
+            $donation = $donation->refresh();
+
+            $this->deliverReceipt($donation, $receipt);
+
+            // deliverReceipt() is best-effort: a failed send is logged and leaves
+            // receipt_delivered_at null. The step that handed this receipt on holds the line's
+            // claim (CartSettlementService::donorAndReceiptStep), and while it is held every
+            // later step gets 0 rows and delivers nothing, so an undelivered receipt would
+            // never be tried again. Give the claim back so the next step can. Only the cart
+            // path does this; deliverReceipt() and its other callers are unchanged.
+            if ($donation->refresh()->receipt_delivered_at === null) {
+                CartSettlementService::releaseReceiptClaim((int) $orderItemId);
+            }
+        }
     }
 
     /**
@@ -592,10 +679,12 @@ class StripeWebhookController extends Controller
             $pdf = $this->receiptPdfs->pdfFor($receipt);
             $pdfName = $this->receiptPdfs->filename($receipt);
         } catch (\Throwable $e) {
+            // The class only, never the message: a renderer's message can quote the letter's text,
+            // which carries the donor's name and address.
             Log::warning('Receipt PDF render failed; sending receipt without the attachment', [
                 'donation_id' => $donation->id,
                 'receipt_id' => $receipt->id,
-                'error' => $e->getMessage(),
+                'error' => $e::class,
             ]);
         }
 
@@ -620,11 +709,40 @@ class StripeWebhookController extends Controller
 
             $donation->forceFill(['receipt_delivered_at' => now()])->save();
         } catch (\Throwable $e) {
+            // The class, and the transport's own words with every address taken out of them: a
+            // transport's message quotes the recipient ("550 no such user donor@example.org"), and
+            // a log line is not where a donor's address belongs, but "no such user" is exactly
+            // what staff need to tell a mistyped address from a mail outage. The donation id is
+            // what finds the row.
             Log::warning('Receipt email failed to send', [
                 'donation_id' => $donation->id,
-                'error' => $e->getMessage(),
+                'error' => $e::class,
+                'reason' => self::scrubbedReason($e->getMessage(), (string) $email),
             ]);
         }
+    }
+
+    /**
+     * A failure message that is safe to log: the recipient's address replaced by `[recipient]`,
+     * then any other email-shaped text by `[email]`, cut to 300 characters.
+     *
+     * Only for a SEND failure, whose message quotes an address and nothing else of the donor. It
+     * is NOT used for a PDF render failure: that message can quote the letter's names, which no
+     * pattern can find, so the render failure logs the class alone.
+     *
+     * The cut comes last, so it can never leave the front half of an address behind. If the
+     * pattern itself fails (PCRE gives up on a hostile message), nothing is logged at all rather
+     * than the text unscrubbed.
+     */
+    private static function scrubbedReason(string $message, string $recipient): string
+    {
+        if ($recipient !== '') {
+            $message = str_ireplace($recipient, '[recipient]', $message);
+        }
+
+        $message = preg_replace('/[^\s@<>"\']+@[^\s@<>"\']+/', '[email]', $message);
+
+        return $message === null ? '' : mb_substr($message, 0, 300);
     }
 
     private function handlePaymentIntentSucceeded(array $pi, ?string $account): void
