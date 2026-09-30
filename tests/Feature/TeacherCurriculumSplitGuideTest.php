@@ -164,6 +164,11 @@ class TeacherCurriculumSplitGuideTest extends TestCase
         $this->assertContains('Arabic Language', $siblings);
         $this->assertContains('Islamic Studies', $siblings);
         $this->assertNotContains(self::COMBINED, $siblings, 'week 4 is separated; the combined cell is gone');
+
+        // The surah and the specifics live in the Objective, so a sibling carries it.
+        $byOrder = array_column($cell['siblings'], null, 'subject');
+        $this->assertSame('Learn 4 colors', $byOrder['Arabic Language']['objective']);
+        $this->assertSame('Respect others', $byOrder['Islamic Studies']['objective']);
     }
 
     #[Test]
@@ -178,6 +183,13 @@ class TeacherCurriculumSplitGuideTest extends TestCase
             ['standard_code', 'objective', 'assessment_formative', 'curriculum_week_no', 'subject', 'grade_label', 'prefill_source', 'siblings'],
             array_keys($cell)
         );
+
+        // A sibling from the base guide is exactly {subject, focus}: no objective key at all.
+        $july = array_filter($cell['siblings'], fn (array $s): bool => in_array($s['subject'], ['Mathematics', 'Science', 'Social Studies', 'Healthful Living'], true));
+        $this->assertCount(4, $july);
+        foreach ($july as $s) {
+            $this->assertSame(['subject', 'focus'], array_keys($s), $s['subject']);
+        }
     }
 
     // ------------------------------------------------------------------ standards search

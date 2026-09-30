@@ -5428,6 +5428,14 @@ The production apply is NOT part of this change and waits for the owner's yes on
   applies to every field); the Islamic integration box takes one line per Islamic sibling when there are several
   and the bare focus when there is one (`islamicIntegration`), so Qur'an no longer falls into "other subjects".
   The family portal, the catalogue, the COMBINED list and `SubjectFence` are unchanged.
+- **After review (2026-09-30).** (1) A sibling line in the week payload now carries `objective` when the row has
+  one (the base guide's rows have none, so they stay exactly `{subject, focus}`), and the Islamic integration box
+  writes `focus — objective` for such a sibling, so "Memorize Surah Al-Ikhlāṣ" is not lost behind "Memorization".
+  (2) `outcomeFill` empties the outcomes list when the guide wrote the only entry there and the next pick or week
+  has no Learning Outcome, as `autoFill` does for every other field; a teacher's own entry is still never touched.
+  (3) The week select gains "Another week…", which swaps in the number input, and a plan holding a week past the
+  list opens on the number input: the separated weeks stop at 8, and before the split these subjects had the
+  free 1-52 input.
 - **Not done (options, not built).** O-1: the plan's ELA, Math, Science, Social Studies and STEM are not
   imported (different code system from the live guide; Grade 2 Math absent, Grade 2 ELA overview only, Grade 2
   Science in two differing copies). F-1: a hint on a split subject's week list that weeks 9+ are still under the

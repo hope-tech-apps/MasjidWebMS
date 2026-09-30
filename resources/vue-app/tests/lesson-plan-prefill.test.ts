@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { islamicIntegration, outcomeFill } from '../core/helpers/lessonPlanPrefill.ts';
+import { islamicIntegration, outcomeFill, weekOutsideGuide } from '../core/helpers/lessonPlanPrefill.ts';
 
 // ---------- islamicIntegration
 
@@ -55,6 +55,16 @@ test('no Islamic sibling leaves the box empty and every subject in the others', 
     assert.deepEqual(islamicIntegration([]), { islamic: '', others: '' });
 });
 
+test('a separated week’s Objective follows its Focus Skill, so the surah reaches the box', () => {
+    const { islamic, others } = islamicIntegration([
+        { subject: "Qur'an", focus: 'Memorization', objective: 'Memorize Surah Al-Ikhlāṣ' },
+        { subject: 'Arabic Language', focus: 'Greetings', objective: 'Say hello' },
+        { subject: 'Science', focus: 'Senses', objective: null },
+    ]);
+    assert.equal(islamic, 'Memorization — Memorize Surah Al-Ikhlāṣ');
+    assert.equal(others, 'Arabic Language: Greetings — Say hello\nScience: Senses');
+});
+
 // ---------- outcomeFill
 
 test('an empty outcomes list is filled with the school’s Learning Outcome', () => {
@@ -79,6 +89,27 @@ test('a week with no outcome, or the outcome already there, changes nothing', ()
     assert.equal(outcomeFill([], undefined, undefined), null);
     assert.equal(outcomeFill([], '', undefined), null);
     assert.equal(outcomeFill(['Recite independently'], 'Recite independently', 'Recite independently'), null);
+});
+
+test('a week with no outcome empties the outcome the guide itself wrote, and only that', () => {
+    assert.deepEqual(outcomeFill(['Recite independently'], null, 'Recite independently'), []);
+    assert.deepEqual(outcomeFill([' Recite independently '], '', 'Recite independently'), []);
+    assert.deepEqual(outcomeFill(['Recite independently'], undefined, 'Recite independently'), []);
+    // the teacher's own words, or a list the guide did not write alone, stay
+    assert.equal(outcomeFill(['Say the surah by heart'], null, 'Recite independently'), null);
+    assert.equal(outcomeFill(['Recite independently', 'and my own'], null, 'Recite independently'), null);
+    assert.equal(outcomeFill(['Recite independently'], null, undefined), null);
+});
+
+// ---------- weekOutsideGuide
+
+test('a week the guide list does not carry keeps the number input', () => {
+    const weeks = [{ week_no: 1 }, { week_no: 2 }, { week_no: 8 }];
+    assert.equal(weekOutsideGuide(12, weeks), true);
+    assert.equal(weekOutsideGuide('12', weeks), true);
+    assert.equal(weekOutsideGuide(8, weeks), false);
+    assert.equal(weekOutsideGuide(null, weeks), false);
+    assert.equal(weekOutsideGuide(12, []), false, 'no list means the number input already shows');
 });
 
 // ---------- the components use them (a component cannot be mounted here, so read the source)
@@ -110,4 +141,9 @@ test('both standards lists key a suggestion by its objective and show it', () =>
 
 test('the week select shows the objective when the row has one', () => {
     assert.match(teacherClass, /\{\{ w\.week_no \}\} · \{\{ w\.focus \}\}\{\{ w\.objective \? ` · \$\{w\.objective\}` : '' \}\}/);
+});
+
+test('the week control offers a way to a week past the list', () => {
+    assert.match(teacherClass, /<option :value="WEEK_OTHER">Another week…<\/option>/);
+    assert.match(teacherClass, /weekOutsideGuide\(planForm\.value\.curriculum_week_no, curriculum\.value\.weeks\)/);
 });

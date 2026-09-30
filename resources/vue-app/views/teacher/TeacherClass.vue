@@ -1261,16 +1261,25 @@
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Week</label>
-                                    <select v-if="curriculum.weeks.length" class="form-select form-select-sm"
+                                    <select v-if="curriculum.weeks.length && !weekOther" class="form-select form-select-sm"
                                             style="max-width:16rem" v-model.number="planForm.curriculum_week_no"
                                             @change="onWeekPick">
                                         <option :value="null">—</option>
                                         <option v-for="w in curriculum.weeks" :key="w.week_no" :value="w.week_no">
                                             {{ w.week_no }} · {{ w.focus }}{{ w.objective ? ` · ${w.objective}` : '' }}
                                         </option>
+                                        <!-- The separated Qur'an, Arabic and Islamic Studies
+                                             weeks stop at 8; a later week is still tagged by number. -->
+                                        <option :value="WEEK_OTHER">Another week…</option>
                                     </select>
-                                    <input v-else v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
-                                           class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
+                                    <div v-else class="d-flex gap-1">
+                                        <input v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
+                                               class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
+                                        <button v-if="curriculum.weeks.length" type="button"
+                                                class="btn btn-sm btn-link px-1 text-muted text-nowrap"
+                                                title="Back to the guide's weeks"
+                                                @click="useGuideWeeks">Guide</button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2439,7 +2448,7 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
-import { islamicIntegration, outcomeFill } from '@/core/helpers/lessonPlanPrefill';
+import { islamicIntegration, outcomeFill, weekOutsideGuide } from '@/core/helpers/lessonPlanPrefill';
 import {
     averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
     mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
@@ -2981,6 +2990,7 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
             weeks: d.weeks ?? [],
         };
         curriculumFor.value = { grade: grade ?? '', subject: subject ?? '' };
+        weekOther.value = weekOutsideGuide(planForm.value.curriculum_week_no, curriculum.value.weeks);
         // A subject shown in the free-text box that this grade's guide does
         // list goes back to the picker (the watch below only ever sets it).
         const shown = planForm.value.subject;
@@ -3088,7 +3098,8 @@ const autoFill = (k: string, v: unknown, typedIn = ''): boolean => {
 /**
  * The school's Learning Outcome onto the plan's outcomes list, under the same
  * rule as autoFill (see outcomeFill): only where the teacher has written none or
- * the guide wrote the only one there. True when the list changed.
+ * the guide wrote the only one there; a week with no outcome empties the one
+ * the guide wrote. True when the list changed.
  */
 const autoFillOutcome = (outcome: unknown): boolean => {
     if (planHidden.value.has('learning_outcomes')) return false;
@@ -3096,7 +3107,7 @@ const autoFillOutcome = (outcome: unknown): boolean => {
         autoFilled.value.learning_outcomes);
     if (!next) return false;
     planForm.value.learning_outcomes = next;
-    autoFilled.value.learning_outcomes = next[0];
+    autoFilled.value.learning_outcomes = next[0] ?? '';
     return true;
 };
 
@@ -3113,7 +3124,23 @@ const openFilledSections = () => {
  * empty fields and the guide's own earlier writes change; the button stays for
  * refilling after a teacher clears something.
  */
+const WEEK_OTHER = '__other_week__';
+
+/** True while the teacher types a week the guide's list does not carry. */
+const weekOther = ref(false);
+
+const useGuideWeeks = () => {
+    weekOther.value = false;
+    planForm.value.curriculum_week_no = null;
+};
+
 const onWeekPick = () => {
+    if ((planForm.value.curriculum_week_no as unknown) === WEEK_OTHER) {
+        cancelPrefill();
+        planForm.value.curriculum_week_no = null;
+        weekOther.value = true;
+        return;
+    }
     const f = planForm.value;
     // Only from the list loaded for this grade and subject.
     if (curriculumFor.value.grade !== (f.grade_label || '')
@@ -3186,7 +3213,7 @@ const prefillFromGuide = async (auto = false) => {
 
         // Cross-subject integration, written from the same week's sibling cells
         // so a teacher is not asked to remember what Science is doing.
-        const siblings = (cell.siblings ?? []) as { subject: string; focus: string }[];
+        const siblings = (cell.siblings ?? []) as { subject: string; focus: string; objective?: string | null }[];
         const { islamic, others } = islamicIntegration(siblings);
         wrote = autoFill('cross_integration_islamic', islamic) || wrote;
         wrote = autoFill('cross_integration_subject', others) || wrote;

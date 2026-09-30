@@ -86,11 +86,16 @@ class CurriculumController extends TeacherController
                     ->where('week_no', (int) $week)
                     ->where('subject', '!=', $subject)
                     ->orderBy('subject')
-                    ->get(['subject', 'focus'])
+                    ->get(['subject', 'focus', 'objective'])
+                    // The school's separated Qur'an, Arabic and Islamic Studies weeks keep the
+                    // surah and the specifics in the Objective, not the Focus Skill, so a
+                    // sibling carries its objective when it has one. A row without one
+                    // (every row of the base guide) is exactly what it always was.
                     ->map(fn (CurriculumWeek $s): array => [
                         'subject' => $s->subject,
                         'focus' => $s->focus,
-                    ])->values();
+                    ] + ($s->objective !== null && $s->objective !== '' ? ['objective' => $s->objective] : []))
+                    ->values();
             }
         }
 
