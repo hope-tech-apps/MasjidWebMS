@@ -289,8 +289,10 @@ class CartPaymentService
             // basket to find, and asking would log a false error-level alarm on every refund in
             // that window. The question is inside the try like everything else here: a database
             // that cannot answer it (an information_schema error) must not stop the form arm that
-            // runs after this one.
-            if (! CartTables::has('orders')) {
+            // runs after this one. The strict question, so an unanswerable check reaches the catch
+            // below and is logged at error, rather than reading as "no orders table" and losing
+            // the flag on a real order in silence.
+            if (! CartTables::existsOrFail('orders')) {
                 return;
             }
 

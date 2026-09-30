@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -26,8 +27,14 @@ use Tests\TestCase;
  * cart's tables do not exist, and three paths that run whether or not the cart is switched on used
  * to query them: the form registrations' refund arm (`whereNotExists` over order_items), the cart's
  * own refund arm (which logged a false error-level alarm on every refund) and a member's
- * "Delete account". Each now asks CartTables::has() first. Here the tables are dropped, which is
+ * "Delete account". Each now asks CartTables first. Here the tables are dropped, which is
  * what that window looks like.
+ *
+ * Round 3 adds the other direction: a check that THROWS (a database that cannot answer
+ * information_schema) is a different thing from a table that is not there. `CartTables::has()`
+ * fails SAFE and answers "absent" (the live form refund arm and the prune, where absent is
+ * harmless); `CartTables::existsOrFail()` fails CLOSED and rethrows (every path that deletes or
+ * moves data, where a false "absent" would erase or orphan a paid order). The tests below pin both.
  */
 class CartDeployWindowTest extends TestCase
 {
@@ -221,6 +228,169 @@ class CartDeployWindowTest extends TestCase
 
         $this->assertSame(MemberAccountDeletion::OUTCOME_ERASED, $result['outcome']);
         $this->assertDatabaseMissing('contacts', ['id' => $member->id]);
+    }
+
+    // ------------------------------------------------------------ a check that throws
+
+    /**
+     * The database cannot answer "does this table exist?" for ONE table: a `DB::listen` on the SQLite
+     * grammar's `sqlite_master ... name = '<table>'` (Laravel 12.64, read in Grammars/SQLiteGrammar::
+     * compileTableExists), the way CartRefundArmIsolationTest breaks `orders`. Returns the switch, so a
+     * test can mend the database again.
+     */
+    private function breakTheTableCheck(string $table): object
+    {
+        $switch = (object) ['broken' => true];
+
+        DB::listen(function ($query) use ($table, $switch): void {
+            if ($switch->broken
+                && str_contains((string) $query->sql, 'sqlite_master')
+                && str_contains((string) $query->sql, "name = '{$table}'")) {
+                throw new RuntimeException('the schema is unavailable');
+            }
+        });
+
+        return $switch;
+    }
+
+    /** Run $work, which asserts nothing, and hand back the RuntimeException it threw, or null. */
+    private function thrownBy(callable $work): ?RuntimeException
+    {
+        try {
+            $work();
+        } catch (RuntimeException $e) {
+            return $e;
+        }
+
+        return null;
+    }
+
+    /** A PAID cart order held by this contact: a sale the organisation keeps. */
+    private function paidOrderOf(Contact $contact): int
+    {
+        return (int) DB::table('orders')->insertGetId([
+            'masjid_id' => $contact->masjid_id, 'contact_id' => $contact->id, 'uuid' => (string) Str::uuid(),
+            'order_number' => strtoupper(Str::random(8)), 'status' => 'paid', 'total_minor' => 5000, 'fee_minor' => 0,
+            'currency' => 'usd', 'charge_account_id' => 'acct_1WindowOwn', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    #[Test]
+    public function a_live_form_refund_is_still_flagged_and_answered_200_when_the_order_items_check_itself_throws(): void
+    {
+        $row = $this->pinnedPaidRow();
+        $this->breakTheTableCheck('order_items');
+
+        // Without the fail-safe the exception left the form arm, and the webhook answered 500.
+        $this->postWebhook($this->refund())->assertOk();
+
+        $flagged = $row->fresh();
+        $this->assertSame(FormResponse::CHARGE_FLAG_REFUNDED, $flagged->charge_flag, 'the cart exclusion is skipped and the row is flagged exactly as before the cart');
+        $this->assertSame(320, $flagged->charge_refunded_minor);
+
+        // Said once, by class only; and it is not the cart arm's error-level alarm.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'cart tables could not be looked up')
+                && ($context['exception'] ?? null) === RuntimeException::class
+                && ! str_contains(json_encode($context), 'unavailable'))
+            ->once();
+        Log::shouldNotHaveReceived('error');
+    }
+
+    #[Test]
+    public function the_fail_safe_question_answers_absent_and_warns_once_and_a_failure_is_never_remembered(): void
+    {
+        $database = $this->breakTheTableCheck('order_items');
+
+        $this->assertFalse(CartTables::has('order_items'), 'a check that throws answers "absent"');
+        $this->assertFalse(CartTables::has('order_items'));
+        $this->assertFalse(CartTables::has('order_items'));
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'cart tables could not be looked up'))
+            ->once();
+
+        $database->broken = false;
+
+        $this->assertTrue(CartTables::has('order_items'), 'the failure was not memoised: the next call asked again, and the table is there');
+    }
+
+    #[Test]
+    public function the_strict_question_lets_a_failed_check_propagate_and_says_false_only_for_a_table_that_is_missing(): void
+    {
+        $database = $this->breakTheTableCheck('orders');
+
+        $thrown = $this->thrownBy(fn () => CartTables::existsOrFail('orders'));
+
+        $this->assertNotNull($thrown, 'a check that cannot be answered is not "absent"');
+        $this->assertSame('the schema is unavailable', $thrown->getMessage());
+
+        $database->broken = false;
+
+        $this->assertTrue(CartTables::existsOrFail('orders'), 'nothing was remembered from the failure');
+
+        $this->dropTheCartTables();
+
+        $this->assertFalse(CartTables::existsOrFail('orders'), 'a table that genuinely is not there is false');
+    }
+
+    #[Test]
+    public function the_strict_question_does_not_trust_a_remembered_absence(): void
+    {
+        // The window: the table is missing, and the fail-safe question remembers that for 30 seconds.
+        Schema::dropIfExists('order_items');
+        CartTables::forget();
+        $this->assertFalse(CartTables::has('order_items'));
+
+        // Migrate finishes inside those 30 seconds.
+        Schema::create('order_items', function ($table): void {
+            $table->id();
+        });
+
+        $this->assertFalse(CartTables::has('order_items'), 'the fail-safe question is content with what it remembered');
+        $this->assertTrue(CartTables::existsOrFail('order_items'), 'a path that deletes data asks again');
+    }
+
+    #[Test]
+    public function what_an_account_deletion_keeps_a_member_for_is_not_decided_by_an_orders_check_that_threw(): void
+    {
+        $member = $this->appMember();
+        $this->paidOrderOf($member);
+        $this->breakTheTableCheck('orders');
+
+        $deletion = app(MemberAccountDeletion::class);
+
+        $this->assertNotNull(
+            $this->thrownBy(fn () => $deletion->reasonsToKeep($member)),
+            'a fail-safe "absent" would skip the look at orders and say nothing keeps this member',
+        );
+
+        $this->assertNotNull($this->thrownBy(fn () => $deletion->delete($member, MemberAccountDeletion::VIA_WEB)));
+        $this->assertDatabaseHas('contacts', ['id' => $member->id]);
+        $this->assertSame(1, DB::table('orders')->where('contact_id', $member->id)->where('status', 'paid')->count(), 'the sale is still theirs');
+    }
+
+    #[Test]
+    public function an_account_deletion_whose_baskets_check_threw_is_rolled_back_whole(): void
+    {
+        // reasonsToKeep does not ask about carts, so the deletion gets as far as clearing the
+        // member's tokens before the basket step asks, which is what a rollback has to undo.
+        $member = $this->appMember();
+        $member->createMemberToken();
+        $basket = DB::table('carts')->insertGetId([
+            'masjid_id' => $member->masjid_id, 'contact_id' => $member->id, 'token_hash' => hash('sha256', uniqid('', true)),
+            'status' => 'open', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->assertSame(1, $member->tokens()->count(), 'premise');
+
+        $this->breakTheTableCheck('carts');
+
+        $thrown = $this->thrownBy(fn () => app(MemberAccountDeletion::class)->delete($member, MemberAccountDeletion::VIA_WEB));
+
+        $this->assertNotNull($thrown, 'an unanswerable check stops the deletion');
+        $this->assertDatabaseHas('contacts', ['id' => $member->id]);
+        $this->assertSame(1, $member->tokens()->count(), 'the token cleared earlier in the same transaction is back');
+        $this->assertDatabaseHas('carts', ['id' => $basket]);
     }
 
     // ------------------------------------------------------------ the memo

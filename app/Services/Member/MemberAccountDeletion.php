@@ -351,8 +351,11 @@ class MemberAccountDeletion
             //
             // Both steps ask first whether the cart's tables exist: bin/deploy makes this code
             // live before `migrate`, and a member's Delete account (an App Store requirement)
-            // must not answer 500 in that window. With no table there is nothing to clear.
-            if (CartTables::has('carts')) {
+            // must not answer 500 in that window. With no table there is nothing to clear. The
+            // strict question, not the fail-safe one: this path deletes, and a check that could
+            // not be answered must roll the deletion back, never read as "no table, nothing to
+            // keep" (CartTables).
+            if (CartTables::existsOrFail('carts')) {
                 Cart::withoutMasjidScope()
                     ->where('masjid_id', $contact->masjid_id)
                     ->where('contact_id', $contact->id)
@@ -362,7 +365,7 @@ class MemberAccountDeletion
             // An abandoned checkout (never paid) is not a sale, so it keeps nothing — but
             // it still carries the address, name and phone the shopper typed. Clear them. A
             // PAID order is an office record and keeps its buyer, as meal_orders keep theirs.
-            if (CartTables::has('orders')) {
+            if (CartTables::existsOrFail('orders')) {
                 $this->clearUnpaidCheckouts($contact);
             }
 
@@ -640,8 +643,10 @@ class MemberAccountDeletion
         // roster row is still the office's record, and model scopes would hide
         // both. Every query is keyed on this contact's id.
         foreach (self::OFFICE_RECORDS as $table => $columns) {
-            // A cart table that migrate has not created yet (the deploy window) holds nothing.
-            if (in_array($table, CartTables::NAMES, true) && ! CartTables::has($table)) {
+            // A cart table that migrate has not created yet (the deploy window) holds nothing. A
+            // check that cannot be answered is not "holds nothing": a false "absent" here would
+            // skip the look at `orders` and let a member with paid orders be erased, so it throws.
+            if (in_array($table, CartTables::NAMES, true) && ! CartTables::existsOrFail($table)) {
                 continue;
             }
 
