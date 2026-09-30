@@ -12,6 +12,7 @@ use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -81,6 +82,27 @@ class MemberPortalGateTest extends TestCase
         return $this->flushHeaders();
     }
 
+    /**
+     * Two answers are the same answer: the status, the body's bytes and every header but the
+     * clock. Compared as a whole, so a header a gate adds (or an envelope key) cannot hide.
+     */
+    private function assertSameAnswer(TestResponse $expected, TestResponse $actual, string $message): void
+    {
+        $this->assertSame($expected->getStatusCode(), $actual->getStatusCode(), "{$message}: status");
+        $this->assertSame($expected->getContent(), $actual->getContent(), "{$message}: body");
+        $this->assertSame($this->headersOf($expected), $this->headersOf($actual), "{$message}: headers");
+    }
+
+    /** @return array<string, array<int, string|null>> */
+    private function headersOf(TestResponse $response): array
+    {
+        $headers = $response->headers->all();
+        unset($headers['date']);
+        ksort($headers);
+
+        return $headers;
+    }
+
     #[Test]
     public function the_portal_is_off_unless_it_is_switched_on(): void
     {
@@ -96,20 +118,48 @@ class MemberPortalGateTest extends TestCase
         $org = $this->org();
         $me = $this->member($org);
 
-        $unknown = $this->bare()->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
+        $unknown = $this->bare()->getJson($this->portalUrl($org, 'no-such-route'));
+        $unknown->assertNotFound();
 
         foreach (self::ROUTES as $path) {
             // The premise: this is a real route, so the 404 below is the gate's.
             $this->assertTheRouteIsReal($org, $path);
 
             // Without a token, with a junk one, and with a real member's.
-            $this->assertSame($unknown, $this->bare()->getJson($this->portalUrl($org, $path))->assertNotFound()->getContent(), "{$path}: no token");
+            $this->assertSameAnswer($unknown, $this->bare()->getJson($this->portalUrl($org, $path)), "{$path}: no token");
 
             $junk = $this->bare()->withHeader('Authorization', 'Bearer 1|not-a-real-token')->getJson($this->portalUrl($org, $path));
-            $this->assertSame($unknown, $junk->assertNotFound()->getContent(), "{$path}: junk token");
+            $this->assertSameAnswer($unknown, $junk, "{$path}: junk token");
 
             $real = $this->asMember($me)->getJson($this->portalUrl($org, $path));
-            $this->assertSame($unknown, $real->assertNotFound()->getContent(), "{$path}: a real member's token");
+            $this->assertSameAnswer($unknown, $real, "{$path}: a real member's token");
+        }
+    }
+
+    #[Test]
+    public function off_the_404_has_no_data_key_where_the_portals_own_refusals_keep_theirs(): void
+    {
+        config(['app.debug' => false]);
+        $org = $this->org();
+
+        // The unknown route: no route matched, so the `mobile.member.me.*` envelope never
+        // sees it. The baseline the dark answer must equal.
+        $this->assertArrayNotHasKey('data', $this->bare()->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->json());
+
+        foreach (self::ROUTES as $path) {
+            $this->assertTheRouteIsReal($org, $path);
+
+            // Dark: the gate throws after the route matched, and must still be a bare 404.
+            $dark = $this->bare()->getJson($this->portalUrl($org, $path))->assertNotFound();
+            $this->assertArrayNotHasKey('data', $dark->json(), "{$path}: the dark 404 carries no envelope");
+        }
+
+        // On, the same routes' real refusals DO carry it (the iPhone app decodes `data`).
+        $this->turnMemberPortalOn();
+
+        foreach (self::ROUTES as $path) {
+            $refused = $this->bare()->getJson($this->portalUrl($org, $path))->assertUnauthorized();
+            $this->assertArrayHasKey('data', $refused->json(), "{$path}: a refusal from the stack keeps its envelope");
         }
     }
 
