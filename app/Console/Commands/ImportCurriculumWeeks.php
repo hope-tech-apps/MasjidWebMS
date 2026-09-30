@@ -17,8 +17,8 @@ use RuntimeException;
  *
  *   php artisan curriculum:import 14 database/curriculum/al-razi-pacing-2026-27.json
  *   php artisan curriculum:import 14 database/curriculum/al-razi-qai-split-2026-27-q1.json --dry-run
- *   php artisan curriculum:import 14 <file> --expect=delete=32,insert=96,after=1576
- *   php artisan curriculum:import 14 <file> --verify
+ *   php artisan curriculum:import 14 <file> --expect=delete=32,insert=96,after=1576 --allow-references
+ *   php artisan curriculum:import 14 <file> --verify --expect=after=1576
  *
  * IDEMPOTENT. Every row is an upsert against `curriculum_week_cell_unique`, so
  * re-running after the school revises a week corrects that cell rather than
@@ -44,9 +44,20 @@ use RuntimeException;
  *              nothing, not even a file.
  *   --expect=  Refuse (nothing written) unless the plan's counts equal these, so
  *              an apply only ever does what the owner approved.
+ *   --allow-references
+ *              An apply REFUSES, with or without --expect, while the plan shows a
+ *              teacher record that copies a cell being deleted (plans_touching or
+ *              assignments_touching above 0) or a cell to delete that is already
+ *              absent (delete_absent above 0: the file's spelling is not the
+ *              database's, so it would insert beside what it meant to replace).
+ *              This flag is the explicit yes, given after the dry run was read.
  *   --verify   Read-only: does the database equal the file byte for byte, and
  *              are the replaced cells gone? Exits non-zero on any mismatch. This
  *              is how MySQL's round trip is shown faithful, which SQLite cannot.
+ *              It checks ONLY the file's cells and the replaced keys, never the
+ *              rest of the tenant's guide, so it prints the tenant's total cells
+ *              next to the plan's `after` (`--verify --expect=after=N` fails on a
+ *              different total).
  *
  * Before any change an apply writes, 0600, under storage/app/private/
  * curriculum-imports/: an INVERSE file (itself importable: it deletes what this
@@ -56,6 +67,10 @@ use RuntimeException;
  * delete, the `replaces` deletes and the upserts, and checks the row count before
  * it commits. A WARNING line records the source, and is a warning because
  * production logs only that level and up.
+ *
+ * ROLLBACK restores CONTENT, not ids or timestamps: the inverse file re-creates a
+ * deleted cell through an upsert, so it comes back with a new id and fresh
+ * created_at / updated_at. Nothing references a cell's id.
  *
  * ORDERING HAZARD: re-running a base file after a file that replaces some of its
  * cells re-creates them, because an import only upserts. Re-run the replacing
@@ -69,7 +84,8 @@ class ImportCurriculumWeeks extends Command
         {--fresh : Delete this tenant\'s existing rows first (inside the transaction)}
         {--dry-run : Print the plan and stop; write nothing}
         {--verify : Read-only: compare the database with the file byte for byte}
-        {--expect= : Refuse unless the plan matches, e.g. delete=32,insert=96,update=0,unchanged=0,before=1512,after=1576,plans_touching=0,assignments_touching=0}';
+        {--allow-references : Apply although the plan shows teacher records that copy a deleted cell, or a cell to delete that is already absent}
+        {--expect= : Refuse unless the plan matches, e.g. delete=32,insert=96,update=0,unchanged=0,before=1512,after=1576,plans_touching=0,assignments_touching=0 (with --verify: only after=N)}';
 
     protected $description = "Import a school's weekly pacing guide into curriculum_weeks";
 
@@ -98,8 +114,14 @@ class ImportCurriculumWeeks extends Command
             return self::FAILURE;
         }
 
-        if ($this->option('verify') && ($this->option('dry-run') || $this->option('expect') !== null || $this->option('fresh'))) {
-            $this->error('--verify only reads; it cannot be combined with --dry-run, --expect or --fresh.');
+        if ($this->option('verify') && ($this->option('dry-run') || $this->option('fresh') || $this->option('allow-references'))) {
+            $this->error('--verify only reads; it cannot be combined with --dry-run, --fresh or --allow-references.');
+
+            return self::FAILURE;
+        }
+
+        if ($this->option('verify') && $this->option('expect') !== null && ! preg_match('/^\s*after=\d+\s*$/', (string) $this->option('expect'))) {
+            $this->error('--verify only reads; the one thing --expect can check with it is the total: --expect=after=N.');
 
             return self::FAILURE;
         }
@@ -141,11 +163,21 @@ class ImportCurriculumWeeks extends Command
         $mismatches = CurriculumImportPlan::verify($payload, $this->existing());
         $total = CurriculumWeek::query()->count();
 
+        // The file's cells and the replaced keys are all this compares. A row the
+        // apply should never have touched would pass, so the total is checked
+        // against the plan's `after` when the operator gives it.
+        $expected = $this->option('expect') !== null ? (int) substr(trim((string) $this->option('expect')), strlen('after=')) : null;
+
+        if ($expected !== null && $expected !== $total) {
+            $mismatches[] = "the tenant holds {$total} cells, not the expected {$expected}";
+        }
+
         foreach ($mismatches as $m) {
             $this->line("  MISMATCH {$m}");
         }
 
-        $this->line('mismatches: ' . count($mismatches) . "; {$masjid->name} has {$total} cells.");
+        $this->line('mismatches: ' . count($mismatches) . "; {$masjid->name} has {$total} cells"
+            . ($expected !== null ? " (plan's after: {$expected})." : " (plan's after: not given; compare it with the dry run's after, or pass --expect=after=N)."));
 
         if ($mismatches !== []) {
             $this->error('The database is NOT the file.');
@@ -184,6 +216,18 @@ class ImportCurriculumWeeks extends Command
             $this->info('Dry run: nothing was written.');
 
             return self::SUCCESS;
+        }
+
+        $refused = $this->referenceRefusals($plan);
+
+        if ($refused !== []) {
+            foreach ($refused as $e) {
+                $this->error($e);
+            }
+
+            $this->error('Nothing was written. Read the dry run, have the counts approved, then add --allow-references.');
+
+            return self::FAILURE;
         }
 
         $expectErrors = $this->expectErrors($plan);
@@ -308,6 +352,10 @@ class ImportCurriculumWeeks extends Command
         $this->line("  teacher records that copy a cell being deleted: {$counts['plans_touching']} lesson plans, {$counts['assignments_touching']} assignments"
             . " ({$counts['plans_combined_subject']} plans are filed under a deleted cell's subject; none is changed)");
 
+        if ($this->referenceRefusals($plan) !== []) {
+            $this->line('  an apply of this plan needs --allow-references (it refuses without it): ' . implode(' ', $this->referenceRefusals($plan)));
+        }
+
         if ($plan->skipped) {
             $this->line("  skipped: {$plan->skipped} rows with no grade, subject or week");
         }
@@ -319,6 +367,39 @@ class ImportCurriculumWeeks extends Command
         $this->line('PLAN ' . json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         return $summary;
+    }
+
+    /**
+     * Why an apply must not start without --allow-references. --expect is
+     * optional and can pin anything, so a plan with teacher records behind a
+     * deleted cell, or a cell to delete that is not there, would otherwise apply
+     * on a bare command.
+     *
+     * @return list<string>
+     */
+    private function referenceRefusals(CurriculumImportPlan $plan): array
+    {
+        if ($this->option('allow-references')) {
+            return [];
+        }
+
+        $counts = $plan->counts();
+        $refused = [];
+
+        if ($counts['plans_touching'] > 0) {
+            $refused[] = "{$counts['plans_touching']} lesson plans copy a cell this file deletes.";
+        }
+
+        if ($counts['assignments_touching'] > 0) {
+            $refused[] = "{$counts['assignments_touching']} assignments copy a cell this file deletes.";
+        }
+
+        if ($counts['delete_absent'] > 0) {
+            $refused[] = "{$counts['delete_absent']} cells the file replaces are not in the guide, so it would add its rows beside what it means to replace"
+                . ' (or the cells were already replaced: a second apply).';
+        }
+
+        return $refused;
     }
 
     /** @return list<string> */

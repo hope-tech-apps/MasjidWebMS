@@ -439,6 +439,9 @@ final class CurriculumImportPlan
     private static function normalize(array $raw, ?string $fileLabel): array
     {
         $string = fn (string $k): ?string => isset($raw[$k]) ? (string) $raw[$k] : null;
+        // An empty Objective or Learning Outcome is an absent one: stored as NULL,
+        // so every read path sees the same thing.
+        $optional = fn (string $k): ?string => ($v = $string($k)) === '' ? null : $v;
 
         return [
             'grade_label' => (string) $raw['grade_label'],
@@ -446,8 +449,8 @@ final class CurriculumImportPlan
             'week_no' => (int) $raw['week_no'],
             'quarter' => isset($raw['quarter']) ? (int) $raw['quarter'] : null,
             'focus' => (string) ($raw['focus'] ?? ''),
-            'objective' => $string('objective'),
-            'learning_outcome' => $string('learning_outcome'),
+            'objective' => $optional('objective'),
+            'learning_outcome' => $optional('learning_outcome'),
             'standard_code' => $string('standard_code'),
             'assessment_note' => $string('assessment_note'),
             // An explicit null is kept: an inverse file restores a row whose own

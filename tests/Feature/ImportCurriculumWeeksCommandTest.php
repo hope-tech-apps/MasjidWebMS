@@ -281,7 +281,15 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         ])));
         $this->assertTrue($plan['dry_run']);
         $this->assertSame(hash_file('sha256', $this->split), $plan['file_sha256']);
-        $this->assertSame('1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys', $plan['source']['drive_file_id']);
+        // The data file is in a public repository: the printed provenance names the source by
+        // its hashes and a date, never a private copy's id or an internal note.
+        $this->assertSame('2026-09-07', $plan['source']['document_date']);
+        $this->assertSame('98332b22dd36298ed5d575f22e44745069fd94ddada25929fcfa1f6fe34119e1', $plan['source']['docx_sha256']);
+        $this->assertSame(
+            ['title', 'document_date', 'docx_sha256', 'txt_path', 'txt_sha256', 'generator'],
+            array_keys($plan['source']),
+            'the printed provenance carries exactly the public fields'
+        );
         $this->assertArrayNotHasKey('tables', $plan['source']);
         $this->assertSame(220, $plan['by_subject_after'][self::COMBINED]);
         $this->assertSame(32, $plan['by_subject_after']["Qur'an"]);
@@ -362,7 +370,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
             return $message === 'Curriculum import applied'
                 && $ctx['masjid_id'] === 14
                 && $ctx['file_sha256'] === hash_file('sha256', base_path('database/curriculum/al-razi-qai-split-2026-27-q1.json'))
-                && $ctx['source']['drive_file_id'] === '1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys'
+                && $ctx['source']['txt_sha256'] === '40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f'
                 && $ctx['counts']['insert'] === 96;
         });
         $this->assertStringContainsString('Imported 96 cells', $out);
@@ -375,7 +383,14 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->applySplit();
         $after = $this->fingerprint();
 
+        // The cells it replaces are already gone (delete_absent 32), which is a refusal
+        // unless the operator says it is expected.
         [$exit, $out] = $this->runImport($this->split);
+        $this->assertSame(1, $exit, $out);
+        $this->assertStringContainsString('32 cells the file replaces are not in the guide', $out);
+        $this->assertSame($after, $this->fingerprint());
+
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true]);
         $plan = $this->plan($out);
 
         $this->assertSame(0, $exit);
@@ -425,7 +440,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     #[Test]
     public function verify_cannot_be_combined_with_anything_that_writes(): void
     {
-        foreach (['--dry-run' => true, '--fresh' => true, '--expect' => 'delete=0'] as $option => $value) {
+        foreach (['--dry-run' => true, '--fresh' => true, '--allow-references' => true, '--expect' => 'delete=0'] as $option => $value) {
             [$exit, $out] = $this->runImport($this->base, ['--verify' => true, $option => $value]);
             $this->assertSame(1, $exit, $option);
             $this->assertStringContainsString('only reads', $out);
@@ -623,12 +638,12 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->assertSame(1, $counts['assignments_touching']);
 
         // An apply that pinned the earlier numbers is refused: the owner approved something else.
-        [$exit, $out] = $this->runImport($this->split, ['--expect' => 'plans_touching=0,assignments_touching=0']);
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true, '--expect' => 'plans_touching=0,assignments_touching=0']);
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('plans_touching=0, but the plan says 1', $out);
         $this->assertSame(1512, $this->rowCount());
 
-        [$exit, $out] = $this->runImport($this->split, ['--expect' => 'delete=32,insert=96,plans_touching=1,assignments_touching=1']);
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true, '--expect' => 'delete=32,insert=96,plans_touching=1,assignments_touching=1']);
         $this->assertSame(0, $exit, $out);
         $this->assertSame(1576, $this->rowCount());
 
@@ -639,5 +654,182 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         // though the guide cell it copied is gone.
         $this->assertFalse(CurriculumWeek::query()->where('subject', self::COMBINED)->where('grade_label', 'Pre-Kindergarten')->where('week_no', 3)->exists());
         $this->putJson("{$url}/{$id}", $body)->assertOk();
+    }
+
+    // ---------------------------------------------------------- an apply refuses, unless it is told it may
+
+    private function copyingPlan(): LessonPlan
+    {
+        $cell = CurriculumWeek::query()->where('grade_label', 'Pre-Kindergarten')->where('subject', self::COMBINED)->where('week_no', 3)->firstOrFail();
+
+        return LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+            'session_date' => now()->toDateString(), 'subject' => self::COMBINED, 'grade_label' => 'Pre-Kindergarten',
+            'curriculum_week_no' => 3, 'objective' => $cell->focus, 'prefill_source' => $cell->source_label, 'body' => 'Body.',
+        ]);
+    }
+
+    private function copyingAssignment(): int
+    {
+        $cell = CurriculumWeek::query()->where('grade_label', 'Pre-Kindergarten')->where('subject', self::COMBINED)->where('week_no', 3)->firstOrFail();
+
+        Sanctum::actingAs($this->teacher, ['staff']);
+
+        return $this->postJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}/assignments", [
+            'standard_code' => null, 'curriculum_focus' => $cell->focus, 'curriculum_week_no' => 3,
+            'title' => 'Wudu circle', 'scale' => 'points', 'points_possible' => 10, 'assigned_on' => now()->toDateString(),
+        ])->assertCreated()->json('data.id');
+    }
+
+    /** Nothing changed, no file written, and the command said why. */
+    private function assertRefusedUntouched(int $exit, string $out, string $why, string $before, array $filesBefore, int $rows): void
+    {
+        $this->assertSame(1, $exit, $out);
+        $this->assertStringContainsString($why, $out);
+        $this->assertStringContainsString('--allow-references', $out);
+        $this->assertSame($rows, $this->rowCount());
+        $this->assertSame($before, $this->fingerprint(), 'the guide is unchanged');
+        $this->assertSame($filesBefore, $this->storedFiles(), 'no inverse file or snapshot was written');
+    }
+
+    #[Test]
+    public function a_lesson_plan_that_copies_a_deleted_cell_refuses_the_apply_even_without_expect_until_allowed(): void
+    {
+        $this->importBase();
+        $this->copyingPlan();
+        $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+
+        [$exit, $out] = $this->runImport($this->split);
+        $this->assertRefusedUntouched($exit, $out, '1 lesson plans copy a cell this file deletes', $before, $filesBefore, 1512);
+
+        // Pinning the right numbers is not the explicit yes.
+        [$exit, $out] = $this->runImport($this->split, ['--expect' => 'delete=32,insert=96,plans_touching=1']);
+        $this->assertRefusedUntouched($exit, $out, '1 lesson plans copy a cell this file deletes', $before, $filesBefore, 1512);
+
+        // The dry run still prints the counts, and says an apply needs the flag.
+        [$exit, $out] = $this->runImport($this->split, ['--dry-run' => true]);
+        $this->assertSame(0, $exit);
+        $this->assertSame(1, $this->plan($out)['plans_touching']);
+        $this->assertStringContainsString('an apply of this plan needs --allow-references', $out);
+
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true]);
+        $this->assertSame(0, $exit, $out);
+        $this->assertSame(1576, $this->rowCount());
+    }
+
+    #[Test]
+    public function an_assignment_that_copies_a_deleted_cell_refuses_the_apply_even_without_expect_until_allowed(): void
+    {
+        $this->importBase();
+        $this->copyingAssignment();
+        $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+
+        [$exit, $out] = $this->runImport($this->split);
+        $this->assertRefusedUntouched($exit, $out, '1 assignments copy a cell this file deletes', $before, $filesBefore, 1512);
+
+        [$exit, $out] = $this->runImport($this->split, ['--dry-run' => true]);
+        $plan = $this->plan($out);
+        $this->assertSame([0, 1], [$plan['plans_touching'], $plan['assignments_touching']]);
+
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true, '--expect' => 'assignments_touching=1']);
+        $this->assertSame(0, $exit, $out);
+        $this->assertSame(1576, $this->rowCount());
+    }
+
+    #[Test]
+    public function cells_to_replace_that_are_not_there_refuse_the_apply_until_allowed(): void
+    {
+        // No base guide: the 32 combined cells the file replaces are absent, as they would be
+        // if production spelled the combined subject differently from the file.
+        $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+
+        [$exit, $out] = $this->runImport($this->split);
+        $this->assertRefusedUntouched($exit, $out, '32 cells the file replaces are not in the guide', $before, $filesBefore, 0);
+
+        [$exit, $out] = $this->runImport($this->split, ['--dry-run' => true]);
+        $plan = $this->plan($out);
+        $this->assertSame([0, 32, 96], [$plan['delete'], $plan['delete_absent'], $plan['insert']]);
+
+        [$exit, $out] = $this->runImport($this->split, ['--allow-references' => true]);
+        $this->assertSame(0, $exit, $out);
+        $this->assertSame(96, $this->rowCount());
+    }
+
+    #[Test]
+    public function a_plan_with_no_references_still_applies_without_the_flag(): void
+    {
+        $this->importBase();
+
+        [$exit, $out] = $this->runImport($this->split);
+
+        $this->assertSame(0, $exit, $out);
+        $this->assertSame(1576, $this->rowCount());
+    }
+
+    // ---------------------------------------------------------- verify's total
+
+    #[Test]
+    public function verify_prints_the_tenant_total_beside_the_expected_after_and_fails_on_another_total(): void
+    {
+        $this->importBase();
+        $this->applySplit();
+
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true]);
+        $this->assertSame(0, $exit, $out);
+        $this->assertStringContainsString("has 1576 cells (plan's after: not given", $out);
+
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true, '--expect' => 'after=1576']);
+        $this->assertSame(0, $exit, $out);
+        $this->assertStringContainsString("has 1576 cells (plan's after: 1576)", $out);
+
+        // A cell nobody planned: every file cell still matches, so only the total shows it.
+        DB::table('curriculum_weeks')->insert([
+            'masjid_id' => $this->school->id, 'grade_label' => 'Grade 5', 'subject' => 'Stray', 'week_no' => 1, 'quarter' => 1,
+            'focus' => 'Stray', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true]);
+        $this->assertSame(0, $exit, 'without the total, verify cannot see it');
+
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true, '--expect' => 'after=1576']);
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('the tenant holds 1577 cells, not the expected 1576', $out);
+
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true, '--expect' => 'delete=0']);
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('--expect=after=N', $out);
+    }
+
+    // ---------------------------------------------------------- an empty Objective is an absent one
+
+    #[Test]
+    public function an_empty_objective_or_outcome_is_stored_as_absent(): void
+    {
+        $this->importBase();
+        $variant = $this->splitVariant(function (array $p) {
+            $p['rows'][0]['objective'] = '';
+            $p['rows'][0]['learning_outcome'] = '';
+
+            return $p;
+        });
+
+        [$exit, $out] = $this->runImport($variant);
+        $this->assertSame(0, $exit, $out);
+
+        $first = json_decode((string) file_get_contents($variant), true)['rows'][0];
+        $row = CurriculumWeek::query()
+            ->where('grade_label', $first['grade_label'])->where('subject', $first['subject'])->where('week_no', $first['week_no'])
+            ->firstOrFail();
+
+        $this->assertNull($row->objective);
+        $this->assertNull($row->learning_outcome);
+        $this->assertSame($row->focus, $row->toPrefillArray()['objective'], 'the prefill falls back to the focus');
+        $this->assertArrayNotHasKey('learning_outcome', $row->toPrefillArray());
+
+        [$exit] = $this->runImport($variant, ['--verify' => true]);
+        $this->assertSame(0, $exit, 'verify agrees with what was stored');
     }
 }
