@@ -1029,12 +1029,12 @@ class WeeklyPointsReportTest extends TestCase
         Event::listen(\Illuminate\Mail\Events\MessageSending::class, function ($event) {
             foreach ($event->message->getTo() as $to) {
                 if ($to->getAddress() === 'huda@fam.test') {
-                    throw new \RuntimeException('smtp said no');
+                    // A transport quotes the address it refused, in whatever case it was given.
+                    throw new \RuntimeException('Cannot send to <HUDA@fam.test>: smtp said no');
                 }
             }
         });
-        Log::spy();
-        Log::shouldReceive('channel')->with('monitors')->andReturn(Mockery::spy(LoggerInterface::class));
+        $warnings = $this->captureWarnings();
 
         $this->now('2026-10-09 15:00');
         $this->run_();
@@ -1045,9 +1045,71 @@ class WeeklyPointsReportTest extends TestCase
         $this->assertContains('sara@fam.test', $delivered);
         $this->assertContains('teacher@school.test', $delivered);
         $this->assertNotContains('huda@fam.test', $delivered);
-        Log::shouldHaveReceived('warning')->withArgs(fn ($m) => str_contains((string) $m, 'huda@fam.test'))->atLeast()->once();
+        // Logged where production keeps it (warning), naming the guardian by contact id and carrying no
+        // address anywhere in the line: not the message, not the context, not the transport's own words.
+        $failed = array_values(array_filter($warnings->getArrayCopy(), fn (array $w) => ($w['context']['contact_id'] ?? null) === $this->huda->id));
+        $this->assertCount(1, $failed, 'the dead address is logged once, by its contact id');
+        $this->assertSame('family', $failed[0]['context']['audience']);
+        $this->assertNull($failed[0]['context']['user_id'], 'a guardian is a contact, not a user');
+        $this->assertStringContainsString('smtp said no', $failed[0]['context']['error'], 'the reason survives, without the address');
+        $this->assertNoAddressInAnyLogLine($warnings);
         $this->assertSame(1, (int) DB::table('behavior_weeks')->value('recipients_count'), 'only the delivered family is counted');
         $this->assertSame(1, $this->claimed(), 'a PARTIAL send keeps its claim: a retry would tell the delivered families twice');
+    }
+
+    #[Test]
+    public function a_teachers_failed_notice_is_logged_by_user_id_and_no_log_line_carries_an_address(): void
+    {
+        $this->ordinaryWeek();
+        app()->forgetInstance('mail.manager');
+        \Illuminate\Support\Facades\Facade::clearResolvedInstance('mail.manager');
+        Event::listen(\Illuminate\Mail\Events\MessageSending::class, function ($event) {
+            foreach ($event->message->getTo() as $to) {
+                if ($to->getAddress() === 'teacher@school.test') {
+                    throw new \RuntimeException('Rejected teacher@school.test (from office@school.test): mailbox full');
+                }
+            }
+        });
+        $warnings = $this->captureWarnings();
+
+        $this->now('2026-10-09 15:00');
+        $this->run_();
+
+        $failed = array_values(array_filter($warnings->getArrayCopy(), fn (array $w) => ($w['context']['user_id'] ?? null) === $this->teacher->id));
+        $this->assertCount(1, $failed);
+        $this->assertSame('teacher', $failed[0]['context']['audience']);
+        $this->assertNull($failed[0]['context']['contact_id']);
+        $this->assertStringContainsString('mailbox full', $failed[0]['context']['error']);
+        $this->assertNoAddressInAnyLogLine($warnings);
+    }
+
+    /**
+     * A spy on the log that keeps every warning as ['message' => ..., 'context' => ...] and swallows the
+     * `monitors` channel line (whose own content is pinned elsewhere). The ArrayObject is shared by
+     * handle, so warnings written after this call appear in it.
+     */
+    private function captureWarnings(): \ArrayObject
+    {
+        $lines = new \ArrayObject();
+
+        Log::spy();
+        Log::shouldReceive('warning')->andReturnUsing(function ($message, array $context = []) use ($lines) {
+            $lines[] = ['message' => (string) $message, 'context' => $context];
+        });
+        Log::shouldReceive('channel')->with('monitors')->andReturn(Mockery::spy(LoggerInterface::class));
+
+        return $lines;
+    }
+
+    /** No warning carries an address anywhere: not in the message, not in a context value. */
+    private function assertNoAddressInAnyLogLine(\ArrayObject $warnings): void
+    {
+        $this->assertNotEmpty($warnings->getArrayCopy(), 'the failure was logged at all');
+
+        foreach ($warnings as $line) {
+            $text = $line['message'].' '.json_encode($line['context']);
+            $this->assertStringNotContainsString('@', $text, 'a log line carries no address: '.$text);
+        }
     }
 
     /** Swap the fake for the real array mailer, whose send() can be made to throw while `$down` is true. */
@@ -1515,12 +1577,55 @@ class WeeklyPointsReportTest extends TestCase
         $migration->up();
         $this->assertSame('19:30', $row->fresh()->report_time);
 
-        // down() takes back only what up() wrote.
+        // down() takes back only what up() wrote, and only while nobody has saved it since.
         $migration->down();
         $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count(), 'a changed row is not ours to remove');
+        Carbon::setTestNow(Carbon::parse('2026-10-02 09:00:00', 'UTC')->addDay());
         $row->forceFill(['report_time' => '18:00'])->save();
         $migration->down();
+        $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count(), 'a SuperAdmin put the same values back: that is their row now');
+
+        // The row up() wrote and nobody touched is the one it takes back, and it says so.
+        DB::table('masjid_points_settings')->delete();
+        Carbon::setTestNow(Carbon::parse('2026-10-01 12:00:00', 'UTC'));
+        $migration->up();
+        $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count());
+        Log::spy();
+        $migration->down();
         $this->assertSame(0, MasjidPointsSetting::withoutMasjidScope()->count());
+        Log::shouldHaveReceived('warning')->withArgs(fn ($m, $c = []) => str_contains((string) $m, 'removed by rollback') && ($c['rows_removed'] ?? 0) === 1)->once();
+    }
+
+    #[Test]
+    public function the_biss_schedule_row_is_stamped_with_one_instant_so_its_own_rollback_always_finds_it(): void
+    {
+        $migration = require base_path('database/migrations/2026_10_02_130000_seed_points_report_schedule_for_biss.php');
+
+        Masjid::forceCreate([
+            'id' => 18, 'name' => 'Burlington Islamic Sunday School', 'email' => 'x@y.test', 'phone' => '+15550000018',
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St', 'latitude' => 0.0, 'longitude' => 0.0,
+            'crm_enabled' => true, 'org_type' => 'school',
+        ]);
+
+        // A clock that moves a second every time it is read: the worst case of "two now() calls straddling a
+        // second". Two reads would stamp created_at and updated_at a second apart, and down()'s guard (a row
+        // saved since is not ours) would then take the seed's own row for someone else's and leave it.
+        $ticks = 0;
+        Carbon::setTestNow(function () use (&$ticks) {
+            return Carbon::parse('2026-10-01 12:00:00', 'UTC')->addSeconds($ticks++);
+        });
+
+        try {
+            $migration->up();
+            $row = DB::table('masjid_points_settings')->where('masjid_id', 18)->first();
+            $this->assertNotNull($row);
+            $this->assertSame($row->created_at, $row->updated_at, 'one instant for both stamps');
+
+            $migration->down();
+            $this->assertSame(0, DB::table('masjid_points_settings')->count(), 'its own rollback finds and removes the row');
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     #[Test]
@@ -1546,5 +1651,75 @@ class WeeklyPointsReportTest extends TestCase
         DB::table('masjids')->where('id', 18)->update(['deleted_at' => null]);
         $migration->up();
         $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count());
+    }
+
+    // ---------- optional fold: BehaviorWeek::claim swallows a duplicate and nothing else
+
+    #[Test]
+    public function a_claim_is_won_once_and_a_duplicate_is_the_only_error_it_swallows(): void
+    {
+        $key = [(int) $this->masjid->id, (int) $this->group->id, '2026-10-04'];
+
+        $this->assertTrue(BehaviorWeek::claim(...$key), 'the first caller wins the week');
+        $this->assertFalse(BehaviorWeek::claim(...$key), 'the second finds it taken, and no exception escapes the duplicate');
+        $this->assertSame(1, DB::table('behavior_weeks')->count());
+
+        // A claim given back is claimed again, by the same row.
+        BehaviorWeek::release((int) $this->group->id, '2026-10-04');
+        $this->assertTrue(BehaviorWeek::claim(...$key));
+        $this->assertFalse(BehaviorWeek::claim(...$key));
+        $this->assertSame(1, DB::table('behavior_weeks')->count());
+    }
+
+    /**
+     * behavior_weeks rebuilt with a column the claim never sets and that cannot be NULL, so its INSERT breaks
+     * on something that is NOT a duplicate. SQLite's INSERT OR IGNORE (what MySQL's INSERT IGNORE mirrors, and
+     * what `insertOrIgnore` writes) skips a row that breaks NOT NULL without a word, which is exactly the
+     * failure that used to read as "already sent".
+     */
+    private function behaviorWeeksThatCannotBeWritten(): void
+    {
+        Schema::drop('behavior_weeks');
+        DB::statement('CREATE TABLE behavior_weeks ('
+            .'id integer primary key autoincrement not null, masjid_id integer not null, group_id integer not null, '
+            .'week_start date not null, report_sent_at datetime, recipients_count integer, created_at datetime, '
+            .'updated_at datetime, must_be_set text not null)');
+        DB::statement('CREATE UNIQUE INDEX behavior_weeks_probe_unique ON behavior_weeks (group_id, week_start)');
+    }
+
+    #[Test]
+    public function an_insert_that_fails_for_any_other_reason_is_thrown_never_read_as_already_sent(): void
+    {
+        $this->behaviorWeeksThatCannotBeWritten();
+
+        try {
+            BehaviorWeek::claim((int) $this->masjid->id, (int) $this->group->id, '2026-10-04');
+            $this->fail('a failed claim was reported as an ordinary answer');
+        } catch (\Illuminate\Database\QueryException $e) {
+            $this->assertNotInstanceOf(\Illuminate\Database\UniqueConstraintViolationException::class, $e);
+            $this->assertStringContainsString('must_be_set', $e->getMessage());
+        }
+
+        $this->assertSame(0, DB::table('behavior_weeks')->count());
+    }
+
+    #[Test]
+    public function a_class_whose_claim_cannot_be_written_is_a_failure_in_the_run_not_already_sent(): void
+    {
+        $this->ordinaryWeek();
+        $this->behaviorWeeksThatCannotBeWritten();
+        $warnings = $this->captureWarnings();
+
+        $this->now('2026-10-09 15:00');
+        $output = $this->run_();
+
+        $this->assertStringContainsString('1 failure(s)', $output);
+        $this->assertStringContainsString('0 already sent', $output, 'the class is not counted as one that was sent');
+        Mail::assertNothingSent();
+        $lines = array_column($warnings->getArrayCopy(), 'message');
+        $this->assertTrue(
+            (bool) array_filter($lines, fn ($m) => str_contains($m, 'points:weekly-report failed for class '.$this->group->id)),
+            'and the failure leaves a line: '.json_encode($lines)
+        );
     }
 }

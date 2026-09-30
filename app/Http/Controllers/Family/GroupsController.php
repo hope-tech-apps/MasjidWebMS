@@ -9,6 +9,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
 use App\Support\SchoolSettings;
+use App\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -240,6 +241,10 @@ class GroupsController extends FamilyController
             // How this class's points read: 'running' or 'weekly' (T-003.2). The
             // portal leads with the week for a weekly class and keeps the history.
             'points_period' => $group->pointsPeriod(),
+            // Does this school have the weekly points report on (`points_weekly_report`)?
+            // The portal shows the report page and every link to it only when it does; the
+            // awards endpoints refuse a `?week=` the same way (BehaviorAwardsController).
+            'weekly_report' => SchoolSettings::pointsWeeklyReport(SchoolSettings::org(app(TenantContext::class)->get())),
             'starts_on' => optional($group->starts_on)->toDateString(),
             'ends_on' => optional($group->ends_on)->toDateString(),
 

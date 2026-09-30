@@ -548,7 +548,8 @@ class TenancyCanary extends Command
             '1 attributed 1 met true — the strongest verdict this command can issue, on an endpoint '.
             'handing every caller another school\'s parent contact details. NOT CLOSED.',
         'attributable_tables' => 'A row can only be traced through a relation named in '.
-            '`canary.compare_by` — three of the four names there can attribute. Every other table on the '.
+            '`canary.compare_by`, and all four names there can attribute (`gallery` through the '.
+            '`model` pair in canary.tenant_morphs since 2026-09-27). Every other table on the '.
             'platform is unanchored by construction, so a swap on one is invisible to the only detector '.
             'that sees swaps. `coverage.row_ownership.tables_available` lists the Masjid relations that '.
             'could be named and are not; `unplaced` names the endpoints where it cost something on THIS '.
@@ -3377,13 +3378,14 @@ class TenancyCanary extends Command
      *
      * ## Which relations can attribute, and which are refused
      *
-     * Only a has-one/has-many whose FOREIGN KEY is one of `canary.tenant_keys`.
-     * That excludes `gallery`, which is `hasMany(Media::class, 'model_id')` —
-     * its foreign key is a polymorphic owner id, so `model_id = 5` means "row 5
-     * of some model", not "masjid 5". Attributing through it would read an
-     * announcement's image as belonging to masjid 5 and report a leak that is
-     * not one. It is still used to RANK the compared pair, where an over-count
-     * costs nothing; it is refused here, where a wrong answer accuses somebody.
+     * Only a has-one/has-many whose foreign key names an organisation; see
+     * ownerKeyFor(). `gallery` shows why that needs care: it is
+     * `hasMany(Media::class, 'model_id')`, and `model_id = 5` alone means "row
+     * 5 of some model", not "masjid 5". Attributing through the bare id would
+     * read an announcement's image as belonging to masjid 5 and report a leak
+     * that is not one. So it attributes through the `model` pair in
+     * `canary.tenant_morphs`, and a row counts only when its `model_type` says
+     * Masjid.
      *
      * A relation that cannot attribute is named in `coverage.row_ownership.
      * tables_skipped` with its reason, not dropped silently.
@@ -3393,9 +3395,7 @@ class TenancyCanary extends Command
      */
     private function resolveOwnership(array $config, array $results): void
     {
-        $tenantKeys = (array) ($config['tenant_keys'] ?? ['masjid_id']);
-
-        /** @var array<string,HasOneOrMany<covariant \Illuminate\Database\Eloquent\Model>> $usable */
+        /** @var array<string,array{0:HasOneOrMany<covariant \Illuminate\Database\Eloquent\Model>,1:array{foreign:string,type_column:?string,type:?string}}> $usable */
         $usable = [];
 
         foreach ((array) ($config['compare_by'] ?? []) as $name) {
@@ -3412,16 +3412,10 @@ class TenancyCanary extends Command
                     continue;
                 }
 
-                if (! $relation instanceof HasOneOrMany) {
-                    $this->ownershipSkipped[$name] = 'not a has-one/has-many relation, so it has no '.
-                        'foreign key that names an organisation';
+                $ownerKey = $this->ownerKeyFor($relation, $config, $refusal);
 
-                    continue;
-                }
-
-                if (! in_array($relation->getForeignKeyName(), $tenantKeys, true)) {
-                    $this->ownershipSkipped[$name] = 'keyed on `'.$relation->getForeignKeyName().
-                        '`, which is not one of canary.tenant_keys — a value there does not name an organisation';
+                if ($ownerKey === null) {
+                    $this->ownershipSkipped[$name] = (string) $refusal;
 
                     continue;
                 }
@@ -3429,7 +3423,7 @@ class TenancyCanary extends Command
                 // Empty map rather than no map: the relation IS attributable,
                 // this run just saw none of its rows, and the distinction is
                 // what `tables` in the report means.
-                $usable[$name] = $relation;
+                $usable[$name] = [$relation, $ownerKey];
                 $this->ownership[$name] = [];
             } catch (\Throwable $e) {
                 // Same posture as tenantsHoldingContent(): a canary that dies
@@ -3485,35 +3479,129 @@ class TenancyCanary extends Command
             }
 
             try {
-                $relation = $usable[$name];
-                $related = $relation->getRelated();
-                $table = $related->getTable();
-                $key = $related->getKeyName();
-                $foreignKey = $relation->getForeignKeyName();
+                [$relation, $ownerKey] = $usable[$name];
 
-                // ->getQuery()->getQuery() is the base builder: it keeps the
-                // relation's own constraints (a collection filter, a morph type)
-                // and drops the model's global scopes on purpose. A soft-deleted
-                // row that came back in a response still has an owner, and the
-                // question here is who owns it, not whether it should have been
-                // served.
-                $rows = $relation->getQuery()->getQuery()
-                    ->whereIn($table.'.'.$key, $ids)
-                    ->get([$table.'.'.$key.' as canary_id', $table.'.'.$foreignKey.' as canary_owner']);
-
-                foreach ($rows as $row) {
-                    if ($row->canary_owner === null) {
-                        // A genuinely unowned row proves nothing about tenancy.
-                        continue;
-                    }
-
-                    $this->ownership[$name][(int) $row->canary_id] = (int) $row->canary_owner;
-                }
+                $this->ownership[$name] = $this->ownerMap($relation, $ownerKey, $ids);
             } catch (\Throwable $e) {
                 unset($this->ownership[$name]);
                 $this->ownershipSkipped[$name] = 'lookup failed: '.$e->getMessage();
             }
         }
+    }
+
+    /**
+     * Record id => owning organisation id, for the ids of one relation's table
+     * that this run was handed. One SELECT of two integer columns.
+     *
+     * @param  HasOneOrMany<covariant \Illuminate\Database\Eloquent\Model>  $relation  built by relationOrNull()
+     * @param  array{foreign:string,type_column:?string,type:?string}  $ownerKey  from ownerKeyFor()
+     * @param  array<int,int>  $ids
+     * @return array<int,int>
+     */
+    private function ownerMap(HasOneOrMany $relation, array $ownerKey, array $ids): array
+    {
+        $related = $relation->getRelated();
+        $table = $related->getTable();
+        $key = $related->getKeyName();
+
+        // ->getQuery()->getQuery() is the base builder: it keeps the `where`s
+        // chained onto the relation (gallery's collection filter) and drops the
+        // model's global scopes on purpose. A soft-deleted row that came back
+        // in a response still has an owner, and the question here is who owns
+        // it, not whether it should have been served.
+        $query = $relation->getQuery()->getQuery()->whereIn($table.'.'.$key, $ids);
+
+        // The pair's type half is added HERE, never left to the relation. A
+        // plain hasMany keyed on `model_id` may carry no type clause at all
+        // (gallery had none until 2026-09-27), and a morph relation's own is
+        // dropped by the Relation::noConstraints that relationOrNull() builds
+        // it in. Without it, a Service's photo whose service id equals a
+        // masjid's id reads as that masjid's row.
+        if ($ownerKey['type_column'] !== null) {
+            $query->where($table.'.'.$ownerKey['type_column'], $ownerKey['type']);
+        }
+
+        $owners = [];
+
+        foreach ($query->get([$table.'.'.$key.' as canary_id', $table.'.'.$ownerKey['foreign'].' as canary_owner']) as $row) {
+            if ($row->canary_owner === null) {
+                // A genuinely unowned row proves nothing about tenancy.
+                continue;
+            }
+
+            $owners[(int) $row->canary_id] = (int) $row->canary_owner;
+        }
+
+        return $owners;
+    }
+
+    /**
+     * Which column of a relation's rows names the organisation that owns them,
+     * or null with the reason when none does.
+     *
+     * Two shapes qualify, and both are declared in config rather than guessed:
+     *
+     *  - a foreign key in `canary.tenant_keys` (`masjid_id`). The value IS an
+     *    organisation id;
+     *  - the id half of a pair in `canary.tenant_morphs` (`model_id` of
+     *    `model`). The value is an organisation id ONLY on rows whose type half
+     *    is the organisation model's morph class. `type_column` and `type` carry
+     *    that clause to the lookup, which must add it (see resolveOwnership()).
+     *
+     * The morph case also requires the relation's local key to be Masjid's
+     * primary key. A pair that points at some other Masjid column would put
+     * something that is not an organisation id into `{name}_id`.
+     *
+     * Used by resolveOwnership() and attributableRelationsNotConfigured(), so
+     * the relations the run attributes through and the ones the inventory says
+     * COULD attribute are decided by one rule.
+     *
+     * @param  array<string,mixed>  $config
+     * @param  string|null  $reason  filled in with why null came back
+     * @return array{foreign:string,type_column:?string,type:?string}|null
+     */
+    private function ownerKeyFor(Relation $relation, array $config, ?string &$reason = null): ?array
+    {
+        $reason = null;
+
+        if (! $relation instanceof HasOneOrMany) {
+            $reason = 'not a has-one/has-many relation, so it has no foreign key that names an organisation';
+
+            return null;
+        }
+
+        $foreign = $relation->getForeignKeyName();
+
+        if (in_array($foreign, (array) ($config['tenant_keys'] ?? ['masjid_id']), true)) {
+            return ['foreign' => $foreign, 'type_column' => null, 'type' => null];
+        }
+
+        foreach ((array) ($config['tenant_morphs'] ?? []) as $morph) {
+            if (! is_string($morph) || $foreign !== $morph.'_id') {
+                continue;
+            }
+
+            $organisation = new Masjid;
+
+            if ($relation->getLocalKeyName() !== $organisation->getKeyName()) {
+                $reason = 'keyed on `'.$foreign.'` of the canary.tenant_morphs pair `'.$morph.'`, but against '.
+                    'Masjid\'s `'.$relation->getLocalKeyName().'` rather than its primary key, so a value there '.
+                    'is not an organisation id';
+
+                return null;
+            }
+
+            return [
+                'foreign' => $foreign,
+                'type_column' => $morph.'_type',
+                'type' => $organisation->getMorphClass(),
+            ];
+        }
+
+        $reason = 'keyed on `'.$foreign.'`, which is neither one of canary.tenant_keys nor the id half of a '.
+            'pair in canary.tenant_morphs — a value there does not name an organisation';
+
+        return null;
     }
 
     /** @param array<int,array<string,array<int,int>>> $foreign */
@@ -4015,7 +4103,8 @@ class TenancyCanary extends Command
      *     not the day someone reads the coverage block.
      *
      * The cost is on the record rather than assumed. `canary.compare_by` is four
-     * relations, three of which can attribute, so EVERY other table on the
+     * relations, all of which can attribute since 2026-09-27 (`gallery` through
+     * `canary.tenant_morphs`), so EVERY other table on the
      * platform is unanchored by construction — `coverage.row_ownership.
      * tables_available` now says how many Masjid relations could be named and
      * are not. A vertical shipping its first public read endpoint with rows in it
@@ -4153,7 +4242,6 @@ class TenancyCanary extends Command
     private function attributableRelationsNotConfigured(array $config): array
     {
         $configured = array_map('strval', (array) ($config['compare_by'] ?? []));
-        $tenantKeys = (array) ($config['tenant_keys'] ?? ['masjid_id']);
 
         $available = [];
 
@@ -4175,8 +4263,7 @@ class TenancyCanary extends Command
 
             $relation = $this->relationOrNull($name);
 
-            if ($relation instanceof HasOneOrMany
-                && in_array($relation->getForeignKeyName(), $tenantKeys, true)) {
+            if ($relation !== null && $this->ownerKeyFor($relation, $config) !== null) {
                 $available[] = $name;
             }
         }

@@ -22,7 +22,12 @@ use Illuminate\Support\Facades\Log;
  * (a fresh database, a test run, and any environment where 18 is another
  * organisation get nothing and one warning). Idempotent: an existing row for the
  * school is a SuperAdmin's decision and is left alone. down() removes only a row
- * that still holds exactly what up() wrote.
+ * that still holds exactly what up() wrote AND has not been saved since
+ * (`updated_at` still equal to `created_at`, the way the subjects seed reads
+ * "untouched"), and says in one warning line what it removed. It cannot go
+ * further without a mark on the row, which is a change to up() and to the table
+ * (an applied migration is never edited): a row a SuperAdmin CREATED with these very
+ * values and never touched still reads as ours. That is the gap this leaves.
  *
  * Query builder only, no raw SQL, so no driver guard.
  */
@@ -42,22 +47,36 @@ return new class extends Migration
             return;
         }
 
+        // ONE instant for both stamps: two now() calls can straddle a second, and down() reads
+        // `updated_at != created_at` as "saved since", so it would skip the row it wrote.
+        $now = now();
+
         DB::table('masjid_points_settings')->insert([
             'masjid_id' => self::MASJID_ID,
             'report_weekday' => self::WEEKDAY,
             'report_time' => self::TIME,
-            'created_at' => now(),
-            'updated_at' => now(),
+            'created_at' => $now,
+            'updated_at' => $now,
         ]);
     }
 
     public function down(): void
     {
-        DB::table('masjid_points_settings')
+        $removed = DB::table('masjid_points_settings')
             ->where('masjid_id', self::MASJID_ID)
             ->where('report_weekday', self::WEEKDAY)
             ->where('report_time', self::TIME)
+            // A row saved since (a SuperAdmin put the same values back) is their decision, not ours.
+            ->whereColumn('updated_at', 'created_at')
             ->delete();
+
+        if ($removed > 0) {
+            // Rolling this back returns BISS to the Friday 15:00 default; leave a line that says so.
+            Log::warning('Points report schedule for the Sunday school removed by rollback', [
+                'masjid_id' => self::MASJID_ID,
+                'rows_removed' => $removed,
+            ]);
+        }
     }
 
     private function isBiss(): bool

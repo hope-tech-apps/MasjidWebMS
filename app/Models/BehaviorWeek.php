@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -12,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  *
  * THE ROW IS THE SEND CLAIM, and it is only ever written by the
  * `points:weekly-report` command, through the query builder, never `create()`:
- * the command inserts the row (ignoring a duplicate) and then flips
+ * the command inserts the row (a duplicate is the one error it ignores) and then flips
  * `report_sent_at` from NULL with a conditional UPDATE, so exactly one process can
  * win the week (`BehaviorWeek::claim()`). `week_start` is the points week's first
  * local day as a plain 'Y-m-d' string, so SQLite and MySQL hold the same value and
@@ -58,10 +59,17 @@ class BehaviorWeek extends Model
      * Try to become the sender of this class's report for this week.
      *
      * True for exactly ONE caller per (group, week): the one whose conditional
-     * UPDATE changed the row. The insert ignores a duplicate (the unique index), so
-     * the loser of a race, a second server and a retried run all fall through to the
-     * UPDATE and find it already taken. It is the database, not this method, that
-     * decides: no read-then-write gap for two runs to slip through.
+     * UPDATE changed the row. The insert may hit the unique index, and ONLY that is
+     * swallowed: the loser of a race, a second server and a retried run all fall
+     * through to the UPDATE and find it already taken. It is the database, not this
+     * method, that decides: no read-then-write gap for two runs to slip through.
+     *
+     * Any other failure of the insert (a class deleted between the read and the
+     * claim, a full disk, a lost connection) is thrown. It used to be
+     * `insertOrIgnore`, which on MySQL is INSERT IGNORE and turns those errors into
+     * warnings: the row was not written, the UPDATE matched nothing, and the run
+     * counted the class as "already sent" with no line to say otherwise
+     * (review, optional fold).
      *
      * `$masjidId` is passed explicitly: the command runs with no tenant bound, where
      * the creating hook would stamp nothing.
@@ -70,15 +78,20 @@ class BehaviorWeek extends Model
     {
         $now = now();
 
-        DB::table('behavior_weeks')->insertOrIgnore([
-            'masjid_id' => $masjidId,
-            'group_id' => $groupId,
-            'week_start' => $weekStart,
-            'report_sent_at' => null,
-            'recipients_count' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+        try {
+            DB::table('behavior_weeks')->insert([
+                'masjid_id' => $masjidId,
+                'group_id' => $groupId,
+                'week_start' => $weekStart,
+                'report_sent_at' => null,
+                'recipients_count' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // The (group, week) row exists: sent, released, or taken by a run that is racing
+            // this one. The conditional UPDATE below says which.
+        }
 
         return DB::table('behavior_weeks')
             ->where('group_id', $groupId)

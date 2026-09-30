@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Resources\Api\V1\AnnouncementResource;
+use App\Http\Resources\Api\V1\PhotoGalleryResource;
 use App\Http\Resources\Api\V1\ServiceResource;
 use App\Models\Announcement;
 use App\Models\AppMenuSetting;
@@ -13,6 +14,7 @@ use App\Console\Commands\TenancyCanary;
 use App\Support\AppMenu;
 use App\Support\Canary\AppMenuKillSwitch;
 use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Artisan;
@@ -477,12 +479,240 @@ class TenancyCanaryTest extends TestCase
             'an endpoint whose only id is its own organisation\'s primary key was reported as verified');
         $this->assertStringContainsString('BLIND', $check['detail']);
 
-        // And the relation that CANNOT attribute is named with its reason.
-        // `Masjid::gallery` is hasMany(Media, 'model_id') — a polymorphic owner
-        // id, so `model_id = 5` means "row 5 of some model", not "masjid 5".
+        // Every relation in compare_by attributes. `Masjid::gallery` is
+        // hasMany(Media, 'model_id'), and it does so through the `model` pair in
+        // canary.tenant_morphs; the tests under "The gallery is attributed
+        // through its morph pair" pin what that means.
+        $this->assertSame([], $ownership['tables_skipped']);
+        $this->assertSame(['announcements', 'services', 'pages', 'gallery'], $ownership['tables']);
+    }
+
+    // ================================================================
+    // The gallery is attributed through its morph pair (2026-09-27)
+    //
+    // MEASURED ON PRODUCTION: MEC imported 26 photos (Masjid 13, `galleries`,
+    // media ids 1000718-1000743) at 2026-09-22 00:26 UTC. From the 00:47 run
+    // that day, every hourly run exited 3 `partial` with degraded_by
+    // row_ownership_unplaced and "api/v1/gallery: NOT TRACED: items". The
+    // rows were MEC's own. `gallery` is keyed on `model_id`, which is not a
+    // tenant key, so nothing could say whose they were.
+    //
+    // The fix is the `model` pair in canary.tenant_morphs. `model_id` names
+    // an organisation only when `model_type` says Masjid. These three tests
+    // pin the three things that has to mean.
+    // ================================================================
+
+    #[Test]
+    public function an_organisations_own_gallery_photos_are_traced_back_to_it(): void
+    {
+        // Production's shape: one of the compared pair has photos, the other
+        // has none.
+        foreach (range(1, 3) as $n) {
+            $this->makeMedia(Masjid::class, $this->masjidA->id, 'galleries');
+        }
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+
+        $ownership = $run['coverage']['row_ownership'];
+
+        $this->assertArrayNotHasKey('api/v1/gallery', $ownership['unplaced'],
+            'an organisation\'s own photos were still rows nothing could place — the 2026-09-22 page: '.
+            json_encode($ownership['unplaced']));
+        $this->assertSame(0, $exit, json_encode($run['degraded_by'] ?? null));
+        $this->assertSame('clean', $run['status']);
+        $this->assertTrue($ownership['met']);
+        $this->assertContains('gallery', $ownership['tables']);
+        $this->assertArrayNotHasKey('gallery', $ownership['tables_skipped']);
+
+        $check = collect($run['checks'])
+            ->where('check', 'answer-carries-the-requested-tenants-rows')
+            ->firstWhere('endpoint', 'api/v1/gallery');
+
+        $this->assertSame('pass', $check['outcome']);
+        $this->assertStringContainsString('masjid '.$this->masjidA->id.': 3 row(s) traced back to it', $check['detail']);
+    }
+
+    #[Test]
+    public function gallery_photos_served_to_the_other_organisation_are_a_leak(): void
+    {
+        // Tracing a table is only worth something if the trace can go RED.
+        // Same swap as registerSwappedTenantFixture(), on the gallery.
+        foreach ([$this->masjidA, $this->masjidA, $this->masjidB] as $owner) {
+            $this->makeMedia(Masjid::class, $owner->id, 'galleries');
+        }
+
+        $this->registerSwappedGalleryFixture();
+
+        [$exit, $run] = $this->runCanary(['--only' => '__canary_swap']);
+
+        $this->assertSame(1, $exit, 'each organisation was served the other\'s photos and the canary did not say so: '.
+            json_encode($run['checks'], JSON_PRETTY_PRINT));
+        $this->assertSame('leak', $run['status']);
+
+        $findings = collect($run['findings'])->where('kind', 'foreign_rows_for_requested_tenant');
+
+        $this->assertCount(2, $findings, 'only one side of a two-way swap was reported');
+
+        $forA = $findings->firstWhere('evidence.requested', $this->masjidA->id);
+
+        $this->assertNotNull($forA);
+        $this->assertSame(
+            [$this->masjidB->id],
+            array_map('intval', array_keys($forA['evidence']['foreign_rows']))
+        );
+        $this->assertSame(['gallery'], $forA['evidence']['attributed_by']);
+    }
+
+    #[Test]
+    public function a_photo_of_another_model_is_never_read_as_an_organisations_row(): void
+    {
+        // Why the bare `model_id` was refused, and must stay refused.
+        // `media.model_id` is one half of a key. The endpoint below is
+        // correctly scoped: each organisation gets its gallery AND the photos
+        // of its own services. One of A's services carries the same id as
+        // masjid B. Read by `model_id` alone, that service's photo is "masjid
+        // B's row" in masjid A's answer, and a correct endpoint is accused of
+        // a cross-tenant read. The type half keeps it unowned.
+        //
+        // The photo is filed under `galleries` on purpose. The relation's own
+        // collection filter would hide a `services` row, and this test is
+        // about the type half, not the collection.
+        //
+        // This is the end-to-end run. Once Masjid::gallery() carries the type
+        // half itself (fix/masjid-media-model-type), the relation hides the
+        // row before the canary's clause is reached, so this run alone no
+        // longer isolates that clause.
+        // the_ownership_lookup_adds_the_type_half_itself pins it on a
+        // relation that carries none.
+        $collision = Service::query()
+            ->where('masjid_id', $this->masjidA->id)
+            ->whereKey($this->masjidB->id)
+            ->first();
+
+        $this->assertNotNull($collision,
+            'the premise is gone: none of masjid A\'s services has masjid B\'s id, so this test pins nothing');
+
+        $this->makeMedia(Masjid::class, $this->masjidA->id, 'galleries');
+        $this->makeMedia(Masjid::class, $this->masjidB->id, 'galleries');
+        $this->makeMedia(Service::class, $collision->id, 'galleries');
+
+        $this->registerOrganisationPhotosFixture();
+
+        [$exit, $run] = $this->runCanary(['--only' => '__canary_photos']);
+
+        $this->assertSame([], collect($run['findings'])->where('kind', 'foreign_rows_for_requested_tenant')->values()->all(),
+            'a service\'s photo was attributed by its model_id to the masjid that shares the number: '.
+            json_encode($run['findings'], JSON_PRETTY_PRINT));
+        $this->assertSame(0, $exit, json_encode($run['degraded_by'] ?? null));
+        $this->assertSame('clean', $run['status']);
+
+        $check = collect($run['checks'])
+            ->where('check', 'answer-carries-the-requested-tenants-rows')
+            ->firstWhere('endpoint', 'api/v1/__canary_photos/gallery');
+
+        // Neither accused nor credited: A's gallery photo is A's, and the
+        // service's photo is a row the run says it could not place.
+        $this->assertSame('pass', $check['outcome']);
+        $this->assertStringContainsString('masjid '.$this->masjidA->id.': 1 row(s) traced back to it', $check['detail']);
+        $this->assertStringContainsString('1 id(s) in a traced list resolved to no owner', $check['detail']);
+    }
+
+    #[Test]
+    public function the_ownership_lookup_adds_the_type_half_itself(): void
+    {
+        // The pin for the clause, independent of how any Masjid relation is
+        // written today: a relation keyed on `model_id` with NO type clause,
+        // which is what gallery() was until 2026-09-27. ownerMap() must still
+        // only credit Masjid-typed rows.
+        $relation = Relation::noConstraints(
+            fn () => (new Masjid)->hasMany(Media::class, 'model_id')->where('collection_name', 'galleries')
+        );
+
+        $own = $this->makeMedia(Masjid::class, $this->masjidA->id, 'galleries');
+        $service = $this->makeMedia(Service::class, $this->masjidB->id, 'galleries');
+        $ids = [$own->id, $service->id];
+
+        // The premise: the relation alone would match both rows. On a clone,
+        // so the relation ownerMap() receives is untouched.
+        $this->assertSame(2, (clone $relation->getQuery()->getQuery())->whereIn('media.id', $ids)->count(),
+            'the hand-built relation already filters model_type, so this test would pin nothing');
+
+        [$key] = $this->ownerKeyOf($relation);
+
+        $this->assertSame([$own->id => $this->masjidA->id], $this->ownerMapOf($relation, $key, $ids),
+            'a Service photo whose service id equals masjid B\'s id was credited to masjid B');
+    }
+
+    #[Test]
+    public function the_production_symptom_returns_when_the_morph_pair_is_not_declared(): void
+    {
+        // The control for the three gallery tests above: the same fixture
+        // with `tenant_morphs` emptied must reproduce what production logged
+        // every hour from 2026-09-22 00:49 UTC. If it does not, the fixture is
+        // not production's shape and the passing tests prove less than they
+        // say. It is also the only run that drives the refusal path into
+        // `tables_skipped`.
+        config(['canary.tenant_morphs' => []]);
+
+        foreach (range(1, 3) as $n) {
+            $this->makeMedia(Masjid::class, $this->masjidA->id, 'galleries');
+        }
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+
+        $ownership = $run['coverage']['row_ownership'];
+
+        $this->assertSame(3, $exit);
+        $this->assertSame('partial', $run['status']);
+        $this->assertContains('row_ownership_unplaced', (array) $run['degraded_by']);
+        $this->assertArrayHasKey('api/v1/gallery', $ownership['unplaced']);
+        $this->assertStringContainsString('NOT TRACED: items', $ownership['unplaced']['api/v1/gallery']);
         $this->assertArrayHasKey('gallery', $ownership['tables_skipped']);
-        $this->assertStringContainsString('model_id', $ownership['tables_skipped']['gallery']);
-        $this->assertSame(['announcements', 'services', 'pages'], $ownership['tables']);
+        $this->assertStringContainsString('`model_id`', $ownership['tables_skipped']['gallery']);
+        $this->assertStringContainsString('canary.tenant_morphs', $ownership['tables_skipped']['gallery']);
+        $this->assertSame([], $run['findings'], 'blindness was reported as a leak');
+    }
+
+    #[Test]
+    public function only_a_key_that_names_an_organisation_can_attribute(): void
+    {
+        // ownerKeyFor(), branch by branch. Every relation in compare_by is
+        // accepted today, so without these the refusals have no test and a
+        // fail-open default would pass the suite.
+        [$relation] = $this->resolveRelation('announcements');
+        $this->assertSame(['foreign' => 'masjid_id', 'type_column' => null, 'type' => null], $this->ownerKeyOf($relation)[0]);
+
+        [$relation] = $this->resolveRelation('gallery');
+        $this->assertSame(
+            ['foreign' => 'model_id', 'type_column' => 'model_type', 'type' => (new Masjid)->getMorphClass()],
+            $this->ownerKeyOf($relation)[0]
+        );
+
+        // Not a has-one/has-many: nothing on the related row names an owner.
+        [$relation] = $this->resolveRelation('country');
+        [$key, $reason] = $this->ownerKeyOf($relation);
+        $this->assertNull($key);
+        $this->assertStringContainsString('not a has-one/has-many', (string) $reason);
+
+        // Keyed on a column that is neither a tenant key nor a declared pair.
+        [$relation] = $this->resolveRelation('children');
+        [$key, $reason] = $this->ownerKeyOf($relation);
+        $this->assertNull($key);
+        $this->assertStringContainsString('`parent_id`', (string) $reason);
+        $this->assertStringContainsString('canary.tenant_morphs', (string) $reason);
+
+        // The pair's id half, but against a Masjid column that is not its
+        // primary key: the value there is not an organisation id.
+        $relation = Relation::noConstraints(fn () => (new Masjid)->hasMany(Media::class, 'model_id', 'user_id'));
+        [$key, $reason] = $this->ownerKeyOf($relation);
+        $this->assertNull($key);
+        $this->assertStringContainsString('primary key', (string) $reason);
+
+        // And with the pair undeclared, the gallery is refused with its reason.
+        [$relation] = $this->resolveRelation('gallery');
+        [$key, $reason] = $this->ownerKeyOf($relation, ['tenant_keys' => ['masjid_id'], 'tenant_morphs' => []]);
+        $this->assertNull($key);
+        $this->assertStringContainsString('`model_id`', (string) $reason);
     }
 
     #[Test]
@@ -2745,6 +2975,63 @@ class TenancyCanaryTest extends TestCase
     }
 
     /**
+     * The same swap on the gallery: each organisation is served the other's
+     * photos, through the real V1 Resource (`id`, `title`, `image_url`, so no
+     * tenant key in the body). Only the row-ownership assertion can see it,
+     * and only through the `model` pair in canary.tenant_morphs.
+     */
+    private function registerSwappedGalleryFixture(): void
+    {
+        Route::get('api/v1/__canary_swap/gallery', function () {
+            $tenant = (int) request()->header('masjid-id');
+
+            if ($tenant <= 0) {
+                return response()->api(400, 'A masjid must be specified.', null);
+            }
+
+            $other = Masjid::query()->where('id', '!=', $tenant)->orderBy('id')->value('id');
+            $rows = Masjid::query()->findOrFail($other)->gallery()->get();
+
+            return response()->api(200, 'ok', [
+                'items' => PhotoGalleryResource::collection($rows),
+                'pagination' => ['current_page' => 1, 'total' => $rows->count()],
+            ]);
+        });
+    }
+
+    /**
+     * A CORRECTLY scoped endpoint over two owner types in one list: the
+     * organisation's gallery and the photos of its own services. The shape
+     * that makes `model_id` alone ambiguous, since a service id and a masjid
+     * id are counted from the same 1.
+     */
+    private function registerOrganisationPhotosFixture(): void
+    {
+        Route::get('api/v1/__canary_photos/gallery', function () {
+            $tenant = (int) request()->header('masjid-id');
+
+            if ($tenant <= 0) {
+                return response()->api(400, 'A masjid must be specified.', null);
+            }
+
+            $services = Service::query()->where('masjid_id', $tenant)->pluck('id');
+
+            $rows = Media::query()
+                ->where('collection_name', 'galleries')
+                ->where(fn ($q) => $q
+                    ->where(fn ($q) => $q->where('model_type', Masjid::class)->where('model_id', $tenant))
+                    ->orWhere(fn ($q) => $q->where('model_type', Service::class)->whereIn('model_id', $services)))
+                ->orderBy('id')
+                ->get();
+
+            return response()->api(200, 'ok', [
+                'items' => PhotoGalleryResource::collection($rows),
+                'pagination' => ['current_page' => 1, 'total' => $rows->count()],
+            ]);
+        });
+    }
+
+    /**
      * The HOME FEED SHAPE: sibling lists under one key, one correctly scoped and
      * named after its table, the other a TOTAL SWAP under a key no relation is
      * named by.
@@ -3117,6 +3404,33 @@ class TenancyCanaryTest extends TestCase
         return [$method->invokeArgs($command, $args), $reason];
     }
 
+    /**
+     * ownerKeyFor() through the command, as resolveRelation() does for
+     * relationOrNull().
+     *
+     * @param  array<string,mixed>|null  $config  defaults to the live canary config
+     * @return array{0: ?array, 1: ?string}
+     */
+    private function ownerKeyOf(Relation $relation, ?array $config = null): array
+    {
+        $command = app(TenancyCanary::class);
+
+        $method = new \ReflectionMethod($command, 'ownerKeyFor');
+
+        $reason = null;
+        $args = [$relation, $config ?? (array) config('canary'), &$reason];
+
+        return [$method->invokeArgs($command, $args), $reason];
+    }
+
+    /** @return array<int,int> */
+    private function ownerMapOf(HasOneOrMany $relation, array $ownerKey, array $ids): array
+    {
+        $command = app(TenancyCanary::class);
+
+        return (new \ReflectionMethod($command, 'ownerMap'))->invoke($command, $relation, $ownerKey, $ids);
+    }
+
     /** @return array<int,string> */
     private function coverageInventory(): array
     {
@@ -3131,26 +3445,34 @@ class TenancyCanaryTest extends TestCase
     private function seedMedia(): int
     {
         foreach ([$this->masjidA, $this->masjidB] as $masjid) {
-            $media = new Media;
-
-            $media->model_type = Masjid::class;
-            $media->model_id = $masjid->id;
-            $media->uuid = (string) Str::uuid();
-            $media->collection_name = 'logos';
-            $media->name = 'logo';
-            $media->file_name = 'logo-'.Str::random(6).'.png';
-            $media->mime_type = 'image/png';
-            $media->disk = 'public';
-            $media->size = 12;
-            $media->manipulations = [];
-            $media->custom_properties = [];
-            $media->generated_conversions = [];
-            $media->responsive_images = [];
-            $media->order_column = 1;
-            $media->save();
+            $this->makeMedia(Masjid::class, $masjid->id, 'logos');
         }
 
         return Media::count();
+    }
+
+    /** One media row, owned by `$type` #`$id`, in `$collection`. No file. */
+    private function makeMedia(string $type, int $id, string $collection): Media
+    {
+        $media = new Media;
+
+        $media->model_type = $type;
+        $media->model_id = $id;
+        $media->uuid = (string) Str::uuid();
+        $media->collection_name = $collection;
+        $media->name = $collection;
+        $media->file_name = $collection.'-'.Str::random(6).'.png';
+        $media->mime_type = 'image/png';
+        $media->disk = 'public';
+        $media->size = 12;
+        $media->manipulations = [];
+        $media->custom_properties = [];
+        $media->generated_conversions = [];
+        $media->responsive_images = [];
+        $media->order_column = 1;
+        $media->save();
+
+        return $media;
     }
 
     private function runCanary(array $options = []): array

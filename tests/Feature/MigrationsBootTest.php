@@ -104,6 +104,48 @@ class MigrationsBootTest extends TestCase
         );
     }
 
+    /**
+     * `email_suppressions.email_normalized` becomes byte-exact on MySQL, and
+     * nothing changes on SQLite.
+     *
+     * The collation itself cannot be observed here (SQLite compares bytes
+     * already; the MySQL CI job runs the migration and its rollback), so this
+     * pins what can be: the exact statements, that they are guarded to the MySQL
+     * family, that the column they restate is the create migration's, and that
+     * the two index names are still there, under MySQL's 64-character limit.
+     */
+    #[Test]
+    public function the_email_suppression_key_is_made_byte_exact_on_mysql_and_left_alone_on_sqlite(): void
+    {
+        $migration = (string) file_get_contents(database_path('migrations/2026_10_01_130000_make_email_suppression_key_byte_exact.php'));
+        $create = (string) file_get_contents(database_path('migrations/2026_09_12_100000_create_email_suppressions_table.php'));
+
+        $this->assertStringContainsString(
+            "'ALTER TABLE email_suppressions MODIFY email_normalized VARCHAR(191) COLLATE utf8mb4_bin NOT NULL'",
+            $migration,
+        );
+        $this->assertStringContainsString(
+            "'ALTER TABLE email_suppressions MODIFY email_normalized VARCHAR(191) COLLATE utf8mb4_unicode_ci NOT NULL'",
+            $migration,
+            'down() must restore the collation the column was created with.',
+        );
+        $this->assertStringContainsString("in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)", $migration);
+        $this->assertStringContainsString(
+            '$table->string(\'email_normalized\', 191);',
+            $create,
+            'The MODIFY restates the create migration\'s type, length and nullability; this test must move with it.',
+        );
+
+        $this->artisan('migrate:fresh', ['--force' => true])->assertExitCode(0);
+
+        $indexNames = array_column(Schema::getIndexes('email_suppressions'), 'name');
+
+        foreach (['email_suppressions_tenant_address_unique', 'email_suppressions_address_index'] as $name) {
+            $this->assertContains($name, $indexNames);
+            $this->assertLessThanOrEqual(64, strlen($name));
+        }
+    }
+
     /** The connection under test really is SQLite, so the guarantees above mean something. */
     #[Test]
     public function the_suite_runs_on_sqlite(): void

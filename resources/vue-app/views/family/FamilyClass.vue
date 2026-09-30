@@ -364,12 +364,13 @@
 
                         <!-- THIS WEEK (T-003.2). The figure and the week are the
                              server's, on the SCHOOL's clock; nothing is summed
-                             here. A weekly class leads with the week and keeps
-                             every earlier week under History; every other class
-                             shows the week as a second line under its running
-                             record. A failed read hides the figure rather than
+                             here. Shown ONLY for a class whose teacher has opted in
+                             to the weekly view: it leads with the week and keeps
+                             every earlier week under History. Any other class reads
+                             its running total and is not asked for a week (review F1).
+                             A failed read hides the figure rather than
                              printing a 0 that says the child did nothing. -->
-                        <div v-if="points[child.membership_id]?.week" class="mb-3">
+                        <div v-if="showsThisWeek(group) && points[child.membership_id]?.week" class="mb-3">
                             <div class="d-flex justify-content-between align-items-baseline">
                                 <span class="small fw-semibold">
                                     {{ t('points_this_week') }}
@@ -377,11 +378,21 @@
                                 </span>
                                 <span class="fw-semibold" dir="ltr">{{ signedPoints(points[child.membership_id].week.totals?.points) }}</span>
                             </div>
-                            <div v-if="group.points_period === 'weekly' && points[child.membership_id]?.all"
+                            <div v-if="points[child.membership_id]?.all"
                                  class="d-flex justify-content-between align-items-baseline small text-muted">
                                 <span>{{ t('points_all_weeks') }}</span>
                                 <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
                             </div>
+                        </div>
+
+                        <!-- The weekly report page: only where the school has the report
+                             on (`points_weekly_report`), the same switch the Friday email
+                             answers to. Off means no link and no page (review F1). Kept
+                             OUT of the "This week" block above and off the class's own
+                             opt-in: the email goes to every class in a granted school, so
+                             a family whose class has not opted in still gets a link to the
+                             page the email is about (review G1). -->
+                        <div v-if="weeklyReportOn(group)" class="mb-3">
                             <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
                                 {{ t('weekly_report_open') }}
                             </router-link>
@@ -751,12 +762,18 @@
 
                             <template v-else>
                                 <!-- THE WEIGHTED AVERAGE (T-001.2), only where the teacher
-                                     has given the class weights and there is a figure. It
-                                     leads, and the plain points figure stays below it, so a
-                                     parent never wonders which of two numbers is "the" one.
-                                     A percentage of POINTS work only: levels have their own
-                                     block and are never turned into one. -->
-                                <template v-if="marksFor(child).summary.weighting?.enabled && marksFor(child).summary.weighting.percent !== null">
+                                     has given the class weights, there is a figure, and NO
+                                     older work is left out of it (review F8): older work with
+                                     no type drops out of a weighted figure, and "100% across
+                                     1 piece" above a plain 60 of 90 says nothing about why.
+                                     Until that work is typed the family reads the plain total
+                                     below and no weighted figure, here or anywhere on this
+                                     screen (see familySeesWeighted). It leads, and the plain
+                                     points figure stays below it, so a parent never wonders
+                                     which of two numbers is "the" one. A percentage of POINTS
+                                     work only: levels have their own block and are never
+                                     turned into one. -->
+                                <template v-if="familySeesWeighted(marksFor(child).summary.weighting) && marksFor(child).summary.weighting.percent !== null">
                                     <h3 class="text-uppercase text-muted small">{{ t('marks_weighted_average') }}</h3>
                                     <p class="small mb-1">
                                         <span class="fw-semibold" dir="ltr">{{ percentText(marksFor(child).summary.weighting.percent) }}</span>
@@ -765,9 +782,6 @@
                                         </span>
                                     </p>
                                     <p class="text-muted small mb-1">{{ t('marks_weighted_note') }}</p>
-                                    <p v-if="marksFor(child).summary.weighting.untyped_excluded > 0" class="text-muted small mb-1">
-                                        {{ tCount('marks_untyped', marksFor(child).summary.weighting.untyped_excluded) }}
-                                    </p>
                                     <div class="mb-3"></div>
                                 </template>
 
@@ -824,7 +838,7 @@
                                             &middot; {{ levelPhrase('level_short', Math.round(Number(marksFor(child).summary.levels.mean)), marksFor(child).summary.levels.mean_label) }}
                                         </span>
                                     </p>
-                                    <p v-if="marksFor(child).summary.weighting?.enabled && marksFor(child).summary.weighting.level_mean !== null && marksFor(child).summary.weighting.level_mean !== undefined"
+                                    <p v-if="familySeesWeighted(marksFor(child).summary.weighting) && marksFor(child).summary.weighting.level_mean !== null && marksFor(child).summary.weighting.level_mean !== undefined"
                                        class="small text-muted mb-2">
                                         {{ t('marks_weighted_level', String(marksFor(child).summary.weighting.level_mean)) }}
                                         <span v-if="marksFor(child).summary.weighting.level_mean_label" dir="auto">
@@ -884,7 +898,7 @@
                                         <li v-for="b in marksFor(child).summary.by_subject" :key="b.subject ?? '_none'"
                                             class="d-flex justify-content-between gap-3">
                                             <span dir="auto">{{ b.subject ?? t('marks_no_subject') }}</span>
-                                            <span class="text-muted text-end" dir="auto">{{ subjectFigures(b) }}</span>
+                                            <span class="text-muted text-end" dir="auto">{{ subjectFigures(b, familySeesWeighted(marksFor(child).summary.weighting)) }}</span>
                                         </li>
                                     </ul>
                                 </template>
@@ -1022,9 +1036,9 @@
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
-import { signedPoints, weekRangeLabel } from '@/core/helpers/pointsWeek';
+import { showsThisWeek, signedPoints, weekRangeLabel, weeklyReportOn } from '@/core/helpers/pointsWeek';
 import { drillCaption, letterRuns } from '@/core/helpers/letterRuns';
-import { percentText } from '@/core/helpers/gradebook';
+import { familySeesWeighted, percentText } from '@/core/helpers/gradebook';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
@@ -1572,7 +1586,9 @@ const loadChildRecords = (run = beginRun()) => loadChildRecordsFor(run, group.va
     setRecords: (id, value) => { records.value[id] = value; },
     setLetters: (id, tracks) => { letters.value[id] = tracks; },
     setArabicNotes: (id, notes) => { arabicDayNotes.value[id] = notes; },
-    setPoints: (id, value) => { points.value[id] = value; },
+    // Asked for only by a class that has opted in to the weekly view: the week is not
+    // requested for a class that will not show it (the server would refuse it anyway).
+    setPoints: showsThisWeek(group.value) ? (id, value) => { points.value[id] = value; } : undefined,
 });
 
 // ---------- report cards ----------
@@ -1841,15 +1857,17 @@ const typeWord = (type: string | null | undefined): string => (type && WORK_TYPE
 
 /**
  * One subject's line: this child's points and percentage, the weighted figure
- * where the class has weights, and the mean level for levels work. Levels are a
- * mean level and never a percentage, exactly as in the block above.
+ * where the class has weights (and `showWeighted`: none while older work is left
+ * out of the weighted figures, see familySeesWeighted), and the mean level for
+ * levels work. Levels are a mean level and never a percentage, exactly as in the
+ * block above.
  */
-const subjectFigures = (b: any): string => {
+const subjectFigures = (b: any, showWeighted: boolean): string => {
     const parts: string[] = [];
     if (b?.points_counted > 0 && Number(b.points_possible) > 0) {
         parts.push(`${b.points_earned} ${t('count_of')} ${b.points_possible} (${percentText(b.percent)})`);
     }
-    if (b?.weighted_percent !== null && b?.weighted_percent !== undefined) {
+    if (showWeighted && b?.weighted_percent !== null && b?.weighted_percent !== undefined) {
         parts.push(t('marks_weighted_short', percentText(b.weighted_percent)));
     }
     if (b?.levels_counted > 0 && b.level_mean !== null && b.level_mean !== undefined) {

@@ -63,12 +63,15 @@ use Throwable;
  *
  * ## At most once, claimed in the database
  *
- * behavior_weeks is the claim (BehaviorWeek::claim): an insert-or-ignore then a
- * conditional UPDATE, so overlapping runs, a retried run and a second server cannot
- * send a class's report twice. The price is that a crash between the claim and the mail
- * loses that week's notice for that class rather than repeating it; the portal report
- * is there either way. A run that finds nobody to tell claims nothing, so a guardian
- * who signs in later that day is still picked up by the next hourly run.
+ * behavior_weeks is the claim (BehaviorWeek::claim): an insert that swallows ONLY a
+ * unique-key violation (the (group, week) row is already there), then a conditional
+ * UPDATE, so overlapping runs, a retried run and a second server cannot send a
+ * class's report twice. Any other failure of the insert is thrown and lands in the
+ * per-class handler below as a failure, never as "already sent". The price is that a
+ * crash between the claim and the mail loses that week's notice for that class rather
+ * than repeating it; the portal report is there either way. A run that finds nobody
+ * to tell claims nothing, so a guardian who signs in later that day is still picked up
+ * by the next hourly run.
  *
  * ## Fail-soft, and it leaves a trace
  *
@@ -322,8 +325,8 @@ class SendWeeklyPointsReports extends Command
             .rawurlencode('/family/'.$masjid->id.'/classes/'.$group->id.'/report?week='.$weekStart);
         $teacherUrl = $base.'/teacher/classes/'.$group->id.'?tab=points&week='.$weekStart;
 
-        $sentFamilies = $this->deliver($families, WeeklyPointsReportMail::AUDIENCE_FAMILY, $familyUrl, $orgName, $groupLabel, $orgEmail, $run);
-        $sentTeachers = $this->deliver($teachers, WeeklyPointsReportMail::AUDIENCE_TEACHER, $teacherUrl, $orgName, $groupLabel, $orgEmail, $run);
+        $sentFamilies = $this->deliver($families, WeeklyPointsReportMail::AUDIENCE_FAMILY, $familyUrl, $orgName, $groupLabel, $orgEmail, $run, $group);
+        $sentTeachers = $this->deliver($teachers, WeeklyPointsReportMail::AUDIENCE_TEACHER, $teacherUrl, $orgName, $groupLabel, $orgEmail, $run, $group);
 
         // Every address failed (the mail transport was down): nobody was told, so the
         // claim is given back and the next hourly run, still inside the catch-up window,
@@ -349,10 +352,14 @@ class SendWeeklyPointsReports extends Command
     /**
      * Send one mail per recipient; a dead address is logged and skipped. Returns how many went.
      *
+     * The log line names the person by id and never by address: production keeps warnings, and a
+     * guardian's sign-in address, beside a school and a class, says whose parent someone is.
+     * The transport's own message often quotes the address it refused, so it is scrubbed too.
+     *
      * @param  \Illuminate\Support\Collection<int,NudgeRecipient>  $recipients
      * @param  array<string,mixed>  $run
      */
-    private function deliver($recipients, string $audience, string $url, string $orgName, string $groupLabel, ?string $orgEmail, array &$run): int
+    private function deliver($recipients, string $audience, string $url, string $orgName, string $groupLabel, ?string $orgEmail, array &$run, Group $group): int
     {
         $sent = 0;
 
@@ -369,10 +376,29 @@ class SendWeeklyPointsReports extends Command
                 $sent++;
             } catch (Throwable $e) {
                 $run['failures']++;
-                Log::warning('weekly points report email failed for '.$recipient->address.': '.$e->getMessage());
+                Log::warning('Weekly points report email failed for one recipient.', [
+                    'masjid_id' => (int) $group->masjid_id,
+                    'group_id' => (int) $group->id,
+                    'audience' => $audience,
+                    'contact_id' => $recipient->contactId,
+                    'user_id' => $recipient->userId,
+                    'error' => $this->withoutAddresses($e->getMessage(), $recipient->address),
+                ]);
             }
         }
 
         return $sent;
+    }
+
+    /**
+     * A transport's message with every address taken out: the recipient's own, however it is
+     * cased, and anything else shaped like one (a sender, a Cc), because a log line must not
+     * gain an address by way of somebody else's error text.
+     */
+    private function withoutAddresses(string $message, string $address): string
+    {
+        $message = str_ireplace($address, '[address]', $message);
+
+        return (string) preg_replace('/[^\s<>"\'(),;:]+@[^\s<>"\'(),;]+/u', '[address]', $message);
     }
 }

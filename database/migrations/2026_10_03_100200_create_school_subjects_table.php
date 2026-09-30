@@ -23,13 +23,6 @@ use Illuminate\Support\Facades\Schema;
  *
  * `position` orders the list; ties break by name.
  *
- * `seeded_by` names the migration that inserted a row (NULL for every row the
- * office typed). It exists so the seed's `down()` can tell a row it wrote from an
- * office row that happens to read the same: a "Qur'an" typed into the Subjects
- * screen at the defaults (position 0, every grade) is identical, column for
- * column, to the seeded one, and the seed skips a subject that already exists, so
- * it never owned that row. The office cannot set it (not fillable, never sent).
- *
  * Cascades from the school. The unique index is named by hand (64-character cap
  * on MySQL). Blueprint only. `down()` refuses while rows exist: the list is what
  * the office typed.
@@ -45,7 +38,6 @@ return new class extends Migration
             $table->string('name_key', 64);
             $table->json('grade_labels')->nullable();
             $table->smallInteger('position')->default(0);
-            $table->string('seeded_by', 120)->nullable();
             $table->timestamps();
 
             $table->unique(['masjid_id', 'name_key'], 'school_subject_name_unique');

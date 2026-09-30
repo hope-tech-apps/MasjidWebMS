@@ -1596,7 +1596,7 @@
                         </div>
                         <button v-if="gradesView === 'work'" type="button" class="btn btn-sm btn-outline-secondary ms-auto"
                                 :aria-expanded="showWeights" @click="toggleWeights">
-                            <i class="bi bi-sliders me-1"></i>{{ weightingEnabled ? 'Weights' : 'Set weights' }}
+                            <i class="bi bi-sliders me-1"></i>{{ weightingEnabled || !canChangeWeights ? 'Weights' : 'Set weights' }}
                         </button>
                     </div>
 
@@ -1616,9 +1616,10 @@
                                 <div v-for="t in workTypes" :key="t.key" class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1" :for="`weight-${t.key}`">{{ t.label }}</label>
                                     <input :id="`weight-${t.key}`" v-model="weightsForm[t.key]" type="number" inputmode="numeric"
-                                           min="0" :max="weightMax" step="1" class="form-control form-control-sm" style="width:5.5rem">
+                                           min="0" :max="weightMax" step="1" class="form-control form-control-sm" style="width:5.5rem"
+                                           :disabled="!canChangeWeights">
                                 </div>
-                                <div class="col-auto d-flex gap-2">
+                                <div v-if="canChangeWeights" class="col-auto d-flex gap-2">
                                     <button class="btn btn-sm btn-success" :disabled="savingWeights" @click="saveWeights">
                                         {{ savingWeights ? 'Saving…' : 'Save weights' }}
                                     </button>
@@ -1626,7 +1627,13 @@
                                             :disabled="savingWeights" @click="confirmClearWeights = true">Clear</button>
                                 </div>
                             </div>
-                            <div v-if="confirmClearWeights" class="alert alert-warning small mt-3 mb-0">
+                            <!-- A teacher limited to some subjects reads the weights and cannot change them:
+                                 they move every subject's average, which families read (review F5). -->
+                            <p v-if="!canChangeWeights" class="text-muted small mt-2 mb-0" data-test="weights-read-only">
+                                <i class="bi bi-lock me-1"></i>These weights count in every subject's average, so only a
+                                teacher of all the subjects in this class, or the office, can change them.
+                            </p>
+                            <div v-if="canChangeWeights && confirmClearWeights" class="alert alert-warning small mt-3 mb-0">
                                 Clear the weights? Every average goes back to the plain one, and any weight given to
                                 one piece of work is removed too, including work another teacher of this class set.
                                 <div class="mt-2 d-flex gap-2">
@@ -1753,7 +1760,7 @@
                                               :title="a.curriculum_focus ?? ''">
                                             {{ a.standard_code || 'Standard' }}
                                         </span>
-                                        <span v-if="weightingEnabled && !a.type && a.weight === null" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
+                                        <span v-if="weightingEnabled && isUntyped(a)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
                                               title="Work with no type is left out of the weighted average">no type</span>
                                     </div>
                                 </div>
@@ -1767,7 +1774,7 @@
                         </div>
                     </div>
                     <p v-if="weightingEnabled && untypedInList > 0" class="text-warning-emphasis small mt-2 mb-0">
-                        {{ untypedNoteText(untypedInList) }}: {{ untypedInList === 1 ? 'it is' : 'they are' }} left out of weighted averages until given a type.
+                        {{ untypedListNote(untypedInList) }}
                     </p>
                     </template>
 
@@ -2438,11 +2445,11 @@ import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
-    weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
+    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
+    mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
-    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
+    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
     planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
@@ -3557,7 +3564,12 @@ const deletePlan = async () => {
     const ticket = planForms.current();
     planDeleting.value = true;
     try {
-        await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        try {
+            await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        } catch (e) {
+            // A 404 is "nothing to delete", not a failure: carry on as after a removal that worked.
+            if (!planAlreadyGone(e)) throw e;
+        }
         // Still on the removed plan: the day's next one opens. Moved on to
         // another while the removal ran: she stays there, with her draft.
         if (planForms.isCurrent(ticket)) {
@@ -3597,6 +3609,9 @@ const standardsEnabled = ref(false);
 
 const gradesView = ref<'work' | 'students'>('work');
 const showWeights = ref(false);
+// Only a teacher of every subject in the class (or the office) changes its weights; a limited
+// teacher sees them read-only. The server refuses the change either way.
+const canChangeWeights = computed(() => mayChangeWeights(group.value?.my_subjects));
 const weightsForm = ref<Record<string, string>>({});
 const savingWeights = ref(false);
 const weightsSaved = ref(false);
@@ -3609,10 +3624,15 @@ const gradeContext = computed(() => ({
 }));
 const workReady = computed(() => workFormReady(assignmentForm.value, gradeContext.value));
 const untypedNoteText = untypedNote;
-/** Work in the list that a weighted class would leave out of its average: no type and no weight of its own. */
-const untypedInList = computed(() => assignments.value.filter((a) => !a.type && (a.weight === null || a.weight === undefined)).length);
+/**
+ * Work in the list that a weighted class would leave out of its average for want of a type: no type and no
+ * weight of its own. Simple-scale work is never averaged whatever it is given, so a type would not help it
+ * and it is not counted here (the server leaves it out of `untyped_excluded` the same way).
+ */
+const untypedInList = computed(() => untypedInWork(assignments.value));
 /** What a blank weight box inherits, said in the box so leaving it blank is a decision a teacher can read. */
 const inheritedWeightText = computed(() => {
+    if (assignmentForm.value.scale === SIMPLE_SCALE) return NOT_AVERAGED.replace(/^./, (c) => c.toUpperCase());
     const w = effectiveWeight({ type: assignmentForm.value.type || null }, classWeights.value, weightingEnabled.value);
     return w === null ? 'Type sets it' : `Counts ${w}`;
 });

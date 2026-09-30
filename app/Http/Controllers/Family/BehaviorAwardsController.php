@@ -8,6 +8,7 @@ use App\Models\BehaviorSkill;
 use App\Models\Group;
 use App\Support\PointsWeek;
 use App\Support\SchoolPointsWeek;
+use App\Support\SchoolSettings;
 use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -58,7 +59,7 @@ class BehaviorAwardsController extends FamilyController
         $group = $this->group($group_id);
         $membership = $this->subject($group, $membership_id);
 
-        $week = $this->requestedWeek($request);
+        $week = $this->requestedWeek($request, $group);
 
         $awards = $this->readable($group)
             ->where('group_membership_id', $membership->id)
@@ -95,7 +96,7 @@ class BehaviorAwardsController extends FamilyController
         // `?week=` (T-003.2) names one points week by INSTANT and supersedes
         // from/to. It narrows the SAME audience-constrained query, so a week is
         // arithmetically incapable of including another family's child.
-        $week = $this->requestedWeek($request);
+        $week = $this->requestedWeek($request, $group);
 
         $base = $this->readable($group)
             ->where('group_membership_id', $membership->id)
@@ -164,10 +165,35 @@ class BehaviorAwardsController extends FamilyController
 
     // ------------------------------------------------------------- internals
 
-    /** The week `?week=` names on this school's clock, or null. 422 for a value that is no date. */
-    private function requestedWeek(Request $request): ?PointsWeek
+    /**
+     * The week `?week=` names on this school's clock, or null. 422 for a value that is no date.
+     *
+     * A week is asked for by two portal surfaces, and each is on only where its own switch is
+     * (2026-09-29, review F1): the weekly REPORT (any week, so a parent can page back) exists
+     * only where the school has the `points_weekly_report` grant, and a class's "This week"
+     * line (the week in progress, `current`) only where the class's teacher has opted in to
+     * the weekly view. Anything else is asked for a thing that is not there: a 404, the answer
+     * this realm gives for what does not exist, before the value is even read as a date.
+     * Without a `?week=` nothing here changes: the running record is always served.
+     */
+    private function requestedWeek(Request $request, Group $group): ?PointsWeek
     {
-        return SchoolPointsWeek::fromRequest($request, app(TenantContext::class)->get());
+        $raw = $request->query('week');
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        $masjidId = app(TenantContext::class)->get();
+
+        $mayAsk = SchoolSettings::pointsWeeklyReport(SchoolSettings::org($masjidId))
+            || ($raw === 'current' && $group->usesWeeklyPoints());
+
+        if (! $mayAsk) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return SchoolPointsWeek::fromRequest($request, $masjidId);
     }
 
     /** @return array<string,mixed> */

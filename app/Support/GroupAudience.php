@@ -286,25 +286,41 @@ class GroupAudience
             return [];
         }
 
-        $email = Str::lower(trim((string) $principal->email));
+        $typed = trim((string) $principal->email);
+        $email = Str::lower($typed);
 
         if ($email === '') {
             return [];
         }
 
         // Contact is BelongsToMasjid + SoftDeletes, so this reads only the bound
-        // tenant's live contacts. LOWER() on both sides rather than relying on
-        // the column collation: production is utf8mb4_bin (case-SENSITIVE) while
-        // the test suite runs SQLite, and an identity check must not depend on
-        // which one it is talking to.
-        $matches = Contact::query()
+        // tenant's live contacts.
+        //
+        // THE QUERY IS A SHORTLIST, and this bridge is an AUTHORIZATION: whoever
+        // it resolves a staff login to reads that contact's wards. `contacts.email`
+        // and `users.email` are utf8mb4_unicode_ci on production (read 2026-09-29),
+        // where `parent@gmail.com` = `parent@gmaíl.com`, and `/profile` used to let
+        // any admin-realm user rewrite their own `users.email` unverified. A staff
+        // login at a look-alike spelling therefore resolved to a real parent's
+        // contact and read their children's group standing. Only a byte-exact
+        // address (case and surrounding spaces aside) is the same person, so the
+        // candidates are filtered with `ContactIdentity::keepExactMatches()` before
+        // anything is counted. No `limit()` ahead of it: a limit taken first can
+        // cut the exact row off behind look-alikes, or leave one exact row where
+        // two hold the address.
+        //
+        // The exact comparison is against what the user's own row holds, NOT the
+        // multibyte-lower-cased copy the shortlist uses: `Str::lower()` folds a
+        // Kelvin sign into an ASCII `k`, and the comparison must not.
+        $candidates = Contact::query()
             ->whereNotNull('email')
             ->whereRaw('LOWER(email) = ?', [$email])
-            ->limit(2)
-            ->pluck('id');
+            ->get(['id', 'email']);
+
+        $matches = ContactIdentity::keepExactMatches($candidates, 'email', $typed);
 
         // Ambiguous identity is no identity.
-        return $matches->count() === 1 ? [(int) $matches->first()] : [];
+        return $matches->count() === 1 ? [(int) $matches->first()->id] : [];
     }
 
     /**

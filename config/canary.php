@@ -152,14 +152,15 @@ return [
     | zero findings, because `tenants-get-different-answers` proves only that the
     | two answers DIFFER and a swap makes them differ perfectly.
     |
-    | A relation can do job 1 and not job 2, and `gallery` is exactly that: it is
-    | `hasMany(Media::class, 'model_id')`, so its foreign key is a polymorphic
-    | owner id — `model_id = 5` means "row 5 of some model", not "masjid 5".
-    | Counting it to rank organisations is harmless; attributing through it would
-    | read an announcement's image as belonging to masjid 5 and accuse a correct
-    | endpoint. Only relations whose foreign key is one of `tenant_keys` below
+    | A relation can do job 1 and not job 2. Only relations whose foreign key is
+    | one of `tenant_keys` below, or the id half of a pair in `tenant_morphs`,
     | attribute; the rest are named, with the reason, in
-    | `coverage.row_ownership.tables_skipped` on every run.
+    | `coverage.row_ownership.tables_skipped` on every run. `gallery` was the
+    | example of that split until 2026-09-27: it is `hasMany(Media::class,
+    | 'model_id')`, and `model_id` alone means "row 5 of some model", not
+    | "masjid 5". It attributes now through the `model` pair declared in
+    | `tenant_morphs`, which only counts a row whose `model_type` says Masjid.
+    | See that entry for what it cost to leave it out.
     |
     | Attribution is also ANCHORED: a relation only attributes an endpoint that
     | NAMES it — as a segment of the route URI (`api/v1/announcements`,
@@ -529,6 +530,41 @@ return [
     */
 
     'tenant_keys' => ['masjid_id'],
+
+    /*
+    | Polymorphic pairs whose id half names an organisation, but only together
+    | with the type half. `name` means the columns `{name}_type` / `{name}_id`.
+    |
+    | This is row-ownership attribution ONLY (TenancyCanary::ownerKeyFor). It is
+    | deliberately not a `tenant_keys` entry: those are read out of response
+    | bodies (ResponseFacts::tenantIds walks the whole body), and the mobile
+    | services, announcements, features, about and donation-link endpoints
+    | serialize raw media rows through MobileMedia::envelope, as splash does
+    | with its image row. A Service's icon there carries `model_id` = the
+    | SERVICE's id, so `model_id` as a tenant key would read correct answers
+    | as cross-tenant reads and page hourly.
+    |
+    | A relation keyed on `{name}_id` attributes a row to organisation
+    | `{name}_id` only when `{name}_type` is the organisation model's morph class
+    | (`App\Models\Masjid`). The ownership lookup adds that clause itself
+    | (TenancyCanary::ownerMap), whatever the relation carries: a plain hasMany
+    | may have none, and a morph relation's own is dropped by
+    | `Relation::noConstraints`. A row of any other type resolves to no owner,
+    | so a collision between a Service's id and a masjid's id can never become
+    | an accusation.
+    |
+    |  - model   Spatie's `media` table. Masjid::logo() already says why:
+    |            "`model_type` IS PART OF THE KEY". `gallery` (compare_by above)
+    |            is keyed on `model_id`. MEASURED 2026-09-22 00:49 UTC onward:
+    |            the first run after MEC's 26 photos were imported (media ids
+    |            1000718-1000743, `App\Models\Masjid` 13, `galleries`, written
+    |            2026-09-22 00:26 UTC) exited 3 `partial`, degraded_by
+    |            row_ownership_unplaced, "api/v1/gallery: NOT TRACED: items". So
+    |            did every hourly run after it. The rows were MEC's own, and the
+    |            canary could not say so.
+    */
+
+    'tenant_morphs' => ['model'],
 
     /*
     | Log channel for the one line a run leaves behind. Null = the default

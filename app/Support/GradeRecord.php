@@ -326,14 +326,19 @@ final class GradeRecord
         $levelPieces = 0;
 
         foreach ($slots as $slot) {
+            // A slot of weight 0 (a type set to 0, or a piece given a weight of 0) adds nothing to
+            // the sum or the weight, so its pieces are not among those the figure is "across":
+            // counting them made "across N pieces" say more than shaped the number (review, optional fold).
+            $shapes = $slot['weight'] > 0;
+
             if ($slot['scale'] === ClassAssignment::SCALE_POINTS) {
                 $pointSum += $slot['weight'] * ($slot['earned'] / max(1.0, $slot['possible']));
                 $pointWeight += $slot['weight'];
-                $pointPieces += $slot['n'];
+                $pointPieces += $shapes ? $slot['n'] : 0;
             } else {
                 $levelSum += $slot['weight'] * ($slot['earned'] / $slot['n']);
                 $levelWeight += $slot['weight'];
-                $levelPieces += $slot['n'];
+                $levelPieces += $shapes ? $slot['n'] : 0;
             }
         }
 

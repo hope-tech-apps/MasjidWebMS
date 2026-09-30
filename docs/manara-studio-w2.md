@@ -2313,7 +2313,8 @@ Each needs its own ticket.
 - `google_maps_key` on `/api/v1/settings`;
 - the possible `X-Forwarded-Host: localhost` case;
 - `SectionType::withoutRenderer()` listing OFFERING;
-- `Masjid::header_logo()`/`footer_logo()` without a `model_type` filter;
+- ~~`Masjid::header_logo()`/`footer_logo()` without a `model_type` filter~~ —
+  fixed 2026-09-27 (c1d5256b), with `gallery()`;
 - `renderer:tests/tenant-unchanged.test.ts` pinning `mec-web`'s map;
 - `PagesSeeder` inventing content.
 

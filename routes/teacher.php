@@ -250,9 +250,9 @@ Route::prefix('teacher')
                         Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
                         // How much each TYPE of work counts for in THIS class
                         // (T-001.2), all five types or clear them. A class-level
-                        // setting, so setting it is not subject-fenced; clearing
-                        // is refused a limited teacher while other subjects' work
-                        // carries a weight of its own: see
+                        // setting that moves every subject's average, so it is for
+                        // a teacher of ALL the subjects only: a teacher limited to
+                        // some is refused, setting or clearing (review F5): see
                         // GradebookController::saveWeights. Registered ONCE: the
                         // router keeps one route per verb and URI, so a second
                         // copy is invisible to every test but the source scan in

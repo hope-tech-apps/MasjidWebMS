@@ -43,6 +43,13 @@ class ContactIdentityAddressTest extends TestCase
             'an inner space is a difference' => ['victim@gmail.com', 'vic tim@gmail.com', false],
             'a different address' => ['victim@gmail.com', 'other@gmail.com', false],
 
+            // U+212A KELVIN SIGN lower-cases to an ASCII `k` under mb_strtolower(), so a
+            // multibyte fold would make a look-alike letter equal the real one.
+            'a Kelvin sign is not k' => ['kevin@example.com', "\u{212A}evin@example.com", false],
+            'a Kelvin sign is not k, the other way' => ["\u{212A}evin@example.com", 'kevin@example.com', false],
+            'a Kelvin sign in the domain is not k' => ['kevin@k.example.com', "kevin@\u{212A}.example.com", false],
+            'the same Kelvin address, in another case' => ["\u{212A}evin@example.com", "\u{212A}EVIN@Example.com", true],
+
             'nothing stored' => [null, 'victim@gmail.com', false],
             'nothing typed' => ['victim@gmail.com', '', false],
             'nothing on either side' => [null, '', false],
@@ -98,6 +105,8 @@ class ContactIdentityAddressTest extends TestCase
             'a non-ASCII local part on an ASCII domain is refused' => ['ß@gmail.com', null],
             'no @ and not ASCII' => ['víctim', null],
             'nothing before the @' => ['@gmaíl.com', null],
+            'a Kelvin sign in the local part is refused, not folded into k' => ["\u{212A}evin@example.com", null],
+            'a Kelvin sign in the domain is converted by IDNA' => ["kevin@\u{212A}.example.com", 'kevin@k.example.com'],
         ];
     }
 
