@@ -249,7 +249,9 @@ foreach ($files as $file) {
         continue;
     }
 
-    if (! preg_match("/^(?:final\s+|abstract\s+)?(?:class|interface|trait|enum)\s+(\w+)/m", $source, $cls)) {
+    // Any run of modifiers, in any order: `final readonly class` and `abstract readonly class`
+    // are declarations too, and a gate that skips them leaves those files unchecked.
+    if (! preg_match("/^(?:(?:final|abstract|readonly)\s+)*(?:class|interface|trait|enum)\s+(\w+)/m", $source, $cls)) {
         continue;
     }
 
