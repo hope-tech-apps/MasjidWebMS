@@ -43,11 +43,14 @@ use Symfony\Component\HttpFoundation\Response;
  *                             conversation about one child is then no more visible
  *                             before it is sent than after it.
  *   - write one               anyone who could open the conversation on the spot.
- *   - edit, send now          the AUTHOR, and an office login that is also a teacher
- *                             of the class. The office on its own gets a 403: changing
- *                             words needs reading them. A co-teacher is refused too.
- *   - cancel                  the AUTHOR and the office (`manage contacts`). A
- *                             co-teacher sees it and is refused (403).
+ *   - edit, move, send now    the AUTHOR only. Words that go out under a name are
+ *                             changed by the person whose name it is; an office login
+ *                             that also teaches the class, a co-teacher and the office
+ *                             on its own all get a 403 (the point's W5/W6 delta review,
+ *                             P1). The author-left gate below stays as defence in depth.
+ *   - cancel                  the AUTHOR and the office (`manage contacts`), an office
+ *                             login that also teaches the class included. A co-teacher
+ *                             without `manage contacts` sees it and is refused (403).
  *
  * EDIT, SEND NOW and CANCEL are each ONE conditional UPDATE guarded by the status,
  * never a read-then-write: a sweep that claims the item between the page loading and
@@ -248,12 +251,13 @@ class GroupMessageSchedulesController extends Controller
 
     /**
      * Cancelling: the author and the office (S14). Editing, rescheduling, sending now
-     * (`$editing`): those of them who may also READ it, so not the office on its own
-     * (S14, 2026-09-30). A co-teacher sees an item and may not touch it.
+     * (`$editing`): the AUTHOR only. An office admin who is also on the class's staff
+     * could otherwise change a colleague's words, which then go out under the
+     * colleague's name with no trace (P1). A co-teacher sees an item and may not touch it.
      */
     private function authorizeChanging(?User $user, GroupMessageSchedule $item, bool $editing = false): void
     {
-        if ($this->mayCancel($user, $item) && (! $editing || $this->mayReadContent($user, $item))) {
+        if ($editing ? $this->isAuthor($user, $item) : $this->mayCancel($user, $item)) {
             return;
         }
 
@@ -265,7 +269,14 @@ class GroupMessageSchedulesController extends Controller
     private function mayCancel(?User $user, GroupMessageSchedule $item): bool
     {
         return $user !== null
-            && ((int) $item->author_user_id === (int) $user->id || $user->can('manage contacts'));
+            && ($this->isAuthor($user, $item) || $user->can('manage contacts'));
+    }
+
+    private function isAuthor(?User $user, GroupMessageSchedule $item): bool
+    {
+        return $user !== null
+            && $item->author_user_id !== null
+            && (int) $item->author_user_id === (int) $user->id;
     }
 
     /** May this caller read what the item SAYS: a teacher of its class, or its author. */
@@ -370,7 +381,7 @@ class GroupMessageSchedulesController extends Controller
             'failure_reason' => $item->failure_reason,
             'sent_thread_id' => $item->sent_thread_id !== null ? (int) $item->sent_thread_id : null,
             'author' => $item->author ? ['id' => $item->author->id, 'name' => $item->author->name] : null,
-            'can_change' => $item->isEditable() && $this->mayCancel($viewer, $item),
+            'can_change' => $item->isEditable() && $this->isAuthor($viewer, $item),
             'can_cancel' => $item->isEditable() && $this->mayCancel($viewer, $item),
             'content_hidden' => false,
             'created_at' => optional($item->created_at)->toIso8601String(),

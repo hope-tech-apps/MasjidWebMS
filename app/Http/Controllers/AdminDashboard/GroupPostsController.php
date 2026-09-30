@@ -415,9 +415,10 @@ class GroupPostsController extends Controller
      * Who may change or cancel a story that is NOT out yet.
      *
      *   - CANCEL (delete): its author and the office (`manage contacts`), as before.
-     *   - EDIT, RESCHEDULE, SEND NOW (`$editing`): those of them who may also READ it:
-     *     the author, or an office login that is also a teacher of the class. The
-     *     office on its own may not (S14, 2026-09-30): changing the words needs them.
+     *   - EDIT, RESCHEDULE, SEND NOW (`$editing`): the AUTHOR only. An office admin who
+     *     is also on the class's staff could otherwise change a colleague's words,
+     *     which then go out under the colleague's name with no trace (the point's W5/W6
+     *     delta review, P1). The office on its own may not either (S14, 2026-09-30).
      *
      * A co-teacher may SEE a scheduled story and may not touch it.
      *
@@ -430,7 +431,7 @@ class GroupPostsController extends Controller
             return;
         }
 
-        if ($this->maySchedule($user, $post) && (! $editing || $this->mayReadContent($user, $post))) {
+        if ($editing ? $this->isAuthor($user, $post) : $this->maySchedule($user, $post)) {
             return;
         }
 
@@ -442,7 +443,14 @@ class GroupPostsController extends Controller
     private function maySchedule(?User $user, GroupPost $post): bool
     {
         return $user !== null
-            && ((int) $post->author_user_id === (int) $user->id || $user->can('manage contacts'));
+            && ($this->isAuthor($user, $post) || $user->can('manage contacts'));
+    }
+
+    private function isAuthor(?User $user, GroupPost $post): bool
+    {
+        return $user !== null
+            && $post->author_user_id !== null
+            && (int) $post->author_user_id === (int) $user->id;
     }
 
     /**
@@ -789,7 +797,7 @@ class GroupPostsController extends Controller
             'publish_failure' => $post->publish_failure,
             // Author and office only: a co-teacher sees a scheduled story and is not
             // offered the buttons that would be refused.
-            'can_change_schedule' => $post->isPublished() || ($this->maySchedule(request()->user(), $post) && $this->mayReadContent(request()->user(), $post)),
+            'can_change_schedule' => $post->isPublished() || $this->isAuthor(request()->user(), $post),
             'content_hidden' => false,
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a reader who

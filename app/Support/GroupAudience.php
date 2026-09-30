@@ -357,10 +357,22 @@ class GroupAudience
      * door than mayReadUnpublished() on purpose: that is the whole of the office's
      * part. Editing, rescheduling and sending now stay with the author (and need the
      * words, so they need mayReadUnpublished() or authorship).
+     *
+     * THE TENANT IS CHECKED HERE, as mayReceiveClassStoreTotals() does, not assumed from the
+     * route: `manage contacts` is a permission, not a school, so an office login of another
+     * organisation must not pass on the strength of it. The group must belong to the school
+     * this request bound, and an unbound request grants nothing (P2, the point's W5/W6
+     * delta review).
      */
     public function mayCancelScheduled(?Authenticatable $principal, Group $group): bool
     {
         if (! $principal instanceof User) {
+            return false;
+        }
+
+        $tenant = $this->tenant->get();
+
+        if ($tenant === null || (int) $group->masjid_id !== (int) $tenant) {
             return false;
         }
 

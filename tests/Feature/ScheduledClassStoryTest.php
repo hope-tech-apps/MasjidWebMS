@@ -1069,9 +1069,11 @@ class ScheduledClassStoryTest extends TestCase
         $this->sweep();   // refused now
         $this->assertNotNull($post->fresh()->publish_failed_at);
 
-        // Since S14 (point, 2026-09-30) moving a story needs its words, so the one who can reach
-        // this gate is an office administrator who ALSO teaches the class (a teacher reads, the
-        // office moves). The office alone is refused before the gate, and that is pinned elsewhere.
+        // Only the AUTHOR edits, moves or sends now (P1, the point's W5/W6 delta review), and this
+        // author has left the class. So the one who reaches the route is an office administrator who
+        // ALSO teaches it, and they are refused as a non-author before the author-left gate is asked.
+        // That gate (the 422 "cancel it and write it again") stays in the controller as defence in
+        // depth; the sweep's own refusal of such a story is tested above and in ScheduledSweepTest.
         $office = $this->makeAdmin();
         $this->class->staff()->attach($office->id, [
             'masjid_id' => $this->school->id,
@@ -1079,20 +1081,55 @@ class ScheduledClassStoryTest extends TestCase
             'assigned_at' => now(),
         ]);
 
-        foreach ([['send_at' => '2026-10-20T09:00'], ['send_now' => true]] as $move) {
-            $response = $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), $move)->assertStatus(422);
-            $this->assertStringContainsString('no longer teaches this class', $response->json('data.send_at.0'));
-            $this->assertStringContainsString('cancel it and write it again', $response->json('data.send_at.0'));
+        foreach ([['send_at' => '2026-10-20T09:00'], ['send_now' => true], ['body' => 'Rewritten']] as $move) {
+            $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), $move)->assertForbidden();
         }
 
         $fresh = $post->fresh();
         $this->assertNotNull($fresh->publish_failed_at, 'a refused story was put back although its author may not send it');
         $this->assertNull($fresh->announced_at);
+        $this->assertSame('Tomorrow we visit the garden.', $fresh->body);
         $this->assertNotContains($post->id, $this->familyIds());
         $this->assertSame(0, $this->classStoryJobs());
 
         // Cancelling it, the way out, works.
         $this->asUser($office)->deleteJson($this->adminUrl("/posts/{$post->id}"))->assertOk();
+    }
+
+    #[Test]
+    public function a_non_author_who_is_office_and_teacher_or_a_co_teacher_cannot_edit_move_or_send_now_a_scheduled_story(): void
+    {
+        $post = $this->scheduledPost();
+
+        $officeTeacher = $this->makeAdmin();
+        $this->class->staff()->attach($officeTeacher->id, [
+            'masjid_id' => $this->school->id,
+            'role' => GroupStaff::ROLE_TEACHER,
+            'assigned_at' => now(),
+        ]);
+        $co = $this->coTeacher();
+        $goesOutAt = $post->published_at->toDateTimeString();
+
+        foreach ([['title' => 'Hijacked', 'body' => 'Hijacked'], ['send_at' => '2026-10-07T09:00'], ['send_now' => true]] as $change) {
+            $this->asUser($officeTeacher)->putJson($this->adminUrl("/posts/{$post->id}"), $change)->assertForbidden();
+            $this->asTeacher($co)->putJson($this->teacherUrl("/posts/{$post->id}"), $change)->assertForbidden();
+        }
+
+        $fresh = GroupPost::withoutMasjidScope()->findOrFail($post->id);
+        $this->assertSame('Tomorrow we visit the garden.', $fresh->body);
+        $this->assertSame('Coming up', $fresh->title);
+        $this->assertSame($goesOutAt, $fresh->published_at->toDateTimeString());
+        $this->assertTrue($fresh->isScheduled());
+        $this->assertSame(0, $this->classStoryJobs());
+
+        // The author still edits it.
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Author edit'])->assertOk();
+        $this->assertSame('Author edit', $post->fresh()->body);
+
+        // The office that teaches the class may still cancel (a plain co-teacher may not:
+        // a_co_teacher_can_see_a_scheduled_story_but_cannot_edit_send_or_cancel_it).
+        $this->asUser($officeTeacher)->deleteJson($this->adminUrl("/posts/{$post->id}"))->assertOk();
+        $this->assertNotNull(GroupPost::withoutMasjidScope()->withTrashed()->find($post->id)->deleted_at);
     }
 
     #[Test]

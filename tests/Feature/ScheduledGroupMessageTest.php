@@ -16,6 +16,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Groups\GroupThreadWriter;
 use App\Services\Groups\ScheduledSendGate;
+use App\Support\GroupAudience;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -480,6 +481,44 @@ class ScheduledGroupMessageTest extends TestCase
     // ================================================================ the send
 
     #[Test]
+    public function another_organizations_office_may_not_see_or_cancel_this_schools_scheduled_items(): void
+    {
+        $item = $this->schedule();
+
+        // The office of ANOTHER organisation: it holds `manage contacts` there, which is a
+        // permission and not a school (P2, the point's W5/W6 delta review).
+        $foreign = User::factory()->create([
+            'type' => 'MasjidAdmin', 'name' => 'Other Office',
+            'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]);
+        $this->otherSchool->user_id = $foreign->id;
+        $this->otherSchool->save();
+        $foreign->syncRoles([]);
+        $foreign->givePermissionTo(['view contacts', 'manage contacts']);
+
+        // The decision itself, asked with the tenant the foreign office is bound to: false.
+        // Bound to its own school, this school's class is not its class.
+        app(TenantContext::class)->set($this->otherSchool->id);
+        $audience = app(GroupAudience::class);
+        $this->assertFalse($audience->mayCancelScheduled($foreign, $this->class));
+        // An unbound request grants nothing either.
+        app(TenantContext::class)->forgetTenant();
+        $this->assertFalse($audience->mayCancelScheduled($foreign, $this->class));
+        // The control: this school's own office, bound to this school, may.
+        app(TenantContext::class)->set($this->school->id);
+        $this->assertTrue($audience->mayCancelScheduled($this->office(), $this->class));
+
+        // And through the routes: refused or not found, never the list, never a cancel.
+        $list = $this->asUser($foreign)->getJson($this->adminUrl('/scheduled-messages'));
+        $this->assertContains($list->getStatusCode(), [403, 404], 'another organisation read the scheduled list');
+        $this->assertStringNotContainsString('School resumes on Sunday.', $list->getContent());
+
+        $cancel = $this->asUser($foreign)->deleteJson($this->adminUrl("/scheduled-messages/{$item->id}"));
+        $this->assertContains($cancel->getStatusCode(), [403, 404], 'another organisation cancelled a scheduled item');
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status);
+    }
+
+    #[Test]
     public function a_form_encoded_client_can_send_now_with_the_string_true(): void
     {
         $item = $this->schedule();
@@ -704,9 +743,11 @@ class ScheduledGroupMessageTest extends TestCase
         Artisan::call('groups:publish-due');
         $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $item->fresh()->status);
 
-        // Since S14 (point, 2026-09-30) changing a conversation needs its words, so the one who can
-        // reach this gate is an office administrator who ALSO teaches the class. The office alone is
-        // refused before the gate (the_author_edits_and_the_office_only_cancels).
+        // Only the AUTHOR edits, moves or sends now (P1, the point's W5/W6 delta review), and this
+        // author has left the class. So the one who reaches the route is an office administrator who
+        // ALSO teaches it, and they are refused as a non-author before the author-left gate is asked.
+        // That gate (the 422 "cancel it and write it again") stays in the controller as defence in
+        // depth; the sweep's own refusal of such an item is tested in ScheduledSweepTest.
         $office = $this->office();
         $this->class->staff()->attach($office->id, [
             'masjid_id' => $this->school->id,
@@ -716,19 +757,61 @@ class ScheduledGroupMessageTest extends TestCase
         $url = $this->adminUrl("/scheduled-messages/{$item->id}");
         Carbon::setTestNow(self::NOW);
 
-        foreach ([['send_at' => '2026-10-06T10:00'], ['send_now' => true]] as $move) {
-            $response = $this->asUser($office)->putJson($url, $move)->assertStatus(422);
-            $this->assertStringContainsString('no longer teaches this class', $response->json('data.send_at.0'));
-            $this->assertStringContainsString('cancel it and write it again', $response->json('data.send_at.0'));
+        foreach ([['send_at' => '2026-10-06T10:00'], ['send_now' => true], ['body' => 'Rewritten']] as $move) {
+            $this->asUser($office)->putJson($url, $move)->assertForbidden();
         }
 
         $fresh = $item->fresh();
         $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $fresh->status, 'a refused conversation was put back in the queue');
         $this->assertSame('The author no longer teaches this class.', $fresh->failure_reason);
+        $this->assertSame('School resumes on Sunday.', $fresh->body);
+        $this->assertSame(self::DUE, $fresh->send_at->toDateTimeString());
 
-        // A text edit alone is still allowed, and cancelling is the way out.
-        $this->asUser($office)->putJson($url, ['body' => 'Rewritten'])->assertOk();
+        // Cancelling is the way out, and the office may still do it.
         $this->asUser($office)->deleteJson($url)->assertOk()->assertJsonPath('data.status', 'cancelled');
+    }
+
+    // ===================== only the author edits, moves or sends now (P1)
+
+    #[Test]
+    public function a_non_author_who_is_office_and_teacher_or_a_co_teacher_cannot_edit_move_or_send_now_and_nothing_changes(): void
+    {
+        $item = $this->schedule(null, $this->aboutChild());
+
+        // An office administrator who is ALSO on the class's staff: the case that used to get through.
+        $officeTeacher = $this->office();
+        $this->class->staff()->attach($officeTeacher->id, [
+            'masjid_id' => $this->school->id,
+            'role' => GroupStaff::ROLE_TEACHER,
+            'assigned_at' => now(),
+        ]);
+        $co = $this->coTeacher();
+        $adminUrl = $this->adminUrl("/scheduled-messages/{$item->id}");
+        $teacherUrl = $this->teacherUrl("/scheduled-messages/{$item->id}");
+
+        foreach ([['subject' => 'Hijacked', 'body' => 'Hijacked'], ['send_at' => '2026-10-07T09:00'], ['send_now' => true]] as $change) {
+            $this->asUser($officeTeacher)->putJson($adminUrl, $change)->assertForbidden();
+            $this->asTeacher($co)->putJson($teacherUrl, $change)->assertForbidden();
+        }
+
+        $fresh = $item->fresh();
+        $this->assertSame('School resumes on Sunday.', $fresh->body);
+        $this->assertSame('About Amina', $fresh->subject);
+        $this->assertSame(self::DUE, $fresh->send_at->toDateTimeString());
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $fresh->status);
+        $this->assertSame($this->teacher->id, (int) $fresh->author_user_id);
+
+        // The buttons are not offered to a non-author either.
+        $this->asUser($officeTeacher)->getJson($this->adminUrl('/scheduled-messages'))
+            ->assertOk()->assertJsonPath('data.data.0.can_change', false)->assertJsonPath('data.data.0.can_cancel', true);
+
+        // The author still edits and moves it.
+        $this->asTeacher()->putJson($teacherUrl, ['body' => 'Author edit', 'send_at' => '2026-10-07T09:00'])->assertOk();
+        $this->assertSame('Author edit', $item->fresh()->body);
+
+        // The office that teaches the class may still cancel it (the class's plain co-teacher may not:
+        // a_co_teacher_can_see_an_item_but_cannot_edit_send_now_or_cancel_it).
+        $this->asUser($officeTeacher)->deleteJson($adminUrl)->assertOk()->assertJsonPath('data.status', 'cancelled');
     }
 
     #[Test]
@@ -860,6 +943,53 @@ class ScheduledGroupMessageTest extends TestCase
 
         $this->assertSame(GroupMessageSchedule::STATUS_SENT, $item->fresh()->status);
         $this->assertSame(1, GroupThread::withoutMasjidScope()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function a_dropped_connection_while_writing_also_hands_the_item_back_and_the_next_run_sends_it(): void
+    {
+        // The point's W5/W6 delta review, P3: a database restart or failover used to fail the item
+        // for good. 2006 (server has gone away), 2013 (lost connection), 1040 (too many connections)
+        // and 2002 (connection refused) are retried like a deadlock.
+        foreach ([
+            ['HY000', 2006, 'MySQL server has gone away'],
+            ['HY000', 2013, 'Lost connection to MySQL server during query'],
+            ['08004', 1040, 'Too many connections'],
+            ['HY000', 2002, 'Connection refused'],
+        ] as $n => [$state, $code, $text]) {
+            $item = $this->schedule(null, ['subject' => "Dropped {$n}"]);
+            $pdo = new \PDOException("SQLSTATE[{$state}] [{$code}] {$text}");
+            $pdo->errorInfo = [$state, $code, $text];
+            $dropped = new \Illuminate\Database\QueryException('mysql', 'insert into group_threads ...', [], $pdo);
+
+            $writer = \Mockery::mock(GroupThreadWriter::class)->makePartial();
+            $writer->shouldReceive('open')->once()->andThrow($dropped)->ordered();
+            $writer->shouldReceive('open')->passthru()->ordered();
+            $this->app->instance(GroupThreadWriter::class, $writer);
+
+            Carbon::setTestNow(self::DUE);
+            Artisan::call('groups:publish-due');
+
+            $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status, "{$code} is not a failure");
+            $this->assertNull($item->fresh()->failure_reason);
+
+            Carbon::setTestNow(Carbon::parse(self::DUE)->addMinute());
+            Artisan::call('groups:publish-due');
+            $this->assertSame(GroupMessageSchedule::STATUS_SENT, $item->fresh()->status, "{$code} was not retried to a send");
+            Carbon::setTestNow(self::NOW);
+        }
+
+        // A connect failure that carries no errorInfo, only its text, is recognised too.
+        $item = $this->schedule(null, ['subject' => 'Refused']);
+        $refused = new \PDOException('SQLSTATE[HY000] [2002] Connection refused');
+        $writer = \Mockery::mock(GroupThreadWriter::class)->makePartial();
+        $writer->shouldReceive('open')->once()->andThrow($refused)->ordered();
+        $writer->shouldReceive('open')->passthru()->ordered();
+        $this->app->instance(GroupThreadWriter::class, $writer);
+
+        Carbon::setTestNow(self::DUE);
+        Artisan::call('groups:publish-due');
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status);
     }
 
     #[Test]
