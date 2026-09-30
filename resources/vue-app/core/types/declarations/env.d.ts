@@ -40,6 +40,6 @@ interface Window {
     /** `config('app.env')`, e.g. "production" / "staging". Read by EnvironmentRibbon. */
     __APP_ENV__?: string;
 
-    /** Masjid id for a host mapped in config/portal.php. Read by OrgPortal. */
+    /** Masjid id for a host mapped in config/portal.php. Read by OrgPortal, and by AuthShell to keep an organisation host's sign-in neutral. */
     __PORTAL_MASJID__?: number;
 }

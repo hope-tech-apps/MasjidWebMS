@@ -23,7 +23,20 @@
                     <span class="auth-brand__name">Manara</span>
                 </div>
 
-                <div class="auth-stage__copy">
+                <!--
+                    On an organisation's own hostname (a school's portal domain,
+                    PORTAL_HOSTS) the frame stays neutral: that is the school's
+                    address, so its staff get a plain staff sign-in, not
+                    Manara's pitch for its four products.
+                -->
+                <div v-if="onOrganisationHost" class="auth-stage__copy">
+                    <p class="auth-stage__eyebrow">Staff sign-in</p>
+                    <p class="auth-stage__title">Welcome to your team's workspace.</p>
+                    <p class="auth-stage__lede">
+                        Sign in with the account your organization set up for you.
+                    </p>
+                </div>
+                <div v-else class="auth-stage__copy">
                     <p class="auth-stage__eyebrow">Manara by Hope Tech</p>
                     <p class="auth-stage__title">Made for the places your community gathers.</p>
                     <p class="auth-stage__lede">
@@ -32,7 +45,7 @@
                     </p>
                 </div>
 
-                <ul class="auth-products" aria-label="Manara products">
+                <ul v-if="!onOrganisationHost" class="auth-products" aria-label="Manara products">
                     <li v-for="product in products" :key="product.name" class="auth-product"
                         :style="{ '--tint': product.tint }">
                         <span class="auth-product__icon" aria-hidden="true">
@@ -116,6 +129,9 @@ const products = [
 ];
 
 const year = new Date().getFullYear();
+
+/** Set by the Blade shell only on a hostname an organisation mapped to itself. */
+const onOrganisationHost = typeof window.__PORTAL_MASJID__ === 'number';
 </script>
 
 <style>
@@ -503,7 +519,7 @@ const year = new Date().getFullYear();
 .auth-shell .auth-control__icon {
     position: absolute;
     z-index: 2;
-    left: 0.95rem;
+    inset-inline-start: 0.95rem;
     color: #8a94a3;
     pointer-events: none;
     transition: color 0.15s ease;
@@ -517,7 +533,8 @@ const year = new Date().getFullYear();
 .auth-shell .auth-control .password-input-wrapper input {
     width: 100%;
     height: 3.1rem;
-    padding: 0 1rem 0 2.75rem;
+    padding-block: 0;
+    padding-inline: 2.75rem 1rem;
     border: 1px solid var(--a-field);
     border-radius: 12px;
     background: #fff;
@@ -529,7 +546,7 @@ const year = new Date().getFullYear();
 }
 
 .auth-shell .auth-control .password-input-wrapper input {
-    padding-right: 3rem;
+    padding-inline-end: 3rem;
 }
 
 .auth-shell .auth-input::placeholder,
@@ -559,7 +576,8 @@ const year = new Date().getFullYear();
 }
 
 .auth-shell .auth-control .password-toggle {
-    right: 0.6rem;
+    right: auto;
+    inset-inline-end: 0.6rem;
     width: 2.25rem;
     height: 2.25rem;
     justify-content: center;
@@ -698,6 +716,14 @@ const year = new Date().getFullYear();
 
 .auth-shell .auth-button:hover:not(:disabled) .auth-button__arrow {
     transform: translateX(3px);
+}
+
+[dir='rtl'] .auth-shell .auth-button__arrow {
+    transform: scaleX(-1);
+}
+
+[dir='rtl'] .auth-shell .auth-button:hover:not(:disabled) .auth-button__arrow {
+    transform: scaleX(-1) translateX(3px);
 }
 
 .auth-shell .auth-spinner {

@@ -209,10 +209,6 @@
             </div>
         </form>
 
-        <template #foot>
-            New to Manara?
-            <a class="auth-link" href="https://manara.hopetechapps.com/">See what it can do for you</a>
-        </template>
     </AuthShell>
 </template>
 
