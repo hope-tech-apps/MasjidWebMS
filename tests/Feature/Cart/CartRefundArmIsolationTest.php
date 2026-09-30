@@ -26,7 +26,7 @@ use Tests\TestCase;
  * cart-side failure turned every form refund into a 500 that Stripe retries and, in the end, loses.
  *
  * Here the cart arm's own first query throws, and the form arm must still flag its row. So does
- * the cart arm's table check (`CartTables::has('orders')`, the deploy-window guard), which sits
+ * the cart arm's table check (`CartTables::existsOrFail('orders')`, the deploy-window guard), which sits
  * INSIDE that catch-all: a database that cannot answer it is the cart arm's failure too.
  */
 class CartRefundArmIsolationTest extends TestCase

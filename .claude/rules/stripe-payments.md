@@ -627,8 +627,8 @@ Direct charge on the ONE connected account, exactly the rules above.
   account, so a stray or forged PaymentIntent must never take the write-once slot. Settlement records the
   intent that PAID, replacing any other. The holder of `event.account` is the LIVE organisation,
   a trashed one only when none is live (`CartPaymentService::accountHolder()`, shared with settlement).
-  Idempotent, never throws (the deploy-window table check, `CartTables::has('orders')`, is inside the same
-  try/catch, so a database that cannot answer it cannot stop the form arm that runs next). `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
+  Idempotent, never throws (the deploy-window table check, `CartTables::existsOrFail('orders')`, is inside the same
+  try/catch, so a database that cannot answer it is logged at error and cannot stop the form arm that runs next; the form arm's own check, `CartTables::has('order_items')`, fails safe: a check that throws reads as absent and the row is flagged as before the cart). `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
   `order_items` line points at (`record_type='form_response'`); every other row is one per payment intent
   and behaves exactly as before.
 - **`amount_due` and `entry_count` on a cart form row are what checkout froze**

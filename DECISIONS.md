@@ -6034,3 +6034,65 @@ chunk's WARNING equals the expected list, three WARNINGs in all, no buyer name, 
 for R2-3 and R2-4), a new "round 2" table (R2-0, and R2-2 to R2-6); (A1), (B2), (B3) and (B4) above carry an inline "Round 2" note; `.claude/rules/stripe-payments.md` (the key is
 `cart:item:<id>`, which was already true of `CartSettlementService::lineKey()`; its retention paragraph is rewritten for B4, R2-3 and R2-6, and the refund paragraph for R2-4 and R2-5);
 `config/staging_scrub.php` says `order_items.cart_payload_hash` is "(above)" the orders list, which it is.
+
+## 2026-09-30 — Pre-merge fixes, round 3 (the point's live-path review)
+
+From the point's review of the live paths: GO, with 0 blockers and 0 majors, once the deploy-window guards are folded in. Worked on `feat/universal-cart` @ aa05b84b.
+bin/deploy makes the new code live BEFORE `migrate`, so for that window the cart tables do not exist. NOTHING WAS RUN: there is no PHP here, so every test below was
+written by reading the code it exercises and none has been executed. "Fails without the fix" means read against the code before the fix, not a run.
+
+(R3-0) THE RULE FOR A TABLE CHECK: ONLY A GENUINELY MISSING TABLE SKIPS; A FAILED CHECK FAILS CLOSED ON ANY PATH THAT DELETES OR MOVES DATA. (A design correction from the
+point's review, applied in this round: item 4 of the brief, read as written, would have made `CartTables::has()` swallow a throwing check for every caller.) A check that throws means "I could not tell", which is a different thing
+from "the table is not there". Swallowing it as "absent" is right only where absent is harmless, and wrong where it skips a look at `orders`: a member holding paid orders
+would be erased, a merge would leave the source's paid orders to the foreign key's SET NULL, and an import's undo would delete a contact orders still name. So
+`App\Support\CartTables` has two questions. `has()` FAILS SAFE (catches, logs ONE warning per process by class, answers absent, never remembers a failure): the live form
+refund arm (R3-4) and `cart:prune` (R3-3) only. `existsOrFail()` FAILS CLOSED (false only for a table that genuinely does not exist; a failed check propagates, so the
+caller's transaction rolls back and the operator sees an error): `MemberAccountDeletion` (both steps and `reasonsToKeep`), `ContactsController::merge` (R3-1),
+`WixContactImport::heldBy` (R3-2), and `CartPaymentService::handleChargeFlag` (its catch logs the failure at error, as before, instead of reading it as "no orders table" and
+losing a flag on a real order in silence). Alternative for the strict question: trust a remembered absence like `has()` does; rejected, because the remembered absence can be
+up to 30 seconds stale and these paths delete data, so `existsOrFail()` asks again (one statement on a path that runs rarely). Tests: `CartDeployWindowTest`
+(`the_fail_safe_question_answers_absent_and_warns_once_and_a_failure_is_never_remembered`, `the_strict_question_lets_a_failed_check_propagate_and_says_false_only_for_a_table_that_is_missing`,
+`the_strict_question_does_not_trust_a_remembered_absence`, `what_an_account_deletion_keeps_a_member_for_is_not_decided_by_an_orders_check_that_threw`,
+`an_account_deletion_whose_baskets_check_threw_is_rolled_back_whole`); the existing `CartRefundArmIsolationTest` is unchanged and still needs the cart arm to use the strict
+question (its check must reach the arm's catch and log at error). Fails without the fix: the last two fail if deletion used `has()` (the member is erased, or the
+deletion carries on past the failed step).
+
+(R3-1) THE CONTACT MERGE. `ContactsController::merge` moved `orders.contact_id` with no guard, so every admin merge answered 500 until migrate finished. The orders move now
+sits behind `CartTables::existsOrFail('orders')`; the `meal_orders` move stays unconditional (an old table). The brief said "and the carts move if one exists": the merge has NO
+carts move (an open basket is the shopper's half-finished choice; `carts.contact_id` cascades off the source's force-delete), so there was nothing to guard there. Tests:
+`CartDeployWindowMergeTest::a_merge_in_the_window_succeeds_and_moves_everything_that_is_not_a_cart_order` (tables dropped; gift, lunch and imported Wix order follow to the
+survivor) and `a_merge_whose_orders_check_cannot_be_answered_fails_whole_and_orphans_no_paid_order` (500, source kept, paid order neither moved nor nulled, earlier moves rolled
+back). Fails without the fix: the first (500 on the missing table); the second (the old code never asked, so the merge answered 200), and it also fails if the fail-safe `has()` were used.
+
+(R3-2) THE WIX IMPORT UNDO. `WixContactImport::heldBy` ran `DB::table('orders')` unguarded, so an undo in the window failed on a missing table. It now skips a cart table that
+`existsOrFail()` says is genuinely missing (`carts` was already skipped as `GONE_WITH_THE_CONTACT`). Tests (`WixContactImportTest`): `undo_in_the_deploy_window_removes_what_the_run_created_exactly_as_before_the_cart`,
+`undo_in_the_deploy_window_is_still_refused_for_a_contact_the_office_holds` (refusal text unchanged), `an_undo_whose_orders_check_cannot_be_answered_stops_and_removes_nothing`.
+Fails without the fix: all three.
+
+(R3-3) THE PRUNE COMMAND. `cart:prune` is scheduled daily at 03:41 and had no guard. With any of the four cart tables absent it prints and logs one info line ("cart tables
+not migrated yet; nothing to prune", with the missing names as context), exits 0, and issues no statement that names a cart table; `--dry-run` takes the same path. It uses the
+fail-safe `has()`: a check that cannot be answered also skips the night (the line then says "not migrated", which is a small untruth, and the one `has()` warning says why).
+Skipping is harmless for a sweep that runs again tomorrow. Tests (`CartDeployWindowTest`): `the_prune_in_the_window_logs_one_info_line_exits_zero_and_touches_no_cart_table`
+(a `DB::listen` collects any statement naming a cart table) and `the_prune_skips_the_night_and_deletes_nothing_when_the_table_check_itself_throws` (an expired basket stays).
+Fails without the fix: both.
+
+(R3-4) THE LIVE FORM REFUND ARM. `FormResponsePaymentService::handleChargeFlag` called `CartTables::has('order_items')` outside any try, on the live form refund path, so a
+database that could not answer the question turned a refund into a 500. `has()` itself now fails safe (R3-0), so the arm skips the cart exclusion and behaves exactly as before the
+cart. Test: `CartDeployWindowTest::a_live_form_refund_is_still_flagged_and_answered_200_when_the_order_items_check_itself_throws` (a `DB::listen` on the SQLite grammar's
+`sqlite_master ... name = 'order_items'` throws; the pinned row is flagged, the webhook answers 200, one warning by class, no error line). Fails without the fix: the exception left
+the arm, the row was not flagged and the webhook answered 500.
+
+(R3-5) A FAILED RECEIPT EMAIL LOGS A SCRUBBED REASON. `StripeWebhookController::deliverReceipt` logged the exception class only, which told staff nothing about why a receipt did not
+go. It still logs `error` (the class) and now also `reason`: the exception message with the recipient's address replaced by `[recipient]`, then any remaining text of the shape
+`[^\s@<>"']+@[^\s@<>"']+` by `[email]`, cut to 300 characters (the cut last, so it cannot leave half an address). Only the SEND failure: the PDF render failure stays class-only, because its
+message can quote the letter's names and no pattern finds a name. If the pattern itself fails, `reason` is empty rather than unscrubbed. Tests (`DonationReceiptPdfTest`): the send test now
+asserts `reason` is `550 5.1.1 no such user [recipient]` and that no line holds the address (the transport's own text may now appear); a new test with two more addresses (one in capitals, in angle
+brackets) and a 400-character tail asserts the exact scrubbed, 300-character reason. The render-failure test is unchanged. Fails without the fix: both (no `reason`). CHANGED EXISTING TEST:
+`a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient` no longer asserts the transport's text is absent.
+
+(R3-6) RECORDED, NOT CHANGED: A DARK ROUTE ANSWERS 405 FOR A WRONG METHOD, AND AN OPTIONS PREFLIGHT IS ANSWERED. Both reveal that the path exists, which the 404 of a switched-off portal
+route (R2-2) otherwise hides. Requests with a declared method are byte-identical to an unknown route's. Accepted, because the repository is public, so the route list is not a secret. No
+code change, no test.
+
+(R3-7) DOCS made true: the `CartTables` class comment (two questions, the rule, the memo), `.claude/rules/stripe-payments.md` (the cart arm asks the strict question), the `CartRefundArmIsolationTest`
+class comment, and ASSUMPTIONS "Pre-merge fixes (round 3)". B6 above says the merge and the undo were "not guarded"; R3-1 and R3-2 supersede that.
