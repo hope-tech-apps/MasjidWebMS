@@ -447,4 +447,95 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertTrue(Schema::hasTable('prize_ledger_entries'));
         $this->assertSame(1, PrizeLedgerEntry::query()->count());
     }
+
+    #[Test]
+    public function a_partial_rollback_refuses_to_drop_the_columns_the_ledger_rests_on_while_it_holds_rows(): void
+    {
+        $this->credit($this->amira, 1);
+
+        // 100200 (the converted-week stamp), 100300 (the rate, start day and paper switch) and
+        // 100400 (each week's rate and points) run BEFORE 100100 in a rollback, so without their
+        // own guard they would drop what the rows were worked out from and only then reach the
+        // ledger's refusal.
+        foreach ([2 => ['behavior_weeks', 'prizes_converted_at'], 3 => ['masjid_points_settings', 'points_per_buck'], 4 => ['prize_ledger_entries', 'week_rate']] as $i => [$table, $column]) {
+            $migration = require base_path(self::MIGRATIONS[$i]);
+
+            try {
+                $migration->down();
+                $this->fail(self::MIGRATIONS[$i].' down() must refuse while the ledger has rows');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('Refusing to roll back: 1 Manara Bucks ledger', $e->getMessage());
+            }
+
+            $this->assertTrue(Schema::hasColumn($table, $column), "{$table}.{$column} is still there");
+        }
+    }
+
+    #[Test]
+    public function with_no_ledger_rows_the_partial_rollback_goes_through_and_up_restores_it(): void
+    {
+        $this->assertSame(0, PrizeLedgerEntry::query()->count());
+
+        $settings = require base_path(self::MIGRATIONS[3]);
+        $swept = require base_path(self::MIGRATIONS[5]);
+
+        $swept->down();
+        $settings->down();
+        $this->assertFalse(Schema::hasColumn('masjid_points_settings', 'points_per_buck'));
+
+        $settings->up();
+        $swept->up();
+        $this->assertTrue(Schema::hasColumn('masjid_points_settings', 'points_per_buck'));
+    }
+
+    // ------------------------------------------ the dedupe key on MySQL (A1)
+
+    /**
+     * The CREATE statement the ledger migration sends to MySQL, compiled by Laravel's own MySQL
+     * grammar. The connection's PDO is an in-memory SQLite handle only so the grammar can ask a
+     * server version; nothing is executed.
+     */
+    private function ledgerCreateSqlFor(string $driver): string
+    {
+        $migration = require base_path(self::MIGRATIONS[1]);
+
+        $connection = new \Illuminate\Database\MySqlConnection(
+            fn () => new \PDO('sqlite::memory:'),
+            'w6',
+            '',
+            ['driver' => 'mysql', 'charset' => 'utf8mb4', 'collation' => 'utf8mb4_unicode_ci'],
+        );
+        $connection->useDefaultSchemaGrammar();
+
+        $blueprint = new \Illuminate\Database\Schema\Blueprint($connection, 'prize_ledger_entries', fn ($t) => $migration->define($t, $driver));
+        $blueprint->create();
+
+        return implode(";\n", $blueprint->toSql());
+    }
+
+    #[Test]
+    public function on_mysql_the_dedupe_key_is_byte_exact_so_request_ids_differing_only_in_case_are_two_keys(): void
+    {
+        // The table's default is utf8mb4_unicode_ci, which folds case and accents: without the
+        // column's own collation `redeemed:7:abcDEF12` and `redeemed:7:ABCdef12` would be one
+        // key on MySQL and the second redemption a false replay. SQLite compares bytes, so only
+        // the statement can show it (the behaviour itself was proven on MySQL 8.0, DECISIONS.md).
+        $mysql = $this->ledgerCreateSqlFor('mysql');
+
+        $this->assertStringContainsString("`dedupe_key` varchar(64) collate 'utf8mb4_bin' null", $mysql);
+        $this->assertStringContainsString("collate 'utf8mb4_unicode_ci'", $mysql, 'the rest of the table keeps the default');
+        $this->assertSame(1, substr_count($mysql, 'utf8mb4_bin'), 'only the dedupe key is byte-exact');
+
+        $this->assertStringContainsString('`dedupe_key` varchar(64) collate', $this->ledgerCreateSqlFor('mariadb'));
+        $this->assertStringNotContainsString('utf8mb4_bin', $this->ledgerCreateSqlFor('sqlite'), 'SQLite has no such collation and compares bytes already');
+
+        // And the suite's own engine: two keys that differ only in case are two rows.
+        foreach (['redeemed:7:abcDEF12', 'redeemed:7:ABCdef12'] as $key) {
+            PrizeLedgerEntry::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+                'kind' => PrizeLedgerEntry::KIND_EARNED, 'amount' => 1, 'dedupe_key' => $key,
+            ]);
+        }
+        $this->assertSame(2, PrizeLedgerEntry::query()->where('dedupe_key', 'like', 'redeemed:7:%')->count());
+    }
 }

@@ -1017,7 +1017,13 @@ organisation** (Al-Razi included) until a SuperAdmin switches it on.
   still work. `dedupe_key` is a nullable UNIQUE string (NULLs are distinct on both engines; there are no
   partial indexes) and is how "once" is a database fact: `earned:{membership}:{week_start}`,
   `adjusted:{membership}:{week}:{n}`, `reversal:{entry}`, `redeemed:{membership}:{request_id}`,
-  `expired:{membership}:{cutoff}:{n}` (`n` counts that cutoff's earlier write-offs). `week_start` is a plain `Y-m-d` string, NOT a `date` cast: the cast stores a
+  `expired:{membership}:{cutoff}:{n}` (`n` counts that cutoff's earlier write-offs). **The key is BYTE-EXACT on
+  MySQL** (`utf8mb4_bin`, declared in the table's own CREATE): under the default `utf8mb4_unicode_ci` two request
+  ids differing only in case were one key there and the second redemption a false replay, which SQLite never shows
+  (`ClassStoreSchemaTest` compiles the MySQL statement and pins it). **Only a duplicate is swallowed** anywhere a
+  store write races (`markPrizesConverted` inserts and catches `UniqueConstraintViolationException`, like the
+  report's `claim()`; never `insertOrIgnore`, which is MySQL's INSERT IGNORE). **The W6 migrations after the
+  ledger's own (100200, 100300, 100400) refuse to roll back while a ledger row exists**, as 100100 does. `week_start` is a plain `Y-m-d` string, NOT a `date` cast: the cast stores a
   timestamp on SQLite, and an exact match would silently miss there.
   `group_membership_id` is RESTRICT like every academic record, and `AcademicRecordsHeld` tells the office
   ("N Manara Bucks") before the database refuses.

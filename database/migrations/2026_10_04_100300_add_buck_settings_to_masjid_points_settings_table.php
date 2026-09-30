@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -36,6 +37,19 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Guarded like the ledger's own down() (2026_10_04_100100): while any Manara Bucks
+        // ledger row exists, dropping these columns would leave rows the
+        // application can no longer explain. A partial rollback refuses rather than
+        // quietly losing that.
+        $rows = Schema::hasTable('prize_ledger_entries') ? DB::table('prize_ledger_entries')->count() : 0;
+
+        if ($rows > 0) {
+            throw new RuntimeException(
+                "Refusing to roll back: {$rows} Manara Bucks ledger entr(ies) exist, and this migration holds "
+                .'the rate, start day and paper switch of each school, which the earned rows were worked out from. The ledger is append-only: export and clear it deliberately first.'
+            );
+        }
+
         Schema::table('masjid_points_settings', function (Blueprint $table) {
             $table->dropColumn(['points_per_buck', 'paper_bucks_enabled', 'bucks_from']);
         });

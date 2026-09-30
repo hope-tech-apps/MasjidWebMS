@@ -15,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Console\Scheduling\Schedule;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
@@ -431,6 +432,46 @@ class ClassStoreMintingTest extends TestCase
         // And the reverse: releasing the report's claim leaves the conversion alone.
         BehaviorWeek::release($this->class->id, self::WEEK1);
         $this->assertTrue(BehaviorWeek::prizesConverted($this->class->id, self::WEEK1));
+    }
+
+    #[Test]
+    public function marking_a_week_converted_treats_an_existing_row_as_done_and_keeps_the_first_stamp(): void
+    {
+        // The report claimed the week first: its row exists, so the insert is a duplicate.
+        $this->assertTrue(BehaviorWeek::claim($this->school->id, $this->class->id, self::WEEK1));
+
+        BehaviorWeek::markPrizesConverted($this->school->id, $this->class->id, self::WEEK1);
+        $first = DB::table('behavior_weeks')->value('prizes_converted_at');
+        $this->assertNotNull($first);
+        $this->assertTrue(BehaviorWeek::sent($this->class->id, self::WEEK1), 'the report still owns its claim');
+
+        $this->freeze('2026-10-12 10:00');
+        BehaviorWeek::markPrizesConverted($this->school->id, $this->class->id, self::WEEK1);
+        $this->assertSame($first, DB::table('behavior_weeks')->value('prizes_converted_at'), 'the first stamp stays');
+        $this->assertSame(1, DB::table('behavior_weeks')->count());
+    }
+
+    #[Test]
+    public function marking_a_week_converted_throws_an_insert_failure_that_is_not_a_duplicate(): void
+    {
+        // behavior_weeks rebuilt with a NOT NULL column the mark never sets: its INSERT fails for a
+        // reason that is not the unique index. INSERT OR IGNORE (what insertOrIgnore writes, and
+        // MySQL's INSERT IGNORE mirrors) would skip it without a word, leaving no row and a week
+        // minted again every hour as if it had never been converted.
+        Schema::drop('behavior_weeks');
+        DB::statement('CREATE TABLE behavior_weeks ('
+            .'id integer primary key autoincrement not null, masjid_id integer not null, group_id integer not null, '
+            .'week_start date not null, report_sent_at datetime, recipients_count integer, prizes_converted_at datetime, '
+            .'created_at datetime, updated_at datetime, must_be_set text not null)');
+        DB::statement('CREATE UNIQUE INDEX behavior_weeks_probe_unique ON behavior_weeks (group_id, week_start)');
+
+        try {
+            BehaviorWeek::markPrizesConverted($this->school->id, $this->class->id, self::WEEK1);
+            $this->fail('an insert that failed was swallowed as if the week were already marked');
+        } catch (\Illuminate\Database\QueryException $e) {
+            $this->assertNotInstanceOf(\Illuminate\Database\UniqueConstraintViolationException::class, $e);
+            $this->assertStringContainsString('must_be_set', $e->getMessage());
+        }
     }
 
 

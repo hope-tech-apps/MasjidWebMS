@@ -34,6 +34,17 @@ use Illuminate\Support\Facades\Schema;
  * of a later week's earnings (`week_points` and `week_rate`, added by 2026_10_04_100400, say what
  * it was worked out from).
  *
+ * `dedupe_key` IS BYTE-EXACT ON MYSQL (`utf8mb4_bin`). The server default, utf8mb4_unicode_ci,
+ * compares without case or accents, so two request ids that differ only in case
+ * (`redeemed:7:abcDEF12` and `redeemed:7:ABCdef12`) would be ONE key there and the second
+ * teacher's redemption would come back as a replay of the first. SQLite compares bytes, so the
+ * suite could never see it. The column is declared with the collation here, in its own CREATE,
+ * because no W6 migration had run on any persistent database when this was changed (staging and
+ * production had none of them); `email_suppressions.email_normalized` got the same collation
+ * by an ALTER (2026_10_01_130000) because it already existed. SQLite has no such collation, so
+ * there the column is declared plain (its comparison is already byte for byte).
+ * ClassStoreSchemaTest compiles this definition for MySQL and pins the collation.
+ *
  * `group_membership_id` is RESTRICT, like every other academic-record key
  * (2026_09_09_040000): a roster row that holds a ledger cannot be deleted from under it,
  * and AcademicRecordsHeld says so in a sentence. `group_id` cascades with the class. The
@@ -53,33 +64,48 @@ use Illuminate\Support\Facades\Schema;
  */
 return new class extends Migration
 {
+    /** The collation `dedupe_key` is declared with on MySQL and MariaDB (see above). */
+    public const DEDUPE_KEY_COLLATION = 'utf8mb4_bin';
+
     public function up(): void
     {
-        Schema::create('prize_ledger_entries', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('masjid_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('group_id')->constrained('groups')->cascadeOnDelete();
-            $table->foreignId('group_membership_id')->constrained('group_memberships')->restrictOnDelete();
-            $table->string('kind', 16);
-            $table->integer('amount');
-            $table->date('week_start')->nullable();
-            $table->unsignedInteger('week_basis')->nullable();
-            $table->foreignId('prize_id')->nullable()->constrained('prizes')->nullOnDelete();
-            $table->string('prize_title', 120)->nullable();
-            $table->unsignedInteger('prize_cost')->nullable();
-            $table->foreignId('reverses_entry_id')->nullable()->constrained('prize_ledger_entries')->nullOnDelete();
-            $table->json('breakdown')->nullable();
-            $table->string('note', 255)->nullable();
-            $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->string('dedupe_key', 64)->nullable();
-            $table->dateTime('occurred_at');
-            $table->date('retained_until')->nullable();
+        $driver = Schema::getConnection()->getDriverName();
 
-            $table->unique('dedupe_key', 'prize_ledger_dedupe_unique');
-            $table->index(['group_membership_id', 'occurred_at'], 'prize_ledger_member_occurred_idx');
-            $table->index(['group_id', 'occurred_at'], 'prize_ledger_group_occurred_idx');
-            $table->index('retained_until', 'prize_ledger_retained_idx');
-        });
+        Schema::create('prize_ledger_entries', fn (Blueprint $table) => $this->define($table, $driver));
+    }
+
+    /**
+     * The table, for `$driver`. Public so ClassStoreSchemaTest can compile it with the MySQL
+     * grammar and pin what MySQL is sent, which an SQLite suite cannot otherwise see.
+     */
+    public function define(Blueprint $table, string $driver): void
+    {
+        $table->id();
+        $table->foreignId('masjid_id')->constrained()->cascadeOnDelete();
+        $table->foreignId('group_id')->constrained('groups')->cascadeOnDelete();
+        $table->foreignId('group_membership_id')->constrained('group_memberships')->restrictOnDelete();
+        $table->string('kind', 16);
+        $table->integer('amount');
+        $table->date('week_start')->nullable();
+        $table->unsignedInteger('week_basis')->nullable();
+        $table->foreignId('prize_id')->nullable()->constrained('prizes')->nullOnDelete();
+        $table->string('prize_title', 120)->nullable();
+        $table->unsignedInteger('prize_cost')->nullable();
+        $table->foreignId('reverses_entry_id')->nullable()->constrained('prize_ledger_entries')->nullOnDelete();
+        $table->json('breakdown')->nullable();
+        $table->string('note', 255)->nullable();
+        $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
+        $dedupe = $table->string('dedupe_key', 64)->nullable();
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $dedupe->collation(self::DEDUPE_KEY_COLLATION);
+        }
+        $table->dateTime('occurred_at');
+        $table->date('retained_until')->nullable();
+
+        $table->unique('dedupe_key', 'prize_ledger_dedupe_unique');
+        $table->index(['group_membership_id', 'occurred_at'], 'prize_ledger_member_occurred_idx');
+        $table->index(['group_id', 'occurred_at'], 'prize_ledger_group_occurred_idx');
+        $table->index('retained_until', 'prize_ledger_retained_idx');
     }
 
     public function down(): void
