@@ -351,6 +351,10 @@ return [
             'stripe_checkout_session_id',
             'stripe_payment_intent_id',
             'idempotency_key',
+            // An unsalted sha256 over the same answers as order_items.cart_payload_hash
+            // (below), so a short answer set can be guessed back from it just the same.
+            // Only ever compared for equality at checkout; NULL just means "no page to reuse".
+            'basket_fingerprint',
         ],
 
         'meal_order_top_ups' => [
