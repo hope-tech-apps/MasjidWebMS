@@ -76,7 +76,7 @@ class CartPruneTest extends TestCase
         return $cart;
     }
 
-    private function orderFor(Cart $cart, string $status, ?Carbon $pageExpires): Order
+    private function orderFor(Cart $cart, string $status, ?Carbon $pageExpires, ?string $paymentIntent = null): Order
     {
         return Order::withoutMasjidScope()->create([
             'masjid_id' => $cart->masjid_id,
@@ -88,6 +88,7 @@ class CartPruneTest extends TestCase
             'currency' => 'usd',
             'charge_account_id' => 'acct_prune_test',
             'checkout_expires_at' => $pageExpires,
+            'stripe_payment_intent_id' => $paymentIntent,
         ]);
     }
 
@@ -220,8 +221,11 @@ class CartPruneTest extends TestCase
         $oldElsewhere = $this->withLines($this->orderFor($otherCart, Order::STATUS_EXPIRED, now()->subDays(30)));
         $recent = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(6)));
         $unaged = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, null));
-        // A delayed payment can still settle a pending order, and a paid one is a sale: neither is touched, however old.
-        $pending = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(30)));
+        // A pending order whose page closed only 3 days ago is not this sweep's yet, a pending order with
+        // a payment intent is kept for a month (exactly 30 days is not MORE than 30), and a paid one is a
+        // sale: none is touched. (Older pending orders go: see the pending-order tests below.)
+        $pending = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(3)));
+        $paying = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(30), 'pi_prune_paying'));
         $paid = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(30)));
 
         $this->artisan('cart:prune')
@@ -233,7 +237,7 @@ class CartPruneTest extends TestCase
             $this->assertSame(0, $this->linesOf($gone), "order {$gone->id}: its lines, and the attendee names in them, went with it");
         }
 
-        foreach (['6 days old' => $recent, 'no closing time' => $unaged, 'pending' => $pending, 'paid' => $paid] as $why => $kept) {
+        foreach (['6 days old' => $recent, 'no closing time' => $unaged, 'pending, 3 days' => $pending, 'pending with a payment, 30 days' => $paying, 'paid' => $paid] as $why => $kept) {
             $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), "{$why}: the order stays");
             $this->assertSame(2, $this->linesOf($kept), "{$why}: and so do its lines");
         }
@@ -280,6 +284,165 @@ class CartPruneTest extends TestCase
 
         $this->assertNull(Order::withoutMasjidScope()->find($order->id), 'eight days after its page closed');
         $this->assertSame(0, $this->linesOf($order));
+    }
+
+    // ------------------------------------- pending orders: nothing ever moves them to `expired`
+    //
+    // Production's Connect endpoint does not subscribe to checkout.session.expired, so an order
+    // that was abandoned stays `pending` for ever unless the sweep takes it.
+
+    #[Test]
+    public function a_pending_order_with_no_payment_goes_more_than_a_week_after_its_page_closed(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+
+        $old = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(8)));
+        $boundary = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(7)));
+        $recent = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(6)));
+        $open = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->addMinutes(10)));
+        $unaged = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, null));
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('Pruned 1 pending order(s) with no payment')
+            ->assertExitCode(0);
+
+        $this->assertNull(Order::withoutMasjidScope()->find($old->id), 'closed 8 days ago: gone');
+        $this->assertSame(0, $this->linesOf($old), 'with its lines, and the attendee names in them');
+
+        foreach (['exactly 7 days (not more than 7)' => $boundary, '6 days' => $recent, 'page still open' => $open, 'no closing time' => $unaged] as $why => $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), "{$why}: kept");
+            $this->assertSame(2, $this->linesOf($kept));
+        }
+    }
+
+    #[Test]
+    public function a_pending_order_with_a_payment_intent_goes_only_after_thirty_days_and_is_logged_by_number(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+
+        $old = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(31), 'pi_prune_old'));
+        $boundary = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(30), 'pi_prune_boundary'));
+        $middle = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(8), 'pi_prune_middle'));
+        $unaged = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, null, 'pi_prune_unaged'));
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('and 1 pending order(s) with a payment intent')
+            ->assertExitCode(0);
+
+        $this->assertNull(Order::withoutMasjidScope()->find($old->id), 'closed 31 days ago with a payment intent: gone');
+        $this->assertSame(0, $this->linesOf($old));
+
+        foreach (['exactly 30 days (not more than 30)' => $boundary, '8 days: a payment that may still be sorting itself out' => $middle, 'no closing time' => $unaged] as $why => $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), "{$why}: kept");
+            $this->assertSame(2, $this->linesOf($kept));
+        }
+
+        // The rows are gone, so this line is what staff reconcile from: the count, and each order's
+        // number, payment intent and amount. No name, address or answer.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'carry a payment intent')
+                && $context['orders'] === 1
+                && $context['dry_run'] === false
+                && $context['listed'] === [[
+                    'order_number' => $old->order_number,
+                    'masjid_id' => (int) $old->masjid_id,
+                    'payment_intent' => 'pi_prune_old',
+                    'total_minor' => 5000,
+                    'currency' => 'usd',
+                ]])
+            ->once();
+    }
+
+    #[Test]
+    public function a_paid_order_is_never_pruned_however_old_and_with_or_without_an_intent(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+
+        $paidWithIntent = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(400), 'pi_prune_paid'));
+        $paidBare = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(400)));
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('Pruned 0 pending order(s) with no payment')
+            ->expectsOutputToContain('and 0 pending order(s) with a payment intent')
+            ->assertExitCode(0);
+
+        foreach ([$paidWithIntent, $paidBare] as $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id));
+            $this->assertSame(2, $this->linesOf($kept));
+        }
+
+        Log::shouldNotHaveReceived('warning', fn ($message) => str_contains((string) $message, 'carry a payment intent'));
+    }
+
+    #[Test]
+    public function the_pending_with_payment_window_is_configurable_and_never_below_a_week(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $eleven = $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(11), 'pi_prune_eleven');
+        $nine = $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(9), 'pi_prune_nine');
+
+        config(['cart.prune.pending_with_payment_days' => 10]);
+        $this->artisan('cart:prune')->expectsOutputToContain('and 1 pending order(s) with a payment intent')->assertExitCode(0);
+
+        $this->assertNull(Order::withoutMasjidScope()->find($eleven->id));
+        $this->assertNotNull(Order::withoutMasjidScope()->find($nine->id));
+
+        // A typo (1 day) is read as the floor, a week: an order 5 days past is kept, 8 days past goes.
+        $five = $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(5), 'pi_prune_five');
+        $eight = $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(8), 'pi_prune_eight');
+        $nine->delete();
+
+        config(['cart.prune.pending_with_payment_days' => 1]);
+        $this->artisan('cart:prune')->expectsOutputToContain('and 1 pending order(s) with a payment intent')->assertExitCode(0);
+
+        $this->assertNotNull(Order::withoutMasjidScope()->find($five->id));
+        $this->assertNull(Order::withoutMasjidScope()->find($eight->id));
+    }
+
+    #[Test]
+    public function a_dry_run_counts_pending_orders_deletes_none_and_warns_that_it_would(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $bare = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(9)));
+        $paying = $this->withLines($this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(40), 'pi_prune_dry'));
+
+        $this->assertSame(0, Artisan::call('cart:prune', ['--dry-run' => true]));
+        $output = Artisan::output(); // the buffer empties on read, so read it once
+        $this->assertStringContainsString('Would prune 1 pending order(s) with no payment', $output);
+        $this->assertStringContainsString('and 1 pending order(s) with a payment intent', $output);
+
+        foreach ([$bare, $paying] as $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), 'a dry run deletes nothing');
+            $this->assertSame(2, $this->linesOf($kept));
+        }
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'would delete') && $context['dry_run'] === true && $context['orders'] === 1)
+            ->once();
+
+        // ...and the real run then takes both, once.
+        $this->artisan('cart:prune')->assertExitCode(0);
+        $this->assertNull(Order::withoutMasjidScope()->find($bare->id));
+        $this->assertNull(Order::withoutMasjidScope()->find($paying->id));
+        $this->artisan('cart:prune')->expectsOutputToContain('Pruned 0 pending order(s) with no payment')->assertExitCode(0);
+    }
+
+    #[Test]
+    public function the_sweep_log_carries_the_pending_counts(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(9));
+        $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(9));
+        $this->orderFor($cart, Order::STATUS_PENDING, now()->subDays(40), 'pi_prune_log');
+
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
+                && $context['orders'] === 0
+                && $context['pending_orders_without_payment'] === 2
+                && $context['pending_orders_with_payment'] === 1)
+            ->once();
     }
 
     // ------------------------------------------------------------- the trace it leaves

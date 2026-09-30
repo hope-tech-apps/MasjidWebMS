@@ -84,13 +84,21 @@ return [
      * It also deletes an order whose status is `expired`, with its lines, once its page
      * closed more than `expired_order_days` ago: a payment page that was never completed,
      * holding the buyer's name, phone and address and the answers frozen in its lines.
-     * Never a `pending` order (a delayed payment can still settle it) and never a `paid` one.
-     * The floor is one day, so a typo cannot delete an order whose page has only just closed.
+     * Never a `paid` one. A `pending` order goes as well, because production's Connect endpoint
+     * does not subscribe to checkout.session.expired, so an order NEVER becomes `expired` there:
+     * with no payment intent on record it goes on the same `expired_order_days` clock, and one
+     * WITH an intent on record (a payment event named it) goes only after
+     * `pending_with_payment_days`, and is logged at WARNING by number, payment intent and amount
+     * first, because a debit that succeeded would have settled through payment_intent.succeeded:
+     * an order still pending that long is a payment to reconcile in Stripe.
+     * The floor for `expired_order_days` is one day, so a typo cannot delete an order whose page
+     * has only just closed; the floor for `pending_with_payment_days` is a week.
      */
     'prune' => [
         'grace_days' => max(0, (int) env('CART_PRUNE_GRACE_DAYS', 1)),
         'hold_minutes' => max(0, (int) env('CART_PRUNE_HOLD_MINUTES', 60)),
         'expired_order_days' => max(1, (int) env('CART_PRUNE_EXPIRED_ORDER_DAYS', 7)),
+        'pending_with_payment_days' => max(7, (int) env('CART_PRUNE_PENDING_WITH_PAYMENT_DAYS', 30)),
     ],
 
     /*
