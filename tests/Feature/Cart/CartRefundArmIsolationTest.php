@@ -4,6 +4,7 @@ namespace Tests\Feature\Cart;
 
 use App\Models\FormResponse;
 use App\Models\Masjid;
+use App\Support\CartTables;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -24,7 +25,9 @@ use Tests\TestCase;
  * arm, and nothing tested it: delete the try/catch and every existing test stayed green while a
  * cart-side failure turned every form refund into a 500 that Stripe retries and, in the end, loses.
  *
- * Here the cart arm's own first query throws, and the form arm must still flag its row.
+ * Here the cart arm's own first query throws, and the form arm must still flag its row. So does
+ * the cart arm's table check (`CartTables::has('orders')`, the deploy-window guard), which sits
+ * INSIDE that catch-all: a database that cannot answer it is the cart arm's failure too.
  */
 class CartRefundArmIsolationTest extends TestCase
 {
@@ -53,11 +56,22 @@ class CartRefundArmIsolationTest extends TestCase
         Mail::fake();
         Log::spy();
 
+        // The table guard remembers a table it has seen for the life of the process, so a test that
+        // breaks its question must start with nothing remembered.
+        CartTables::forget();
+
         $this->holder = $this->org(['stripe_account_id' => self::HOLDER_ACCOUNT]);
         $child = $this->org(['stripe_account_id' => null, 'stripe_charges_enabled' => false]);
         DB::table('masjids')->where('id', $child->id)->update(['parent_id' => $this->holder->id, 'forms_card_via_masjid_id' => $this->holder->id]);
 
         $this->row = $this->paidPinnedRow($this->ticketForm($child));
+    }
+
+    protected function tearDown(): void
+    {
+        CartTables::forget();
+
+        parent::tearDown();
     }
 
     /** A registration paid through another organisation's account, as the FORM arm flags it: no basket anywhere. */
@@ -133,6 +147,29 @@ class CartRefundArmIsolationTest extends TestCase
         });
     }
 
+    /**
+     * The cart arm's deploy-window guard, `Schema::hasTable('orders')`, is what fails: the
+     * database cannot answer it (an information_schema error, say). Only that one table's
+     * question, so the FORM arm's own guard on `order_items` still answers.
+     */
+    private function breakTheCartArmsTableCheck(): void
+    {
+        DB::listen(function ($query): void {
+            if (str_contains((string) $query->sql, 'sqlite_master') && str_contains((string) $query->sql, "name = 'orders'")) {
+                throw new RuntimeException('the schema is unavailable');
+            }
+        });
+    }
+
+    private function assertTheCartArmSaidSoByClassOnly(): void
+    {
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'could not be recorded on its order')
+                && ($context['exception'] ?? null) === RuntimeException::class
+                && ! str_contains(json_encode($context), 'unavailable'))
+            ->once();
+    }
+
     #[Test]
     public function premise_the_form_arm_flags_its_row_when_the_cart_arm_works(): void
     {
@@ -171,5 +208,31 @@ class CartRefundArmIsolationTest extends TestCase
         $this->postWebhook($this->chargeEvent('charge.dispute.created', []))->assertOk();
 
         $this->assertSame(FormResponse::CHARGE_FLAG_DISPUTED, $this->row->fresh()->charge_flag);
+    }
+
+    #[Test]
+    public function a_refund_still_flags_the_form_row_when_the_cart_arms_table_check_throws(): void
+    {
+        $this->breakTheCartArmsTableCheck();
+
+        $this->postWebhook($this->chargeEvent('charge.refunded', ['amount_refunded' => 320, 'refunded' => false]))
+            ->assertOk(); // the guard's failure is the cart arm's, not a 500 for the form refund
+
+        $flagged = $this->row->fresh();
+        $this->assertSame(FormResponse::CHARGE_FLAG_REFUNDED, $flagged->charge_flag, 'the form arm still runs after a cart arm that threw before its own try');
+        $this->assertSame(320, $flagged->charge_refunded_minor);
+
+        $this->assertTheCartArmSaidSoByClassOnly();
+    }
+
+    #[Test]
+    public function a_dispute_still_flags_the_form_row_when_the_cart_arms_table_check_throws(): void
+    {
+        $this->breakTheCartArmsTableCheck();
+
+        $this->postWebhook($this->chargeEvent('charge.dispute.created', []))->assertOk();
+
+        $this->assertSame(FormResponse::CHARGE_FLAG_DISPUTED, $this->row->fresh()->charge_flag);
+        $this->assertTheCartArmSaidSoByClassOnly();
     }
 }

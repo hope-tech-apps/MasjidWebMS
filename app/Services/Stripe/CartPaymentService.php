@@ -284,13 +284,16 @@ class CartPaymentService
      */
     public function handleChargeFlag(array $object, ?string $account, string $flag): void
     {
-        // bin/deploy makes the code live before `migrate`: with no orders table there is no basket
-        // to find, and asking would log a false error-level alarm on every refund in that window.
-        if (! CartTables::has('orders')) {
-            return;
-        }
-
         try {
+            // bin/deploy makes the code live before `migrate`: with no orders table there is no
+            // basket to find, and asking would log a false error-level alarm on every refund in
+            // that window. The question is inside the try like everything else here: a database
+            // that cannot answer it (an information_schema error) must not stop the form arm that
+            // runs after this one.
+            if (! CartTables::has('orders')) {
+                return;
+            }
+
             $this->flagOrder($object, $account, $flag);
         } catch (Throwable $e) {
             Log::error('A refund or dispute on a cart basket\'s charge could not be recorded on its order; staff must check the order by hand.', [
