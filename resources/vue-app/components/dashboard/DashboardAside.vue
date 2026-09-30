@@ -1,21 +1,21 @@
 <template>
-    <aside id="dashboard_aside">
-        <div class="d-flex flex-column gap-3 aside-contents-container">
+    <aside id="dashboard_aside" aria-label="Main navigation">
+        <!-- The same night-to-emerald ground as the sign-in screen (AuthShell). -->
+        <div class="aside-glow" aria-hidden="true"></div>
+        <div class="aside-lattice" aria-hidden="true"></div>
+
+        <div class="d-flex flex-column aside-contents-container">
             <div id="dashboard_aside_header" class="d-flex align-items-center gap-2 justify-content-between">
-                <button id="dashboard_aside_close_btn" type="button" class="aside-toggle-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" class="bi bi-x-lg aside-toggle-icon"
-                        viewBox="0 0 16 16">
-                        <path
-                            d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z" />
-                    </svg>
-                </button>
-                <div class="w-100 px-3 py-2 logo">
-                    <svg v-if="route.meta.dashboardType === 'super'" viewBox="0 0 64 64" fill="none"
-                        xmlns="http://www.w3.org/2000/svg" class="logo-super-dash">
-                        <path
-                            d="M10.6667 34.6667H26.6667C27.3739 34.6667 28.0522 34.3857 28.5523 33.8856C29.0524 33.3855 29.3333 32.7072 29.3333 32V10.6667C29.3333 9.95942 29.0524 9.28115 28.5523 8.78105C28.0522 8.28095 27.3739 8 26.6667 8H10.6667C9.95942 8 9.28115 8.28095 8.78105 8.78105C8.28095 9.28115 8 9.95942 8 10.6667V32C8 32.7072 8.28095 33.3855 8.78105 33.8856C9.28115 34.3857 9.95942 34.6667 10.6667 34.6667ZM8 53.3333C8 54.0406 8.28095 54.7189 8.78105 55.219C9.28115 55.7191 9.95942 56 10.6667 56H26.6667C27.3739 56 28.0522 55.7191 28.5523 55.219C29.0524 54.7189 29.3333 54.0406 29.3333 53.3333V42.6667C29.3333 41.9594 29.0524 41.2811 28.5523 40.7811C28.0522 40.281 27.3739 40 26.6667 40H10.6667C9.95942 40 9.28115 40.281 8.78105 40.7811C8.28095 41.2811 8 41.9594 8 42.6667V53.3333ZM34.6667 53.3333C34.6667 54.0406 34.9476 54.7189 35.4477 55.219C35.9478 55.7191 36.6261 56 37.3333 56H53.3333C54.0406 56 54.7189 55.7191 55.219 55.219C55.7191 54.7189 56 54.0406 56 53.3333V34.6667C56 33.9594 55.7191 33.2811 55.219 32.781C54.7189 32.281 54.0406 32 53.3333 32H37.3333C36.6261 32 35.9478 32.281 35.4477 32.781C34.9476 33.2811 34.6667 33.9594 34.6667 34.6667V53.3333ZM37.3333 26.6667H53.3333C54.0406 26.6667 54.7189 26.3857 55.219 25.8856C55.7191 25.3855 56 24.7072 56 24V10.6667C56 9.95942 55.7191 9.28115 55.219 8.78105C54.7189 8.28095 54.0406 8 53.3333 8H37.3333C36.6261 8 35.9478 8.28095 35.4477 8.78105C34.9476 9.28115 34.6667 9.95942 34.6667 10.6667V24C34.6667 24.7072 34.9476 25.3855 35.4477 25.8856C35.9478 26.3857 36.6261 26.6667 37.3333 26.6667Z"
-                            fill="white" />
-                    </svg>
+                <div class="aside-identity">
+                    <template v-if="route.meta.dashboardType === 'super'">
+                        <span class="aside-identity-tile aside-identity-tile--brand">
+                            <img :src="'/manara-icon.svg'" alt="" width="40" height="40">
+                        </span>
+                        <span class="aside-identity-text">
+                            <span class="aside-identity-name">Manara</span>
+                            <span class="aside-identity-sub">Super dashboard</span>
+                        </span>
+                    </template>
 
                     <!--
                         Hidden while the server and this tab disagree about which
@@ -24,17 +24,34 @@
                         it, would put the contradiction back on screen in the one
                         element nobody reads as text.
                     -->
-                    <img v-else-if="masjidStore.masjid && !tenantSwitchStore.mismatch"
-                        :src="masjidStore.masjid?.logo?.original_url" alt="logo" class="w-100">
+                    <template v-else-if="masjidStore.masjid && !tenantSwitchStore.mismatch">
+                        <span class="aside-identity-tile" :class="{ 'aside-identity-tile--wide': logoIsWide }">
+                            <img v-if="logoUrl" :src="logoUrl" alt="" @load="measureLogo">
+                            <span v-else class="aside-identity-initials">{{ initials }}</span>
+                        </span>
+                        <span class="aside-identity-text">
+                            <span class="aside-identity-name">{{ tenantSwitchStore.chromeOrgName }}</span>
+                            <span class="aside-identity-sub">{{ masjidStore.organizationLabel }}</span>
+                        </span>
+                    </template>
                 </div>
+
+                <button id="dashboard_aside_close_btn" type="button" class="aside-toggle-btn" aria-label="Close menu">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" class="bi bi-x-lg aside-toggle-icon"
+                        viewBox="0 0 16 16" aria-hidden="true">
+                        <path
+                            d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z" />
+                    </svg>
+                </button>
             </div>
 
-            <div id="dashboard_aside_menu">
+            <nav id="dashboard_aside_menu" aria-label="Sections">
                 <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
                     <router-link v-if="stateOf(menuItem) === 'visible'"
                         :to="menuItem.to" class="dashboard-aside-menu-item">
-                        <div class="menu-item-icon">
-                            <span v-html="menuItem.svg_icon"></span>
+                        <div class="menu-item-icon" aria-hidden="true">
+                            <i v-if="iconFor(menuItem)" class="bi" :class="iconFor(menuItem)"></i>
+                            <span v-else v-html="menuItem.svg_icon"></span>
                         </div>
                         <div class="menu-item-text">
                             {{ title(menuItem) }}
@@ -61,8 +78,13 @@
                         </router-link>
                     </div>
                 </details>
-            </div>
+            </nav>
 
+            <div class="aside-footer">
+                <img :src="'/manara-icon.svg'" alt="" width="22" height="22">
+                <span class="aside-footer-name">Manara</span>
+                <span class="aside-footer-by">by Hope Tech</span>
+            </div>
         </div>
     </aside>
 </template>
@@ -144,6 +166,80 @@ const closeAsideOnSmallScreens = () => {
     document.getElementById('dashboard_layout')?.classList.remove('aside-hidden');
 };
 
+/**
+ * One icon family for the whole rail. The menu constants carry hand-picked SVGs
+ * that mix outline and solid glyphs at different weights; on the dark rail the
+ * mix read as uneven. Each known route gets its Bootstrap Icons outline glyph
+ * (the icon font the app already loads); an unmapped route keeps its own SVG.
+ */
+const MENU_ICONS: Record<string, string> = {
+    '/masjid/details': 'bi-building',
+    '/masjid/announcements': 'bi-megaphone',
+    '/masjid/splash-announcements': 'bi-window-stack',
+    '/masjid/broadcasts': 'bi-broadcast',
+    '/masjid/events': 'bi-calendar-event',
+    '/masjid/services': 'bi-grid-1x2',
+    '/masjid/donation': 'bi-heart',
+    '/masjid/about': 'bi-info-circle',
+    '/masjid/gallery': 'bi-images',
+    '/masjid/flyers': 'bi-file-earmark-richtext',
+    '/masjid/pages': 'bi-globe2',
+    '/masjid/form-responses': 'bi-ui-checks',
+    '/masjid/payment-methods': 'bi-credit-card',
+    '/masjid/team': 'bi-person-badge',
+    '/masjid/notifications': 'bi-bell',
+    '/masjid/contact-requests': 'bi-envelope',
+    '/masjid/contacts': 'bi-people',
+    '/masjid/groups': 'bi-easel2',
+    '/masjid/roster-import': 'bi-upload',
+    '/masjid/teachers': 'bi-person-workspace',
+    '/masjid/school-calendar': 'bi-calendar3',
+    '/masjid/class-store': 'bi-shop',
+    '/masjid/attendance': 'bi-clipboard-check',
+    '/masjid/offerings': 'bi-card-checklist',
+    '/masjid/appointment-requests': 'bi-calendar-check',
+    '/masjid/donations/dashboard': 'bi-graph-up-arrow',
+    '/masjid/zakat': 'bi-calculator',
+    '/masjid/impact-report': 'bi-bar-chart-line',
+    '/masjid/funds': 'bi-piggy-bank',
+    '/masjid/jummah-lunch': 'bi-cup-hot',
+    '/masjid/donations': 'bi-cash-coin',
+    '/masjid/recurring-donations': 'bi-arrow-repeat',
+    '/masjid/annual-statements': 'bi-file-earmark-text',
+    '/masjid/properties': 'bi-houses',
+    '/masjid/assistant': 'bi-stars',
+    '/masjid/mobile-features': 'bi-phone',
+    '/hadith': 'bi-book',
+    '/azkar': 'bi-moon-stars',
+    '/tasabih': 'bi-record-circle',
+    '/dashboard/super/users': 'bi-people',
+    '/dashboard/super/masjids': 'bi-buildings',
+    '/dashboard/super/onboarding': 'bi-box-arrow-in-up-right',
+    '/dashboard/super/studio': 'bi-palette',
+    '/dashboard/super/app-config': 'bi-sliders',
+};
+const iconFor = (menuItem: AsideMenuItem): string | null =>
+    typeof menuItem.to === 'string' ? (MENU_ICONS[menuItem.to] ?? null) : null;
+
+/** The organisation's logo, when it has one. */
+const logoUrl = computed<string | null>(() => masjidStore.masjid?.logo?.original_url || null);
+
+/** Two letters for an organisation without a logo. */
+const initials = computed<string>(() => {
+    const words = (tenantSwitchStore.chromeOrgName || '').split(/\s+/).filter(Boolean);
+    return ((words[0]?.[0] ?? '') + (words[1]?.[0] ?? '')).toUpperCase() || 'M';
+});
+
+/**
+ * A wordmark logo (wider than it is tall) gets the whole header row instead of
+ * being squeezed into a square beside the name.
+ */
+const logoIsWide = ref<boolean>(false);
+const measureLogo = (event: Event): void => {
+    const img = event.target as HTMLImageElement;
+    logoIsWide.value = img.naturalWidth > img.naturalHeight * 1.6;
+};
+
 // Html refs
 const dashboardLayout = ref<HTMLElement | null>();
 const asideCloseButton = ref<HTMLElement | null>();
@@ -152,127 +248,284 @@ const asideMenuItems = ref<NodeListOf<Element>>();
 </script>
 
 <style scoped>
+/*
+ * The rail is the one dark surface in the app, drawn like the sign-in stage:
+ * a navy ground, an emerald glow at the top, and the masjids lattice fading
+ * in from the bottom. Label and icon colours are chosen for contrast on
+ * #0b2340: #c9d3df is 10.2:1, white 15.6:1.
+ */
+.aside-glow {
+    position: absolute;
+    inset: -30% -40% auto -20%;
+    height: 60%;
+    background: radial-gradient(closest-side, rgb(1 177 81 / 26%), transparent);
+    pointer-events: none;
+}
+
+.aside-lattice {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Cg fill='none' stroke='rgba(255,255,255,0.07)' stroke-width='1'%3E%3Cpath d='M18 18h28v28H18z'/%3E%3Cpath d='M32 12.2 51.8 32 32 51.8 12.2 32z'/%3E%3Cpath d='M32 0v12.2M32 51.8V64M0 32h12.2M51.8 32H64'/%3E%3Cpath d='M0 0l8 8M64 0l-8 8M0 64l8-8M64 64l-8-8'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 64px 64px;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 45%);
+    mask-image: linear-gradient(to top, #000 0%, transparent 45%);
+    pointer-events: none;
+}
+
 #dashboard_aside_header {
-    box-sizing: content-box;
-    overflow: hidden;
+    position: relative;
     flex-shrink: 0;
+    padding: 0.35rem 0.25rem 1rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid rgb(255 255 255 / 8%);
 }
 
-#dashboard_aside_header .logo {
+.aside-identity {
     display: flex;
-    align-items: start;
-    justify-content: center;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    flex: 1;
 }
 
-#dashboard_aside_header .logo img {
+.aside-identity-tile {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 4px;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 14%), 0 6px 18px rgb(0 0 0 / 30%);
+    overflow: hidden;
+}
+
+.aside-identity-tile img {
+    width: 100%;
+    height: 100%;
     object-fit: contain;
-    max-height: 2.5rem;
 }
 
-#dashboard_aside_header .logo svg.logo-super-dash {
-    width: 3rem !important;
-    height: 3rem !important;
+.aside-identity-tile--wide {
+    width: 100%;
+    height: 52px;
+    padding: 6px 10px;
+}
+
+.aside-identity-tile--wide + .aside-identity-text {
+    display: none;
+}
+
+.aside-identity-tile--brand {
+    padding: 0;
+    background: transparent;
+}
+
+.aside-identity-initials {
+    color: var(--mn-navy, #0b2340);
+    font-weight: 750;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+}
+
+.aside-identity-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.aside-identity-name {
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.98rem;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.aside-identity-sub {
+    color: #93a3b8;
+    font-size: 0.78rem;
+    font-weight: 550;
+    letter-spacing: 0.02em;
 }
 
 #dashboard_aside_menu {
-    margin: .5rem;
-    color: var(--cgreen-light);
-    /* Nav labels are --cgreen-light (#EBFFF4) on this surface; over --cgreen (#01B151)
-       that is only 2.72:1. Darkened same-hue brand green carries it at 4.79:1. */
-    background-color: #01813B;
+    position: relative;
+    color: #c9d3df;
     display: flex;
     flex-direction: column;
-    gap: .5rem;
+    gap: 2px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    margin: 0 -0.25rem;
+    padding: 0.15rem 0.25rem 1.25rem;
+    /* The last items fade out under the footer rather than butting into it. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 18%) transparent;
 }
 
+#dashboard_aside_menu::-webkit-scrollbar { width: 6px; }
+#dashboard_aside_menu::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 16%); border-radius: 999px; border: 0; }
+
 #dashboard_aside_menu .dashboard-aside-menu-item {
-    color: var(--cgreen-light);
+    position: relative;
+    color: #c9d3df;
     display: flex;
-    gap: 1rem;
+    gap: 0.8rem;
     align-items: center;
     justify-content: start;
-    padding: .5rem 1rem;
-    border-radius: .5rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 10px;
     text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 #dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 1.25rem;
+    height: 1.25rem;
     overflow: hidden;
+    color: #8fa0b5;
+    transition: color 0.15s ease;
 }
 
 #dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon span {
     width: 100% !important;
     height: 100% !important;
+    display: flex;
 }
 
-#dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon svg {
+#dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon :deep(svg) {
     width: 100% !important;
     height: 100% !important;
     object-fit: contain;
 }
 
-#dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon svg path {
-    /* width: 100% !important;
-    height: 100% !important; */
-    fill: var(--cgreen-light);
+#dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon :deep(svg path) {
+    fill: currentColor;
+}
+
+#dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon .bi {
+    font-size: 1.1rem;
+    line-height: 1;
 }
 
 #dashboard_aside_menu .dashboard-aside-menu-item .menu-item-text {
-    font-size: 1rem;
-    font-weight: 400;
+    font-size: 0.93rem;
+    font-weight: 520;
+    line-height: 1.3;
 }
 
-#dashboard_aside_menu .dashboard-aside-menu-item:hover,
+#dashboard_aside_menu .dashboard-aside-menu-item:hover {
+    background-color: rgb(255 255 255 / 6%);
+    color: #fff;
+}
+
+#dashboard_aside_menu .dashboard-aside-menu-item:hover .menu-item-icon {
+    color: #dbe4ee;
+}
+
 #dashboard_aside_menu .router-link-active.dashboard-aside-menu-item {
-    /* --cgreen-active (#04C159) left #EBFFF4 label text at 2.30:1. This darker
-       same-hue green carries it at 6.40:1 and still reads as the active state. */
-    background-color: #016B31;
+    background: linear-gradient(90deg, rgb(1 177 81 / 24%), rgb(1 177 81 / 8%));
+    color: #fff;
+    box-shadow: inset 0 0 0 1px rgb(1 177 81 / 22%);
 }
 
-/* The SuperAdmin's "Switched off" list. Same label colour as the menu (the
-   contrast figures above hold); set apart by a rule, a smaller size and an
-   outline icon rather than by fading the text, which would fail contrast. */
+#dashboard_aside_menu .router-link-active.dashboard-aside-menu-item::before {
+    content: '';
+    position: absolute;
+    left: -0.25rem;
+    top: 22%;
+    bottom: 22%;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: #01b151;
+}
+
+#dashboard_aside_menu .router-link-active.dashboard-aside-menu-item .menu-item-icon {
+    color: #5fe39a;
+}
+
+#dashboard_aside_menu .router-link-active.dashboard-aside-menu-item .menu-item-text {
+    font-weight: 620;
+}
+
+#dashboard_aside_menu .dashboard-aside-menu-item:focus-visible,
+#dashboard_aside_menu .aside-switched-off-summary:focus-visible,
+#dashboard_aside_menu .aside-switched-off-link:focus-visible {
+    outline: 2px solid #5fe39a;
+    outline-offset: 1px;
+}
+
+/* The SuperAdmin's "Switched off" list: set apart by a rule, a smaller size and
+   an outline icon rather than by fading the text, which would fail contrast. */
 #dashboard_aside_menu .aside-switched-off {
-    margin-top: .5rem;
-    padding: .5rem 1rem 0;
-    border-top: 1px solid rgba(235, 255, 244, .35);
-    color: var(--cgreen-light);
-    font-size: .875rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem 0.75rem 0;
+    border-top: 1px solid rgb(255 255 255 / 10%);
+    color: #c9d3df;
+    font-size: 0.85rem;
 }
 
 #dashboard_aside_menu .aside-switched-off-summary {
     cursor: pointer;
-    padding: .25rem 0;
-    border-radius: .25rem;
-}
-
-#dashboard_aside_menu .aside-switched-off-summary:focus-visible,
-#dashboard_aside_menu .aside-switched-off-link:focus-visible {
-    outline: 2px solid var(--cgreen-light);
-    outline-offset: 2px;
+    padding: 0.25rem 0;
+    border-radius: 0.25rem;
 }
 
 #dashboard_aside_menu .aside-switched-off-link {
-    color: var(--cgreen-light);
+    color: #c9d3df;
     display: flex;
-    gap: .5rem;
+    gap: 0.5rem;
     align-items: center;
-    padding: .375rem .5rem;
-    border-radius: .5rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: 8px;
     text-decoration: none;
 }
 
 #dashboard_aside_menu .aside-switched-off-link:hover,
 #dashboard_aside_menu .aside-switched-off-link.router-link-active {
-    background-color: #016B31;
+    background-color: rgb(255 255 255 / 7%);
+    color: #fff;
 }
 
+.aside-footer {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.85rem 0.5rem 0.25rem;
+    border-top: 1px solid rgb(255 255 255 / 8%);
+    color: #aab7c8;
+    font-size: 0.82rem;
+}
+
+.aside-footer img {
+    border-radius: 6px;
+}
+
+.aside-footer-name {
+    color: #e6edf5;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #dashboard_aside_menu .dashboard-aside-menu-item,
+    #dashboard_aside_menu .dashboard-aside-menu-item .menu-item-icon {
+        transition: none;
+    }
+}
 </style>

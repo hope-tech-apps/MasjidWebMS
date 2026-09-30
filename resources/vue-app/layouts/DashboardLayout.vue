@@ -58,6 +58,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { hasGrant, moduleIsOff } from '@/core/access/orgAccess';
+import { useStaffChrome } from '@/core/helpers/staffChrome';
+
+// The staff theme (resources/css/custom/theme.css) for as long as this shell is up.
+useStaffChrome();
 
 // Lifecycle hooks
 onBeforeMount(async () => {

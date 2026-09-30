@@ -1,18 +1,19 @@
 <template>
-    <div class="min-vh-100 bg-light">
-        <nav class="navbar navbar-expand bg-white border-bottom sticky-top">
+    <div class="min-vh-100 mn-realm">
+        <nav class="navbar navbar-expand sticky-top mn-topbar">
             <div class="container-fluid px-3 px-lg-4">
                 <router-link to="/teacher" class="navbar-brand d-flex align-items-center gap-2 text-decoration-none teacher-brand">
-                    <img v-if="school?.logo_url" :src="school.logo_url" alt="" width="32" height="32"
-                         class="rounded" style="object-fit: cover;">
-                    <img v-else :src="'/manara-icon.svg'" alt="" width="32" height="32">
-                    <span class="fw-semibold text-dark text-truncate">{{ school?.name || 'My Classes' }}</span>
+                    <span class="mn-topbar-tile">
+                        <img v-if="school?.logo_url" :src="school.logo_url" alt="" width="32" height="32">
+                        <img v-else :src="'/manara-icon.svg'" alt="" width="32" height="32">
+                    </span>
+                    <span class="mn-topbar-name text-truncate">{{ school?.name || 'My Classes' }}</span>
                 </router-link>
 
                 <div class="ms-auto d-flex align-items-center gap-3 flex-shrink-0">
                     <router-link to="/teacher"
-                                 class="nav-link px-0 d-none d-sm-inline"
-                                 :class="isClassesActive ? 'fw-semibold text-success' : 'text-muted'">
+                                 class="nav-link mn-topbar-link d-none d-sm-inline"
+                                 :class="{ 'is-active': isClassesActive }">
                         My Classes
                     </router-link>
                     <!-- Only once the school has published a calendar
@@ -21,8 +22,8 @@
                          (where My Classes is the brand link), so it keeps an
                          accessible name that contains the visible word. -->
                     <router-link v-if="calendarPublished" to="/teacher/calendar"
-                                 class="nav-link px-0 d-inline-flex align-items-center gap-1 teacher-tap"
-                                 :class="isCalendarActive ? 'fw-semibold text-success' : 'text-muted'"
+                                 class="nav-link mn-topbar-link d-inline-flex align-items-center gap-1 teacher-tap"
+                                 :class="{ 'is-active': isCalendarActive }"
                                  aria-label="School calendar" title="School calendar">
                         <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
                     </router-link>
@@ -30,7 +31,7 @@
                          teacher at one school sees the header they always saw. -->
                     <TeacherSchoolPicker :choices="choices" :current-id="selectedId" :switching="switching"
                                          @choose="switchSchool" />
-                    <span v-if="teacherName" class="text-muted small d-none d-md-inline">{{ teacherName }}</span>
+                    <span v-if="teacherName" class="mn-topbar-person d-none d-md-inline">{{ teacherName }}</span>
                     <button class="btn btn-sm btn-outline-secondary teacher-tap" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>
                         <span v-else>Sign out</span>
@@ -71,6 +72,10 @@ import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/tea
 import { clearTeacherSchoolNotices, provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
 import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
 import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
+import { useStaffChrome } from '@/core/helpers/staffChrome';
+
+// The staff theme (resources/css/custom/theme.css) for as long as this shell is up.
+useStaffChrome();
 
 interface TeacherSchool {
     id: number;

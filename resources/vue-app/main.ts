@@ -4,6 +4,8 @@ import 'bootstrap/dist/css/bootstrap.min.css'
 import 'bootstrap-icons/font/bootstrap-icons.css'
 import 'bootstrap'
 import '../css/custom.css'
+// The staff theme, active only under body.mn-app (core/helpers/staffChrome.ts).
+import '../css/custom/theme.css'
 import { createApp } from 'vue'
 import AdminDashboardApp from '@/AdminDashboardApp.vue'
 import router from '@/router/router'

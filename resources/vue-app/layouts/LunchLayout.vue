@@ -1,17 +1,18 @@
 <template>
-    <div class="min-vh-100 bg-light">
-        <nav class="navbar navbar-expand bg-white border-bottom sticky-top">
+    <div class="min-vh-100 mn-realm">
+        <nav class="navbar navbar-expand sticky-top mn-topbar">
             <div class="container-fluid px-3 px-lg-4">
                 <span class="navbar-brand d-flex align-items-center gap-2">
-                    <img v-if="logoUrl" :src="logoUrl" alt="" width="32" height="32"
-                         class="rounded" style="object-fit: cover;">
-                    <img v-else :src="'/manara-icon.svg'" alt="" width="32" height="32">
-                    <span class="fw-semibold text-dark">{{ masjidName }}</span>
+                    <span class="mn-topbar-tile">
+                        <img v-if="logoUrl" :src="logoUrl" alt="" width="32" height="32">
+                        <img v-else :src="'/manara-icon.svg'" alt="" width="32" height="32">
+                    </span>
+                    <span class="mn-topbar-name">{{ masjidName }}</span>
                 </span>
 
                 <div class="ms-auto d-flex align-items-center gap-3">
-                    <span class="text-muted small d-none d-sm-inline">Jummah Lunch</span>
-                    <span v-if="staffName" class="text-muted small d-none d-md-inline">{{ staffName }}</span>
+                    <span class="mn-topbar-chip d-none d-sm-inline">Jummah Lunch</span>
+                    <span v-if="staffName" class="mn-topbar-person d-none d-md-inline">{{ staffName }}</span>
                     <button class="btn btn-sm btn-outline-secondary" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>
                         <span v-else>Sign out</span>
@@ -40,6 +41,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRouter } from 'vue-router';
+import { useStaffChrome } from '@/core/helpers/staffChrome';
+
+// The staff theme (resources/css/custom/theme.css) for as long as this shell is up.
+useStaffChrome();
 
 const authStore = useAuthStore();
 const router = useRouter();

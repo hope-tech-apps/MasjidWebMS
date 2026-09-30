@@ -1,0 +1,942 @@
+/*
+ * The Manara staff theme: every screen a school, masjid, community group or
+ * business uses after signing in (the organisation dashboard, the teacher
+ * realm, the lunch realm). It continues the sign-in screens (AuthShell.vue)
+ * and the marketing site: Figtree, the navy-to-emerald brand, quiet surfaces,
+ * one green for "go".
+ *
+ * Scoped to body.mn-app, which only the three staff layouts set
+ * (core/helpers/staffChrome.ts). The family portal and the public pages load
+ * the same stylesheet and are untouched by everything below.
+ *
+ * Bootstrap 5.3 bakes several colours into its compiled component rules
+ * (#0d6efd on .btn-primary, .nav-pills, focus rings and checked inputs), so
+ * those are re-declared here rather than reached through --bs-primary.
+ */
+
+@font-face {
+    font-family: 'Manara Figtree';
+    src: url('/fonts/figtree/figtree-latin-wght-normal.woff2') format('woff2-variations'),
+         url('/fonts/figtree/figtree-latin-wght-normal.woff2') format('woff2');
+    font-weight: 300 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+body.mn-app {
+    --mn-font: 'Manara Figtree', 'Figtree', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --mn-ink: #111827;
+    --mn-ink-2: #344054;
+    --mn-muted: #5d6275;
+    --mn-subtle: #8a94a3;
+    --mn-line: #e3e8ee;
+    --mn-line-2: #eef1f5;
+    --mn-field: #cdd4dd;
+    --mn-bg: #f5f7fa;
+    --mn-surface: #ffffff;
+    --mn-hover: #f5f7f9;
+    --mn-brand: #01b151;
+    --mn-brand-strong: #007a38;
+    --mn-brand-deep: #005c2a;
+    --mn-brand-soft: #e8f6ee;
+    --mn-brand-soft-2: #d3eedf;
+    --mn-ring: 0 0 0 4px rgb(1 177 81 / 16%);
+    --mn-navy: #0b2340;
+    --mn-night: #07131f;
+    --mn-gold: #f3cf7a;
+    --mn-radius-sm: 8px;
+    --mn-radius: 11px;
+    --mn-radius-lg: 16px;
+    --mn-shadow-sm: 0 1px 2px rgb(16 24 40 / 5%);
+    --mn-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 3px 10px rgb(16 24 40 / 5%);
+    --mn-shadow-lg: 0 16px 40px rgb(16 24 40 / 14%), 0 3px 8px rgb(16 24 40 / 6%);
+    --mn-card-ring: 0 0 0 1px var(--mn-line);
+
+    --bs-body-font-family: var(--mn-font);
+    --bs-body-color: var(--mn-ink);
+    --bs-body-color-rgb: 17, 24, 39;
+    --bs-body-bg: var(--mn-bg);
+    --bs-emphasis-color: var(--mn-ink);
+    --bs-secondary-color: var(--mn-muted);
+    --bs-primary: #007a38;
+    --bs-primary-rgb: 0, 122, 56;
+    --bs-primary-text-emphasis: #005c2a;
+    --bs-primary-bg-subtle: #e8f6ee;
+    --bs-primary-border-subtle: #b9e4cb;
+    --bs-link-color: #007a38;
+    --bs-link-color-rgb: 0, 122, 56;
+    --bs-link-hover-color: #005c2a;
+    --bs-link-hover-color-rgb: 0, 92, 42;
+    --bs-border-color: var(--mn-line);
+    --bs-border-radius: 10px;
+    --bs-border-radius-sm: 8px;
+    --bs-border-radius-lg: 14px;
+    --bs-focus-ring-color: rgb(1 177 81 / 25%);
+
+    font-family: var(--mn-font);
+    background-color: var(--mn-bg);
+    color: var(--mn-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11';
+}
+
+/* Every element inherits Figtree, including form controls and buttons, which
+   browsers otherwise give their own face. */
+body.mn-app button,
+body.mn-app input,
+body.mn-app select,
+body.mn-app textarea,
+body.mn-app .tooltip,
+body.mn-app .popover {
+    font-family: inherit;
+}
+
+/* ---------------------------------------------------------------- type */
+
+body.mn-app h1, body.mn-app h2, body.mn-app h3,
+body.mn-app .h1, body.mn-app .h2, body.mn-app .h3 {
+    font-weight: 750;
+    letter-spacing: -0.022em;
+    color: var(--mn-ink);
+}
+
+body.mn-app h4, body.mn-app h5, body.mn-app h6,
+body.mn-app .h4, body.mn-app .h5, body.mn-app .h6 {
+    font-weight: 700;
+    letter-spacing: -0.012em;
+    color: var(--mn-ink);
+}
+
+body.mn-app .fw-semibold { font-weight: 620 !important; }
+body.mn-app .fw-bold { font-weight: 720 !important; }
+body.mn-app .text-muted { color: var(--mn-muted) !important; }
+body.mn-app .text-secondary { color: var(--mn-muted) !important; }
+body.mn-app .small, body.mn-app small { font-size: 0.86em; }
+
+body.mn-app a:not(.btn):not(.nav-link):not(.dropdown-item):not(.page-link):not(.dashboard-aside-menu-item) {
+    text-underline-offset: 3px;
+}
+
+body.mn-app ::selection {
+    background: rgb(1 177 81 / 20%);
+}
+
+/* ---------------------------------------------------------------- cards and page containers */
+
+body.mn-app .card {
+    --bs-card-border-color: var(--mn-line);
+    --bs-card-border-radius: var(--mn-radius-lg);
+    --bs-card-inner-border-radius: calc(var(--mn-radius-lg) - 1px);
+    --bs-card-cap-bg: transparent;
+    --bs-card-bg: var(--mn-surface);
+    border-radius: var(--mn-radius-lg);
+    box-shadow: var(--mn-shadow);
+}
+
+/* Page containers are written `card border-0` (PageDataContainer and ~25 views):
+   the ring stands in for the border the utility removes. */
+body.mn-app .card.border-0 {
+    box-shadow: var(--mn-card-ring), var(--mn-shadow);
+}
+
+body.mn-app .card .card {
+    box-shadow: none;
+}
+
+/* A section card inside a page card (a settings tab, say) sits flat: one
+   surface, not two concentric frames. */
+body.mn-app .card .card.border-0 {
+    box-shadow: none;
+}
+
+body.mn-app .card-header,
+body.mn-app .card-footer {
+    background-color: transparent;
+}
+
+body.mn-app .card-title.fs-4,
+body.mn-app .card-title .fs-4 {
+    font-size: 1.4rem !important;
+    font-weight: 740 !important;
+    letter-spacing: -0.022em;
+    color: var(--mn-ink);
+}
+
+body.mn-app .shadow-sm { box-shadow: var(--mn-shadow) !important; }
+body.mn-app .shadow { box-shadow: var(--mn-shadow-lg) !important; }
+
+/* ---------------------------------------------------------------- buttons */
+
+body.mn-app .btn {
+    --bs-btn-font-weight: 600;
+    --bs-btn-border-radius: 10px;
+    --bs-btn-padding-y: 0.5rem;
+    --bs-btn-padding-x: 1rem;
+    --bs-btn-focus-box-shadow: 0 0 0 4px rgb(1 177 81 / 18%);
+    letter-spacing: 0.003em;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+body.mn-app .btn-sm {
+    --bs-btn-border-radius: 8px;
+    --bs-btn-padding-y: 0.3rem;
+    --bs-btn-padding-x: 0.7rem;
+    --bs-btn-font-size: 0.85rem;
+}
+
+body.mn-app .btn-lg {
+    --bs-btn-border-radius: 12px;
+}
+
+body.mn-app .btn-primary,
+body.mn-app .btn-success {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: #03954a;
+    --bs-btn-border-color: #03954a;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--mn-brand-strong);
+    --bs-btn-hover-border-color: var(--mn-brand-strong);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--mn-brand-deep);
+    --bs-btn-active-border-color: var(--mn-brand-deep);
+    --bs-btn-disabled-color: #fff;
+    --bs-btn-disabled-bg: #03954a;
+    --bs-btn-disabled-border-color: #03954a;
+    --bs-btn-focus-shadow-rgb: 1, 177, 81;
+    background-image: linear-gradient(180deg, rgb(255 255 255 / 9%), rgb(255 255 255 / 0%));
+    box-shadow: 0 1px 0 rgb(255 255 255 / 16%) inset, 0 1px 2px rgb(16 24 40 / 10%), 0 3px 10px rgb(0 122 56 / 18%);
+}
+
+body.mn-app .btn-primary:hover,
+body.mn-app .btn-success:hover {
+    box-shadow: 0 1px 0 rgb(255 255 255 / 16%) inset, 0 2px 4px rgb(16 24 40 / 12%), 0 6px 16px rgb(0 122 56 / 24%);
+}
+
+body.mn-app .btn-outline-primary,
+body.mn-app .btn-outline-success {
+    --bs-btn-color: var(--mn-brand-strong);
+    --bs-btn-border-color: #9fd9b8;
+    --bs-btn-hover-color: var(--mn-brand-deep);
+    --bs-btn-hover-bg: var(--mn-brand-soft);
+    --bs-btn-hover-border-color: #7ccb9f;
+    --bs-btn-active-color: var(--mn-brand-deep);
+    --bs-btn-active-bg: var(--mn-brand-soft-2);
+    --bs-btn-active-border-color: #7ccb9f;
+    --bs-btn-disabled-color: var(--mn-brand-strong);
+    --bs-btn-disabled-border-color: #9fd9b8;
+    background-color: #fff;
+}
+
+body.mn-app .btn-outline-secondary,
+body.mn-app .btn-outline-dark,
+body.mn-app .btn-light,
+body.mn-app .btn-alice-blue-success {
+    --bs-btn-color: var(--mn-ink-2);
+    --bs-btn-bg: #fff;
+    --bs-btn-border-color: var(--mn-field);
+    --bs-btn-hover-color: var(--mn-ink);
+    --bs-btn-hover-bg: var(--mn-hover);
+    --bs-btn-hover-border-color: #b8c1cc;
+    --bs-btn-active-color: var(--mn-ink);
+    --bs-btn-active-bg: #edf0f4;
+    --bs-btn-active-border-color: #b8c1cc;
+    --bs-btn-disabled-color: var(--mn-subtle);
+    --bs-btn-disabled-bg: #fff;
+    --bs-btn-disabled-border-color: var(--mn-line);
+    box-shadow: var(--mn-shadow-sm);
+}
+
+body.mn-app .btn-light-success {
+    --bs-btn-color: var(--mn-brand-deep);
+    --bs-btn-bg: var(--mn-brand-soft);
+    --bs-btn-border-color: var(--mn-brand-soft);
+    --bs-btn-hover-color: var(--mn-brand-deep);
+    --bs-btn-hover-bg: var(--mn-brand-soft-2);
+    --bs-btn-hover-border-color: var(--mn-brand-soft-2);
+    --bs-btn-active-color: var(--mn-brand-deep);
+    --bs-btn-active-bg: #c2e7d2;
+    --bs-btn-active-border-color: #c2e7d2;
+    --bs-btn-disabled-color: var(--mn-brand-deep);
+    --bs-btn-disabled-bg: var(--mn-brand-soft);
+    --bs-btn-disabled-border-color: var(--mn-brand-soft);
+}
+
+body.mn-app .btn-outline-danger {
+    --bs-btn-color: #b42318;
+    --bs-btn-border-color: #f4b4ad;
+    --bs-btn-hover-color: #912018;
+    --bs-btn-hover-bg: #fef3f2;
+    --bs-btn-hover-border-color: #ee9a90;
+    --bs-btn-active-color: #912018;
+    --bs-btn-active-bg: #fee4e2;
+    --bs-btn-active-border-color: #ee9a90;
+    background-color: #fff;
+}
+
+body.mn-app .btn-danger {
+    --bs-btn-bg: #d92d20;
+    --bs-btn-border-color: #d92d20;
+    --bs-btn-hover-bg: #b42318;
+    --bs-btn-hover-border-color: #b42318;
+    --bs-btn-active-bg: #912018;
+    --bs-btn-active-border-color: #912018;
+    --bs-btn-focus-shadow-rgb: 217, 45, 32;
+}
+
+/* Disabled reads as disabled: a quiet grey, not a washed-out brand green with
+   white text on it (which failed contrast). */
+body.mn-app .btn-primary:disabled,
+body.mn-app .btn-primary.disabled,
+body.mn-app .btn-success:disabled,
+body.mn-app .btn-success.disabled {
+    --bs-btn-disabled-bg: #e9edf1;
+    --bs-btn-disabled-border-color: #e1e6eb;
+    --bs-btn-disabled-color: #7b8594;
+    --bs-btn-disabled-opacity: 1;
+    background-image: none;
+    box-shadow: none;
+}
+
+body.mn-app .btn:disabled,
+body.mn-app .btn.disabled {
+    cursor: not-allowed;
+    pointer-events: auto;
+}
+
+body.mn-app .btn-link {
+    --bs-btn-color: var(--mn-brand-strong);
+    --bs-btn-hover-color: var(--mn-brand-deep);
+    --bs-btn-font-weight: 600;
+}
+
+body.mn-app .btn-group > .btn {
+    box-shadow: none;
+}
+
+body.mn-app .btn-check:checked + .btn,
+body.mn-app .btn-group > .btn.active {
+    --bs-btn-active-bg: var(--mn-brand-soft);
+    --bs-btn-active-color: var(--mn-brand-deep);
+    --bs-btn-active-border-color: #9fd9b8;
+}
+
+body.mn-app .btn-check:checked + .btn-primary,
+body.mn-app .btn-check:checked + .btn-success,
+body.mn-app .btn-group > .btn-primary.active,
+body.mn-app .btn-group > .btn-success.active {
+    --bs-btn-active-bg: var(--mn-brand-strong);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-border-color: var(--mn-brand-strong);
+}
+
+/* ---------------------------------------------------------------- forms */
+
+body.mn-app .form-label,
+body.mn-app .input-group label,
+body.mn-app .label,
+body.mn-app label.form-check-label {
+    color: var(--mn-ink-2);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+body.mn-app label.form-check-label {
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+body.mn-app .form-control,
+body.mn-app .form-select,
+body.mn-app .input,
+body.mn-app .dashboard-input {
+    border: 1px solid var(--mn-field) !important;
+    border-radius: 10px !important;
+    background-color: #fff;
+    color: var(--mn-ink);
+    font-size: 0.95rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+body.mn-app .form-control,
+body.mn-app .form-select,
+body.mn-app .input {
+    min-height: 2.6rem;
+    padding: 0.5rem 0.8rem;
+}
+
+body.mn-app .form-select {
+    padding-right: 2.25rem;
+}
+
+body.mn-app .form-control-sm,
+body.mn-app .form-select-sm {
+    min-height: 2.1rem;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.875rem;
+    border-radius: 8px !important;
+}
+
+body.mn-app .dashboard-input {
+    padding: 0.7rem 0.85rem !important;
+}
+
+body.mn-app .form-control:hover,
+body.mn-app .form-select:hover,
+body.mn-app .input:hover,
+body.mn-app .dashboard-input:hover {
+    border-color: #b3bcc8 !important;
+}
+
+body.mn-app .form-control:focus,
+body.mn-app .form-select:focus,
+body.mn-app .input:focus,
+body.mn-app .input:focus-within,
+body.mn-app .dashboard-input:focus,
+body.mn-app .dashboard-input:focus-within,
+body.mn-app select:focus-within {
+    border-color: var(--mn-brand-strong) !important;
+    box-shadow: var(--mn-ring) !important;
+    outline: none !important;
+}
+
+body.mn-app .form-control::placeholder,
+body.mn-app .input::placeholder,
+body.mn-app .dashboard-input::placeholder {
+    color: #98a2b3;
+    font-size: 0.93rem;
+}
+
+body.mn-app .form-control:disabled,
+body.mn-app .form-select:disabled,
+body.mn-app .form-control[readonly] {
+    background-color: #f7f8fa;
+}
+
+body.mn-app .form-check-input {
+    border-color: #aeb7c3;
+}
+
+body.mn-app .form-check-input:checked {
+    background-color: var(--mn-brand-strong);
+    border-color: var(--mn-brand-strong);
+}
+
+body.mn-app .form-check-input:focus {
+    border-color: var(--mn-brand-strong);
+    box-shadow: var(--mn-ring);
+}
+
+body.mn-app .form-switch .form-check-input:focus:not(:checked) {
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23007a38'/%3e%3c/svg%3e");
+}
+
+body.mn-app input[type='file']::file-selector-button {
+    margin-right: 0.75rem;
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--mn-field);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--mn-ink-2);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+body.mn-app input[type='file']::file-selector-button:hover {
+    background: var(--mn-hover);
+}
+
+body.mn-app .input-group-text {
+    background-color: #f7f8fa;
+    border-color: var(--mn-field);
+    color: var(--mn-muted);
+}
+
+body.mn-app .error-message,
+body.mn-app .invalid-feedback {
+    color: #b42318;
+    font-weight: 500;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+body.mn-app .table {
+    --bs-table-color: var(--mn-ink);
+    --bs-table-border-color: var(--mn-line-2);
+    --bs-table-hover-bg: #f8fafb;
+    --bs-table-striped-bg: #fafbfc;
+    font-size: 0.93rem;
+}
+
+body.mn-app .table > thead > tr > th,
+body.mn-app .table > thead > tr > td {
+    color: var(--mn-muted);
+    font-size: 0.74rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background-color: #f8fafb;
+    border-bottom: 1px solid var(--mn-line);
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+    white-space: nowrap;
+}
+
+body.mn-app .table > :not(caption) > * > * {
+    padding: 0.8rem 0.85rem;
+}
+
+body.mn-app .table > tbody > tr {
+    transition: background-color 0.12s ease;
+}
+
+body.mn-app .table > tbody > tr:hover > * {
+    background-color: #fafbfc;
+}
+
+body.mn-app .table-responsive {
+    border-radius: 12px;
+}
+
+/* ---------------------------------------------------------------- summary tiles
+   ".stats-card" is repeated in eight list screens (Classrooms, Families,
+   Teachers, Programs, Contact requests...) with a violet gradient from an old
+   template. One brand treatment for all of them: the navy of the rail with an
+   emerald glow. The views' own rules are scoped (one attribute), so this wins. */
+
+body.mn-app .stats-card {
+    background:
+        radial-gradient(120% 140% at 100% 0%, rgb(1 177 81 / 34%), transparent 58%),
+        linear-gradient(135deg, #0d2a4d 0%, #0a1c33 100%);
+    border-radius: 16px;
+    color: #fff;
+    box-shadow: 0 1px 2px rgb(16 24 40 / 8%), 0 8px 24px rgb(11 35 64 / 18%);
+}
+
+body.mn-app .stats-card:hover {
+    box-shadow: 0 2px 4px rgb(16 24 40 / 10%), 0 12px 28px rgb(11 35 64 / 24%);
+}
+
+body.mn-app .stats-card .stats-icon {
+    background: rgb(255 255 255 / 10%);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 14%);
+    color: #7ff0b0;
+}
+
+body.mn-app .stats-card .stats-label {
+    color: #c9d3df;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+body.mn-app .stats-card .stats-value {
+    color: #fff;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+}
+
+/* The same list screens tint their own search box violet on focus. */
+body.mn-app .search-input:focus {
+    border-color: var(--mn-brand-strong) !important;
+    box-shadow: var(--mn-ring) !important;
+    background-color: #fff;
+}
+
+/* ---------------------------------------------------------------- navigation: tabs, pills, pagination */
+
+body.mn-app .nav-tabs {
+    --bs-nav-tabs-border-color: var(--mn-line);
+    --bs-nav-tabs-link-hover-border-color: transparent;
+    --bs-nav-tabs-link-active-color: var(--mn-brand-strong);
+    --bs-nav-tabs-link-active-bg: transparent;
+    --bs-nav-tabs-link-active-border-color: transparent;
+    gap: 0.25rem;
+}
+
+body.mn-app .nav-tabs .nav-link {
+    border: 0;
+    border-radius: 0;
+    color: var(--mn-muted);
+    font-weight: 600;
+    padding: 0.7rem 0.95rem;
+    box-shadow: inset 0 -2px 0 transparent;
+    transition: color 0.15s ease, box-shadow 0.15s ease;
+}
+
+body.mn-app .nav-tabs .nav-link:hover {
+    color: var(--mn-ink);
+    box-shadow: inset 0 -2px 0 var(--mn-line);
+}
+
+body.mn-app .nav-tabs .nav-link.active,
+body.mn-app .nav-tabs .nav-item.show .nav-link {
+    color: var(--mn-brand-strong);
+    background: transparent;
+    box-shadow: inset 0 -2.5px 0 var(--mn-brand);
+}
+
+body.mn-app .nav-pills {
+    --bs-nav-pills-link-active-bg: var(--mn-brand-strong);
+    --bs-nav-pills-link-active-color: #fff;
+    --bs-nav-pills-border-radius: 9px;
+}
+
+body.mn-app .nav-pills .nav-link {
+    color: var(--mn-ink-2);
+    font-weight: 600;
+}
+
+body.mn-app .nav-pills .nav-link:not(.active):hover {
+    background-color: var(--mn-hover);
+}
+
+body.mn-app .pagination {
+    --bs-pagination-color: var(--mn-ink-2);
+    --bs-pagination-border-color: var(--mn-line);
+    --bs-pagination-hover-color: var(--mn-ink);
+    --bs-pagination-hover-bg: var(--mn-hover);
+    --bs-pagination-hover-border-color: var(--mn-line);
+    --bs-pagination-focus-box-shadow: var(--mn-ring);
+    --bs-pagination-active-bg: var(--mn-brand-strong);
+    --bs-pagination-active-border-color: var(--mn-brand-strong);
+    --bs-pagination-border-radius: 9px;
+    gap: 0.3rem;
+}
+
+body.mn-app .pagination .page-link {
+    border-radius: 9px !important;
+    font-weight: 600;
+    min-width: 2.25rem;
+    text-align: center;
+}
+
+/* ---------------------------------------------------------------- badges and alerts */
+
+body.mn-app .badge {
+    --bs-badge-font-weight: 650;
+    --bs-badge-border-radius: 999px;
+    --bs-badge-padding-x: 0.62em;
+    --bs-badge-padding-y: 0.36em;
+    letter-spacing: 0.01em;
+}
+
+body.mn-app .badge.bg-success,
+body.mn-app .badge.text-bg-success,
+body.mn-app .badge.bg-primary,
+body.mn-app .badge.text-bg-primary {
+    background-color: #e3f5ea !important;
+    color: #05603a !important;
+    box-shadow: inset 0 0 0 1px #bfe6cf;
+}
+
+body.mn-app .badge.bg-warning,
+body.mn-app .badge.text-bg-warning {
+    background-color: #fff6e0 !important;
+    color: #8a4b00 !important;
+    box-shadow: inset 0 0 0 1px #f8dfa6;
+}
+
+body.mn-app .badge.bg-danger,
+body.mn-app .badge.text-bg-danger {
+    background-color: #fdecea !important;
+    color: #9d1c12 !important;
+    box-shadow: inset 0 0 0 1px #f6c7c1;
+}
+
+body.mn-app .badge.bg-info,
+body.mn-app .badge.text-bg-info {
+    background-color: #e8f1fd !important;
+    color: #174a8b !important;
+    box-shadow: inset 0 0 0 1px #c6dbf6;
+}
+
+body.mn-app .badge.bg-secondary,
+body.mn-app .badge.text-bg-secondary,
+body.mn-app .badge.bg-light,
+body.mn-app .badge.text-bg-light {
+    background-color: #f1f3f6 !important;
+    color: #3d4452 !important;
+    box-shadow: inset 0 0 0 1px #e1e5eb;
+}
+
+body.mn-app .alert {
+    --bs-alert-border-radius: 12px;
+    font-size: 0.94rem;
+}
+
+body.mn-app .alert-success { --bs-alert-color: #05603a; --bs-alert-bg: #ecfaf2; --bs-alert-border-color: #bfe6cf; }
+body.mn-app .alert-info { --bs-alert-color: #174a8b; --bs-alert-bg: #eef5fe; --bs-alert-border-color: #c6dbf6; }
+body.mn-app .alert-warning { --bs-alert-color: #7a4100; --bs-alert-bg: #fffaeb; --bs-alert-border-color: #f8dfa6; }
+body.mn-app .alert-danger { --bs-alert-color: #8b1a11; --bs-alert-bg: #fef3f2; --bs-alert-border-color: #f6c7c1; }
+body.mn-app .alert-secondary,
+body.mn-app .alert-light { --bs-alert-color: #3d4452; --bs-alert-bg: #f7f8fa; --bs-alert-border-color: #e3e8ee; }
+
+/* ---------------------------------------------------------------- menus, modals, lists, progress */
+
+body.mn-app .dropdown-menu {
+    --bs-dropdown-border-color: var(--mn-line);
+    --bs-dropdown-border-radius: 12px;
+    --bs-dropdown-box-shadow: var(--mn-shadow-lg);
+    --bs-dropdown-link-color: var(--mn-ink-2);
+    --bs-dropdown-link-hover-color: var(--mn-ink);
+    --bs-dropdown-link-hover-bg: var(--mn-hover);
+    --bs-dropdown-link-active-color: var(--mn-brand-deep);
+    --bs-dropdown-link-active-bg: var(--mn-brand-soft);
+    --bs-dropdown-item-border-radius: 8px;
+    --bs-dropdown-item-padding-y: 0.45rem;
+    --bs-dropdown-item-padding-x: 0.75rem;
+    --bs-dropdown-header-color: var(--mn-muted);
+    padding: 0.35rem;
+    box-shadow: var(--mn-shadow-lg);
+    font-size: 0.93rem;
+}
+
+body.mn-app .dropdown-item {
+    border-radius: 8px;
+    font-weight: 500;
+}
+
+body.mn-app .dropdown-item:focus,
+body.mn-app .dropdown-item:active {
+    background-color: var(--mn-brand-soft) !important;
+    color: var(--mn-brand-deep) !important;
+}
+
+body.mn-app .dropdown-menu .dropdown-item:focus svg path {
+    fill: currentColor !important;
+}
+
+body.mn-app .dropdown-header {
+    font-size: 0.72rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+body.mn-app .modal {
+    --bs-modal-border-radius: 18px;
+    --bs-modal-inner-border-radius: 17px;
+    --bs-modal-border-width: 0;
+    --bs-modal-box-shadow: var(--mn-shadow-lg);
+    --bs-modal-header-border-color: var(--mn-line-2);
+    --bs-modal-footer-border-color: var(--mn-line-2);
+    --bs-modal-header-padding: 1.1rem 1.4rem;
+    --bs-modal-padding: 1.4rem;
+}
+
+body.mn-app .modal-content {
+    box-shadow: var(--mn-shadow-lg);
+}
+
+body.mn-app .modal-title {
+    font-weight: 720;
+    letter-spacing: -0.015em;
+}
+
+body.mn-app .modal-backdrop {
+    --bs-backdrop-bg: #07131f;
+    --bs-backdrop-opacity: 0.45;
+}
+
+body.mn-app .list-group {
+    --bs-list-group-border-color: var(--mn-line);
+    --bs-list-group-border-radius: 12px;
+    --bs-list-group-active-bg: var(--mn-brand-soft);
+    --bs-list-group-active-color: var(--mn-brand-deep);
+    --bs-list-group-active-border-color: #bfe6cf;
+    --bs-list-group-action-hover-bg: var(--mn-hover);
+}
+
+body.mn-app .progress {
+    --bs-progress-bg: #edf0f3;
+    --bs-progress-bar-bg: var(--mn-brand);
+    --bs-progress-border-radius: 999px;
+}
+
+body.mn-app .accordion {
+    --bs-accordion-border-color: var(--mn-line);
+    --bs-accordion-border-radius: 12px;
+    --bs-accordion-inner-border-radius: 11px;
+    --bs-accordion-active-bg: var(--mn-brand-soft);
+    --bs-accordion-active-color: var(--mn-brand-deep);
+    --bs-accordion-btn-focus-box-shadow: var(--mn-ring);
+}
+
+body.mn-app .tooltip {
+    --bs-tooltip-bg: var(--mn-night);
+    --bs-tooltip-border-radius: 8px;
+    --bs-tooltip-font-size: 0.8rem;
+}
+
+body.mn-app .spinner-border.text-primary,
+body.mn-app .spinner-border.text-success {
+    color: var(--mn-brand) !important;
+}
+
+/* ---------------------------------------------------------------- SweetAlert2 (appended to <body>)
+   Dialogs and toasts share .swal2-popup; a toast is the small corner notice and
+   must keep its own size and no backdrop, so every dialog rule excludes it. */
+
+body.mn-app .swal2-popup:not(.swal2-toast) {
+    font-family: var(--mn-font);
+    border-radius: 20px;
+    padding: 1.75rem 1.5rem 1.5rem;
+    box-shadow: var(--mn-shadow-lg);
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-title {
+    color: var(--mn-ink);
+    font-weight: 740;
+    letter-spacing: -0.02em;
+    font-size: 1.45rem;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-html-container {
+    color: var(--mn-muted);
+    font-size: 1rem;
+    line-height: 1.55;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-actions {
+    gap: 0.6rem;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-styled {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    padding: 0.6rem 1.15rem !important;
+    margin: 0 !important;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-styled.swal2-confirm {
+    background-color: #03954a !important;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-styled.swal2-cancel {
+    background-color: #fff !important;
+    color: var(--mn-ink-2) !important;
+    box-shadow: 0 0 0 1px var(--mn-field), var(--mn-shadow-sm) !important;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-styled.swal2-cancel:hover {
+    background-color: var(--mn-hover) !important;
+    background-image: none !important;
+}
+
+body.mn-app .swal2-popup:not(.swal2-toast) .swal2-styled.swal2-deny {
+    background-color: #fef3f2 !important;
+    color: #b42318 !important;
+    box-shadow: 0 0 0 1px #f4b4ad !important;
+}
+
+body.mn-app .swal2-styled:focus {
+    box-shadow: var(--mn-ring) !important;
+}
+
+body.mn-app:not(.swal2-toast-shown) .swal2-container.swal2-backdrop-show {
+    background: rgb(7 19 31 / 45%) !important;
+}
+
+body.mn-app .swal2-popup.swal2-toast {
+    font-family: var(--mn-font);
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px var(--mn-line), var(--mn-shadow-lg);
+}
+
+body.mn-app .swal2-popup.swal2-toast .swal2-title {
+    color: var(--mn-ink);
+    font-weight: 620;
+    letter-spacing: -0.005em;
+}
+
+/* ---------------------------------------------------------------- teacher and lunch shells (a top bar, no rail) */
+
+body.mn-app .mn-realm {
+    background-color: var(--mn-bg);
+}
+
+body.mn-app .mn-topbar {
+    min-height: 62px;
+    background-color: rgb(255 255 255 / 88%);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    backdrop-filter: saturate(160%) blur(14px);
+    border-bottom: 1px solid var(--mn-line);
+}
+
+body.mn-app .mn-topbar-tile {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 0 0 1px var(--mn-line), var(--mn-shadow-sm);
+}
+
+body.mn-app .mn-topbar-tile img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+body.mn-app .mn-topbar-name {
+    color: var(--mn-ink);
+    font-weight: 720;
+    font-size: 1.02rem;
+    letter-spacing: -0.015em;
+}
+
+body.mn-app .mn-topbar-link {
+    color: var(--mn-muted);
+    font-weight: 600;
+    font-size: 0.93rem;
+    padding: 0.4rem 0.75rem !important;
+    border-radius: 9px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+body.mn-app .mn-topbar-link:hover {
+    color: var(--mn-ink);
+    background-color: var(--mn-hover);
+}
+
+body.mn-app .mn-topbar-link.is-active {
+    color: var(--mn-brand-deep);
+    background-color: var(--mn-brand-soft);
+}
+
+body.mn-app .mn-topbar-person {
+    color: var(--mn-muted);
+    font-size: 0.86rem;
+    font-weight: 550;
+}
+
+body.mn-app .mn-topbar-chip {
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    background: #f1f3f6;
+    box-shadow: inset 0 0 0 1px #e1e5eb;
+    color: var(--mn-ink-2);
+    font-size: 0.78rem;
+    font-weight: 650;
+}
+
+/* ---------------------------------------------------------------- scrollbars inside the app */
+
+body.mn-app ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.mn-app ::-webkit-scrollbar-thumb { background: #cfd6de; border-radius: 999px; border: 2px solid var(--mn-bg); }
+body.mn-app ::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+    body.mn-app .btn,
+    body.mn-app .form-control,
+    body.mn-app .table > tbody > tr {
+        transition: none;
+    }
+}

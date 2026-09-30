@@ -1,8 +1,8 @@
 :root {
     --dash-header-l-padding: 2rem;
     --dash-header-r-padding: 2rem;
-    --dash-header-t-padding: 1rem;
-    --dash-header-b-padding: 1rem;
+    --dash-header-t-padding: .75rem;
+    --dash-header-b-padding: .75rem;
     --dash-header-overall-height: calc(var(--dash-header-t-padding) + var(--dash-header-b-padding) + 4rem);
     --dash-aside-width: 16.25rem;
     --dash-footer-l-padding: 2rem;
@@ -27,18 +27,20 @@
     top: 0;
     left: 0;
     z-index: 1049;
-    background-color: var(--gray-800);
-    opacity: .75;
+    background-color: #07131f;
+    opacity: .55;
     display: none;
 }
 
 #dashboard_aside {
     width: var(--dash-aside-width);
     height: 100vh;
-    /* Same surface/text pair as #dashboard_aside_menu: --cgreen-light on --cgreen is
-       2.72:1. Matched to the darkened same-hue brand green so the rail stays uniform. */
-    background-color: #01813B;
-    color: var(--cgreen-light);
+    /* The night-to-navy ground of the sign-in stage (AuthShell.vue). Menu labels
+       on it are #c9d3df (10.2:1) and white (15.6:1). */
+    background: linear-gradient(180deg, #0d2a4d 0%, #0a1c33 52%, #07131f 100%);
+    color: #c9d3df;
+    overflow: hidden;
+    box-shadow: 1px 0 0 rgb(255 255 255 / 4%), 8px 0 24px rgb(7 19 31 / 8%);
     position: fixed;
     top: 0;
     left: 0;
@@ -67,8 +69,10 @@
 
 #dashboard_header {
     width: calc(100% - var(--dash-aside-width));
-    background-color: var(--background-color);
-    box-shadow: 0px 4px 6px -4px var(--background-color);
+    background-color: rgb(245 247 250 / 86%);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    backdrop-filter: saturate(160%) blur(14px);
+    border-bottom: 1px solid rgb(227 232 238 / 90%);
     position: fixed;
     height: auto;
     padding: var(--dash-header-t-padding) var(--dash-header-l-padding);
@@ -82,16 +86,18 @@
 
 #dashboard_footer {
     width: 100%;
+    color: #8a94a3;
+    font-size: .82rem;
     /* background-color: var(--cgreen-light); */
     /* position: fixed;
     bottom: 0; */
-    height: var(--dash-footer-height);
-    padding: var(--dash-footer-t-padding) var(--dash-footer-l-padding);
+    min-height: var(--dash-footer-height);
+    padding: var(--dash-footer-t-padding) var(--dash-footer-l-padding) 1.25rem;
 }
 
 #dashboard_main {
     margin-top: 4rem;
-    padding: 2rem 2rem;
+    padding: 1.75rem 2rem 2rem;
     width: 100%;
 }
 
@@ -100,7 +106,8 @@
 }
 
 #dashboard_layout #dashboard_aside .aside-contents-container {
-    padding: .75rem 1rem;
+    position: relative;
+    padding: 1rem .85rem .85rem;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -108,22 +115,34 @@
 }
 
 #dashboard_layout .aside-toggle-btn {
-    width: 2rem;
-    height: 2rem;
+    flex: none;
+    width: 2.25rem;
+    height: 2.25rem;
     border: 0;
-    border-radius: .25rem;
-    padding: .2rem;
+    border-radius: 10px;
+    padding: .45rem;
+    transition: background-color .15s ease, box-shadow .15s ease;
 }
 
 #dashboard_aside_close_btn {
-    background-color: var(--cgreen-light);
-    color: var(--cgreen);
+    background-color: rgb(255 255 255 / 8%);
+    color: #fff;
     display: none;
 }
 
 #dashboard_aside_toggle_btn {
-    background-color: var(--cgreen);
-    color: var(--cgreen-light);
+    background-color: #fff;
+    color: #344054;
+    box-shadow: 0 0 0 1px #e3e8ee, 0 1px 2px rgb(16 24 40 / 5%);
+}
+
+#dashboard_aside_toggle_btn:hover {
+    background-color: #f5f7f9;
+}
+
+#dashboard_layout .aside-toggle-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px rgb(1 177 81 / 25%);
 }
 
 #dashboard_aside .aside-toggle-btn .aside-toggle-icon {
@@ -140,10 +159,13 @@
 
     #dashboard_aside {
         left: calc(-1 * var(--dash-aside-width));
+        /* Closed, the drawer sits off screen; its shadow must not. */
+        box-shadow: none;
     }
 
     #dashboard_layout.aside-hidden #dashboard_aside {
         left: 0;
+        box-shadow: 12px 0 40px rgb(7 19 31 / 35%);
     }
 
     #header_main_container {
