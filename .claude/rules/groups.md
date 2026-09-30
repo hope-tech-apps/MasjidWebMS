@@ -14,6 +14,17 @@ paths:
   - "app/Models/GroupThread.php"
   - "app/Models/GroupMessage.php"
   - "app/Models/GroupThreadRead.php"
+  - "app/Models/GroupMessageSchedule.php"
+  - "app/Http/Controllers/AdminDashboard/GroupMessageSchedulesController.php"
+  - "app/Http/Requests/Admin/Groups/*ScheduledMessageRequest.php"
+  - "app/Http/Requests/Admin/Groups/ValidatesSendAt.php"
+  - "app/Services/Groups/GroupThreadWriter.php"
+  - "app/Services/Groups/GroupStoryPublisher.php"
+  - "app/Services/Groups/ScheduledSendGate.php"
+  - "app/Support/ScheduledTime.php"
+  - "app/Console/Commands/PublishDueGroupItems.php"
+  - "database/migrations/*_add_scheduling_to_group_posts_table.php"
+  - "database/migrations/*_create_group_message_schedules_table.php"
   - "app/Support/GroupAudience.php"
   - "app/Models/GroupResource.php"
   - "app/Models/GroupResourceRecipient.php"
@@ -703,6 +714,9 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   archive, so `principal()` must not resolve them, or the digest would mail them and count
   their taps. Digests are grouped per author AND per class, so a teacher of two classes gets
   two emails, each naming its own class.
+- **A reaction on a story that is not out yet is not announced** (T-002.4): the reaction endpoints refuse
+  an unpublished story, so such a row should not exist, and if one does the sweep leaves it UNCLAIMED (it is
+  announced once, after the story is out) rather than telling the author before any family could read it.
 - **At most once**: each row is CLAIMED by an UPDATE guarded by `notified_at IS NULL`
   before it is sent; skipped rows are claimed too. A crash between claim and send loses
   that digest rather than repeating it.
@@ -718,6 +732,88 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   OFFICE records in `MemberAccountDeletion::OFFICE_RECORDS` (only a guardian writes one,
   and their guardian edge already keeps the contact). Neither table holds free text, so the
   staging scrub needed no new entry (the coverage test passes unchanged).
+
+## Scheduled class stories and new conversations — "Send later" (T-002.4, 2026-09-29)
+
+A teacher or the office writes a class story, or opens a NEW conversation, to go out later. Proven
+by `ScheduledClassStoryTest` and `ScheduledGroupMessageTest`; each guard below was removed in turn
+and a test went red (DECISIONS.md, school side quest W5).
+
+**Stories: the CLOCK publishes, the sweep announces.** `group_posts.published_at` is when families
+may see it; every family read goes through `GroupPost::scopePublished()` (`published_at <= now` and
+not `publish_failed_at`), with no sweep in the loop. A NULL `published_at` reads as out (a row from
+code that predates the column); the model stamps the rest, so an ordinary post is out the moment it
+is written.
+
+- **A family site that forgets `->published()` serves tomorrow's story today.** The sites are:
+  `Family\GroupPostsController` `index`, `show`, `markSeen` (W2), `setReaction` (PUT and DELETE, W2),
+  `downloadAttachment`, `playbackTicket`, and the stream `GroupMediaPlaybackController::post` (which
+  filters unless `GroupAudience::mayReadUnpublished`). `ScheduledClassStoryTest` asks EVERY one of
+  them for a future story, each after proving the door is open for an ordinary one. A new family
+  read of a post joins that list or it is a leak. Staff reactions are refused on an unpublished story
+  too, and the reaction digest leaves such a row UNCLAIMED (announced once, after it is out).
+- **Who sees a story that is not out: `GroupAudience::mayReadUnpublished`**, deliberately narrower
+  than reading the feed: a teacher of the class (`group_staff`) and the office (`manage contacts`),
+  never a Contact and never an administrator who reads the class only as a consented parent. The
+  staff feed (`index`) shows what families see; the Scheduled list is `GET .../posts?scheduled=1`.
+  The office manages a scheduled story without roster standing (a story not out is not yet a
+  disclosure); the feed gate is unchanged. `show` and the attachment routes use `postsFor()`.
+- **`announced_at`** is the class-story email's claim (an UPDATE guarded by `announced_at IS NULL`):
+  at most once, whoever gets there first (sweep, "Send now"). The migration backfills it to
+  `created_at` so the ten live stories are never re-announced; the model stamps it for a story that is
+  already out when written. A story scheduled ahead dispatches NOTHING at creation.
+- **S15: the author left the class.** The sweep looks `groups.scheduling.lookahead_seconds` (120)
+  AHEAD and refuses such a story BEFORE its time (`publish_failed_at` + `publish_failure`), because
+  visibility follows the clock and a refusal after it would leave the story on screen for up to a
+  minute. A failed story is excluded by the scope whatever the clock says, so it never appears when
+  its time passes. A new `send_at` (or `send_now`) puts it back.
+- **Edit / Send now / Cancel** are the existing PUT and DELETE. `send_at`/`send_now` on a story that has
+  gone out is a 422; the author and the office change a scheduled story, a co-teacher only sees it
+  (`authorizeScheduledWrite`; an already-published story is as editable as it always was).
+  `retained_until` counts from the day it goes OUT; a window the system stamped follows a new time.
+- The family payload gains `published_at` (the date it shows); the staff payload gains
+  `published_at_local`, `status`, `publish_failure`, `can_change_schedule` and `meta.scheduling`.
+
+**Conversations: the sweep WRITES.** A scheduled conversation is a row in `group_message_schedules`
+and NOTHING ELSE until its time: never a `group_messages` row with a future time, because receipts
+compare message ids (`GroupThreadRead::covers`) and unread compares them to a bookmark, so an early
+row would be counted, listed, translated, reacted to and emailed the moment it was written. NEW
+conversations only (S11), text only (S13): a `send_at`/`send_now` on a reply or on `POST /threads` is a
+422, never a quiet send-now, and a photo on a schedule is refused, not dropped.
+
+- **One send path.** `GroupThreadWriter::open()` is extracted from `GroupThreadsController::store`
+  and is what the sweep calls; the `sent` stamp runs INSIDE its transaction, so a thread exists if
+  and only if its schedule says `sent`.
+- **Gates re-run at send time** (`ScheduledSendGate`), the tenant bound to the item's own school:
+  the author still teaches the class (a teacher on `group_staff`; an administrator who still belongs
+  to the school and holds `manage contacts`; not archived, not deleted), and for a conversation about
+  one child, that child is still a participant who has not left. A refusal is `status=failed` with
+  a fixed sentence naming no person; an unexpected error is `failed` too, logged by CLASS NAME only.
+- **Claims.** `scheduled -> sending` is one UPDATE guarded by status and time. A claim older than
+  `stale_claim_minutes` (10) wrote nothing (atomic with the thread) and is handed back. Edit, Send now
+  and Cancel are each one guarded UPDATE, so a sweep that claims between the page load and the click
+  wins cleanly and the click is told "no longer editable".
+- **Who**: the author and the office edit, send now (PUT `send_now`, the sweep sends within a minute)
+  and cancel; a co-teacher sees the Scheduled list and is refused. Both realms mount
+  `GroupMessageSchedulesController` (teacher: `teacher.leads`; admin: `manage contacts`), and the
+  controller asks `mayReadUnpublished` again. The office reads a scheduled conversation's words
+  without roster standing (S14 needs it to edit or cancel): OWNER TO CONFIRM.
+- Retention: `retained_until` counts from `send_at`; `groups:purge-feed` deletes finished rows
+  (sent, failed, cancelled), never a waiting or sending one.
+
+**Time.** `send_at` is the SCHOOL's wall clock (`2026-10-05T10:00`, `masjids.timezone`, an unset UTC
+reads as America/New_York), read by `App\Support\ScheduledTime`; a value with its own offset is
+honoured; stored in the application zone. In the future and at most `groups.scheduling.max_days_ahead`
+(30) days ahead. An hour that does not exist (spring forward) moves on and the response says what was
+kept. The Vue field labels the zone the SERVER names, never the browser's.
+
+**The sweep.** `groups:publish-due`, every minute, `withoutOverlapping(5)` (a killed run must not hold the
+mutex for 24 hours), one WARNING line per run. Runs unbound and binds each item's own tenant, restoring
+the previous binding. `--masjid=` narrows, `--dry-run` changes nothing.
+
+**Deploy.** Deploy AFTER HOURS: `bin/deploy` checks out new PHP before it migrates, and the family
+reads select `published_at`, so the seconds between fail. Run the migrations up, down and up on staging
+MySQL first (RECON-PLAN 3.1 rule 13).
 
 ## Class files — a handout is ADDRESSED (2026-09-24)
 

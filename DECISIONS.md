@@ -5103,3 +5103,55 @@ answers; each carries its alternative.
   - **Left as they were.** The resolver's own `->current()` on the ward query is redundant with the command's (defence in depth; the
     review marked the mutant equivalent). The `familyLoginIsActive` and `PointsWeek::containing` time-zone mutants that survived the command
     test file alone are covered elsewhere or unconfirmed; not re-litigated here.
+
+- **2026-09-29 (school side quest W5, T-002.4): "Send later" for class stories and NEW conversations.** Built on `b9bb63f4`
+  (integrate/w3-w4), branch `feat/school-w5-scheduling`. S11 to S15 of the delivery plan, as answered by default; rules in
+  `.claude/rules/groups.md` ("Scheduled class stories and new conversations").
+  - **Stories: the clock publishes, the sweep announces.** `group_posts.published_at` (visibility), `announced_at` (the email's claim),
+    `publish_failed_at` + `publish_failure` (S15). Every family read goes through `GroupPost::scopePublished()`; the sites are the feed,
+    one story, W2's seen POST and reaction PUT and DELETE, a photo download, a playback ticket and the playback stream, and
+    `ScheduledClassStoryTest` asks each of them for a future story after proving the door is open for an ordinary one. Feeds order by
+    `published_at`; `retained_until` counts from it. The digest leaves a reaction on an unpublished story unclaimed, and W2's
+    "Not tracked before" line now dates a story by `published_at`.
+  - **Deviation from the plan: two extra nullable columns** (`publish_failed_at`, `publish_failure`) on `group_posts`. S15 says a story whose
+    author left the class is "not sent, shown as failed with the reason" and the plan's two columns cannot say "failed": with only
+    `published_at`, a refused story would appear when its time passed. `scopePublished()` excludes a failed row whatever the clock says.
+    Also nullable `published_at` (plan section 3.1 rule 4) with NULL read as "out" so an old-code insert in the deploy seconds stays visible.
+  - **Look-ahead.** Visibility follows the clock, so a refusal after the time would leave a story on screen for up to a minute. The sweep asks the
+    author gate `groups.scheduling.lookahead_seconds` (120) BEFORE the time. An estimate: two sweeps' worth.
+  - **Conversations live in `group_message_schedules` until their time**, written through `GroupThreadWriter` (extracted from
+    `GroupThreadsController::store`, one send path) with the `sent` stamp inside its transaction. Gates re-run at send time
+    (`ScheduledSendGate`): author still on `group_staff` (or an administrator who still belongs and holds `manage contacts`), child still a current
+    participant. Claims: `scheduled -> sending` one guarded UPDATE, stale claims (10 min, an estimate) handed back, edit/send now/cancel each one
+    guarded UPDATE. `send_now` is a PUT that sets the time to now.
+  - **Only new conversations, text only.** `send_at` and `send_now` on a reply or on `POST /threads` are a 422, not a quiet send-now (a client
+    that believes it scheduled something must not be answered 201 with an immediate send); a photo on a schedule is refused, not dropped.
+  - **Decision to confirm (S14 reading): the office (`manage contacts`) may READ scheduled items without being on the class roster**, because S14
+    says it edits and cancels them and that needs the words. For a story that is not yet a disclosure to anybody; for a conversation ABOUT A CHILD
+    it is the office reading a message meant for one family before it is sent. The feed and every thread stay behind roster standing; only the
+    Scheduled lists use `GroupAudience::mayReadUnpublished` (a teacher of the class, or `manage contacts`). An administrator who is on the roster only
+    as a consented parent gets neither. OWNER TO CONFIRM; narrowing it is one line in `mayReadUnpublished`.
+  - **Time.** The school's wall clock (`masjids.timezone`, unset UTC reads America/New_York), 30 days ahead at most (S12), an offset honoured, a
+    skipped DST hour moved on and reported back. The compose boxes label the zone the server names. The `send_at` name is used for both kinds.
+  - **Scheduler.** `groups:publish-due` every minute, `withoutOverlapping(5)`, one WARNING line per run, each item handled with its own tenant bound
+    and the previous binding restored. New `GroupAudience::mayReadUnpublished` is the twentieth pinned signature
+    (`GroupAudienceForeignPrincipalTest`). `groups:purge-feed` gained the schedule rows (finished ones only). `config/staging_scrub.php` scrubs
+    `group_message_schedules.subject` and `.body`.
+  - **Teacher realm:** +3 write verbs (`POST`, `PUT`, `DELETE` `scheduled-messages`), pinned in `TeacherRealmTest` and swept for cross-school bleed in
+    `TeacherMultiSchoolTest` (the world gained a schedule row). Story scheduling adds no verb.
+  - **Mutation-proved.** 55 single-fault mutants, one per guard, each run against the scheduling tests on the droplet: every family door
+    losing `published()` (feed, one story, seen, react, download, ticket, stream), the scope's failed-row and NULL rules,
+    `mayReadUnpublished` (always true, view-only administrators), `postsFor`, the scheduled-list and `show` gates, a staff reaction on an
+    unpublished story, the co-teacher and cancel authority, rescheduling a published story, the creation-time announcement, `send_now` not
+    announcing, the retention day, the school-clock parse and both bounds, the digest deferral, the look-ahead, both gates at send time
+    (author and child, plus the archived and lost-membership cases), the claims (double announce, double send, stale reclaim), the tenant binding,
+    the in-transaction `sent` stamp, error recording, the log leak, both `send_at` refusals on replies and live threads, photos on a schedule,
+    the purge guard and the schedule registration. All 55 were killed. Three guards had NO killing test and each got one (two spotted by reading the mutant list before it ran, the third by a real survivor, M2):
+    `a_conversation_whose_claim_was_lost_leaves_no_thread_behind` (the sent stamp is atomic with the thread),
+    `a_story_inside_the_lookahead_that_passes_its_gate_waits_for_its_time_to_be_announced` and
+    `the_controller_refuses_the_list_itself_when_a_route_lets_the_wrong_person_in` (the controller's own gate, which the route middleware
+    otherwise duplicates). Harness and results: `/root/w5mut/{mutants.py,run.py,run_direct.py,results.jsonl}` on the droplet, copied to the
+    side-quest folder `w5-logs/`.
+  - **Not done, on purpose.** Photos on a scheduled conversation (S13), scheduling a reply (S11), a staff push (the staff app is parked), and any
+    change to the Friday report (unaffected). Unknown, needs investigation: how many families a scheduled story reaches at BISS is 0 until BISS is
+    onboarded; and a sweep this frequent has no production timing yet.
