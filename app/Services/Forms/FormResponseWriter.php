@@ -210,7 +210,7 @@ final class FormResponseWriter
 
     /**
      * The row an earlier write under this client_submission_key made on this form, or
-     * null. For a caller that keys its writes (the cart's `cart_item_<id>`) and must
+     * null. For a caller that keys its writes (the cart's `cart:item:<id>`) and must
      * answer a replayed event with the first row rather than write a second: the unique
      * (form_id, client_submission_key) index is the backstop, this is the polite answer.
      * Read it under the form lock, before write().

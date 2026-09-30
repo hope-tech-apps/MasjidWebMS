@@ -549,7 +549,7 @@ class CartSettlementService
             );
         }
 
-        $key = 'cart_item_' . $item->id;
+        $key = self::lineKey($item);
         $row = $this->forms->earlier((int) $form->id, $key);
 
         if ($row === null) {
@@ -746,7 +746,7 @@ class CartSettlementService
 
     /**
      * A donation line: the pending row from createPendingDonation() under the cart's own
-     * key `cart_item_<id>`, then markSucceeded() with the cart's payment intent.
+     * key `cart:item:<id>`, then markSucceeded() with the cart's payment intent.
      *
      * `fee`/`net` are left null (see the class doc). `markSucceeded()` has no status
      * guard, so the pending check is here, under a row lock. ZakatDesignation stays the
@@ -782,7 +782,7 @@ class CartSettlementService
             );
         }
 
-        $key = 'cart_item_' . $item->id;
+        $key = self::lineKey($item);
         $answers = (array) ($item->payload ?? []);
         $existing = Donation::withoutMasjidScope()->where('idempotency_key', $key)->first();
 
@@ -1000,6 +1000,23 @@ class CartSettlementService
 
             return null;
         }
+    }
+
+    /**
+     * The key a line's record is written under: `form_responses.client_submission_key` for a
+     * ticket, `donations.idempotency_key` for a gift. It is what makes a replayed event answer with
+     * the first row instead of writing a second.
+     *
+     * The colon is the point. The PUBLIC form door takes any `client_submission_key` matching
+     * `^[A-Za-z0-9_-]{8,64}$`, so a key made only of those characters (the old `cart_item_<id>`)
+     * could be submitted by anyone against the same form, and settlement's `earlier()` would then
+     * find THEIR row, mark it paid with this order's payment and link the ticket to it. `:` is
+     * outside that alphabet, so the door cannot produce this key however it is asked.
+     * (form_responses.client_submission_key is 64 wide; this is 10 characters and an id.)
+     */
+    public static function lineKey(OrderItem $item): string
+    {
+        return 'cart:item:' . $item->id;
     }
 
     /** Stamp the record on the line — the per-line idempotency marker. */

@@ -36,7 +36,7 @@ class FormResponseWriterTest extends TestCase
     use MakesRamadanGivingForms;
     use RefreshDatabase;
 
-    private const KEY = 'cart_item_7';
+    private const KEY = 'cart:item:7';
 
     /** A ticket form whose identity is read from the first attendee. */
     private function festivalForm(array $overrides = []): Form
@@ -164,7 +164,7 @@ class FormResponseWriterTest extends TestCase
 
         $found = (new FormResponseWriter)->earlier((int) $form->id, self::KEY);
         $this->assertSame($first->id, $found?->id);
-        $this->assertNull((new FormResponseWriter)->earlier((int) $form->id, 'cart_item_8'));
+        $this->assertNull((new FormResponseWriter)->earlier((int) $form->id, 'cart:item:8'));
 
         try {
             $this->writeAs($form, $this->twoTickets());
@@ -283,7 +283,7 @@ class FormResponseWriterTest extends TestCase
             ];
 
             $card = $this->writeAs($form, $answers('2027-02-10'), reserveOn: '2027-02-10');
-            $office = $this->writeAs($form, $answers('2027-02-11'), FormResponseWriter::LEG_OFFICE, 'cart_item_9', '2027-02-11');
+            $office = $this->writeAs($form, $answers('2027-02-11'), FormResponseWriter::LEG_OFFICE, 'cart:item:9', '2027-02-11');
 
             $held = FormReservations::of($card);
             $this->assertTrue($held->isHolding());

@@ -188,7 +188,7 @@ class CartSettlementTest extends TestCase
         $this->assertSame(1500, (int) $row->unit_price_minor);
         $this->assertSame(2, (int) $row->price_quantity);
         $this->assertSame(2, (int) $row->entry_count);
-        $this->assertSame('cart_item_' . $items['form']->id, $row->client_submission_key);
+        $this->assertSame('cart:item:' . $items['form']->id, $row->client_submission_key);
         $this->assertSame(['A', 'B'], array_column($row->data['tickets'], 'attendeeName'));
 
         // The meal order: the frozen line, paid, on the menu, for the buyer.
@@ -212,7 +212,7 @@ class CartSettlementTest extends TestCase
         $this->assertSame(5000, (int) $gift->intended_amount);
         $this->assertSame(5000, (int) $gift->charged_amount);
         $this->assertSame('pi_cart_1', $gift->stripe_payment_intent_id);
-        $this->assertSame('cart_item_' . $items['gift']->id, $gift->idempotency_key);
+        $this->assertSame('cart:item:' . $items['gift']->id, $gift->idempotency_key);
         $this->assertNull($gift->stripe_fee_amount, 'the basket\'s one fee cannot be split honestly per line');
         $this->assertNull($gift->net_amount);
         $this->assertSame(ZakatDesignation::resolve(null, $fund)['is_zakat'], (bool) $gift->is_zakat, 'zakat is ZakatDesignation\'s alone');
