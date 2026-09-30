@@ -27,10 +27,12 @@ use Illuminate\Support\Facades\Schema;
  * `amount` is signed bucks. `dedupe_key` is a nullable UNIQUE string, which is how "once"
  * is made a database fact on both engines (NULLs are distinct, and there are no partial
  * indexes): `earned:{membership}:{week_start}`, `adjusted:{membership}:{week_start}:{n}`,
- * `reversal:{entry}`, `redeemed:{membership}:{request_id}`, `expired:{membership}:{cutoff}`.
+ * `reversal:{entry}`, `redeemed:{membership}:{request_id}`, `expired:{membership}:{cutoff}:{n}` (n counts that
+ * cutoff's earlier write-offs, so a week minted after the first one is still written off).
  * `week_basis` is, for earned and adjusted rows, the bucks the week's points came to as
  * accounted AFTER that row, so a clamped clawback is forgiven once and never taken back out
- * of a later week's earnings.
+ * of a later week's earnings (`week_points` and `week_rate`, added by 2026_10_04_100400, say what
+ * it was worked out from).
  *
  * `group_membership_id` is RESTRICT, like every other academic-record key
  * (2026_09_09_040000): a roster row that holds a ledger cannot be deleted from under it,

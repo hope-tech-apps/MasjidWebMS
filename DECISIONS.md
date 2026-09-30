@@ -5151,3 +5151,39 @@ answers; each carries its alternative.
   - **Unknown, needs investigation.** How MySQL behaves under two simultaneous taps (ASSUMPTIONS W6-A8); whether Al-Razi wants a departed child to
     keep the week's bucks (W6-A2); the year and class end dates Al-Razi has entered (W6-A3).
 
+
+- **2026-09-29 (school side quest W6-A review fixes): what the review of the class store found, and how each was fixed.**
+  Every fix has a test that fails without it (mutation proofs in the closing report).
+  - **Expiry ran before the class's last week was minted, and its once-only key let those bucks escape.** The week that holds a cutoff is
+    minted only after it closes, so bucks for a pre-cutoff week can arrive after the first write-off, and `expired:{m}:{cutoff}` was already
+    taken. Chosen: the expiry is re-runnable per cutoff (`expired:{m}:{cutoff}:{n}`, `n` counted under the student's lock; the amount is
+    still `balance - minted from weeks on or after the cutoff`, so a run with nothing left writes nothing), and the minter stops minting a
+    class's weeks that open after its `ends_on`. Alternative: hold the cutoff back until the weeks around it have closed and left the
+    adjustment window (about three weeks). Rejected: bucks stay spendable for weeks after a class ended. Cost of the chosen way: for up to
+    30 minutes (between the hourly mint at :10 and the expire at :40) a late-minted pre-cutoff buck shows on the balance before it is
+    written off.
+  - **A change of `points_per_buck` re-rated the last two weeks.** Each `earned` and `adjusted` row now keeps `week_rate` (and `week_points`, the
+    audit record of what the basis was worked out from; the adjustment itself needs only the rate); a week is re-priced at its own rate, so a
+    new rate applies to weeks minted after it. Alternative: an
+    "effective from" date on the setting. Rejected: a second setting to keep in step, and a late award in an old week still has to be priced
+    at some rate. Migration `2026_10_04_100400` (nullable columns; an older row without them reads at the current rate).
+  - **Switching the store off and on paid the weeks it was off.** `bucks_swept_at` marks a sweep that found the store on; a sweep that finds it
+    off for a marked school clears `bucks_from` and the mark, so the next sweep with it on starts at the week in progress. Alternatives: hook the
+    capability writer (Studio's file, to be coordinated), or read `masjid_capability_changes` (a start day set by hand after a pause cannot be
+    told from an old one). A SuperAdmin's start day, set after the pause or before the store was ever on, is honoured. Migration
+    `2026_10_04_100500`.
+  - **`bucks_from` was documented as a day and worked as a week.** Kept as documented: the first week's window starts at that day's midnight on
+    the school's clock (BucksMinter, and the reconciliation's expected figure). Alternative: round it to the week start and echo that.
+    Rejected: it would credit the days the SuperAdmin meant to exclude.
+  - **Two overlapping mint runs could write one late change twice.** The delta is decided again under the student's lock from the newest row
+    as it is then (`settle`), not from the row read before the lock.
+  - **A lost response was a second deduction in the SPA.** One request id per write (student and prize, student and amount), kept across a
+    retry after no response, 408 or 5xx and dropped on success or any other 4xx. A reload failing after a successful write no longer says
+    the write failed (that would invite the second tap).
+  - **Tests only:** the row locks (source pin, SQLite cannot see them), the store gate on cash-out and the hand-out with paper ON, the
+    office's contacts permissions, replays of the last bucks and last stock, the layers of the replay and stock guards, a 1-buck overdraft,
+    the start-side week boundary, the frozen week, and a request id scoped to its kind.
+  - **Not fixed, on purpose.** The reconciliation's `expected` uses today's rate, so after a rate change it differs from `minted` for weeks
+    minted earlier: the view already calls a difference a question for the office, and its docblock now names the rate change as a reason.
+  - **Unknown, needs investigation.** The lock behaviour on MySQL with two connections (ASSUMPTIONS W6-A8) and the migrations on MySQL 8.4
+    (W6-A7) remain unrun by this fix, as before.

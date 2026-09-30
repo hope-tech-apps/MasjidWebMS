@@ -19,7 +19,9 @@ use Symfony\Component\HttpFoundation\Response;
  * SuperAdmin only, like the capability that switches the store on (`class_store`): the same
  * person decides that a school has the store, how many points make one buck (R1, settable per
  * school), from which day points count, and whether the paper cash-out is offered at all
- * (built and OFF while the physical Manara Bucks are paused). Neither a school's own
+ * (built and OFF while the physical Manara Bucks are paused). `bucks_from` is a DAY on the
+ * school's clock: points awarded before that day's midnight never mint, even inside the same
+ * Sunday-to-Sunday week (BucksMinter). Neither a school's own
  * administrators nor its teachers can move any of it. GET checks in the controller (a 403 like
  * PointsReportScheduleController); PUT checks in the request's authorize().
  *
@@ -48,6 +50,12 @@ class ClassStoreSettingsController extends Controller
             if ($request->exists($field)) {
                 $row->{$field} = $request->validated($field);
             }
+        }
+
+        if ($request->exists('bucks_from')) {
+            // A start day a SuperAdmin has just chosen is theirs: a pause the sweep had not yet
+            // noticed must not wipe it (MintClassBucks::pauseCounting).
+            $row->bucks_swept_at = null;
         }
 
         $row->save();

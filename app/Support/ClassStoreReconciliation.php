@@ -33,7 +33,8 @@ use Illuminate\Support\Facades\Date;
  * closed weeks since the store began (`bucks_from`), `floor(positive points / points_per_buck)`
  * for each child, summed. `minted` is what the ledger holds for the same weeks. They differ
  * only for reasons the rules allow: a late change to a week older than the two-week
- * adjustment window, a clawback clamped at a zero balance, or a child who left the class. A
+ * adjustment window, a clawback clamped at a zero balance, a child who left the class, or a
+ * change of rate (a week keeps the rate it was minted at, and `expected_minted` uses today's). A
  * difference is therefore a question for the office, not an error, and the view says so.
  * `negative_balances` counts children whose ledger sums below zero: it should always be 0.
  */
@@ -52,6 +53,7 @@ final class ClassStoreReconciliation
         $tz = SchoolPointsWeek::timezone((int) $masjid->id);
         $settings = ClassStoreSettings::for((int) $masjid->id);
         $window = self::window($tz, $settings['bucks_from'], $weeks);
+        $from = $settings['bucks_from'] === null ? null : BucksMinter::startInstant($settings['bucks_from'], $tz);
         $groupIds = $groups->pluck('id')->map(fn ($id): int => (int) $id)->all();
 
         $byKind = PrizeLedgerEntry::query()
@@ -69,13 +71,13 @@ final class ClassStoreReconciliation
             ->get()
             ->groupBy('group_id');
 
-        $classes = $groups->map(function (Group $group) use ($byKind, $holdings, $window, $settings): array {
+        $classes = $groups->map(function (Group $group) use ($byKind, $holdings, $window, $settings, $from): array {
             $kinds = collect($byKind->get($group->id, []))->mapWithKeys(fn ($r) => [$r->kind => (int) $r->bucks]);
             $students = collect($holdings->get($group->id, []))->map(fn ($r): int => (int) $r->bucks);
 
             $minted = (int) ($kinds[PrizeLedgerEntry::KIND_EARNED] ?? 0) + (int) ($kinds[PrizeLedgerEntry::KIND_ADJUSTED] ?? 0);
             $inWindow = $window === [] ? 0 : self::mintedIn($group, $window);
-            $expected = $window === [] ? 0 : self::expectedFromPoints($group, $window, $settings['points_per_buck']);
+            $expected = $window === [] ? 0 : self::expectedFromPoints($group, $window, $settings['points_per_buck'], $from);
 
             return [
                 'group_id' => (int) $group->id,
@@ -182,7 +184,7 @@ final class ClassStoreReconciliation
      *
      * @param  list<PointsWeek>  $window
      */
-    private static function expectedFromPoints(Group $group, array $window, int $rate): int
+    private static function expectedFromPoints(Group $group, array $window, int $rate, ?CarbonImmutable $from = null): int
     {
         $newest = $window[0];
         $oldest = end($window);
@@ -196,20 +198,29 @@ final class ClassStoreReconciliation
             ->flip();
 
         $tz = $newest->timezone();
+        $endsOn = $group->ends_on?->toDateString();
         $sums = [];
 
         BehaviorAward::query()
             ->where('group_id', $group->id)
             ->where('skill_polarity', '<>', BehaviorSkill::POLARITY_NEGATIVE)
             ->where('points', '>', 0)
-            ->awardedWithin($oldest->startUtc(), $newest->endUtc())
+            // bucks_from is a day: nothing before its midnight mints, even inside its week.
+            ->awardedWithin($from !== null && $from->gt($oldest->startUtc()) ? $from : $oldest->startUtc(), $newest->endUtc())
             ->get(['group_membership_id', 'points', 'awarded_at'])
-            ->each(function (BehaviorAward $a) use (&$sums, $tz, $eligible): void {
+            ->each(function (BehaviorAward $a) use (&$sums, $tz, $eligible, $endsOn): void {
                 if (! $eligible->has((int) $a->group_membership_id)) {
                     return;
                 }
 
-                $key = (int) $a->group_membership_id.'|'.PointsWeek::containing(CarbonImmutable::instance($a->awarded_at), $tz)->startDate();
+                $weekStart = PointsWeek::containing(CarbonImmutable::instance($a->awarded_at), $tz)->startDate();
+
+                // A week that opens after the class's last day is not minted (BucksMinter).
+                if ($endsOn !== null && $weekStart > $endsOn) {
+                    return;
+                }
+
+                $key = (int) $a->group_membership_id.'|'.$weekStart;
                 $sums[$key] = ($sums[$key] ?? 0) + (int) $a->points;
             });
 

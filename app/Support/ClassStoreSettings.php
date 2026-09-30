@@ -6,7 +6,8 @@ use App\Models\MasjidPointsSetting;
 
 /**
  * How a school's points turn into Manara Bucks (T-003.4): the rate, whether paper cash-out
- * is on, and the first day whose points may mint. The ONE reader, so the command, the
+ * is on, and the first day whose points may mint. A new rate applies to weeks minted AFTER
+ * the change; a week already minted keeps the rate it was minted at (BucksMinter). The ONE reader, so the command, the
  * redemption and the SuperAdmin endpoint agree.
  *
  * No row, or a row written before these columns existed, reads as the defaults: one point a

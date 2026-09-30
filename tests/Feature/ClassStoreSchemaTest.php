@@ -45,6 +45,8 @@ class ClassStoreSchemaTest extends TestCase
         'database/migrations/2026_10_04_100100_create_prize_ledger_entries_table.php',
         'database/migrations/2026_10_04_100200_add_prizes_converted_at_to_behavior_weeks_table.php',
         'database/migrations/2026_10_04_100300_add_buck_settings_to_masjid_points_settings_table.php',
+        'database/migrations/2026_10_04_100400_add_week_points_and_rate_to_prize_ledger_entries_table.php',
+        'database/migrations/2026_10_04_100500_add_bucks_swept_at_to_masjid_points_settings_table.php',
     ];
 
     protected function setUp(): void
@@ -84,6 +86,9 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertSame('date', Schema::getColumnType('prize_ledger_entries', 'retained_until'));
         $this->assertSame('datetime', Schema::getColumnType('behavior_weeks', 'prizes_converted_at'));
         $this->assertSame('date', Schema::getColumnType('masjid_points_settings', 'bucks_from'));
+        $this->assertSame('datetime', Schema::getColumnType('masjid_points_settings', 'bucks_swept_at'));
+        $this->assertSame('integer', Schema::getColumnType('prize_ledger_entries', 'week_points'));
+        $this->assertSame('integer', Schema::getColumnType('prize_ledger_entries', 'week_rate'));
 
         // The migrations declare the widths MySQL will enforce; SQLite cannot show them.
         $ledger = file_get_contents(base_path(self::MIGRATIONS[1]));
@@ -91,6 +96,7 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertStringContainsString("string('dedupe_key', 64)", $ledger);
         $this->assertStringContainsString("string('note', 255)", $ledger);
         $this->assertStringContainsString("string('title', 120)", file_get_contents(base_path(self::MIGRATIONS[0])));
+        $this->assertStringContainsString("unsignedSmallInteger('week_rate')", file_get_contents(base_path(self::MIGRATIONS[4])), 'a rate is at most 100, so a small integer');
     }
 
     #[Test]

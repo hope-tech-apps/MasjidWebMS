@@ -13,20 +13,30 @@ use Illuminate\Support\Facades\DB;
  *
  * ## The cutoffs
  *
- * A balance is written off, once, at each of:
+ * A balance is written off at each of:
  *   - the day after a class's `ends_on`, and
  *   - the day after the last day of each of the school's calendar years (SchoolCalendar),
  * as soon as that day has passed on the SCHOOL's clock. A class with no end date in a school
  * with no calendar never expires: nothing is invented for it.
  *
- * ## An expiry is a SET, and it is one ledger row
+ * ## An expiry is a SET, and it can be run again for the same cutoff
  *
- * The write-off is a single `expired` row per child and cutoff (a negative amount, so the
- * balance reads zero afterwards), `dedupe_key = expired:{membership}:{cutoff}`, so a repeated
- * run writes nothing. It takes what the child holds that was minted BEFORE the cutoff:
- * `balance - (minted from weeks starting on or after the cutoff)`, clamped to `[0, balance]`,
- * so a new year's first earnings are never swept away by the last year's expiry and a child who
- * spent more than they held is never pushed negative.
+ * The write-off is a single `expired` row per child and pass (a negative amount, so the
+ * balance reads zero afterwards). It takes what the child holds that was minted BEFORE the
+ * cutoff: `balance - (minted from weeks starting on or after the cutoff)`, clamped to
+ * `[0, balance]`, so a new year's first earnings are never swept away by the last year's
+ * expiry and a child who spent more than they held is never pushed negative.
+ *
+ * The cutoff is due the day after the class or the year, but the week that CONTAINS it is
+ * only minted once it has closed (BucksMinter mints closed weeks), and a late award reaches
+ * the two weeks before that. So bucks for a pre-cutoff week can arrive AFTER the first
+ * write-off. Each run therefore works the sum out again and writes a further row for what is
+ * left over: `dedupe_key = expired:{membership}:{cutoff}:{n}`, with `n` counting this
+ * cutoff's earlier rows, taken under the student's lock so two overlapping runs cannot both
+ * write it. A run that finds nothing left writes nothing, so the hourly sweep settles at once
+ * (the amount is `balance - later`, and after a write-off it is zero). A tiny window remains
+ * between the hourly mint (:10) and this sweep (:40) in which those bucks show; they are gone
+ * by the next expiry run.
  *
  * The retention purge then removes a child's rows only when EVERY one of them is due
  * (PrizeLedgerEntry::purgeDueSets), and every row is stamped from its own date, so the sweep
@@ -98,11 +108,22 @@ final class BucksExpiry
 
                     $amount = max(0, min($balance, $balance - $later));
 
-                    return $amount > 0 ? [
+                    if ($amount < 1) {
+                        return null;
+                    }
+
+                    // This cutoff's next pass, counted under the student's lock.
+                    $prefix = 'expired:'.$membershipId.':'.$cutoff.':';
+                    $n = PrizeLedgerEntry::withoutMasjidScope()
+                        ->where('group_membership_id', $membershipId)
+                        ->where('dedupe_key', 'like', $prefix.'%')
+                        ->count() + 1;
+
+                    return [
                         'kind' => PrizeLedgerEntry::KIND_EXPIRED,
                         'amount' => -$amount,
-                        'dedupe_key' => 'expired:'.$membershipId.':'.$cutoff,
-                    ] : null;
+                        'dedupe_key' => $prefix.$n,
+                    ];
                 };
 
                 if ($dry) {

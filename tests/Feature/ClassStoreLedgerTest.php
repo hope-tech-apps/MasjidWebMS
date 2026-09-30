@@ -10,7 +10,9 @@ use App\Models\PrizeLedgerEntry;
 use App\Support\ClassStore;
 use App\Support\ClassStoreRefusal;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use ReflectionMethod;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\BuildsClassStoreFixture;
 use Tests\TestCase;
@@ -427,6 +429,273 @@ class ClassStoreLedgerTest extends TestCase
         $this->assertSame(30, $this->balanceOf($this->amira));
     }
 
+    // ------------------------------------------- review fixes: the locks are pinned
+
+    /** The source of one method, by its own line range (a lock removed from it changes this text). */
+    private function bodyOf(string $class, string $method): string
+    {
+        $r = new ReflectionMethod($class, $method);
+        $lines = file((string) $r->getFileName());
+
+        return implode('', array_slice($lines, $r->getStartLine() - 1, $r->getEndLine() - $r->getStartLine() + 1));
+    }
+
+    /** How many INSERTs into the ledger the callback tried (counted before they ran). */
+    private function insertsDuring(callable $work): int
+    {
+        $count = 0;
+        $armed = true;
+        DB::beforeExecuting(function (string $query) use (&$count, &$armed) {
+            if ($armed && str_contains($query, 'insert into "prize_ledger_entries"')) {
+                $count++;
+            }
+        });
+
+        try {
+            $work();
+        } finally {
+            $armed = false;
+        }
+
+        return $count;
+    }
+
+    #[Test]
+    public function every_ledger_write_takes_its_row_locks_and_takes_them_first(): void
+    {
+        // SQLite has no row locks, so no behavioural test can see `lockForUpdate` go: pin the
+        // source, as tests/Feature/TeacherAttachTest.php does for its user-row lock. On MySQL these
+        // are what serialise two teachers redeeming the last stock, or a redemption racing the mint.
+        $store = ClassStore::class;
+
+        $this->assertSame(4, substr_count((string) file_get_contents(app_path('Support/ClassStore.php')), 'lockForUpdate()'), 'ClassStore holds four locks: the prize, and the roster row in three places');
+
+        foreach (['lockStudent', 'reverse', 'appendForSystem'] as $method) {
+            $this->assertSame(1, substr_count($this->bodyOf($store, $method), 'lockForUpdate()'), "{$store}::{$method} must lock the student's roster row");
+        }
+
+        $redeem = $this->bodyOf($store, 'redeem');
+        $this->assertSame(1, substr_count($redeem, 'lockForUpdate()'), 'redeem locks the prize row');
+        $this->assertLessThan(strpos($redeem, 'lockForUpdate()'), strpos($redeem, 'self::lockStudent('), 'the student is locked before the prize');
+        $this->assertLessThan(strpos($redeem, 'self::existing('), strpos($redeem, 'self::lockStudent('), 'and before anything is read');
+        $this->assertLessThan(strpos($redeem, 'self::rawBalance('), strpos($redeem, 'lockForUpdate()'), 'the balance is read under both locks');
+
+        $cash = $this->bodyOf($store, 'cashOut');
+        $this->assertLessThan(strpos($cash, 'self::rawBalance('), strpos($cash, 'self::lockStudent('), 'a cash-out reads the balance only after locking the student');
+
+        $reverse = $this->bodyOf($store, 'reverse');
+        $this->assertLessThan(strpos($reverse, 'self::existing('), strpos($reverse, 'lockForUpdate()'));
+
+        $system = $this->bodyOf($store, 'appendForSystem');
+        $this->assertLessThan(strpos($system, '$decide('), strpos($system, 'lockForUpdate()'), 'minting and expiry decide only under the lock');
+
+        $purge = $this->bodyOf(PrizeLedgerEntry::class, 'purgeDueSets');
+        $this->assertSame(1, substr_count($purge, 'lockForUpdate()'), 'the retention purge holds the roster rows');
+        $this->assertLessThan(strpos($purge, '->delete()'), strpos($purge, 'lockForUpdate()'), 'and holds them before it deletes');
+    }
+
+    // ---------------------------------- review fixes: replays on the last bucks and stock
+
+    #[Test]
+    public function a_replay_of_the_redemption_that_took_the_last_bucks_and_the_last_stock_is_a_replay_not_a_refusal(): void
+    {
+        $this->credit($this->amira, 5);
+        $prize = $this->prize(['cost_bucks' => 5, 'stock' => 1]);
+
+        $first = $this->redeem($this->amira, $prize, 'last-one-0001');
+        $this->assertSame(0, $this->balanceOf($this->amira));
+        $this->assertSame(0, $prize->fresh()->stock);
+
+        // The teacher's screen never heard back and taps again: nothing is left to pay with or to
+        // give, and the answer must still be "that already happened", not not_enough_bucks / out_of_stock.
+        $again = $this->redeem($this->amira, $prize, 'last-one-0001');
+
+        $this->assertTrue($again['replayed']);
+        $this->assertSame($first['entry']->id, $again['entry']->id);
+        $this->assertSame(1, PrizeLedgerEntry::query()->where('kind', PrizeLedgerEntry::KIND_REDEEMED)->count());
+        $this->assertSame(0, $prize->fresh()->stock);
+    }
+
+    #[Test]
+    public function a_replay_attempts_no_write_at_all(): void
+    {
+        MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $this->school->id, 'paper_bucks_enabled' => true]);
+        $this->credit($this->amira, 40);
+        $prize = $this->prize(['cost_bucks' => 5]);
+        $spent = $this->redeem($this->amira, $prize, 'replay-write-0001')['entry'];
+        $cashed = ClassStore::cashOut($this->class, $this->amira, 4, $this->teacher, 'replay-cash-0001')['entry'];
+        ClassStore::reverse($this->class, $spent, $this->teacher);
+
+        // Each replay is answered from the row that is already there: not by trying an insert and
+        // catching the unique index (which also works, but is a write the answer does not need).
+        $this->assertSame(0, $this->insertsDuring(fn () => $this->redeem($this->amira, $prize, 'replay-write-0001')));
+        $this->assertSame(0, $this->insertsDuring(fn () => ClassStore::reverse($this->class, $spent, $this->teacher)));
+        $this->assertSame(0, $this->insertsDuring(fn () => ClassStore::cashOut($this->class, $this->amira, 4, $this->teacher, 'replay-cash-0001')));
+
+        // And a fresh request does write, so the counter is measuring what it says.
+        $this->assertSame(1, $this->insertsDuring(fn () => $this->redeem($this->amira, $prize, 'replay-write-0002')));
+        $this->assertNotNull($cashed);
+    }
+
+    #[Test]
+    public function a_key_that_loses_the_race_on_the_unique_index_is_a_replay_of_the_winner_not_a_500(): void
+    {
+        // guarded() is the second replay layer: two taps that both passed the pre-check. Called
+        // straight, with a write that violates the index a committed rival row holds (a test that
+        // races through the same connection would roll the rival back with our savepoint).
+        $key = ClassStoreKeys::redeemed($this->amira->id, 'race-token-0001');
+        $winner = PrizeLedgerEntry::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+            'kind' => PrizeLedgerEntry::KIND_REDEEMED, 'amount' => -5, 'dedupe_key' => $key,
+        ]);
+        $guarded = new ReflectionMethod(ClassStore::class, 'guarded');
+        $duplicate = fn () => [
+            'entry' => PrizeLedgerEntry::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+                'kind' => PrizeLedgerEntry::KIND_REDEEMED, 'amount' => -5, 'dedupe_key' => $key,
+            ]),
+            'replayed' => false,
+        ];
+
+        $result = $guarded->invoke(null, $key, $duplicate);
+
+        $this->assertTrue($result['replayed']);
+        $this->assertSame($winner->id, $result['entry']->id);
+        $this->assertSame(1, PrizeLedgerEntry::query()->where('dedupe_key', $key)->count());
+
+        // A violation with no key of ours to point at is not swallowed.
+        $this->expectException(UniqueConstraintViolationException::class);
+        $guarded->invoke(null, null, $duplicate);
+    }
+
+    #[Test]
+    public function a_request_id_belongs_to_its_kind_so_a_redemption_id_cannot_replay_a_cash_out(): void
+    {
+        MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $this->school->id, 'paper_bucks_enabled' => true]);
+        $this->credit($this->amira, 20);
+
+        $spent = $this->redeem($this->amira, $this->prize(['cost_bucks' => 5]), 'shared-token-0001');
+        $cash = ClassStore::cashOut($this->class, $this->amira, 4, $this->teacher, 'shared-token-0001');
+
+        $this->assertFalse($cash['replayed'], 'the same token on a different kind of write is a new write');
+        $this->assertNotSame($spent['entry']->id, $cash['entry']->id);
+        $this->assertSame(PrizeLedgerEntry::KIND_CASHED_OUT, $cash['entry']->kind);
+        $this->assertSame(11, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function an_overdraft_of_exactly_one_buck_is_refused_like_a_bigger_one(): void
+    {
+        $this->credit($this->amira, 1);
+        $prize = $this->prize(['cost_bucks' => 1, 'stock' => 2]);
+
+        // Another connection spends the child's last buck between our balance read and our insert.
+        $fired = false;
+        DB::beforeExecuting(function (string $query) use (&$fired) {
+            if (! $fired && str_contains($query, 'insert into "prize_ledger_entries"')) {
+                $fired = true;
+                DB::table('prize_ledger_entries')->insert([
+                    'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+                    'kind' => 'redeemed', 'amount' => -1, 'occurred_at' => now(),
+                ]);
+            }
+        });
+
+        $this->refusedWith('balance_changed', fn () => $this->redeem($this->amira, $prize));
+
+        $this->assertSame(1, $this->balanceOf($this->amira), 'nothing of the failed attempt survives, the rival row included');
+        $this->assertSame(2, $prize->fresh()->stock);
+    }
+
+    // ------------------------------- review fixes: stock, price and the system's own rows
+
+    #[Test]
+    public function stock_that_runs_out_between_the_check_and_the_decrement_refuses_and_writes_nothing(): void
+    {
+        $this->credit($this->amira, 10);
+        $prize = $this->prize(['cost_bucks' => 5, 'stock' => 1]);
+
+        // The last unit goes to someone else after inStock() said yes and before we decrement.
+        $fired = false;
+        DB::beforeExecuting(function (string $query) use (&$fired, $prize) {
+            if (! $fired && str_contains($query, 'insert into "prize_ledger_entries"')) {
+                $fired = true;
+                DB::table('prizes')->where('id', $prize->id)->update(['stock' => 0]);
+            }
+        });
+
+        $this->refusedWith('out_of_stock', fn () => $this->redeem($this->amira, $prize));
+
+        // Without the guard on the decrement the stock would go to -1 and the redemption would stand.
+        $this->assertGreaterThanOrEqual(0, (int) $prize->fresh()->stock, 'never below zero');
+        $this->assertSame(10, $this->balanceOf($this->amira), 'the child was not charged for a prize that was not there');
+        $this->assertSame(0, PrizeLedgerEntry::query()->where('kind', PrizeLedgerEntry::KIND_REDEEMED)->count());
+    }
+
+    #[Test]
+    public function a_prize_that_is_out_of_stock_is_refused_before_anything_is_written(): void
+    {
+        $this->credit($this->amira, 10);
+        $prize = $this->prize(['cost_bucks' => 5, 'stock' => 0]);
+
+        $inserts = $this->insertsDuring(fn () => $this->refusedWith('out_of_stock', fn () => $this->redeem($this->amira, $prize)));
+
+        $this->assertSame(0, $inserts, 'the shelf is checked before a ledger row is even attempted');
+    }
+
+    #[Test]
+    public function the_price_charged_is_the_locked_rows_not_the_one_the_caller_loaded_earlier(): void
+    {
+        $this->credit($this->amira, 20);
+        $stale = $this->prize(['cost_bucks' => 5]);
+        DB::table('prizes')->where('id', $stale->id)->update(['cost_bucks' => 8]);   // repriced after the caller read it
+
+        $entry = $this->redeem($this->amira, $stale)['entry']->fresh();
+
+        $this->assertSame(-8, $entry->amount);
+        $this->assertSame(8, $entry->prize_cost);
+        $this->assertSame(12, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function the_systems_own_rows_are_written_once_only_and_only_into_the_named_class(): void
+    {
+        $row = fn (string $key) => fn (int $balance): array => [
+            'kind' => PrizeLedgerEntry::KIND_EARNED, 'amount' => 3, 'week_start' => '2026-10-04', 'week_basis' => 3, 'dedupe_key' => $key,
+        ];
+
+        $this->assertNotNull(ClassStore::appendForSystem($this->class, $this->amira->id, $row('earned:sys:once')));
+
+        // Sequential repeat: answered from the existing row, no insert attempted.
+        $again = null;
+        $inserts = $this->insertsDuring(function () use (&$again, $row) {
+            $again = ClassStore::appendForSystem($this->class, $this->amira->id, $row('earned:sys:once'));
+        });
+        $this->assertNull($again);
+        $this->assertSame(0, $inserts);
+
+        // A rival run writes the key between our check and our insert: the unique index says so and
+        // the answer is "already done", not an exception out of the hourly sweep.
+        $fired = false;
+        DB::beforeExecuting(function (string $query) use (&$fired) {
+            if (! $fired && str_contains($query, 'insert into "prize_ledger_entries"')) {
+                $fired = true;
+                DB::table('prize_ledger_entries')->insert([
+                    'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+                    'kind' => 'earned', 'amount' => 3, 'dedupe_key' => 'earned:sys:race', 'occurred_at' => now(),
+                ]);
+            }
+        });
+        $this->assertNull(ClassStore::appendForSystem($this->class, $this->amira->id, $row('earned:sys:race')));
+        $this->assertSame(3, $this->balanceOf($this->amira), 'only the first row of the test remains');
+
+        // A student of another class is not this class's to write into.
+        $other = Group::factory()->create(['masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => 'Grade 4']);
+        $before = $this->rows();
+        $this->assertNull(ClassStore::appendForSystem($other, $this->amira->id, $row('earned:sys:wrong-class')));
+        $this->assertSame($before, $this->rows());
+    }
+
     // ---------------------------------------------------- reading a balance
 
     #[Test]
@@ -449,5 +718,14 @@ class ClassStoreLedgerTest extends TestCase
     {
         \Illuminate\Support\Facades\Auth::forgetGuards();
         app(\App\Support\TenantContext::class)->set($this->school->id);
+    }
+}
+
+/** The dedupe key ClassStore::keyFor builds for a redemption, written out so a test does not call the private method. */
+final class ClassStoreKeys
+{
+    public static function redeemed(int $membershipId, string $requestId): string
+    {
+        return 'redeemed:'.$membershipId.':'.$requestId;
     }
 }

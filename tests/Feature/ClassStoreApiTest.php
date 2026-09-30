@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\Support\BuildsClassStoreFixture;
 use Tests\TestCase;
 
@@ -341,6 +343,36 @@ class ClassStoreApiTest extends TestCase
     }
 
     #[Test]
+    public function cash_out_and_the_handout_are_closed_by_the_store_gate_alone_when_paper_is_on(): void
+    {
+        // Paper ON and the store OFF: the two routes must be refused by `capability:class_store`, not
+        // by the paper check that would also answer 403 (with a reason). Told apart by the body.
+        $this->paperOn();
+        $this->credit($this->amira, 30);
+        $cashed = \App\Support\ClassStore::cashOut($this->class, $this->amira, 10, $this->teacher)['entry'];
+        $this->storeOn(null, false);
+        $rows = PrizeLedgerEntry::query()->count();
+
+        $refusals = [
+            $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 5]),
+            $this->getJson($this->teacherUrl('/bucks/handout')),
+            $this->postJson($this->teacherUrl('/prize-entries/'.$cashed->id.'/reverse')),
+        ];
+
+        foreach ($refusals as $res) {
+            $res->assertForbidden()->assertJsonMissingPath('reason');
+            $this->assertStringContainsString('not switched on', (string) $res->json('message'), 'the capability gate spoke, not the paper switch');
+        }
+
+        $this->assertSame($rows, PrizeLedgerEntry::query()->count(), 'nothing was written');
+        $this->assertSame(20, $this->balanceOf($this->amira));
+
+        // With the store back on, the same routes work: the gate above was the only thing in the way.
+        $this->storeOn();
+        $this->getJson($this->teacherUrl('/bucks/handout'))->assertOk();
+    }
+
+    #[Test]
     public function with_paper_on_a_cash_out_records_the_notes_and_the_handout_lists_them_until_reversed(): void
     {
         $this->paperOn();
@@ -524,6 +556,35 @@ class ClassStoreApiTest extends TestCase
     }
 
     #[Test]
+    public function the_offices_prize_routes_need_the_contacts_permissions(): void
+    {
+        $prize = $this->prize(['title' => 'Certificate', 'cost_bucks' => 8]);
+        $this->actAs($this->admin);
+        $this->getJson($this->adminUrl('/prizes'))->assertOk();
+        $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk();
+
+        // Read but not manage: the list and the totals stay readable, and the two writes close.
+        Role::findByName('masjid-admin', 'web')->revokePermissionTo('manage contacts');
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $this->actAs($this->admin->fresh());
+
+        $this->getJson($this->adminUrl('/prizes'))->assertOk();
+        $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk();
+        $this->postJson($this->adminUrl('/prizes'), ['title' => 'Sticker', 'cost_bucks' => 1])->assertForbidden();
+        $this->putJson($this->adminUrl('/prizes/'.$prize->id), ['cost_bucks' => 1])->assertForbidden();
+        $this->assertSame(1, Prize::query()->count(), 'no prize was made');
+        $this->assertSame(8, $prize->fresh()->cost_bucks, 'and none was changed');
+
+        // Neither permission: even the reads close.
+        Role::findByName('masjid-admin', 'web')->revokePermissionTo('view contacts');
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $this->actAs($this->admin->fresh());
+
+        $this->getJson($this->adminUrl('/prizes'))->assertForbidden();
+        $this->getJson($this->adminUrl('/prize-reconciliation'))->assertForbidden();
+    }
+
+    #[Test]
     public function the_office_routes_answer_403_for_a_school_without_the_store_and_are_closed_to_a_teacher(): void
     {
         $this->actAs($this->admin);
@@ -653,6 +714,25 @@ class ClassStoreApiTest extends TestCase
         }
         $this->assertSame(3, \App\Support\ClassStoreSettings::for($this->school->id)['points_per_buck']);
         $this->assertTrue(\App\Support\ClassStoreSettings::paperEnabled($this->school->id));
+    }
+
+    #[Test]
+    public function a_start_day_a_superadmin_chooses_is_theirs_and_a_rate_change_alone_leaves_the_pause_mark(): void
+    {
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $url = $this->adminUrl('/class-store-settings');
+        $this->actAs($super);
+        $swept = fn () => DB::table('masjid_points_settings')->where('masjid_id', $this->school->id)->value('bucks_swept_at');
+
+        DB::table('masjid_points_settings')->insert(['masjid_id' => $this->school->id, 'bucks_from' => '2026-10-04', 'bucks_swept_at' => '2026-10-05 10:00:00']);
+
+        // The rate alone does not touch the mark that tells the sweep the store ran.
+        $this->putJson($url, ['points_per_buck' => 2])->assertOk();
+        $this->assertNotNull($swept());
+
+        // A start day someone has just set is theirs: a pause the sweep has not yet noticed must not wipe it.
+        $this->putJson($url, ['bucks_from' => '2026-10-11'])->assertOk()->assertJsonPath('data.bucks_from', '2026-10-11');
+        $this->assertNull($swept());
     }
 
     #[Test]

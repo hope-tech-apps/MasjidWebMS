@@ -71,6 +71,8 @@ class PrizeLedgerEntry extends Model
         'amount',
         'week_start',
         'week_basis',
+        'week_points',
+        'week_rate',
         'prize_id',
         'prize_title',
         'prize_cost',
@@ -95,6 +97,8 @@ class PrizeLedgerEntry extends Model
         return [
             'amount' => 'integer',
             'week_basis' => 'integer',
+            'week_points' => 'integer',
+            'week_rate' => 'integer',
             'prize_cost' => 'integer',
             'breakdown' => 'array',
             'occurred_at' => 'datetime',

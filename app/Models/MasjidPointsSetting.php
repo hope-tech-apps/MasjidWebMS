@@ -31,6 +31,7 @@ class MasjidPointsSetting extends Model
         'points_per_buck',
         'paper_bucks_enabled',
         'bucks_from',
+        'bucks_swept_at',
     ];
 
     protected function casts(): array
@@ -40,6 +41,7 @@ class MasjidPointsSetting extends Model
             'points_per_buck' => 'integer',
             'paper_bucks_enabled' => 'boolean',
             'bucks_from' => 'date',
+            'bucks_swept_at' => 'datetime',
         ];
     }
 }

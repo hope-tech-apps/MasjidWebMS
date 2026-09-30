@@ -1010,7 +1010,7 @@ organisation** (Al-Razi included) until a SuperAdmin switches it on.
   still work. `dedupe_key` is a nullable UNIQUE string (NULLs are distinct on both engines; there are no
   partial indexes) and is how "once" is a database fact: `earned:{membership}:{week_start}`,
   `adjusted:{membership}:{week}:{n}`, `reversal:{entry}`, `redeemed:{membership}:{request_id}`,
-  `expired:{membership}:{cutoff}`. `week_start` is a plain `Y-m-d` string, NOT a `date` cast: the cast stores a
+  `expired:{membership}:{cutoff}:{n}` (`n` counts that cutoff's earlier write-offs). `week_start` is a plain `Y-m-d` string, NOT a `date` cast: the cast stores a
   timestamp on SQLite, and an exact match would silently miss there.
   `group_membership_id` is RESTRICT like every academic record, and `AcademicRecordsHeld` tells the office
   ("N Manara Bucks") before the database refuses.
@@ -1025,9 +1025,20 @@ organisation** (Al-Razi included) until a SuperAdmin switches it on.
   no `earned` row mints; the LAST TWO closed weeks are re-read and a late change becomes an `adjusted` delta
   clamped so no balance goes below zero. `week_basis` records what the week's points came to after each
   row, so a clamped clawback is forgiven ONCE and never collected out of a later week's earnings. Older
-  weeks are frozen. **Nothing retroactive by surprise:** the first time a school with the store on is seen,
-  `masjid_points_settings.bucks_from` is set to the start of the week in progress; a SuperAdmin may move it
-  earlier on purpose (only the last 60 closed weeks are minted in one run). `behavior_weeks.prizes_converted_at`
+  weeks are frozen. **A week keeps the rate it was minted at:** every `earned` and `adjusted` row also keeps
+  `week_rate` (and `week_points`, what the basis was worked out from), a week is re-priced at ITS OWN rate, so a
+  SuperAdmin changing `points_per_buck` moves nothing already minted (the first
+  version compared today's rate with a basis worked out at yesterday's and clawed back a fifth of two weeks).
+  The adjustment is decided again under the student's lock, so two overlapping runs cannot write one late
+  change twice. **`bucks_from` is a DAY, not a week:** points awarded before its midnight on the school's clock
+  never mint, even inside the same Sunday-to-Sunday week. **A class that has ended** (`groups.ends_on`) mints
+  nothing for a week that opens after its last day. **Nothing retroactive by surprise:** the first time a school
+  with the store on is seen, `masjid_points_settings.bucks_from` is set to the start of the week in progress; a
+  SuperAdmin may move it earlier on purpose (only the last 60 closed weeks are minted in one run). **A pause is
+  not history:** every sweep that finds the store on leaves `bucks_swept_at`; a sweep that finds it OFF for a
+  school with that mark clears `bucks_from` and the mark, so switching the store back on counts from the week in
+  progress and the weeks it was off are not paid in one hourly run (a start day chosen by a SuperAdmin after
+  that is theirs, and a school that never ran keeps a start day set in advance). `behavior_weeks.prizes_converted_at`
   records a processed class-week (a saving of work; the dedupe key is what makes minting once-only) and never
   touches the Friday report's `report_sent_at` claim.
 - **Every write locks the student first.** `App\Support\ClassStore` is the only writer of a person's ledger
@@ -1037,15 +1048,22 @@ organisation** (Al-Razi included) until a SuperAdmin switches it on.
   nothing. A `request_id` from the screen (one per click) makes a double-tap a replay. **The prize must be this
   school's and either school-wide or this class's own** (`Prize::availableTo`, checked again in the service
   because a console caller runs unbound). Stock is optional (blank = unlimited), taken in the same
-  transaction and given back by a reversal. Reversal is once per entry, only of a redemption or a cash-out, and refused after
+  transaction and given back by a reversal. The locks cannot be seen by a SQLite test, so
+  `ClassStoreLedgerTest::every_ledger_write_takes_its_row_locks_and_takes_them_first` pins the source (four in
+  `ClassStore`, one in the retention purge, each before the read it protects). The screen keeps ONE request id per
+  write (student and prize, or student and amount) across a retry after a dropped response, and forgets it only
+  on success or a definitive 4xx, so a lost response is a replay and not a second deduction. Reversal is once per entry, only of a redemption or a cash-out, and refused after
   an expiry (an expired balance stays ended).
 - **Cash-out to paper is BUILT AND OFF** (`masjid_points_settings.paper_bucks_enabled`, default false, SuperAdmin
   only): the owner paused the physical Manara Bucks until the admin team decides. It is refused in `ClassStore`
   itself, not only in a controller, and the screen hides it. It writes a `cashed_out` row with the 20/10/5/1
   breakdown, and `GET .../bucks/handout` is the printable class hand-out for a day.
-- **Expiry (R5).** `bucks:expire` writes one `expired` row per child and cutoff at the end of a class
+- **Expiry (R5).** `bucks:expire` writes an `expired` row per child and cutoff at the end of a class
   (`groups.ends_on`) and of each school-calendar year: what the child still holds that was minted before the
-  cutoff, never below zero. **The retention purge removes a child's ledger as a SET**
+  cutoff, never below zero. **It is re-runnable per cutoff:** the week that holds the cutoff is minted only
+  after it closes, so bucks for a pre-cutoff week can arrive after the first write-off; every run works the sum
+  out again and writes a further `expired:{m}:{cutoff}:{n}` for what is left (nothing left, nothing written).
+  Tests drive the real `bucks:mint` then `bucks:expire` order across that week. **The retention purge removes a child's ledger as a SET**
   (`PrizeLedgerEntry::purgeDueSets`, inside `groups:purge-feed`): only when EVERY row is due, decided again inside a
   transaction that holds the roster row, so it can never leave a redemption without what paid for it.
 - **Privacy: exactly as private as an award.** Every balance is read through
