@@ -383,10 +383,17 @@
                                 <span>{{ t('points_all_weeks') }}</span>
                                 <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
                             </div>
-                            <!-- The weekly report page: only where the school has the report
-                                 on (`points_weekly_report`), the same switch the Friday email
-                                 answers to. Off means no link and no page (review F1). -->
-                            <router-link v-if="weeklyReportOn(group)" :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                        </div>
+
+                        <!-- The weekly report page: only where the school has the report
+                             on (`points_weekly_report`), the same switch the Friday email
+                             answers to. Off means no link and no page (review F1). Kept
+                             OUT of the "This week" block above and off the class's own
+                             opt-in: the email goes to every class in a granted school, so
+                             a family whose class has not opted in still gets a link to the
+                             page the email is about (review G1). -->
+                        <div v-if="weeklyReportOn(group)" class="mb-3">
+                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
                                 {{ t('weekly_report_open') }}
                             </router-link>
                         </div>
