@@ -123,7 +123,8 @@ jobs:
     # cannot reach production.
     services:
       mysql:
-        image: mysql:8.0
+        # Production runs 8.4 (read 2026-09-30: 8.4.8); tests/Mysql asserts the match.
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: masjid_test
@@ -179,3 +180,18 @@ jobs:
         run: |
           php artisan migrate:rollback --force --no-interaction --step=1
           php artisan migrate --force --no-interaction
+
+      - name: MySQL-only tests (tests/Mysql, group "mysql")
+        # Properties SQLite cannot show. Excluded from every other run by
+        # phpunit.xml; the suite refuses any database whose name does not end
+        # in _test, so it can only ever meet this job's throwaway database.
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: masjid_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: vendor/bin/pest --group=mysql --colors=never
