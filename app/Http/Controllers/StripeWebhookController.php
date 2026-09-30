@@ -709,14 +709,40 @@ class StripeWebhookController extends Controller
 
             $donation->forceFill(['receipt_delivered_at' => now()])->save();
         } catch (\Throwable $e) {
-            // The class only, never the message: a transport's message quotes the recipient
-            // ("550 no such user donor@example.org"), and a log line is not where a donor's
-            // address belongs. The donation id is what staff need to find the row.
+            // The class, and the transport's own words with every address taken out of them: a
+            // transport's message quotes the recipient ("550 no such user donor@example.org"), and
+            // a log line is not where a donor's address belongs, but "no such user" is exactly
+            // what staff need to tell a mistyped address from a mail outage. The donation id is
+            // what finds the row.
             Log::warning('Receipt email failed to send', [
                 'donation_id' => $donation->id,
                 'error' => $e::class,
+                'reason' => self::scrubbedReason($e->getMessage(), (string) $email),
             ]);
         }
+    }
+
+    /**
+     * A failure message that is safe to log: the recipient's address replaced by `[recipient]`,
+     * then any other email-shaped text by `[email]`, cut to 300 characters.
+     *
+     * Only for a SEND failure, whose message quotes an address and nothing else of the donor. It
+     * is NOT used for a PDF render failure: that message can quote the letter's names, which no
+     * pattern can find, so the render failure logs the class alone.
+     *
+     * The cut comes last, so it can never leave the front half of an address behind. If the
+     * pattern itself fails (PCRE gives up on a hostile message), nothing is logged at all rather
+     * than the text unscrubbed.
+     */
+    private static function scrubbedReason(string $message, string $recipient): string
+    {
+        if ($recipient !== '') {
+            $message = str_ireplace($recipient, '[recipient]', $message);
+        }
+
+        $message = preg_replace('/[^\s@<>"\']+@[^\s@<>"\']+/', '[email]', $message);
+
+        return $message === null ? '' : mb_substr($message, 0, 300);
     }
 
     private function handlePaymentIntentSucceeded(array $pi, ?string $account): void

@@ -254,11 +254,20 @@ class DonationReceiptPdfTest extends TestCase
         $this->assertCount(1, app('mailer')->getSymfonyTransport()->messages());
     }
 
-    #[Test]
-    public function a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient(): void
+    /**
+     * A mail transport whose refusal is whatever $text makes of the addresses it was given, as a real
+     * SMTP server's quotes the address it refused.
+     *
+     * @param  \Closure(list<string>): string  $text
+     */
+    private function refuseEverySendWith(\Closure $text): void
     {
-        // A transport whose refusal quotes the address it was given, as real SMTP servers do.
-        Mail::extend('refusing', fn () => new class extends AbstractTransport {
+        Mail::extend('refusing', fn () => new class($text) extends AbstractTransport {
+            public function __construct(private readonly \Closure $text)
+            {
+                parent::__construct();
+            }
+
             protected function doSend(SentMessage $message): void
             {
                 $to = array_map(
@@ -266,7 +275,7 @@ class DonationReceiptPdfTest extends TestCase
                     $message->getEnvelope()->getRecipients()
                 );
 
-                throw new \RuntimeException('550 5.1.1 no such user ' . implode(',', $to));
+                throw new \RuntimeException(($this->text)($to));
             }
 
             public function __toString(): string
@@ -275,6 +284,13 @@ class DonationReceiptPdfTest extends TestCase
             }
         });
         config(['mail.default' => 'refusing', 'mail.mailers.refusing' => ['transport' => 'refusing']]);
+    }
+
+    #[Test]
+    public function a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient(): void
+    {
+        // A transport whose refusal quotes the address it was given, as real SMTP servers do.
+        $this->refuseEverySendWith(fn (array $to): string => '550 5.1.1 no such user ' . implode(',', $to));
 
         $logged = [];
         Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
@@ -293,10 +309,46 @@ class DonationReceiptPdfTest extends TestCase
         $this->assertSame($donation->id, $failures[0]->context['donation_id']);
         $this->assertSame(\RuntimeException::class, $failures[0]->context['error']);
 
+        // The transport's own words are kept, because they tell staff a mistyped address from an outage;
+        // the address in them is not.
+        $this->assertSame('550 5.1.1 no such user [recipient]', $failures[0]->context['reason']);
+
         foreach ($logged as $event) {
             $line = $event->message . ' ' . json_encode($event->context);
             $this->assertStringNotContainsString('donor@test.local', $line, 'no log line quotes the recipient');
-            $this->assertStringNotContainsString('no such user', $line, 'nor the transport\'s own message');
+        }
+    }
+
+    #[Test]
+    public function a_failed_receipt_sends_reason_scrubs_every_address_in_it_and_is_capped_at_300_characters(): void
+    {
+        // A refusal that quotes the recipient, two OTHER addresses (one in angle brackets, in capitals), and a long tail.
+        $this->refuseEverySendWith(fn (array $to): string => 'relay denied for ' . implode(',', $to)
+            . ' (bounces go to postmaster@mail.example.org and cc <Ops.Team@Example.ORG>) ' . str_repeat('x', 400));
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt email failed to send'));
+
+        $this->assertCount(1, $failures, 'premise: the failed send is logged once');
+
+        $scrubbed = 'relay denied for [recipient] (bounces go to [email] and cc <[email]>) ' . str_repeat('x', 400);
+
+        $this->assertSame(mb_substr($scrubbed, 0, 300), $failures[0]->context['reason'], 'recipient, then any other address, then the cut');
+        $this->assertSame(300, mb_strlen($failures[0]->context['reason']));
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsStringIgnoringCase('donor@test.local', $line);
+            $this->assertStringNotContainsStringIgnoringCase('postmaster@mail.example.org', $line);
+            $this->assertStringNotContainsStringIgnoringCase('Ops.Team@Example.ORG', $line);
         }
     }
 
