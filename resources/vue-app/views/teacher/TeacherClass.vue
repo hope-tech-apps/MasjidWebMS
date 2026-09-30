@@ -2443,7 +2443,7 @@ import {
     mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
-    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
+    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
     planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
@@ -3553,7 +3553,12 @@ const deletePlan = async () => {
     const ticket = planForms.current();
     planDeleting.value = true;
     try {
-        await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        try {
+            await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        } catch (e) {
+            // A 404 is "nothing to delete", not a failure: carry on as after a removal that worked.
+            if (!planAlreadyGone(e)) throw e;
+        }
         // Still on the removed plan: the day's next one opens. Moved on to
         // another while the removal ran: she stays there, with her draft.
         if (planForms.isCurrent(ticket)) {

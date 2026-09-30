@@ -24,8 +24,10 @@ import {
     subjectLine,
     untypedNote,
     weightNote,
+    weightsClearCall,
     weightsFormFrom,
     weightsRequest,
+    weightsSaveCall,
     workFormFrom,
     workFormReady,
     workRequest,
@@ -381,7 +383,7 @@ test('no denominator is no percentage, never NaN', () => {
 test('the office Grades tab takes its points percentage from the helper and rounds nothing itself', () => {
     const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
 
-    assert.match(view, /import \{ averageLines, pointsPercentText, subjectLine, weightNote \} from '@\/core\/helpers\/gradebook'/);
+    assert.match(view, /import \{[^}]*\bpointsPercentText\b[^}]*\} from '@\/core\/helpers\/gradebook'/);
     assert.match(view, /pointsPercentText\(student\.value\?\.summary\?\.points_earned, student\.value\?\.summary\?\.points_possible\)/);
     assert.match(view, /\(\{\{ pointsPct \}\}\)/, 'the helper\'s string already carries its % sign');
     assert.doesNotMatch(view, /Math\.round/, 'no second rounding in the tab');
@@ -449,4 +451,193 @@ test('a weight typed on one piece says it counts on its own, not "(this work)"',
     assert.doesNotMatch(label, /this work/);
     // The type's own weight is still the plain "counts 40".
     assert.equal(weightNote({ scale: 'points', type: 'test' }, weightsOn, true), 'counts 40');
+});
+
+// ---------------------------------------------------------------- the office sets the class's weights
+
+const adminBase = '/api/admin/masjids/7/groups/12';
+
+test('the office saves weights with one PUT to the admin route, and clears them with another', () => {
+    const typed = weightsRequest({ test: '40', quiz: '20', homework: '10', classwork: '10', other: '10' }, types);
+    assert.equal(typed.ok, true);
+    if (!typed.ok) return;
+
+    assert.deepEqual(weightsSaveCall(adminBase, typed.weights), {
+        method: 'put',
+        url: '/api/admin/masjids/7/groups/12/grade-weights',
+        payload: { weights: { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 } },
+    });
+    assert.deepEqual(weightsClearCall(adminBase), {
+        method: 'put',
+        url: '/api/admin/masjids/7/groups/12/grade-weights',
+        payload: { clear: true },
+    });
+    // A clear carries no weights: the server refuses the two together.
+    assert.equal('weights' in weightsClearCall(adminBase).payload, false);
+});
+
+test('the URL the office panel builds is the route the server mounts, with the same permission as its neighbours', () => {
+    const routes = readFileSync(new URL('../../../routes/admin.php', import.meta.url), 'utf8');
+    const line = routes.match(/Route::put\('([^']*grade-weights)', \[GroupGradeWeightsController::class, 'update'\]\)\s*->middleware\('([^']*)'\)/);
+    assert.ok(line, 'routes/admin.php mounts PUT grade-weights on GroupGradeWeightsController');
+    assert.equal(line![2], 'permission:manage contacts');
+
+    // The route is `{masjid_id}/groups/{group_id}/grade-weights` under `api/admin/masjids`.
+    const path = `/api/admin/masjids/${line![1].replace('{masjid_id}', '7').replace('{group_id}', '12')}`;
+    assert.equal(weightsClearCall(adminBase).url, path);
+});
+
+test('the office Grades tab sends its weights through those calls, on its own admin base', () => {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+
+    // The base is the admin group route, the one every other call in the tab uses.
+    assert.match(view, /const base = computed\(\(\) => `\/api\/admin\/masjids\/\$\{props\.masjidId\}\/groups\/\$\{props\.groupId\}`\);/);
+    assert.match(view, /weightsSaveCall\(base\.value, request\.weights\)/);
+    assert.match(view, /weightsClearCall\(base\.value\)/);
+    assert.match(view, /ApiService\.put\(call\.url as any, call\.payload\)/);
+    // What was typed is checked as the teacher's panel checks it, before any request.
+    assert.match(view, /weightsRequest\(weightsForm\.value, workTypes\.value, weightMax\.value\)/);
+    assert.match(view, /if \(!request\.ok\) \{ weightsError\.value = request\.message; return; \}/);
+    // The types and the ceiling come off the payload, not a copy of the server's list.
+    assert.match(view, /workTypes\.value = res\.data\?\.types \?\? workTypes\.value;/);
+    assert.match(view, /weightMax\.value = res\.data\?\.weight_max \?\? weightMax\.value;/);
+});
+
+test('the office weights panel is not read-only: inputs, Save and Clear are always there, and success and failure are said', () => {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+    const panel = view.slice(view.indexOf('data-test="weights-panel"'), view.indexOf('No work has been set for this class yet.'));
+    assert.ok(panel.length > 500, 'the panel is in the work list');
+
+    // Editable inputs, one per type off the payload, bound to the form.
+    assert.match(panel, /<input :id="`weight-\$\{t\.key\}`" v-model="weightsForm\[t\.key\]" type="number"/);
+    assert.doesNotMatch(panel, /disabled="!/, 'nothing here is disabled for who the user is');
+    assert.doesNotMatch(panel, /<input[^>]*\bdisabled\b/);
+    // Save is always offered; Clear is offered once the class has weights, behind a confirmation.
+    assert.match(panel, /<button class="btn btn-sm btn-success" :disabled="savingWeights" @click="saveWeights">/);
+    assert.match(panel, /<button v-if="weightingEnabled && !confirmClearWeights" class="btn btn-sm btn-outline-danger"/);
+    assert.match(panel, /<button class="btn btn-sm btn-danger" :disabled="savingWeights" @click="clearWeights">Clear them<\/button>/);
+    // Success and errors, the way the neighbouring panels put them.
+    assert.match(panel, /<p v-if="weightsSaved" class="text-success small mt-2 mb-0">/);
+    assert.match(panel, /<p v-if="weightsError" class="text-danger small mt-2 mb-0" role="alert">\{\{ weightsError \}\}<\/p>/);
+    assert.match(view, /weightsError\.value = firstFieldError\(e, failed\);/);
+
+    // The teacher's limited-teacher machinery has no place here, and the old "read-only" line is gone.
+    for (const teacherOnly of ['canChangeWeights', 'mayChangeWeights', 'weights-read-only', 'my_subjects']) {
+        assert.doesNotMatch(view, new RegExp(teacherOnly), teacherOnly);
+    }
+    assert.doesNotMatch(view, /read-only here/);
+    // The button that opens it reads "Set weights" until the class has some.
+    assert.match(view, /\{\{ weightingEnabled \? 'Weights' : 'Set weights' \}\}/);
+});
+
+test('after a save the list is re-read without the loading swap, so the panel stays and the badges follow', () => {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+
+    assert.match(view, /const load = async \(quiet = false\) => \{\s+if \(!quiet\) loading\.value = true;/);
+    assert.match(view, /await load\(true\);/);
+    assert.match(view, /onMounted\(\(\) => load\(\)\);/, 'the first load is not quiet, and is not handed the mount hook\'s arguments');
+});
+
+/**
+ * The office panel's save and clear, as the component has them, run against stubs (the suite has no
+ * renderer). What matters is the request that leaves, and what the panel holds after each answer.
+ */
+async function runOfficePanel(answer: (call: { url: string; payload: unknown }) => unknown, typed: Record<string, string>) {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+    const start = view.indexOf('const sendWeights = async');
+    const clearLine = view.indexOf('const clearWeights = ');
+    assert.ok(start !== -1 && clearLine > start, 'the tab defines sendWeights, saveWeights and clearWeights together');
+    // The script is TypeScript and this runner (Node 22.12) has no type stripper for a snippet: the three
+    // annotations these functions use are removed by hand, and any other one is a syntax error, loudly.
+    const block = view.slice(start, view.indexOf('\n', clearLine))
+        .replace(/\b(\w+): (?:WeightsCall|string|any)\b/g, '$1')
+        .replace(/ as any\b/g, '');
+
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+    const held = {
+        weights: { value: {} as Record<string, number> },
+        weightingEnabled: { value: false },
+        weightsForm: { value: typed },
+        savingWeights: { value: false },
+        weightsSaved: { value: false },
+        weightsError: { value: '' },
+        confirmClearWeights: { value: true },
+    };
+    const sent: { url: string; payload: unknown }[] = [];
+    let reloads = 0;
+    const build = new AsyncFunction(
+        'held', 'base', 'workTypes', 'weightMax', 'ApiService', 'load',
+        'weightsRequest', 'weightsFormFrom', 'weightsSaveCall', 'weightsClearCall', 'firstFieldError',
+        `const { weights, weightingEnabled, weightsForm, savingWeights, weightsSaved, weightsError, confirmClearWeights } = held;\n${block}\nreturn { saveWeights, clearWeights };`
+    );
+    const { saveWeights, clearWeights } = await build(
+        held, { value: adminBase }, { value: types }, { value: 100 },
+        { put: async (url: string, payload: unknown) => { sent.push({ url, payload }); return { data: answer({ url, payload }) }; } },
+        async (quiet: boolean) => { assert.equal(quiet, true, 'the re-read is the quiet one'); reloads++; },
+        weightsRequest, weightsFormFrom, weightsSaveCall, weightsClearCall, firstFieldError
+    );
+
+    return { held, sent, saveWeights, clearWeights, reloads: () => reloads };
+}
+
+const typedFive = { test: '40', quiz: '20', homework: '10', classwork: '10', other: '10' };
+const savedAnswer = () => ({ status: 'success', data: { weights: { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 }, weighting_enabled: true, cleared_overrides: 0 } });
+
+test('the office panel saves: one PUT with the five weights, then it says Saved and holds what the server holds', async () => {
+    const p = await runOfficePanel(savedAnswer, typedFive);
+    await p.saveWeights();
+
+    assert.deepEqual(p.sent, [{ url: '/api/admin/masjids/7/groups/12/grade-weights', payload: { weights: { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 } } }]);
+    assert.equal(p.held.weightsSaved.value, true);
+    assert.equal(p.held.weightsError.value, '');
+    assert.equal(p.held.weightingEnabled.value, true);
+    assert.deepEqual(p.held.weights.value, { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 });
+    assert.equal(p.held.savingWeights.value, false);
+    assert.equal(p.reloads(), 1, 'the list is re-read so the badges follow');
+});
+
+test('the office panel refuses a bad form before any request, in the words the teacher\'s panel uses', async () => {
+    const p = await runOfficePanel(savedAnswer, { ...typedFive, quiz: '' });
+    await p.saveWeights();
+
+    assert.deepEqual(p.sent, []);
+    assert.equal(p.held.weightsError.value, 'Set a weight for Quiz, or clear the weights.');
+    assert.equal(p.held.weightsSaved.value, false);
+});
+
+test('the office panel clears: one PUT of clear, then the weights are gone and the confirmation closes', async () => {
+    const p = await runOfficePanel(() => ({ status: 'success', data: { weights: {}, weighting_enabled: false, cleared_overrides: 2 } }), typedFive);
+    p.held.weights.value = { test: 40 };
+    p.held.weightingEnabled.value = true;
+    await p.clearWeights();
+
+    assert.deepEqual(p.sent, [{ url: '/api/admin/masjids/7/groups/12/grade-weights', payload: { clear: true } }]);
+    assert.equal(p.held.weightingEnabled.value, false);
+    assert.deepEqual(p.held.weights.value, {});
+    assert.equal(p.held.confirmClearWeights.value, false);
+    assert.equal(p.held.weightsSaved.value, true);
+    assert.equal(p.reloads(), 1, 'clearing removes every piece\'s own weight, so the list is re-read');
+});
+
+test('a refused save or clear shows the server\'s words and never says Saved', async () => {
+    const refuse = (status: number, message: string) => () => { throw { response: { status, data: { status: 'failed', message } } }; };
+
+    const forbidden = await runOfficePanel(refuse(403, 'User does not have the right permissions.'), typedFive);
+    await forbidden.saveWeights();
+    assert.equal(forbidden.held.weightsError.value, 'User does not have the right permissions.');
+    assert.equal(forbidden.held.weightsSaved.value, false);
+    assert.equal(forbidden.held.savingWeights.value, false, 'the button frees up');
+    assert.equal(forbidden.reloads(), 0);
+
+    const invalid = await runOfficePanel(() => { throw { response: { status: 422, data: { status: 'failed', data: { weights: ['At least one type of work has to count for something.'] } } } }; }, typedFive);
+    await invalid.saveWeights();
+    assert.equal(invalid.held.weightsError.value, 'At least one type of work has to count for something.');
+
+    // No answer at all: the panel's own sentence, per verb.
+    const offline = await runOfficePanel(() => { throw new Error('Network Error'); }, typedFive);
+    await offline.saveWeights();
+    assert.equal(offline.held.weightsError.value, 'The weights could not be saved.');
+    await offline.clearWeights();
+    assert.equal(offline.held.weightsError.value, 'The weights could not be cleared.');
+    assert.equal(offline.held.weightsSaved.value, false);
 });

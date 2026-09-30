@@ -202,6 +202,19 @@ export function weightsRequest(form: Record<string, string>, types: WorkType[], 
     return { ok: true, weights };
 }
 
+/** The two writes to a class's weights, as the office's Weights panel sends them (`base` is `/api/admin/masjids/{id}/groups/{id}`). */
+export type WeightsCall = { method: 'put'; url: string; payload: { weights: Record<string, number> } | { clear: true } };
+
+/** Set every type's weight: `weights` is what `weightsRequest` returned. */
+export function weightsSaveCall(base: string, weights: Record<string, number>): WeightsCall {
+    return { method: 'put', url: `${base}/grade-weights`, payload: { weights } };
+}
+
+/** Clear the class's weights, and with them every piece of work's own weight. */
+export function weightsClearCall(base: string): WeightsCall {
+    return { method: 'put', url: `${base}/grade-weights`, payload: { clear: true } };
+}
+
 // ---------------------------------------------------------------- figures
 
 /** 81.4 -> "81.4%"; whole numbers lose the decimal; null is a dash. Never used for a levels mean. */
