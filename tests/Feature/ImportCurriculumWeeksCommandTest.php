@@ -769,6 +769,93 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->assertSame(1576, $this->rowCount());
     }
 
+    #[Test]
+    public function the_dry_run_prints_the_apply_line_that_pins_every_count_the_flag_waives(): void
+    {
+        $this->importBase();
+        $this->copyingPlan();
+
+        [$exit, $out] = $this->runImport($this->split, ['--dry-run' => true]);
+
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString(
+            'approved apply: --expect=delete=32,insert=96,after=1576,plans_touching=1,assignments_touching=0,delete_absent=0 --allow-references',
+            $out
+        );
+
+        // A plan that needs no flag prints no apply line.
+        $clean = $this->makeSchool('Al-Razi Clean ' . uniqid());
+        [, $cleanOut] = $this->runImport($this->base, ['--dry-run' => true], $clean->id);
+        $this->assertStringNotContainsString('approved apply:', $cleanOut);
+
+        // A teacher who saves a plan between that dry run and the apply stops the pinned apply.
+        $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+        $this->copyingAssignment();
+        [$exit, $out] = $this->runImport($this->split, [
+            '--expect' => 'delete=32,insert=96,after=1576,plans_touching=1,assignments_touching=0,delete_absent=0',
+            '--allow-references' => true,
+        ]);
+        $this->assertSame(1, $exit, $out);
+        $this->assertStringContainsString('assignments_touching=0, but the plan says 1', $out);
+        $this->assertSame($before, $this->fingerprint());
+        $this->assertSame($filesBefore, $this->storedFiles());
+    }
+
+    #[Test]
+    public function the_documented_apply_example_and_the_runbook_pin_what_the_flag_waives(): void
+    {
+        $command = (string) file_get_contents(base_path('app/Console/Commands/ImportCurriculumWeeks.php'));
+        $this->assertMatchesRegularExpression(
+            '/curriculum:import 14 <file> --expect=\S*plans_touching=\d\S*assignments_touching=\d\S*delete_absent=\d\S* --allow-references/',
+            $command,
+            'the docblock example pins the three counts --allow-references waives'
+        );
+        $this->assertStringContainsString('the inverse file is an', strtolower(preg_replace('/\s+\*?\s*/', ' ', $command)), 'the rollback note says the inverse refuses too');
+
+        foreach (['DECISIONS.md', '.claude/rules/groups.md'] as $doc) {
+            $text = (string) file_get_contents(base_path($doc));
+            $this->assertStringContainsString('plans_touching', $text, $doc);
+            $this->assertMatchesRegularExpression('/inverse file[^.]*refuses/i', preg_replace('/\s+/', ' ', $text), "{$doc}: the rollback note names the refusal");
+        }
+
+        $this->assertStringNotContainsString(
+            '--expect=<the approved counts>',
+            (string) file_get_contents(base_path('DECISIONS.md')),
+            'the runbook names the counts to pin, not "the approved counts"'
+        );
+    }
+
+    #[Test]
+    public function applying_the_inverse_after_teachers_planned_on_the_split_cells_refuses_until_allowed(): void
+    {
+        $this->importBase();
+        $this->applySplit();
+        $inverse = $this->inverseFile();
+
+        // A teacher plans on a split cell (Pre-K Qur'an, week 3).
+        $cell = CurriculumWeek::query()->where('grade_label', 'Pre-Kindergarten')->where('subject', "Qur'an")->where('week_no', 3)->firstOrFail();
+        LessonPlan::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+            'session_date' => now()->toDateString(), 'subject' => "Qur'an", 'grade_label' => 'Pre-Kindergarten',
+            'curriculum_week_no' => 3, 'objective' => $cell->objective, 'prefill_source' => $cell->source_label, 'body' => 'Body.',
+        ]);
+        $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+
+        [$exit, $out] = $this->runImport($inverse, ['--expect' => 'delete=96,insert=32,after=1512']);
+        $this->assertRefusedUntouched($exit, $out, '1 lesson plans copy a cell this file deletes', $before, $filesBefore, 1576);
+
+        [$exit, $out] = $this->runImport($inverse, ['--dry-run' => true]);
+        $this->assertSame(1, $this->plan($out)['plans_touching']);
+        $this->assertStringContainsString('approved apply: --expect=delete=96,insert=32,after=1512,plans_touching=1,assignments_touching=0,delete_absent=0 --allow-references', $out);
+
+        [$exit, $out] = $this->runImport($inverse, ['--expect' => 'delete=96,insert=32,after=1512,plans_touching=1,assignments_touching=0,delete_absent=0', '--allow-references' => true]);
+        $this->assertSame(0, $exit, $out);
+        $this->assertSame(1512, $this->rowCount());
+        $this->assertSame(1, LessonPlan::query()->count(), 'the teacher\'s plan is never written');
+    }
+
     // ---------------------------------------------------------- verify's total
 
     #[Test]

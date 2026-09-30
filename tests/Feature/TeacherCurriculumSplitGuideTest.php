@@ -348,6 +348,30 @@ class TeacherCurriculumSplitGuideTest extends TestCase
         $this->assertArrayNotHasKey('guide_subject', $july);
     }
 
+    #[Test]
+    public function grades_the_split_does_not_cover_get_no_combined_fallback_for_any_separated_subject(): void
+    {
+        // Grades 3-5 have only the combined column: the school never separated them, so
+        // asking for Arabic (which has no column there at all), Qur'an or Islamic Studies
+        // gets no prefill, in a week the split covers elsewhere (3) and in one it does not (12).
+        foreach (['Grade 3', 'Grade 4', 'Grade 5'] as $grade) {
+            foreach (['Arabic', 'Arabic Language', "Qur'an", 'Islamic Studies'] as $subject) {
+                foreach ([3, 12] as $week) {
+                    $this->assertNull(
+                        $this->guide(['grade' => $grade, 'subject' => $subject, 'week' => $week])['cell'],
+                        "{$grade} {$subject} week {$week}"
+                    );
+                }
+            }
+        }
+
+        // The combined column itself is still read as it always was.
+        $this->assertNotNull($this->guide(['grade' => 'Grade 4', 'subject' => self::COMBINED, 'week' => 3])['cell']);
+
+        // Pre-K to Grade 2 keep the fallback.
+        $this->assertTrue($this->guide(['grade' => 'Grade 2', 'subject' => 'Arabic Language', 'week' => 12])['cell']['from_combined_guide']);
+    }
+
     // ------------------------------------------------------------------ the fence on the guide reads
 
     private function limitTo(array $subjects): void
@@ -388,12 +412,15 @@ class TeacherCurriculumSplitGuideTest extends TestCase
             $this->assertNull($payload['cell'], "{$refused}: no cell");
         }
 
-        // The siblings of a Qur'an cell are the subjects this teacher teaches: neither
-        // Arabic Language nor Islamic Studies (nor Mathematics), so their objectives never
-        // reach the integration boxes.
+        // The siblings of a Qur'an cell are fenced only where a staff subject covers them: neither
+        // Arabic Language nor Islamic Studies reaches the integration boxes, while the subjects no
+        // staff subject covers (Mathematics, Science...) still do.
         $cell = $this->guide($g + ['subject' => "Qur'an", 'week' => 4])['cell'];
         $this->assertSame("Qur'an", $cell['subject']);
-        $this->assertSame([], $cell['siblings']);
+        $siblings = array_column($cell['siblings'], 'subject');
+        $this->assertNotContains('Arabic Language', $siblings);
+        $this->assertNotContains('Islamic Studies', $siblings);
+        $this->assertContains('Mathematics', $siblings);
 
         // A week past the split: the combined line, which this teacher teaches.
         $late = $this->guide($g + ['subject' => "Qur'an", 'week' => 12])['cell'];
@@ -423,7 +450,10 @@ class TeacherCurriculumSplitGuideTest extends TestCase
 
         $cell = $this->guide($g + ['subject' => 'Islamic Studies', 'week' => 4])['cell'];
         $this->assertSame('Respect others', $cell['objective']);
-        $this->assertSame([], $cell['siblings']);
+        $siblings = array_column($cell['siblings'], 'subject');
+        $this->assertNotContains("Qur'an", $siblings);
+        $this->assertNotContains('Arabic Language', $siblings);
+        $this->assertContains('Mathematics', $siblings);
     }
 
     #[Test]
@@ -447,7 +477,10 @@ class TeacherCurriculumSplitGuideTest extends TestCase
 
         $cell = $this->guide($g + ['subject' => 'Arabic Language', 'week' => 4])['cell'];
         $this->assertSame('Learn 3 colors', $cell['objective']);
-        $this->assertSame([], $cell['siblings']);
+        $siblings = array_column($cell['siblings'], 'subject');
+        $this->assertNotContains("Qur'an", $siblings);
+        $this->assertNotContains('Islamic Studies', $siblings);
+        $this->assertContains('Mathematics', $siblings, 'a subject no staff subject covers is still an integration line');
 
         // Week 12: the combined line is not this teacher's to read, so there is no fallback.
         $this->assertNull($this->guide($g + ['subject' => 'Arabic Language', 'week' => 12])['cell']);

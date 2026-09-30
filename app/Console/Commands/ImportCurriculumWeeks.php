@@ -17,7 +17,7 @@ use RuntimeException;
  *
  *   php artisan curriculum:import 14 database/curriculum/al-razi-pacing-2026-27.json
  *   php artisan curriculum:import 14 database/curriculum/al-razi-qai-split-2026-27-q1.json --dry-run
- *   php artisan curriculum:import 14 <file> --expect=delete=32,insert=96,after=1576 --allow-references
+ *   php artisan curriculum:import 14 <file> --expect=delete=32,insert=96,after=1576,plans_touching=0,assignments_touching=0,delete_absent=0 --allow-references
  *   php artisan curriculum:import 14 <file> --verify --expect=after=1576
  *
  * IDEMPOTENT. Every row is an upsert against `curriculum_week_cell_unique`, so
@@ -50,7 +50,11 @@ use RuntimeException;
  *              assignments_touching above 0) or a cell to delete that is already
  *              absent (delete_absent above 0: the file's spelling is not the
  *              database's, so it would insert beside what it meant to replace).
- *              This flag is the explicit yes, given after the dry run was read.
+ *              This flag is the explicit yes, given after the dry run was read. It
+ *              waives the refusal for ANY counts, so pass it only with --expect
+ *              pinning plans_touching, assignments_touching and delete_absent (the
+ *              dry run prints the exact line): a teacher who saves a plan between
+ *              the dry run and the apply then stops it instead of passing unreported.
  *   --verify   Read-only: does the database equal the file byte for byte, and
  *              are the replaced cells gone? Exits non-zero on any mismatch. This
  *              is how MySQL's round trip is shown faithful, which SQLite cannot.
@@ -70,7 +74,10 @@ use RuntimeException;
  *
  * ROLLBACK restores CONTENT, not ids or timestamps: the inverse file re-creates a
  * deleted cell through an upsert, so it comes back with a new id and fresh
- * created_at / updated_at. Nothing references a cell's id.
+ * created_at / updated_at. Nothing references a cell's id. The inverse file is an
+ * ordinary import: once teachers have planned on the split cells, applying it
+ * REFUSES (plans_touching above 0) until --allow-references is added, so a
+ * rollback dry-runs the inverse first and pins its counts like any other apply.
  *
  * ORDERING HAZARD: re-running a base file after a file that replaces some of its
  * cells re-creates them, because an import only upserts. Re-run the replacing
@@ -354,6 +361,9 @@ class ImportCurriculumWeeks extends Command
 
         if ($this->referenceRefusals($plan) !== []) {
             $this->line('  an apply of this plan needs --allow-references (it refuses without it): ' . implode(' ', $this->referenceRefusals($plan)));
+            // The flag waives the refusal for any counts, so the apply pins these ones: if a
+            // teacher saves a plan between this dry run and the apply, --expect refuses it.
+            $this->line('  approved apply: --expect=' . $this->pinnedCounts($counts) . ' --allow-references');
         }
 
         if ($plan->skipped) {
@@ -400,6 +410,20 @@ class ImportCurriculumWeeks extends Command
         }
 
         return $refused;
+    }
+
+    /**
+     * The counts an apply that uses --allow-references must pin: the plan's own
+     * shape and the three the flag waives.
+     *
+     * @param  array<string, int>  $counts
+     */
+    private function pinnedCounts(array $counts): string
+    {
+        return implode(',', array_map(
+            fn (string $k): string => "{$k}={$counts[$k]}",
+            ['delete', 'insert', 'after', 'plans_touching', 'assignments_touching', 'delete_absent'],
+        ));
     }
 
     /** @return list<string> */

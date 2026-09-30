@@ -42,8 +42,9 @@ class CurriculumController extends TeacherController
 
     /**
      * The subjects the school's separated plan covers (Pre-K to Grade 2, weeks
-     * 1-8). Asked for in a week that plan has no row for, they fall back to the
-     * combined column's line for that week (see combinedFallback).
+     * 1-8). Asked for in a week that plan has no row for, in a grade the plan
+     * covers, they fall back to the combined column's line for that week (see
+     * combinedFallback).
      */
     private const SEPARATED_KEYS = ['quran', 'islamic studies', 'arabic language', 'arabic'];
 
@@ -120,7 +121,10 @@ class CurriculumController extends TeacherController
                     ->where('subject', '!=', $combined ? $combined->subject : $subject)
                     ->orderBy('subject')
                     ->get(['subject', 'focus', 'objective'])
-                    ->filter(fn (CurriculumWeek $s): bool => $fenced($s->subject))
+                    // Only the subjects a staff subject covers (Qur'an, Arabic, Islamic Studies) are
+                    // fenced. Mathematics, Science and the rest belong to no staff subject, so a
+                    // limited teacher still gets their integration lines.
+                    ->filter(fn (CurriculumWeek $s): bool => SubjectKey::staffKeys(SubjectKey::for($s->subject)) === [] || $fenced($s->subject))
                     // The school's separated Qur'an, Arabic and Islamic Studies weeks keep the
                     // surah and the specifics in the Objective, not the Focus Skill, so a
                     // sibling carries its objective when it has one. A row without one
@@ -165,15 +169,18 @@ class CurriculumController extends TeacherController
      * combined column carries the school's own line for weeks 9-36, and a teacher
      * planning week 12 should get it, not "nothing for that week".
      *
-     * Null for any other subject, when the week has a row of its own (the caller
-     * checked), when the fence does not let this teacher see the combined column
-     * (an Arabic-only teacher), or when the guide has no combined row that week.
+     * Null for any other subject, for a grade the separated plan does not cover
+     * (Grades 3-5 have only the combined column, so nothing there is "not
+     * separated yet", and Arabic has no column at any grade but the plan's),
+     * when the week has a row of its own (the caller checked), when the fence
+     * does not let this teacher see the combined column (an Arabic-only
+     * teacher), or when the guide has no combined row that week.
      *
      * @param  callable(?string): bool  $fenced
      */
     private function combinedFallback(string $grade, string $subject, int $week, callable $fenced): ?CurriculumWeek
     {
-        if (! in_array(SubjectKey::for($subject), self::SEPARATED_KEYS, true)) {
+        if (! in_array(SubjectKey::for($subject), self::SEPARATED_KEYS, true) || ! $this->gradeIsSeparated($grade)) {
             return null;
         }
 
@@ -183,6 +190,16 @@ class CurriculumController extends TeacherController
             ->orderBy('subject')
             ->get()
             ->first(fn (CurriculumWeek $r): bool => in_array(SubjectKey::for($r->subject), self::COMBINED_KEYS, true) && $fenced($r->subject));
+    }
+
+    /** Whether the school's separated plan has rows for this grade (Pre-K to Grade 2). */
+    private function gradeIsSeparated(string $grade): bool
+    {
+        return CurriculumWeek::query()
+            ->where('grade_label', $grade)
+            ->distinct()
+            ->pluck('subject')
+            ->contains(fn (string $subject): bool => in_array(SubjectKey::for($subject), self::SEPARATED_KEYS, true));
     }
 
     /**

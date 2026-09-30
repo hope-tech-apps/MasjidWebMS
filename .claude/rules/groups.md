@@ -1205,7 +1205,10 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   replacing file.
   An apply REFUSES (exit 1, nothing written) while `plans_touching`, `assignments_touching`
   or `delete_absent` is above 0, with or without `--expect`, unless `--allow-references` is
-  given. The rollback restores content, not ids or timestamps. `--verify` checks only the
+  given, and the flag is passed only with `--expect` pinning `plans_touching`, `assignments_touching` and
+  `delete_absent` (the dry run prints the line). The rollback restores content, not ids or timestamps, and the
+  inverse file refuses too (`plans_touching` above 0) once teachers have planned on the split cells, so it needs the
+  same dry run and `--allow-references`. `--verify` checks only the
   file's cells and the replaced keys, so pass `--verify --expect=after=<the dry run's
   after>` and compare the tenant total it prints.
 - **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows

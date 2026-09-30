@@ -5469,15 +5469,21 @@ the inverse restores all existing rows and removes only cells the file created.
   A dry run still prints all three counts and says an apply needs the flag. A second apply of the same file
   therefore needs `--allow-references` too (delete_absent 32).
 - **Runbook, production.** (1) Dry run against production just before, read the counts. (2) The owner approves those
-  exact counts. (3) `sudo -u www-data php artisan curriculum:import 14 <file> --expect=<the approved counts>
-  --allow-references` (run as the web user, as `bin/deploy` runs migrate, so the log and the safety directory are
+  exact counts. (3) `sudo -u www-data php artisan curriculum:import 14 <file>
+  --expect=delete=N,insert=N,after=N,plans_touching=N,assignments_touching=N,delete_absent=N --allow-references`
+  with the six counts the owner approved (the dry run prints this line when the flag is needed). The flag waives the
+  refusal for any counts, so the pins on `plans_touching`, `assignments_touching` and `delete_absent` are what stop
+  an apply when a teacher saves a plan between the dry run and the apply (run as the web user, as `bin/deploy` runs migrate, so the log and the safety directory are
   not left root-owned). (4) `--verify --expect=after=<the dry run's after>`: `--verify` compares only the file's
   cells and the replaced keys, so a row nobody planned passes it; the total it prints next to the expected `after`
   is the check on everything else, and a different total fails it.
 - **Rollback restores content, not ids or timestamps.** The inverse file re-creates a deleted cell through an
   upsert, so it comes back with a new id and new `created_at` / `updated_at`. Nothing references a cell's id (plans
   and work copy text), and every read orders by content, so nothing depends on them. It is "the same cells", not
-  "the same rows byte for byte".
+  "the same rows byte for byte". The inverse file is an ordinary import, so once teachers have planned on the split
+  cells (Qur'an, Arabic Language, Islamic Studies, Pre-K to Grade 2, weeks 1-8) applying it refuses with
+  `plans_touching` above 0 until `--allow-references` is added: dry-run the inverse, have its counts approved, and
+  pin them as in the runbook.
 - **Public repository.** The data file, generator, tests and these notes carry no private document id, no
   internal note field, and no reference to internal working notes or local paths. The source is pinned by `docx_sha256`
   and `txt_sha256`, a title and `document_date`. The committed source `.txt` stays for now (whether the school's
@@ -5485,13 +5491,18 @@ the inverse restores all existing rows and removes only cells the file created.
   is absent, checks the data file's sha256 pins and skips the line-by-line comparison with a message, so dropping the
   `.txt` later is a one-file deletion (the generator needs it to rebuild, which is not a test).
 - **Weeks past the split.** A plan for Qur'an, Islamic Studies or Arabic Language asking for a week the split has no
-  row for (weeks 9 on, and Grades 3-5) gets the combined "Qur’an & Islamic Studies" line for that week as the
-  prefill, marked `from_combined_guide` with `guide_subject`, and the plan form says so. No split row is invented,
+  row for (weeks 9 on) in a grade the split covers (Pre-K to Grade 2: the grade has split rows) gets the combined
+  "Qur’an & Islamic Studies" line for that week as the prefill. Grades 3-5 have only the combined column, so they get
+  no fallback for any separated subject (Arabic has no column there at all, and "the school has not separated this
+  week yet" would be false); the owner has not decided Arabic or Qur'an prefills for them. Where it applies, the
+  prefill is marked `from_combined_guide` with `guide_subject`, and the plan form says so. No split row is invented,
   and the combined line is not its own sibling. The fence applies: an Arabic-only teacher, who may not read the
   combined column, gets no fallback.
 - **The subject fence covers the guide reads.** With `?group_id=` the week list, the cell, its siblings and the
   standards search use the same `SubjectFence` limits `subjectsFor` uses, by subject key. Qur'an-only and
-  Islamic-Studies-only teachers still see the combined column; an Arabic-only teacher does not. The SPA now sends the
+  Islamic-Studies-only teachers still see the combined column; an Arabic-only teacher does not. Only the subjects a staff
+  subject covers (Qur'an, Arabic, Islamic Studies and the combined column) are fenced among a cell's siblings:
+  Mathematics, Science and the rest have no staff subject, so a limited teacher still gets those integration lines. The SPA now sends the
   class on the prefill, the plan's standards search and the assignment picker. Without `group_id` nothing is fenced,
   as before.
 - **Minors.** `in_scope` and the scope rank compare by subject key, not exact string. An empty Objective or Learning
