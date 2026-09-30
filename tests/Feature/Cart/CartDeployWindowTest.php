@@ -35,6 +35,9 @@ use Tests\TestCase;
  * fails SAFE and answers "absent" (the live form refund arm and the prune, where absent is
  * harmless); `CartTables::existsOrFail()` fails CLOSED and rethrows (every path that deletes or
  * moves data, where a false "absent" would erase or orphan a paid order). The tests below pin both.
+ *
+ * The daily `cart:prune` (03:41) is the third caller of the fail-safe question: with the tables absent
+ * it logs one info line, exits 0 and touches nothing.
  */
 class CartDeployWindowTest extends TestCase
 {
@@ -228,6 +231,51 @@ class CartDeployWindowTest extends TestCase
 
         $this->assertSame(MemberAccountDeletion::OUTCOME_ERASED, $result['outcome']);
         $this->assertDatabaseMissing('contacts', ['id' => $member->id]);
+    }
+
+    // ------------------------------------------------------------ the prune
+
+    #[Test]
+    public function the_prune_in_the_window_logs_one_info_line_exits_zero_and_touches_no_cart_table(): void
+    {
+        $this->dropTheCartTables();
+
+        $touched = [];
+        DB::listen(function ($query) use (&$touched): void {
+            // A double-quoted identifier: the table-exists question names its table in single quotes.
+            if (preg_match('/"(carts|cart_items|orders|order_items)"/', (string) $query->sql) === 1) {
+                $touched[] = (string) $query->sql;
+            }
+        });
+
+        // Without the guard the sweep's first query failed on a table that is not there.
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('cart tables not migrated yet; nothing to prune')
+            ->assertExitCode(0);
+
+        $this->assertSame([], $touched, 'no statement named a cart table');
+
+        Log::shouldHaveReceived('info')->once();
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'cart tables not migrated yet; nothing to prune')
+            ->once();
+    }
+
+    #[Test]
+    public function the_prune_skips_the_night_and_deletes_nothing_when_the_table_check_itself_throws(): void
+    {
+        // An open basket that expired ten days ago: exactly what the sweep deletes when it runs.
+        $basket = $this->cart($this->org());
+        $basket->forceFill(['expires_at' => now()->subDays(10)])->save();
+        $this->breakTheTableCheck('carts');
+
+        // Skipping one night is harmless (the next run asks again); a stack trace in the scheduler is not.
+        $this->artisan('cart:prune')->assertExitCode(0);
+
+        $this->assertTrue(Cart::withoutMasjidScope()->whereKey($basket->id)->exists(), 'nothing was deleted');
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'cart tables not migrated yet; nothing to prune')
+            ->once();
     }
 
     // ------------------------------------------------------------ a check that throws

@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Cart;
 use App\Models\Order;
+use App\Support\CartTables;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -65,6 +66,12 @@ use Illuminate\Support\Facades\Log;
  *
  * Having an intent is not being paid: only `status` says that, and `paid` is never touched.
  *
+ * bin/deploy makes this code live BEFORE `migrate`, and the sweep is scheduled daily at 03:41. If
+ * that window (or a failed migrate) spans the schedule, the cart tables are not there: it logs
+ * one info line, exits 0 and touches nothing, rather than failing on a table that does not exist
+ * (CartTables::has(): a check that cannot be answered also reads as "not there", which skips one
+ * night and is safe here; the next run asks again).
+ *
  * Idempotent (a second run finds nothing), `--dry-run` deletes nothing, and it runs UNBOUND
  * across every organisation, as a console sweep does. It prints its counts and logs them
  * (`schedule:run` discards stdout).
@@ -82,6 +89,19 @@ class PruneCarts extends Command
 
     public function handle(): int
     {
+        // The sweep reads and deletes across all four tables (the cascades take cart_items and
+        // order_items), so any one of them missing means migrate has not finished.
+        $missing = array_values(array_filter(CartTables::NAMES, static fn (string $table): bool => ! CartTables::has($table)));
+
+        if ($missing !== []) {
+            $message = 'cart tables not migrated yet; nothing to prune';
+
+            $this->info($message);
+            Log::info($message, ['missing' => $missing]);
+
+            return self::SUCCESS;
+        }
+
         $graceDays = max(0, (int) config('cart.prune.grace_days', 1));
         $holdMinutes = max(0, (int) config('cart.prune.hold_minutes', 60));
 
