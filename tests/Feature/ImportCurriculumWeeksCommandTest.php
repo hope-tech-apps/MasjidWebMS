@@ -115,7 +115,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     }
 
     /** @return array{0: int, 1: string} */
-    private function run(string $file, array $options = [], ?int $masjid = null): array
+    private function runImport(string $file, array $options = [], ?int $masjid = null): array
     {
         $exit = Artisan::call('curriculum:import', ['masjid' => $masjid ?? $this->school->id, 'file' => $file] + $options);
 
@@ -130,7 +130,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         return json_decode($m[1], true, flags: JSON_THROW_ON_ERROR);
     }
 
-    private function count(?int $masjid = null): int
+    private function rowCount(?int $masjid = null): int
     {
         return DB::table('curriculum_weeks')->where('masjid_id', $masjid ?? $this->school->id)->count();
     }
@@ -149,7 +149,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
 
     private function importBase(): void
     {
-        [$exit] = $this->run($this->base);
+        [$exit] = $this->runImport($this->base);
         $this->assertSame(0, $exit);
     }
 
@@ -157,7 +157,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
 
     private function applySplit(): array
     {
-        [$exit, $out] = $this->run($this->split, ['--expect' => self::APPLY_EXPECT]);
+        [$exit, $out] = $this->runImport($this->split, ['--expect' => self::APPLY_EXPECT]);
         $this->assertSame(0, $exit, $out);
 
         return [$exit, $out];
@@ -174,6 +174,15 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         return $path;
     }
 
+    /** Every file the command has written so far, sorted; empty when it has written none. */
+    private function storedFiles(): array
+    {
+        $found = glob($this->storage . '/app/private/curriculum-imports/*') ?: [];
+        sort($found);
+
+        return $found;
+    }
+
     private function inverseFile(): string
     {
         $found = glob($this->storage . '/app/private/curriculum-imports/*inverse-of-*');
@@ -188,22 +197,22 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     #[Test]
     public function the_base_file_still_imports_1512_cells_and_re_imports_with_nothing_changed(): void
     {
-        [$exit, $out] = $this->run($this->base);
+        [$exit, $out] = $this->runImport($this->base);
         $this->assertSame(0, $exit);
         $this->assertStringContainsString('Imported 1512 cells', $out);
-        $this->assertSame(1512, $this->count());
+        $this->assertSame(1512, $this->rowCount());
         $first = $this->fingerprint();
 
-        [$exit, $out] = $this->run($this->base);
+        [$exit, $out] = $this->runImport($this->base);
         $this->assertSame(0, $exit);
-        $this->assertSame(1512, $this->count());
+        $this->assertSame(1512, $this->rowCount());
         $plan = $this->plan($out);
         $this->assertSame([0, 0, 0, 1512, 1512], [$plan['delete'], $plan['insert'], $plan['update'], $plan['unchanged'], $plan['after']]);
         $this->assertSame($first, $this->fingerprint(), 'nothing changed on a second import');
 
-        [$exit] = $this->run($this->base, ['--fresh']);
+        [$exit] = $this->runImport($this->base, ['--fresh' => true]);
         $this->assertSame(0, $exit);
-        $this->assertSame(1512, $this->count());
+        $this->assertSame(1512, $this->rowCount());
     }
 
     #[Test]
@@ -215,11 +224,11 @@ class ImportCurriculumWeeksCommandTest extends TestCase
             ['grade_label' => 'Grade 1', 'subject' => 'Science', 'week_no' => 1, 'focus' => 'y'],
         ]]));
 
-        [$exit, $out] = $this->run($path);
+        [$exit, $out] = $this->runImport($path);
 
         $this->assertSame(0, $exit);
         $this->assertStringContainsString('(1 skipped)', $out);
-        $this->assertSame(1, $this->count());
+        $this->assertSame(1, $this->rowCount());
     }
 
     #[Test]
@@ -237,7 +246,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         });
 
         try {
-            $this->run($this->base, ['--fresh']);
+            $this->runImport($this->base, ['--fresh' => true]);
             $this->fail('the import should have thrown');
         } catch (RuntimeException $e) {
             $this->assertSame('disk full', $e->getMessage());
@@ -245,7 +254,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
             $armed = false;
         }
 
-        $this->assertSame(1512, $this->count(), 'the --fresh delete was rolled back with the failed import');
+        $this->assertSame(1512, $this->rowCount(), 'the --fresh delete was rolled back with the failed import');
         $this->assertSame($before, $this->fingerprint());
     }
 
@@ -256,8 +265,10 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     {
         $this->importBase();
         $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
+        $this->assertCount(2, $filesBefore, 'the base apply wrote its own inverse file and snapshot');
 
-        [$exit, $out] = $this->run($this->split, ['--dry-run']);
+        [$exit, $out] = $this->runImport($this->split, ['--dry-run' => true]);
         $plan = $this->plan($out);
 
         $this->assertSame(0, $exit);
@@ -277,7 +288,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->assertStringContainsString('applies after al-razi-pacing-2026-27.json', $out);
 
         $this->assertSame($before, $this->fingerprint(), 'a dry run changes no row');
-        $this->assertDirectoryDoesNotExist($this->storage . '/app/private/curriculum-imports', 'and writes no file');
+        $this->assertSame($filesBefore, $this->storedFiles(), 'and writes no file');
     }
 
     // ---------------------------------------------------------- the split: apply
@@ -286,15 +297,17 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     public function the_split_applies_with_the_matching_expect_and_every_cell_equals_the_file(): void
     {
         $this->importBase();
-        $untouchedWhere = fn ($q) => $q->where('subject', '!=', self::COMBINED);
+        $july = ['English Language Arts', 'Healthful Living', 'Mathematics', 'Science', 'Social Studies'];
+        $untouchedWhere = fn ($q) => $q->whereIn('subject', $july);
         // The 1260 rows the split must not touch, ids and timestamps included.
         $before = $this->fingerprint(null, $untouchedWhere);
-        $this->assertSame(1260, DB::table('curriculum_weeks')->where('subject', '!=', self::COMBINED)->count());
+        $this->assertSame(1260, DB::table('curriculum_weeks')->whereIn('subject', $july)->count());
 
         Log::spy();
+        $filesBefore = $this->storedFiles();
         [, $out] = $this->applySplit();
 
-        $this->assertSame(1576, $this->count());
+        $this->assertSame(1576, $this->rowCount());
         $this->assertSame($before, $this->fingerprint(null, $untouchedWhere), 'the 1260 other rows are byte-identical');
 
         $bySubject = array_map('intval', DB::table('curriculum_weeks')->groupBy('subject')->selectRaw('subject, count(*) n')->pluck('n', 'subject')->all());
@@ -331,8 +344,8 @@ class ImportCurriculumWeeksCommandTest extends TestCase
 
         // The safety files: written, 0600, decodable.
         $dir = $this->storage . '/app/private/curriculum-imports';
-        $files = glob("{$dir}/*");
-        $this->assertCount(2, $files);
+        $files = array_values(array_diff($this->storedFiles(), $filesBefore));
+        $this->assertCount(2, $files, 'the split apply added exactly an inverse file and a snapshot');
         $this->assertSame(0700, fileperms($dir) & 0777);
         foreach ($files as $f) {
             $this->assertSame(0600, fileperms($f) & 0777, $f);
@@ -362,7 +375,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->applySplit();
         $after = $this->fingerprint();
 
-        [$exit, $out] = $this->run($this->split);
+        [$exit, $out] = $this->runImport($this->split);
         $plan = $this->plan($out);
 
         $this->assertSame(0, $exit);
@@ -380,7 +393,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->importBase();
         $this->applySplit();
 
-        [$exit, $out] = $this->run($this->split, ['--verify']);
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true]);
         $this->assertSame(0, $exit, $out);
         $this->assertStringContainsString('mismatches: 0', $out);
         $this->assertStringContainsString('1576 cells', $out);
@@ -388,7 +401,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         DB::table('curriculum_weeks')->where('grade_label', 'Kindergarten')->where('subject', "Qur'an")->where('week_no', 4)
             ->update(['objective' => 'Memorize Surah Al-Ikhlas']);
 
-        [$exit, $out] = $this->run($this->split, ['--verify']);
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true]);
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('mismatches: 1', $out);
         $this->assertStringContainsString('Kindergarten / Qur\'an / week 4: objective differs', $out);
@@ -399,20 +412,21 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     {
         $this->importBase();
         $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
 
-        [$exit, $out] = $this->run($this->split, ['--verify']);
+        [$exit, $out] = $this->runImport($this->split, ['--verify' => true]);
 
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('mismatches: 128', $out, '96 missing cells and 32 replaced cells still present');
         $this->assertSame($before, $this->fingerprint());
-        $this->assertDirectoryDoesNotExist($this->storage . '/app/private/curriculum-imports');
+        $this->assertSame($filesBefore, $this->storedFiles(), 'verify writes no file');
     }
 
     #[Test]
     public function verify_cannot_be_combined_with_anything_that_writes(): void
     {
         foreach (['--dry-run' => true, '--fresh' => true, '--expect' => 'delete=0'] as $option => $value) {
-            [$exit, $out] = $this->run($this->base, ['--verify' => true, $option => $value]);
+            [$exit, $out] = $this->runImport($this->base, ['--verify' => true, $option => $value]);
             $this->assertSame(1, $exit, $option);
             $this->assertStringContainsString('only reads', $out);
         }
@@ -427,20 +441,20 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->applySplit();
         $inverse = $this->inverseFile();
 
-        [$exit, $out] = $this->run($inverse, ['--dry-run']);
+        [$exit, $out] = $this->runImport($inverse, ['--dry-run' => true]);
         $plan = $this->plan($out);
         $this->assertSame(0, $exit);
         $this->assertSame([96, 32, 0, 0, 1512], [$plan['delete'], $plan['insert'], $plan['update'], $plan['unchanged'], $plan['after']]);
 
-        [$exit, $out] = $this->run($inverse, ['--expect' => 'delete=96,insert=32,after=1512']);
+        [$exit, $out] = $this->runImport($inverse, ['--expect' => 'delete=96,insert=32,after=1512']);
         $this->assertSame(0, $exit, $out);
-        $this->assertSame(1512, $this->count());
+        $this->assertSame(1512, $this->rowCount());
 
-        [$exit, $out] = $this->run($this->base, ['--verify']);
+        [$exit, $out] = $this->runImport($this->base, ['--verify' => true]);
         $this->assertSame(0, $exit, "the base file is the database again:\n{$out}");
 
         $this->applySplit();
-        $this->assertSame(1576, $this->count());
+        $this->assertSame(1576, $this->rowCount());
     }
 
     #[Test]
@@ -449,14 +463,14 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $this->importBase();
         $this->applySplit();
 
-        [$exit, $out] = $this->run($this->base);
+        [$exit, $out] = $this->runImport($this->base);
         $this->assertSame(0, $exit);
         $this->assertSame(32, $this->plan($out)['insert']);
-        $this->assertSame(1608, $this->count());
+        $this->assertSame(1608, $this->rowCount());
 
-        [$exit] = $this->run($this->split);
+        [$exit] = $this->runImport($this->split);
         $this->assertSame(0, $exit);
-        $this->assertSame(1576, $this->count());
+        $this->assertSame(1576, $this->rowCount());
     }
 
     // ---------------------------------------------------------- guards: each refuses and writes nothing
@@ -466,6 +480,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     {
         $this->importBase();
         $before = $this->fingerprint();
+        $filesBefore = $this->storedFiles();
 
         $oversize = $this->splitVariant(function (array $p) {
             $p['rows'][0]['objective'] = str_repeat('x', 501);
@@ -517,12 +532,12 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         ];
 
         foreach ($cases as $name => [$file, $options, $message]) {
-            [$exit, $out] = $this->run($file, $options);
+            [$exit, $out] = $this->runImport($file, $options);
 
             $this->assertSame(1, $exit, $name);
             $this->assertStringContainsString($message, $out, $name);
             $this->assertSame($before, $this->fingerprint(), "{$name}: the guide is unchanged");
-            $this->assertDirectoryDoesNotExist($this->storage . '/app/private/curriculum-imports', "{$name}: no file written");
+            $this->assertSame($filesBefore, $this->storedFiles(), "{$name}: no file written");
         }
     }
 
@@ -533,7 +548,7 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $before = $this->fingerprint();
         $this->school->forceFill(['name' => 'Some Other School'])->save();
 
-        [$exit, $out] = $this->run($this->split);
+        [$exit, $out] = $this->runImport($this->split);
 
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('name contains "razi"', $out);
@@ -543,11 +558,11 @@ class ImportCurriculumWeeksCommandTest extends TestCase
     #[Test]
     public function an_unknown_masjid_and_a_missing_file_are_refused(): void
     {
-        [$exit, $out] = $this->run($this->split, [], 9999);
+        [$exit, $out] = $this->runImport($this->split, [], 9999);
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('No masjid with id 9999', $out);
 
-        [$exit, $out] = $this->run($this->storage . '/nope.json');
+        [$exit, $out] = $this->runImport($this->storage . '/nope.json');
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('No file at', $out);
     }
@@ -571,9 +586,9 @@ class ImportCurriculumWeeksCommandTest extends TestCase
 
         $this->applySplit();
         $this->assertSame($theirs, $this->fingerprint($other->id), 'after the apply');
-        $this->assertSame(10, $this->count($other->id));
+        $this->assertSame(10, $this->rowCount($other->id));
 
-        $this->run($this->inverseFile(), ['--expect' => 'delete=96,insert=32,after=1512']);
+        $this->runImport($this->inverseFile(), ['--expect' => 'delete=96,insert=32,after=1512']);
         $this->assertSame($theirs, $this->fingerprint($other->id), 'after the rollback');
     }
 
@@ -601,21 +616,21 @@ class ImportCurriculumWeeksCommandTest extends TestCase
         $planBefore = LessonPlan::query()->findOrFail($plan->id)->getAttributes();
         $assignmentBefore = ClassAssignment::withTrashed()->findOrFail($id)->getAttributes();
 
-        [, $out] = $this->run($this->split, ['--dry-run']);
+        [, $out] = $this->runImport($this->split, ['--dry-run' => true]);
         $counts = $this->plan($out);
         $this->assertSame(1, $counts['plans_touching']);
         $this->assertSame(1, $counts['plans_combined_subject']);
         $this->assertSame(1, $counts['assignments_touching']);
 
         // An apply that pinned the earlier numbers is refused: the owner approved something else.
-        [$exit, $out] = $this->run($this->split, ['--expect' => 'plans_touching=0,assignments_touching=0']);
+        [$exit, $out] = $this->runImport($this->split, ['--expect' => 'plans_touching=0,assignments_touching=0']);
         $this->assertSame(1, $exit);
         $this->assertStringContainsString('plans_touching=0, but the plan says 1', $out);
-        $this->assertSame(1512, $this->count());
+        $this->assertSame(1512, $this->rowCount());
 
-        [$exit, $out] = $this->run($this->split, ['--expect' => 'delete=32,insert=96,plans_touching=1,assignments_touching=1']);
+        [$exit, $out] = $this->runImport($this->split, ['--expect' => 'delete=32,insert=96,plans_touching=1,assignments_touching=1']);
         $this->assertSame(0, $exit, $out);
-        $this->assertSame(1576, $this->count());
+        $this->assertSame(1576, $this->rowCount());
 
         $this->assertSame($planBefore, LessonPlan::query()->findOrFail($plan->id)->getAttributes(), 'the lesson plan is byte-identical');
         $this->assertSame($assignmentBefore, ClassAssignment::withTrashed()->findOrFail($id)->getAttributes(), 'the assignment is byte-identical');

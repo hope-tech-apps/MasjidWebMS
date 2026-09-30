@@ -185,7 +185,12 @@ class TeacherCurriculumSplitGuideTest extends TestCase
     #[Test]
     public function a_code_the_plan_repeats_offers_each_objective_and_names_its_week(): void
     {
-        $matches = $this->search(['q' => 'K.QUR.MEM.1', 'grade' => 'Kindergarten', 'subject' => "Qur'an"]);
+        $all = $this->search(['q' => 'K.QUR.MEM.1', 'grade' => 'Kindergarten', 'subject' => "Qur'an"]);
+
+        // "PK.QUR.MEM.1" ends with the typed "K.QUR.MEM.1", so the Pre-K row is offered too, below the
+        // in-scope rows; the plan's own two weeks are the ones that carry the flag.
+        $this->assertSame([true, true, false], array_column($all, 'in_scope'));
+        $matches = array_values(array_filter($all, fn (array $m): bool => $m['in_scope']));
 
         $this->assertCount(2, $matches);
         $this->assertSame([[4], [7]], array_column($matches, 'weeks'));
