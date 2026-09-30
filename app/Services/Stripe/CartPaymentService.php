@@ -250,10 +250,11 @@ class CartPaymentService
      * warning that it was flagged before settlement recorded it: Stripe does not redeliver a
      * refund or dispute, so ignoring it would lose it. An order names its payment from the first
      * session or payment-intent event that identified it, before settlement is tried
-     * (recordPaymentIntent()), so a payment settlement refused or failed to record is still found. A charge that is no basket's (every
-     * donation, lunch and registration refund) writes nothing, exactly as before this arm
-     * existed, and is logged at info so there is a trace. It never throws: a 500 would only
-     * make Stripe retry, and a lost flag is logged at error.
+     * (recordPaymentIntent()), so a payment settlement refused or failed to record is still
+     * found. A charge that is no basket's (every donation, lunch and registration refund)
+     * writes nothing, exactly as before this arm existed, and is logged at info so there is a
+     * trace. It never throws: a 500 would only make Stripe retry, and a lost flag is logged at
+     * error.
      *
      * The form registrations such a basket settled are the cart's, not the form arm's
      * (FormResponsePaymentService::handleChargeFlag skips them).
