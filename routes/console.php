@@ -93,17 +93,28 @@ Schedule::command('groups:notify-reactions')->hourlyAt(20)->withoutOverlapping(5
 // this sweep has announced it (GroupPost::scopePublished asks published_at <= now AND
 // announced_at): it refuses one whose author left the class and, for the rest, stamps
 // announced_at and sends the class-story email. A stopped sweep delays stories; it never
-// leaks one. Its run line goes to the monitors channel; a story stuck 10 minutes past its
-// time is an ERROR.
+// leaks one. Its run line goes to the monitors channel. A story or conversation stuck
+// 10 minutes past its time is reported by a DIFFERENT command, `groups:sweep-health` below,
+// because a dead sweep cannot report itself.
 // A CONVERSATION exists only because this sweep writes it, at its time, through the same
 // writer a live one uses, after asking its gates again. Both are claimed by an UPDATE, so
 // an overlapping run sends nothing twice. withoutOverlapping(5), not the bare call: a run
 // that is killed (a deploy, an OOM) never releases the mutex, and with the 24-hour default
 // that one dead run would silence every scheduled item for a day; five minutes costs at
 // most five, and a claim left in `sending` is handed back after
-// groups.scheduling.stale_claim_minutes. One WARNING line per run is the proof it ran
-// (production's LOG_LEVEL=warning drops an info line). See PublishDueGroupItems.
+// groups.scheduling.stale_claim_minutes. One info line per run on the monitors channel is
+// the proof it ran (production's LOG_LEVEL=warning would drop it on the default one). See
+// PublishDueGroupItems.
 Schedule::command('groups:publish-due')->everyMinute()->withoutOverlapping(5);
+
+// Is that sweep getting anything out? A story or conversation more than ten minutes past its
+// time and still not out is an ERROR on the monitors channel AND the default channel (counts
+// only); otherwise one info line on monitors. A command of its own, not a step inside the
+// sweep, so a sweep that is dead, wedged on its mutex or crashing cannot be the thing that has
+// to notice it (the point's W5/W6 delta review, P5). Every ten minutes is ten missed sweeps.
+// withoutOverlapping(9): a killed run must not hold the mutex past the next tick. See
+// GroupsSweepHealth.
+Schedule::command('groups:sweep-health')->everyTenMinutes()->withoutOverlapping(9);
 
 // The parent portal's translation cache. Same policy as the sweep above, over a
 // derived copy of the same content: every row is the Arabic of something a

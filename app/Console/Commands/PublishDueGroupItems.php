@@ -116,10 +116,6 @@ class PublishDueGroupItems extends Command
         // channel (the point's W5 review, item 6).
         Log::channel('monitors')->info($line);
 
-        if (! $dryRun) {
-            $this->warnIfStuck();
-        }
-
         return self::SUCCESS;
     }
 
@@ -300,9 +296,14 @@ class PublishDueGroupItems extends Command
     }
 
     /**
-     * A failure worth retrying rather than recording: MySQL deadlock (1213), lock-wait
-     * timeout (1205), serialization failure (SQLSTATE 40001), and SQLite's "database is
-     * locked". Walks the previous-exception chain, since the writer may wrap them.
+     * A failure worth retrying rather than recording. Contention: MySQL deadlock (1213),
+     * lock-wait timeout (1205), serialization failure (SQLSTATE 40001), SQLite's "database
+     * is locked". And a connection that dropped under the write (the point's W5/W6 delta
+     * review, P3): 2006 "server has gone away", 2013 "lost connection", 1040 "too many
+     * connections", 2002 "connection refused". Those come during a database restart or a
+     * failover, which is exactly when an item must not be failed for good: the write was
+     * rolled back and the next minute's run may well succeed. Walks the previous-exception
+     * chain, since the writer may wrap them.
      */
     private function isTransient(Throwable $e): bool
     {
@@ -312,44 +313,24 @@ class PublishDueGroupItems extends Command
                 $state = (string) ($info[0] ?? $x->getCode());
                 $driverCode = (int) ($info[1] ?? 0);
 
-                if ($state === '40001' || in_array($driverCode, [1205, 1213], true)
-                    || str_contains(strtolower($x->getMessage()), 'database is locked')) {
+                // A connect failure carries no errorInfo: the driver code is in the code or the text.
+                if ($driverCode === 0 && is_int($x->getCode())) {
+                    $driverCode = $x->getCode();
+                }
+
+                $message = strtolower($x->getMessage());
+
+                if ($state === '40001' || in_array($driverCode, [1205, 1213, 2006, 2013, 1040, 2002], true)
+                    || str_contains($message, 'database is locked')
+                    || str_contains($message, 'server has gone away')
+                    || str_contains($message, 'lost connection')
+                    || str_contains($message, 'connection refused')) {
                     return true;
                 }
             }
         }
 
         return false;
-    }
-
-    /**
-     * The sweep now decides when a story becomes visible, so an item that is well past
-     * its time and still not out is a fault somebody must hear about: an ERROR on the
-     * default channel (the point's W5 review, item 6). Ten minutes is ten missed runs.
-     * A cron that has stopped altogether runs nothing, this included; the monitors line
-     * above going quiet is that signal.
-     */
-    private function warnIfStuck(): void
-    {
-        $cutoff = now()->subMinutes(10);
-
-        $stories = GroupPost::withoutMasjidScope()
-            ->whereNull('announced_at')
-            ->whereNull('publish_failed_at')
-            ->where('published_at', '<=', $cutoff)
-            ->count();
-
-        $conversations = GroupMessageSchedule::withoutMasjidScope()
-            ->where('status', GroupMessageSchedule::STATUS_SCHEDULED)
-            ->where('send_at', '<=', $cutoff)
-            ->count();
-
-        if ($stories + $conversations > 0) {
-            Log::error(sprintf(
-                'groups:publish-due: %d scheduled stories and %d scheduled conversations are more than 10 minutes past their time and still not out',
-                $stories, $conversations
-            ));
-        }
     }
 
     private function markFailed(GroupMessageSchedule $item, string $reason): void

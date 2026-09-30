@@ -1090,25 +1090,123 @@ class ScheduledSweepTest extends TestCase
         $this->assertNull($fresh->failure_reason);
     }
 
+    // ============================== sweep liveness: a different command (P5)
+
     #[Test]
     public function a_story_stuck_more_than_ten_minutes_past_its_time_is_an_error_somebody_sees(): void
     {
-        // The point's W5 review, item 6. Simulate a story that keeps failing to be released.
+        // The point's W5 review, item 6, moved out of the sweep (the point's W5/W6 delta review, P5):
+        // a dead sweep cannot report itself. Simulate a story that keeps failing to be released.
         $post = $this->scheduledPost('+1 minute');
         $this->partialMock(\App\Services\Groups\GroupStoryPublisher::class, function ($mock) {
             $mock->shouldReceive('announce')->andThrow(new \RuntimeException('queue down'));
         });
 
+        $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
         Log::spy();
-        Log::shouldReceive('channel')->with('monitors')->andReturn(\Mockery::spy(\Psr\Log\LoggerInterface::class));
+        Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
 
         $this->goTo(now()->addMinutes(5)->toDateTimeString());
         $this->sweep();
-        Log::shouldNotHaveReceived('error', [\Mockery::on(fn ($m) => str_contains((string) $m, 'past their time'))]);
+        Artisan::call('groups:sweep-health');
+        Log::shouldNotHaveReceived('error');
+        $monitors->shouldNotHaveReceived('error');
+        $monitors->shouldHaveReceived('info')->withArgs(fn ($m) => str_starts_with((string) $m, 'groups:sweep-health:'));
 
         $this->goTo(now()->addMinutes(10)->toDateTimeString());
         $this->sweep();
-        Log::shouldHaveReceived('error')->withArgs(fn ($m) => str_contains((string) $m, '1 scheduled stories and 0 scheduled conversations are more than 10 minutes past their time'));
+        // The sweep itself no longer raises it.
+        Log::shouldNotHaveReceived('error');
+
+        Artisan::call('groups:sweep-health');
+        $expected = fn ($m) => str_contains((string) $m, '1 scheduled stories and 0 scheduled conversations are more than 10 minutes past their time');
+        Log::shouldHaveReceived('error')->once()->withArgs($expected);
+        $monitors->shouldHaveReceived('error')->once()->withArgs($expected);
         $this->assertNull($post->fresh()->announced_at);
+    }
+
+    #[Test]
+    public function the_health_check_counts_a_conversation_but_never_a_refused_cancelled_or_not_yet_late_item_and_names_no_one(): void
+    {
+        $now = now();
+        $late = $now->copy()->subMinutes(11);
+
+        // Stuck: a conversation still `scheduled` 11 minutes late.
+        GroupMessageSchedule::create([
+            'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+            'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => 'Secret subject', 'body' => 'Secret body',
+            'send_at' => $late,
+        ]);
+        // Not stuck: late by nine minutes, late but failed, late but being sent, late but cancelled.
+        foreach ([[GroupMessageSchedule::STATUS_SCHEDULED, 9], [GroupMessageSchedule::STATUS_FAILED, 30],
+            [GroupMessageSchedule::STATUS_SENDING, 30], [GroupMessageSchedule::STATUS_CANCELLED, 30]] as [$status, $minutes]) {
+            GroupMessageSchedule::create([
+                'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+                'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => 'x', 'body' => 'x',
+                'send_at' => $now->copy()->subMinutes($minutes), 'status' => $status,
+            ]);
+        }
+        // Stories: one refused, one cancelled (soft-deleted), one announced: none is stuck.
+        $refused = $this->scheduledPost('-30 minutes');
+        $refused->forceFill(['publish_failed_at' => $now])->save();
+        $this->scheduledPost('-30 minutes')->delete();
+        $this->scheduledPost('-30 minutes')->forceFill(['announced_at' => $now])->save();
+
+        $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
+        Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
+
+        $this->assertSame(0, Artisan::call('groups:sweep-health'));
+
+        $expected = fn ($m) => str_contains((string) $m, '0 scheduled stories and 1 scheduled conversations are more than 10 minutes')
+            && ! str_contains((string) $m, 'Secret');
+        Log::shouldHaveReceived('error')->once()->withArgs($expected);
+        $monitors->shouldHaveReceived('error')->once()->withArgs($expected);
+    }
+
+    #[Test]
+    public function the_health_check_is_quiet_with_one_info_line_when_nothing_is_late_and_the_sweep_no_longer_raises_it(): void
+    {
+        $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
+        Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
+
+        Artisan::call('groups:sweep-health');
+
+        $monitors->shouldHaveReceived('info')->once()->withArgs(fn ($m) => str_starts_with((string) $m, 'groups:sweep-health:'));
+        $monitors->shouldNotHaveReceived('error');
+        Log::shouldNotHaveReceived('error');
+    }
+
+    #[Test]
+    public function the_sweep_itself_no_longer_carries_the_staleness_check(): void
+    {
+        // Two hours late and unannounced: the sweep (whatever it does with the item) does not raise the alarm.
+        // (Written in the future and then left to go late: a row created already in the past is
+        // announced at birth, which would leave nothing stuck to report.)
+        $post = $this->scheduledPost('+1 minute');
+        $this->partialMock(\App\Services\Groups\GroupStoryPublisher::class, function ($mock) {
+            $mock->shouldReceive('announce')->andThrow(new \RuntimeException('queue down'));
+        });
+        Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn(\Mockery::spy(\Psr\Log\LoggerInterface::class));
+
+        $this->goTo(now()->addHours(2)->toDateTimeString());
+        $this->sweep();
+        $this->assertNull($post->fresh()->announced_at, 'the story is still unannounced, so it is stuck');
+
+        Log::shouldNotHaveReceived('error');
+    }
+
+    #[Test]
+    public function the_health_check_is_scheduled_every_ten_minutes_and_cannot_overlap_itself(): void
+    {
+        Artisan::call('list', ['--raw' => true]);
+        $event = collect(app(\Illuminate\Console\Scheduling\Schedule::class)->events())
+            ->first(fn ($e) => str_contains((string) $e->command, 'groups:sweep-health'));
+
+        $this->assertNotNull($event, 'groups:sweep-health is not scheduled');
+        $this->assertSame('*/10 * * * *', $event->expression);
+        $this->assertTrue($event->withoutOverlapping);
     }
 }

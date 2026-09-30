@@ -166,8 +166,12 @@ sent (nothing else sends them). Before rolling back:
 3. Only then roll back the code. To roll the schema back too, `migrate:rollback` the two scheduling migrations:
    their `down()`s REFUSE while any story or conversation is still waiting or sending, so step 2 is enforced.
 
-The sweep runs every minute and logs one info line per run to the **monitors** channel; a story or conversation more
-than 10 minutes past its time and still not out is an ERROR on the default channel.
+The sweep (`groups:publish-due`) runs every minute and logs one info line per run to the **monitors** channel. A
+separate command, `groups:sweep-health`, runs every ten minutes and checks the database directly (so a dead sweep cannot
+be the thing that has to report itself): a story or conversation more than 10 minutes past its time and still not out is
+an ERROR on both the **monitors** and the default channel (counts only); otherwise it writes one info line to
+**monitors**. After a rollback that removes the sweep, remove or expect the alert from `groups:sweep-health` too: it
+reads the same tables, and only the waiting items it counts need to be cleared (step 2 above).
 
 ## Scheduler cron
 
