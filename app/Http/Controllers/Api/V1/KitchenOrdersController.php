@@ -10,6 +10,7 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\MealOrderItem;
 use App\Services\Kitchen\KitchenOrderNotifier;
+use App\Services\Lunch\MealOrderCreator;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\AcceptedPaymentMethods;
 use App\Support\Errors;
@@ -21,7 +22,6 @@ use App\Support\PaymentMethods;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 /**
  * The PUBLIC kitchen ordering surface: a standing catalogue (MealMenu kind
@@ -74,7 +74,8 @@ class KitchenOrdersController extends Controller
 
     public function __construct(
         private MealOrderCheckoutService $checkout,
-        private KitchenOrderNotifier $notifier
+        private KitchenOrderNotifier $notifier,
+        private MealOrderCreator $creator
     ) {
     }
 
@@ -171,34 +172,25 @@ class KitchenOrdersController extends Controller
                 return response()->api(422, $e->getMessage(), null);
             }
 
-            $order = DB::transaction(function () use ($masjid, $menu, $request, $lines, $subtotal, $online, $method, $pickup, $origin) {
-                $order = new MealOrder([
-                    'meal_menu_id' => $menu->id,
-                    'customer_name' => trim((string) $request->input('customer_name')),
-                    'customer_phone' => trim((string) $request->input('customer_phone')),
-                    // Dropped when the organisation turned the field off, as on
-                    // the lunch door: a crafted body may still carry one.
-                    'customer_email' => $menu->collect_customer_email ? $request->input('customer_email') : null,
-                    'customer_notes' => $request->input('customer_notes'),
-                    'payment_method' => $online ? MealOrder::METHOD_ONLINE : MealOrder::METHOD_PICKUP,
-                ]);
-                $order->masjid_id = (int) $masjid->id;
-                $order->currency = $menu->currency;
-                $order->subtotal_minor = $subtotal;
-                $order->total_minor = $subtotal;
-                $order->order_number = MealOrder::nextOrderNumber((int) $masjid->id, (int) $menu->id);
-                $order->placed_at = now();
-                $order->pickup_at = $pickup;
-                $order->preferred_payment = $online ? null : $method;
-                $order->site_origin = $origin;
-                $order->save();
-
-                foreach ($lines as $line) {
-                    $order->items()->create(array_merge($line, ['masjid_id' => (int) $masjid->id]));
-                }
-
-                return $order;
-            }, 3);
+            // The write is MealOrderCreator's, shared with the lunch door and the
+            // cart; everything above is this door's gates and stays here.
+            $order = $this->creator->create(
+                $menu,
+                (int) $masjid->id,
+                ['lines' => $lines, 'subtotal_minor' => $subtotal],
+                [
+                    'name' => $request->input('customer_name'),
+                    'phone' => $request->input('customer_phone'),
+                    'email' => $request->input('customer_email'),
+                    'notes' => $request->input('customer_notes'),
+                ],
+                $online ? MealOrder::METHOD_ONLINE : MealOrder::METHOD_PICKUP,
+                $origin,
+                catalogue: [
+                    'pickup_at' => $pickup,
+                    'preferred_payment' => $online ? null : $method,
+                ]
+            );
 
             if ($online) {
                 try {

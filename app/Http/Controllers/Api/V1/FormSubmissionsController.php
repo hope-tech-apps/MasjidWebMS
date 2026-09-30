@@ -8,10 +8,10 @@ use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\FormStaffCode;
 use App\Models\Masjid;
+use App\Services\Forms\FormResponseWriter;
 use App\Services\Stripe\FormCheckoutRefused;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\Errors;
-use App\Support\FormAttachments;
 use App\Support\FormDateTaken;
 use App\Support\FormNotifier;
 use App\Support\FormPayment;
@@ -423,97 +423,31 @@ class FormSubmissionsController extends Controller
                         return ['date_taken', null];
                     }
 
-                    $created = new FormResponse(array_merge(
+                    // The row, its hold and its uploads are written by the writer the cart
+                    // shares (App\Services\Forms\FormResponseWriter). Every question above
+                    // (open, capacity, window, date, staff code, replay) was asked HERE; the
+                    // writer asks none, so the cart can record a payment that landed late.
+                    $created = app(FormResponseWriter::class)->write(
+                        $locked,
+                        $schema,
+                        $clean,
+                        match (true) {
+                            $staffCode !== null => FormResponseWriter::LEG_STAFF,
+                            $online => FormResponseWriter::LEG_ONLINE,
+                            $office => FormResponseWriter::LEG_OFFICE,
+                            default => FormResponseWriter::LEG_NONE,
+                        },
+                        $quote,
                         [
-                            'form_id' => $locked->id,
-                            'masjid_id' => $masjidId,
-                            'data' => $clean,
-                            'entry_count' => $schema->entryCount($clean),
-                            'amount_due' => $schema->amountDue($clean),
-                            'status' => 'new',
                             'device_id' => $request->input('device_id'),
                             'ip_address' => $request->ip(),
                             'user_agent' => substr((string) $request->userAgent(), 0, 1000),
-                            'submitted_at' => now(),
                         ],
-                        $schema->identity($clean)
-                    ));
-
-                    // Not fillable: the replay guard's pair, and — for a staff entry — the
-                    // cents snapshot the cash is settled from (App\Support\FormPayment).
-                    $guarded = [];
-
-                    if ($clientKey !== null) {
-                        $guarded['client_submission_key'] = $clientKey;
-                        $guarded['client_payload_hash'] = FormResponse::payloadHash($fingerprint);
-                    }
-
-                    if ($staffCode !== null) {
-                        $guarded['amount_due_minor'] = $quote['amount_due_minor'];
-                        $guarded['currency'] = $quote['currency'];
-                    }
-
-                    // The breakdown the money leg was priced at (unit x quantity, and the tier
-                    // or level), beside the amount it multiplies to, for the receipt and the
-                    // admin view. Written wherever amount_due_minor is.
-                    if ($quote !== null && ($staffCode !== null || $online || $office)) {
-                        $guarded += [
-                            'unit_price_minor' => $quote['unit_minor'],
-                            'price_quantity' => $quote['quantity'],
-                            'price_label' => $quote['tier_label'] !== null ? mb_substr($quote['tier_label'], 0, 255) : null,
-                        ];
-                    }
-
-                    // A card registration is written UNPAID, with the snapshot Stripe is
-                    // charged from. Only the signed webhook moves it to paid.
-                    if ($online) {
-                        $guarded += [
-                            'payment_method' => FormResponse::METHOD_ONLINE,
-                            'payment_status' => FormResponse::PAYMENT_UNPAID,
-                            'currency' => $quote['currency'],
-                            'amount_due_minor' => $quote['amount_due_minor'],
-                            'fee_covered_minor' => $quote['fee_covered_minor'],
-                            'total_minor' => $quote['total_minor'],
-                        ];
-                    }
-
-                    // A family paying the office is written UNPAID, owing the list price:
-                    // no card was offered a fee, so none is covered, and the total is what
-                    // is owed. Staff settle it by hand when the money comes.
-                    if ($office) {
-                        $guarded += [
-                            'payment_method' => FormResponse::METHOD_OFFICE,
-                            'payment_status' => FormResponse::PAYMENT_UNPAID,
-                            'currency' => $quote['currency'],
-                            'amount_due_minor' => $quote['amount_due_minor'],
-                            'fee_covered_minor' => 0,
-                            'total_minor' => $quote['amount_due_minor'],
-                        ];
-                    }
-
-                    $created->forceFill($guarded)->save();
-
-                    // The hold, in the transaction that wrote the row: a card registration's
-                    // lapses with its payment page (FormReservations::cardHoldUntil()); cash,
-                    // the office and a form that takes no payment never lapse. The unique
-                    // index refusing it rolls the row back (FormDateTaken, answered below).
-                    if ($reserveOn !== null) {
-                        FormReservations::hold($created, $reserveOn, $online ? FormReservations::cardHoldUntil(now()) : null);
-                    }
-
-                    // Inside the transaction, and only once the row exists: a submission
-                    // that arrives after the last place is taken returns above without
-                    // ever touching the disk, and a write that fails here rolls the
-                    // response back (FormAttachments removes what it had written).
-                    $names = FormAttachments::store($created, $uploads);
-
-                    if ($names !== []) {
-                        // The respondent's filenames go back into `data` under their
-                        // field names, so the admin table and the CSV export have a cell
-                        // to render — the bytes stay on the private disk, reachable only
-                        // through the authenticated download endpoint.
-                        $created->update(['data' => array_merge($clean, $names)]);
-                    }
+                        $clientKey,
+                        $fingerprint,
+                        $reserveOn,
+                        $uploads,
+                    );
 
                     // Cash its holder owes, in the transaction that wrote the row: the row
                     // never exists unpaid, and use_count moves with it.

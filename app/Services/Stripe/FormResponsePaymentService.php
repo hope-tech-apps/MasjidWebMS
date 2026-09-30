@@ -5,6 +5,8 @@ namespace App\Services\Stripe;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
+use App\Models\OrderItem;
+use App\Support\CartTables;
 use App\Support\FormNotifier;
 use App\Support\FormReservations;
 use Illuminate\Support\Facades\Log;
@@ -162,8 +164,22 @@ class FormResponsePaymentService
         $ref = self::chargeRef(is_array($intent) ? $intent : []) ?? self::chargeRef($object);
         $intentId = is_array($intent) ? $this->stringOrNull($intent['id'] ?? null) : $this->stringOrNull($intent);
 
+        // A registration a CART settled is the cart's, not this arm's: a basket's rows all
+        // share its one payment intent, and a refund names an amount, never a line, so the
+        // order carries the flag (CartPaymentService::handleChargeFlag). Every other row is
+        // one per payment intent, so first() is right there and behaves as it always did.
         $row = $intentId !== null
-            ? FormResponse::query()->where('stripe_payment_intent_id', $intentId)->first()
+            ? FormResponse::query()
+                ->where('stripe_payment_intent_id', $intentId)
+                // bin/deploy makes this code live before `migrate`: until order_items exists there
+                // is no basket a row could belong to, and asking would answer 500 to a live refund.
+                ->when(CartTables::has('order_items'), fn ($query) => $query->whereNotExists(function ($cart): void {
+                    $cart->selectRaw('1')
+                        ->from('order_items')
+                        ->where('order_items.record_type', OrderItem::RECORD_FORM_RESPONSE)
+                        ->whereColumn('order_items.record_id', 'form_responses.id');
+                }))
+                ->first()
             : null;
 
         $row ??= $ref !== null ? FormResponse::findByChargeRef($ref) : null;

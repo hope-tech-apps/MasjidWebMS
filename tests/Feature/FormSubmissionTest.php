@@ -151,6 +151,40 @@ class FormSubmissionTest extends TestCase
         $this->assertSame('amal@example.com', $stored->respondent_email);
     }
 
+    /**
+     * The abuse-trace columns a registration carries: which device, from which address, in
+     * which browser. The writer's own test hands it a made-up origin; this is the DOOR's, so
+     * it fails if the controller stops passing them (a row nobody can trace).
+     */
+    #[Test]
+    public function the_door_stores_the_devices_address_and_browser_on_the_response(): void
+    {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.7'])
+            ->withHeader('User-Agent', 'MEC-Test-Browser/1.0 ' . str_repeat('x', 1100))
+            ->submit($this->payload(['device_id' => 'device-abc-123']), $this->masjidA->id)
+            ->assertOk();
+
+        $stored = FormResponse::first();
+
+        $this->assertSame('device-abc-123', $stored->device_id);
+        $this->assertSame('203.0.113.7', $stored->ip_address);
+        $this->assertStringStartsWith('MEC-Test-Browser/1.0 ', (string) $stored->user_agent);
+        $this->assertSame(1000, strlen((string) $stored->user_agent), 'the browser string is cut at 1000 characters');
+    }
+
+    #[Test]
+    public function a_submission_without_a_device_id_still_records_its_address(): void
+    {
+        $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.20'])
+            ->submit($this->payload(), $this->masjidA->id)
+            ->assertOk();
+
+        $stored = FormResponse::first();
+
+        $this->assertNull($stored->device_id);
+        $this->assertSame('198.51.100.20', $stored->ip_address);
+    }
+
     #[Test]
     public function entry_count_and_amount_due_are_computed_server_side(): void
     {

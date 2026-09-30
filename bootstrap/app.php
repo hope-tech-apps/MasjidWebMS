@@ -183,6 +183,15 @@ return Application::configure(basePath: dirname(__DIR__))
             // SuperAdmins pass. Runs after `tenant`, like `crm`. The SuperAdmin
             // toggle that sets them (PATCH .../capabilities/{key}) is NOT gated.
             'capability' => \App\Http\Middleware\EnsureOrgCapability::class,
+            // The universal cart's public routes (routes/api_v1.php): the same 404 an
+            // unknown route gets until config/cart.php switches the basket on, and for
+            // any organisation its allowlist leaves out. See EnsureCartEnabled.
+            'cart.enabled' => \App\Http\Middleware\EnsureCartEnabled::class,
+            // The member portal's "Your orders" routes (routes/api.php, `me/orders` and
+            // friends): the same 404 an unknown route gets until config/member_portal.php
+            // switches the portal on, and for any organisation its allowlist leaves out.
+            // See EnsureMemberPortalEnabled.
+            'member.portal' => \App\Http\Middleware\EnsureMemberPortalEnabled::class,
             // After a successful write, purge the organisation's pages from the
             // public renderer's cache so the save is live at once. Works in
             // terminate(), after the response; no-op when unconfigured. On the
@@ -196,6 +205,30 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
+
+        // The order a route's middleware RUNS in is not the order it lists them: Laravel
+        // re-sorts every route's stack by its priority list, and ThrottleRequests ranks above
+        // the `api` group's SubstituteBindings, so `cart.enabled` (unranked) was pushed BEHIND
+        // `throttle:cart-*`. A dark cart then still ran the limiter closures (database reads),
+        // wrote rate-limit rows, carried X-RateLimit headers on its 404 and, from the 21st
+        // POST /carts of an hour, answered 429 instead of the 404: "switched off" was
+        // distinguishable from "never built". Ranking the gate ahead of the throttles puts it
+        // first on every cart route. See EnsureCartEnabled and CartEndpointsGateTest.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            prepend: \App\Http\Middleware\EnsureCartEnabled::class,
+        );
+
+        // The member portal's gate ranks ahead of AUTHENTICATION, which itself ranks ahead of
+        // the throttles: a dark portal route must not answer an unauthenticated probe with a
+        // 401 (a missing route would not), spend a limiter, or carry a rate-limit header.
+        // AuthenticatesRequests is the interface `auth:family` (Authenticate) implements, the
+        // first auth middleware Laravel's own priority list ranks. See EnsureMemberPortalEnabled
+        // and MemberPortalGateTest.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            prepend: \App\Http\Middleware\EnsureMemberPortalEnabled::class,
+        );
     })
     ->withExceptions(function (Exceptions $exceptions) {
 
@@ -211,12 +244,15 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // Runs AFTER any renderer below has built the response. It changes
-        // nothing except refusals from the member routes an app calls to leave
-        // (DELETE .../me and .../me/device), which gain an empty `data` object
-        // so the iPhone app can decode the 401, 403 or 429 it is given. See
+        // nothing except refusals from the member routes named
+        // `mobile.member.me.*` (an app leaving: DELETE .../me and .../me/device;
+        // the member portal's orders, gifts and receipts), which gain an empty
+        // `data` object so the iPhone app can decode the 401, 403 or 429 it is
+        // given, except the 404 a switched-off portal route answers
+        // (DarkRouteException), which must stay the unknown route's bytes. See
         // App\Support\MobileErrorEnvelope.
         $exceptions->respond(function (Response $response, Throwable $e, Request $request) {
-            return \App\Support\MobileErrorEnvelope::withDataKey($response, $request);
+            return \App\Support\MobileErrorEnvelope::withDataKey($response, $request, $e);
         });
 
         // JSON renderer for API + AJAX requests — preserves the legacy envelope
