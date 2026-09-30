@@ -163,6 +163,23 @@ class CartPreSettlementFlagTest extends TestCase
     }
 
     #[Test]
+    public function an_earlier_intent_that_is_not_the_payment_settling_gives_way_to_it(): void
+    {
+        [$order] = $this->giftOrder();
+
+        // A stray intent recorded ahead of settlement (a holder's own users can write the metadata
+        // that identifies an order on their account), then the payment that really settles it.
+        Order::withoutMasjidScope()->whereKey($order->id)->update(['stripe_payment_intent_id' => 'pi_stray']);
+
+        $this->postWebhook($this->sessionEvent($order))->assertOk();
+
+        $paid = $order->fresh();
+        $this->assertSame(Order::STATUS_PAID, $paid->status);
+        $this->assertSame('pi_cart_1', $paid->stripe_payment_intent_id, 'the intent that paid is the one on record');
+        $this->assertSame('pi_cart_1', Donation::withoutMasjidScope()->sole()->stripe_payment_intent_id);
+    }
+
+    #[Test]
     public function an_event_that_does_not_identify_the_order_records_nothing_on_it(): void
     {
         [$order] = $this->giftOrder();

@@ -298,11 +298,16 @@ class CartSettlementService
             Log::warning('A cart order for an offboarded organisation was paid; it is recorded and nobody is emailed on its behalf.', $this->context($order));
         }
 
-        // 3. Paid, once. The payment intent is recorded here and never overwritten.
+        // 3. Paid, once. The payment intent that PAID is the one recorded: an event may have written
+        // one earlier (CartPaymentService::recordPaymentIntent(), so that a refund which beats
+        // settlement finds the order), and an honest event writes the same intent. A payment intent
+        // event on a holder's account is identified by metadata their own users can write, so an
+        // earlier one that is not the payment settling now gives way to it. After this save the
+        // intent is never overwritten (noteRepeat()).
         $order->forceFill([
             'status' => Order::STATUS_PAID,
             'paid_at' => now(),
-            'stripe_payment_intent_id' => $order->stripe_payment_intent_id ?? $paymentIntentId,
+            'stripe_payment_intent_id' => $paymentIntentId ?? $order->stripe_payment_intent_id,
         ])->save();
 
         // 4. Every line that has no record yet.
