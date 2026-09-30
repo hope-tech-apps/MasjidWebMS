@@ -619,9 +619,16 @@ Direct charge on the ONE connected account, exactly the rules above.
   naming the order number and saying the lines cannot be attributed automatically, so staff reconcile it.
   An order that names the payment but is NOT PAID yet is flagged all the same, with a WARNING saying it
   was flagged before settlement recorded it (Stripe does not redeliver a refund or dispute); a charge no
-  order carries writes nothing and logs at INFO. The holder of `event.account` is the LIVE organisation,
+  order carries writes nothing and logs at INFO. An order names its payment ahead of settlement ONLY through
+  the checkout-SESSION event of the page the app opened (`recordPaymentIntent()`: the session id must equal
+  `orders.stripe_checkout_session_id`, and the intent is written once, `whereNull`, outside the settlement
+  transaction, so a refusal or a throw does not lose it). A `payment_intent.succeeded` records its intent only
+  when it settles the order: it names the order by metadata, which a holder's own users can write on their
+  account, so a stray or forged PaymentIntent must never take the write-once slot. Settlement records the
+  intent that PAID, replacing any other. The holder of `event.account` is the LIVE organisation,
   a trashed one only when none is live (`CartPaymentService::accountHolder()`, shared with settlement).
-  Idempotent, never throws. `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
+  Idempotent, never throws (the deploy-window table check, `CartTables::has('orders')`, is inside the same
+  try/catch, so a database that cannot answer it cannot stop the form arm that runs next). `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
   `order_items` line points at (`record_type='form_response'`); every other row is one per payment intent
   and behaves exactly as before.
 - **`amount_due` and `entry_count` on a cart form row are what checkout froze**
@@ -716,7 +723,10 @@ services, called as they are. Rules a change here must keep:
   `me/orders/{source}/{id}`, `me/gifts`, `me/receipts/{id}/pdf` routes carry `member.portal`
   (`EnsureMemberPortalEnabled`, keyed on the ROUTE's `{masjid_id}`); off is the router's own 404,
   ranked ahead of AUTHENTICATION (`prependToPriorityList(before: AuthenticatesRequests)`), not just the
-  throttles, so an unauthenticated probe cannot tell it from a missing route. It stays dark until the
+  throttles, so an unauthenticated probe cannot tell it from a missing route. It is also the same
+  status, headers and body: the gate throws a `DarkRouteException` after the route has matched, and
+  `MobileErrorEnvelope` (which puts `data:{}` on every other refusal of a `mobile.member.me.*` route)
+  skips that one class, so a dark route has no `data` key, like a path that matches no route. It stays dark until the
   owner picks its client and answers ASSUMPTIONS #61 (a gift and a Wix order are listed by `contact_id`
   alone). `MemberPortalGateTest` reads the sorted stack; a suite that drives the routes calls
   `turnMemberPortalOn()`.
@@ -731,13 +741,23 @@ services, called as they are. Rules a change here must keep:
   day past, lines and answers with them, unless a PENDING order's page could still be paid. A
   payment that lands for an order whose basket is gone still settles and records every line:
   settlement writes from `order_items`, never the basket, and `orders.cart_id` is nullOnDelete
-  (`CartPruneTest` proves it). It also deletes an order whose status is `expired`, with its
-  lines (`order_items.order_id` cascades), once its `checkout_expires_at` is more than 7 days
-  past (`cart.prune.expired_order_days`): a payment page that was never completed, still holding
-  the buyer's name, phone and email and the attendee names in its lines. NEVER a `pending` order
-  (a delayed payment can still settle it) and never a `paid` one. It prints its counts and logs
-  them (`Log::info`, "Cart retention sweep completed.", zeros included), because `schedule:run`
-  discards stdout (`routes/console.php`).
+  (`CartPruneTest` proves it). It also deletes an UNPAID order, with its lines
+  (`order_items.order_id` cascades), because an order NEVER becomes `expired` on production (the
+  Connect endpoint does not subscribe to `checkout.session.expired`), so a `pending` one is swept
+  as well as an `expired` one. Both statuses follow ONE rule, on `checkout_expires_at`: with NO
+  payment intent on record it goes once its page closed more than 7 days ago
+  (`cart.prune.expired_order_days`); WITH an intent on record (written ahead of settlement by the
+  session event of its own page, or at settlement) only once it closed more than 30 days ago
+  (`cart.prune.pending_with_payment_days`, floor 7), because a delayed debit from an earlier page can
+  still be clearing (a shopper who checks out again expires the old order) and a debit that succeeded
+  would have settled through `payment_intent.succeeded`: an order still unpaid that long is a payment
+  to reconcile in Stripe. Exactly 7 or 30 days is kept. Each of those is logged at WARNING as it is
+  deleted, one WARNING per chunk of 100 listing EVERY order of the chunk (order number, organisation
+  id, payment intent, amount, currency; no buyer), because the rows are gone afterwards and that
+  line is what staff reconcile from. NEVER a `paid` order, and having an intent is not being paid
+  (only `status` says that). The baskets and orders hold the buyer's name, phone and email and the
+  attendee names in the lines. It prints its counts and logs them (`Log::info`, "Cart retention
+  sweep completed.", zeros included), because `schedule:run` discards stdout (`routes/console.php`).
 
 ## Tenancy note
 

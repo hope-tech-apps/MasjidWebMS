@@ -5828,7 +5828,9 @@ Off the ship-critic (`design/ship-critic-2026-09-30.json`), on `fix/cart-premerg
 (`MEMBER_PORTAL_MASJID_IDS`; empty = every organisation once on; a malformed list becomes `[0]`, nobody, by the same parser
 as `config/cart.php`). `EnsureMemberPortalEnabled` (alias `member.portal`, on the `/me` group of `routes/api.php`) reads the
 ROUTE's `{masjid_id}` (these routes carry the organisation in the URL, unlike the cart's header) and throws the router's own
-`NotFoundHttpException`, so a dark route is the same bytes as an unknown one. It is ranked ahead of authentication with
+404 with the router's own message, so a dark route is the same bytes as an unknown one. (Round 2, R2-2: as first written it was not,
+because the exception rendered on a MATCHED `mobile.member.me.*` route and `MobileErrorEnvelope` added `data:{}` to it. It is now a
+`DarkRouteException`, a `NotFoundHttpException` the envelope skips.) It is ranked ahead of authentication with
 `prependToPriorityList(before: AuthenticatesRequests::class, ...)`. The cart gate is only ranked ahead of `ThrottleRequests`, and
 authentication ranks ahead of the throttles, so a portal gate placed the same way would run behind `auth:family` and answer an
 unauthenticated probe with a 401 where a missing route answers 404. Alternatives: (a) unregister the routes when off, rejected because the route cache would
@@ -5838,8 +5840,11 @@ portal on in their setUp (`BuildsMemberPortal::turnMemberPortalOn()`). Tests: `M
 with no token, a junk token and a real one; the token is never looked at (`last_used_at` stays null); the `mobile` limiter closure
 never runs; no rate-limit header; 35 calls never reach a 429; the SORTED stack from `Router::gatherRouteMiddleware` puts the gate
 before `Authenticate` and every `ThrottleRequests` on all four routes; the allowlist, the fail-closed `[0]`, the master switch over
-the allowlist, the route's id over a header), `MemberPortalConfigTest` (the env parser). Fails without the fix: every "off" test
-(there was no gate, so the routes answered 401/200).
+the allowlist, the route's id over a header), `MemberPortalConfigTest` (the env parser). Fails without the fix: the off tests, from
+round 2 on. As first written they did NOT: `BuildsMemberPortal::portalUrl()` already prefixed `me/`, and the test's paths did too, so every
+call went to `/me/me/...`, a route that does not exist, and the off tests passed with no gate at all. Only the calls to
+`enabledFor()` and the sorted-stack test depended on the gate. Round 2 (R2-1) removes the doubled prefix and makes each off test first assert
+that its URL is a real route (switched on, it answers the portal's 401); only then do the off assertions mean anything.
 (A2) A FUND CANNOT BE DELETED WHILE A BASKET LINE STILL NEEDS IT. `FundsController::destroy` answers 409 with one sentence while an
 `order_items` row of type `donation` for that fund sits on a `pending` order, or on a `paid` order with `record_id` null (the
 LINE's `record_id`: `orders` has none). Settlement of a gift line throws when the fund is gone, and for a paid basket that is a
@@ -5897,9 +5902,10 @@ of both migrations and compares them with the longest value the code writes (a m
 column has no recorded maximum, and reads every string in the rows a real paid and partly refunded basket leaves.
 
 (B2) A refund or dispute before settlement is no longer lost. `CartPaymentService::recordPaymentIntent()` writes
-`orders.stripe_payment_intent_id` (once, `whereNull`, outside any transaction) as soon as a session or payment-intent event has
+`orders.stripe_payment_intent_id` (once, `whereNull`, outside any transaction) as soon as an event has
 resolved the order and matched its page, BEFORE settlement is tried, so it survives a refusal (amount mismatch) or a throw (a fund
-that vanished). `flagOrder` then finds the pending order and flags it with its "flagged before settlement recorded it" warning.
+that vanished). (Round 2, R2-4: only a checkout SESSION event whose id is the order's recorded page does this now; a payment-intent
+event records its intent at settlement, as before.) `flagOrder` then finds the pending order and flags it with its "flagged before settlement recorded it" warning.
 HAVING AN INTENT IS NOT BEING PAID, proved by grep over `app/`: the only readers of `orders.stripe_payment_intent_id` are
 `flagOrder` (finds the order), `CartSettlementService` (writes it; `noteRepeat` reads it on an already PAID order) and now
 `PruneCarts` (treats pending-with-intent as a payment to reconcile); everything that decides "paid" reads `status`
@@ -5916,14 +5922,15 @@ and gifts (`donations.idempotency_key`, 255). The public door accepts `^[A-Za-z0
 anyone against the same form and settlement's `earlier()` would find THEIR row and mark it paid with the basket's payment; a colon is
 outside that alphabet. `CartSettlementService::lineKey()` is the one place the key is built. Tests: the door's own rule refuses
 `cart:item:42` and accepts `cart_item_42`; a decoy row written under `cart_item_<id>` is neither captured nor marked paid. Existing
-tests that spelled the old key were updated (`CartSettlementTest`, `FormResponseWriterTest`). `.claude/rules/stripe-payments.md:554`
-(group A's file) still says `cart_item_<id>`; not touched here.
+tests that spelled the old key were updated (`CartSettlementTest`, `FormResponseWriterTest`). `.claude/rules/stripe-payments.md` (group A's
+file) now says `cart:item:<id>`, which group A wrote against the brief and which round 2 (R2-7) checked against `CartSettlementService::lineKey()`.
 
 (B4) `cart:prune` also deletes `pending` orders, with their lines, because an order never becomes `expired` on production (the
 Connect endpoint does not subscribe to `checkout.session.expired`): with NO intent on record once `checkout_expires_at` is more than
 `expired_order_days` (7) past; WITH an intent once it is more than `cart.prune.pending_with_payment_days` (new, default 30, floor 7,
-env `CART_PRUNE_PENDING_WITH_PAYMENT_DAYS`) past, and that count is logged at WARNING with each order's number, payment intent and
-amount (the rows are gone afterwards; no name, address or answer is logged). A debit that succeeded would have settled through
+env `CART_PRUNE_PENDING_WITH_PAYMENT_DAYS`) past, and those orders are logged at WARNING with each order's number, payment intent and
+amount (the rows are gone afterwards; no name, address or answer is logged). (Round 2, R2-3 and R2-6: an `expired` order follows the
+same rule, and the WARNING is one per chunk of 100 with every deleted order listed, not one capped at 100.) A debit that succeeded would have settled through
 `payment_intent.succeeded`, so a pending order with an intent this long after is a payment to reconcile in Stripe. `paid` is never
 touched; each delete names the status (and the missing intent) again so an order that settled or was named between read and delete
 is skipped. Boundaries tested (7 and 30 days exactly are kept), plus dry run, the config floor and the log. CHANGED EXISTING TEST:
@@ -5959,3 +5966,71 @@ organisation whose `buyer_email` is EXACTLY their `login_email` or `email` (`Con
 touched. `order_items.payload` (attendee names) and `basket_fingerprint` are NOT cleared: a pending order can still be paid by a
 delayed method and settlement writes its records from the payload; `cart:prune` removes the whole order (B4). Tested including a
 look-alike under the `FoldsAccentsLikeUnicodeCi` stand-in, in both directions.
+
+## 2026-09-30 — Pre-merge fixes, round 2 (from the Opus checks of groups A and B)
+
+From `design/premerge-fixes-check-2026-09-30.json`, worked on `feat/universal-cart` @ 1aaae2ab (groups A and B merged on 3345ac28). Framework
+behaviour was read in `~/Developer/MasjidWebMS/vendor` (Laravel 12.64.0, the version `composer.lock` pins). NOTHING WAS RUN: there is no PHP here,
+so every test below was written by reading the code it exercises and none has been executed. "Fails without the fix" below means read against the
+code before the fix, not a run.
+
+(R2-1) `MemberPortalGateTest` WAS VACUOUS, AND IS NOT NOW. `ROUTES` and every literal passed `me/orders` and the like to `portalUrl()`, which already
+prefixes `me/`, so each HTTP call went to `/me/me/...`. The prefix is gone from the paths (no other suite had it). Each off test now first calls
+`assertTheRouteIsReal()`: with the switch ON for everyone, an unauthenticated call to the same URL must answer the portal's 401, which a path no route
+matches can never do (it answers the router's 404); the switch is put back as the test had it. The helper `bare()` drops sticky headers and the
+guard's memoised user first, because `withHeader()` STAYS on the test for every later call, so a "no token" call after `asMember()` had been a member's
+call. `on_an_unauthenticated_call_is_the_stacks_401_not_the_gates_404` now covers all four routes. Fails without the fix: nothing here is a code fix.
+The old paths made `switched_on_the_routes_answer` and the unauthenticated 401 test fail, and the off tests pass vacuously; the premise is what fails
+against a wrong URL.
+
+(R2-2) A DARK PORTAL ROUTE IS THE UNKNOWN ROUTE'S BYTES. `EnsureMemberPortalEnabled` throws after the route has matched, and the `exceptions->respond()`
+hook (`MobileErrorEnvelope::withDataKey`) then added `data:{}` to that 404, as it does to every JSON refusal on a route named `mobile.member.me.*`;
+a path that matches no route never reaches it, so a probe could tell "switched off" from "never built". Chosen: a dedicated
+`App\Exceptions\DarkRouteException extends NotFoundHttpException` (the router's own message, `forPath()`), which the gate throws and the envelope
+skips; `withDataKey()` takes the exception as an optional third argument and `bootstrap/app.php` passes it. Alternative: a request attribute the hook
+reads, rejected because the exception already carries the fact through the handler unchanged (`prepareException` returns an HttpException as it is) and a
+class cannot be forgotten to be set. Every other refusal on these routes, including a controller's own 404, keeps its envelope (the iPhone app decodes
+`data`). Tests: `MemberPortalGateTest::off_every_portal_route_is_the_same_404_as_a_route_that_does_not_exist` now compares the status, the body's bytes and
+every header but `Date` of the unknown route with the dark answer, for no token, a junk token and a real member's, on all four routes;
+`off_the_404_has_no_data_key_where_the_portals_own_refusals_keep_theirs` pins the key's absence on the dark 404 and its presence on the 401s;
+`MobileErrorEnvelopeTest` pins it without HTTP (an ordinary `NotFoundHttpException` is decorated, a `DarkRouteException` is not, another route is untouched).
+Fails without the fix: the first two (the body differs by `"data":{}`) and the unit test (no such class).
+
+(R2-3) THE EXPIRED SWEEP OF `cart:prune` FOLLOWS THE PENDING RULE. B2 records an intent early, and `markExpired` / `closePage` expire an order when the shopper
+checks out again, possibly while a delayed debit from the earlier page is still clearing; the expired sweep deleted such an order 7 days after its page
+closed, ahead of the 30 days B4 gives a pending order with an intent, and with no reconcile list. Now an `expired` or a `pending` order WITH an intent goes
+after `pending_with_payment_days` (30), and one WITHOUT after `expired_order_days` (7); the two statuses share `sweepWithoutIntent()` and
+`sweepWithIntent()` (each delete names the status and the intent condition again). The console prints and logs a third count
+(`expired_orders_with_payment`); existing keys and output strings are unchanged. Tests: `CartPruneTest::an_expired_order_with_a_payment_intent_waits_thirty_days_and_one_without_waits_a_week`
+(no intent: 8 days goes, exactly 7 stays; intent: 31 goes, exactly 30 and 8 stay; the WARNING lists the 31-day one) and
+`a_dry_run_counts_expired_orders_with_a_payment_intent_and_deletes_none`. Fails without the fix: the 8-day order with an intent was deleted.
+
+(R2-4) THE EARLY PAYMENT-INTENT RECORD CAN NO LONGER BE SQUATTED. `recordPaymentIntent()` wrote the first intent any resolved event named, before the
+amount and currency checks. On a holder's account the holder's own users can write `cart_charge_ref` metadata on a PaymentIntent, so a stray or forged
+one could take the write-once slot, keep the real payment's intent off the order, and (refunded) flag the order. Now it records ahead of settlement ONLY
+from a checkout SESSION event whose id equals the order's `stripe_checkout_session_id`: the page the app opened, so the intent Stripe made for it is the
+order's. `handlePaymentIntentSucceeded()` no longer calls it, so a payment-intent event records its intent only when it settles the order, as before B2. An
+order that has recorded no page yet records nothing early (there is no page to match). Alternative: keep trusting a payment-intent event and check the
+amount first, rejected because a forged event can carry the right amount and the slot is write-once. Cost, accepted (ASSUMPTIONS R2-4): a payment that
+reaches only a refused payment-intent event has no intent on the order, so an early refund or dispute of it is not found. Tests:
+`CartPreSettlementFlagTest::a_forged_payment_intent_event_does_not_take_the_slot_and_the_genuine_session_event_still_records_its_intent` (own account),
+`on_a_holders_account_a_forged_payment_intent_event_does_not_take_the_slot_either` (a `charge_ref` basket), `a_session_event_records_early_only_for_the_page_the_order_recorded`.
+CHANGED EXISTING TEST: `a_payment_intent_event_that_settlement_refuses_records_its_intent_too` asserted exactly the behaviour removed; it is replaced by the
+first of these. Fails without the fix: all three.
+
+(R2-5) `CartPaymentService::handleChargeFlag()`'S TABLE CHECK IS INSIDE ITS TRY. The `CartTables::has('orders')` guard sat above the try/catch, so a database that
+could not answer `Schema::hasTable` would have thrown ahead of the form refund arm that runs after it, which the method's "never throws" promise and B5 exist to
+prevent. It is now the first statement inside the try. Tests: `CartRefundArmIsolationTest::a_refund_still_flags_the_form_row_when_the_cart_arms_table_check_throws`
+and `a_dispute_...`, which break only the `orders` question (a `DB::listen` on the SQLite grammar's `sqlite_master ... name = 'orders'`, after `CartTables::forget()`), so
+the form arm's own `order_items` guard still answers. Fails without the fix: the form row was not flagged and the webhook answered 500.
+
+(R2-6) THE PRUNE'S RECONCILE LIST IS NOT CAPPED. The single WARNING sliced `listed` to 100, and it is the only record staff can reconcile from once the rows are
+deleted. `sweepWithIntent()` now reads and deletes 100 orders at a time (`RECONCILE_CHUNK`, `chunkById`, safe with deletes) and logs one WARNING per chunk
+listing every order that chunk deleted (number, organisation id, intent, amount, currency; no buyer). Alternative: one WARNING per order, rejected as noisier for the
+same information. Test: `CartPruneTest::every_deleted_order_with_an_intent_is_on_a_warning_however_many_there_are_and_none_carries_a_buyer` (250 orders, both statuses, each
+chunk's WARNING equals the expected list, three WARNINGs in all, no buyer name, email or phone in any). Fails without the fix: the list stopped at 100.
+
+(R2-7) DOCS made true on the merged branch: ASSUMPTIONS PM-A1 (what the dark 404 is, and what it is not), PM-A3 (the vendor source was read: index 5), B-4 and B-5 (edited
+for R2-3 and R2-4), a new "round 2" table (R2-0, and R2-2 to R2-6); (A1), (B2), (B3) and (B4) above carry an inline "Round 2" note; `.claude/rules/stripe-payments.md` (the key is
+`cart:item:<id>`, which was already true of `CartSettlementService::lineKey()`; its retention paragraph is rewritten for B4, R2-3 and R2-6, and the refund paragraph for R2-4 and R2-5);
+`config/staging_scrub.php` says `order_items.cart_payload_hash` is "(above)" the orders list, which it is.
