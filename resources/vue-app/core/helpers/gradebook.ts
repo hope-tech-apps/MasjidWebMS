@@ -148,12 +148,16 @@ export const SIMPLE_SCALE = 'simple';
 /** What a piece of simple-scale work says where a weighted class would say "counts N". */
 export const NOT_AVERAGED = 'not averaged';
 
-/** "counts 40", "counts 30 (this work)", "not averaged" (simple-scale work in a weighted class), or "" when nothing is known. */
+/**
+ * "counts 40", "counts 30 on its own", "not averaged" (simple-scale work in a weighted class), or "" when nothing is known.
+ * A weight typed on one piece makes it a slot of its own beside its type's, not a share of the type's weight, so
+ * it says "on its own": "(this work)" read as "30 of the type's 40".
+ */
 export function weightNote(work: { weight?: number | null; type?: string | null; scale?: string | null }, weights: Record<string, number>, enabled: boolean): string {
     if (enabled && work.scale === SIMPLE_SCALE) return NOT_AVERAGED;
     const w = effectiveWeight(work, weights, enabled);
     if (w === null) return '';
-    return work.weight !== null && work.weight !== undefined ? `counts ${w} (this work)` : `counts ${w}`;
+    return work.weight !== null && work.weight !== undefined ? `counts ${w} on its own` : `counts ${w}`;
 }
 
 /**

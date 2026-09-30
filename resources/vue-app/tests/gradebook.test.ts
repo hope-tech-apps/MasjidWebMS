@@ -127,7 +127,7 @@ test('a piece of work counts by its own weight, else its types, else nothing', (
     assert.equal(effectiveWeight({ type: 'constructor' }, weights, true), null, 'a type is never looked up on the prototype');
 
     assert.equal(weightNote({ type: 'test' }, weights, true), 'counts 40');
-    assert.equal(weightNote({ type: 'test', weight: 30 }, weights, true), 'counts 30 (this work)');
+    assert.equal(weightNote({ type: 'test', weight: 30 }, weights, true), 'counts 30 on its own');
     assert.equal(weightNote({ type: null }, weights, true), '');
 });
 
@@ -312,7 +312,7 @@ test('a simple-scale piece in a weighted class says it is not averaged, not "cou
     // Points and levels work count as they did.
     assert.equal(weightNote({ scale: 'points', type: 'test' }, weightsOn, true), 'counts 40');
     assert.equal(weightNote({ scale: 'levels', type: 'quiz' }, weightsOn, true), 'counts 20');
-    assert.equal(weightNote({ scale: 'points', type: 'test', weight: 30 }, weightsOn, true), 'counts 30 (this work)');
+    assert.equal(weightNote({ scale: 'points', type: 'test', weight: 30 }, weightsOn, true), 'counts 30 on its own');
     // No scale on the payload (an older client's work) reads as it always did.
     assert.equal(weightNote({ type: 'homework' }, weightsOn, true), 'counts 10');
     // An unweighted class has no weight to note for anyone.
@@ -438,4 +438,15 @@ test('the family screen asks familySeesWeighted before every weighted figure and
 
     // The block that used to explain what was left out is gone with the figure it explained.
     assert.doesNotMatch(view, /tCount\('marks_untyped'/);
+});
+
+// ---------------------------------------------------------------- optional fold: the override's own label
+
+test('a weight typed on one piece says it counts on its own, not "(this work)"', () => {
+    const label = weightNote({ scale: 'points', type: 'test', weight: 30 }, weightsOn, true);
+
+    assert.equal(label, 'counts 30 on its own');
+    assert.doesNotMatch(label, /this work/);
+    // The type's own weight is still the plain "counts 40".
+    assert.equal(weightNote({ scale: 'points', type: 'test' }, weightsOn, true), 'counts 40');
 });

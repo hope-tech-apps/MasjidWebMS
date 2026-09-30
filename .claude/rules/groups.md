@@ -984,8 +984,9 @@ positioning, not its configuration.
     the portal and never makes a second email. The moment is the school's (Friday 15:00 unless
     `masjid_points_settings` says otherwise, SuperAdmin-only), never derived from the calendar; a
     week with a calendar closure is skipped.
-  - **`behavior_weeks` is the atomic claim** (insert-or-ignore, then `UPDATE ... WHERE report_sent_at
-    IS NULL`): at most once by design, and a run with nobody to tell claims nothing. It holds no child
+  - **`behavior_weeks` is the atomic claim** (an insert that swallows ONLY the unique violation, then
+    `UPDATE ... WHERE report_sent_at IS NULL`; never `insertOrIgnore`, which on MySQL turns any other
+    failure into a warning and reads as "already sent"): at most once by design, and a run with nobody to tell claims nothing. It holds no child
     data, so it has no retention, erasure or RESTRICT (cascades to the school and class).
   - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
     with `?week=`, for the parent's own children only, printable, and says so when a read fails.

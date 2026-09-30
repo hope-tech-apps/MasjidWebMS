@@ -113,6 +113,35 @@ class GradebookSchemaTest extends TestCase
     }
 
     #[Test]
+    public function the_curriculum_migration_refuses_to_roll_back_over_a_row_holding_only_a_week_number(): void
+    {
+        $masjid = Masjid::create([
+            'name' => 'School '.uniqid(), 'email' => 's-'.uniqid().'@test.local',
+            'phone' => '+1'.random_int(1000000000, 9999999999), 'country_id' => '1', 'city_id' => '1',
+            'address' => '1 Test St', 'latitude' => 0.0, 'longitude' => 0.0, 'crm_enabled' => true, 'org_type' => 'school',
+        ]);
+        $group = Group::factory()->create(['masjid_id' => $masjid->id, 'kind' => Group::KIND_CLASS, 'name' => 'C', 'slug' => 'c']);
+        // Only the guide's week number is set: none of the five columns the guard used to look at.
+        \Illuminate\Support\Facades\DB::table('class_assignments')->insert([
+            'masjid_id' => $masjid->id, 'group_id' => $group->id, 'title' => 'Week 4 work', 'points_possible' => 10,
+            'scale' => 'points', 'assigned_on' => now()->toDateString(), 'curriculum_week_no' => 4,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $migration = require database_path('migrations/2026_10_03_100000_add_curriculum_fields_to_class_assignments_table.php');
+
+        try {
+            $migration->down();
+            $this->fail('the rollback dropped a week number nobody had cleared');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Refusing to roll back: 1 piece(s) of work', $e->getMessage());
+        }
+
+        $this->assertTrue(Schema::hasColumn('class_assignments', 'curriculum_week_no'), 'the column, and the number in it, are still there');
+        $this->assertSame(4, (int) \Illuminate\Support\Facades\DB::table('class_assignments')->value('curriculum_week_no'));
+    }
+
+    #[Test]
     public function the_type_constants_are_the_five_the_migration_documents(): void
     {
         $this->assertEqualsCanonicalizing(['quiz', 'homework', 'test', 'classwork', 'other'], ClassAssignment::TYPES);

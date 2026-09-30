@@ -5225,3 +5225,17 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   and the untyped note. The decision is in the SPA, not the payload: the family and teacher endpoints stay byte-identical (`FamilyGradesTest`'s parity
   test), and the family payload keeps carrying `untyped_excluded` for the screen to decide on. Alternative: show the untyped note to families beside
   the weighted figure. Rejected by the orchestrator: a family has no way to act on it, and the note still leaves the two figures disagreeing.
+
+- **2026-09-29 (W3/W4 folds, the five cheap optional items): done, one skipped in part.**
+  (1) `2026_10_03_100000` `down()` now refuses over a row holding only `curriculum_week_no` (it drops that column too). down() only.
+  (2) `GradeRecord::weighted` counts `points_pieces` and `level_pieces` only for slots of weight above 0: "across N pieces" no longer counts a piece
+  whose type or own weight is 0 and shaped nothing (a subject of only weight-zero work read "across 2 pieces" beside no figure). This SUPERSEDES the
+  W3 line "an override of 0 keeps a piece out of the figure and still counts it in `points_pieces`" (DECISIONS W3-1 revised); the figure itself is unchanged.
+  (3) The per-piece override reads "counts 30 on its own" (`weightNote`), not "(this work)": an override is a slot beside its type's, not a share of it.
+  (4) `BehaviorWeek::claim` inserts plainly and catches ONLY `UniqueConstraintViolationException` (a duplicate is "already sent"); any other failure
+  is thrown, and the command's per-class handler logs it as a failure. Proven on SQLite with a table whose insert breaks NOT NULL, which
+  `INSERT OR IGNORE` skips silently (the SQLite mirror of MySQL's INSERT IGNORE). `.claude/rules/groups.md` said insert-or-ignore and is corrected.
+  (5) BISS schedule migration `2026_10_02_130000`, DOWN() ONLY: it now leaves a row that has been saved since (`updated_at` moved) and logs one warning naming what
+  it removed. NOT done, because it needs a mark on the row (a new column and a change to up(), the mistake F3 fixes): a row a SuperAdmin created
+  with exactly Sunday 18:00 and never touched still reads as the seed's and is removed by a rollback. Recorded in the migration's docblock; the report is
+  off by default and a rollback of this migration alone is unlikely, so the exposure is small.

@@ -1577,12 +1577,23 @@ class WeeklyPointsReportTest extends TestCase
         $migration->up();
         $this->assertSame('19:30', $row->fresh()->report_time);
 
-        // down() takes back only what up() wrote.
+        // down() takes back only what up() wrote, and only while nobody has saved it since.
         $migration->down();
         $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count(), 'a changed row is not ours to remove');
+        Carbon::setTestNow(Carbon::parse('2026-10-02 09:00:00', 'UTC')->addDay());
         $row->forceFill(['report_time' => '18:00'])->save();
         $migration->down();
+        $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count(), 'a SuperAdmin put the same values back: that is their row now');
+
+        // The row up() wrote and nobody touched is the one it takes back, and it says so.
+        DB::table('masjid_points_settings')->delete();
+        Carbon::setTestNow(Carbon::parse('2026-10-01 12:00:00', 'UTC'));
+        $migration->up();
+        $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count());
+        Log::spy();
+        $migration->down();
         $this->assertSame(0, MasjidPointsSetting::withoutMasjidScope()->count());
+        Log::shouldHaveReceived('warning')->withArgs(fn ($m, $c = []) => str_contains((string) $m, 'removed by rollback') && ($c['rows_removed'] ?? 0) === 1)->once();
     }
 
     #[Test]
@@ -1608,5 +1619,75 @@ class WeeklyPointsReportTest extends TestCase
         DB::table('masjids')->where('id', 18)->update(['deleted_at' => null]);
         $migration->up();
         $this->assertSame(1, MasjidPointsSetting::withoutMasjidScope()->count());
+    }
+
+    // ---------- optional fold: BehaviorWeek::claim swallows a duplicate and nothing else
+
+    #[Test]
+    public function a_claim_is_won_once_and_a_duplicate_is_the_only_error_it_swallows(): void
+    {
+        $key = [(int) $this->masjid->id, (int) $this->group->id, '2026-10-04'];
+
+        $this->assertTrue(BehaviorWeek::claim(...$key), 'the first caller wins the week');
+        $this->assertFalse(BehaviorWeek::claim(...$key), 'the second finds it taken, and no exception escapes the duplicate');
+        $this->assertSame(1, DB::table('behavior_weeks')->count());
+
+        // A claim given back is claimed again, by the same row.
+        BehaviorWeek::release((int) $this->group->id, '2026-10-04');
+        $this->assertTrue(BehaviorWeek::claim(...$key));
+        $this->assertFalse(BehaviorWeek::claim(...$key));
+        $this->assertSame(1, DB::table('behavior_weeks')->count());
+    }
+
+    /**
+     * behavior_weeks rebuilt with a column the claim never sets and that cannot be NULL, so its INSERT breaks
+     * on something that is NOT a duplicate. SQLite's INSERT OR IGNORE (what MySQL's INSERT IGNORE mirrors, and
+     * what `insertOrIgnore` writes) skips a row that breaks NOT NULL without a word, which is exactly the
+     * failure that used to read as "already sent".
+     */
+    private function behaviorWeeksThatCannotBeWritten(): void
+    {
+        Schema::drop('behavior_weeks');
+        DB::statement('CREATE TABLE behavior_weeks ('
+            .'id integer primary key autoincrement not null, masjid_id integer not null, group_id integer not null, '
+            .'week_start date not null, report_sent_at datetime, recipients_count integer, created_at datetime, '
+            .'updated_at datetime, must_be_set text not null)');
+        DB::statement('CREATE UNIQUE INDEX behavior_weeks_probe_unique ON behavior_weeks (group_id, week_start)');
+    }
+
+    #[Test]
+    public function an_insert_that_fails_for_any_other_reason_is_thrown_never_read_as_already_sent(): void
+    {
+        $this->behaviorWeeksThatCannotBeWritten();
+
+        try {
+            BehaviorWeek::claim((int) $this->masjid->id, (int) $this->group->id, '2026-10-04');
+            $this->fail('a failed claim was reported as an ordinary answer');
+        } catch (\Illuminate\Database\QueryException $e) {
+            $this->assertNotInstanceOf(\Illuminate\Database\UniqueConstraintViolationException::class, $e);
+            $this->assertStringContainsString('must_be_set', $e->getMessage());
+        }
+
+        $this->assertSame(0, DB::table('behavior_weeks')->count());
+    }
+
+    #[Test]
+    public function a_class_whose_claim_cannot_be_written_is_a_failure_in_the_run_not_already_sent(): void
+    {
+        $this->ordinaryWeek();
+        $this->behaviorWeeksThatCannotBeWritten();
+        $warnings = $this->captureWarnings();
+
+        $this->now('2026-10-09 15:00');
+        $output = $this->run_();
+
+        $this->assertStringContainsString('1 failure(s)', $output);
+        $this->assertStringContainsString('0 already sent', $output, 'the class is not counted as one that was sent');
+        Mail::assertNothingSent();
+        $lines = array_column($warnings->getArrayCopy(), 'message');
+        $this->assertTrue(
+            (bool) array_filter($lines, fn ($m) => str_contains($m, 'points:weekly-report failed for class '.$this->group->id)),
+            'and the failure leaves a line: '.json_encode($lines)
+        );
     }
 }
