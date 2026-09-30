@@ -7,6 +7,12 @@ the organisation's name as the display name. It unblocks the Schools landing pag
 check P5 (`~/Developer/manara-marketing/docs/research/pricing/FINAL.md`). Decision:
 `DECISIONS.md`, 2026-09-29, "Manara mail sends from manara.hopetechapps.com".
 
+**Status (2026-09-30 03:42Z): LIVE in production.** Staging verified 03:36Z, production switched
+03:41:56Z (config re-cache of unchanged main `b5c2f808`), verified with a real send: inbox, From
+"Al-Razi School <notifications@manara.hopetechapps.com>", Reply-To the school, DKIM/SPF/DMARC pass.
+Records in LOG.md. Open: this branch's code on main; revoking the old key (step 6); the DMARC ramp
+(step 7).
+
 ## 1. Where the address comes from (checked 2026-09-29, origin/main `b5c2f808`)
 
 - Every Mailable that sets a From takes the address from `config('mail.from.address')`, and the
@@ -128,6 +134,12 @@ Each step marked **YES** waits for the owner's explicit go.
    4. Tell the other shipping sessions, then re-run `scripts/ship.sh production`. `bin/deploy`
       runs `config:cache` and restarts `masjid-queue` even when the code is already up to date.
       This is the moment of the switch; queued mail picks it up through the restart.
+   The switch needs no code from this branch: the deployed code already reads the address from
+   config. On 2026-09-30 it went in the other order. The owner set RESEND_KEY first, so
+   MAIL_FROM_ADDRESS went in within a minute, before any config:cache could pair the new key with
+   the old address. Then the re-ship switched both, and the code followed later under the baton.
+   Whenever one of the two keys is set, set the other straight away: any session's production
+   ship re-caches config.
    5. Verify: `sudo -u www-data php artisan mail:test-send <owner address> --org=14` on production
       (no prompt; it uses the new `.env`). Check the headers as in step 4. Watch
       `storage/logs/laravel.log` for mail warnings over the next day.
