@@ -300,6 +300,36 @@ class DonationReceiptPdfTest extends TestCase
         }
     }
 
+    #[Test]
+    public function a_failed_receipt_render_is_logged_by_class_and_never_quotes_the_letter(): void
+    {
+        // A renderer whose failure quotes the letter it was drawing, as a template or PDF engine can.
+        $this->mock(DonationReceiptPdfService::class, function ($mock): void {
+            $mock->shouldReceive('pdfFor')->andThrow(new \RuntimeException('could not render the letter for Donor Name, donor@test.local'));
+        });
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        // A failed render never fails the webhook: the receipt goes without its attachment.
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt PDF render failed; sending receipt without the attachment'));
+
+        $this->assertCount(1, $failures, 'premise: the render failed and was logged once');
+        $this->assertSame(\RuntimeException::class, $failures[0]->context['error']);
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsString('donor@test.local', $line, 'no log line quotes the recipient');
+            $this->assertStringNotContainsString('Donor Name', $line, 'nor the letter the renderer was drawing');
+        }
+    }
+
     // ============================= helpers =============================
 
     /** The Symfony attachment on the first message the array transport captured. */
