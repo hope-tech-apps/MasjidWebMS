@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-    LEDGER_KINDS, blankPrizeForm, breakdownLine, bucksLabel, dayLabel, entryText, kindLabel, newRequestId,
+    LEDGER_KINDS, blankPrizeForm, breakdownLine, bucksLabel, createRequestIds, dayLabel, entryText, keepsRequestId, kindLabel, newRequestId,
     prizeFormFrom, prizeFormReady, prizeRequest, shelfFor, signedBucks, stockNote,
 } from '../core/helpers/classStore.ts';
 
@@ -39,6 +39,48 @@ test('a request id has the shape the server accepts and never repeats', () => {
     const ids = new Set(Array.from({ length: 50 }, () => newRequestId()));
     assert.equal(ids.size, 50);
     for (const id of ids) assert.match(id, /^[A-Za-z0-9_-]{8,36}$/);
+});
+
+test('a request id is kept after a failure that may have committed and dropped after one that did not', () => {
+    for (const status of [undefined, null, 0, 408, 500, 502, 503, 504]) assert.equal(keepsRequestId(status), true, String(status));
+    for (const status of [400, 401, 403, 404, 409, 422, 429]) assert.equal(keepsRequestId(status), false, String(status));
+});
+
+test('a retry after a dropped response sends the same id, and a new write after success or a refusal sends a new one', () => {
+    let n = 0;
+    const ids = createRequestIds(() => `id-${++n}-xxxxxxxx`);
+    const key = 'redeem:7:3';
+
+    const first = ids.idFor(key);
+    assert.equal(ids.idFor(key), first, 'asking again before an answer is the same write');
+
+    ids.failed(key, undefined); // the response never arrived: it may have committed
+    assert.equal(ids.idFor(key), first, 'the retry is a replay, not a second deduction');
+    ids.failed(key, 503);
+    assert.equal(ids.idFor(key), first);
+
+    ids.failed(key, 422); // refused for good: nothing was written
+    const second = ids.idFor(key);
+    assert.notEqual(second, first);
+
+    ids.succeeded(key);
+    assert.notEqual(ids.idFor(key), second, 'once it went through, the next tap is a new prize');
+});
+
+test('two different writes never share an id, and a student, a prize or an amount is a different write', () => {
+    let n = 0;
+    const ids = createRequestIds(() => `id-${++n}-xxxxxxxx`);
+
+    const a = ids.idFor('redeem:7:3');
+    const b = ids.idFor('redeem:7:4');
+    const c = ids.idFor('redeem:8:3');
+    const d = ids.idFor('cashout:7:10');
+    assert.equal(new Set([a, b, c, d]).size, 4);
+    assert.equal(ids.size, 4);
+
+    ids.succeeded('redeem:7:3');
+    assert.equal(ids.size, 3);
+    assert.equal(ids.idFor('redeem:7:4'), b, 'the others are still waiting on their answer');
 });
 
 test('the shelf offers only active prizes and says why one cannot be given', () => {

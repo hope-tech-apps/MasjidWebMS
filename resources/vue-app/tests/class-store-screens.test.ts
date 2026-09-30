@@ -41,11 +41,22 @@ test('a parent sees the Bucks section only when the class payload says the store
     assert.ok(card > 0 && bucks > card, 'the Bucks section is drawn inside each child\'s own card');
 });
 
-test('a prize is given and paid out with one request id per click, so a double tap is a replay', () => {
+test('a prize is given and paid out with one request id per WRITE, kept across a retry, so a lost response is a replay', () => {
     const src = code(teacherStore);
-    assert.match(src, /redeem`, \{ prize_id: p\.id, request_id: newRequestId\(\) \}/);
-    assert.match(src, /cash-out`, \{ amount: Number\(cashAmount\.value\), request_id: newRequestId\(\) \}/);
+    assert.match(src, /redeem`, \{ prize_id: p\.id, request_id: requestIds\.idFor\(key\) \}/);
+    assert.match(src, /cash-out`, \{ amount: Number\(cashAmount\.value\), request_id: requestIds\.idFor\(key\) \}/);
+    assert.doesNotMatch(src, /request_id: newRequestId\(\)/, 'a fresh id on every click is a second deduction after a dropped response');
+    assert.match(src, /const key = `redeem:\$\{selectedId\.value\}:\$\{p\.id\}`/, 'one id per student and prize');
+    assert.match(src, /const key = `cashout:\$\{selectedId\.value\}:\$\{Number\(cashAmount\.value\)\}`/, 'one id per student and amount');
+    assert.equal((src.match(/requestIds\.succeeded\(key\)/g) ?? []).length, 2, 'both writes forget the id once they succeed');
+    assert.equal((src.match(/requestIds\.failed\(key, /g) ?? []).length, 2, 'both writes keep or drop it by the failure');
     assert.match(src, /:disabled="!p\.available \|\| busy"/, 'and the button is off while a write is in flight');
+});
+
+test('a reload that fails after a prize was given does not claim the prize failed', () => {
+    const src = code(teacherStore);
+    assert.match(src, /if \(saved\) giveError\.value = 'That prize was given, but the screen could not reload/);
+    assert.match(src, /if \(saved\) giveError\.value = 'That was paid out, but the screen could not reload/);
 });
 
 test('a balance the screen could not read is never shown as zero', () => {

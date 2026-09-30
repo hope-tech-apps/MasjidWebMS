@@ -60,6 +60,53 @@ export function newRequestId(): string {
     return out;
 }
 
+/**
+ * Should a retry of a write reuse its request id? YES when the answer never arrived (no HTTP
+ * response at all: a dropped connection, a timeout) or the server failed (5xx, 408): the write
+ * may have committed, and only the same id turns the retry into a replay instead of a second
+ * deduction. NO for any other refusal (a 4xx says it was NOT done, and a fresh attempt is a
+ * fresh write).
+ */
+export function keepsRequestId(status: number | undefined | null): boolean {
+    return status === undefined || status === null || status === 0 || status === 408 || status >= 500;
+}
+
+/**
+ * One request id per WRITE, not per click: the id stays with the write (a prize for a student,
+ * an amount for a student) until it is known to have finished, so tapping again after "That prize
+ * could not be given" while the first request may have committed sends the SAME id and the server
+ * answers with the row it already wrote. A double-tap while the first is in flight is stopped by
+ * the screen's `busy` flag; this covers the retry after a lost response.
+ */
+export function createRequestIds(make: () => string = newRequestId) {
+    const pending = new Map<string, string>();
+
+    return {
+        /** The id for this write: the one already pending, or a fresh one. */
+        idFor(key: string): string {
+            let id = pending.get(key);
+            if (id === undefined) {
+                id = make();
+                pending.set(key, id);
+            }
+
+            return id;
+        },
+        /** The write succeeded: the next one for the same key is a new write. */
+        succeeded(key: string): void {
+            pending.delete(key);
+        },
+        /** The write failed with this HTTP status (undefined when no response came back). */
+        failed(key: string, status: number | undefined | null): void {
+            if (!keepsRequestId(status)) pending.delete(key);
+        },
+        /** For tests: how many writes are waiting on an answer. */
+        get size(): number {
+            return pending.size;
+        },
+    };
+}
+
 export interface StorePrize {
     id: number;
     scope: 'school' | 'class';

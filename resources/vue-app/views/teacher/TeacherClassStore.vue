@@ -175,7 +175,7 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import {
-    blankPrizeForm, breakdownLine, bucksLabel, entryText, newRequestId, prizeFormFrom, prizeFormReady, prizeRequest,
+    blankPrizeForm, breakdownLine, bucksLabel, createRequestIds, entryText, prizeFormFrom, prizeFormReady, prizeRequest,
     shelfFor, signedBucks, stockNote,
 } from '@/core/helpers/classStore';
 import type { PrizeForm, StorePrize } from '@/core/helpers/classStore';
@@ -193,6 +193,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
  * Students are listed in the order the server sent them; nothing here sorts or totals Bucks.
  */
 const props = defineProps<{ base: string }>();
+
+/** The request id each write in flight is sent with, kept across a retry (see createRequestIds). */
+const requestIds = createRequestIds();
 
 const loading = ref(true);
 const error = ref('');
@@ -287,15 +290,27 @@ async function refresh() {
 
 async function give(p: StorePrize) {
     if (selectedId.value === null || busy.value) return;
+    const key = `redeem:${selectedId.value}:${p.id}`;
     busy.value = true;
     giveError.value = '';
+    let saved = false;
     try {
-        // One id per click: a double-tap or a retry is a replay on the server, not a second deduction.
-        await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/redeem`, { prize_id: p.id, request_id: newRequestId() });
-        await refresh();
+        // One id per WRITE: a double-tap, or a retry after a lost response, is a replay on the server,
+        // not a second deduction. The id is kept until the write succeeds or is refused for good.
+        await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/redeem`, { prize_id: p.id, request_id: requestIds.idFor(key) });
+        requestIds.succeeded(key);
+        saved = true;
     } catch (e) {
+        requestIds.failed(key, (e as any)?.response?.status);
         giveError.value = apiErrorText(e, 'That prize could not be given.');
-        try { await refresh(); } catch { /* the message above stands */ }
+    }
+
+    try {
+        await refresh();
+    } catch {
+        // A reload that fails AFTER the prize was given must not say it failed: the teacher would tap
+        // again and the Bucks would go twice.
+        if (saved) giveError.value = 'That prize was given, but the screen could not reload. Refresh the page to see the new balance.';
     } finally {
         busy.value = false;
     }
@@ -317,14 +332,24 @@ async function undo(e: any) {
 
 async function cashOut() {
     if (selectedId.value === null || !cashAmountOk.value || busy.value) return;
+    const key = `cashout:${selectedId.value}:${Number(cashAmount.value)}`;
     busy.value = true;
     giveError.value = '';
+    let saved = false;
     try {
-        await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/cash-out`, { amount: Number(cashAmount.value), request_id: newRequestId() });
+        await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/cash-out`, { amount: Number(cashAmount.value), request_id: requestIds.idFor(key) });
+        requestIds.succeeded(key);
         cashAmount.value = '';
-        await refresh();
+        saved = true;
     } catch (e) {
+        requestIds.failed(key, (e as any)?.response?.status);
         giveError.value = apiErrorText(e, 'That could not be paid out.');
+    }
+
+    try {
+        await refresh();
+    } catch {
+        if (saved) giveError.value = 'That was paid out, but the screen could not reload. Refresh the page to see the new balance.';
     } finally {
         busy.value = false;
     }
