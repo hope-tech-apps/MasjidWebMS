@@ -11,6 +11,7 @@ use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
+use App\Support\CartTables;
 use App\Support\ContactIdentity;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
@@ -347,19 +348,27 @@ class MemberAccountDeletion
             // but a KEPT contact is never force-deleted, so the cascade never fires and
             // the unpaid basket — attendee names in its lines — would outlive the request.
             // Delete them here, on both paths; cart_items go with them by cascade.
-            Cart::withoutMasjidScope()
-                ->where('masjid_id', $contact->masjid_id)
-                ->where('contact_id', $contact->id)
-                ->delete();
+            //
+            // Both steps ask first whether the cart's tables exist: bin/deploy makes this code
+            // live before `migrate`, and a member's Delete account (an App Store requirement)
+            // must not answer 500 in that window. With no table there is nothing to clear.
+            if (CartTables::has('carts')) {
+                Cart::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('contact_id', $contact->id)
+                    ->delete();
+            }
 
             // An abandoned checkout (never paid) is not a sale, so it keeps nothing — but
             // it still carries the address, name and phone the shopper typed. Clear them. A
             // PAID order is an office record and keeps its buyer, as meal_orders keep theirs.
-            Order::withoutMasjidScope()
-                ->where('masjid_id', $contact->masjid_id)
-                ->where('contact_id', $contact->id)
-                ->where('status', '!=', Order::STATUS_PAID)
-                ->update(['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null]);
+            if (CartTables::has('orders')) {
+                Order::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('contact_id', $contact->id)
+                    ->where('status', '!=', Order::STATUS_PAID)
+                    ->update(['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null]);
+            }
 
             // App sign-in codes for whichever address could sign straight back in:
             // the proven one, or both when that is unknown.
@@ -572,6 +581,11 @@ class MemberAccountDeletion
         // roster row is still the office's record, and model scopes would hide
         // both. Every query is keyed on this contact's id.
         foreach (self::OFFICE_RECORDS as $table => $columns) {
+            // A cart table that migrate has not created yet (the deploy window) holds nothing.
+            if (in_array($table, CartTables::NAMES, true) && ! CartTables::has($table)) {
+                continue;
+            }
+
             $held = DB::table($table)
                 ->where(function ($query) use ($columns, $contact) {
                     foreach ($columns as $column) {

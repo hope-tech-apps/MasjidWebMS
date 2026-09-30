@@ -6,6 +6,7 @@ use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Models\OrderItem;
+use App\Support\CartTables;
 use App\Support\FormNotifier;
 use App\Support\FormReservations;
 use Illuminate\Support\Facades\Log;
@@ -170,12 +171,14 @@ class FormResponsePaymentService
         $row = $intentId !== null
             ? FormResponse::query()
                 ->where('stripe_payment_intent_id', $intentId)
-                ->whereNotExists(function ($cart): void {
+                // bin/deploy makes this code live before `migrate`: until order_items exists there
+                // is no basket a row could belong to, and asking would answer 500 to a live refund.
+                ->when(CartTables::has('order_items'), fn ($query) => $query->whereNotExists(function ($cart): void {
                     $cart->selectRaw('1')
                         ->from('order_items')
                         ->where('order_items.record_type', OrderItem::RECORD_FORM_RESPONSE)
                         ->whereColumn('order_items.record_id', 'form_responses.id');
-                })
+                }))
                 ->first()
             : null;
 

@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Services\Cart\CartCheckoutService;
 use App\Services\Cart\CartSettlementResult;
 use App\Services\Cart\CartSettlementService;
+use App\Support\CartTables;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -261,6 +262,12 @@ class CartPaymentService
      */
     public function handleChargeFlag(array $object, ?string $account, string $flag): void
     {
+        // bin/deploy makes the code live before `migrate`: with no orders table there is no basket
+        // to find, and asking would log a false error-level alarm on every refund in that window.
+        if (! CartTables::has('orders')) {
+            return;
+        }
+
         try {
             $this->flagOrder($object, $account, $flag);
         } catch (Throwable $e) {
