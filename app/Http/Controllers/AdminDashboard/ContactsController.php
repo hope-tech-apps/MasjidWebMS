@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Contacts\UpdateContactRequest;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\HistoricalOrder;
+use App\Support\CartTables;
 use App\Support\Errors;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -340,8 +341,21 @@ class ContactsController extends Controller
             // the typed address (MemberPurchases): the survivor would lose every
             // purchase whose typed address is not their own verified one, while
             // their gifts and Wix orders, which moved above, still showed.
-            \App\Models\Order::where('contact_id', $source->id)
-                ->update(['contact_id' => $target->id]);
+            //
+            // bin/deploy makes this code live BEFORE `migrate`, so for that window
+            // there is no `orders` table and the move would answer 500 on every
+            // merge. With no table there is no order to move. Only a table that
+            // genuinely is not there skips: `existsOrFail()` lets a check that
+            // could not be answered throw, which rolls the whole merge back. A
+            // false "absent" would skip the move and the force-delete below would
+            // null every paid order the source held (CartTables). `meal_orders`
+            // is an old table and needs no such question. `carts.contact_id`
+            // cascades off the force-delete, and an open basket is not moved: it
+            // is the shopper's half-finished choice, not a record.
+            if (CartTables::existsOrFail('orders')) {
+                \App\Models\Order::where('contact_id', $source->id)
+                    ->update(['contact_id' => $target->id]);
+            }
 
             \App\Models\MealOrder::where('contact_id', $source->id)
                 ->update(['contact_id' => $target->id]);
