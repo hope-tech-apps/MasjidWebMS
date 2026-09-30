@@ -40,6 +40,7 @@ if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; t
     git fetch -q origin main 2>/dev/null || true
     BASE="$(git merge-base HEAD origin/main)"
 fi
+BASE="$(git rev-parse --verify "$BASE^{commit}")"
 
 PATHS=(docs .claude/rules DECISIONS.md ASSUMPTIONS.md tests/fixtures)
 

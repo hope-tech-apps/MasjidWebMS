@@ -113,6 +113,21 @@ jobs:
             exit 1
           fi
 
+  public-repo-scan:
+    name: Public repo scan (added lines in docs, rules and fixtures)
+    runs-on: ubuntu-latest
+
+    # The repo is public: refuse real-looking Stripe ids and real email addresses in
+    # lines this push or PR adds to docs, rule files and test fixtures. Existing
+    # history never fails it (scripts/public-repo-scan.sh).
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan added lines
+        run: scripts/public-repo-scan.sh "${{ github.event.pull_request.base.sha || github.event.before }}"
+
   migrations-mysql:
     name: Migrations (mysql, as production runs them)
     runs-on: ubuntu-latest
