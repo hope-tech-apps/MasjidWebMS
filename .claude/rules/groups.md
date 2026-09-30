@@ -1195,8 +1195,10 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   the class is weighted, and clearing the weights clears every override in the class in the
   same transaction. Only a teacher NOT limited to some subjects may set or clear
   them (403, nothing written, for a limited one: the weights move every subject's average, which
-  parents read; review F5, 2026-09-29, superseding W3-3(e)); the office passes the same gate
-  (`SubjectFence::mayWeighClass`) but has no route to set them (`AdminGradebookReadTest`).
+  parents read; review F5, 2026-09-29, superseding W3-3(e)); the office sets and clears them through
+  its own route (`PUT admin/.../grade-weights`, `permission:manage contacts`, no subject fence), which runs the
+  same `ClassGradeWeightsService` the teacher's route does, so a class of only limited teachers is not stuck
+  (`AdminGradeWeightsTest`).
   `App\Support\GradeRecord` is the one copy of the arithmetic; the teacher's and the
   parent's endpoints both call it, and `weighting` / `by_subject` sit BESIDE the older
   summary keys, which are unchanged. The teacher's endpoint adds `data.fenced`.

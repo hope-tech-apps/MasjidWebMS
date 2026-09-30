@@ -5239,3 +5239,21 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   it removed. NOT done, because it needs a mark on the row (a new column and a change to up(), the mistake F3 fixes): a row a SuperAdmin created
   with exactly Sunday 18:00 and never touched still reads as the seed's and is removed by a rollback. Recorded in the migration's docblock; the report is
   off by default and a rollback of this migration alone is unlikely, so the exposure is small.
+
+- **W3/W4 folds (point, 2026-09-29): office route for grade weights.** The point's reason: a class whose teachers are ALL limited to some subjects
+  (the common case at Al-Razi) could otherwise never set weights, because F5 refuses a limited teacher, setting or clearing, and the office had no
+  route to the verb. Decision: the office gets `PUT /api/admin/masjids/{masjid_id}/groups/{group_id}/grade-weights` (`AdminDashboard\GroupGradeWeightsController`),
+  behind `permission:manage contacts`, the gate the roster, letter tracker and class writes beside it carry. No new permission or capability. It takes
+  the same `SaveGradeWeightsRequest` and runs the same write as the teacher's route: the body of `Teacher\GradebookController::saveWeights` moved into
+  `Services\Schools\ClassGradeWeightsService::save` (set all five types or clear; a clear also removes every per-work override, in one transaction) and both
+  controllers call it, so only WHO may call differs. The teacher route keeps its `SubjectFence::mayWeighClass` gate untouched; the office route has no
+  subject fence, because the office is not subject-limited and is gated by the permission. The group is read through the tenant scope, so another
+  organisation's group is a 404 and writes nothing (`AdminGradeWeightsTest`). Supersedes the F5 "Consequence to know" above (the office has no route) and
+  W3-3(e)'s "the office reads and does not set"; the rest of F5 stands. The office Grades tab gets a Weights panel (a "Set weights" / "Weights" button
+  above the work list) built like the teacher's: the same five inputs and confirm-before-clear, never read-only, "Saved" or the server's words on failure. It
+  does not know whether the signed-in office user holds `manage contacts` (the admin SPA carries no permission list), so a user without it sees the panel and is
+  refused by the server with that message; the same is true of every other office write. Alternative: mount the teacher's `saveWeights` in the admin realm
+  as the gradebook reads are mounted. Rejected: it would route the office through a fence that is about subject-limited teachers, and the point asked for the
+  write to be shared, not the route. Resolves ASSUMPTIONS W3F-2. Also here: the teacher SPA treats a 404 from the plan removal as "nothing to delete" (no message,
+  and the screen ends as after a removal that worked). The screen removes a plan by id; `DELETE /lesson-plans?date=` has no caller in this app and stays for
+  older screens.

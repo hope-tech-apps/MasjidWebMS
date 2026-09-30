@@ -797,17 +797,50 @@ class GradebookWeightingTest extends TestCase
     }
 
     #[Test]
-    public function the_office_has_no_route_to_set_weights(): void
+    public function weights_have_exactly_two_doors_the_teachers_and_the_offices_and_the_office_can_use_its_own(): void
     {
-        $verbs = [];
+        // This used to pin the ABSENCE of an office door ("weights are a teacher policy; the office reads them").
+        // The rule moved (DECISIONS 2026-09-29, office route for grade weights): a class whose teachers are all
+        // limited to some subjects could otherwise never set weights. It still pins WHICH doors exist, so a third
+        // one, or a second office verb, is a decision and not a slip.
+        $doors = [];
+        $officeMiddleware = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
-            if (str_ends_with($route->uri(), 'grade-weights') && str_starts_with($route->uri(), 'api/admin')) {
-                $verbs = array_merge($verbs, $route->methods());
+            if (! str_ends_with($route->uri(), 'grade-weights')) {
+                continue;
+            }
+            foreach ($route->methods() as $verb) {
+                if ($verb !== 'HEAD') {
+                    $doors[] = $verb.' '.$route->uri();
+                }
+            }
+            if (str_starts_with($route->uri(), 'api/admin')) {
+                $officeMiddleware = $route->gatherMiddleware();
             }
         }
+        sort($doors);
 
-        $this->assertSame([], $verbs, 'weights are a teacher policy; the office reads them and does not set them');
+        $this->assertSame([
+            'PUT api/admin/masjids/{masjid_id}/groups/{group_id}/grade-weights',
+            'PUT api/teacher/masjids/{masjid_id}/groups/{group_id}/grade-weights',
+        ], $doors);
+        $this->assertContains('permission:manage contacts', $officeMiddleware, 'the office door is gated by the roster-writing permission, and mints no new one');
+
+        // And it works for the office: the same rows the teacher's route writes, stamped with the office user.
+        $office = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        $this->school->user_id = $office->id;
+        $this->school->save();
+        \Illuminate\Support\Facades\Auth::forgetGuards();
+        app(\App\Support\TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($office);
+
+        $this->putJson("/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/grade-weights", [
+            'weights' => ['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10],
+        ])->assertOk()->assertJsonPath('data.weighting_enabled', true);
+
+        $this->assertSame(5, ClassGradeWeight::withoutMasjidScope()->where('group_id', $this->class->id)->count());
+        $this->assertSame($office->id, (int) ClassGradeWeight::withoutMasjidScope()->where('group_id', $this->class->id)->value('updated_by_user_id'));
     }
 
     // ----------------------------------------------------------------- helpers

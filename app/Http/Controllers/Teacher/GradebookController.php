@@ -14,6 +14,7 @@ use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Http\Requests\Teacher\SaveGradeWeightsRequest;
+use App\Services\Schools\ClassGradeWeightsService;
 use App\Support\ClassSubjects;
 use App\Support\GradeRecord;
 use App\Support\PerformanceLevel;
@@ -565,9 +566,13 @@ class GradebookController extends TeacherController
      * what families read for Arabic or Mathematics. Setting and clearing are one rule:
      * a limited teacher is refused (403) and nothing is written. The old special case
      * for clearing (refused only while another subject's work carried its own weight)
-     * is gone with it. `SubjectFence::mayWeighClass` is the one answer; the office
-     * (an admin, never a limited Teacher) passes it, though it has no route to this
-     * verb today (`GradebookWeightingTest::the_office_has_no_route_to_set_weights`).
+     * is gone with it. `SubjectFence::mayWeighClass` is the one answer.
+     *
+     * The office sets and clears them through its own route (PUT
+     * `admin/.../grade-weights`, AdminDashboard\GroupGradeWeightsController, behind
+     * `permission:manage contacts`), so a class whose every teacher is limited to some
+     * subjects is not left with nobody who can. What a set or a clear does is
+     * ClassGradeWeightsService's, shared, so only WHO may differs between the two.
      */
     public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
     {
@@ -581,36 +586,14 @@ class GradebookController extends TeacherController
             );
         }
 
-        $cleared = 0;
-
-        DB::transaction(function () use ($request, $group, &$cleared): void {
-            if ($request->boolean('clear')) {
-                ClassGradeWeight::query()->where('group_id', $group->id)->delete();
-                $cleared = ClassAssignment::query()
-                    ->where('group_id', $group->id)
-                    ->whereNotNull('weight')
-                    ->update(['weight' => null]);
-
-                return;
-            }
-
-            foreach ($request->validated('weights') as $type => $weight) {
-                ClassGradeWeight::query()->updateOrCreate(
-                    ['group_id' => $group->id, 'assignment_type' => $type],
-                    ['masjid_id' => $group->masjid_id, 'weight' => (int) $weight, 'updated_by_user_id' => Auth::id()],
-                );
-            }
-        });
-
-        $weights = ClassGradeWeight::forGroup((int) $group->id);
-
         return response()->json([
             'status' => 'success',
-            'data' => [
-                'weights' => (object) $weights,
-                'weighting_enabled' => $weights !== [],
-                'cleared_overrides' => $cleared,
-            ],
+            'data' => app(ClassGradeWeightsService::class)->save(
+                $group,
+                $request->boolean('clear'),
+                (array) $request->validated('weights'),
+                Auth::id(),
+            ),
         ], Response::HTTP_OK);
     }
 

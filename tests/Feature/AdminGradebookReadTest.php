@@ -28,6 +28,10 @@ use Tests\TestCase;
  * marker's user id, and an office screen that could do it would put a teacher's
  * name on a judgement nobody in the room made. `the_office_cannot_write`
  * below is what stops a later hand from "completing the CRUD".
+ *
+ * The one class-level setting the office does write, how much each type of work
+ * counts, is about no child and signs no judgement; it has its own file
+ * (AdminGradeWeightsTest).
  */
 class AdminGradebookReadTest extends TestCase
 {

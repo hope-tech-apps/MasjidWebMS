@@ -934,8 +934,9 @@ class TeacherSubjectAccessTest extends TestCase
         $this->assertTrue(SubjectFence::mayWeighClass($super, $this->class->id));
         $this->assertFalse(SubjectFence::mayWeighClass($this->teacher, $this->class->id));
 
-        // And the controller itself lets the office through. The office has no ROUTE to this verb (pinned in
-        // GradebookWeightingTest), so the verb is called directly with a validated request.
+        // And the teacher controller's own verb lets the office through, called directly with a validated request:
+        // the office's own route (AdminGradeWeightsTest) does not go through this gate, so this is the one place
+        // that pins that the gate itself has never been a limit on anyone but a limited Teacher.
         foreach ([$admin, $super] as $office) {
             \Illuminate\Support\Facades\Auth::forgetGuards();
             app(\App\Support\TenantContext::class)->forgetTenant();
