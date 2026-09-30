@@ -425,6 +425,65 @@ class CartPruneTest extends TestCase
     }
 
     #[Test]
+    public function every_deleted_order_with_an_intent_is_on_a_warning_however_many_there_are_and_none_carries_a_buyer(): void
+    {
+        // More than one chunk, and more than the 100 an earlier version of the list stopped at.
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $expected = [];
+
+        for ($i = 1; $i <= 250; $i++) {
+            $order = $this->orderFor(
+                $cart,
+                $i % 2 === 0 ? Order::STATUS_EXPIRED : Order::STATUS_PENDING,
+                now()->subDays(40),
+                "pi_prune_bulk_{$i}"
+            );
+            $order->forceFill([
+                'buyer_name' => 'CANARY-BUYER-NAME',
+                'buyer_email' => 'canary-buyer@example.test',
+                'buyer_phone' => '5550199',
+            ])->save();
+
+            $expected[] = [
+                'order_number' => $order->order_number,
+                'masjid_id' => (int) $order->masjid_id,
+                'payment_intent' => "pi_prune_bulk_{$i}",
+                'total_minor' => 5000,
+                'currency' => 'usd',
+            ];
+        }
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('and 125 pending order(s) with a payment intent')
+            ->expectsOutputToContain('Pruned 125 expired order(s) with a payment intent')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, Order::withoutMasjidScope()->count(), 'all 250 went');
+
+        // One WARNING per chunk of 100, in id order, each listing every order that chunk deleted:
+        // together, all 250, none left off.
+        $chunks = array_chunk($expected, 100);
+        $this->assertCount(3, $chunks);
+
+        foreach ($chunks as $chunk) {
+            Log::shouldHaveReceived('warning')
+                ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'carry a payment intent')
+                    && $context['dry_run'] === false
+                    && $context['orders'] === count($chunk)
+                    && $context['listed'] === $chunk)
+                ->once();
+        }
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message) => str_contains($message, 'carry a payment intent'))
+            ->times(3);
+
+        // Numbers, intents and amounts: never a name, an address or a phone.
+        Log::shouldNotHaveReceived('warning', fn ($message, $context = []) => str_contains(json_encode([$message, $context]), 'CANARY')
+            || str_contains(json_encode([$message, $context]), '5550199'));
+    }
+
+    #[Test]
     public function a_paid_order_is_never_pruned_however_old_and_with_or_without_an_intent(): void
     {
         $cart = $this->basket(['expires_at' => now()->addDay()]);

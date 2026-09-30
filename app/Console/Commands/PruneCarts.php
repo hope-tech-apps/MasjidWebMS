@@ -58,7 +58,8 @@ use Illuminate\Support\Facades\Log;
  *     the office knows about. That holds for an `expired` order as well: a shopper who checks
  *     out again closes the earlier page (CartCheckoutService::markExpired, closePage) while a
  *     delayed debit from it can still be in flight. The sweep logs each order's number, payment
- *     intent and amount at WARNING as it deletes it, so staff have something to reconcile against.
+ *     intent and amount at WARNING as it deletes it (one WARNING per chunk of RECONCILE_CHUNK
+ *     orders, none of them left off), so staff have something to reconcile against.
  *
  * Having an intent is not being paid: only `status` says that, and `paid` is never touched.
  *
@@ -70,6 +71,9 @@ use Illuminate\Support\Facades\Log;
  */
 class PruneCarts extends Command
 {
+    /** Orders read, deleted and listed in one WARNING: see sweepWithIntent(). */
+    private const RECONCILE_CHUNK = 100;
+
     protected $signature = 'cart:prune {--dry-run : Count the baskets and orders that would go and delete nothing}';
 
     protected $description = 'Delete open baskets whose expiry is more than a day past (unless a payment page of theirs could still be paid), and unpaid orders (expired or pending) with no payment intent whose page closed more than a week ago, and unpaid orders with a payment intent whose page closed more than 30 days ago.';
@@ -191,7 +195,7 @@ class PruneCarts extends Command
 
     /**
      * Delete the `pending` and the `expired` orders that carry a payment intent, once their
-     * page closed before the cut-off, and log them at WARNING.
+     * page closed before the cut-off, and log every one of them.
      *
      * An `expired` order can carry an intent too: the intent is recorded as soon as a session
      * event names the order, and a shopper who checks out again closes the earlier page
@@ -199,23 +203,26 @@ class PruneCarts extends Command
      * So both statuses wait `pending_with_payment_days`, not the shorter clock of an order
      * nothing was ever paid for.
      *
-     * One by one, because the orders actually deleted are the ones the log must name. Ids,
-     * amounts and Stripe references only: no name, address or answer. The rows are gone after
-     * this run, so this line is the only list staff will have to reconcile from.
+     * One by one, because the orders actually deleted are the ones the log must name, and
+     * one WARNING per chunk of RECONCILE_CHUNK, listing every order of that chunk that went:
+     * the rows are gone after this run, so these lines are all staff have to reconcile from,
+     * and a cap on the list would lose the rest. Ids, amounts and Stripe references only: no
+     * name, address or answer.
      *
      * @return array<string, int> orders deleted (or, on a dry run, that would be), by status
      */
     private function sweepWithIntent(Carbon $closedBefore, int $days, bool $dryRun): array
     {
         $counts = [Order::STATUS_PENDING => 0, Order::STATUS_EXPIRED => 0];
-        $toReconcile = [];
 
         Order::withoutMasjidScope()
             ->whereIn('status', array_keys($counts))
             ->whereNotNull('stripe_payment_intent_id')
             ->whereNotNull('checkout_expires_at')
             ->where('checkout_expires_at', '<', $closedBefore)
-            ->chunkById(200, function (Collection $orders) use ($dryRun, &$counts, &$toReconcile): void {
+            ->chunkById(self::RECONCILE_CHUNK, function (Collection $orders) use ($closedBefore, $days, $dryRun, &$counts): void {
+                $listed = [];
+
                 foreach ($orders as $order) {
                     $gone = $dryRun
                         ? 1
@@ -230,7 +237,7 @@ class PruneCarts extends Command
                     }
 
                     $counts[$order->status]++;
-                    $toReconcile[] = [
+                    $listed[] = [
                         'order_number' => (string) $order->order_number,
                         'masjid_id' => (int) $order->masjid_id,
                         'payment_intent' => (string) $order->stripe_payment_intent_id,
@@ -238,24 +245,26 @@ class PruneCarts extends Command
                         'currency' => (string) $order->currency,
                     ];
                 }
+
+                if ($listed === []) {
+                    return;
+                }
+
+                $n = count($listed);
+
+                Log::warning(
+                    $dryRun
+                        ? "cart:prune (dry run) would delete {$n} unpaid order(s) that carry a payment intent and whose page closed more than {$days} days ago. Reconcile them in Stripe first."
+                        : "cart:prune deleted {$n} unpaid order(s) that carry a payment intent and whose page closed more than {$days} days ago. "
+                            . 'A delayed debit that succeeded would have settled through payment_intent.succeeded, so these were never recorded as paid: reconcile each payment intent in Stripe.',
+                    [
+                        'dry_run' => $dryRun,
+                        'orders' => $n,
+                        'page_closed_before' => $closedBefore->toIso8601String(),
+                        'listed' => $listed,
+                    ]
+                );
             });
-
-        $n = count($toReconcile);
-
-        if ($n > 0) {
-            Log::warning(
-                $dryRun
-                    ? "cart:prune (dry run) would delete {$n} unpaid order(s) that carry a payment intent and whose page closed more than {$days} days ago. Reconcile them in Stripe first."
-                    : "cart:prune deleted {$n} unpaid order(s) that carry a payment intent and whose page closed more than {$days} days ago. "
-                        . 'A delayed debit that succeeded would have settled through payment_intent.succeeded, so these were never recorded as paid: reconcile each payment intent in Stripe.',
-                [
-                    'dry_run' => $dryRun,
-                    'orders' => $n,
-                    'page_closed_before' => $closedBefore->toIso8601String(),
-                    'listed' => array_slice($toReconcile, 0, 100),
-                ]
-            );
-        }
 
         return $counts;
     }
