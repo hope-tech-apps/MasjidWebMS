@@ -87,7 +87,7 @@ return [
      * production's Connect endpoint does not subscribe to checkout.session.expired, so an order
      * NEVER becomes `expired` there. Either status follows the same rule: with no payment intent
      * on record it goes once its page closed more than `expired_order_days` ago, and one WITH an
-     * intent on record (a payment event named it) goes only after
+     * intent on record (its own page's session event, or a settlement, recorded it) goes only after
      * `pending_with_payment_days`, and is logged at WARNING by number, payment intent and amount
      * as it goes, because a debit that succeeded would have settled through
      * payment_intent.succeeded: an order still unpaid that long is a payment to reconcile in Stripe.

@@ -48,18 +48,20 @@ use Illuminate\Support\Facades\Log;
  * on whether a payment intent is on record:
  *
  *   - with NO payment intent on record, once its page closed more than `prune.expired_order_days`
- *     (a week) ago: no payment event ever named it, and none can now (the page closes within 31
- *     minutes, and Stripe redelivers a webhook for three days at most);
- *   - WITH an intent on record (recorded by the first session or payment-intent event that named
- *     the order, whether or not settlement then succeeded), only once its page closed more than
- *     `prune.pending_with_payment_days` (30) ago. Something was paid, or at least attempted, for
- *     it, and a delayed debit that succeeded would have settled through payment_intent.succeeded,
- *     so an order still unpaid this long after is a payment to reconcile in Stripe, not a sale
- *     the office knows about. That holds for an `expired` order as well: a shopper who checks
- *     out again closes the earlier page (CartCheckoutService::markExpired, closePage) while a
- *     delayed debit from it can still be in flight. The sweep logs each order's number, payment
- *     intent and amount at WARNING as it deletes it (one WARNING per chunk of RECONCILE_CHUNK
- *     orders, none of them left off), so staff have something to reconcile against.
+ *     (a week) ago: neither its own page's session event nor a settlement ever recorded one, and
+ *     none can now (the page closes within 31 minutes, and Stripe redelivers a webhook for three
+ *     days at most);
+ *   - WITH an intent on record (written ahead of settlement by the checkout-session event of the
+ *     page the app opened, or at settlement by the event that settles it), only once its page
+ *     closed more than `prune.pending_with_payment_days` (30) ago. Something was paid, or at
+ *     least attempted, for it, and a delayed debit that succeeded would have settled through
+ *     payment_intent.succeeded, so an order still unpaid this long after is a payment to
+ *     reconcile in Stripe, not a sale the office knows about. That holds for an `expired`
+ *     order as well: a shopper who checks out again closes the earlier page
+ *     (CartCheckoutService::markExpired, closePage) while a delayed debit from it can still be
+ *     in flight. The sweep logs each order's number, payment intent and amount at WARNING as
+ *     it deletes it (one WARNING per chunk of RECONCILE_CHUNK orders, none of them left off),
+ *     so staff have something to reconcile against.
  *
  * Having an intent is not being paid: only `status` says that, and `paid` is never touched.
  *

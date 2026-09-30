@@ -83,7 +83,7 @@ class CartPaymentService
         }
 
         // Before anything that can refuse or throw: see recordPaymentIntent().
-        $this->recordPaymentIntent($order, $this->stringOrNull($session['payment_intent'] ?? null));
+        $this->recordPaymentIntent($order, $session);
 
         // `payment_status`, never `status`: every completed session is `complete`.
         if (($session['payment_status'] ?? null) !== 'paid') {
@@ -117,8 +117,9 @@ class CartPaymentService
             return CartSettlementResult::none();
         }
 
-        $this->recordPaymentIntent($order, $this->stringOrNull($intent['id'] ?? null));
-
+        // No early record here: a payment-intent event names an order only by metadata, which on
+        // a holder's account the holder's own users can write. Its intent is recorded when it
+        // settles the order (CartSettlementService), as before. See recordPaymentIntent().
         [$currency, $amount] = $this->reportedTotal($intent, self::KIND_INTENT);
 
         // A payment intent in another currency than the order's is a localised one (Adaptive
@@ -148,8 +149,8 @@ class CartPaymentService
     }
 
     /**
-     * Remember which payment an event says this order is, as soon as the event has identified
-     * the order and the page, and BEFORE settlement is tried.
+     * Remember which payment this order's checkout page took, as soon as the page's own session
+     * event has identified the order, and BEFORE settlement is tried.
      *
      * The intent used to be written only in the save that marks the order paid, inside the
      * settlement transaction. A settlement that refused (an amount that did not match) or threw
@@ -159,18 +160,38 @@ class CartPaymentService
      * redeliver a refund or a dispute. Written here, outside the settlement's transaction, the
      * intent survives whatever settlement does, and flagOrder finds the pending order and flags it.
      *
+     * ONLY from a checkout SESSION event whose id is the page the app opened and recorded on the
+     * order (`stripe_checkout_session_id`): that page is ours, so the payment intent Stripe made
+     * for it is this order's. A payment-intent event proves nothing of the kind. It names the
+     * order by metadata, and on a holder's account the holder's own users can write that metadata
+     * on any PaymentIntent, so a stray or forged one would take the write-once slot below and
+     * keep the real payment's intent off the order (and a refund of the forged one would flag it).
+     * A payment-intent event records its intent only when it settles the order, as before. An
+     * order that has not recorded its page yet records nothing early either: there is no page to
+     * match.
+     *
      * HAVING AN INTENT MEANS NOTHING ABOUT PAYMENT. Only `status` says an order is paid
      * (Order::isPaid()), and only settlement moves it. Nothing reads this column as "paid":
      * the portal, the payment-state read, checkout and the prune all test `status`, and the prune
-     * treats a pending order with an intent as a payment to reconcile, never as a sale.
+     * treats an unpaid order with an intent as a payment to reconcile, never as a sale.
      *
      * It is written once (`whereNull`, so a recorded intent is never replaced and two events
      * cannot race each other's value), and a failure to write it is logged and swallowed: the
      * settlement that follows is the more important write and reaches the same database.
+     *
+     * @param  array<string, mixed>  $session  the checkout session object of the event
      */
-    private function recordPaymentIntent(Order $order, ?string $intentId): void
+    private function recordPaymentIntent(Order $order, array $session): void
     {
+        $intentId = $this->stringOrNull($session['payment_intent'] ?? null);
+        $seen = $this->stringOrNull($session['id'] ?? null);
+        $page = $this->stringOrNull($order->stripe_checkout_session_id);
+
         if ($intentId === null || $order->stripe_payment_intent_id !== null) {
+            return;
+        }
+
+        if ($seen === null || $page === null || ! hash_equals($page, $seen)) {
             return;
         }
 
@@ -248,10 +269,10 @@ class CartPaymentService
      *
      * An order that names the payment but is NOT PAID yet is flagged all the same, with a
      * warning that it was flagged before settlement recorded it: Stripe does not redeliver a
-     * refund or dispute, so ignoring it would lose it. An order names its payment from the first
-     * session or payment-intent event that identified it, before settlement is tried
+     * refund or dispute, so ignoring it would lose it. An order names its payment from the
+     * checkout-session event of the page the app opened, before settlement is tried
      * (recordPaymentIntent()), so a payment settlement refused or failed to record is still
-     * found. A charge that is no basket's (every donation, lunch and registration refund)
+     * found. (A payment-intent event records its intent only when it settles the order.) A charge that is no basket's (every donation, lunch and registration refund)
      * writes nothing, exactly as before this arm existed, and is logged at info so there is a
      * trace. It never throws: a 500 would only make Stripe retry, and a lost flag is logged at
      * error.

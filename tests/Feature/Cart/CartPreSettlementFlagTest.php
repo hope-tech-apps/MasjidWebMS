@@ -10,6 +10,7 @@ use App\Models\StripeWebhookEvent;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Cart\Endpoints\CallsCartApi;
 use Tests\TestCase;
@@ -21,8 +22,10 @@ use Tests\TestCase;
  * settlement transaction. When settlement refused (an amount that did not match) or threw (a
  * line that could not be recorded), the order carried no intent, so a `charge.refunded` or
  * `charge.dispute.created` for that very payment found no order, was logged at info and lost:
- * Stripe does not redeliver either. The intent is now recorded as soon as an event identifies
- * the order and its page, outside and before the settlement transaction.
+ * Stripe does not redeliver either. The intent is now recorded as soon as the checkout-session
+ * event of the page the app opened identifies the order, outside and before the settlement
+ * transaction. A payment-intent event never records it early (pre-merge fix, round 2): it names
+ * the order by metadata a holder's own users can write.
  */
 class CartPreSettlementFlagTest extends TestCase
 {
@@ -106,19 +109,67 @@ class CartPreSettlementFlagTest extends TestCase
     }
 
     #[Test]
-    public function a_payment_intent_event_that_settlement_refuses_records_its_intent_too(): void
+    public function a_forged_payment_intent_event_does_not_take_the_slot_and_the_genuine_session_event_still_records_its_intent(): void
     {
         [$order] = $this->giftOrder();
 
-        $this->postWebhook($this->intentEvent($order, ['amount' => (int) $order->total_minor + 1]))->assertOk();
+        // A payment intent that is not this order's but names it (metadata a holder's own users
+        // can write). Settlement refuses it (one cent), and it must not have taken the write-once
+        // slot on its way: it is a payment-intent event, which records only at settlement.
+        $this->postWebhook($this->intentEvent($order, ['payment_intent' => 'pi_forged', 'amount' => 1]))->assertOk();
 
-        $this->assertSame(Order::STATUS_PENDING, $order->fresh()->status);
-        $this->assertSame('pi_cart_1', $order->fresh()->stripe_payment_intent_id);
+        $forged = $order->fresh();
+        $this->assertSame(Order::STATUS_PENDING, $forged->status, 'premise: settlement refused it');
+        $this->assertNull($forged->stripe_payment_intent_id, 'the forged intent did not take the slot');
 
-        $this->postWebhook($this->disputeEvent($order))->assertOk();
+        // The genuine session event, for the page the app opened, still records ITS intent, even
+        // though settlement refuses it too.
+        $this->postWebhook($this->sessionEvent($order, ['amount' => (int) $order->total_minor - 1]))->assertOk();
 
-        $this->assertSame(Order::CHARGE_FLAG_DISPUTED, $order->fresh()->charge_flag);
+        $genuine = $order->fresh();
+        $this->assertSame(Order::STATUS_PENDING, $genuine->status, 'premise: settlement refused it as well');
+        $this->assertSame('pi_cart_1', $genuine->stripe_payment_intent_id);
+
+        // So the refund of the real payment is found, and the forged intent's is not.
+        $this->postWebhook($this->refundEvent($order, 5000))->assertOk();
+
+        $this->assertSame(Order::CHARGE_FLAG_REFUNDED, $order->fresh()->charge_flag);
         $this->assertWarnedBeforeSettlement($order);
+    }
+
+    #[Test]
+    public function on_a_holders_account_a_forged_payment_intent_event_does_not_take_the_slot_either(): void
+    {
+        [$order] = $this->giftOrder();
+
+        // A basket on a HOLDER's account: named by its opaque reference, which the holder's Stripe
+        // users can see and write on any PaymentIntent of that account.
+        $order->forceFill(['charge_ref' => 'cref_' . Str::random(32)])->save();
+        $order = $order->fresh();
+
+        $this->postWebhook($this->intentEvent($order, ['payment_intent' => 'pi_forged', 'amount' => 1]))->assertOk();
+
+        $this->assertNull($order->fresh()->stripe_payment_intent_id, 'premise: a forged intent named the order and recorded nothing');
+
+        $this->postWebhook($this->sessionEvent($order, ['amount' => (int) $order->total_minor - 1]))->assertOk();
+
+        $this->assertSame('pi_cart_1', $order->fresh()->stripe_payment_intent_id, 'the page the app recorded still records its own intent');
+    }
+
+    #[Test]
+    public function a_session_event_records_early_only_for_the_page_the_order_recorded(): void
+    {
+        [$order] = $this->giftOrder();
+
+        // An order that has recorded no page yet still accepts a session event on its own account
+        // (the account and the uuid already agree), but there is no page to match, so nothing is
+        // written ahead of settlement.
+        Order::withoutMasjidScope()->whereKey($order->id)->update(['stripe_checkout_session_id' => null]);
+
+        $this->postWebhook($this->sessionEvent($order, ['session_id' => 'cs_not_recorded', 'amount' => 1]))->assertOk();
+
+        $this->assertSame(Order::STATUS_PENDING, $order->fresh()->status, 'premise: settlement refused it');
+        $this->assertNull($order->fresh()->stripe_payment_intent_id);
     }
 
     // ------------------------------------------------------------ settlement throws
