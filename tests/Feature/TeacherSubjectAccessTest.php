@@ -300,13 +300,17 @@ class TeacherSubjectAccessTest extends TestCase
         $this->assertSame('Body.', $arabic->fresh()->body);
         $this->assertSame('Body.', $maths->fresh()->body);
 
-        // The day's general plan is open to every teacher, and it is the only plan THEY see on this day
-        // besides their own, so it is theirs to rename the way the old screen meant it. Arabic is still not.
+        // The day's general plan is open to every teacher BY ID, but it is not "their" plan by day: it is the only plan
+        // they see on this day besides their own, and retyping it to Qur'an would overwrite what the whole class reads
+        // (review G2; this half used to pin that rename). A new plan of their own, and neither of the others moves.
         $other = now()->addDays(2)->toDateString();
         $hidden = $this->plan($other, 'Arabic Language');
         $general = $this->plan($other, null);
-        $this->putJson($this->url('/lesson-plans'), ['session_date' => $other, 'subject' => "Qur'an", 'body' => 'Renamed.'])
-            ->assertOk()->assertJsonPath('data.id', $general->id);
+        $created = $this->putJson($this->url('/lesson-plans'), ['session_date' => $other, 'subject' => "Qur'an", 'body' => 'Mine.'])
+            ->assertOk()->assertJsonPath('data.subject', "Qur'an");
+        $this->assertNotSame($general->id, $created->json('data.id'));
+        $this->assertNull($general->fresh()->subject);
+        $this->assertSame('Body.', $general->fresh()->body);
         $this->assertSame('Arabic Language', $hidden->fresh()->subject);
         $this->assertSame('Body.', $hidden->fresh()->body);
     }
@@ -379,13 +383,15 @@ class TeacherSubjectAccessTest extends TestCase
         $this->assertNotNull(LessonPlan::query()->find($arabic->id));
         $this->assertNotNull(LessonPlan::query()->find($maths->id));
 
-        // Two plans of THEIRS is a real 409, and deletes nothing.
+        // Two plans of THEIRS is a real 409, and deletes nothing. Theirs means filed under their subjects: the
+        // day's general plan is not one of them (review G2; this half used to count it as theirs, and 409).
         $one = $this->plan($day, "Qur'an");
-        $two = $this->plan($day, null);
+        $two = $this->plan($day, 'Qur’an & Islamic Studies');
+        $general = $this->plan($day, null);
         $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertStatus(409);
-        $this->assertNotNull(LessonPlan::query()->find($one->id));
-        $this->assertNotNull(LessonPlan::query()->find($two->id));
-        $this->assertNotNull(LessonPlan::query()->find($arabic->id));
+        foreach ([$one, $two, $general, $arabic] as $plan) {
+            $this->assertNotNull(LessonPlan::query()->find($plan->id), 'a refused delete removes nothing');
+        }
     }
 
     #[Test]
@@ -419,6 +425,114 @@ class TeacherSubjectAccessTest extends TestCase
         $this->deleteJson($this->url("/lesson-plans/{$mine->id}"))->assertOk();
         $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertOk();
         $this->assertNull(LessonPlan::query()->find($arabic->id));
+    }
+
+    // ---- review G2 (2026-09-29): the by-day verbs never take over the shared GENERAL plan
+
+    /** Every column of a plan as it is stored: "byte-unchanged" means this array is equal before and after. */
+    private function stored(LessonPlan $plan): array
+    {
+        return $plan->fresh()->getAttributes();
+    }
+
+    #[Test]
+    public function a_limited_teachers_by_day_save_on_a_day_of_the_general_plan_and_another_subject_creates_their_own_and_touches_neither(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $general = $this->plan($day, null);
+        $arabic = $this->plan($day, 'Arabic Language');
+        $generalBefore = $this->stored($general);
+        $arabicBefore = $this->stored($arabic);
+
+        // Their subject is not on the day. The general plan is not "their" plan to retype: a new plan.
+        $created = $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Fatiha.'])
+            ->assertOk()->assertJsonPath('data.subject', "Qur'an")->assertJsonPath('data.body', 'Fatiha.');
+
+        $this->assertNotContains($created->json('data.id'), [$general->id, $arabic->id], 'a new plan, neither of the two renamed');
+        $this->assertSame(3, LessonPlan::query()->count());
+        $this->assertSame($generalBefore, $this->stored($general), 'the general plan is byte-unchanged: subject, body, author, stamp');
+        $this->assertSame($arabicBefore, $this->stored($arabic), "and so is Arabic's");
+
+        // Saving again corrects THEIR plan, not the general one and not a fourth.
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Fatiha, corrected.'])
+            ->assertOk()->assertJsonPath('data.id', $created->json('data.id'));
+        $this->assertSame(3, LessonPlan::query()->count());
+        $this->assertSame($generalBefore, $this->stored($general));
+        $this->assertSame($arabicBefore, $this->stored($arabic));
+    }
+
+    #[Test]
+    public function a_limited_teachers_by_day_delete_on_a_day_of_the_general_plan_and_another_subject_removes_neither(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $empty = now()->addDays(2)->toDateString();
+        $general = $this->plan($day, null);
+        $arabic = $this->plan($day, 'Arabic Language');
+        $generalBefore = $this->stored($general);
+        $arabicBefore = $this->stored($arabic);
+
+        // Nothing of theirs is there: the general plan is everyone's and is not theirs to delete by day, so
+        // it is the same 404 an empty day gives, byte for byte.
+        $held = $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertNotFound();
+        $nothing = $this->deleteJson($this->url('/lesson-plans?date='.$empty))->assertNotFound();
+
+        $this->assertSame($nothing->getContent(), $held->getContent());
+        $this->assertSame(2, LessonPlan::query()->count());
+        $this->assertSame($generalBefore, $this->stored($general));
+        $this->assertSame($arabicBefore, $this->stored($arabic));
+    }
+
+    #[Test]
+    public function on_a_day_of_the_general_plan_and_their_own_subject_a_limited_teachers_by_day_save_and_delete_reach_only_their_own(): void
+    {
+        $this->assign([GroupStaff::SUBJECT_QURAN]);
+        $day = now()->addDay()->toDateString();
+        $general = $this->plan($day, null);
+        $mine = $this->plan($day, "Qur'an");
+        $generalBefore = $this->stored($general);
+
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $day, 'subject' => "Qur'an", 'body' => 'Corrected.'])
+            ->assertOk()->assertJsonPath('data.id', $mine->id);
+        $this->assertSame('Corrected.', $mine->fresh()->body);
+        $this->assertSame(2, LessonPlan::query()->count());
+        $this->assertSame($generalBefore, $this->stored($general), 'the general plan is byte-unchanged');
+
+        // Their plan goes, the general one stays: no 409 for "two plans", because only one of them is theirs.
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertOk();
+        $this->assertNull(LessonPlan::query()->find($mine->id));
+        $this->assertSame($generalBefore, $this->stored($general));
+
+        // And with none of theirs left it is the plain 404, and the general plan is still there.
+        $this->deleteJson($this->url('/lesson-plans?date='.$day))->assertNotFound();
+        $this->assertSame($generalBefore, $this->stored($general));
+    }
+
+    #[Test]
+    public function an_unrestricted_teachers_by_day_save_is_unchanged_including_the_old_screens_rename(): void
+    {
+        $this->assign(null);
+        $only = now()->addDay()->toDateString();
+        $several = now()->addDays(2)->toDateString();
+
+        // The day's only plan is renamed, as the screen from before per-subject plans meant it.
+        $science = $this->plan($only, 'Science');
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $only, 'subject' => 'Math', 'body' => 'Sums.'])
+            ->assertOk()->assertJsonPath('data.id', $science->id);
+        $this->assertSame('Math', $science->fresh()->subject);
+
+        // A day of several plans is never renamed: the subject sent is upserted, and nothing else moves.
+        $general = $this->plan($several, null);
+        $arabic = $this->plan($several, 'Arabic Language');
+        $before = [$this->stored($general), $this->stored($arabic)];
+        $created = $this->putJson($this->url('/lesson-plans'), ['session_date' => $several, 'subject' => "Qur'an", 'body' => 'Fatiha.'])
+            ->assertOk()->json('data.id');
+        $this->assertNotContains($created, [$general->id, $arabic->id]);
+        $this->assertSame($before, [$this->stored($general), $this->stored($arabic)]);
+        $this->putJson($this->url('/lesson-plans'), ['session_date' => $several, 'subject' => 'arabic language', 'body' => 'Alif.'])
+            ->assertOk()->assertJsonPath('data.id', $arabic->id);
+        $this->assertSame(3, LessonPlan::query()->whereDate('session_date', $several)->count());
     }
 
     #[Test]

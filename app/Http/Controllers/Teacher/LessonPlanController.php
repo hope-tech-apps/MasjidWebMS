@@ -56,6 +56,13 @@ use Symfony\Component\HttpFoundation\Response;
  * 2026-09-29). Only a subject the teacher TYPES is refused, with a 403 that names
  * what they wrote.
  *
+ * BY DAY, a limited teacher reaches only plans in THEIR OWN subjects (review G2,
+ * 2026-09-29). The general plan is open to them by id, where they open it on
+ * purpose, but the by-day address names a plan by day and subject only, and
+ * "the day's plan" must never resolve to the class's shared general plan or to
+ * another subject's: their save upserts on the subject they sent, and their
+ * delete removes only what is filed under their subjects.
+ *
  * `teacher.leads` has already answered "may this teacher touch this class"
  * before any method here runs. A plan id is always resolved THROUGH that class
  * (`$group->lessonPlans()`), so an id from another class is a 404, never a
@@ -150,14 +157,17 @@ class LessonPlanController extends TeacherController
      * Which plan that is:
      *   1. the day's plan for the subject sent, when there is one — an upsert on
      *      the per-subject unique key, so saving twice corrects the same plan;
-     *   2. otherwise, when the day holds exactly ONE plan the teacher may touch,
-     *      that plan. The old screen showed one plan a day and sends the whole
-     *      form, subject included, so a teacher who changed the subject there
-     *      meant to rename THAT plan. Upserting on the new subject instead would
-     *      leave the old plan behind and add a second one she never asked for. A
-     *      plan a limited teacher may not touch is not counted: their save is
-     *      then a new plan of their own beside it, never a 403 and never a
-     *      rewrite of another subject's;
+     *   2. otherwise, when the day holds exactly ONE plan, that plan, for a
+     *      teacher who is not limited to some subjects. The old screen showed one
+     *      plan a day and sends the whole form, subject included, so a teacher
+     *      who changed the subject there meant to rename THAT plan. Upserting on
+     *      the new subject instead would leave the old plan behind and add a
+     *      second one she never asked for. A LIMITED teacher never renames by day
+     *      (review G2): the only plan they can see on a day may be the class's
+     *      shared general plan, and retyping it to their subject would overwrite
+     *      what every teacher of the class reads. Their save is a new plan of
+     *      their own beside whatever is there, never a 403 and never a rewrite of
+     *      the general plan or another subject's;
      *   3. otherwise a new plan: the day is empty, or it already holds several
      *      subjects' plans and none for this one, so "the day's plan" names none
      *      of them and replacing one would lose work she did not point at.
@@ -218,9 +228,11 @@ class LessonPlanController extends TeacherController
      * point at; it answers 409 and the teacher removes them one at a time.
      *
      * "The day's plans" are the ones THIS teacher may touch. For a limited teacher
-     * the others are not counted (so a 409 never says a hidden plan exists) and are
-     * never deleted, and a day with nothing they may touch is a 404, whether it is
-     * empty or holds only another subject's plan: the two cannot be told apart.
+     * that is the plans filed under THEIR subjects, and only those (review G2): the
+     * general plan is not among them, so it is neither counted nor deleted, and
+     * neither is another subject's (so a 409 never says a hidden plan exists). A day
+     * with nothing of theirs is a 404, whether it is empty or holds only the general
+     * plan or another subject's plan: the cases cannot be told apart.
      */
     public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
     {
@@ -239,9 +251,15 @@ class LessonPlanController extends TeacherController
         // to March 2nd and remove that day's plan; as a string it matches nothing.
         $plans = $this->plansTouchableOn($group, $date);
 
-        // A limited teacher with nothing of their own that day: the one plain 404.
-        if ($plans->isEmpty() && $this->limits($group) !== null) {
-            abort(Response::HTTP_NOT_FOUND);
+        if ($this->limits($group) !== null) {
+            // Touchable is the general plan and their own subjects'; by day only the
+            // latter are theirs. The general plan is the class's, not "their" plan.
+            $plans = $plans->filter(fn (LessonPlan $p): bool => SubjectKey::clean($p->subject) !== null)->values();
+
+            // Nothing of their own that day: the one plain 404.
+            if ($plans->isEmpty()) {
+                abort(Response::HTTP_NOT_FOUND);
+            }
         }
 
         if ($plans->count() > 1) {
@@ -444,14 +462,19 @@ class LessonPlanController extends TeacherController
     }
 
     /**
-     * The day's plan when the day holds exactly one THIS TEACHER MAY TOUCH; null when it
-     * holds none or several. A plan a limited teacher may not touch is not counted, so
-     * the day looks to them as it does on their own screen, and their by-day save
-     * never lands on it.
+     * The day's plan when the day holds exactly one; null when it holds none or several,
+     * and ALWAYS null for a teacher limited to some subjects. Renaming "the day's only
+     * plan" is the old screen's meaning of a save, and for a limited teacher that plan
+     * can be the shared general one or, before them, another subject's, which a save
+     * of theirs must never retype or overwrite (review G2).
      */
     private function onlyPlanOn(Group $group, Carbon $date): ?LessonPlan
     {
-        $plans = $this->plansTouchableOn($group, $date->toDateString());
+        if ($this->limits($group) !== null) {
+            return null;
+        }
+
+        $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
 
         return $plans->count() === 1 ? $plans->first() : null;
     }

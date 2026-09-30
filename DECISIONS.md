@@ -5257,3 +5257,18 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   write to be shared, not the route. Resolves ASSUMPTIONS W3F-2. Also here: the teacher SPA treats a 404 from the plan removal as "nothing to delete" (no message,
   and the screen ends as after a removal that worked). The screen removes a plan by id; `DELETE /lesson-plans?date=` has no caller in this app and stays for
   older screens.
+
+- **W3/W4 folds (2026-09-29, G2): the by-day lesson-plan verbs never take over the shared general plan.** F4 made "the day's plan" mean the plans the
+  signed-in teacher may touch, and the general (untagged) plan counts as touchable, so on a day holding [general, Arabic] a Qur'an-only teacher's by-day
+  `PUT {subject: Qur'an}` found the general plan as "the day's only plan", retyped it to Qur'an and overwrote its body, and a by-day `DELETE` then
+  deleted it (it used to be a 409). Rule now: a by-day PUT with subject S updates only the day's plan filed under S, or creates one; a teacher LIMITED
+  to some subjects never renames "the day's only plan" by day (`onlyPlanOn` is null for them) and a limited teacher's by-day DELETE reaches only plans
+  filed under their own subjects: the general plan is neither counted (no 409 for it) nor deleted, and a day with nothing of theirs is the same plain
+  404 whether it is empty or holds the general plan or another subject's. The general plan stays open to a limited teacher BY ID, where they open it on
+  purpose. An unrestricted teacher's by-day behaviour is unchanged, including the old screen's rename of a day's only plan and the 409 for a day of
+  several. Two existing tests pinned the regression and were changed, one half each, in `TeacherSubjectAccessTest`:
+  `a_limited_teachers_by_day_save_ignores_every_plan_they_may_not_touch_however_many_there_are` (its second half asserted the general plan was renamed
+  to Qur'an) and `the_by_day_delete_removes_only_a_plan_the_teacher_may_touch_and_never_counts_a_hidden_one` (its second half asserted a 409 for
+  [Qur'an, general], which counted the general plan as the teacher's; the 409 now needs two plans under their own subjects, Qur'an and the combined
+  "Qur'an & Islamic Studies"). Alternative: keep the rename for a limited teacher when the only plan they can see is a subject's, not the general one.
+  Rejected: the point's rule is that a by-day save never retypes another subject's plan, and the old screen is not what the day view uses.
