@@ -3,11 +3,13 @@
 namespace Tests\Feature;
 
 use App\Models\Broadcast;
+use App\Models\Cart;
 use App\Models\Contact;
 use App\Models\ContactTag;
 use App\Models\EmailSuppression;
 use App\Models\ImportLink;
 use App\Models\Masjid;
+use App\Models\Order;
 use App\Models\SmsSuppression;
 use App\Services\Broadcast\BroadcastAudienceResolver;
 use App\Services\Broadcast\EmailSuppressionService;
@@ -1019,6 +1021,64 @@ Called about the fall festival."])->save();
         $this->assertStringContainsString("contact {$withLogin->id}: contacts.login_email", $output);
         $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
         $this->assertSame(2, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->count());
+    }
+
+    /** A cart order for $contact in the given state, built unbound with an explicit organisation. */
+    private function orderFor(Contact $contact, string $status): Order
+    {
+        return Order::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'order_number' => strtoupper(\Illuminate\Support\Str::random(8)),
+            'contact_id' => $contact->id,
+            'buyer_email' => 'buyer@example.test',
+            'status' => $status,
+            'total_minor' => 5000,
+            'currency' => 'usd',
+            'charge_account_id' => 'acct_' . uniqid(),
+        ]);
+    }
+
+    #[Test]
+    public function undo_is_not_held_by_an_unpaid_checkout_or_an_abandoned_basket(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'pending@example.test']),
+            $this->wix('w2', ['email' => 'expired@example.test']),
+            $this->wix('w3', ['email' => 'basket@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $this->orderFor($this->contactWithEmail('pending@example.test'), Order::STATUS_PENDING);
+        $this->orderFor($this->contactWithEmail('expired@example.test'), Order::STATUS_EXPIRED);
+        $cart = Cart::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'contact_id' => $this->contactWithEmail('basket@example.test')->id,
+            'token_hash' => hash('sha256', uniqid('', true)),
+        ]);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(0, $this->contacts()->count(), 'an unpaid order is not a record, nor is a basket');
+        $this->assertFalse(Cart::withoutMasjidScope()->whereKey($cart->id)->exists(), 'the basket went with its contact');
+    }
+
+    #[Test]
+    public function undo_is_still_refused_once_an_imported_contact_has_a_paid_order(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'paid@example.test']),
+            $this->wix('w2', ['email' => 'other@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $paid = $this->contactWithEmail('paid@example.test');
+        $this->orderFor($paid, Order::STATUS_PAID);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$paid->id}: orders", $output);
+        $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
     }
 
     #[Test]

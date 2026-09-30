@@ -165,6 +165,13 @@ final class WixContactImport
      */
     private const COLUMNS_THE_IMPORT_WRITES = ['first_name', 'last_name', 'email', 'phone', 'notes', 'import_batch'];
 
+    /**
+     * Tables in MemberAccountDeletion::LOGIN_RECORDS whose rows cascade away with the contact
+     * (carts.contact_id is cascadeOnDelete) and are never a record the office keeps, so an
+     * undo does not count them. A signed-in shopper's other login columns still hold the undo.
+     */
+    private const GONE_WITH_THE_CONTACT = ['carts'];
+
     public function __construct(
         private readonly EmailSuppressionService $emailSuppression,
         private readonly SmsConsentService $sms,
@@ -1203,11 +1210,24 @@ final class WixContactImport
         }
 
         foreach (MemberAccountDeletion::OFFICE_RECORDS + MemberAccountDeletion::LOGIN_RECORDS as $table => $columns) {
+            // An unpaid basket is the shopper's half-finished choice, not a record: its foreign
+            // key cascades, so the undo removes it with the contact, as an account deletion does.
+            if (in_array($table, self::GONE_WITH_THE_CONTACT, true)) {
+                continue;
+            }
+
             $query = DB::table($table)->where(function ($q) use ($columns, $contact) {
                 foreach ($columns as $column) {
                     $q->orWhere($column, $contact->id);
                 }
             });
+
+            // The same conditions an account deletion applies (an order is a record only once
+            // it is PAID). Without them, an abandoned checkout would hold the contact against
+            // the undo of the import that created it.
+            if (isset(MemberAccountDeletion::OFFICE_RECORD_CONDITIONS[$table])) {
+                $query->where(MemberAccountDeletion::OFFICE_RECORD_CONDITIONS[$table]);
+            }
 
             if ($table === 'contact_tag_links') {
                 $query->whereNull('import_batch');
