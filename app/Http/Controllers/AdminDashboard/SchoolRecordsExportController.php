@@ -330,8 +330,11 @@ class SchoolRecordsExportController extends Controller
     /** @param resource $out */
     private function writeAssignments($out): void
     {
+        // The last five (W3) are appended, never inserted, so a spreadsheet that
+        // already reads the earlier columns by position still does.
         Csv::row($out, ['Assignment id', 'Class id', 'Title', 'Scale', 'Points possible',
-            'Assigned on', 'Withdrawn on']);
+            'Assigned on', 'Withdrawn on',
+            'Subject', 'Type', 'Weight', 'Standard code', 'Curriculum focus']);
 
         Csv::each(
             ClassAssignment::withTrashed()->whereIn('group_id', $this->schoolGroupIds()),
@@ -339,6 +342,8 @@ class SchoolRecordsExportController extends Controller
                 Csv::num($a->id), Csv::num($a->group_id), Csv::text($a->title),
                 Csv::text($a->scale), Csv::num($a->points_possible),
                 Csv::num($a->assigned_on?->toDateString()), Csv::num($a->deleted_at),
+                Csv::text($a->subject), Csv::text($a->type), Csv::num($a->weight),
+                Csv::text($a->standard_code), Csv::text($a->curriculum_focus),
             ])
         );
     }

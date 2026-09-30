@@ -47,6 +47,10 @@ class StoreGroupRequest extends GroupFormRequest
             // placed ones, alphabetically.
             'position' => 'nullable|integer|min:0|max:9999',
             'is_active' => 'sometimes|boolean',
+            // How the class's points read: 'running' or 'weekly' (T-003.2). A view
+            // choice the teacher can also flip from their own screen; blank means
+            // the default, one running total.
+            'points_period' => ['nullable', 'string', Rule::in(Group::POINTS_PERIODS)],
             'starts_on' => 'nullable|date',
             // Ordering is only checkable when both ends of the window were sent;
             // `after_or_equal` against an absent field cannot decide anything.

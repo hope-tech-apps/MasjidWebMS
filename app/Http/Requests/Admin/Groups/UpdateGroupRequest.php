@@ -39,6 +39,10 @@ class UpdateGroupRequest extends GroupFormRequest
             // placed ones, alphabetically.
             'position' => 'sometimes|nullable|integer|min:0|max:9999',
             'is_active' => 'sometimes|boolean',
+            // How the class's points read: 'running' or 'weekly' (T-003.2). A view
+            // choice the teacher can also flip from their own screen; blank means
+            // the default, one running total.
+            'points_period' => ['sometimes', 'nullable', 'string', Rule::in(Group::POINTS_PERIODS)],
             'starts_on' => 'sometimes|nullable|date',
             // Ordering is only checkable when the caller sent both ends of the
             // window; `after_or_equal` against an absent field silently compares

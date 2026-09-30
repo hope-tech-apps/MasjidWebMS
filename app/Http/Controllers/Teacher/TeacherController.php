@@ -91,6 +91,8 @@ abstract class TeacherController extends Controller
             'description' => $group->description,
             'is_active' => (bool) $group->is_active,
             'arabic_stage' => $group->arabicStage(),
+            // How this class's points read: 'running' or 'weekly' (T-003.2).
+            'points_period' => $group->pointsPeriod(),
             // What THIS teacher teaches in this class: null for everything (every
             // assignment before subjects existed, and a full-time teacher), else a
             // list. The screen hides the tabs a subject owns; the server refuses
@@ -105,15 +107,6 @@ abstract class TeacherController extends Controller
     /** @return list<string>|null */
     private function mySubjects(Group $group): ?array
     {
-        $subjects = \App\Models\GroupStaff::query()
-            ->where('group_id', $group->id)
-            ->where('user_id', Auth::id())
-            ->value('subjects');
-
-        if (is_string($subjects)) {
-            $subjects = json_decode($subjects, true);
-        }
-
-        return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
+        return \App\Support\SubjectFence::assigned((int) $group->id, (int) Auth::id());
     }
 }

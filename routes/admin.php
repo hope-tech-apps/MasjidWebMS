@@ -33,6 +33,7 @@ use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
+use App\Http\Controllers\AdminDashboard\GroupGradeWeightsController;
 use App\Http\Controllers\AdminDashboard\AdministratorsController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
@@ -731,6 +732,13 @@ Route::prefix('admin')->group(function () {
             // live page sections show it, and the last changes. Same in-controller
             // 403 as the writers above.
             Route::get('{masjid_id}/capabilities', [MasjidsController::class, 'capabilities']);
+            // SuperAdmin-only: WHEN the school's weekly points report goes out
+            // (T-003.3): a weekday and a time on the school's clock, default Friday
+            // 15:00. Whether it goes out at all is the `points_weekly_report`
+            // capability above. GET checks in the controller, PUT in the request's
+            // authorize(), so a non-super never sees validation output.
+            Route::get('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'show']);
+            Route::put('{masjid_id}/points-report-schedule', [\App\Http\Controllers\AdminDashboard\PointsReportScheduleController::class, 'update']);
             // SuperAdmin-only: rebuild the favicon, touch icon and share image
             // from the current logo (Studio W2 S8, BrandAssets). A per-org
             // decision on a live organisation: it adds three keys to its
@@ -968,6 +976,20 @@ Route::prefix('admin')->group(function () {
                     Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
                 });
 
+                // The school's own list of subjects (T-001.3), edited by the
+                // office and offered to teachers setting work. `view contacts`
+                // reads, `manage contacts` writes, like the class list beside it,
+                // and no permission is minted. Work keeps a SNAPSHOT of the
+                // subject's name, so no edit here moves a mark.
+                Route::prefix('{masjid_id}/school-subjects')
+                    ->controller(\App\Http\Controllers\AdminDashboard\SchoolSubjectsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::put('/{subject_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{subject_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
                 // Teacher provisioning — create a teacher login, assign the
                 // classes they lead, email an invite. Gated by `manage contacts`
                 // (the roster-administration permission every MasjidAdmin holds);
@@ -1129,7 +1151,8 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/members/{membership_id}/arabic-notes/{note_id}', 'deleteDailyNote')->middleware('permission:manage contacts');
                     });
 
-                // The gradebook, from the OFFICE's side — READ ONLY.
+                // The gradebook, from the OFFICE's side — READ ONLY, but for one
+                // class-level setting (the weights, below).
                 //
                 // Three GETs and no writes, mounting the teacher realm's own
                 // controller unchanged (the mirror of ArabicLettersController
@@ -1157,6 +1180,24 @@ Route::prefix('admin')->group(function () {
                         Route::get('/assignments/{assignment_id}', 'show')->middleware('permission:view contacts');
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
+
+                // THE CLASS'S GRADE WEIGHTS — the office's one gradebook write.
+                //
+                // How much each type of work counts is one policy for the whole
+                // class, not a judgement about a child: it stamps no marker's name
+                // and mails nobody, which is what keeps it out of the reasons
+                // above. It is here because a teacher limited to some subjects may
+                // not change it (SubjectFence::mayWeighClass), so a class whose
+                // every teacher is limited could otherwise never set weights. The
+                // office is not subject-limited and needs no fence.
+                //
+                // `manage contacts`, the gate every write in this block's
+                // neighbourhood carries (the roster, the letter tracker, the
+                // class itself): no new permission. It runs the same
+                // SaveGradeWeightsRequest and ClassGradeWeightsService as the
+                // teacher's `PUT grade-weights`, so the two cannot drift.
+                Route::put('{masjid_id}/groups/{group_id}/grade-weights', [GroupGradeWeightsController::class, 'update'])
+                    ->middleware('permission:manage contacts');
 
                 // LESSON PLANS, from the office's side — the READ, and only it.
                 //

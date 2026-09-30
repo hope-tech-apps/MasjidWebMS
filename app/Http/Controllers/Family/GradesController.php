@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Family;
 
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
+use App\Support\GradeRecord;
 use App\Support\PerformanceLevel;
 use App\Support\SimpleMark;
 use Illuminate\Http\JsonResponse;
@@ -97,18 +98,17 @@ use Symfony\Component\HttpFoundation\Response;
  *     reached yet has nothing here, which is the truth.
  *
  * ---------------------------------------------------------------------------
- * THIS ARITHMETIC IS A SECOND COPY, AND A TEST HOLDS THE TWO TOGETHER
+ * THE ARITHMETIC IS ONE COPY: App\Support\GradeRecord
  * ---------------------------------------------------------------------------
  *
- * `Teacher\GradebookController::forMember()` computes the same summary from the
- * same rows, and the right end-state is one `App\Support\GradeRecord` both
- * controllers call — a parent's average and a teacher's average disagreeing
- * about the same child is the kind of defect that is discovered in a meeting.
- * That extraction touches the teacher realm and is deliberately not made here.
- * Until it is, `FamilyGradesTest::the_parents_summary_is_the_same_arithmetic_the
- * _teacher_sees` calls BOTH endpoints for the same child and asserts the two
- * `summary` blocks are identical, so a change to either copy that does not move
- * the other is a failing build rather than a discrepancy on a screen.
+ * `Teacher\GradebookController::forMember()` and this controller both call
+ * `GradeRecord::summaryFor()`. A parent's average and a teacher's average
+ * disagreeing about the same child is the kind of defect that is discovered in
+ * a meeting, so there is no second implementation left to drift.
+ * `FamilyGradesTest::the_parents_summary_is_the_same_arithmetic_the_teacher_sees`
+ * still calls BOTH endpoints for the same child and asserts the two `summary`
+ * blocks are identical: it now proves the two endpoints hand the same block to
+ * their clients, which is the property a parent-teacher meeting depends on.
  *
  * The serialisation is NOT shared and should not be. The teacher's payload is
  * built through their realm's names-only boundary and is pinned byte-for-byte by
@@ -129,14 +129,9 @@ class GradesController extends FamilyController
         $membership = $this->subject($group, $membership_id);
         $membership->loadMissing('contact');
 
-        $totals = $this->totals((int) $membership->id);
-        $recorded = (int) $totals->sum('n');
-        $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
-
-        // Points work only. A levels mark must never reach a numerator over a
-        // denominator: 3 out of 4 rendered as 75% turns "Meets Expectations"
-        // into a C, which is precisely what a standards scale exists to stop.
-        $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
+        // The ONE copy of the arithmetic, shared with the teacher's endpoint
+        // (App\Support\GradeRecord).
+        $summary = GradeRecord::summaryFor((int) $membership->id);
 
         $scores = $this->scores((int) $membership->id);
 
@@ -145,22 +140,7 @@ class GradesController extends FamilyController
             'data' => [
                 'student' => $this->student($membership),
                 // Aggregated over the whole term, never over the page below.
-                'summary' => [
-                    'recorded' => $recorded,
-                    'counted' => (int) $countingRows->sum('n'),
-                    'excused' => (int) $totals->where('status', AssignmentScore::STATUS_EXCUSED)->sum('n'),
-                    // Points work only — see above.
-                    'points_earned' => round((float) $pointRows->sum('earned'), 2),
-                    'points_possible' => round((float) $pointRows->sum('possible'), 2),
-                    'points_counted' => (int) $pointRows->sum('n'),
-                    // Levels work, reported as levels: a distribution and a mean
-                    // level to one decimal. Never a percentage.
-                    'levels' => $this->levelSummary((int) $membership->id),
-                    // Excellent / Good / Needs work: a count of each word, the
-                    // same shared arithmetic the teacher's copy calls. No mean,
-                    // no percentage.
-                    'simple' => SimpleMark::summaryFor((int) $membership->id),
-                ],
+                'summary' => $summary,
                 'scores' => $scores->map(fn (AssignmentScore $s): array => [
                     'assignment' => $s->assignment ? $this->assignment($s->assignment) : null,
                     // The WORD, not a number. The client renders `missing` as
@@ -179,7 +159,7 @@ class GradesController extends FamilyController
                     'note' => $s->note,
                 ])->values(),
                 'scores_shown' => $scores->count(),
-                'scores_truncated' => $recorded > $scores->count(),
+                'scores_truncated' => $summary['recorded'] > $scores->count(),
             ],
             // THE KEY, a SIBLING of `data` rather than a member of it, matching
             // ReportCardsController::show() and the teacher's copy — the client
@@ -193,44 +173,6 @@ class GradesController extends FamilyController
     }
 
     // ------------------------------------------------------------- internals
-
-    /**
-     * Every mark this child has, counted by status and by scale.
-     *
-     * AGGREGATED IN SQL, OVER THE WHOLE TERM — never over the page served
-     * below. The teacher's copy of this query carries the incident that made it
-     * so: the average used to be computed from a `limit(200)` with NO ordering
-     * applied before the limit, so past 200 marks a child's average was taken
-     * over an arbitrary database-order subset with nothing on screen to say so.
-     * A wrong number in front of a parent is worse than a missing one, and this
-     * is the surface where the parent actually is.
-     *
-     * GROUPED BY SCALE AS WELL AS STATUS. A class can hold both kinds of work —
-     * a spelling quiz out of 10 and a rubric marked 1-4 — and adding those
-     * denominators together produces a figure that is wrong in a way nobody can
-     * see. The two scales are summarised separately and never combined.
-     *
-     * The join is also what keeps withdrawn work out, and the table prefixes on
-     * every column are load-bearing: `AssignmentScore` is BelongsToMasjid, and
-     * under this join an unqualified `masjid_id` in the global scope's predicate
-     * would be ambiguous.
-     *
-     * @return \Illuminate\Support\Collection<int, \Illuminate\Database\Eloquent\Model>
-     */
-    private function totals(int $membershipId): \Illuminate\Support\Collection
-    {
-        return AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membershipId)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->groupBy('assignment_scores.status', 'class_assignments.scale')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('class_assignments.scale as scale')
-            ->selectRaw('COUNT(*) as n')
-            ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
-            ->selectRaw('SUM(class_assignments.points_possible) as possible')
-            ->get();
-    }
 
     /**
      * The most recent marks, ORDERED BEFORE THE LIMIT so the list is honestly
@@ -257,60 +199,6 @@ class GradesController extends FamilyController
     }
 
     /**
-     * One child's performance levels: how many of each, and the mean.
-     *
-     * `missing` is deliberately EXCLUDED from the mean rather than counted as a
-     * 1. On the points scale, work not handed in scores zero and that is fair —
-     * zero out of ten is a real statement about a real denominator. There is no
-     * equivalent on this scale: 1 is not "nothing", it is "Needs Support", which
-     * is a judgement about a child's understanding that nobody made. So a
-     * missing piece of levels work is counted and shown, and left out of the
-     * average.
-     *
-     * @return array{recorded:int, counted:int, missing:int, mean:float|null, mean_label:string|null, distribution:array<int, array{level:int, label:string, short_label:string, count:int}>}
-     */
-    private function levelSummary(int $membershipId): array
-    {
-        $rows = AssignmentScore::query()
-            ->where('assignment_scores.group_membership_id', $membershipId)
-            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
-            ->whereNull('class_assignments.deleted_at')
-            ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
-            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
-            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
-            ->selectRaw('assignment_scores.status as status')
-            ->selectRaw('assignment_scores.points_earned as level')
-            ->selectRaw('COUNT(*) as n')
-            ->get();
-
-        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
-        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
-
-        $counted = (int) $scored->sum('n');
-        $sum = (float) $scored->sum(fn ($r) => (float) $r->level * (int) $r->n);
-        $mean = $counted > 0 ? round($sum / $counted, 1) : null;
-
-        return [
-            'recorded' => $counted + $missing,
-            'counted' => $counted,
-            'missing' => $missing,
-            'mean' => $mean,
-            // The WORD for the mean, which the client prints beside the number
-            // and never instead of it — see PerformanceLevel::labelForMean.
-            'mean_label' => PerformanceLevel::labelForMean($mean),
-            // Every level is present even at zero, so the shape of the
-            // distribution does not change as a child's marks come in, and "no
-            // 4s yet" is visible rather than absent.
-            'distribution' => array_map(fn (int $level): array => [
-                'level' => $level,
-                'label' => PerformanceLevel::label($level),
-                'short_label' => PerformanceLevel::shortLabel($level),
-                'count' => (int) $scored->where('level', $level)->sum('n'),
-            ], PerformanceLevel::ALL),
-        ];
-    }
-
-    /**
      * The piece of work a mark is a mark OF, as a parent sees it.
      *
      * `created_by_user_id` and the soft-delete clock are staff provenance and
@@ -329,6 +217,17 @@ class GradesController extends FamilyController
             'points_possible' => (int) $a->points_possible,
             'scale' => $a->scale,
             'assigned_on' => $a->assigned_on->toDateString(),
+            // What the work is FOR (T-001.1-.3), the same facts the teacher sees.
+            // `type` is the KEY: the portal words it in the parent's language
+            // (familyI18n), so no English label travels here. `weight` is the
+            // piece's own override; the class's weight for its type is in
+            // `summary.weighting.weights`. The standard and its focus are the
+            // SCHOOL'S guide's words, and the screen says so.
+            'subject' => $a->subject,
+            'type' => $a->type,
+            'weight' => $a->weight !== null ? (int) $a->weight : null,
+            'standard_code' => $a->standard_code,
+            'curriculum_focus' => $a->curriculum_focus,
         ];
     }
 }

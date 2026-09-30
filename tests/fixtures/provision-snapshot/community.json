@@ -43,7 +43,8 @@
                     "form_editing": false,
                     "report_card_core_subjects": false,
                     "short_lesson_plan": false,
-                    "simple_marking": false
+                    "simple_marking": false,
+                    "points_weekly_report": false
                 },
                 "modules_off": [],
                 "modules_on": [],

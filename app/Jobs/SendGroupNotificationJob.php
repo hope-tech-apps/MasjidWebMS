@@ -173,8 +173,18 @@ class SendGroupNotificationJob implements ShouldQueue
                         orgEmail: $orgEmail,
                     ));
                 } catch (Throwable $e) {
-                    // One dead address must not stop the rest.
-                    Log::warning('group nudge email failed for '.$recipient->address.': '.$e->getMessage());
+                    // One dead address must not stop the rest. The log names the
+                    // recipient by id, never by address: a guardian's sign-in address
+                    // is personal data, and the transport's own error text often
+                    // repeats it, so that is scrubbed too.
+                    Log::warning('Group nudge email failed for one recipient.', [
+                        'masjid_id' => (int) $masjid->id,
+                        'group_id' => (int) $group->id,
+                        'realm' => $recipient->realm,
+                        'contact_id' => $recipient->contactId,
+                        'user_id' => $recipient->userId,
+                        'error' => $this->withoutAddresses($e->getMessage(), $recipient->address),
+                    ]);
                 }
             }
 
@@ -194,6 +204,14 @@ class SendGroupNotificationJob implements ShouldQueue
         return $recipient->realm === 'staff'
             ? $base.'/auth/sign-in'
             : $base.'/family/'.$masjid->id.'/sign-in';
+    }
+
+    /** The same scrub as `points:weekly-report`'s failed-send line: this address, then anything shaped like one. */
+    private function withoutAddresses(string $message, string $address): string
+    {
+        $message = str_ireplace($address, '[address]', $message);
+
+        return (string) preg_replace('/[^\s<>"\'(),;:]+@[^\s<>"\'(),;]+/u', '[address]', $message);
     }
 
     public function failed(?Throwable $e): void

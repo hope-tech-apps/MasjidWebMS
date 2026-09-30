@@ -661,6 +661,9 @@ class TeacherMultiSchoolTest extends TestCase
             ],
             'DELETE /groups/{group_id}/awards/{award_id}' => [],
 
+            // -- how the class's points read (T-003.2): a view choice on the class, no row of a child
+            'PUT /groups/{group_id}/points-period' => ['body' => fn () => ['points_period' => 'weekly']],
+
             // -- attendance
             'PUT /groups/{group_id}/attendance' => [
                 'body' => fn (TeacherRealmWorld $w) => ['session_date' => $today, 'marks' => [['membership_id' => $w->student->id, 'status' => 'present']]],
@@ -696,6 +699,11 @@ class TeacherMultiSchoolTest extends TestCase
             'PUT /groups/{group_id}/assignments/{assignment_id}/scores' => [
                 'body' => fn (TeacherRealmWorld $w) => ['scores' => [['membership_id' => $w->student->id, 'status' => 'scored', 'points_earned' => 5]]],
                 'refuse' => $bodyRefusal,
+            ],
+            // W3 (T-001.2): a class-level setting with no id in its body, so only the
+            // URL's school and class can be foreign to it.
+            'PUT /groups/{group_id}/grade-weights' => [
+                'body' => fn () => ['weights' => ['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]],
             ],
 
             // -- report cards. The period is named so the fixture card is the one prepared.

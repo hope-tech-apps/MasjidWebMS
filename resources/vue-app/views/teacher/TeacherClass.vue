@@ -639,6 +639,26 @@
             <!-- ==================================================== POINTS -->
             <section v-else-if="activeTab === 'points'">
                 <p class="text-muted small">Behaviour points for one student at a time.</p>
+
+                <!-- THE WEEKLY RESET (T-003.2, teachers can opt in). A VIEW
+                     choice: nothing is deleted or revoked either way, the
+                     running history stays, and switching it off gives the
+                     running total straight back. It belongs to the CLASS, not to
+                     this teacher (a family sees one number for their child), and
+                     the screen says so here instead of letting a teacher find out
+                     from a colleague. -->
+                <div class="form-check form-switch mb-1">
+                    <input class="form-check-input" type="checkbox" role="switch" id="points-weekly"
+                           :checked="pointsWeekly" :disabled="savingPeriod" @change="setPointsPeriod($event.target as HTMLInputElement)">
+                    <label class="form-check-label small fw-semibold" for="points-weekly">Start each week fresh</label>
+                </div>
+                <p class="text-muted small mb-3">
+                    Points show one week at a time (Sunday to Saturday), with every earlier week kept in the history.
+                    Nothing is deleted, and you can switch this off at any time.
+                    This applies to every teacher of this class.
+                </p>
+                <p v-if="periodError" class="text-danger small">{{ periodError }}</p>
+
                 <label class="form-label small text-muted">Student</label>
                 <select class="form-select form-select-sm mb-3" style="max-width: 22rem"
                         v-model="pointsMembership" @change="loadAwards">
@@ -655,16 +675,33 @@
                      (.claude/rules/groups.md). -->
                 <div v-if="pointsTotals" class="card border-0 bg-light mb-3">
                     <div class="card-body py-2">
+                        <!-- The week in view, with its neighbours. The class's
+                             own choice decides which figure leads (a weekly class
+                             leads with the week), but both are always shown. -->
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" aria-label="Previous week"
+                                    @click="loadPointsTotals(pointsTotals.week?.previous)"><i class="bi bi-chevron-left"></i></button>
+                            <span class="small fw-semibold">
+                                {{ pointsTotals.week?.is_current ? 'This week' : 'Week' }}
+                                <span class="text-muted fw-normal">· {{ pointsWeekLabel }}</span>
+                            </span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" aria-label="Next week"
+                                    :disabled="pointsTotals.week?.is_current" @click="loadPointsTotals(pointsTotals.week?.next)"><i class="bi bi-chevron-right"></i></button>
+                        </div>
                         <div v-if="pointsMembership && selectedPointsTotal" class="d-flex justify-content-between align-items-baseline">
-                            <span class="small fw-semibold">{{ name(selectedPointsTotal.contact) }}’s total</span>
-                            <span class="fw-semibold">{{ signedPoints(selectedPointsTotal.points) }}</span>
+                            <span class="small fw-semibold">{{ name(selectedPointsTotal.contact) }}’s {{ pointsWeekly ? 'week' : 'total' }}</span>
+                            <span class="fw-semibold">{{ signedPoints(selectedHeadline.points) }}</span>
+                        </div>
+                        <div v-if="pointsMembership && selectedPointsTotal" class="d-flex justify-content-between align-items-baseline small text-muted">
+                            <span>{{ pointsWeekly ? 'All weeks' : 'This week' }}</span>
+                            <span>{{ signedPoints(selectedHeadline.other.points) }}</span>
                         </div>
                         <div class="d-flex justify-content-between align-items-baseline small text-muted">
                             <span>Whole class</span>
-                            <span>{{ signedPoints(pointsTotals.class?.points ?? 0) }}</span>
+                            <span>{{ signedPoints(classHeadline.points) }}</span>
                         </div>
                         <details class="mt-1">
-                            <summary class="small text-primary" style="cursor:pointer">Each student’s total</summary>
+                            <summary class="small text-primary" style="cursor:pointer">Each student’s {{ pointsWeekly ? 'week' : 'total' }}</summary>
                             <ul class="list-unstyled mb-0 mt-1">
                                 <li v-for="t in pointsTotals.students" :key="t.membership_id"
                                     class="d-flex justify-content-between small py-1 border-bottom">
@@ -672,7 +709,7 @@
                                             @click="pointsMembership = t.membership_id; loadAwards()">
                                         {{ name(t.contact) }}
                                     </button>
-                                    <span>{{ signedPoints(t.points) }}</span>
+                                    <span>{{ signedPoints(pointsHeadline(pointsPeriod, t).points) }}</span>
                                 </li>
                             </ul>
                         </details>
@@ -1208,7 +1245,7 @@
                                              subject per day. -->
                                         <option v-for="s in curriculum.subjects" :key="s" :value="s"
                                                 :disabled="takenSubjects.has(subjectKey(s))">
-                                            {{ s }}{{ takenSubjects.has(subjectKey(s)) ? ' — already planned' : '' }}
+                                            {{ s }}{{ isCombinedGuideColumn(s) ? ' (school pacing-guide column)' : '' }}{{ takenSubjects.has(subjectKey(s)) ? ' — already planned' : '' }}
                                         </option>
                                         <option :value="SUBJECT_OTHER">Other…</option>
                                     </select>
@@ -1547,11 +1584,78 @@
             <!-- ======================================================= GRADES -->
             <section v-else-if="activeTab === 'grades'">
                 <template v-if="!openAssignment">
+                    <!-- Work | Students. Students is the teacher's own view of each
+                         child's average, which this app never had: it reads the same
+                         endpoint (and the same arithmetic) a parent's screen does. -->
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Grades view">
+                            <button type="button" class="btn" :class="gradesView === 'work' ? 'btn-success' : 'btn-outline-success'"
+                                    @click="gradesView = 'work'">Work</button>
+                            <button type="button" class="btn" :class="gradesView === 'students' ? 'btn-success' : 'btn-outline-success'"
+                                    @click="showStudentsView">Students</button>
+                        </div>
+                        <button v-if="gradesView === 'work'" type="button" class="btn btn-sm btn-outline-secondary ms-auto"
+                                :aria-expanded="showWeights" @click="toggleWeights">
+                            <i class="bi bi-sliders me-1"></i>{{ weightingEnabled || !canChangeWeights ? 'Weights' : 'Set weights' }}
+                        </button>
+                    </div>
+
+                    <!-- ============================================ THE CLASS'S WEIGHTS -->
+                    <div v-if="gradesView === 'work' && showWeights" class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <div class="fw-semibold mb-1">How much each type of work counts</div>
+                            <p class="text-muted small mb-2">
+                                Each type of work counts by its weight, however many pieces of it there are: with Test at
+                                40 and Homework at 10, Tests make up four fifths of the average whether a child has done
+                                one Homework or ten. Weights are relative, so they do not have to add up to 100, and a
+                                type nobody has been marked on yet changes nothing. Give one piece of work its own weight
+                                when you set it and it counts on its own, beside the types. Leave the weights unset for
+                                a plain average.
+                            </p>
+                            <div class="row g-2 align-items-end">
+                                <div v-for="t in workTypes" :key="t.key" class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1" :for="`weight-${t.key}`">{{ t.label }}</label>
+                                    <input :id="`weight-${t.key}`" v-model="weightsForm[t.key]" type="number" inputmode="numeric"
+                                           min="0" :max="weightMax" step="1" class="form-control form-control-sm" style="width:5.5rem"
+                                           :disabled="!canChangeWeights">
+                                </div>
+                                <div v-if="canChangeWeights" class="col-auto d-flex gap-2">
+                                    <button class="btn btn-sm btn-success" :disabled="savingWeights" @click="saveWeights">
+                                        {{ savingWeights ? 'Saving…' : 'Save weights' }}
+                                    </button>
+                                    <button v-if="weightingEnabled && !confirmClearWeights" class="btn btn-sm btn-outline-danger"
+                                            :disabled="savingWeights" @click="confirmClearWeights = true">Clear</button>
+                                </div>
+                            </div>
+                            <!-- A teacher limited to some subjects reads the weights and cannot change them:
+                                 they move every subject's average, which families read (review F5). -->
+                            <p v-if="!canChangeWeights" class="text-muted small mt-2 mb-0" data-test="weights-read-only">
+                                <i class="bi bi-lock me-1"></i>These weights count in every subject's average, so only a
+                                teacher of all the subjects in this class, or the office, can change them.
+                            </p>
+                            <div v-if="canChangeWeights && confirmClearWeights" class="alert alert-warning small mt-3 mb-0">
+                                Clear the weights? Every average goes back to the plain one, and any weight given to
+                                one piece of work is removed too, including work another teacher of this class set.
+                                <div class="mt-2 d-flex gap-2">
+                                    <button class="btn btn-sm btn-danger" :disabled="savingWeights" @click="clearWeights">Clear them</button>
+                                    <button class="btn btn-sm btn-light" @click="confirmClearWeights = false">Keep them</button>
+                                </div>
+                            </div>
+                            <p v-if="weightsSaved" class="text-success small mt-2 mb-0"><i class="bi bi-check-circle me-1"></i>Saved</p>
+                            <p v-if="gradesError" class="text-danger small mt-2 mb-0">{{ gradesError }}</p>
+                        </div>
+                    </div>
+
+                    <template v-if="gradesView === 'work'">
                     <div class="card border-0 shadow-sm mb-3">
                         <div class="card-body">
+                            <div v-if="editingId !== null" class="d-flex align-items-center gap-2 mb-2">
+                                <span class="badge bg-warning-subtle text-warning-emphasis">Editing</span>
+                                <span class="small text-muted">Changes apply to work already marked.</span>
+                            </div>
                             <div class="row g-2 align-items-end">
                                 <div class="col-12 col-sm">
-                                    <label class="form-label small text-muted mb-1">New work</label>
+                                    <label class="form-label small text-muted mb-1">{{ editingId !== null ? 'Work' : 'New work' }}</label>
                                     <input v-model="assignmentForm.title" type="text" maxlength="200"
                                            class="form-control form-control-sm" placeholder="e.g. Spelling test">
                                 </div>
@@ -1575,41 +1679,199 @@
                                     <input v-model="assignmentForm.assigned_on" type="date"
                                            class="form-control form-control-sm" style="width:10rem">
                                 </div>
-                                <div class="col-auto">
+                            </div>
+
+                            <!-- Row 2: what the work is FOR. Subject first, then the
+                                 standard it teaches, so the search can rank that
+                                 subject's standards first. -->
+                            <div class="row g-2 align-items-end mt-1">
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1" for="work-subject">
+                                        Subject<span v-if="gradeSubjects.length" class="text-danger"> *</span>
+                                    </label>
+                                    <select v-if="gradeSubjects.length" id="work-subject" v-model="assignmentForm.subject"
+                                            class="form-select form-select-sm" style="min-width:11rem">
+                                        <option value="" disabled>Choose…</option>
+                                        <option v-for="s in gradeSubjects" :key="s.key" :value="s.name">{{ s.name }}</option>
+                                        <!-- Work already filed under a subject the school has since
+                                             retired keeps its name rather than losing it to a select
+                                             with no such option. -->
+                                        <option v-if="assignmentForm.subject && !gradeSubjects.some((s) => s.name === assignmentForm.subject)"
+                                                :value="assignmentForm.subject">{{ assignmentForm.subject }}</option>
+                                    </select>
+                                    <input v-else id="work-subject" v-model="assignmentForm.subject" type="text" maxlength="64"
+                                           class="form-control form-control-sm" style="min-width:11rem" placeholder="Optional">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1" for="work-type">Type</label>
+                                    <select id="work-type" v-model="assignmentForm.type" class="form-select form-select-sm" style="min-width:8.5rem">
+                                        <option value="">No type</option>
+                                        <option v-for="t in workTypes" :key="t.key" :value="t.key">{{ t.label }}</option>
+                                    </select>
+                                </div>
+                                <!-- A weight of its own, only where the class has weights: the
+                                     server refuses one otherwise. The placeholder says what it
+                                     inherits, so leaving it blank is a decision a teacher can read. -->
+                                <div v-if="weightingEnabled" class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1" for="work-weight">Weight</label>
+                                    <input id="work-weight" v-model="assignmentForm.weight" type="number" inputmode="numeric" min="0"
+                                           :max="weightMax" step="1" class="form-control form-control-sm" style="width:6.5rem"
+                                           :placeholder="inheritedWeightText">
+                                </div>
+                                <div v-if="standardsEnabled" class="col-12 col-md">
+                                    <label class="form-label small text-muted mb-1" for="work-standard">Standard</label>
+                                    <StandardPicker v-model="assignmentForm.standard" :masjid-id="masjidId"
+                                                    :grade="singleGrade" :subject="assignmentForm.subject || null"
+                                                    input-id="work-standard" />
+                                </div>
+                                <div class="col-auto ms-auto d-flex gap-2">
+                                    <button v-if="editingId !== null" class="btn btn-sm btn-light" :disabled="creatingAssignment"
+                                            @click="cancelEdit">Cancel</button>
                                     <button class="btn btn-sm btn-success"
-                                            :disabled="creatingAssignment || !assignmentForm.title.trim()"
-                                            @click="createAssignment">Add</button>
+                                            :disabled="creatingAssignment || !workReady"
+                                            @click="saveWork">{{ editingId !== null ? 'Save changes' : 'Add' }}</button>
                                 </div>
                             </div>
-                            <p v-if="gradesError" class="text-danger small mt-2 mb-0">{{ gradesError }}</p>
+                            <p v-if="gradeSubjects.length && !assignmentForm.subject && assignmentForm.title.trim()"
+                               class="text-muted small mt-2 mb-0">Choose the subject this work is for.</p>
+                            <p v-if="gradesError && !showWeights" class="text-danger small mt-2 mb-0">{{ gradesError }}</p>
                         </div>
                     </div>
 
                     <p v-if="!assignments.length" class="text-muted small">No work set yet.</p>
                     <div v-else class="list-group">
-                        <button v-for="a in assignments" :key="a.id" type="button"
-                                class="list-group-item list-group-item-action d-flex align-items-center gap-3"
-                                @click="openScores(a)">
-                            <div class="flex-grow-1">
-                                <div class="fw-semibold small">{{ a.title }}</div>
-                                <div class="text-muted small">
-                                    {{ a.assigned_on }} · {{ a.scale === 'levels' ? 'levels 4–1' : a.scale === 'simple' ? 'Excellent / Good / Needs work' : `out of ${a.points_possible}` }}
+                        <!-- A div, not a button: an Edit button inside a button is not valid
+                             HTML and steals the tap. The open target is its own button. -->
+                        <div v-for="a in assignments" :key="a.id" class="list-group-item d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-link text-start text-decoration-none text-body p-0 flex-grow-1 d-flex align-items-center gap-3"
+                                    @click="openScores(a)">
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold small">{{ a.title }}</div>
+                                    <div class="text-muted small">
+                                        {{ a.assigned_on }} · {{ a.scale === 'levels' ? 'levels 4–1' : a.scale === 'simple' ? 'Excellent / Good / Needs work' : `out of ${a.points_possible}` }}
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-1 mt-1">
+                                        <span v-if="a.subject" class="badge bg-primary-subtle text-primary-emphasis fw-normal">{{ a.subject }}</span>
+                                        <span v-if="a.type_label" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">{{ a.type_label }}</span>
+                                        <span v-if="weightNote(a, classWeights, weightingEnabled)" class="badge bg-light text-muted fw-normal">
+                                            {{ weightNote(a, classWeights, weightingEnabled) }}
+                                        </span>
+                                        <span v-if="a.standard_code || a.curriculum_focus" class="badge bg-success-subtle text-success-emphasis fw-normal"
+                                              :title="a.curriculum_focus ?? ''">
+                                            {{ a.standard_code || 'Standard' }}
+                                        </span>
+                                        <span v-if="weightingEnabled && isUntyped(a)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
+                                              title="Work with no type is left out of the weighted average">no type</span>
+                                    </div>
+                                </div>
+                                <span class="badge" :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
+                                    {{ a.scored }}/{{ a.roster }} marked
+                                </span>
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" :aria-label="`Edit ${a.title}`" @click="startEdit(a)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <p v-if="weightingEnabled && untypedInList > 0" class="text-warning-emphasis small mt-2 mb-0">
+                        {{ untypedListNote(untypedInList) }}
+                    </p>
+                    </template>
+
+                    <!-- ============================================ STUDENTS -->
+                    <template v-else>
+                        <p v-if="!students.length" class="text-muted small">No students in this class.</p>
+                        <div v-else class="list-group">
+                            <div v-for="s in students" :key="s.membership_id" class="list-group-item">
+                                <button type="button" class="btn btn-link text-start text-decoration-none text-body p-0 w-100 d-flex align-items-center gap-3"
+                                        :aria-expanded="openStudentId === s.membership_id" @click="toggleStudent(s)">
+                                    <PersonAvatar :avatar="s.contact?.avatar" :first-name="s.contact?.first_name"
+                                                  :last-name="s.contact?.last_name" :size="34" />
+                                    <span class="fw-semibold small flex-grow-1">{{ name(s.contact) }}</span>
+                                    <i class="bi" :class="openStudentId === s.membership_id ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                                </button>
+
+                                <div v-if="openStudentId === s.membership_id" class="mt-3">
+                                    <div v-if="studentLoading" class="text-center py-2"><span class="spinner-border spinner-border-sm text-success"></span></div>
+                                    <p v-else-if="studentError" class="text-danger small mb-0">{{ studentError }}</p>
+                                    <template v-else-if="studentGrades">
+                                        <p v-if="!studentGrades.summary.recorded" class="text-muted small mb-0">No marks yet.</p>
+                                        <template v-else>
+                                            <dl class="row small mb-2">
+                                                <template v-for="line in studentLines" :key="line.label">
+                                                    <dt class="col-sm-4 fw-semibold">{{ line.label }}</dt>
+                                                    <dd class="col-sm-8">{{ line.value }} <span class="text-muted">{{ line.note }}</span></dd>
+                                                </template>
+                                            </dl>
+                                            <p v-if="studentFencedNote" class="text-muted small mb-2">{{ studentFencedNote }}</p>
+                                            <p v-if="studentGrades.summary.weighting.untyped_excluded" class="text-warning-emphasis small mb-2">
+                                                {{ untypedNoteText(studentGrades.summary.weighting.untyped_excluded) }}, so
+                                                {{ studentGrades.summary.weighting.untyped_excluded === 1 ? 'it is' : 'they are' }} left out of the weighted average.
+                                            </p>
+                                            <div v-if="studentGrades.summary.by_subject.length" class="mb-2">
+                                                <div class="text-uppercase text-muted small">By subject</div>
+                                                <ul class="list-unstyled small mb-0">
+                                                    <li v-for="b in studentGrades.summary.by_subject" :key="b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
+                                                        <span>{{ b.subject ?? 'No subject' }}</span>
+                                                        <span class="text-muted text-end">{{ subjectLine(b) || '—' }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div v-if="studentGrades.summary.weighting.by_type.length" class="mb-2">
+                                                <div class="text-uppercase text-muted small">By type</div>
+                                                <ul class="list-unstyled small mb-0">
+                                                    <li v-for="t in studentGrades.summary.weighting.by_type" :key="t.type" class="d-flex justify-content-between gap-3">
+                                                        <span>{{ t.label }}<span v-if="t.weight !== null" class="text-muted"> · counts {{ t.weight }}</span></span>
+                                                        <span class="text-muted">{{ percentText(t.percent) }} · {{ t.pieces }} piece{{ t.pieces === 1 ? '' : 's' }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <ul class="list-unstyled small mb-0">
+                                                <li v-for="(sc, i) in studentGrades.scores" :key="`${sc.assignment?.id ?? 'x'}-${i}`"
+                                                    class="border-top py-1 d-flex justify-content-between gap-3">
+                                                    <span>
+                                                        {{ sc.assignment?.title }}
+                                                        <span v-if="sc.assignment?.type_label" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal ms-1">{{ sc.assignment.type_label }}</span>
+                                                        <span v-if="sc.assignment?.subject" class="text-muted"> · {{ sc.assignment.subject }}</span>
+                                                    </span>
+                                                    <span class="text-muted text-nowrap">{{ scoreText(sc) }}</span>
+                                                </li>
+                                            </ul>
+                                            <p v-if="studentGrades.scores_truncated" class="text-muted small mt-2 mb-0">Showing the most recent {{ studentGrades.scores_shown }}.</p>
+                                        </template>
+                                    </template>
                                 </div>
                             </div>
-                            <span class="badge" :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
-                                {{ a.scored }}/{{ a.roster }} marked
-                            </span>
-                        </button>
-                    </div>
+                        </div>
+                    </template>
                 </template>
 
                 <template v-else>
                     <button class="btn btn-link px-0 text-decoration-none mb-2" @click="openAssignment = null">
                         ← Assignments
                     </button>
-                    <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
-                    <div class="text-muted small mb-3">
+                    <div class="d-flex align-items-start gap-2 mb-1">
+                        <div class="fw-semibold flex-grow-1">{{ openAssignment.title }}</div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" @click="startEdit(openAssignment)">
+                            <i class="bi bi-pencil me-1"></i>Edit
+                        </button>
+                    </div>
+                    <div class="text-muted small mb-1">
                         {{ openAssignment.scale === 'levels' ? 'Performance levels' : openAssignment.scale === 'simple' ? 'Excellent / Good / Needs work' : `Out of ${openAssignment.points_possible}` }}
+                    </div>
+                    <div class="d-flex flex-wrap gap-1 mb-3">
+                        <span v-if="openAssignment.subject" class="badge bg-primary-subtle text-primary-emphasis fw-normal">{{ openAssignment.subject }}</span>
+                        <span v-if="openAssignment.type_label" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">{{ openAssignment.type_label }}</span>
+                        <span v-if="weightNote(openAssignment, classWeights, weightingEnabled)" class="badge bg-light text-muted fw-normal">
+                            {{ weightNote(openAssignment, classWeights, weightingEnabled) }}
+                        </span>
+                    </div>
+                    <!-- The school's guide's own words, labelled as such: the guide
+                         carries codes and a weekly focus, not the standard's wording. -->
+                    <div v-if="openAssignment.standard_code || openAssignment.curriculum_focus" class="small mb-3">
+                        <span class="fw-semibold">{{ openAssignment.standard_code || 'Standard' }}</span>
+                        <span dir="auto"> {{ openAssignment.curriculum_focus }}</span>
+                        <span class="text-muted"> · from the school's pacing guide<span v-if="openAssignment.curriculum_week_no">, week {{ openAssignment.curriculum_week_no }}</span></span>
                     </div>
 
                     <!-- THE KEY. Rendered from the payload, never hardcoded, so
@@ -2171,11 +2433,17 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
+import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
+import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planDeleteUrl, planFilesFull as planFilesFullOf,
+    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
+    mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
+} from '@/core/helpers/gradebook';
+import {
+    MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
     planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import { useAuthStore } from '@/stores/authStore';
@@ -2199,7 +2467,12 @@ const base = computed(() => `/api/teacher/masjids/${masjidId.value}/groups/${gro
 const group = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
-const activeTab = ref<TabKey>('roster');
+// `?tab=points` is what the weekly class-summary email links to (T-003.3). The one tab a
+// link may open, so an arbitrary query value can never select a tab the screen hides.
+const activeTab = ref<TabKey>(route.query.tab === 'points' ? 'points' : 'roster');
+// `?week=` (with `?tab=points`) names the week the email reported, so the Points tab opens on
+// that week and not on the one in progress; null (or an invalid value) is the current week.
+const linkedPointsWeek = route.query.tab === 'points' ? weekFromQuery(route.query.week) : null;
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },
@@ -2692,6 +2965,9 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
         const q = new URLSearchParams();
         if (grade) q.set('grade', grade);
         if (subject) q.set('subject', subject);
+        // Names the class so the server can limit the subject list to what THIS
+        // teacher teaches here (the same fence the plan's save enforces).
+        q.set('group_id', groupId.value);
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum${q.toString() ? '?' + q : ''}`
         );
@@ -3277,7 +3553,12 @@ const deletePlan = async () => {
     const ticket = planForms.current();
     planDeleting.value = true;
     try {
-        await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        try {
+            await TeacherApiService.delete(planDeleteUrl(base.value, planId.value));
+        } catch (e) {
+            // A 404 is "nothing to delete", not a failure: carry on as after a removal that worked.
+            if (!planAlreadyGone(e)) throw e;
+        }
         // Still on the removed plan: the day's next one opens. Moved on to
         // another while the removal ran: she stays there, with her draft.
         if (planForms.isCurrent(ticket)) {
@@ -3297,9 +3578,62 @@ const deletePlan = async () => {
 
 // ---------- gradebook ----------
 const assignments = ref<any[]>([]);
-const blankAssignment = () => ({ title: '', points_possible: 10, scale: defaultScale.value, assigned_on: todayIso });
-const assignmentForm = ref<any>({ title: '', points_possible: 10, scale: 'levels', assigned_on: todayIso });
+const blankAssignment = () => blankWorkForm({ scale: defaultScale.value, today: todayIso, subject: defaultSubject.value });
+const assignmentForm = ref<any>(blankWorkForm({ scale: 'levels', today: todayIso }));
 const creatingAssignment = ref(false);
+/** The piece of work being edited, or null while the form is adding new work. */
+const editingId = ref<number | null>(null);
+
+// What the school and the class say about work: the types, the class's weights,
+// the subjects THIS teacher may file work under (already limited by the server's
+// subject fence) and whether the school teaches from a pacing guide. All read
+// from the payload, none decided here.
+const workTypes = ref<{ key: string; label: string }[]>([]);
+const classWeights = ref<Record<string, number>>({});
+const weightingEnabled = ref(false);
+const weightMax = ref(100);
+const gradeSubjects = ref<{ name: string; key: string }[]>([]);
+const defaultSubject = ref<string | null>(null);
+const standardsEnabled = ref(false);
+
+const gradesView = ref<'work' | 'students'>('work');
+const showWeights = ref(false);
+// Only a teacher of every subject in the class (or the office) changes its weights; a limited
+// teacher sees them read-only. The server refuses the change either way.
+const canChangeWeights = computed(() => mayChangeWeights(group.value?.my_subjects));
+const weightsForm = ref<Record<string, string>>({});
+const savingWeights = ref(false);
+const weightsSaved = ref(false);
+const confirmClearWeights = ref(false);
+
+const gradeContext = computed(() => ({
+    subjects: gradeSubjects.value,
+    weightingEnabled: weightingEnabled.value,
+    standardsEnabled: standardsEnabled.value,
+}));
+const workReady = computed(() => workFormReady(assignmentForm.value, gradeContext.value));
+const untypedNoteText = untypedNote;
+/**
+ * Work in the list that a weighted class would leave out of its average for want of a type: no type and no
+ * weight of its own. Simple-scale work is never averaged whatever it is given, so a type would not help it
+ * and it is not counted here (the server leaves it out of `untyped_excluded` the same way).
+ */
+const untypedInList = computed(() => untypedInWork(assignments.value));
+/** What a blank weight box inherits, said in the box so leaving it blank is a decision a teacher can read. */
+const inheritedWeightText = computed(() => {
+    if (assignmentForm.value.scale === SIMPLE_SCALE) return NOT_AVERAGED.replace(/^./, (c) => c.toUpperCase());
+    const w = effectiveWeight({ type: assignmentForm.value.type || null }, classWeights.value, weightingEnabled.value);
+    return w === null ? 'Type sets it' : `Counts ${w}`;
+});
+/**
+ * The one grade this class teaches, or null for a combined class. Passed to the
+ * standards search to rank that grade's rows first; with two grades in the room
+ * there is no one grade to prefer, and the search then ranks by subject alone.
+ */
+const singleGrade = computed<string | null>(() => {
+    const grades = new Set(students.value.map((s) => s.grade_label).filter((g): g is string => !!g));
+    return grades.size === 1 ? [...grades][0] : null;
+});
 
 // THE KEY, and the school's default scale, both read from the server rather
 // than hardcoded here. What a 3 means is a fact about the school, not about
@@ -3327,27 +3661,164 @@ const loadAssignments = async () => {
         defaultScale.value = res.data?.default_scale ?? defaultScale.value;
         gradingScales.value = res.data?.scales ?? gradingScales.value;
         simpleMarks.value = res.data?.simple_marks ?? simpleMarks.value;
-        if (!assignmentForm.value.title) assignmentForm.value.scale = defaultScale.value;
+        workTypes.value = res.data?.types ?? workTypes.value;
+        classWeights.value = { ...(res.data?.weights ?? {}) };
+        weightingEnabled.value = !!res.data?.weighting_enabled;
+        weightMax.value = res.data?.weight_max ?? weightMax.value;
+        gradeSubjects.value = res.data?.subjects ?? [];
+        defaultSubject.value = res.data?.default_subject ?? null;
+        standardsEnabled.value = !!res.data?.standards_enabled;
+        // A form nobody has started takes the school's defaults; one in progress is left alone.
+        if (editingId.value === null && !assignmentForm.value.title) {
+            assignmentForm.value.scale = defaultScale.value;
+            if (!assignmentForm.value.subject && defaultSubject.value) assignmentForm.value.subject = defaultSubject.value;
+        }
     } catch {
         gradesError.value = 'Could not load the gradebook.';
     }
 };
 
-const createAssignment = async () => {
+/** Add new work, or save changes to the work being edited: one form, one request. */
+const saveWork = async () => {
+    if (!workReady.value) return;
     creatingAssignment.value = true;
     gradesError.value = '';
     try {
-        await TeacherApiService.post(`${base.value}/assignments`, assignmentForm.value);
+        const body = workRequest(assignmentForm.value, gradeContext.value);
+        if (editingId.value !== null) {
+            await TeacherApiService.put(`${base.value}/assignments/${editingId.value}`, body);
+        } else {
+            await TeacherApiService.post(`${base.value}/assignments`, body);
+        }
+        editingId.value = null;
         assignmentForm.value = blankAssignment();
         await loadAssignments();
     } catch (e: any) {
-        gradesError.value = e?.response?.data?.data?.title?.[0]
-            ?? e?.response?.data?.data?.points_possible?.[0]
-            ?? e?.response?.data?.data?.scale?.[0]
-            ?? 'That work could not be added.';
+        gradesError.value = firstFieldError(e, editingId.value !== null ? 'That work could not be saved.' : 'That work could not be added.');
     } finally {
         creatingAssignment.value = false;
     }
+};
+
+const startEdit = (a: any) => {
+    gradesError.value = '';
+    editingId.value = a.id;
+    assignmentForm.value = workFormFrom(a);
+    gradesView.value = 'work';
+    openAssignment.value = null;
+    nextTick(() => document.getElementById('work-subject')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+};
+
+const cancelEdit = () => {
+    editingId.value = null;
+    assignmentForm.value = blankAssignment();
+    gradesError.value = '';
+};
+
+// ---------- the class's weights ----------
+const toggleWeights = () => {
+    showWeights.value = !showWeights.value;
+    confirmClearWeights.value = false;
+    weightsSaved.value = false;
+    gradesError.value = '';
+    if (showWeights.value) weightsForm.value = weightsFormFrom(classWeights.value, workTypes.value);
+};
+
+const applyWeights = (data: any) => {
+    classWeights.value = { ...(data?.weights ?? {}) };
+    weightingEnabled.value = !!data?.weighting_enabled;
+    weightsForm.value = weightsFormFrom(classWeights.value, workTypes.value);
+};
+
+const saveWeights = async () => {
+    gradesError.value = '';
+    weightsSaved.value = false;
+    const request = weightsRequest(weightsForm.value, workTypes.value, weightMax.value);
+    if (!request.ok) { gradesError.value = request.message; return; }
+
+    savingWeights.value = true;
+    try {
+        const res = await TeacherApiService.put(`${base.value}/grade-weights`, { weights: request.weights });
+        applyWeights(res.data?.data);
+        weightsSaved.value = true;
+        await loadAssignments();
+        studentGrades.value = null; openStudentId.value = null;
+    } catch (e: any) {
+        gradesError.value = firstFieldError(e, 'The weights could not be saved.');
+    } finally {
+        savingWeights.value = false;
+    }
+};
+
+const clearWeights = async () => {
+    gradesError.value = '';
+    savingWeights.value = true;
+    try {
+        const res = await TeacherApiService.put(`${base.value}/grade-weights`, { clear: true });
+        applyWeights(res.data?.data);
+        confirmClearWeights.value = false;
+        weightsSaved.value = true;
+        // Clearing removes every per-work weight too; a form holding one would send it back.
+        if (assignmentForm.value.weight !== '') assignmentForm.value.weight = '';
+        await loadAssignments();
+        studentGrades.value = null; openStudentId.value = null;
+    } catch (e: any) {
+        gradesError.value = firstFieldError(e, 'The weights could not be cleared.');
+    } finally {
+        savingWeights.value = false;
+    }
+};
+
+// ---------- the Students view ----------
+const openStudentId = ref<number | null>(null);
+const studentGrades = ref<any>(null);
+const studentLoading = ref(false);
+const studentError = ref('');
+const studentLines = computed(() => averageLines(studentGrades.value?.summary, !!studentGrades.value?.fenced));
+/** Said under the figures when this teacher teaches only some subjects of the class. */
+const studentFencedNote = computed(() => fencedNote(studentGrades.value?.fenced));
+
+const showStudentsView = () => {
+    gradesView.value = 'students';
+    gradesError.value = '';
+    if (!levelKey.value.length) loadAssignments();
+};
+
+const toggleStudent = async (s: any) => {
+    if (openStudentId.value === s.membership_id) { openStudentId.value = null; return; }
+    openStudentId.value = s.membership_id;
+    studentGrades.value = null;
+    studentError.value = '';
+    studentLoading.value = true;
+    try {
+        const res = await TeacherApiService.get(`${base.value}/members/${s.membership_id}/grades`);
+        // A slower answer for a child the teacher has already moved off is dropped.
+        if (openStudentId.value !== s.membership_id) return;
+        studentGrades.value = res.data?.data ?? null;
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
+    } catch {
+        if (openStudentId.value === s.membership_id) studentError.value = 'Could not load that child’s marks.';
+    } finally {
+        if (openStudentId.value === s.membership_id) studentLoading.value = false;
+    }
+};
+
+/**
+ * What one mark SAYS, from the payload's own words: "Not handed in" and "Excused"
+ * for those statuses (never a zero), the school's word for a level or simple
+ * mark, and "8 / 10" for points. A levels mark is never drawn as a percentage.
+ */
+const scoreText = (sc: any): string => {
+    if (sc.status === 'missing') return 'Not handed in';
+    if (sc.status === 'excused') return 'Excused';
+    if (sc.points_earned === null || sc.points_earned === undefined) return '—';
+    const a = sc.assignment;
+    if (a?.scale === 'levels') {
+        const l = levelKey.value.find((k: any) => k.level === Number(sc.points_earned));
+        return l ? `${l.level} · ${l.short_label}` : String(sc.points_earned);
+    }
+    if (a?.scale === 'simple') return sc.mark_label ?? String(sc.points_earned);
+    return `${sc.points_earned} / ${a?.points_possible ?? '?'}`;
 };
 
 /**
@@ -4285,20 +4756,66 @@ const createSkill = async () => {
 // one page of one child, and a total built from a page is a wrong number.
 const pointsTotals = ref<any>(null);
 const pointsTotalsFailed = ref(false);
-const loadPointsTotals = async () => {
+// The week the totals are showing, as the server's first-day date; null = the
+// week in progress. Stepping is by the server's own `previous` / `next`, never by
+// arithmetic on the browser's clock (the browser's zone is not the school's).
+const loadPointsTotals = async (week: string | null = null) => {
     pointsTotalsFailed.value = false;
     try {
-        const res = await TeacherApiService.get(`${base.value}/awards/totals`);
+        const res = await TeacherApiService.get(
+            `${base.value}/awards/totals${week ? `?week=${encodeURIComponent(week)}` : ''}`
+        );
         pointsTotals.value = res.data?.data ?? null;
+        // The server's word on how this class reads (another teacher of the class
+        // may have changed it since this screen loaded).
+        if (group.value && pointsTotals.value?.points_period) group.value.points_period = pointsTotals.value.points_period;
     } catch {
         // Hidden rather than shown as zeros: a failed read is not "no points".
         pointsTotals.value = null;
         pointsTotalsFailed.value = true;
     }
 };
+// Landing on the Points tab from the email link (?tab=points) is not a tab CHANGE, so the watch on
+// `activeTab` below never fires for it: load what the tab shows here, on the reported week.
+onMounted(() => {
+    if (activeTab.value !== 'points') return;
+    loadSkills();
+    loadPointsTotals(linkedPointsWeek);
+});
 const selectedPointsTotal = computed(() => pointsTotals.value?.students
     ?.find((t: any) => String(t.membership_id) === String(pointsMembership.value)) ?? null);
-const signedPoints = (n: number) => `${n > 0 ? '+' : ''}${n}`;
+
+// The weekly reset (T-003.2). The class's own choice, saved on the class so every
+// teacher of it reads the same thing; `group` carries it from the class payload.
+const pointsPeriod = computed<string>(() => group.value?.points_period ?? pointsTotals.value?.points_period ?? 'running');
+const pointsWeekly = computed(() => isWeekly(pointsPeriod.value));
+const selectedHeadline = computed(() => pointsHeadline(pointsPeriod.value, selectedPointsTotal.value));
+const classHeadline = computed(() => pointsHeadline(pointsPeriod.value, pointsTotals.value?.class));
+const pointsWeekLabel = computed(() => pointsTotals.value?.week
+    ? weekRangeLabel(pointsTotals.value.week.start, pointsTotals.value.week.end)
+    : '');
+const savingPeriod = ref(false);
+const periodError = ref('');
+const setPointsPeriod = async (input: HTMLInputElement) => {
+    const weekly = input.checked;
+    savingPeriod.value = true;
+    periodError.value = '';
+    try {
+        const res = await TeacherApiService.put(`${base.value}/points-period`, {
+            points_period: weekly ? 'weekly' : 'running',
+        });
+        // The server's word, not the checkbox's: what is stored is what is shown.
+        const stored = res.data?.data?.points_period ?? (weekly ? 'weekly' : 'running');
+        if (group.value) group.value.points_period = stored;
+        await loadPointsTotals(pointsTotals.value?.week?.is_current === false ? pointsTotals.value.week.start : null);
+    } catch (e: any) {
+        periodError.value = apiErrorText(e, 'That could not be saved.');
+        // The switch shows what is actually stored, not what was tapped.
+        input.checked = !weekly;
+    } finally {
+        savingPeriod.value = false;
+    }
+};
 
 const loadAwards = async () => {
     awards.value = [];

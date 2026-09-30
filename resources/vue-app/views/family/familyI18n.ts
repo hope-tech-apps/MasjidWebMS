@@ -362,6 +362,19 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         handover_let: "Let {x} choose",
         handover_failed: "That could not be started. Please try again.",
         section_behaviour: "Behaviour",
+        // Weekly points view and report (T-003.2, T-003.3). Machine-drafted where the file says so.
+        points_this_week: "This week",
+        points_all_weeks: "All weeks",
+        points_history: "History",
+        weekly_report_open: "Weekly report",
+        weekly_report_prev: "Previous week",
+        weekly_report_next: "Next week",
+        weekly_report_print: "Print",
+        weekly_report_none: "No points were recorded this week.",
+        weekly_report_back: "Back to class",
+        weekly_report_load_error: "We could not load this report right now. Please try again.",
+        weekly_report_truncated: "Showing the latest {x} entries. The figures above count all of them.",
+        weekly_report_points: "Points",
         // "Letters", not "Arabic letters": the section now heads both tracks and
         // each names itself underneath. These names are CHROME — this portal's
         // own words for its own sections — and belong here rather than in the
@@ -461,6 +474,29 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_missing: "Not handed in",
         mark_excused: "Excused",
         marks_truncated: "Showing the most recent {x}.",
+        // ------------------------------------------ weighted marks (W3)
+        // A weight is what the teacher gave one type of work (or one piece), so a
+        // parent can read why a Test moves the figure more than a Homework. The
+        // standard and its focus are the SCHOOL'S guide's words and are printed as
+        // written; this line only says where they came from.
+        marks_weighted_average: "Weighted average",
+        marks_weighted_note: "Some work counts for more than other work, as your child's teacher has set for each type of work.",
+        marks_weighted_level: "Weighted level {x}",
+        marks_untyped_one: "{x} piece of work has no type, so it is left out of the weighted average.",
+        marks_untyped_two: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_untyped_few: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_untyped_many: "{x} pieces of work have no type, so they are left out of the weighted average.",
+        marks_section_subjects: "By subject",
+        marks_no_subject: "No subject",
+        marks_section_types: "By type of work",
+        marks_type_counts: "counts {x}",
+        marks_weighted_short: "weighted {x}",
+        mark_type_test: "Test",
+        mark_type_quiz: "Quiz",
+        mark_type_homework: "Homework",
+        mark_type_classwork: "Classwork",
+        mark_type_other: "Other",
+        marks_standard_source: "From the school's pacing guide",
     },
     ar: {
         // ------------------------------------------------------------ shared
@@ -631,6 +667,19 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         handover_let: "دع {x} يختار",
         handover_failed: "تعذّر البدء. يرجى المحاولة مرة أخرى.",
         section_behaviour: "السلوك",
+        // Weekly points view and report (T-003.2, T-003.3). Machine-drafted where the file says so.
+        points_this_week: "هذا الأسبوع",
+        points_all_weeks: "كل الأسابيع",
+        points_history: "السجل",
+        weekly_report_open: "التقرير الأسبوعي",
+        weekly_report_prev: "الأسبوع السابق",
+        weekly_report_next: "الأسبوع التالي",
+        weekly_report_print: "طباعة",
+        weekly_report_none: "لم تُسجَّل أي نقاط هذا الأسبوع.",
+        weekly_report_back: "العودة إلى الصف",
+        weekly_report_load_error: "تعذّر تحميل هذا التقرير الآن. يرجى المحاولة مرة أخرى.",
+        weekly_report_truncated: "تُعرض أحدث {x} إدخالًا. الأرقام أعلاه تشمل جميعها.",
+        weekly_report_points: "النقاط",
         section_letters: "الحروف",
         alphabet_arabic: "الحروف العربية",
         alphabet_english: "الحروف الإنجليزية",
@@ -702,6 +751,25 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         mark_missing: "لم يُسلَّم",
         mark_excused: "معفى منه",
         marks_truncated: "تُعرض أحدث {x} من الدرجات.",
+        // ------------------------------------------ weighted marks (W3)
+        marks_weighted_average: "المعدّل الموزون",
+        marks_weighted_note: "تُحتسب بعض الأعمال بوزن أكبر من غيرها، بحسب ما حدّده المعلّم لكل نوع من الأعمال.",
+        marks_weighted_level: "المستوى الموزون {x}",
+        marks_untyped_one: "عمل واحد بلا نوع، لذلك لم يُحتسب في المعدّل الموزون.",
+        marks_untyped_two: "عملان بلا نوع، لذلك لم يُحتسبا في المعدّل الموزون.",
+        marks_untyped_few: "{x} أعمال بلا نوع، لذلك لم تُحتسب في المعدّل الموزون.",
+        marks_untyped_many: "{x} عملًا بلا نوع، لذلك لم تُحتسب في المعدّل الموزون.",
+        marks_section_subjects: "حسب المادة",
+        marks_no_subject: "بلا مادة",
+        marks_section_types: "حسب نوع العمل",
+        marks_type_counts: "وزنه {x}",
+        marks_weighted_short: "موزون {x}",
+        mark_type_test: "اختبار",
+        mark_type_quiz: "اختبار قصير",
+        mark_type_homework: "واجب منزلي",
+        mark_type_classwork: "عمل صفي",
+        mark_type_other: "أخرى",
+        marks_standard_source: "من الدليل الزمني للمنهج في المدرسة",
     },
 };
 

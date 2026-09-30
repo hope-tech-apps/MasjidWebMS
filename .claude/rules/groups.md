@@ -36,6 +36,15 @@ paths:
   - "database/migrations/*_create_group_thread_reads_table.php"
   - "app/Models/BehaviorSkill.php"
   - "app/Models/BehaviorAward.php"
+  - "app/Support/PointsWeek.php"
+  - "app/Support/SchoolPointsWeek.php"
+  - "app/Http/Controllers/Teacher/PointsPeriodController.php"
+  - "app/Console/Commands/SendWeeklyPointsReports.php"
+  - "app/Mail/WeeklyPointsReportMail.php"
+  - "app/Models/BehaviorWeek.php"
+  - "app/Models/MasjidPointsSetting.php"
+  - "app/Support/PointsReportSchedule.php"
+  - "app/Services/Groups/GroupNotificationRecipientResolver.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorSkillsController.php"
   - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
   - "database/migrations/*_create_behavior_skills_table.php"
@@ -851,9 +860,12 @@ group; never to the whole tenant; never as a class-wide ranking.
   constraint are both required — the 403 is honest to a parent who mistyped an
   id, and the constraint is what makes the honesty safe.
 - Every aggregate is **per student**. There is deliberately no class-wide
-  endpoint, no rank column, and no comparison payload. If a future slice wants
-  a teacher's overview, it is a list of per-student rows a leader is already
-  entitled to — not a ranking, and not something a guardian can reach.
+  RANKING, no rank column, and no comparison payload. The one class-wide read is
+  the teacher's overview, `GET .../awards/totals` (BISS, 2026-09-21): a list of
+  per-student rows a leader is already entitled to, in roster order, leaders
+  only, and not something a guardian can reach. (An earlier version of this
+  bullet said "no class-wide endpoint" and was already false the day `totals`
+  shipped.)
 - **Consent gates broadcasts, not a parent's view of their own child** — the
   same call T-005c made for participant threads. A guardian with no consent
   record still reads their own ward's awards; requiring feed consent there
@@ -922,6 +934,67 @@ positioning, not its configuration.
   newest-first. On the teacher's screen `core/helpers/behaviorSkills.ts` keeps a
   locally added skill in the same order and opens the picker on the first
   positive skill. Pinned by `BehaviorSkillOrderTest` and `behavior-skills.test.ts`.
+- **The weekly view is a VIEW, and nothing is deleted (T-003.2, 2026-09-29;
+  owner: "points need a reset option at the end of the week that teachers can opt
+  into").** `groups.points_period` (`running` | `weekly`; null reads as `running`,
+  `Group::pointsPeriod()`) decides only how a class's points are SHOWN. A teacher of
+  the class sets it (`PUT .../points-period`, the realm's +1 write verb) or the office
+  does through the group form; it belongs to the CLASS, not the teacher, because a
+  family sees one figure for their child, and the screen and the response both say it
+  applies to every teacher. Turning it on or off changes no `behavior_awards` row, so
+  it needs no backup and switching it off gives the running total straight back
+  (`PointsWeekTest` snapshots every row before and after).
+  - **A week is Sunday 00:00 to Sunday 00:00 on the SCHOOL's clock**
+    (`App\Support\PointsWeek`, start day named explicitly). Its two ends are built as
+    local midnights and converted, so the week that holds a daylight-saving change is
+    167 or 169 hours, not 168; `start + 7 x 24h` would drop a Saturday-night award into
+    the wrong report.
+  - **Awards are placed by INSTANT, never `whereDate`**
+    (`BehaviorAward::scopeAwardedWithin`, half-open `[start, end)`). `DATE(awarded_at)`
+    is the UTC date, so a Saturday-evening Eastern award is already Sunday in the column.
+    The older `awardedBetween(from, to)` is left exactly as it was for its callers.
+  - **`?week=`** (any day of a week names it, or the word `current` for the school's
+    week in progress) narrows the SAME audience-constrained query, so a week can never
+    include anything the caller could not already read. A value that is not a date is a
+    422, never a silent fall back to this week under last week's label. It is on the
+    staff and family listings and summaries; `totals` always carries the week beside the
+    running figures (`week_points`, `week_awards`, and the class's).
+  - **The figure a class leads with follows `points_period`; both are always served.**
+    Nothing is summed in the browser (`core/helpers/pointsWeek.ts`).
+  - **A family sees a week only where its switch is on (review F1, 2026-09-29).** The portal's "This
+    week" line is for a class that opted in to `points_period = weekly`; the weekly REPORT page and every
+    link to it are for a school holding `points_weekly_report`. The family class payload carries
+    `weekly_report` (the school's answer) beside `points_period`, and the family awards endpoints agree:
+    a `?week=` is served when the school has the report on (any week), or as `current` for a weekly class,
+    and is a plain 404 otherwise, before the value is read as a date. No `?week=` is unchanged.
+- **The Friday report is a notice and a link, off by default, once per class and week
+  (T-003.3, 2026-09-29; owner B5).** `points:weekly-report` runs hourly and, for a school
+  holding the `points_weekly_report` grant (OFF for every organisation until a SuperAdmin
+  decides), emails each family "your child's weekly report is ready" and each class's teachers
+  their summary. **Nothing about a child is in the email** (`WeeklyPointsReportMail`): the numbers
+  live behind the portal's ward-edge gate, where consent and identity are checked, not in an inbox
+  that forwards and previews on a lock screen.
+  - **Recipients are the strictest of the four notifier shapes**
+    (`GroupNotificationRecipientResolver::weeklyReportGuardians`): a CURRENT ward, and a
+    confirmed, CURRENT, feed-consented guardian edge with a live family login. The resolver checks
+    both `left_on` columns itself; the model hook that ends a guardian edge with the child is not
+    relied on. Consent is required here although a parent may always READ their child's record,
+    because this is a mail to an address the school holds. Teachers are `group_staff` logins only.
+  - **The week is the one holding the SCHEDULED instant, up to that instant.** A later award shows in
+    the portal and never makes a second email. The moment is the school's (Friday 15:00 unless
+    `masjid_points_settings` says otherwise, SuperAdmin-only), never derived from the calendar; a
+    week with a calendar closure is skipped.
+  - **`behavior_weeks` is the atomic claim** (an insert that swallows ONLY the unique violation, then
+    `UPDATE ... WHERE report_sent_at IS NULL`; never `insertOrIgnore`, which on MySQL turns any other
+    failure into a warning and reads as "already sent"): at most once by design, and a run with nobody to tell claims nothing. It holds no child
+    data, so it has no retention, erasure or RESTRICT (cascades to the school and class).
+  - **The portal page** (`FamilyWeeklyReport.vue`) reads the existing `/awards` and `/awards/summary`
+    with `?week=`, for the parent's own children only, printable, and says so when a read fails.
+    Sign-in follows `?next=` only for that one path shape for the same school
+    (`familyNextPath`), optionally with `?week=YYYY-MM-DD` (a real date): both emailed links NAME the
+    week that was reported, so a link opened on the Sunday after still shows that week, not the new one.
+  - **A send in which every email failed is given back** (`BehaviorWeek::release`), so the next run
+    inside the 12-hour window retries; a partial send keeps its claim (a retry would double-send).
 
 ## Ḥifẓ tracking — Qur'an memorization (T-014)
 
@@ -1081,6 +1154,89 @@ tracked as **52 drills, not 26**: `a.upper` … `z.lower`, in two runs of tiles
 - **The records export** keeps the stored `Drill id` and appends a readable
   `Letter` column ("Capital A") after `Alphabet`, so positional readers keep
   their columns.
+
+## Gradebook — subject, type, weight, standard and the subject fence (W3, 2026-09-29)
+
+Work (`class_assignments`) carries a **subject**, a **type**, an optional **weight** and
+**one standard**. Every one is a SNAPSHOT, never a foreign key, and existing rows stay
+NULL (blank is not a default): renaming a subject, re-importing the pacing guide or
+retiring a type changes no mark a family has read. `subject_key` is derived from
+`subject` on every save (`App\Support\SubjectKey`) and is `hidden`.
+
+- **One key for "the same subject".** `SubjectKey::for()` trims, collapses spaces,
+  lower-cases and DROPS every apostrophe-like mark, so `Qur’an`, `Qur'an` and `Quran` are
+  one subject. It never lengthens a name (a 64-character name is a key that fits a
+  64-character column). `LessonPlan::subjectKeyFor` does NOT use it: that key carries a
+  unique index with live rows, and changing it would let the by-day save miss the plan it
+  means and add a duplicate. The lesson-plan fence compares the folded key instead.
+- **The school's list** (`school_subjects`, the office's Subjects screen) decides what a
+  class offers (`ClassSubjects`): the list, else the guide's subjects, else free text;
+  limited to grades someone in the class is in (`GradeLevel` folds `Pre-K`/`Pre-Kindergarten`,
+  `KG`/`Kindergarten`, `1st`/`Grade 1`); an unlabelled child hides nothing. It is
+  reference data: the office edits it, a teacher never does.
+- **A standard is only ever a row of the school's own guide.** The teacher picks it from
+  `GET curriculum/standards` (the ONE matcher; there is no second one), and
+  `GradebookController::refuseStandard` checks the (code, focus, week) really is a
+  `curriculum_weeks` row of this school before it is stored. An uncoded weekly focus is a
+  standard by its words. Where `short_lesson_plan` is on (BISS) the three standard keys are
+  dropped before validation: not shown, not written. No standard exists for Arabic,
+  Qur'an or Islamic Studies and none may be invented; an Arabic search answers nothing.
+- **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows
+  means the class is unweighted and every average is byte for byte what it was. A TYPE is
+  one slot in the weighted average, worth its class weight however many pieces are in it;
+  the pieces in a slot are pooled (points over points, as the by-type row prints them), and
+  slots are renormalised over the types that have counted work, so a type nobody has been
+  marked on drags nothing down and Test 40 / Homework 10 with one Test at 90% and any number
+  of Homework at 100% is 92.0. A piece with its own weight is a slot of its own worth exactly
+  that number (0 keeps it out of the figure), and is not in its type's by-type row. A piece
+  with neither a type nor a weight of its own is left out and counted in `untyped_excluded`
+  ("N pieces of work have no type"). Levels get a weighted mean LEVEL over the same slots,
+  never a percentage; simple marks are never averaged. An override is refused (422) unless
+  the class is weighted, and clearing the weights clears every override in the class in the
+  same transaction. Only a teacher NOT limited to some subjects may set or clear
+  them (403, nothing written, for a limited one: the weights move every subject's average, which
+  parents read; review F5, 2026-09-29, superseding W3-3(e)); the office sets and clears them through
+  its own route (`PUT admin/.../grade-weights`, `permission:manage contacts`, no subject fence), which runs the
+  same `ClassGradeWeightsService` the teacher's route does, so a class of only limited teachers is not stuck
+  (`AdminGradeWeightsTest`).
+  `App\Support\GradeRecord` is the one copy of the arithmetic; the teacher's and the
+  parent's endpoints both call it, and `weighting` / `by_subject` sit BESIDE the older
+  summary keys, which are unchanged. The teacher's endpoint adds `data.fenced`.
+- **The subject fence now covers grades and lesson plans** (`App\Support\SubjectFence`). A
+  teacher whose `group_staff.subjects` lists some subjects is LIMITED: they list, set, edit,
+  withdraw and mark only work whose subject maps to a staff subject they teach, read only
+  those subjects' marks of a child (the summary, `by_subject`, `levels`, `simple` and the
+  list are all filtered), must NAME a subject they teach when setting work, and cannot move
+  work into another subject. `SubjectKey::staffKeys()` is the map: the combined
+  "Qur'an & Islamic Studies" column belongs to BOTH `quran` and `islamic_studies`;
+  Mathematics belongs to none, so a limited teacher does not teach it. Work with NO subject
+  is invisible to a limited teacher (404, not 403: it is not any subject's to refuse), and so is
+  ANOTHER subject's work or lesson plan (review F4, 2026-09-29): by id it answers the one plain
+  404 that untagged work (or a plan id that names nothing) answers, status and body alike, so a
+  refusal never names a subject and never confirms that something is there. The by-day lesson plan
+  address counts and touches only the plans the teacher may touch: their save on a day holding
+  only another subject's plan creates their own beside it, their delete never reaches the others,
+  and a day with nothing of theirs is a 404 whether it is empty or not. Only a subject the
+  teacher TYPES and does not teach is refused with a 403 in the words of `teacher.teaches:`
+  ("You do not teach X in this class.", X being what they wrote).
+  A lesson plan with no subject (the day's general plan) stays open to every teacher of the
+  class, because fencing it would strand every plan BISS has. Only a signed-in TEACHER is
+  limited: the office reads the same controllers through the admin realm and is never
+  fenced, and the family endpoint has no fence at all.
+- **Migrations.** `add_curriculum_fields_to_class_assignments_table` (one migration for all
+  three items), `create_class_grade_weights_table`, `create_school_subjects_table`: additive,
+  hand-named unique indexes under 64 characters, `down()` refuses while data exists. The
+  seed `seed_school_subjects_for_alrazi_and_biss` is guarded by org id AND name, insert-only,
+  logs one WARNING line, marks every row it writes (`school_subjects.seeded_by`, added by its own
+  guarded migration `add_seeded_by_to_school_subjects_table`, after the table and before the seed: an applied
+  migration is never edited), and its `down()`
+  removes only marked rows that are still untouched (an office "Qur'an" it skipped is never its own). Deploy after
+  hours (new code meets the old schema for a few seconds). Ship the seed only after the
+  owner's yes (B3).
+- **Proven by** `GradebookWeightingTest`, `GradebookCurriculumFieldsTest`,
+  `GradebookSubjectsTest`, `SchoolSubjectsTest`, `SchoolSubjectsTenantIsolationTest`,
+  `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherRoutesRegisteredOnceTest`, `TeacherSubjectAccessTest`
+  (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
 
 ## Tenant isolation
 

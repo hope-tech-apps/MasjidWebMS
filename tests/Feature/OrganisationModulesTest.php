@@ -193,7 +193,7 @@ class OrganisationModulesTest extends TestCase
 
             $this->assertSame(
                 ['web_pages', 'jummah_lunch', 'school_calendar', 'crm', 'assistant', 'form_editing',
-                    'report_card_core_subjects', 'short_lesson_plan', 'simple_marking'],
+                    'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report'],
                 array_keys($data['capabilities']),
                 "a {$orgType}'s capabilities gained or lost a key"
             );
@@ -225,6 +225,7 @@ class OrganisationModulesTest extends TestCase
             'report_card_core_subjects' => false,
             'short_lesson_plan' => false,
             'simple_marking' => false,
+            'points_weekly_report' => false,
         ], $data['capabilities']);
 
         foreach (self::MODULE_READS as $module => $path) {

@@ -147,6 +147,22 @@ final class SchoolCalendar
             ->first(fn (SchoolClosure $c) => $c->closed_on->toDateString() === $day);
     }
 
+    /**
+     * The first closure falling on any day from `$first` to `$last` inclusive
+     * ('Y-m-d' each), or null. "Is there school this week" for a WEEKLY school: a
+     * closure sits on a meeting day, so a week with one is a week the school did not
+     * meet (the weekly points report skips it). A school with no calendar has no
+     * closures and never reads as closed. Ordered by day, so the answer is stable.
+     */
+    public function closureWithin(string $first, string $last): ?SchoolClosure
+    {
+        return $this->years
+            ->flatMap(fn (SchoolYear $y) => $y->closures)
+            ->sortBy(fn (SchoolClosure $c) => $c->closed_on->toDateString())
+            ->first(fn (SchoolClosure $c) => $c->closed_on->toDateString() >= $first
+                && $c->closed_on->toDateString() <= $last);
+    }
+
     public function isMeetingDay(string $day): bool
     {
         $year = $this->yearContaining($day);

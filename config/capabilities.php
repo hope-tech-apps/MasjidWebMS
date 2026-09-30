@@ -204,6 +204,22 @@ return [
         'listed_when_off' => false,
     ],
 
+    // The Friday points report (T-003.3, owner 2026-09-28: "Points Report for end
+    // of week to be sent at the end of the week to be a nice report"). A grant,
+    // OFF for every organisation, Al-Razi included: it emails families and
+    // teachers, so switching it on for a school is a SuperAdmin's call, made once
+    // the school's families have logins to read the report with (about ten at
+    // Al-Razi, none at BISS on 2026-09-29). App\Support\SchoolSettings is the reader
+    // and points:weekly-report the only sender.
+    'points_weekly_report' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Weekly points report',
+        'description' => 'Each week, tell every family with a portal login that their child\'s weekly points report is ready (nothing about the child is in the email), and give each class\'s teachers their class summary. Off: no report is sent.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     // ------------------------------------------------------------------
     // Modules — default ON; labels are the sidebar titles
     // ------------------------------------------------------------------

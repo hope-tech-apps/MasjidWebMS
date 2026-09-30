@@ -6,6 +6,10 @@ use App\Models\Contact;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
 use App\Models\Group;
+use App\Support\PointsWeek;
+use App\Support\SchoolPointsWeek;
+use App\Support\SchoolSettings;
+use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -55,9 +59,15 @@ class BehaviorAwardsController extends FamilyController
         $group = $this->group($group_id);
         $membership = $this->subject($group, $membership_id);
 
+        $week = $this->requestedWeek($request, $group);
+
         $awards = $this->readable($group)
             ->where('group_membership_id', $membership->id)
-            ->awardedBetween($request->query('from'), $request->query('to'))
+            ->when(
+                $week !== null,
+                fn (Builder $q) => $q->awardedWithin($week->startUtc(), $week->endUtc()),
+                fn (Builder $q) => $q->awardedBetween($request->query('from'), $request->query('to'))
+            )
             ->with(['membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS, 'awardedBy:id,name'])
             ->orderByDesc('awarded_at')
             ->orderByDesc('id')
@@ -67,7 +77,7 @@ class BehaviorAwardsController extends FamilyController
         return response()->json([
             'status' => 'success',
             'data' => $awards,
-            'meta' => $this->meta(['student' => $this->student($membership)]),
+            'meta' => $this->meta(['student' => $this->student($membership)] + $this->weekMeta($week)),
         ], Response::HTTP_OK);
     }
 
@@ -83,9 +93,18 @@ class BehaviorAwardsController extends FamilyController
         $group = $this->group($group_id);
         $membership = $this->subject($group, $membership_id);
 
+        // `?week=` (T-003.2) names one points week by INSTANT and supersedes
+        // from/to. It narrows the SAME audience-constrained query, so a week is
+        // arithmetically incapable of including another family's child.
+        $week = $this->requestedWeek($request, $group);
+
         $base = $this->readable($group)
             ->where('group_membership_id', $membership->id)
-            ->awardedBetween($request->query('from'), $request->query('to'));
+            ->when(
+                $week !== null,
+                fn (Builder $q) => $q->awardedWithin($week->startUtc(), $week->endUtc()),
+                fn (Builder $q) => $q->awardedBetween($request->query('from'), $request->query('to'))
+            );
 
         // Both grouped columns are selected, so MySQL's ONLY_FULL_GROUP_BY is
         // satisfied and SQLite behaves identically.
@@ -127,6 +146,9 @@ class BehaviorAwardsController extends FamilyController
             'data' => [
                 'student' => $this->student($membership),
                 'range' => ['from' => $request->query('from'), 'to' => $request->query('to')],
+                // The week these figures are for, when one was asked for; null
+                // for the whole record, as before (T-003.2).
+                'week' => $week !== null ? SchoolPointsWeek::payload($week, app(TenantContext::class)->get()) : null,
                 'totals' => [
                     'awards' => array_sum(array_column($byPolarity, 'awards')),
                     // The NET of the snapshotted values. Not a score, and not
@@ -142,6 +164,43 @@ class BehaviorAwardsController extends FamilyController
     }
 
     // ------------------------------------------------------------- internals
+
+    /**
+     * The week `?week=` names on this school's clock, or null. 422 for a value that is no date.
+     *
+     * A week is asked for by two portal surfaces, and each is on only where its own switch is
+     * (2026-09-29, review F1): the weekly REPORT (any week, so a parent can page back) exists
+     * only where the school has the `points_weekly_report` grant, and a class's "This week"
+     * line (the week in progress, `current`) only where the class's teacher has opted in to
+     * the weekly view. Anything else is asked for a thing that is not there: a 404, the answer
+     * this realm gives for what does not exist, before the value is even read as a date.
+     * Without a `?week=` nothing here changes: the running record is always served.
+     */
+    private function requestedWeek(Request $request, Group $group): ?PointsWeek
+    {
+        $raw = $request->query('week');
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        $masjidId = app(TenantContext::class)->get();
+
+        $mayAsk = SchoolSettings::pointsWeeklyReport(SchoolSettings::org($masjidId))
+            || ($raw === 'current' && $group->usesWeeklyPoints());
+
+        if (! $mayAsk) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return SchoolPointsWeek::fromRequest($request, $masjidId);
+    }
+
+    /** @return array<string,mixed> */
+    private function weekMeta(?PointsWeek $week): array
+    {
+        return $week === null ? [] : ['week' => SchoolPointsWeek::payload($week, app(TenantContext::class)->get())];
+    }
 
     /**
      * The awards this parent may read in this group, as a constrained query.

@@ -52,6 +52,20 @@ class Group extends Model
         self::KIND_TEAM,
     ];
 
+    /**
+     * How a class's points read (T-003.2). PHP constants, never a DB enum
+     * (.claude/rules/migrations.md). `running` is the stored default AND what
+     * NULL reads as, so every class that existed before the column does exactly
+     * what it always did.
+     */
+    public const POINTS_PERIOD_RUNNING = 'running';
+    public const POINTS_PERIOD_WEEKLY = 'weekly';
+
+    public const POINTS_PERIODS = [
+        self::POINTS_PERIOD_RUNNING,
+        self::POINTS_PERIOD_WEEKLY,
+    ];
+
     protected $fillable = [
         'masjid_id',
         'name',
@@ -68,6 +82,10 @@ class Group extends Model
         // property of the room, not of thirty children who would each have
         // to carry a number that agrees with it. Null = the first stage.
         'arabic_stage',
+        // How this class's points are SHOWN: null/'running' = one running total,
+        // 'weekly' = each week on its own with the running history kept
+        // (T-003.2). A view choice: no award row is ever changed by it.
+        'points_period',
     ];
 
     protected $attributes = [
@@ -279,6 +297,24 @@ class Group extends Model
     public function arabicLetterProgress(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(ArabicLetterProgress::class);
+    }
+
+    /**
+     * The stored points period, degraded to `running` when null or unrecognised,
+     * the same defensive read as kind(). An unknown value must never make a class
+     * hide its running total.
+     */
+    public function pointsPeriod(): string
+    {
+        $period = $this->attributes['points_period'] ?? null;
+
+        return in_array($period, self::POINTS_PERIODS, true) ? $period : self::POINTS_PERIOD_RUNNING;
+    }
+
+    /** Does this class read its points one week at a time? */
+    public function usesWeeklyPoints(): bool
+    {
+        return $this->pointsPeriod() === self::POINTS_PERIOD_WEEKLY;
     }
 
     /** Never null: a group with no stage set is on the first one. */

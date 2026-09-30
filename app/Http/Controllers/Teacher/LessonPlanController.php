@@ -9,7 +9,10 @@ use App\Models\LessonPlan;
 use App\Models\LessonPlanResource;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
+use App\Support\SubjectFence;
+use App\Support\SubjectKey;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -38,6 +41,27 @@ use Symfony\Component\HttpFoundation\Response;
  *     screen still open saves where they expect to (see save()). The day view
  *     does not use it: "copy to the rest of this week" writes each day's plan
  *     by id, or creates one.
+ *
+ * THE SUBJECT FENCE (2026-09-29). A teacher whose assignment to the class lists
+ * subjects sees and writes only the plans in subjects they teach
+ * (App\Support\SubjectFence). A plan with NO subject is the day's general plan and
+ * stays open to every teacher of the class: it has been first-class since the
+ * feature shipped, BISS writes nothing else, and fencing it would strand every
+ * plan that exists. The office reads through the admin realm and is never fenced.
+ *
+ * A plan a limited teacher may not touch is not there for them: by id it
+ * answers the 404 a plan that does not exist answers, by day it is left out of
+ * "the day's plan" (so their own save creates their own plan beside it and their
+ * delete never reaches it), and nothing says which subject it was (review F4,
+ * 2026-09-29). Only a subject the teacher TYPES is refused, with a 403 that names
+ * what they wrote.
+ *
+ * BY DAY, a limited teacher reaches only plans in THEIR OWN subjects (review G2,
+ * 2026-09-29). The general plan is open to them by id, where they open it on
+ * purpose, but the by-day address names a plan by day and subject only, and
+ * "the day's plan" must never resolve to the class's shared general plan or to
+ * another subject's: their save upserts on the subject they sent, and their
+ * delete removes only what is filed under their subjects.
  *
  * `teacher.leads` has already answered "may this teacher touch this class"
  * before any method here runs. A plan id is always resolved THROUGH that class
@@ -73,6 +97,15 @@ class LessonPlanController extends TeacherController
             ->orderBy('id')
             ->with('attachments.groupResource')
             ->get();
+
+        // The subject fence, applied in PHP rather than SQL: `lesson_plans.subject_key`
+        // keeps its own older derivation (see App\Support\SubjectKey), so the
+        // fence compares the folded key of each plan's subject instead.
+        $limits = $this->limits($group);
+
+        if ($limits !== null) {
+            $plans = $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+        }
 
         return response()->json([
             'status' => 'success',
@@ -112,7 +145,7 @@ class LessonPlanController extends TeacherController
     public function update(SaveLessonPlanRequest $request, $masjid_id, $group_id, $plan_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $plan = $group->lessonPlans()->findOrFail($plan_id);
+        $plan = $this->planFor($group, $plan_id);
 
         return $this->write($request, $masjid_id, $group, $plan);
     }
@@ -124,11 +157,17 @@ class LessonPlanController extends TeacherController
      * Which plan that is:
      *   1. the day's plan for the subject sent, when there is one — an upsert on
      *      the per-subject unique key, so saving twice corrects the same plan;
-     *   2. otherwise, when the day holds exactly ONE plan, that plan. The old
-     *      screen showed one plan a day and sends the whole form, subject
-     *      included, so a teacher who changed the subject there meant to rename
-     *      THAT plan. Upserting on the new subject instead would leave the old
-     *      plan behind and add a second one she never asked for;
+     *   2. otherwise, when the day holds exactly ONE plan, that plan, for a
+     *      teacher who is not limited to some subjects. The old screen showed one
+     *      plan a day and sends the whole form, subject included, so a teacher
+     *      who changed the subject there meant to rename THAT plan. Upserting on
+     *      the new subject instead would leave the old plan behind and add a
+     *      second one she never asked for. A LIMITED teacher never renames by day
+     *      (review G2): the only plan they can see on a day may be the class's
+     *      shared general plan, and retyping it to their subject would overwrite
+     *      what every teacher of the class reads. Their save is a new plan of
+     *      their own beside whatever is there, never a 403 and never a rewrite of
+     *      the general plan or another subject's;
      *   3. otherwise a new plan: the day is empty, or it already holds several
      *      subjects' plans and none for this one, so "the day's plan" names none
      *      of them and replacing one would lose work she did not point at.
@@ -168,7 +207,7 @@ class LessonPlanController extends TeacherController
     public function destroyPlan(Request $request, $masjid_id, $group_id, $plan_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
-        $plan = $group->lessonPlans()->findOrFail($plan_id);
+        $plan = $this->planFor($group, $plan_id);
 
         $date = $plan->session_date->toDateString();
         $plan->delete();
@@ -187,6 +226,13 @@ class LessonPlanController extends TeacherController
      * "remove the plan for Tuesday" no longer names one, and deleting every
      * subject's plan because one was meant would erase work the teacher did not
      * point at; it answers 409 and the teacher removes them one at a time.
+     *
+     * "The day's plans" are the ones THIS teacher may touch. For a limited teacher
+     * that is the plans filed under THEIR subjects, and only those (review G2): the
+     * general plan is not among them, so it is neither counted nor deleted, and
+     * neither is another subject's (so a 409 never says a hidden plan exists). A day
+     * with nothing of theirs is a 404, whether it is empty or holds only the general
+     * plan or another subject's plan: the cases cannot be told apart.
      */
     public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
     {
@@ -203,16 +249,29 @@ class LessonPlanController extends TeacherController
 
         // The string as given, not a parsed Carbon: '2026-02-30' would roll over
         // to March 2nd and remove that day's plan; as a string it matches nothing.
-        $onDay = $this->plansOnDay($group, $date);
+        $plans = $this->plansTouchableOn($group, $date);
 
-        if ((clone $onDay)->count() > 1) {
+        if ($this->limits($group) !== null) {
+            // Touchable is the general plan and their own subjects'; by day only the
+            // latter are theirs. The general plan is the class's, not "their" plan.
+            $plans = $plans->filter(fn (LessonPlan $p): bool => SubjectKey::clean($p->subject) !== null)->values();
+
+            // Nothing of their own that day: the one plain 404.
+            if ($plans->isEmpty()) {
+                abort(Response::HTTP_NOT_FOUND);
+            }
+        }
+
+        if ($plans->count() > 1) {
             return response()->json([
                 'status' => 'failed',
                 'data' => ['date' => ['This day has a plan for more than one subject. Remove them one at a time.']],
             ], Response::HTTP_CONFLICT);
         }
 
-        $onDay->delete();
+        // Only the plan counted above, by id: never the day's other plans, which are
+        // another subject's when this teacher is limited.
+        $plans->each->delete();
 
         return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
     }
@@ -225,6 +284,18 @@ class LessonPlanController extends TeacherController
     private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
     {
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+
+        // The subject fence, on what the plan is becoming FIRST: a subject the teacher
+        // typed and does not teach is refused in the words they wrote, whether or not
+        // a plan of that subject exists, so the refusal says nothing about the day.
+        $this->fence($group, $request->validated('subject'));
+
+        // And on the plan AS IT IS: no verb reaches another subject's plan for a
+        // limited teacher. The callers resolve a plan through planFor() or the
+        // touchable set, so this is the last line, and it is the same 404.
+        if ($plan->exists) {
+            $this->mustTouch($group, $plan, $plan->getKey());
+        }
 
         // The whole object, every time. The request declares every template
         // field `nullable` rather than `sometimes` precisely so that an omitted
@@ -390,12 +461,90 @@ class LessonPlanController extends TeacherController
         return $this->plansOnDay($group, $date->toDateString())->where('subject_key', $subjectKey)->first();
     }
 
-    /** The day's plan when the day holds exactly one; null when it holds none or several. */
+    /**
+     * The day's plan when the day holds exactly one; null when it holds none or several,
+     * and ALWAYS null for a teacher limited to some subjects. Renaming "the day's only
+     * plan" is the old screen's meaning of a save, and for a limited teacher that plan
+     * can be the shared general one or, before them, another subject's, which a save
+     * of theirs must never retype or overwrite (review G2).
+     */
     private function onlyPlanOn(Group $group, Carbon $date): ?LessonPlan
     {
+        if ($this->limits($group) !== null) {
+            return null;
+        }
+
         $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
 
         return $plans->count() === 1 ? $plans->first() : null;
+    }
+
+    /**
+     * This class's plans on one day that the signed-in teacher may touch: all of
+     * them, or for a limited teacher only the general plan and their own subjects'.
+     *
+     * @return \Illuminate\Support\Collection<int,LessonPlan>
+     */
+    private function plansTouchableOn(Group $group, string $day): \Illuminate\Support\Collection
+    {
+        $plans = $this->plansOnDay($group, $day)->orderBy('id')->get();
+        $limits = $this->limits($group);
+
+        return $limits === null
+            ? $plans
+            : $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+    }
+
+    /**
+     * One plan of this class by id, for the signed-in teacher. A limited teacher's
+     * fence is invisibility, so a plan in another subject answers exactly what an
+     * id that names no plan answers: the same exception, message included, so the
+     * body cannot tell them apart and nothing says which subject it was.
+     */
+    private function planFor(Group $group, $planId): LessonPlan
+    {
+        $plan = $group->lessonPlans()->findOrFail($planId);
+        $this->mustTouch($group, $plan, $planId);
+
+        return $plan;
+    }
+
+    /** The 404 a plan that does not exist gets, for a plan a limited teacher may not touch. */
+    private function mustTouch(Group $group, LessonPlan $plan, $planId): void
+    {
+        $limits = $this->limits($group);
+
+        if ($limits !== null && ! $this->mayTouch($limits, $plan->subject)) {
+            throw (new ModelNotFoundException())->setModel(LessonPlan::class, [$planId]);
+        }
+    }
+
+    /** @return list<string>|null  what the signed-in teacher is limited to here, NULL for all */
+    private function limits(Group $group): ?array
+    {
+        return SubjectFence::limitsFor(Auth::user(), (int) $group->id);
+    }
+
+    /**
+     * May a teacher with these limits read or write a plan filed under `$subject`?
+     * No subject is the day's general plan, which is nobody's to refuse.
+     *
+     * @param  list<string>  $limits
+     */
+    private function mayTouch(array $limits, ?string $subject): bool
+    {
+        return SubjectKey::clean($subject) === null
+            || SubjectFence::allows($limits, SubjectKey::for($subject));
+    }
+
+    /** Refuse, in the fence's own words, a plan in a subject this teacher does not teach. */
+    private function fence(Group $group, ?string $subject): void
+    {
+        $limits = $this->limits($group);
+
+        if ($limits !== null && ! $this->mayTouch($limits, $subject)) {
+            SubjectFence::refuse($subject);
+        }
     }
 
     /**

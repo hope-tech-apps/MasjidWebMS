@@ -13,6 +13,7 @@ use App\Http\Controllers\Teacher\CurriculumController;
 use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\LessonPlanController;
+use App\Http\Controllers\Teacher\PointsPeriodController;
 use App\Http\Controllers\Teacher\ReportCardController;
 use App\Http\Controllers\Teacher\ResourcesController;
 use App\Http\Controllers\Teacher\SchoolController;
@@ -181,6 +182,11 @@ Route::prefix('teacher')
                         Route::delete('/awards/{award_id}', [BehaviorAwardsController::class, 'destroy']);
                         Route::get('/members/{membership_id}/awards', [BehaviorAwardsController::class, 'forMember']);
                         Route::get('/members/{membership_id}/awards/summary', [BehaviorAwardsController::class, 'summary']);
+                        // How this class's points READ: one running total, or a
+                        // week at a time (T-003.2). A view choice that changes no
+                        // award; it applies to every teacher of the class. The
+                        // realm's +1 write verb for the points reset.
+                        Route::put('/points-period', [PointsPeriodController::class, 'update']);
 
                         // The class register. The teacher realm's OWN controller,
                         // not a reused admin one: taking a register is a teacher
@@ -214,6 +220,16 @@ Route::prefix('teacher')
                         Route::put('/assignments/{assignment_id}', [GradebookController::class, 'update']);
                         Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
                         Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
+                        // How much each TYPE of work counts for in THIS class
+                        // (T-001.2), all five types or clear them. A class-level
+                        // setting that moves every subject's average, so it is for
+                        // a teacher of ALL the subjects only: a teacher limited to
+                        // some is refused, setting or clearing (review F5): see
+                        // GradebookController::saveWeights. Registered ONCE: the
+                        // router keeps one route per verb and URI, so a second
+                        // copy is invisible to every test but the source scan in
+                        // TeacherRoutesRegisteredOnceTest.
+                        Route::put('/grade-weights', [GradebookController::class, 'saveWeights']);
                         Route::get('/members/{membership_id}/grades', [GradebookController::class, 'forMember']);
 
                         // Report cards and progress reports. Both are the same

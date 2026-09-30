@@ -74,6 +74,13 @@ export interface ChildRecordSinks {
     setLetters: (membershipId: number, tracks: any[]) => void;
     /** `null` means "we could not ask"; `[]` means there are none. */
     setArabicNotes: (membershipId: number, notes: any[] | null) => void;
+    /**
+     * The child's points totals: this week's and the whole record's (T-003.2).
+     * `null` means "we could not ask", which is NOT zero points: the screen hides
+     * the figure rather than print a made-up 0. Optional, so a screen that does not
+     * show the weekly figure asks for nothing.
+     */
+    setPoints?: (membershipId: number, points: { week: any; all: any } | null) => void;
 }
 
 export async function loadChildRecordsFor(run: ClassRun, children: any[], sinks: ChildRecordSinks): Promise<void> {
@@ -92,6 +99,25 @@ export async function loadChildRecordsFor(run: ClassRun, children: any[], sinks:
                 awards: rowsOf(awards.data?.data),
                 hifz: rowsOf(hifz.data?.data),
             });
+
+            // The points totals. Its own try, like the notes below: a failure here
+            // must not blank the award log above, and it must not read as "no
+            // points" either. `week=current` is the school's own week in progress,
+            // which the browser could not work out (its zone is the parent's).
+            if (sinks.setPoints) {
+                try {
+                    const [week, all] = await Promise.all([
+                        FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary?week=current`),
+                        FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary`),
+                    ]);
+                    if (run.stale()) return;
+                    sinks.setPoints(child.membership_id, { week: week.data?.data ?? null, all: all.data?.data ?? null });
+                } catch (e) {
+                    if (run.stale()) return;
+                    if (run.fail(e)) return;
+                    sinks.setPoints(child.membership_id, null);
+                }
+            }
 
             // Both alphabets, asked for separately because they ARE separate
             // records — same route, same ward-edge gate, one `?alphabet=` apart.
@@ -362,4 +388,62 @@ export function watchStoriesSeen(src: StoryReadsSource): () => Promise<void> {
     watch([src.tab, src.posts, src.enabled, src.loading, src.error], report);
 
     return report;
+}
+
+export interface WeeklyReportSinks {
+    /** `null` means "we could not ask", which is NOT "no points this week". */
+    setReport: (membershipId: number, report: { summary: any; awards: any[]; truncated: boolean } | null) => void;
+    /** The week the server says it answered for (its dates, neighbours, is_current). */
+    setWeek: (week: any) => void;
+}
+
+/**
+ * The printable weekly report's per-child reads (T-003.3): each of THIS parent's own
+ * children's totals and awards for one points week, through the same ward-edge-gated
+ * endpoints the class screen uses.
+ *
+ * `weekParam` is `current` (the school's week in progress, which the browser cannot know)
+ * or a week's first day taken from the server's own `previous` / `next`. A run, like the
+ * fetch loops above: it takes its base once, and stops the moment the parent is at another
+ * school or the screen is gone, so a slow read never fires a request for the NEW school's
+ * route under this child's membership id.
+ *
+ * The list is asked for its page maximum (100); if the week holds more than came back,
+ * `truncated` says so, because a silently short list beside totals that count everything
+ * would read as an error in the school's arithmetic.
+ */
+export async function loadWeeklyReportFor(
+    run: ClassRun,
+    children: any[],
+    weekParam: string,
+    sinks: WeeklyReportSinks,
+): Promise<void> {
+    const q = encodeURIComponent(weekParam);
+
+    for (const child of children) {
+        if (run.stale()) return;
+
+        try {
+            const [summary, awards] = await Promise.all([
+                FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards/summary?week=${q}`),
+                FamilyApiService.get(`${run.base}/members/${child.membership_id}/awards?week=${q}&per_page=100`),
+            ]);
+
+            if (run.stale()) return;
+
+            const s = summary.data?.data ?? null;
+            const rows = rowsOf(awards.data?.data);
+
+            if (s?.week) sinks.setWeek(s.week);
+
+            sinks.setReport(
+                child.membership_id,
+                s ? { summary: s, awards: rows, truncated: Number(awards.data?.data?.total ?? rows.length) > rows.length } : null,
+            );
+        } catch (e) {
+            if (run.stale()) return;
+            if (run.fail(e)) return;
+            sinks.setReport(child.membership_id, null);
+        }
+    }
 }

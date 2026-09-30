@@ -154,6 +154,11 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/behavior-skills',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards/{award_id}',
+            // The weekly points reset (T-003.2, 2026-09-29): +1 verb. A teacher
+            // choosing how THEIR OWN class's points read ('running' or 'weekly').
+            // A view choice on the class: it changes no award, and it applies to
+            // every teacher of the class. Not roster mutation.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/points-period',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
@@ -168,6 +173,10 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}/scores',
+            // How much one piece of work of each type counts for in this class
+            // (W3, T-001.2, 2026-09-29). The only NEW write of the gradebook wave:
+            // subject, type, weight and standard ride the assignment verbs above.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/grade-weights',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',

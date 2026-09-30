@@ -99,6 +99,7 @@
 </template>
 
 <script setup lang="ts">
+import { familyNextPath } from '@/core/helpers/familySessions';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
@@ -111,6 +112,10 @@ const familyStore = useFamilyStore();
 const { lang, dir, t } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
+
+// Where to go once signed in: the home screen, or the one page an emailed link named
+// (?next=, an allowlisted path for THIS school only: see familyNextPath).
+const afterSignIn = () => familyNextPath(masjidId.value, route.query.next);
 const step = ref<'email' | 'code'>('email');
 const email = ref('');
 const code = ref('');
@@ -129,7 +134,7 @@ const emailLooksValid = computed(() => /\S+@\S+\.\S+/.test(email.value.trim()));
 
 onMounted(() => {
     if (familyStore.isSignedInTo(masjidId.value)) {
-        router.replace(`/family/${masjidId.value}`);
+        router.replace(afterSignIn());
     }
 });
 
@@ -156,7 +161,7 @@ const verify = async () => {
     error.value = '';
     try {
         await familyStore.verifyCode(masjidId.value, email.value.trim(), code.value.trim());
-        router.replace(`/family/${masjidId.value}`);
+        router.replace(afterSignIn());
     } catch (e: any) {
         // Every way this can fail returns the same 410, so the message is the
         // same too.
@@ -181,7 +186,7 @@ const signInWithPassword = async () => {
     error.value = '';
     try {
         await familyStore.signInWithPassword(masjidId.value, email.value.trim(), password.value);
-        router.replace(`/family/${masjidId.value}`);
+        router.replace(afterSignIn());
     } catch {
         error.value = 'signin_password_failed';
     } finally {
