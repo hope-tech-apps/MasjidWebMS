@@ -91,7 +91,9 @@ return new class extends Migration
             $table->unsignedBigInteger('fee_minor')->default(0);
             $table->char('currency', 3)->default('usd');
 
-            $table->string('charge_account_id', 64);
+            // As wide as its source, `masjids.stripe_account_id` (255): the pin is copied from that
+            // column, and a narrower one would refuse an id the organisation was allowed to hold.
+            $table->string('charge_account_id', 255);
 
             // WHAT the page charges for, as a hash of the payable lines (type, id,
             // quantity, unit price, answers) plus currency and fee. An open page is
@@ -116,7 +118,10 @@ return new class extends Migration
             // which line. `charge_flag` is refunded | partially_refunded | disputed;
             // `charge_refunded_minor` is the latest amount_refunded Stripe reported (recorded,
             // never added to); staff reconcile the lines by hand (CartPaymentService::handleChargeFlag).
-            $table->string('charge_flag', 16)->nullable();
+            // 32, not 16: 'partially_refunded' is 18 characters, and MySQL's strict mode refuses
+            // to store it (SQLite ignores the length, so no SQLite test can show it).
+            // CartColumnWidthsTest pins every value the code writes against its declared width.
+            $table->string('charge_flag', 32)->nullable();
             $table->unsignedBigInteger('charge_refunded_minor')->default(0);
             $table->timestamp('charge_flagged_at')->nullable();
 
