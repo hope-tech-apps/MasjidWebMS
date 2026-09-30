@@ -8,12 +8,10 @@
  "applies_after": "al-razi-pacing-2026-27.json",
  "source": {
   "title": "First Semester/ Quarter 1 suggested pacing for all subjects from Pre-k to Grade 2",
-  "drive_file_id": "1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys",
-  "drive_modified": "2026-09-07",
+  "document_date": "2026-09-07",
   "docx_sha256": "98332b22dd36298ed5d575f22e44745069fd94ddada25929fcfa1f6fe34119e1",
   "txt_path": "database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt",
   "txt_sha256": "40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f",
-  "owner_note": "Owner 2026-09-29: the separated guide is already in the shared drive (B12).",
   "generator": "database/curriculum/tools/build-al-razi-qai-split.mjs",
   "tables": [
    {

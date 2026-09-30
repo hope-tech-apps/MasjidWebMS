@@ -13,11 +13,18 @@ use PHPUnit\Framework\TestCase;
  * that first read the .docx nor the generator that wrote the data file: it
  * re-reads the committed .txt by LINE NUMBER and compares every stored string
  * with assertSame, byte for byte, with no trimming. The .txt is itself pinned to
- * the Drive download by hash.
+ * the school's document by sha256 (and the .docx it came from by its own).
+ *
+ * The .txt is optional. When the file is absent (the owner may decide the school's
+ * text is not to be public, which is a one-file deletion) the text comparisons
+ * are skipped with a message saying so, and the sha256 pins in the data file are
+ * still checked.
  */
 class CurriculumSplitSourceFaithfulnessTest extends TestCase
 {
     private const TXT_SHA256 = '40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f';
+
+    private const DOCX_SHA256 = '98332b22dd36298ed5d575f22e44745069fd94ddada25929fcfa1f6fe34119e1';
 
     private const SOURCE = 'database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt';
 
@@ -25,8 +32,8 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
 
     private const COMBINED = "Qur\u{2019}an & Islamic Studies";
 
-    /** @var list<string> */
-    private array $lines;
+    /** @var list<string> empty when the committed source text is absent */
+    private array $lines = [];
 
     /** @var array<string, mixed> */
     private array $data;
@@ -36,7 +43,9 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
         parent::setUp();
 
         $root = dirname(__DIR__, 2);
-        $this->lines = explode("\n", (string) file_get_contents("{$root}/" . self::SOURCE));
+        if (is_file("{$root}/" . self::SOURCE)) {
+            $this->lines = explode("\n", (string) file_get_contents("{$root}/" . self::SOURCE));
+        }
         $this->data = json_decode((string) file_get_contents("{$root}/" . self::DATA), true, flags: JSON_THROW_ON_ERROR);
     }
 
@@ -45,20 +54,38 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
         return $this->lines[$n - 1];
     }
 
-    #[Test]
-    public function the_committed_source_is_the_drive_download(): void
+    /** Skip a comparison that needs the school's text when the .txt is not committed. */
+    private function requireSourceText(): void
     {
+        if ($this->lines === []) {
+            $this->markTestSkipped(
+                'The source text ' . self::SOURCE . ' is not committed, so the line-by-line comparison with the school\'s '
+                . 'document is skipped. The data file\'s sha256 pins (docx_sha256, txt_sha256) are still checked by '
+                . 'the_source_is_pinned_by_sha256.'
+            );
+        }
+    }
+
+    #[Test]
+    public function the_source_is_pinned_by_sha256(): void
+    {
+        $this->assertSame(self::TXT_SHA256, $this->data['source']['txt_sha256']);
+        $this->assertSame(self::DOCX_SHA256, $this->data['source']['docx_sha256']);
+        $this->assertSame(self::SOURCE, $this->data['source']['txt_path']);
+
         $file = dirname(__DIR__, 2) . '/' . self::SOURCE;
 
-        $this->assertSame(self::TXT_SHA256, hash_file('sha256', $file));
-        $this->assertSame(self::TXT_SHA256, $this->data['source']['txt_sha256']);
-        $this->assertSame(self::SOURCE, $this->data['source']['txt_path']);
-        $this->assertSame(171429, filesize($file));
+        // Without the committed text the pins above are all there is to check.
+        if (is_file($file)) {
+            $this->assertSame(self::TXT_SHA256, hash_file('sha256', $file));
+            $this->assertSame(171429, filesize($file));
+        }
     }
 
     #[Test]
     public function every_imported_string_is_its_source_line_byte_for_byte(): void
     {
+        $this->requireSourceText();
         $this->assertCount(96, $this->data['rows']);
 
         foreach ($this->data['rows'] as $row) {
@@ -80,6 +107,7 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
     #[Test]
     public function every_block_is_the_quarter_table_it_claims(): void
     {
+        $this->requireSourceText();
         $tables = $this->data['source']['tables'];
         $this->assertCount(12, $tables);
 
@@ -131,7 +159,10 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
 
             $this->assertSame(1, $row['quarter']);
             $this->assertNull($row['assessment_note']);
-            $this->assertSame((string) $row['week_no'], $this->line($row['source_lines']['week_no']));
+
+            if ($this->lines !== []) {
+                $this->assertSame((string) $row['week_no'], $this->line($row['source_lines']['week_no']));
+            }
         }
 
         $this->assertCount(12, $byBlock);
@@ -182,6 +213,10 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
         $this->assertSame('Memorize Surah Al-Ikhlāṣ', $row['objective']);
         $this->assertSame('Recite independently', $row['learning_outcome']);
         $this->assertSame(3948, $row['source_lines']['objective']);
+
+        if ($this->lines !== []) {
+            $this->assertSame($row['objective'], $this->line(3948));
+        }
     }
 
     #[Test]
@@ -222,6 +257,7 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
     #[Test]
     public function grade_1_islamic_studies_copies_agree(): void
     {
+        $this->requireSourceText();
         $this->assertSame(
             array_slice($this->lines, 5878, 45),
             array_slice($this->lines, 6116, 45),
@@ -232,12 +268,14 @@ class CurriculumSplitSourceFaithfulnessTest extends TestCase
     #[Test]
     public function the_provenance_names_the_schools_document(): void
     {
-        $this->assertSame('1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys', $this->data['source']['drive_file_id']);
-        $this->assertSame('2026-09-07', $this->data['source']['drive_modified']);
-        $this->assertSame(
-            '98332b22dd36298ed5d575f22e44745069fd94ddada25929fcfa1f6fe34119e1',
-            $this->data['source']['docx_sha256']
-        );
+        $this->assertSame('2026-09-07', $this->data['source']['document_date']);
+        $this->assertSame(self::DOCX_SHA256, $this->data['source']['docx_sha256']);
+        $this->assertSame(self::TXT_SHA256, $this->data['source']['txt_sha256']);
+
+        // The file is in a public repository: pin the source by its hashes, never by
+        // where a private copy lives, and carry no internal working note.
+        $this->assertSame(['title', 'document_date', 'docx_sha256', 'txt_path', 'txt_sha256', 'generator', 'tables'], array_keys($this->data['source']));
+        $this->assertStringNotContainsString('drive', strtolower((string) json_encode($this->data['source'])));
         $this->assertSame(['id' => 14, 'name_contains' => 'razi', 'org_type' => 'school'], $this->data['for_masjid']);
         $this->assertLessThanOrEqual(120, mb_strlen($this->data['source_label']));
         $this->assertSame('al-razi-pacing-2026-27.json', $this->data['applies_after']);

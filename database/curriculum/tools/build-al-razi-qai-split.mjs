@@ -72,7 +72,7 @@ function sha256(buffer) {
 const raw = readFileSync(SOURCE);
 
 if (sha256(raw) !== TXT_SHA256) {
-  fail(`the source text's sha256 is ${sha256(raw)}, not the Drive download's ${TXT_SHA256}`);
+  fail(`the source text's sha256 is ${sha256(raw)}, not the pinned source's ${TXT_SHA256}`);
 }
 
 // No trimming and no newline normalisation: a line is exactly the bytes between
@@ -172,12 +172,10 @@ const out = {
   applies_after: 'al-razi-pacing-2026-27.json',
   source: {
     title: 'First Semester/ Quarter 1 suggested pacing for all subjects from Pre-k to Grade 2',
-    drive_file_id: '1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys',
-    drive_modified: '2026-09-07',
+    document_date: '2026-09-07',
     docx_sha256: DOCX_SHA256,
     txt_path: 'database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt',
     txt_sha256: TXT_SHA256,
-    owner_note: 'Owner 2026-09-29: the separated guide is already in the shared drive (B12).',
     generator: 'database/curriculum/tools/build-al-razi-qai-split.mjs',
     tables,
   },
