@@ -150,8 +150,13 @@ class CartSettlementService
         array $customerDetails = [],
     ): CartSettlementResult {
         try {
+            // Read BEFORE the transaction opens, never inside it (see settleLocked() step 1): under
+            // InnoDB's REPEATABLE READ the first plain SELECT of a transaction fixes the snapshot
+            // every later plain read sees, and this one would fix it before the locks below are won.
+            $ref = Order::withoutMasjidScope()->whereKey($orderId)->first(['id', 'masjid_id', 'cart_id']);
+
             $done = DB::transaction(
-                fn (): array => $this->settleLocked($orderId, $paymentIntentId, $amountMinor, $currency, $sessionId, $customerDetails),
+                fn (): array => $this->settleLocked($orderId, $ref, $paymentIntentId, $amountMinor, $currency, $sessionId, $customerDetails),
                 3, // a deadlock retries the whole (re-entrant) closure rather than 500-ing a paid basket
             );
         } catch (Throwable $e) {
@@ -210,6 +215,7 @@ class CartSettlementService
      */
     private function settleLocked(
         int $orderId,
+        ?Order $ref,
         ?string $paymentIntentId,
         ?int $amountMinor,
         ?string $currency,
@@ -219,7 +225,20 @@ class CartSettlementService
         // 1. The locks every settlement of this order queues behind: the CART first, then
         // the order, the order checkout takes them in (it locks the basket, then touches its
         // orders), so a checkout and a settlement of the same basket cannot deadlock.
-        $ref = Order::withoutMasjidScope()->whereKey($orderId)->first(['id', 'masjid_id', 'cart_id']);
+        //
+        // NO PLAIN SELECT BEFORE THE LOCKS. On MySQL (REPEATABLE READ) the first consistent read
+        // in a transaction fixes its snapshot, and every later plain read (the order's lines in
+        // backfillLocked(), the basket's lines in closeCart()) sees the database as of that
+        // moment, however long the lock wait was. A settlement queued behind another one (the
+        // payment intent's and the session's events arrive together) would then read lines the
+        // winner had not yet linked, and a line added to the basket while it waited would not exist.
+        // Locking reads always see the latest committed rows and do not fix a snapshot, so the
+        // first statement here is the cart's `FOR UPDATE`, and the first plain read comes after
+        // both locks are held. The order's basket id (`$ref`) is read by settle() before the
+        // transaction opens: it decides only WHICH cart to lock, and an order's cart_id never
+        // moves except to NULL when the basket is pruned, in which case there is nothing to lock
+        // (closeCart() then does nothing, exactly as if the read had been made in here). Everything
+        // that matters is read below, under the locks.
         $cart = $ref?->cart_id === null
             ? null
             : Cart::withoutMasjidScope()->where('masjid_id', $ref->masjid_id)->whereKey($ref->cart_id)->lockForUpdate()->first();
