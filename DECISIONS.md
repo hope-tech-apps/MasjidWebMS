@@ -5381,3 +5381,74 @@ organisational-domain fallback. No `_dmarc.manara` record, which would take its 
 dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
 Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
 Reply-To bounces.
+
+## 2026-09-29 — Guide split: the school's separated Qur'an, Arabic and Islamic Studies weeks replace the combined column for Pre-K to Grade 2, weeks 1-8 (feat/school-guide-split, off b5c2f808)
+Decision: the owner said the separated guide is already in the shared drive (RECON-PLAN B12 answered; the
+school's "First Semester / Quarter 1 suggested pacing for all subjects from Pre-k to Grade 2", Drive
+`1Y_-gek3OxcOlDKYUxK1wX1UXxf22_8Ys`, 2026-09-07). It supersedes W3-6's "T-001.4 is partial until B12" for these
+cells only. `curriculum:import` (extended) loads `database/curriculum/al-razi-qai-split-2026-27-q1.json`
+after the base guide: 96 new rows (Pre-K, Kindergarten, Grade 1, Grade 2, times Qur'an, Arabic Language and
+Islamic Studies, times weeks 1-8) replace the 32 combined cells for the same grades and weeks, in one
+transaction. Masjid 14 goes from 1512 to 1576 rows. The combined column stays for weeks 9-36 in Pre-K to
+Grade 2 and for all 36 weeks of Grades 3-5 (220 rows): the school has given nothing else for them.
+The production apply is NOT part of this change and waits for the owner's yes on the exact dry-run counts.
+- **Mapping, name for name, nothing joined.** Focus Skill to `focus`, Objective to a new `objective`, Learning
+  Outcome to a new `learning_outcome`, Standard Code to `standard_code`; `assessment_note` is NULL (the plan has
+  no such column). A single-slot mapping loses the school's words ("Memorize Surah Al-Ikhlāṣ" is an Objective,
+  "Letters أ–ب" a Focus Skill) and a joined string is one the school never wrote, which a byte-for-byte test could
+  not state. Migration `2026_10_05_100000` adds both columns nullable; its `down()` refuses while any row holds
+  either (the inverse import empties them first).
+- **Subject names are the catalogue's exact bytes** (`Qur'an` with U+0027, `Arabic Language`, `Islamic
+  Studies`), not the combined column's U+2019, because `LessonPlan::subjectKeyFor` does not fold apostrophes and
+  a second spelling would let one class-day hold two Qur'an plans. The school's own heading words stay in the
+  file's `source.tables` block. Grade labels are the live guide's spellings, because the lookups compare exactly.
+- **Data path is the importer, not a migration.** A migration runs everywhere at deploy (code and data would
+  ship as one step), cannot print a dry run for the owner to approve, and no migration writes guide data. The
+  importer gains `--dry-run` (exact counts plus one `PLAN {json}` line, writes nothing), `--expect=` (refuses on
+  any different count, so the apply does only what was approved), `--verify` (read-only, byte for byte, exit 1 on
+  any mismatch), a masjid guard (`for_masjid`: id, name_contains, org_type), an inverse file and a full snapshot
+  written 0600 before any change (read back and counted), one transaction that re-counts before it commits, and
+  a WARNING log line with the file's sha256 and provenance (prod logs warning and up). `--fresh` now deletes
+  INSIDE that transaction (it used to delete outside it, so a failed import lost the guide), and is refused
+  together with `replaces`. Idempotent: a second apply is delete 0, insert 0, update 0, unchanged 96.
+  The ordering hazard is real and pinned: re-running the base file re-creates the 32 combined cells (an import only
+  upserts); re-run the split file, which is idempotent.
+- **Teachers' records are never written.** Plans and assignments copy text and hold no key to the guide, so
+  deleting a guide row changes none of them, and an assignment whose unchanged snapshot names a deleted cell still
+  saves on edit. The dry run counts `plans_touching`, `assignments_touching` and `plans_combined_subject`, and
+  `--expect` pins the first two. Production on 2026-09-29: 0 plans, 0 assignments (GUIDE-MAP section 10).
+- **What people see.** The prefill and standards payloads carry `objective` and `learning_outcome` ONLY on rows
+  that have them, so every July row answers byte for byte as before (the pin in
+  `TeacherCurriculumStandardsTest` is unchanged). The standards de-duplication key includes the objective, since
+  K and Grade 1 `x.QUR.MEM.1 Memorization` (weeks 4 and 7) and Grade 2 `2.AAL.ALPH.1 Alphabet` (weeks 2 and 3)
+  repeat a code and focus with a different Objective; the matcher reads focus, objective and outcome as the
+  row's own words. SPA: the week select and both standards lists show the objective and key by it; a pick writes
+  the Objective (else the Focus Skill, as a week prefill does); the Learning Outcome fills the outcomes list only
+  where the teacher wrote none or the guide wrote the only one there (`outcomeFill`, the rule `autoFill`
+  applies to every field); the Islamic integration box takes one line per Islamic sibling when there are several
+  and the bare focus when there is one (`islamicIntegration`), so Qur'an no longer falls into "other subjects".
+  The family portal, the catalogue, the COMBINED list and `SubjectFence` are unchanged.
+- **Not done (options, not built).** O-1: the plan's ELA, Math, Science, Social Studies and STEM are not
+  imported (different code system from the live guide; Grade 2 Math absent, Grade 2 ELA overview only, Grade 2
+  Science in two differing copies). F-1: a hint on a split subject's week list that weeks 9+ are still under the
+  combined column. F-3: B7 (which per-grade Arabic outcomes document is current) is NOT settled by the Drive
+  files; no outcomes list is imported.
+- **Correction.** `sidequest/RECON-PLAN.md:828` says the Drive document carries no Qur'an, Arabic or Islamic
+  Studies codes. It does: the 7 Sep plan has `PK.QUR.*`, `PK.AAL.*`, `PK.IS.*` and the K, 1 and 2 equivalents,
+  school-authored, imported verbatim and never invented. `.claude/rules/groups.md` says so now.
+- **Faithfulness.** `database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt` is committed whole
+  (sha256 `40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f`); the generator
+  `database/curriculum/tools/build-al-razi-qai-split.mjs` copies whole lines by number and exits non-zero on any
+  surprise; `CurriculumSplitSourceFaithfulnessTest` re-reads the .txt by line number and `assertSame`s all 480
+  stored strings. The build also compared all 96 rows' five cells against the .docx tables directly (OOXML
+  `w:tbl`, not the .txt or the extractor's JSON): 0 differences.
+- **Open with the school (owner questions, defaults imported):** K and Grade 1 Qur'an week 3 says Recitation in
+  the quarter table and Tajwīd in the day plan (the quarter table is imported); Pre-K has two Qur'an sections
+  (the full one at L1733 is imported, not the overview at L1723); whether plan week n is guide week n (assumed).
+Deviations from the design: (1) the inverse file's `for_masjid` falls back to `{id}` when the source file
+names none, so an inverse is never unguarded; (2) an inverse row whose own `source_label` was NULL restores as
+NULL (an explicit null in a row is kept, not replaced by the file's label); (3) the two safety files never
+overwrite an earlier pair made in the same second (`-1`, `-2` suffix); (4) `--verify` is also refused with
+`--fresh`; (5) under `--fresh` the plan reports delete = every existing row and insert = every file row, and
+the inverse restores all existing rows and removes only cells the file created; (6) the sidequest working files
+(design section 5.9, last bullet, and checklist step 13) were not updated by this build.
