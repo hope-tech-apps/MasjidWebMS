@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Cart;
 
+use App\Models\Cart;
 use App\Models\Contact;
 use App\Models\FormResponse;
 use App\Models\Masjid;
@@ -439,6 +440,34 @@ class CartDeployWindowTest extends TestCase
         $this->assertDatabaseHas('contacts', ['id' => $member->id]);
         $this->assertSame(1, $member->tokens()->count(), 'the token cleared earlier in the same transaction is back');
         $this->assertDatabaseHas('carts', ['id' => $basket]);
+    }
+
+    #[Test]
+    public function an_account_deletion_whose_unpaid_checkout_check_threw_is_rolled_back_whole(): void
+    {
+        $member = $this->appMember();
+        $member->createMemberToken();
+        $this->assertSame(1, $member->tokens()->count(), 'premise');
+
+        // Genuinely missing, so every strict question reaches the database (a remembered absence is not trusted).
+        $this->dropTheCartTables();
+
+        // reasonsToKeep asks about `orders` first and is answered; the checkout clean-up asks again, and is not.
+        $asked = 0;
+        DB::listen(function ($query) use (&$asked): void {
+            if (str_contains((string) $query->sql, 'sqlite_master')
+                && str_contains((string) $query->sql, "name = 'orders'")
+                && ++$asked === 2) {
+                throw new RuntimeException('the schema is unavailable');
+            }
+        });
+
+        $thrown = $this->thrownBy(fn () => app(MemberAccountDeletion::class)->delete($member, MemberAccountDeletion::VIA_WEB));
+
+        $this->assertSame(2, $asked, 'premise: the second question about orders is the clean-up step\'s');
+        $this->assertNotNull($thrown, 'an unanswerable check stops the deletion');
+        $this->assertDatabaseHas('contacts', ['id' => $member->id]);
+        $this->assertSame(1, $member->tokens()->count(), 'the token cleared earlier in the same transaction is back');
     }
 
     // ------------------------------------------------------------ the memo
