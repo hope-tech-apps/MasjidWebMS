@@ -286,6 +286,77 @@ class CartPruneTest extends TestCase
         $this->assertSame(0, $this->linesOf($order));
     }
 
+    #[Test]
+    public function an_expired_order_with_a_payment_intent_waits_thirty_days_and_one_without_waits_a_week(): void
+    {
+        // A shopper who checks out again closes the earlier page (markExpired), and a delayed debit
+        // from it can still be clearing: its payment intent was recorded early (B2), so an EXPIRED
+        // order can carry one. It waits like a pending order with a payment does, not a week.
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+
+        $bareOld = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(8)));
+        $bareBoundary = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(7)));
+        $payingOld = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(31), 'pi_prune_expired_old'));
+        $payingBoundary = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(30), 'pi_prune_expired_boundary'));
+        $payingAWeek = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(8), 'pi_prune_expired_week'));
+
+        $this->artisan('cart:prune')
+            ->expectsOutputToContain('and 1 expired unpaid order(s)')
+            ->expectsOutputToContain('Pruned 1 expired order(s) with a payment intent')
+            ->assertExitCode(0);
+
+        foreach (['no intent, 8 days' => $bareOld, 'intent, 31 days' => $payingOld] as $why => $gone) {
+            $this->assertNull(Order::withoutMasjidScope()->find($gone->id), "{$why}: gone");
+            $this->assertSame(0, $this->linesOf($gone), "{$why}: with its lines");
+        }
+
+        foreach ([
+            'no intent, exactly 7 days (not more than 7)' => $bareBoundary,
+            'intent, exactly 30 days (not more than 30)' => $payingBoundary,
+            'intent, 8 days: a debit may still be clearing' => $payingAWeek,
+        ] as $why => $kept) {
+            $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id), "{$why}: kept");
+            $this->assertSame(2, $this->linesOf($kept), "{$why}: and its lines");
+        }
+
+        // What went is on the WARNING, by number, intent and amount, like a pending order with one.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'carry a payment intent')
+                && $context['dry_run'] === false
+                && $context['listed'] === [[
+                    'order_number' => $payingOld->order_number,
+                    'masjid_id' => (int) $payingOld->masjid_id,
+                    'payment_intent' => 'pi_prune_expired_old',
+                    'total_minor' => 5000,
+                    'currency' => 'usd',
+                ]])
+            ->once();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Cart retention sweep completed.'
+                && $context['orders'] === 1
+                && $context['pending_orders_with_payment'] === 0
+                && $context['expired_orders_with_payment'] === 1)
+            ->once();
+    }
+
+    #[Test]
+    public function a_dry_run_counts_expired_orders_with_a_payment_intent_and_deletes_none(): void
+    {
+        $cart = $this->basket(['expires_at' => now()->addDay()]);
+        $paying = $this->withLines($this->orderFor($cart, Order::STATUS_EXPIRED, now()->subDays(45), 'pi_prune_expired_dry'));
+
+        $this->assertSame(0, Artisan::call('cart:prune', ['--dry-run' => true]));
+        $this->assertStringContainsString('Would prune 1 expired order(s) with a payment intent', Artisan::output());
+
+        $this->assertNotNull(Order::withoutMasjidScope()->find($paying->id), 'a dry run deletes nothing');
+        $this->assertSame(2, $this->linesOf($paying));
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'would delete') && $context['dry_run'] === true && $context['orders'] === 1)
+            ->once();
+    }
+
     // ------------------------------------- pending orders: nothing ever moves them to `expired`
     //
     // Production's Connect endpoint does not subscribe to checkout.session.expired, so an order
