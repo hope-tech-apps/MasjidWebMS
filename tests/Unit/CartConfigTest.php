@@ -21,6 +21,7 @@ class CartConfigTest extends TestCase
         'CART_CREATE_PER_HOUR',
         'CART_WRITE_PER_HOUR',
         'CART_PRUNE_EXPIRED_ORDER_DAYS',
+        'CART_PRUNE_PENDING_WITH_PAYMENT_DAYS',
     ];
 
     protected function tearDown(): void
@@ -105,6 +106,17 @@ class CartConfigTest extends TestCase
 
         foreach (['0', '-3', 'soon'] as $bad) {
             $this->assertSame(1, $this->evaluate(['CART_PRUNE_EXPIRED_ORDER_DAYS' => $bad])['prune']['expired_order_days'], "CART_PRUNE_EXPIRED_ORDER_DAYS={$bad}");
+        }
+    }
+
+    #[Test]
+    public function a_pending_order_with_a_payment_is_kept_thirty_days_and_a_typo_cannot_shorten_it_below_a_week(): void
+    {
+        $this->assertSame(30, $this->evaluate([])['prune']['pending_with_payment_days'], 'a month, before a payment nobody recorded is written off');
+        $this->assertSame(45, $this->evaluate(['CART_PRUNE_PENDING_WITH_PAYMENT_DAYS' => '45'])['prune']['pending_with_payment_days']);
+
+        foreach (['0', '-3', '1', 'soon'] as $bad) {
+            $this->assertSame(7, $this->evaluate(['CART_PRUNE_PENDING_WITH_PAYMENT_DAYS' => $bad])['prune']['pending_with_payment_days'], "CART_PRUNE_PENDING_WITH_PAYMENT_DAYS={$bad}");
         }
     }
 
