@@ -248,9 +248,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // `mobile.member.me.*` (an app leaving: DELETE .../me and .../me/device;
         // the member portal's orders, gifts and receipts), which gain an empty
         // `data` object so the iPhone app can decode the 401, 403 or 429 it is
-        // given. See App\Support\MobileErrorEnvelope.
+        // given, except the 404 a switched-off portal route answers
+        // (DarkRouteException), which must stay the unknown route's bytes. See
+        // App\Support\MobileErrorEnvelope.
         $exceptions->respond(function (Response $response, Throwable $e, Request $request) {
-            return \App\Support\MobileErrorEnvelope::withDataKey($response, $request);
+            return \App\Support\MobileErrorEnvelope::withDataKey($response, $request, $e);
         });
 
         // JSON renderer for API + AJAX requests — preserves the legacy envelope
