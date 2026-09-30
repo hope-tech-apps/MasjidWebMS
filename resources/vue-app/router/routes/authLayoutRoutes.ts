@@ -12,7 +12,8 @@ const authRoutes: RouteRecordRaw[] = [
                 name: 'signIn',
                 component: () => import("@/views/auth/SignIn.vue"),
                 meta: {
-                    pageTitle: "Sign-In"
+                    pageTitle: "Sign in",
+                    fullBleed: true
                 }
             },
             {
@@ -20,7 +21,8 @@ const authRoutes: RouteRecordRaw[] = [
                 name: 'forgotPassword',
                 component: () => import("@/views/auth/ForgotPassword.vue"),
                 meta: {
-                    pageTitle: "Forgot Password"
+                    pageTitle: "Reset your password",
+                    fullBleed: true
                 }
             },
             {
@@ -29,7 +31,8 @@ const authRoutes: RouteRecordRaw[] = [
                 name: 'resetPassword',
                 component: () => import("@/views/auth/ResetPassword.vue"),
                 meta: {
-                    pageTitle: "Set Password"
+                    pageTitle: "Set your password",
+                    fullBleed: true
                 }
             },
             {
