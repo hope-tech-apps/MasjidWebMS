@@ -1287,16 +1287,25 @@
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Week</label>
-                                    <select v-if="curriculum.weeks.length" class="form-select form-select-sm"
+                                    <select v-if="curriculum.weeks.length && !weekOther" class="form-select form-select-sm"
                                             style="max-width:16rem" v-model.number="planForm.curriculum_week_no"
                                             @change="onWeekPick">
                                         <option :value="null">—</option>
                                         <option v-for="w in curriculum.weeks" :key="w.week_no" :value="w.week_no">
-                                            {{ w.week_no }} · {{ w.focus }}
+                                            {{ w.week_no }} · {{ w.focus }}{{ w.objective ? ` · ${w.objective}` : '' }}
                                         </option>
+                                        <!-- The separated Qur'an, Arabic and Islamic Studies
+                                             weeks stop at 8; a later week is still tagged by number. -->
+                                        <option :value="WEEK_OTHER">Another week…</option>
                                     </select>
-                                    <input v-else v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
-                                           class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
+                                    <div v-else class="d-flex gap-1">
+                                        <input v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
+                                               class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
+                                        <button v-if="curriculum.weeks.length" type="button"
+                                                class="btn btn-sm btn-link px-1 text-muted text-nowrap"
+                                                title="Back to the guide's weeks"
+                                                @click="useGuideWeeks">Guide</button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1322,6 +1331,10 @@
                                 </button>
                                 <span v-if="planForm.prefill_source" class="badge bg-success-subtle text-success-emphasis fw-normal">
                                     from the pacing guide
+                                </span>
+                                <span v-if="prefillCombined" class="text-muted small" dir="auto">
+                                    The school has not separated this week yet: filled from its combined
+                                    “{{ prefillCombined }}” guide line.
                                 </span>
                                 <span v-if="prefillKept" class="text-muted small">
                                     Kept what this plan already says. Clear a field to fill it from the guide.
@@ -1477,7 +1490,7 @@
                                     <ul v-if="stdOpen === f.key && stdMatches.length" :id="`std-${f.key}-list`"
                                         role="listbox" class="list-group position-absolute w-100 shadow tc-std-list">
                                         <template v-for="(m, i) in stdMatches"
-                                                  :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`">
+                                                  :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}|${m.objective ?? ''}`">
                                             <!-- Where the form's own grade and subject end: a
                                                  heading, not an option, so it cannot be picked. -->
                                             <li v-if="!m.in_scope && (i === 0 || stdMatches[i - 1].in_scope)"
@@ -1497,6 +1510,7 @@
                                                 <span class="fw-semibold text-nowrap">{{ m.standard_code || 'No code' }}</span>
                                                 <span>{{ m.focus }}</span>
                                             </div>
+                                            <div v-if="m.objective" class="text-muted small" dir="auto">{{ m.objective }}</div>
                                             <div class="text-muted tc-std-meta">
                                                 {{ m.grade_label }} · {{ m.subject }} · {{ weeksLabel(m.weeks) }}
                                             </div>
@@ -1748,7 +1762,7 @@
                                     <label class="form-label small text-muted mb-1" for="work-standard">Standard</label>
                                     <StandardPicker v-model="assignmentForm.standard" :masjid-id="masjidId"
                                                     :grade="singleGrade" :subject="assignmentForm.subject || null"
-                                                    input-id="work-standard" />
+                                                    :group-id="groupId" input-id="work-standard" />
                                 </div>
                                 <div class="col-auto ms-auto d-flex gap-2">
                                     <button v-if="editingId !== null" class="btn btn-sm btn-light" :disabled="creatingAssignment"
@@ -2475,6 +2489,7 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
+import { islamicIntegration, outcomeFill, weekOutsideGuide } from '@/core/helpers/lessonPlanPrefill';
 import {
     averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
     mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
@@ -3021,6 +3036,7 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
             weeks: d.weeks ?? [],
         };
         curriculumFor.value = { grade: grade ?? '', subject: subject ?? '' };
+        weekOther.value = weekOutsideGuide(planForm.value.curriculum_week_no, curriculum.value.weeks);
         // A subject shown in the free-text box that this grade's guide does
         // list goes back to the picker (the watch below only ever sets it).
         const shown = planForm.value.subject;
@@ -3125,11 +3141,38 @@ const autoFill = (k: string, v: unknown, typedIn = ''): boolean => {
     return value !== current;
 };
 
+/**
+ * The school's Learning Outcome onto the plan's outcomes list, under the same
+ * rule as autoFill (see outcomeFill): only where the teacher has written none or
+ * the guide wrote the only one there; a week with no outcome empties the one
+ * the guide wrote. True when the list changed.
+ */
+const autoFillOutcome = (outcome: unknown): boolean => {
+    if (planHidden.value.has('learning_outcomes')) return false;
+    const next = outcomeFill(planForm.value.learning_outcomes, outcome == null ? null : String(outcome),
+        autoFilled.value.learning_outcomes);
+    if (!next) return false;
+    planForm.value.learning_outcomes = next;
+    autoFilled.value.learning_outcomes = next[0] ?? '';
+    return true;
+};
+
 /** Open every section the guide just wrote into, so a fill is never hidden. */
 const openFilledSections = () => {
     for (const sec of visiblePlanSections.value) {
         if (sectionFilled(sec)) planOpen.value[sec.key] = true;
     }
+};
+
+/** The week select's last option: swaps in the number input for a week the list lacks. */
+const WEEK_OTHER = '__other_week__';
+
+/** True while the teacher types a week the guide's list does not carry. */
+const weekOther = ref(false);
+
+const useGuideWeeks = () => {
+    weekOther.value = false;
+    planForm.value.curriculum_week_no = null;
 };
 
 /**
@@ -3139,6 +3182,12 @@ const openFilledSections = () => {
  * refilling after a teacher clears something.
  */
 const onWeekPick = () => {
+    if ((planForm.value.curriculum_week_no as unknown) === WEEK_OTHER) {
+        cancelPrefill();
+        planForm.value.curriculum_week_no = null;
+        weekOther.value = true;
+        return;
+    }
     const f = planForm.value;
     // Only from the list loaded for this grade and subject.
     if (curriculumFor.value.grade !== (f.grade_label || '')
@@ -3154,11 +3203,19 @@ const onWeekPick = () => {
  */
 let prefillSeq = 0;
 
+/**
+ * The combined guide column ("Qur’an & Islamic Studies") the last prefill was
+ * taken from, or '' when it came from the subject's own row. Set only for a
+ * separated subject asked for a week the school's separated plan does not have.
+ */
+const prefillCombined = ref('');
+
 /** Drop a prefill in flight and the "Filling…" and "Kept" states with it. */
 function cancelPrefill() {
     prefillSeq++;
     prefilling.value = false;
     prefillKept.value = false;
+    prefillCombined.value = '';
 }
 
 /**
@@ -3180,12 +3237,16 @@ const prefillFromGuide = async (auto = false) => {
     };
     prefilling.value = true;
     prefillKept.value = false;
+    prefillCombined.value = '';
     planError.value = '';
     try {
         const q = new URLSearchParams({
             grade: asked.grade,
             subject: asked.subject,
             week: String(asked.week),
+            // Names the class, so the guide answers only with the subjects THIS
+            // teacher teaches here (the same fence the subject list and the save use).
+            group_id: String(groupId.value),
         });
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum?${q}`
@@ -3203,23 +3264,27 @@ const prefillFromGuide = async (auto = false) => {
             return;
         }
 
+        // A separated subject asked for a week past the school's separated plan
+        // (weeks 9 on) is answered with the combined guide line; `prefillCombined`
+        // (set below, when something is written) says so, so it is never mistaken
+        // for a week of its own.
         // Every call runs: `||` after the call, never before it.
         let wrote = autoFill('standard_code', cell.standard_code);
         wrote = autoFill('objective', cell.objective) || wrote;
         wrote = autoFill('assessment_formative', cell.assessment_formative) || wrote;
+        wrote = autoFillOutcome(cell.learning_outcome) || wrote;
 
         // Cross-subject integration, written from the same week's sibling cells
         // so a teacher is not asked to remember what Science is doing.
-        const siblings = (cell.siblings ?? []) as { subject: string; focus: string }[];
-        const islamic = siblings.find((s) => /Qur|Islamic/i.test(s.subject));
-        wrote = autoFill('cross_integration_islamic', islamic?.focus) || wrote;
-        const others = siblings.filter((s) => s !== islamic)
-            .map((s) => `${s.subject}: ${s.focus}`).join('\n');
+        const siblings = (cell.siblings ?? []) as { subject: string; focus: string; objective?: string | null }[];
+        const { islamic, others } = islamicIntegration(siblings);
+        wrote = autoFill('cross_integration_islamic', islamic) || wrote;
         wrote = autoFill('cross_integration_subject', others) || wrote;
 
         // A saved plan's fields are the teacher's, so a week pick on it can
         // change nothing — then say so, rather than badge it "from the guide".
         if (wrote) {
+            prefillCombined.value = cell.from_combined_guide ? String(cell.guide_subject ?? '') : '';
             planForm.value.prefill_source = cell.prefill_source ?? 'pacing guide';
             openFilledSections();
         } else {
@@ -3297,6 +3362,8 @@ const searchStandards = async (field: string, q: string, typed = true) => {
         if (planForm.value.grade_label) params.set('grade', planForm.value.grade_label);
         if (planForm.value.subject) params.set('subject', planForm.value.subject);
         if (planForm.value.curriculum_week_no) params.set('week', String(planForm.value.curriculum_week_no));
+        // The class, so a teacher limited to some subjects searches only those.
+        params.set('group_id', String(groupId.value));
         const res = await TeacherApiService.get(
             `/api/teacher/masjids/${masjidId.value}/curriculum/standards?${params}`
         );
@@ -3367,7 +3434,10 @@ const pickStandard = async (m: any) => {
     // An uncoded row (the Islamic Studies column) clears the search text out
     // of the code box rather than leaving "wudu" standing as a standard.
     autoFill('standard_code', m.standard_code, typedIn);
-    autoFill('objective', m.focus);
+    // The school's own Objective where the row has one; the Focus Skill otherwise,
+    // as a week prefill does (CurriculumWeek::toPrefillArray).
+    autoFill('objective', m.objective ?? m.focus);
+    autoFillOutcome(m.learning_outcome);
     autoFill('assessment_formative', m.assessment_formative);
 
     const f = planForm.value;

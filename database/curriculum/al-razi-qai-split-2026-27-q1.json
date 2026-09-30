@@ -1,0 +1,2007 @@
+{
+ "source_label": "Al-Razi Detailed Pacing Plan, Pre-K to Grade 2, Quarter 1 (school document of 2026-09-07)",
+ "for_masjid": {
+  "id": 14,
+  "name_contains": "razi",
+  "org_type": "school"
+ },
+ "applies_after": "al-razi-pacing-2026-27.json",
+ "source": {
+  "title": "First Semester/ Quarter 1 suggested pacing for all subjects from Pre-k to Grade 2",
+  "document_date": "2026-09-07",
+  "docx_sha256": "98332b22dd36298ed5d575f22e44745069fd94ddada25929fcfa1f6fe34119e1",
+  "txt_path": "database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt",
+  "txt_sha256": "40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f",
+  "generator": "database/curriculum/tools/build-al-razi-qai-split.mjs",
+  "tables": [
+   {
+    "grade_label": "Pre-Kindergarten",
+    "subject": "Qur'an",
+    "heading_line": 1752,
+    "heading": "QUARTER 1 — PRE-K QUR’AN ",
+    "first_line": 1754,
+    "last_line": 1798
+   },
+   {
+    "grade_label": "Pre-Kindergarten",
+    "subject": "Arabic Language",
+    "heading_line": 1256,
+    "heading": "QUARTER 1 — PRE-K ARABIC (AAL) (TABLE FORMAT)",
+    "first_line": 1258,
+    "last_line": 1302
+   },
+   {
+    "grade_label": "Pre-Kindergarten",
+    "subject": "Islamic Studies",
+    "heading_line": 1501,
+    "heading": "QUARTER 1 — PRE-K ISLAMIC STUDIES",
+    "first_line": 1503,
+    "last_line": 1547
+   },
+   {
+    "grade_label": "Kindergarten",
+    "subject": "Qur'an",
+    "heading_line": 3923,
+    "heading": "QUARTER 1 — KINDERGARTEN QUR’AN & TAJWĪD ",
+    "first_line": 3925,
+    "last_line": 3969
+   },
+   {
+    "grade_label": "Kindergarten",
+    "subject": "Arabic Language",
+    "heading_line": 3437,
+    "heading": "QUARTER 1 — KINDERGARTEN ARABIC (AAL)",
+    "first_line": 3439,
+    "last_line": 3483
+   },
+   {
+    "grade_label": "Kindergarten",
+    "subject": "Islamic Studies",
+    "heading_line": 3680,
+    "heading": "QUARTER 1 — KINDERGARTEN ISLAMIC STUDIES ",
+    "first_line": 3682,
+    "last_line": 3726
+   },
+   {
+    "grade_label": "Grade 1",
+    "subject": "Qur'an",
+    "heading_line": 6354,
+    "heading": "QUARTER 1 — GRADE 1 QUR’AN & TAJWWĪD ",
+    "first_line": 6356,
+    "last_line": 6400
+   },
+   {
+    "grade_label": "Grade 1",
+    "subject": "Arabic Language",
+    "heading_line": 5638,
+    "heading": "QUARTER 1 — GRADE 1 ARABIC (AAL)",
+    "first_line": 5640,
+    "last_line": 5684
+   },
+   {
+    "grade_label": "Grade 1",
+    "subject": "Islamic Studies",
+    "heading_line": 5877,
+    "heading": "QUARTER 1 — GRADE 1 ISLAMIC STUDIES ",
+    "first_line": 5879,
+    "last_line": 5923
+   },
+   {
+    "grade_label": "Grade 2",
+    "subject": "Qur'an",
+    "heading_line": 8913,
+    "heading": "QUARTER 1 — GRADE 2 QUR’AN & TAJWĪD",
+    "first_line": 8915,
+    "last_line": 8959
+   },
+   {
+    "grade_label": "Grade 2",
+    "subject": "Arabic Language",
+    "heading_line": 8040,
+    "heading": "QUARTER 1 — GRADE 2 ARABIC AAL",
+    "first_line": 8042,
+    "last_line": 8086
+   },
+   {
+    "grade_label": "Grade 2",
+    "subject": "Islamic Studies",
+    "heading_line": 8476,
+    "heading": "QUARTER 1 — GRADE 2 ISLAMIC STUDIES",
+    "first_line": 8478,
+    "last_line": 8522
+   }
+  ]
+ },
+ "replaces": [
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 1
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 2
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 3
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 4
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 5
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 6
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 7
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 8
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 1
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 2
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 3
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 4
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 5
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 6
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 7
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 8
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 1
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 2
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 3
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 4
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 5
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 6
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 7
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 8
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 1
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 2
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 3
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 4
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 5
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 6
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 7
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur’an & Islamic Studies",
+   "week_no": 8
+  }
+ ],
+ "rows": [
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Love for Qur’an",
+   "objective": "Introduce Qur’an",
+   "learning_outcome": "Show respect & interest",
+   "standard_code": "PK.QUR.IDENTITY.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1759,
+    "standard_code": 1760,
+    "focus": 1761,
+    "objective": 1762,
+    "learning_outcome": 1763
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Qur’an manners",
+   "objective": "Practice quiet listening",
+   "learning_outcome": "Demonstrate calm behavior",
+   "standard_code": "PK.QUR.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1764,
+    "standard_code": 1765,
+    "focus": 1766,
+    "objective": 1767,
+    "learning_outcome": 1768
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Listening",
+   "objective": "Listen to short Surahs",
+   "learning_outcome": "Attend to recitation",
+   "standard_code": "PK.QUR.LISTEN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1769,
+    "standard_code": 1770,
+    "focus": 1771,
+    "objective": 1772,
+    "learning_outcome": 1773
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Imitation",
+   "objective": "Repeat simple phrases",
+   "learning_outcome": "Repeat 1–2 words",
+   "standard_code": "PK.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1774,
+    "standard_code": 1775,
+    "focus": 1776,
+    "objective": 1777,
+    "learning_outcome": 1778
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Memorization readiness",
+   "objective": "Recognize Surah names",
+   "learning_outcome": "Identify Surah icons",
+   "standard_code": "PK.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1779,
+    "standard_code": 1780,
+    "focus": 1781,
+    "objective": 1782,
+    "learning_outcome": 1783
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Listening fluency",
+   "objective": "Listen to Surah Al-Ikhlas",
+   "learning_outcome": "Attend & respond",
+   "standard_code": "PK.QUR.LISTEN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1784,
+    "standard_code": 1785,
+    "focus": 1786,
+    "objective": 1787,
+    "learning_outcome": 1788
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Recitation",
+   "objective": "Repeat parts of Al-Ikhlas",
+   "learning_outcome": "Produce short phrases",
+   "standard_code": "PK.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1789,
+    "standard_code": 1790,
+    "focus": 1791,
+    "objective": 1792,
+    "learning_outcome": 1793
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Review",
+   "objective": "Practice Qur’an routines",
+   "learning_outcome": "Follow routines independently",
+   "standard_code": "PK.QUR.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1794,
+    "standard_code": 1795,
+    "focus": 1796,
+    "objective": 1797,
+    "learning_outcome": 1798
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Listening routines",
+   "objective": "Respond to simple Arabic words",
+   "learning_outcome": "Follow basic instructions",
+   "standard_code": "PK.AAL.LS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1263,
+    "standard_code": 1264,
+    "focus": 1265,
+    "objective": 1266,
+    "learning_outcome": 1267
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Greetings",
+   "objective": "Learn “Marhaba,” “Ma’a as-salamah”",
+   "learning_outcome": "Use greetings appropriately",
+   "standard_code": "PK.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1268,
+    "standard_code": 1269,
+    "focus": 1270,
+    "objective": 1271,
+    "learning_outcome": 1272
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Letters أ–ب",
+   "objective": "Recognize letters",
+   "learning_outcome": "Identify أ and ب",
+   "standard_code": "PK.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1273,
+    "standard_code": 1274,
+    "focus": 1275,
+    "objective": 1276,
+    "learning_outcome": 1277
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Colors",
+   "objective": "Learn 3 colors",
+   "learning_outcome": "Name أحمر، أزرق، أخضر",
+   "standard_code": "PK.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1278,
+    "standard_code": 1279,
+    "focus": 1280,
+    "objective": 1281,
+    "learning_outcome": 1282
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Speaking",
+   "objective": "Repeat simple words",
+   "learning_outcome": "Produce familiar vocabulary",
+   "standard_code": "PK.AAL.S.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1283,
+    "standard_code": 1284,
+    "focus": 1285,
+    "objective": 1286,
+    "learning_outcome": 1287
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Letters ت–ث",
+   "objective": "Recognize letters",
+   "learning_outcome": "Identify ت and ث",
+   "standard_code": "PK.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1288,
+    "standard_code": 1289,
+    "focus": 1290,
+    "objective": 1291,
+    "learning_outcome": 1292
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Numbers",
+   "objective": "Learn numbers ١–٥",
+   "learning_outcome": "Count orally",
+   "standard_code": "PK.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1293,
+    "standard_code": 1294,
+    "focus": 1295,
+    "objective": 1296,
+    "learning_outcome": 1297
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Culture",
+   "objective": "Explore Arabic songs",
+   "learning_outcome": "Participate in cultural activity",
+   "standard_code": "PK.AAL.CULT.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1298,
+    "standard_code": 1299,
+    "focus": 1300,
+    "objective": 1301,
+    "learning_outcome": 1302
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Muslim identity",
+   "objective": "“I am Muslim” awareness",
+   "learning_outcome": "Identify self as Muslim",
+   "standard_code": "PK.IS.IDENTITY.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1508,
+    "standard_code": 1509,
+    "focus": 1510,
+    "objective": 1511,
+    "learning_outcome": 1512
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Allah as Creator",
+   "objective": "Recognize creation",
+   "learning_outcome": "Name things Allah created",
+   "standard_code": "PK.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1513,
+    "standard_code": 1514,
+    "focus": 1515,
+    "objective": 1516,
+    "learning_outcome": 1517
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Manners",
+   "objective": "Practice kindness",
+   "learning_outcome": "Show polite behavior",
+   "standard_code": "PK.IS.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1518,
+    "standard_code": 1519,
+    "focus": 1520,
+    "objective": 1521,
+    "learning_outcome": 1522
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Respect",
+   "objective": "Respect others",
+   "learning_outcome": "Demonstrate respectful actions",
+   "standard_code": "PK.IS.AKHLAQ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1523,
+    "standard_code": 1524,
+    "focus": 1525,
+    "objective": 1526,
+    "learning_outcome": 1527
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Prophet stories",
+   "objective": "Learn simple stories",
+   "learning_outcome": "Retell basic events",
+   "standard_code": "PK.IS.SEERAH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1528,
+    "standard_code": 1529,
+    "focus": 1530,
+    "objective": 1531,
+    "learning_outcome": 1532
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Worship concepts",
+   "objective": "Learn masjid etiquette",
+   "learning_outcome": "Show quiet/respectful behavior",
+   "standard_code": "PK.IS.WORSHIP.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1533,
+    "standard_code": 1534,
+    "focus": 1535,
+    "objective": 1536,
+    "learning_outcome": 1537
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Gratitude",
+   "objective": "Practice saying “Alhamdulillah”",
+   "learning_outcome": "Use gratitude phrase",
+   "standard_code": "PK.IS.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1538,
+    "standard_code": 1539,
+    "focus": 1540,
+    "objective": 1541,
+    "learning_outcome": 1542
+   }
+  },
+  {
+   "grade_label": "Pre-Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Blessings",
+   "objective": "Count blessings",
+   "learning_outcome": "Name blessings from Allah",
+   "standard_code": "PK.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 1543,
+    "standard_code": 1544,
+    "focus": 1545,
+    "objective": 1546,
+    "learning_outcome": 1547
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Qur’an manners",
+   "objective": "Practice quiet listening",
+   "learning_outcome": "Demonstrate calm behavior",
+   "standard_code": "K.QUR.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3930,
+    "standard_code": 3931,
+    "focus": 3932,
+    "objective": 3933,
+    "learning_outcome": 3934
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Listening fluency",
+   "objective": "Listen to short Surahs",
+   "learning_outcome": "Attend & respond",
+   "standard_code": "K.QUR.LISTEN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3935,
+    "standard_code": 3936,
+    "focus": 3937,
+    "objective": 3938,
+    "learning_outcome": 3939
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Recitation",
+   "objective": "Repeat simple phrases",
+   "learning_outcome": "Produce clear sounds",
+   "standard_code": "K.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3940,
+    "standard_code": 3941,
+    "focus": 3942,
+    "objective": 3943,
+    "learning_outcome": 3944
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Memorize Surah Al-Ikhlāṣ",
+   "learning_outcome": "Recite independently",
+   "standard_code": "K.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3945,
+    "standard_code": 3946,
+    "focus": 3947,
+    "objective": 3948,
+    "learning_outcome": 3949
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Tajwīd sounds",
+   "objective": "Identify clear vs nasal sounds",
+   "learning_outcome": "Produce م/ن correctly",
+   "standard_code": "K.QUR.TAJWID.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3950,
+    "standard_code": 3951,
+    "focus": 3952,
+    "objective": 3953,
+    "learning_outcome": 3954
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Makhārij",
+   "objective": "Recognize lips vs tongue sounds",
+   "learning_outcome": "Identify ب/ف vs ل/ر",
+   "standard_code": "K.QUR.MAKHAR.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3955,
+    "standard_code": 3956,
+    "focus": 3957,
+    "objective": 3958,
+    "learning_outcome": 3959
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Begin Surah Al-Falaq",
+   "learning_outcome": "Recite first 2 ayāt",
+   "standard_code": "K.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3960,
+    "standard_code": 3961,
+    "focus": 3962,
+    "objective": 3963,
+    "learning_outcome": 3964
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Qur'an",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Review",
+   "objective": "Recite Surahs with manners",
+   "learning_outcome": "Follow routines independently",
+   "standard_code": "K.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3965,
+    "standard_code": 3966,
+    "focus": 3967,
+    "objective": 3968,
+    "learning_outcome": 3969
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Listening routines",
+   "objective": "Respond to simple Arabic words",
+   "learning_outcome": "Follow basic instructions",
+   "standard_code": "K.AAL.LS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3444,
+    "standard_code": 3445,
+    "focus": 3446,
+    "objective": 3447,
+    "learning_outcome": 3448
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Greetings",
+   "objective": "Learn “Marhaba,” “Assalamu Alaikum”",
+   "learning_outcome": "Use greetings appropriately",
+   "standard_code": "K.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3449,
+    "standard_code": 3450,
+    "focus": 3451,
+    "objective": 3452,
+    "learning_outcome": 3453
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Letters أ–ب–ت",
+   "objective": "Recognize letters",
+   "learning_outcome": "Identify letters & sounds",
+   "standard_code": "K.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3454,
+    "standard_code": 3455,
+    "focus": 3456,
+    "objective": 3457,
+    "learning_outcome": 3458
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Colors",
+   "objective": "Learn 4 colors",
+   "learning_outcome": "Name أحمر، أزرق، أخضر، أصفر",
+   "standard_code": "K.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3459,
+    "standard_code": 3460,
+    "focus": 3461,
+    "objective": 3462,
+    "learning_outcome": 3463
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Letters ث–ج–ح",
+   "objective": "Recognize letters",
+   "learning_outcome": "Produce sounds",
+   "standard_code": "K.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3464,
+    "standard_code": 3465,
+    "focus": 3466,
+    "objective": 3467,
+    "learning_outcome": 3468
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Reading readiness",
+   "objective": "Identify beginning sounds",
+   "learning_outcome": "Match sound to picture",
+   "standard_code": "K.AAL.READY.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3469,
+    "standard_code": 3470,
+    "focus": 3471,
+    "objective": 3472,
+    "learning_outcome": 3473
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Numbers",
+   "objective": "Learn numbers ١–٥",
+   "learning_outcome": "Count orally",
+   "standard_code": "K.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3474,
+    "standard_code": 3475,
+    "focus": 3476,
+    "objective": 3477,
+    "learning_outcome": 3478
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Arabic Language",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Culture",
+   "objective": "Explore Arabic songs",
+   "learning_outcome": "Participate in cultural activity",
+   "standard_code": "K.AAL.CULT.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3479,
+    "standard_code": 3480,
+    "focus": 3481,
+    "objective": 3482,
+    "learning_outcome": 3483
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Muslim identity",
+   "objective": "“I am Muslim” awareness",
+   "learning_outcome": "Identify self as Muslim",
+   "standard_code": "K.IS.IDENTITY.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3687,
+    "standard_code": 3688,
+    "focus": 3689,
+    "objective": 3690,
+    "learning_outcome": 3691
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Allah as Creator",
+   "objective": "Recognize creation",
+   "learning_outcome": "Name things Allah created",
+   "standard_code": "K.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3692,
+    "standard_code": 3693,
+    "focus": 3694,
+    "objective": 3695,
+    "learning_outcome": 3696
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Manners",
+   "objective": "Practice kindness",
+   "learning_outcome": "Show polite behavior",
+   "standard_code": "K.IS.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3697,
+    "standard_code": 3698,
+    "focus": 3699,
+    "objective": 3700,
+    "learning_outcome": 3701
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Respect",
+   "objective": "Respect others",
+   "learning_outcome": "Demonstrate respectful actions",
+   "standard_code": "K.IS.AKHLAQ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3702,
+    "standard_code": 3703,
+    "focus": 3704,
+    "objective": 3705,
+    "learning_outcome": 3706
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Prophet stories",
+   "objective": "Learn early Seerah",
+   "learning_outcome": "Retell basic events",
+   "standard_code": "K.IS.SEERAH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3707,
+    "standard_code": 3708,
+    "focus": 3709,
+    "objective": 3710,
+    "learning_outcome": 3711
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Worship concepts",
+   "objective": "Learn masjid etiquette",
+   "learning_outcome": "Show quiet/respectful behavior",
+   "standard_code": "K.IS.WORSHIP.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3712,
+    "standard_code": 3713,
+    "focus": 3714,
+    "objective": 3715,
+    "learning_outcome": 3716
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Gratitude",
+   "objective": "Practice saying “Alhamdulillah”",
+   "learning_outcome": "Use gratitude phrase",
+   "standard_code": "K.IS.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3717,
+    "standard_code": 3718,
+    "focus": 3719,
+    "objective": 3720,
+    "learning_outcome": 3721
+   }
+  },
+  {
+   "grade_label": "Kindergarten",
+   "subject": "Islamic Studies",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Blessings",
+   "objective": "Count blessings",
+   "learning_outcome": "Name blessings from Allah",
+   "standard_code": "K.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 3722,
+    "standard_code": 3723,
+    "focus": 3724,
+    "objective": 3725,
+    "learning_outcome": 3726
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Qur’an manners",
+   "objective": "Practice quiet listening",
+   "learning_outcome": "Demonstrate calm behavior",
+   "standard_code": "1.QUR.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6361,
+    "standard_code": 6362,
+    "focus": 6363,
+    "objective": 6364,
+    "learning_outcome": 6365
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Listening fluency",
+   "objective": "Listen to short Surahs",
+   "learning_outcome": "Attend & respond",
+   "standard_code": "1.QUR.LISTEN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6366,
+    "standard_code": 6367,
+    "focus": 6368,
+    "objective": 6369,
+    "learning_outcome": 6370
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Recitation",
+   "objective": "Repeat Surah phrases",
+   "learning_outcome": "Produce clear sounds",
+   "standard_code": "1.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6371,
+    "standard_code": 6372,
+    "focus": 6373,
+    "objective": 6374,
+    "learning_outcome": 6375
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Memorize Surah Al-Ikhlāṣ",
+   "learning_outcome": "Recite independently",
+   "standard_code": "1.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6376,
+    "standard_code": 6377,
+    "focus": 6378,
+    "objective": 6379,
+    "learning_outcome": 6380
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Tajwīd basics",
+   "objective": "Learn Madd Ṭabī‘ī (2 counts)",
+   "learning_outcome": "Apply elongation",
+   "standard_code": "1.QUR.TAJWID.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6381,
+    "standard_code": 6382,
+    "focus": 6383,
+    "objective": 6384,
+    "learning_outcome": 6385
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Makhārij",
+   "objective": "Identify lips vs tongue vs throat sounds",
+   "learning_outcome": "Produce correct articulation",
+   "standard_code": "1.QUR.MAKHAR.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6386,
+    "standard_code": 6387,
+    "focus": 6388,
+    "objective": 6389,
+    "learning_outcome": 6390
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Begin Surah Al-Falaq",
+   "learning_outcome": "Recite first 3 ayāt",
+   "standard_code": "1.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6391,
+    "standard_code": 6392,
+    "focus": 6393,
+    "objective": 6394,
+    "learning_outcome": 6395
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Qur'an",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Review",
+   "objective": "Recite Surahs with manners",
+   "learning_outcome": "Follow routines independently",
+   "standard_code": "1.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 6396,
+    "standard_code": 6397,
+    "focus": 6398,
+    "objective": 6399,
+    "learning_outcome": 6400
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Listening routines",
+   "objective": "Respond to simple Arabic words",
+   "learning_outcome": "Follow basic instructions",
+   "standard_code": "1.AAL.LS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5645,
+    "standard_code": 5646,
+    "focus": 5647,
+    "objective": 5648,
+    "learning_outcome": 5649
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Greetings",
+   "objective": "Practice “Marhaba” & “Assalamu Alaikum”",
+   "learning_outcome": "Use greetings appropriately",
+   "standard_code": "1.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5650,
+    "standard_code": 5651,
+    "focus": 5652,
+    "objective": 5653,
+    "learning_outcome": 5654
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Letters أ–ب–ت–ث",
+   "objective": "Recognize letters & sounds",
+   "learning_outcome": "Identify & produce sounds",
+   "standard_code": "1.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5655,
+    "standard_code": 5656,
+    "focus": 5657,
+    "objective": 5658,
+    "learning_outcome": 5659
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Colors",
+   "objective": "Learn 4–5 colors",
+   "learning_outcome": "Name أحمر، أزرق، أخضر، أصفر، أسود",
+   "standard_code": "1.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5660,
+    "standard_code": 5661,
+    "focus": 5662,
+    "objective": 5663,
+    "learning_outcome": 5664
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Letters ج–ح–خ",
+   "objective": "Recognize letters",
+   "learning_outcome": "Produce throat sounds",
+   "standard_code": "1.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5665,
+    "standard_code": 5666,
+    "focus": 5667,
+    "objective": 5668,
+    "learning_outcome": 5669
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Reading readiness",
+   "objective": "Blend simple 2-letter words",
+   "learning_outcome": "Read orally (e.g., أب، أم)",
+   "standard_code": "1.AAL.READ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5670,
+    "standard_code": 5671,
+    "focus": 5672,
+    "objective": 5673,
+    "learning_outcome": 5674
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Numbers",
+   "objective": "Learn numbers ١–١٠",
+   "learning_outcome": "Count orally",
+   "standard_code": "1.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5675,
+    "standard_code": 5676,
+    "focus": 5677,
+    "objective": 5678,
+    "learning_outcome": 5679
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Arabic Language",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Culture",
+   "objective": "Arabic songs & traditions",
+   "learning_outcome": "Participate in cultural activity",
+   "standard_code": "1.AAL.CULT.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5680,
+    "standard_code": 5681,
+    "focus": 5682,
+    "objective": 5683,
+    "learning_outcome": 5684
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Muslim identity",
+   "objective": "“I am Muslim” awareness",
+   "learning_outcome": "Identify self as Muslim",
+   "standard_code": "1.IS.IDENTITY.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5884,
+    "standard_code": 5885,
+    "focus": 5886,
+    "objective": 5887,
+    "learning_outcome": 5888
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Allah’s attributes",
+   "objective": "Learn Allah as Creator",
+   "learning_outcome": "Name things Allah created",
+   "standard_code": "1.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5889,
+    "standard_code": 5890,
+    "focus": 5891,
+    "objective": 5892,
+    "learning_outcome": 5893
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Pillars of Iman",
+   "objective": "Introduce 6 Pillars",
+   "learning_outcome": "Name 3–4 pillars",
+   "standard_code": "1.IS.IMAN.2",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5894,
+    "standard_code": 5895,
+    "focus": 5896,
+    "objective": 5897,
+    "learning_outcome": 5898
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Manners",
+   "objective": "Practice kindness",
+   "learning_outcome": "Demonstrate polite behavior",
+   "standard_code": "1.IS.AKHLAQ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5899,
+    "standard_code": 5900,
+    "focus": 5901,
+    "objective": 5902,
+    "learning_outcome": 5903
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Prophet stories",
+   "objective": "Learn early Seerah",
+   "learning_outcome": "Retell basic events",
+   "standard_code": "1.IS.SEERAH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5904,
+    "standard_code": 5905,
+    "focus": 5906,
+    "objective": 5907,
+    "learning_outcome": 5908
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Worship concepts",
+   "objective": "Masjid etiquette",
+   "learning_outcome": "Show quiet/respectful behavior",
+   "standard_code": "1.IS.WORSHIP.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5909,
+    "standard_code": 5910,
+    "focus": 5911,
+    "objective": 5912,
+    "learning_outcome": 5913
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Qur’an love",
+   "objective": "Practice Qur’an manners",
+   "learning_outcome": "Demonstrate calm listening",
+   "standard_code": "1.IS.QURAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5914,
+    "standard_code": 5915,
+    "focus": 5916,
+    "objective": 5917,
+    "learning_outcome": 5918
+   }
+  },
+  {
+   "grade_label": "Grade 1",
+   "subject": "Islamic Studies",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Blessings",
+   "objective": "Count blessings",
+   "learning_outcome": "Name blessings from Allah",
+   "standard_code": "1.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 5919,
+    "standard_code": 5920,
+    "focus": 5921,
+    "objective": 5922,
+    "learning_outcome": 5923
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Recitation",
+   "objective": "Improve fluency & pacing",
+   "learning_outcome": "Recite short Surahs smoothly",
+   "standard_code": "2.QUR.RECITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8920,
+    "standard_code": 8921,
+    "focus": 8922,
+    "objective": 8923,
+    "learning_outcome": 8924
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Review Grade 1 Surahs",
+   "learning_outcome": "Recite from memory with accuracy",
+   "standard_code": "2.QUR.MEM.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8925,
+    "standard_code": 8926,
+    "focus": 8927,
+    "objective": 8928,
+    "learning_outcome": 8929
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Tajwīd",
+   "objective": "Introduction to Madd",
+   "learning_outcome": "Apply basic elongation",
+   "standard_code": "2.QUR.TAJWID.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8930,
+    "standard_code": 8931,
+    "focus": 8932,
+    "objective": 8933,
+    "learning_outcome": 8934
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Makhārij",
+   "objective": "Tongue letters (ل، ر، ن)",
+   "learning_outcome": "Correct articulation",
+   "standard_code": "2.QUR.MAKHAR.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8935,
+    "standard_code": 8936,
+    "focus": 8937,
+    "objective": 8938,
+    "learning_outcome": 8939
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Memorization",
+   "objective": "Begin Surah Al-Zalzalah",
+   "learning_outcome": "Memorize gradually",
+   "standard_code": "2.QUR.MEM.2",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8940,
+    "standard_code": 8941,
+    "focus": 8942,
+    "objective": 8943,
+    "learning_outcome": 8944
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Tajwīd",
+   "objective": "Ikhfā’ (basic)",
+   "learning_outcome": "Recognize & apply rule",
+   "standard_code": "2.QUR.TAJWID.2",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8945,
+    "standard_code": 8946,
+    "focus": 8947,
+    "objective": 8948,
+    "learning_outcome": 8949
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Manners",
+   "objective": "Qur’an etiquette",
+   "learning_outcome": "Demonstrate respect",
+   "standard_code": "2.QUR.MANNERS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8950,
+    "standard_code": 8951,
+    "focus": 8952,
+    "objective": 8953,
+    "learning_outcome": 8954
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Qur'an",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Surah Themes",
+   "objective": "Understand Surah meanings",
+   "learning_outcome": "Explain simple themes",
+   "standard_code": "2.QUR.THEME.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8955,
+    "standard_code": 8956,
+    "focus": 8957,
+    "objective": 8958,
+    "learning_outcome": 8959
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Listening",
+   "objective": "Follow simple Arabic instructions",
+   "learning_outcome": "Respond physically (TPR)",
+   "standard_code": "2.AAL.LS.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8047,
+    "standard_code": 8048,
+    "focus": 8049,
+    "objective": 8050,
+    "learning_outcome": 8051
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Alphabet",
+   "objective": "Review letters أ–ث",
+   "learning_outcome": "Identify & pronounce letters",
+   "standard_code": "2.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8052,
+    "standard_code": 8053,
+    "focus": 8054,
+    "objective": 8055,
+    "learning_outcome": 8056
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Alphabet",
+   "objective": "Letters ج–خ",
+   "learning_outcome": "Produce correct sounds",
+   "standard_code": "2.AAL.ALPH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8057,
+    "standard_code": 8058,
+    "focus": 8059,
+    "objective": 8060,
+    "learning_outcome": 8061
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Vocabulary",
+   "objective": "Colors & classroom items",
+   "learning_outcome": "Name 6–8 items",
+   "standard_code": "2.AAL.V.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8062,
+    "standard_code": 8063,
+    "focus": 8064,
+    "objective": 8065,
+    "learning_outcome": 8066
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Reading",
+   "objective": "Blend 2–3 letter words",
+   "learning_outcome": "Read simple words",
+   "standard_code": "2.AAL.READ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8067,
+    "standard_code": 8068,
+    "focus": 8069,
+    "objective": 8070,
+    "learning_outcome": 8071
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Writing",
+   "objective": "Copy letters in all positions",
+   "learning_outcome": "Write basic words",
+   "standard_code": "2.AAL.WRITE.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8072,
+    "standard_code": 8073,
+    "focus": 8074,
+    "objective": 8075,
+    "learning_outcome": 8076
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Speaking",
+   "objective": "Simple sentences",
+   "learning_outcome": "Use “أنا… عندي… هذا…”",
+   "standard_code": "2.AAL.S.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8077,
+    "standard_code": 8078,
+    "focus": 8079,
+    "objective": 8080,
+    "learning_outcome": 8081
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Arabic Language",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Culture",
+   "objective": "Arabic songs & routines",
+   "learning_outcome": "Participate in cultural activity",
+   "standard_code": "2.AAL.CULT.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8082,
+    "standard_code": 8083,
+    "focus": 8084,
+    "objective": 8085,
+    "learning_outcome": 8086
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 1,
+   "quarter": 1,
+   "focus": "Islamic Identity",
+   "objective": "“I am Muslim” & daily routines",
+   "learning_outcome": "Identify Muslim practices",
+   "standard_code": "2.IS.ID.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8483,
+    "standard_code": 8484,
+    "focus": 8485,
+    "objective": 8486,
+    "learning_outcome": 8487
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 2,
+   "quarter": 1,
+   "focus": "Iman",
+   "objective": "Pillars of Iman",
+   "learning_outcome": "Name & explain pillars",
+   "standard_code": "2.IS.IMAN.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8488,
+    "standard_code": 8489,
+    "focus": 8490,
+    "objective": 8491,
+    "learning_outcome": 8492
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 3,
+   "quarter": 1,
+   "focus": "Seerah",
+   "objective": "Early life of Prophet ﷺ",
+   "learning_outcome": "Retell key events",
+   "standard_code": "2.IS.SEERAH.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8493,
+    "standard_code": 8494,
+    "focus": 8495,
+    "objective": 8496,
+    "learning_outcome": 8497
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 4,
+   "quarter": 1,
+   "focus": "Manners",
+   "objective": "Kindness & respect",
+   "learning_outcome": "Demonstrate manners",
+   "standard_code": "2.IS.AKHLAQ.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8498,
+    "standard_code": 8499,
+    "focus": 8500,
+    "objective": 8501,
+    "learning_outcome": 8502
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 5,
+   "quarter": 1,
+   "focus": "Worship",
+   "objective": "Masjid etiquette",
+   "learning_outcome": "Practice correct behavior",
+   "standard_code": "2.IS.WORSHIP.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8503,
+    "standard_code": 8504,
+    "focus": 8505,
+    "objective": 8506,
+    "learning_outcome": 8507
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 6,
+   "quarter": 1,
+   "focus": "Seerah",
+   "objective": "Stories of kindness",
+   "learning_outcome": "Connect lessons to life",
+   "standard_code": "2.IS.SEERAH.2",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8508,
+    "standard_code": 8509,
+    "focus": 8510,
+    "objective": 8511,
+    "learning_outcome": 8512
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 7,
+   "quarter": 1,
+   "focus": "Gratitude",
+   "objective": "Blessings from Allah",
+   "learning_outcome": "Practice saying الحمد لله",
+   "standard_code": "2.IS.IMAN.2",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8513,
+    "standard_code": 8514,
+    "focus": 8515,
+    "objective": 8516,
+    "learning_outcome": 8517
+   }
+  },
+  {
+   "grade_label": "Grade 2",
+   "subject": "Islamic Studies",
+   "week_no": 8,
+   "quarter": 1,
+   "focus": "Islamic Culture",
+   "objective": "Islamic celebrations (values-based)",
+   "learning_outcome": "Participate respectfully",
+   "standard_code": "2.IS.CULT.1",
+   "assessment_note": null,
+   "source_lines": {
+    "week_no": 8518,
+    "standard_code": 8519,
+    "focus": 8520,
+    "objective": 8521,
+    "learning_outcome": 8522
+   }
+  }
+ ]
+}

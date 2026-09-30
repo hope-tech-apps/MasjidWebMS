@@ -1440,8 +1440,38 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   `GradebookController::refuseStandard` checks the (code, focus, week) really is a
   `curriculum_weeks` row of this school before it is stored. An uncoded weekly focus is a
   standard by its words. Where `short_lesson_plan` is on (BISS) the three standard keys are
-  dropped before validation: not shown, not written. No standard exists for Arabic,
-  Qur'an or Islamic Studies and none may be invented; an Arabic search answers nothing.
+  dropped before validation: not shown, not written. Qur'an, Arabic Language and Islamic
+  Studies have standards ONLY where the school wrote them: Al-Razi's Quarter 1 plan of
+  2026-09-07 (Pre-K to Grade 2, weeks 1-8) carries its own `PK.QUR.*`, `PK.AAL.*`,
+  `PK.IS.*` codes (and K, 1, 2), imported verbatim by `curriculum:import` from
+  `database/curriculum/al-razi-qai-split-2026-27-q1.json`. None may be invented anywhere
+  else: weeks 9-36 and Grades 3-5 stay under the combined "Qur’an & Islamic Studies" column,
+  and an Arabic search there answers nothing.
+- **A guide row can carry the school's Objective and Learning Outcome** (`curriculum_weeks.
+  objective` / `.learning_outcome`, nullable). Each school column lands in the field of the
+  same name and nothing is joined, so a test can compare every stored string with the
+  school's document byte for byte (`CurriculumSplitSourceFaithfulnessTest`). The prefill and
+  standards payloads carry the two keys ONLY on rows that have them, so a July row's payload
+  is unchanged; the picker's de-duplication key includes the objective, because the plan
+  repeats a code and focus in two weeks with a different Objective each time. Subject names
+  in that file are the catalogue's exact bytes (`Qur'an` with U+0027), not the combined
+  column's U+2019, because `LessonPlan::subjectKeyFor` does not fold apostrophes.
+- **`curriculum:import` is how the guide changes.** A file may `replaces` cells (deleted in
+  the same transaction as the upserts). `--dry-run` prints the exact counts and a `PLAN`
+  json line, `--expect=` refuses unless they match, an apply writes an inverse file and a
+  snapshot (0600, `storage/app/private/curriculum-imports/`) before it changes anything,
+  and `--verify` compares the database with the file byte for byte. It never writes a lesson
+  plan or an assignment; the dry run counts the ones that copy a replaced cell. Re-running
+  the base file after a file that replaces some of its cells re-creates them: re-run the
+  replacing file.
+  An apply REFUSES (exit 1, nothing written) while `plans_touching`, `assignments_touching`
+  or `delete_absent` is above 0, with or without `--expect`, unless `--allow-references` is
+  given, and the flag is passed only with `--expect` pinning `plans_touching`, `assignments_touching` and
+  `delete_absent` (the dry run prints the line). The rollback restores content, not ids or timestamps, and the
+  inverse file refuses too (`plans_touching` above 0) once teachers have planned on the split cells, so it needs the
+  same dry run and `--allow-references`. `--verify` checks only the
+  file's cells and the replaced keys, so pass `--verify --expect=after=<the dry run's
+  after>` and compare the tenant total it prints.
 - **Weights** (`class_grade_weights`, `PUT grade-weights`): all five types or none. No rows
   means the class is unweighted and every average is byte for byte what it was. A TYPE is
   one slot in the weighted average, worth its class weight however many pieces are in it;

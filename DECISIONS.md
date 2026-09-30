@@ -5652,6 +5652,136 @@ Reply-To bounces.
   - **Also checked on MySQL 8.0 while the throwaway database existed:** the expiry and its give-back (`expired -8` then `reversal +8`
     after the end date moved, nothing on the third run), and the purge's grouped query (a left child's zero set removed, a left child's
     8 Bucks and a current child's 5 kept). Database and user dropped and the copy deleted afterwards.
+
+## 2026-09-29 — Guide split: the school's separated Qur'an, Arabic and Islamic Studies weeks replace the combined column for Pre-K to Grade 2, weeks 1-8 (feat/school-guide-split, off b5c2f808)
+Decision: the school's separated guide ("First Semester / Quarter 1 suggested pacing for all subjects from Pre-k
+to Grade 2", dated 2026-09-07, pinned by the sha256 values in the data file's `source`) is in hand. It supersedes
+W3-6's "T-001.4 is partial until the school's revised weekly guide" for these cells only. `curriculum:import` (extended) loads `database/curriculum/al-razi-qai-split-2026-27-q1.json`
+after the base guide: 96 new rows (Pre-K, Kindergarten, Grade 1, Grade 2, times Qur'an, Arabic Language and
+Islamic Studies, times weeks 1-8) replace the 32 combined cells for the same grades and weeks, in one
+transaction. Masjid 14 goes from 1512 to 1576 rows. The combined column stays for weeks 9-36 in Pre-K to
+Grade 2 and for all 36 weeks of Grades 3-5 (220 rows): the school has given nothing else for them.
+The production apply is NOT part of this change and waits for the owner's yes on the exact dry-run counts.
+- **Mapping, name for name, nothing joined.** Focus Skill to `focus`, Objective to a new `objective`, Learning
+  Outcome to a new `learning_outcome`, Standard Code to `standard_code`; `assessment_note` is NULL (the plan has
+  no such column). A single-slot mapping loses the school's words ("Memorize Surah Al-Ikhlāṣ" is an Objective,
+  "Letters أ–ب" a Focus Skill) and a joined string is one the school never wrote, which a byte-for-byte test could
+  not state. Migration `2026_10_05_100000` adds both columns nullable; its `down()` refuses while any row holds
+  either (the inverse import empties them first).
+- **Subject names are the catalogue's exact bytes** (`Qur'an` with U+0027, `Arabic Language`, `Islamic
+  Studies`), not the combined column's U+2019, because `LessonPlan::subjectKeyFor` does not fold apostrophes and
+  a second spelling would let one class-day hold two Qur'an plans. The school's own heading words stay in the
+  file's `source.tables` block. Grade labels are the live guide's spellings, because the lookups compare exactly.
+- **Data path is the importer, not a migration.** A migration runs everywhere at deploy (code and data would
+  ship as one step), cannot print a dry run for the owner to approve, and no migration writes guide data. The
+  importer gains `--dry-run` (exact counts plus one `PLAN {json}` line, writes nothing), `--expect=` (refuses on
+  any different count, so the apply does only what was approved), `--verify` (read-only, byte for byte, exit 1 on
+  any mismatch), a masjid guard (`for_masjid`: id, name_contains, org_type), an inverse file and a full snapshot
+  written 0600 before any change (read back and counted), one transaction that re-counts before it commits, and
+  a WARNING log line with the file's sha256 and provenance (prod logs warning and up). `--fresh` now deletes
+  INSIDE that transaction (it used to delete outside it, so a failed import lost the guide), and is refused
+  together with `replaces`. Idempotent: a second apply is delete 0, insert 0, update 0, unchanged 96.
+  The ordering hazard is real and pinned: re-running the base file re-creates the 32 combined cells (an import only
+  upserts); re-run the split file, which is idempotent.
+- **Teachers' records are never written.** Plans and assignments copy text and hold no key to the guide, so
+  deleting a guide row changes none of them, and an assignment whose unchanged snapshot names a deleted cell still
+  saves on edit. The dry run counts `plans_touching`, `assignments_touching` and `plans_combined_subject`, and
+  `--expect` pins them. The owner approves counts from a dry run taken against production just before the apply,
+  never from an earlier count: teachers write plans every day.
+- **What people see.** The prefill and standards payloads carry `objective` and `learning_outcome` ONLY on rows
+  that have them, so every July row answers byte for byte as before (the pin in
+  `TeacherCurriculumStandardsTest` is unchanged). The standards de-duplication key includes the objective, since
+  K and Grade 1 `x.QUR.MEM.1 Memorization` (weeks 4 and 7) and Grade 2 `2.AAL.ALPH.1 Alphabet` (weeks 2 and 3)
+  repeat a code and focus with a different Objective; the matcher reads focus, objective and outcome as the
+  row's own words. SPA: the week select and both standards lists show the objective and key by it; a pick writes
+  the Objective (else the Focus Skill, as a week prefill does); the Learning Outcome fills the outcomes list only
+  where the teacher wrote none or the guide wrote the only one there (`outcomeFill`, the rule `autoFill`
+  applies to every field); the Islamic integration box takes one line per Islamic sibling when there are several
+  and the bare focus when there is one (`islamicIntegration`), so Qur'an no longer falls into "other subjects".
+  The family portal, the catalogue, the COMBINED list and `SubjectFence` are unchanged.
+- **After review (2026-09-30).** (1) A sibling line in the week payload now carries `objective` when the row has
+  one (the base guide's rows have none, so they stay exactly `{subject, focus}`), and the Islamic integration box
+  writes `focus — objective` for such a sibling, so "Memorize Surah Al-Ikhlāṣ" is not lost behind "Memorization".
+  (2) `outcomeFill` empties the outcomes list when the guide wrote the only entry there and the next pick or week
+  has no Learning Outcome, as `autoFill` does for every other field; a teacher's own entry is still never touched.
+  (3) The week select gains "Another week…", which swaps in the number input, and a plan holding a week past the
+  list opens on the number input: the separated weeks stop at 8, and before the split these subjects had the
+  free 1-52 input.
+- **Not done (options, not built).** O-1: the plan's ELA, Math, Science, Social Studies and STEM are not
+  imported (different code system from the live guide; Grade 2 Math absent, Grade 2 ELA overview only, Grade 2
+  Science in two differing copies). F-1: a hint on a split subject's week list that weeks 9+ are still under the
+  combined column. F-3: which per-grade Arabic outcomes document is current is NOT settled by the school's
+  files; no outcomes list is imported.
+- **Correction.** An earlier planning note said the school's document carries no Qur'an, Arabic or Islamic
+  Studies codes. It does: the 7 Sep plan has `PK.QUR.*`, `PK.AAL.*`, `PK.IS.*` and the K, 1 and 2 equivalents,
+  school-authored, imported verbatim and never invented. `.claude/rules/groups.md` says so now.
+- **Faithfulness.** `database/curriculum/sources/al-razi-detailed-pacing-plan-2026-09-07.txt` is committed whole
+  (sha256 `40cc44ac38a4b8b2be01fd07ef7fdf081682f0ff17ca78968992024a82ea8a0f`); the generator
+  `database/curriculum/tools/build-al-razi-qai-split.mjs` copies whole lines by number and exits non-zero on any
+  surprise; `CurriculumSplitSourceFaithfulnessTest` re-reads the .txt by line number and `assertSame`s all 480
+  stored strings. The build also compared all 96 rows' five cells against the .docx tables directly (OOXML
+  `w:tbl`, not the .txt or the extractor's JSON): 0 differences.
+- **Open with the school (owner questions, defaults imported):** K and Grade 1 Qur'an week 3 says Recitation in
+  the quarter table and Tajwīd in the day plan (the quarter table is imported); Pre-K has two Qur'an sections
+  (the full one at L1733 is imported, not the overview at L1723); whether plan week n is guide week n (assumed).
+Deviations from the design: (1) the inverse file's `for_masjid` falls back to `{id}` when the source file
+names none, so an inverse is never unguarded; (2) an inverse row whose own `source_label` was NULL restores as
+NULL (an explicit null in a row is kept, not replaced by the file's label); (3) the two safety files never
+overwrite an earlier pair made in the same second (`-1`, `-2` suffix); (4) `--verify` is also refused with
+`--fresh`; (5) under `--fresh` the plan reports delete = every existing row and insert = every file row, and
+the inverse restores all existing rows and removes only cells the file created.
+
+### 2026-09-30 — Guide split, second review folded (feat/school-guide-split)
+- **An apply refuses by default when it would leave something behind.** `plans_touching` or `assignments_touching`
+  above 0 (a teacher record copies a cell being deleted), or `delete_absent` above 0 (a cell the file replaces is
+  not there: the file's spelling is not the database's, so it would insert 96 rows beside 32 it meant to replace,
+  or the file was already applied), makes `curriculum:import` exit 1 and write nothing, with or without `--expect`,
+  unless `--allow-references` is given. `--expect` alone is not the yes: it pins numbers, the flag accepts them.
+  A dry run still prints all three counts and says an apply needs the flag. A second apply of the same file
+  therefore needs `--allow-references` too (delete_absent 32).
+- **Runbook, production.** Every step below runs as `sudo -u www-data env HOME=/tmp XDG_CONFIG_HOME=/tmp php artisan
+  curriculum:import ...` (the web user, with a writable home). (1) Dry run against production just before, read the
+  counts. (2) The owner approves those exact counts. (3) `sudo -u www-data env HOME=/tmp XDG_CONFIG_HOME=/tmp php artisan curriculum:import 14 <file>
+  --expect=delete=N,insert=N,after=N,plans_touching=N,assignments_touching=N,delete_absent=N --allow-references`
+  with the six counts the owner approved (the dry run prints this line when the flag is needed). The flag waives the
+  refusal for any counts, so the pins on `plans_touching`, `assignments_touching` and `delete_absent` are what stop
+  an apply when a teacher saves a plan between the dry run and the apply (run as the web user, as `bin/deploy` runs migrate, so the log and the safety directory are
+  not left root-owned). (4) `--verify --expect=after=<the dry run's after>`: `--verify` compares only the file's
+  cells and the replaced keys, so a row nobody planned passes it; the total it prints next to the expected `after`
+  is the check on everything else, and a different total fails it. The "Curriculum import applied" log line records
+  whether `--allow-references` was given and the `--expect` pins, so a waiver is visible afterwards.
+- **Rollback restores content, not ids or timestamps.** The inverse file re-creates a deleted cell through an
+  upsert, so it comes back with a new id and new `created_at` / `updated_at`. Nothing references a cell's id (plans
+  and work copy text), and every read orders by content, so nothing depends on them. It is "the same cells", not
+  "the same rows byte for byte". The inverse file is an ordinary import, so once teachers have planned on the split
+  cells (Qur'an, Arabic Language, Islamic Studies, Pre-K to Grade 2, weeks 1-8) applying it refuses with
+  `plans_touching` above 0 until `--allow-references` is added: dry-run the inverse, have its counts approved, and
+  pin them as in the runbook.
+- **Public repository.** The data file, generator, tests and these notes carry no private document id, no
+  internal note field, and no reference to internal working notes or local paths. The source is pinned by `docx_sha256`
+  and `txt_sha256`, a title and `document_date`. The committed source `.txt` stays for now (whether the school's
+  text may be public is the owner's call); `CurriculumSplitSourceFaithfulnessTest` reads it when present and, when it
+  is absent, checks the data file's sha256 pins and skips the line-by-line comparison with a message, so dropping the
+  `.txt` later is a one-file deletion (the generator needs it to rebuild, which is not a test).
+- **Weeks past the split.** A plan for Qur'an, Islamic Studies or Arabic Language asking for a week the split has no
+  row for (weeks 9 on) in a grade the split covers (Pre-K to Grade 2: the grade has split rows) gets the combined
+  "Qur’an & Islamic Studies" line for that week as the prefill. Grades 3-5 have only the combined column, so they get
+  no fallback for any separated subject (Arabic has no column there at all, and "the school has not separated this
+  week yet" would be false); the owner has not decided Arabic or Qur'an prefills for them. Where it applies, the
+  prefill is marked `from_combined_guide` with `guide_subject`, and the plan form says so. No split row is invented,
+  and the combined line is not its own sibling. The fence applies: an Arabic-only teacher, who may not read the
+  combined column, gets no fallback.
+- **The subject fence covers the guide reads.** With `?group_id=` the week list, the cell, its siblings and the
+  standards search use the same `SubjectFence` limits `subjectsFor` uses, by subject key. Qur'an-only and
+  Islamic-Studies-only teachers still see the combined column; an Arabic-only teacher does not. Only the subjects a staff
+  subject covers (Qur'an, Arabic, Islamic Studies and the combined column) are fenced among a cell's siblings:
+  Mathematics, Science and the rest have no staff subject, so a limited teacher still gets those integration lines. The SPA now sends the
+  class on the prefill, the plan's standards search and the assignment picker. Without `group_id` nothing is fenced,
+  as before.
+- **Minors.** `in_scope` and the scope rank compare by subject key, not exact string. An empty Objective or Learning
+  Outcome is stored as NULL by the importer and read as absent everywhere. A single Islamic sibling that is not the
+  combined column carries its subject label; the combined column stays bare.
+
 ## 2026-09-28 — Donation row build extracted from the door: `DonationService::createPendingDonation`
 Decision: the `Donation::create` that `createDonationCheckout` ran before opening Stripe is now
 `DonationService::createPendingDonation`, and the door calls it and reads every value back off the
