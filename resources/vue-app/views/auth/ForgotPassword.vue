@@ -1,56 +1,82 @@
 <template>
-    <div class="d-flex flex-column align-items-center justify-content-center gap-5 w-100 min-vh-100 py-4">
-        <div class="d-flex flex-column align-items-center justify-content-center gap-2">
-            <img :src="'/manara-icon.svg'" alt="Manara" width="84" height="84" class="mb-1" />
-            <div class="display-4 text-cgreen text-center fw-bold">Manara</div>
-            <div class="fs-5 text-muted text-center">Masjid Management Portal</div>
-        </div>
-
-        <div class="container">
-            <div class="d-flex flex-row flex-wrap align-items-center justify-content-center gap-4">
-                <Form @submit="submit()" :validation-schema="validationSchema" class="card border-0 shadow p-3 overflow-auto sign-in-form">
-                    <div class="card-header border-0 bg-white text-center fs-1 fw-bold text-cdark">
-                        <div class="card-title">Forgot password</div>
-                    </div>
-
-                    <div class="card-body d-flex flex-column align-items-start justify-content-start gap-4 w-100">
-                        <!-- Deliberately the same message whether or not the address exists:
-                             the API does not disclose who has an account, and neither does this. -->
-                        <div v-if="sent" class="alert alert-success w-100 mb-0">
-                            {{ message }}
-                        </div>
-
-                        <template v-else>
-                            <p class="text-muted mb-0">
-                                Enter the email address for your account and we will send you a link to set a new password.
-                            </p>
-                            <ColumnInputContainer name="email" label="Your Email" :show_error="true">
-                                <Field type="email" name="email" v-model="email" class="input w-100" placeholder="example@example.com" />
-                            </ColumnInputContainer>
+    <AuthShell>
+        <Form v-slot="{ errors }" @submit="submit()" :validation-schema="validationSchema" class="auth-card" novalidate>
+            <div class="auth-card__head">
+                <span class="auth-badge" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <template v-if="sent">
+                            <rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" />
                         </template>
-                    </div>
-
-                    <div class="card-footer bg-white border-0 d-flex flex-column gap-3">
-                        <LoadingButton v-if="!sent" type="submit" classes="btn-success w-100" :is-loading="loading">
-                            Send reset link
-                        </LoadingButton>
-                        <router-link to="/auth/sign-in" class="text-center text-decoration-none">Back to sign in</router-link>
-                    </div>
-                </Form>
+                        <template v-else>
+                            <circle cx="8" cy="15" r="4" /><path d="m11 12 8-8" /><path d="m16 7 3 3" />
+                        </template>
+                    </svg>
+                </span>
+                <h1 class="auth-title">{{ sent ? 'Check your email' : 'Reset your password' }}</h1>
+                <p v-if="!sent" class="auth-sub">
+                    Enter the email address for your account and we will send you a link to set a new password.
+                </p>
             </div>
-        </div>
-    </div>
+
+            <!-- Deliberately the same message whether or not the address exists:
+                 the API does not disclose who has an account, and neither does this. -->
+            <div v-if="sent" class="auth-alert auth-alert--ok" role="status">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 4.5-5" />
+                </svg>
+                <span>{{ message }}</span>
+            </div>
+
+            <div v-else class="auth-field">
+                <label class="auth-label" for="forgot_email">Email</label>
+                <div class="auth-control">
+                    <svg class="auth-control__icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                        aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" />
+                    </svg>
+                    <Field id="forgot_email" type="email" name="email" v-model="email" class="auth-input"
+                        placeholder="you@yourorganization.org" autocomplete="username" inputmode="email"
+                        autocapitalize="none" spellcheck="false" autofocus :validate-on-model-update="false"
+                        :aria-invalid="errors.email ? 'true' : 'false'"
+                        :aria-describedby="errors.email ? 'forgot_email_error' : undefined" />
+                </div>
+                <p v-if="errors.email" id="forgot_email_error" class="auth-error-text">{{ errors.email }}</p>
+            </div>
+
+            <div class="auth-actions">
+                <button v-if="!sent" type="submit" class="auth-button" :disabled="loading" :aria-busy="loading">
+                    <template v-if="!loading">
+                        <span>Send reset link</span>
+                        <svg class="auth-button__arrow" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                            stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+                            aria-hidden="true">
+                            <path d="M5 12h14" /><path d="m13 6 6 6-6 6" />
+                        </svg>
+                    </template>
+                    <template v-else>
+                        <span class="auth-spinner" aria-hidden="true"></span>
+                        <span>Sending…</span>
+                    </template>
+                </button>
+                <router-link to="/auth/sign-in" class="auth-link auth-link--center">Back to sign in</router-link>
+            </div>
+        </Form>
+    </AuthShell>
 </template>
 
 <script setup lang="ts">
-import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
-import LoadingButton from '@/components/form/LoadingButton.vue';
+import AuthShell from '@/components/auth/AuthShell.vue';
 import ApiService from '@/core/services/ApiService';
 import { Form, Field } from 'vee-validate';
 import { ref } from 'vue';
 import { object, string } from 'yup';
 
-const validationSchema = object().shape({ email: string().email().required() });
+const validationSchema = object().shape({
+    email: string().email('Enter a valid email address.').required('Enter your email address.'),
+});
 
 const email = ref('');
 const loading = ref(false);

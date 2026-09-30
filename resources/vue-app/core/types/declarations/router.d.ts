@@ -7,6 +7,9 @@ declare module 'vue-router' {
         auth?: boolean;
         allowedUsers?: Array<UserType>;
         pageTitle?: string;
+        // The sign-in screens draw their own full-screen frame (AuthShell), so
+        // AuthLayout drops its patterned background for them.
+        fullBleed?: boolean;
         dashboardType?: 'masjid' | 'super';
         requiresCrm?: boolean;
         requiresAssistant?: boolean;

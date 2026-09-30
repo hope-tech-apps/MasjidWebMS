@@ -38,6 +38,13 @@ export const useAuthStore = defineStore('authStore', () => {
 
     /** The inline refusal under the code field (wrong code, or locked out). */
     const twoFactorError = ref<string>('');
+    /**
+     * Why the email-and-password step was refused, shown under the heading of
+     * the sign-in form. It used to be a SweetAlert modal: a popup for a mistyped
+     * password is the one thing a returning user meets most often, and it has to
+     * be dismissed before they can fix the field it is about.
+     */
+    const signInError = ref<string>('');
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -157,6 +164,7 @@ export const useAuthStore = defineStore('authStore', () => {
         }
 
         twoFactorError.value = '';
+        signInError.value = '';
 
         await ApiService.post('/api/admin/login', formdata)
             .then((res: AxiosResponse) => {
@@ -170,8 +178,10 @@ export const useAuthStore = defineStore('authStore', () => {
                     // next step of a normal sign-in, and an error popup over it
                     // is what locked enrolled admins out.
                     twoFactorRequired.value = true;
+                } else if (twoFactorRequired.value) {
+                    twoFactorError.value = getMessageFromObj(res);
                 } else {
-                    MSwal.fire('Sorry', getMessageFromObj(res), 'error');
+                    signInError.value = getMessageFromObj(res);
                 }
             })
             .catch((error: AxiosError<BackendResponseData>) => {
@@ -183,8 +193,10 @@ export const useAuthStore = defineStore('authStore', () => {
                 const status = error.response?.status;
                 if (twoFactorRequired.value && (status === 422 || status === 429)) {
                     twoFactorError.value = getMessageFromObj(error);
-                } else {
+                } else if (twoFactorRequired.value) {
                     MSwal.fire('Sorry', getMessageFromObj(error), 'error');
+                } else {
+                    signInError.value = getMessageFromObj(error);
                 }
             })
             .finally(() => {
@@ -197,6 +209,7 @@ export const useAuthStore = defineStore('authStore', () => {
     function cancelTwoFactorChallenge() {
         twoFactorRequired.value = false;
         twoFactorError.value = '';
+        signInError.value = '';
     }
 
     /**
@@ -313,7 +326,7 @@ export const useAuthStore = defineStore('authStore', () => {
 
     return {
         user, isAuthenticated, token, dashboardMasjidId,
-        twoFactorRequired, twoFactorError,
+        twoFactorRequired, twoFactorError, signInError,
         login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId,
         forgetDashboardMasjidId, cancelTwoFactorChallenge,
     }
