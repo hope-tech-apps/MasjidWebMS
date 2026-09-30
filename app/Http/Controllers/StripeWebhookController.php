@@ -679,10 +679,12 @@ class StripeWebhookController extends Controller
             $pdf = $this->receiptPdfs->pdfFor($receipt);
             $pdfName = $this->receiptPdfs->filename($receipt);
         } catch (\Throwable $e) {
+            // The class only, never the message: a renderer's message can quote the letter's text,
+            // which carries the donor's name and address.
             Log::warning('Receipt PDF render failed; sending receipt without the attachment', [
                 'donation_id' => $donation->id,
                 'receipt_id' => $receipt->id,
-                'error' => $e->getMessage(),
+                'error' => $e::class,
             ]);
         }
 
@@ -707,9 +709,12 @@ class StripeWebhookController extends Controller
 
             $donation->forceFill(['receipt_delivered_at' => now()])->save();
         } catch (\Throwable $e) {
+            // The class only, never the message: a transport's message quotes the recipient
+            // ("550 no such user donor@example.org"), and a log line is not where a donor's
+            // address belongs. The donation id is what staff need to find the row.
             Log::warning('Receipt email failed to send', [
                 'donation_id' => $donation->id,
-                'error' => $e->getMessage(),
+                'error' => $e::class,
             ]);
         }
     }

@@ -12,9 +12,14 @@ use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Receipts\StatementLetterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\View;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mailer\Transport\AbstractTransport;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -247,6 +252,52 @@ class DonationReceiptPdfTest extends TestCase
         $this->assertNotNull($donation->fresh()->receipt_delivered_at);
         // Delivered exactly once — the second event must not re-send.
         $this->assertCount(1, app('mailer')->getSymfonyTransport()->messages());
+    }
+
+    #[Test]
+    public function a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient(): void
+    {
+        // A transport whose refusal quotes the address it was given, as real SMTP servers do.
+        Mail::extend('refusing', fn () => new class extends AbstractTransport {
+            protected function doSend(SentMessage $message): void
+            {
+                $to = array_map(
+                    static fn ($address): string => $address->getAddress(),
+                    $message->getEnvelope()->getRecipients()
+                );
+
+                throw new \RuntimeException('550 5.1.1 no such user ' . implode(',', $to));
+            }
+
+            public function __toString(): string
+            {
+                return 'refusing';
+            }
+        });
+        config(['mail.default' => 'refusing', 'mail.mailers.refusing' => ['transport' => 'refusing']]);
+
+        $logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$logged): void {
+            $logged[] = $event;
+        });
+
+        $donation = $this->donationFor($this->masjidA, $this->fundA, 10000, ['status' => 'pending']);
+
+        // The failed send never fails the webhook, and the gift is not marked delivered.
+        $this->postWebhook($this->checkoutCompletedEvent($donation))->assertOk();
+        $this->assertNull($donation->fresh()->receipt_delivered_at);
+
+        $failures = array_values(array_filter($logged, static fn (MessageLogged $e): bool => $e->message === 'Receipt email failed to send'));
+
+        $this->assertCount(1, $failures, 'the failed send is logged once');
+        $this->assertSame($donation->id, $failures[0]->context['donation_id']);
+        $this->assertSame(\RuntimeException::class, $failures[0]->context['error']);
+
+        foreach ($logged as $event) {
+            $line = $event->message . ' ' . json_encode($event->context);
+            $this->assertStringNotContainsString('donor@test.local', $line, 'no log line quotes the recipient');
+            $this->assertStringNotContainsString('no such user', $line, 'nor the transport\'s own message');
+        }
     }
 
     // ============================= helpers =============================
