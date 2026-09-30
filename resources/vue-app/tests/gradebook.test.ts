@@ -16,12 +16,15 @@ import {
     fencedNote,
     firstFieldError,
     isCombinedGuideColumn,
+    isUntyped,
     mayChangeWeights,
     NOT_AVERAGED,
     NOT_AVERAGED_WHY,
     percentText,
     pointsPercentText,
     subjectLine,
+    untypedInWork,
+    untypedListNote,
     untypedNote,
     weightNote,
     weightsClearCall,
@@ -346,8 +349,8 @@ test('a weighted class with only simple marks says why there is no weighted figu
 test('the work list and the blank weight box word simple-scale work the same way', () => {
     const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
 
-    // The untyped warning does not count work a type could not help.
-    assert.match(source, /assignments\.value\.filter\(\(a\) => a\.scale !== SIMPLE_SCALE && !a\.type/);
+    // The untyped warning does not count work a type could not help (the one predicate is `isUntyped`, below).
+    assert.match(source, /const untypedInList = computed\(\(\) => untypedInWork\(assignments\.value\)\);/);
     // The blank weight box on a simple-scale form says so instead of "Type sets it".
     assert.match(source, /if \(assignmentForm\.value\.scale === SIMPLE_SCALE\) return NOT_AVERAGED/);
 });
@@ -640,4 +643,95 @@ test('a refused save or clear shows the server\'s words and never says Saved', a
     await offline.clearWeights();
     assert.equal(offline.held.weightsError.value, 'The weights could not be cleared.');
     assert.equal(offline.held.weightsSaved.value, false);
+});
+
+// ---------------------------------------------------------------- review G5: "not averaged" polish
+
+test('work a type could not help is not "untyped": simple-scale work, and work with a weight of its own', () => {
+    assert.equal(isUntyped({ scale: 'points', type: null, weight: null }), true);
+    assert.equal(isUntyped({ scale: 'levels', type: '', weight: undefined }), true);
+    assert.equal(isUntyped({ type: null, weight: null }), true, 'no scale on the payload reads as it always did');
+    assert.equal(isUntyped({ scale: 'simple', type: null, weight: null }), false, 'never averaged, whatever it is given');
+    assert.equal(isUntyped({ scale: 'points', type: 'test', weight: null }), false);
+    assert.equal(isUntyped({ scale: 'points', type: null, weight: 30 }), false);
+    assert.equal(isUntyped({ scale: 'points', type: null, weight: 0 }), false, 'a weight of 0 is still a weight of its own');
+    assert.equal(isUntyped(null), false, 'no piece of work is not an untyped one');
+    assert.equal(isUntyped(undefined), false);
+
+    const list = [
+        { scale: 'points', type: null, weight: null }, { scale: 'simple', type: null, weight: null },
+        { scale: 'levels', type: 'quiz', weight: null }, { scale: 'points', type: null, weight: 20 }, { scale: 'levels', type: null, weight: null },
+    ];
+    assert.equal(untypedInWork(list), 2);
+    assert.equal(untypedInWork([]), 0);
+    assert.equal(untypedInWork(null), 0);
+});
+
+test('the note under the work list says how many, and what fixes it', () => {
+    assert.equal(untypedListNote(0), '');
+    assert.equal(untypedListNote(1), '1 piece of work has no type: it is left out of weighted averages until given a type.');
+    assert.equal(untypedListNote(3), '3 pieces of work have no type: they are left out of weighted averages until given a type.');
+});
+
+test('the teacher\'s "no type" badge skips simple-scale work, through the same predicate as the note under the list', () => {
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+
+    assert.match(source, /<span v-if="weightingEnabled && isUntyped\(a\)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"/);
+    assert.doesNotMatch(source, /!a\.type && a\.weight === null/, 'no second, older spelling of the predicate');
+    assert.match(source, /\{\{ untypedListNote\(untypedInList\) \}\}/);
+});
+
+/** The `v-if` of the office list's badge wrapper, as an expression to run against a piece of work. */
+function officeWrapperShows(a: Record<string, unknown>, weights: Record<string, number>, weightingEnabled: boolean): boolean {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+    const expr = view.match(/<div v-if="([^"]*)"\s+class="d-flex flex-wrap gap-1 mt-1">/);
+    assert.ok(expr, 'the office list has its badge wrapper');
+
+    return Boolean(new Function('a', 'weights', 'weightingEnabled', 'weightNote', 'isUntyped', `return (${expr![1]});`)(a, weights, weightingEnabled, weightNote, isUntyped));
+}
+
+test('the office list shows "not averaged" for a simple piece with no subject, type or standard, and its "no type" badge for the rest', () => {
+    const weights = { test: 40, quiz: 20, homework: 10, classwork: 10, other: 10 };
+    const bare = { scale: 'simple', type: null, weight: null, subject: null, type_label: null, standard_code: null };
+
+    // The review's case: nothing else on the piece, so the wrapper used to be missing and the note with it.
+    assert.equal(weightNote(bare, weights, true), 'not averaged');
+    assert.equal(officeWrapperShows(bare, weights, true), true);
+    // An unweighted class has no weight to note and simple work has no "no type" to warn about.
+    assert.equal(officeWrapperShows(bare, {}, false), false);
+    // Points work with no type in a weighted class: the "no type" badge, so the wrapper is there for it too.
+    assert.equal(officeWrapperShows({ ...bare, scale: 'points' }, weights, true), true);
+    // A typed piece, an override or a subject each keep the wrapper as they always did.
+    assert.equal(officeWrapperShows({ ...bare, scale: 'points', type: 'test', type_label: 'Test' }, weights, true), true);
+    assert.equal(officeWrapperShows({ ...bare, subject: 'Arabic' }, {}, false), true);
+});
+
+test('the office Grades tab says which work a weighted class leaves out, in the teacher\'s words', () => {
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+
+    assert.match(view, /const untypedInList = computed\(\(\) => untypedInWork\(assignments\.value\)\);/);
+    assert.match(view, /<p v-if="assignments\.length && weightingEnabled && untypedInList > 0"[^>]*data-test="untyped-note">\s*\{\{ untypedListNote\(untypedInList\) \}\}/);
+    assert.match(view, /<span v-if="weightingEnabled && isUntyped\(a\)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"/);
+});
+
+test('"never averaged" is the reason for no weighted figure only while no work is waiting for a type', () => {
+    const summary = (untyped: number | null | undefined) => ({
+        points_counted: 0, points_earned: 0, points_possible: 0, levels: { counted: 0, mean: null },
+        simple: { recorded: 3, counted: 3, missing: 0 },
+        weighting: { enabled: true, percent: null, level_mean: null, points_pieces: 0, untyped_excluded: untyped },
+    });
+
+    // Nothing untyped (0, null, or a payload that does not say): the simple marks are the whole reason.
+    for (const none of [0, null, undefined]) {
+        assert.deepEqual(averageLines(summary(none)), [{ label: 'Weighted average', value: '—', note: NOT_AVERAGED_WHY }], String(none));
+    }
+
+    // Work is left out for want of a type: THAT is the reason a teacher can act on, and "never averaged" is not said.
+    assert.deepEqual(averageLines(summary(1)), [{
+        label: 'Weighted average', value: '—', note: '1 piece of work has no type, left out of the weighted average until given a type',
+    }]);
+    assert.equal(averageLines(summary(4))[0].note, '4 pieces of work have no type, left out of the weighted average until given a type');
+    assert.equal(averageLines(summary(4)).some((l) => l.note === NOT_AVERAGED_WHY), false);
+    // The fenced label still follows the line.
+    assert.equal(averageLines(summary(4), true)[0].label, 'Weighted average (your subjects)');
 });

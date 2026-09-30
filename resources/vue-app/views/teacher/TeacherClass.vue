@@ -1760,7 +1760,7 @@
                                               :title="a.curriculum_focus ?? ''">
                                             {{ a.standard_code || 'Standard' }}
                                         </span>
-                                        <span v-if="weightingEnabled && !a.type && a.weight === null" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
+                                        <span v-if="weightingEnabled && isUntyped(a)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
                                               title="Work with no type is left out of the weighted average">no type</span>
                                     </div>
                                 </div>
@@ -1774,7 +1774,7 @@
                         </div>
                     </div>
                     <p v-if="weightingEnabled && untypedInList > 0" class="text-warning-emphasis small mt-2 mb-0">
-                        {{ untypedNoteText(untypedInList) }}: {{ untypedInList === 1 ? 'it is' : 'they are' }} left out of weighted averages until given a type.
+                        {{ untypedListNote(untypedInList) }}
                     </p>
                     </template>
 
@@ -2439,7 +2439,7 @@ import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import {
-    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, percentText, subjectLine, untypedNote,
+    averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
     mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
 } from '@/core/helpers/gradebook';
 import {
@@ -3618,7 +3618,7 @@ const untypedNoteText = untypedNote;
  * weight of its own. Simple-scale work is never averaged whatever it is given, so a type would not help it
  * and it is not counted here (the server leaves it out of `untyped_excluded` the same way).
  */
-const untypedInList = computed(() => assignments.value.filter((a) => a.scale !== SIMPLE_SCALE && !a.type && (a.weight === null || a.weight === undefined)).length);
+const untypedInList = computed(() => untypedInWork(assignments.value));
 /** What a blank weight box inherits, said in the box so leaving it blank is a decision a teacher can read. */
 const inheritedWeightText = computed(() => {
     if (assignmentForm.value.scale === SIMPLE_SCALE) return NOT_AVERAGED.replace(/^./, (c) => c.toUpperCase());

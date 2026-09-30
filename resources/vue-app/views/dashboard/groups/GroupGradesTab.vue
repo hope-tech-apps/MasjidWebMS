@@ -74,12 +74,17 @@
                         <div class="text-muted small">
                             {{ a.assigned_on }} · {{ scaleLabel(a) }}
                         </div>
-                        <div v-if="a.subject || a.type_label || a.standard_code" class="d-flex flex-wrap gap-1 mt-1">
+                        <!-- The wrapper asks about the weight note too: a simple-scale piece with no subject, type or
+                             standard has nothing else to show, and its "not averaged" is the one thing worth saying (review G5). -->
+                        <div v-if="a.subject || a.type_label || a.standard_code || weightNote(a, weights, weightingEnabled) || (weightingEnabled && isUntyped(a))"
+                             class="d-flex flex-wrap gap-1 mt-1">
                             <span v-if="a.subject" class="badge bg-primary-subtle text-primary-emphasis fw-normal">{{ a.subject }}</span>
                             <span v-if="a.type_label" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">{{ a.type_label }}</span>
                             <span v-if="weightNote(a, weights, weightingEnabled)" class="badge bg-light text-muted fw-normal">{{ weightNote(a, weights, weightingEnabled) }}</span>
                             <span v-if="a.standard_code" class="badge bg-success-subtle text-success-emphasis fw-normal"
                                   :title="a.curriculum_focus ?? ''">{{ a.standard_code }}</span>
+                            <span v-if="weightingEnabled && isUntyped(a)" class="badge bg-warning-subtle text-warning-emphasis fw-normal"
+                                  title="Work with no type is left out of the weighted average">no type</span>
                         </div>
                     </div>
                     <span class="badge"
@@ -89,6 +94,9 @@
                     <i class="bi bi-chevron-right text-muted"></i>
                 </button>
             </div>
+            <p v-if="assignments.length && weightingEnabled && untypedInList > 0" class="text-warning-emphasis small mt-2 mb-0" data-test="untyped-note">
+                {{ untypedListNote(untypedInList) }}
+            </p>
         </template>
 
         <!-- ============================================ ONE CHILD'S RECORD -->
@@ -269,8 +277,8 @@
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
 import {
-    averageLines, firstFieldError, pointsPercentText, subjectLine, weightNote, weightsClearCall, weightsFormFrom,
-    weightsRequest, weightsSaveCall, type WeightsCall,
+    averageLines, firstFieldError, isUntyped, pointsPercentText, subjectLine, untypedInWork, untypedListNote, weightNote,
+    weightsClearCall, weightsFormFrom, weightsRequest, weightsSaveCall, type WeightsCall,
 } from '@/core/helpers/gradebook';
 import { computed, onMounted, ref } from 'vue';
 
@@ -368,6 +376,9 @@ const pointsPct = computed<string | null>(() =>
     pointsPercentText(student.value?.summary?.points_earned, student.value?.summary?.points_possible));
 
 const studentLines = computed(() => averageLines(student.value?.summary));
+
+// Work a weighted class leaves out for want of a type: the same count, and the same words, as the teacher's list.
+const untypedInList = computed(() => untypedInWork(assignments.value));
 
 // `quiet` re-reads the list without the "Loading…" swap, so the weights panel that just
 // saved is still on screen when the fresh list lands.

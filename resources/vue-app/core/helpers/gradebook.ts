@@ -245,6 +245,26 @@ export function untypedNote(n: number): string {
     return n === 1 ? '1 piece of work has no type' : `${n} pieces of work have no type`;
 }
 
+/**
+ * Would a weighted class leave this piece of work out of its average for want of a type: no type and no
+ * weight of its own? Simple-scale work is never averaged whatever it is given, so a type would not help it
+ * and it is not counted (the server leaves it out of `untyped_excluded` the same way).
+ */
+export function isUntyped(work: { type?: string | null; weight?: number | null; scale?: string | null } | null | undefined): boolean {
+    return work != null && work.scale !== SIMPLE_SCALE && !work.type && (work.weight === null || work.weight === undefined);
+}
+
+/** How many pieces of a class's work list `isUntyped` names. */
+export function untypedInWork(work: ReadonlyArray<{ type?: string | null; weight?: number | null; scale?: string | null }> | null | undefined): number {
+    return (work ?? []).filter((w) => isUntyped(w)).length;
+}
+
+/** The staff work list's note under the list, said where a class has weights: what is left out, and what fixes it. '' for none. */
+export function untypedListNote(n: number): string {
+    if (!n || n < 1) return '';
+    return `${untypedNote(n)}: ${n === 1 ? 'it is' : 'they are'} left out of weighted averages until given a type.`;
+}
+
 export interface AverageLine { label: string; value: string; note: string }
 
 /** Said under the figures of a teacher limited to some subjects: a parent's screen counts them all. */
@@ -277,10 +297,17 @@ function averageLinesUnfenced(summary: any): AverageLine[] {
     const w = summary?.weighting;
 
     // A weighted class with simple marks and nothing else to average: no weighted figure appears, and a
-    // teacher who set weights and typed the work would otherwise wonder where it went.
+    // teacher who set weights and typed the work would otherwise wonder where it went. "Never averaged" is
+    // the reason only when nothing is waiting for a type: work left out for want of one is the reason a
+    // fix is in the teacher's hands, so it is what is said while any is (review G5).
     const noWeightedFigure = w?.enabled && (w.percent === null || w.percent === undefined) && (w.level_mean === null || w.level_mean === undefined);
     if (noWeightedFigure && Number(summary?.simple?.recorded ?? 0) > 0) {
-        lines.push({ label: 'Weighted average', value: '—', note: NOT_AVERAGED_WHY });
+        const untyped = Number(w.untyped_excluded ?? 0);
+        lines.push({
+            label: 'Weighted average',
+            value: '—',
+            note: untyped > 0 ? `${untypedNote(untyped)}, left out of the weighted average until given a type` : NOT_AVERAGED_WHY,
+        });
     }
 
     if (w?.enabled && w.percent !== null && w.percent !== undefined) {
