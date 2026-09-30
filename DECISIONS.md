@@ -6497,3 +6497,76 @@ code change, no test.
 
 (R3-7) DOCS made true: the `CartTables` class comment (two questions, the rule, the memo), `.claude/rules/stripe-payments.md` (the cart arm asks the strict question), the `CartRefundArmIsolationTest`
 class comment, and ASSUMPTIONS "Pre-merge fixes (round 3)". B6 above says the merge and the undo were "not guarded"; R3-1 and R3-2 supersede that.
+
+## 2026-09-30 — Tuition autopay and the family ledger: what "no payment scheduler" still means
+(amends "2026-08-10 — Payments doctrine: tenant is always merchant of record", corollaries (a),
+(b) and (c), including "Manara does not build a payment scheduler"; the owner's decisions of
+2026-09-30 on tuition autopay and a family ledger, and his answer of the same day: no card surcharge)
+
+Decision. Corollary (a) stands in its core: Stripe subscriptions on the organisation's own
+connected account are the only thing that charges, retries or dunns a card or bank payment.
+Manara builds no payment scheduler, no retry loop, no dunning engine, and nothing that initiates,
+retries or re-attempts a charge.
+
+What changes, and why it is still not a scheduler:
+1. Autopay for tuition is one Stripe Subscription Schedule per enrolment on the organisation's
+   own account. Manara AUTHORS that schedule: its start date, its number of instalments, its price
+   and any one-time fee lines. The 2026-08-10 doctrine allowed less (a schedule attached to a
+   Checkout-made subscription only to stop it after N), so this is an amendment, not a
+   clarification. The start date and the instalment count are fixed when the family consents on
+   the hosted setup page, shown to them there, and stored; nothing recomputes them later. After
+   creation Manara changes a schedule only to swap its payment method at the office's request, or
+   to cancel it (never prorating, never invoicing on cancel). It never changes when or how much a
+   live schedule charges. Stripe is the billing clock, the retrier and the dunning engine.
+2. A family-account LEDGER (append-only) records what a family owes and what has been recorded
+   against it: (i) money an office received outside Manara's Stripe path (cash, check, Zelle, bank
+   transfer, a third-party scholarship payer, a card payment taken in the school's own Stripe
+   dashboard, an invoice the school marked paid in its dashboard), each entry naming how it came,
+   who recorded it and when; (ii) what a family owes, as charge rows that are bookkeeping (posting
+   one touches no card, sends nothing that asks for payment, and is idempotent); (iii) Stripe
+   payments the signature-verified webhook path already recorded, mirrored as derived rows that
+   can be rebuilt from registration_payments.
+3. Why the ledger is not a scheduler: a ledger row never causes money to move. A charge row says
+   "the school expects X on date D". Whether and when X is collected is Stripe's act (autopay) or
+   the office's (desk). Charge rows are written when an autopay schedule is created (one place,
+   from the stored snapshot), by an import of the school's own sheet, or by an explicit staff
+   action. Nothing fires on them. A late fee charged by Manara on a date would be a scheduler and
+   needs its own decision.
+4. Payment state (corollary (b)): anything that LOOKS like Stripe state (paid_via stripe, the
+   stripe_* columns, source stripe_webhook) is written only by the webhook projection. An invoice
+   the school marks paid in its own dashboard never becomes Stripe state: staff record how the
+   money actually came. Staff entries carry a how-it-came label and the recording staff member,
+   extending the precedent of form take-cash and lunch Mark paid to a family account. Staff
+   entries are never written to registrations.payment_status or registration_payments. A
+   statement says "recorded by the school", never "paid by card through Manara".
+5. Aid (corollary (c)): a credit entry records a reduction the school decided on. It is not money
+   movement and does not change what Stripe charges. Posting one to an account with live autopay
+   needs an acknowledgement, and the statement says so.
+6. No card surcharge. Tuition is published with card costs built in. A school may discount other
+   ways of paying, and that discount is priced before payment in both places it applies:
+   (i) autopay: a separately priced bank-debit plan the family chooses on the setup page, which
+   corollary (c) already allows as a pre-checkout price; (ii) money received outside Stripe: a
+   credit the office posts with each payment, computed from the amount received (never typed) and
+   capped at the discount on the whole charge. The offline credit is not post-hoc money movement: it moves no money and changes no
+   Stripe charge; it records the price the school set for that way of paying, at the moment the
+   office receives the money. Manara never adds a fee to a card payment.
+7. Refunds and disputes remain the organisation's own act in its own Stripe dashboard. For a
+   payment Manara projected, the webhook records what Stripe reports (refund amounts, dispute
+   opened and closed) on the payment row and as idempotent ledger rows; staff cannot hand-record a
+   refund of a projected payment. Staff record refunds of money that came outside Stripe.
+8. Unchanged: the organisation is merchant of record, Manara never holds funds or sees card data,
+   and only Stripe-hosted surfaces take payment details.
+
+Alternatives rejected: Stripe-only (cannot represent cash, check or Zelle, and gives no family
+balance); per-response take-cash on forms (one payment per response, no balance);
+registration_payments (one writer, the webhook, by design, per registration); the class-store Bucks
+ledger (prize points, not money); a card surcharge (owner answer N1).
+
+Consequences: new tables and opt-in grants; the ledger is the ONLY record of offline receipts, so
+off-site backups with a passed restore drill are a precondition for real data; a read-only
+reconcile command exists because a webhook-only mirror can miss a payment.
+
+Design and slicing: the tuition plan (private workspace), reviewed by the point session in two passes
+(2026-09-30). Rule files: .claude/rules/family-ledger.md (new), stripe-payments.md ("Stripe owns the
+billing clock" and "Registration payments record fee/net"), registration-billing-data.md ("Tuition
+autopay"). No code implements this yet; slice 1A builds the ledger.

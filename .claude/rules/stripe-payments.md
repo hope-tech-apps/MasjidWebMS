@@ -118,6 +118,14 @@ pending-before-redirect with an idempotency key, webhook-only advancement.
   on the payload. No read-back, and no fee-formula estimate: a registration
   issues no receipt, so a guessed fee would be a fabricated number in a
   financial ledger (contrast the donation fallback, which backs a receipt).
+  - Tuition exception (DECISIONS.md 2026-09-30): newer API versions drop the
+    payment intent and charge ids from `invoice.*` payloads, so a tuition
+    invoice without them is re-read ONCE at the pinned API version to get them,
+    and the real fee and net may be read from the balance transaction. A missing
+    id never means "paid out of band". The read-only
+    `family-accounts:reconcile` command lists paid invoices tied to Manara
+    registrations that never reached the ledger; it never lists the
+    organisation's other customers or payments.
 
 ### Subscriptions (T-006e) — same doctrine, two parameter differences
 
@@ -135,11 +143,26 @@ pending-before-redirect with an idempotency key, webhook-only advancement.
   `parent.subscription_details` across API versions — all known locations are
   checked, so an invoice routes correctly regardless of pinned version.
 - **STRIPE OWNS THE BILLING CLOCK, THE RETRIES AND THE DUNNING.** Do not build a
-  payment scheduler, a retry loop, or a dunning engine. The only thing this
-  codebase creates is a Subscription Schedule (`end_behavior=cancel`,
-  `iterations=N`) telling Stripe when to stop; it is attached idempotently from
-  whichever event first carries the subscription id, and a failure to attach it
-  is LOGGED, never thrown — a 500 in a webhook makes Stripe retry forever.
+  payment scheduler, a retry loop, or a dunning engine.
+  - Installment plans sold through Checkout: the only thing this codebase creates
+    is a Subscription Schedule (`end_behavior=cancel`, N instalments) telling
+    Stripe when to stop, attached idempotently from whichever event first carries
+    the subscription id; a failure to attach it is logged and the next event
+    tries again.
+  - Tuition autopay (DECISIONS.md 2026-09-30, "Tuition autopay and the family
+    ledger"): Manara AUTHORS one schedule per enrolment on the organisation's
+    account: its start date and instalment count (both fixed when the family
+    consents, shown to them, stored), its price and any one-time fee lines.
+    Afterwards it only swaps the payment method at the office's request or
+    cancels, and never changes when or how much a live schedule charges.
+  - Cancelling a schedule passes `invoice_now=false` and `prorate=false` (both
+    default to true for schedules, which would issue a proration invoice or
+    credit) and an idempotency key; updates pass `proration_behavior=none`.
+  - Stripe retries a failed webhook delivery for up to three days, not forever.
+    A path that CREATES a tuition schedule or POSTS money to the family ledger
+    rethrows a transient failure after its own transaction commits (non-2xx, so
+    Stripe redelivers) and is idempotent on redelivery (adopt-before-create;
+    ledger keys). Only "is this event mine?" checks use the fail-safe `has()`.
 - **Dispatch stays additive.** `invoice.payment_succeeded` and
   `customer.subscription.deleted` were already donation events; they now ask the
   registration question first and fall through to the identical donation call

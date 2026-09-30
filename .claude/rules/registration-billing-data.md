@@ -739,3 +739,27 @@ and it has to be argued as one.
 - A contact merge moves them to the survivor with their `historical_orders` (their payer would
   otherwise null on the force-delete). A live registration's payer is not moved by a merge (open).
 
+## TUITION AUTOPAY (DECISIONS.md 2026-09-30, "Tuition autopay and the family ledger")
+
+Tuition runs on this engine through office-only plans. Until slice 3a lands, none of
+this is built; it is the contract the build follows.
+
+- **Office-only plans.** A plan-level `office_only` flag keeps tuition plans out of
+  every public door (`isPurchasable`, `findFeePlan`, `OfferingPublicPayload`); the
+  public payload for existing plans stays byte-equal.
+- **Consent fixes the dates.** The first due date and the instalment count are
+  computed when the office creates the setup session, shown on the hosted page,
+  and stored on the registration. Setup completion uses exactly those, or creates
+  nothing and asks the office to re-send.
+- **One instalment count.** `registration->installments_total ?? plan->installment_count`
+  in every place that counts instalments; `list_total_minor` (the existing
+  creation snapshot) is the price times that count.
+- **One live autopay per child** per school year, checked under a lock.
+- **Staff entries never land here.** Cash, check, Zelle and off-site card payments
+  are family-ledger entries (family-ledger.md). Nothing a person types is written
+  to `registrations.payment_status` or `registration_payments`; the ledger mirrors
+  Stripe payments from `registration_payments`, never the other way round.
+- **Cancel reaches every schedule** with a stored `stripe_subscription_schedule_id`,
+  including one that has not started, with the no-proration parameters in
+  stripe-payments.md.
+
