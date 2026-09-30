@@ -5465,3 +5465,43 @@ organisational-domain fallback. No `_dmarc.manara` record, which would take its 
 dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
 Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
 Reply-To bounces.
+
+- **2026-09-30 (school side quest W6 fold): main merged, and the point's review of the class store folded (Gate A, all fourteen of Gate B).**
+  Main 5ba2fae0 merged (three mechanical conflicts, both sides kept). Each fold has a test that fails without it (one mutant run with the
+  Gate A and B source reverted and the tests kept: 16 of 19 new PHP tests failed; the other 3 are the two HTTP tests B13 asked for (behaviour that already held) and a guard of B3's
+  boundary (a date that still exists is not given back); the SPA's
+  mounted tests fail against the pre-fold screens and against single-line mutants of the message and busy guards).
+  - **A1: `dedupe_key` is `utf8mb4_bin` on MySQL, set in the table's own CREATE.** Chosen over main's ALTER pattern because no W6
+    migration has run on any persistent database, so there is nothing to alter; SQLite keeps the plain column. Proven on MySQL 8.0.46 in a
+    throwaway database on staging: with the migration, `redeemed:1:abcDEF12` and `redeemed:1:ABCdef12` are two rows; with the column
+    ALTERed back to the table default the second is `ERROR 1062 Duplicate entry`. The suite pins the compiled MySQL statement.
+  - **A2: `markPrizesConverted` inserts and catches only the unique violation** (as main's `claim()`); **A3: 100200, 100300 and 100400
+    refuse to roll back while ledger rows exist** (100400 included: it holds each week's rate, which every adjustment reads).
+  - **Already fixed by the workflow's own fix stage (89452859, 9308902f), not redone:** B1 (the delta decided under the student's lock),
+    B2 (expiry re-runnable per cutoff), B6 (a week keeps its rate), and the SPA half of B5 (one request id per write). **B1 was proven on
+    MySQL 8.0 here:** two `bucks:mint` runs made to meet at the student's row lock (a third session held it, both runs had read the week
+    before it) wrote ONE `adjusted +3` with the current minter and TWO (balance 11 where 8 was owed) with the pre-fix minter of d2820e85.
+  - **B3: a cutoff waits `expiry_grace_days` (7) and a vanished cutoff is given back.** Alternative: make the office confirm an end date.
+    Rejected: the dates are already typed on screens that serve other features, and a confirm step does not help a date typed wrong with
+    confidence. The give-back is a `reversal` row pointing at the `expired` one (append-only both ways); a reversal of a prize is refused
+    only across an expiry that still stands.
+  - **B5 server: `request_id` REQUIRED on redeem and cash-out.** **B11: a replay with another prize or amount is a 409.** **B8: a prize edit
+    locks the row and compares `expected_stock`** (compare-and-set). Alternative: a delta from the loaded count. Rejected: it needs the same
+    loaded count and silently merges two people's intentions; a 409 with the current count lets the editor decide. The screens send the
+    stock only when it changed. **B10: an empty `is_active` is no change.**
+  - **B7: `mayReceiveClassStoreTotals` checks the bound tenant, and the reconciliation hides classes under 5 current students**, left out of
+    the totals too (a total that included them gives them back by subtraction). Alternative: merge small classes into an "other" row.
+    Rejected: with one small class, "other" is that class.
+  - **B9: the purge removes only a zero-sum set of a child no longer enrolled** (left, or the class ended). Cost: a withdrawn child's
+    positive balance is kept past 365 days until W6-C1 is decided (ASSUMPTIONS W6-A12).
+  - **B4, B12, B13, B14 (the screens):** the refusal message survives the reload; "Show earlier" and keyboard-operable students on the
+    teacher's screen; each screen MOUNTED in `npm run test:spa` by a small harness (`tests/support/mountSfc.ts`: the project's own
+    `@vue/compiler-sfc` and Vue's `createRenderer`, no DOM and no new dependency). Alternative: add jsdom and @vue/test-utils. Rejected
+    for this fold: two new dev dependencies and a lockfile change on a branch that must not touch main's toolchain; the harness can be
+    swapped for them later without changing a test's intent. HTTP tests added for the 409 `balance_changed` and the 422 `expired`.
+  - **Gate C.** C2 built as recommended and reversible (records export dataset `bucks_ledger`, no note). C1 only in part: a left child's
+    refusal now says why; the carry-over on a move and the 30-day office hold are an ENABLE BLOCKER (W6-C1). C3 is an ENABLE BLOCKER (no
+    settings screen). The Arabic and other machine-drafted parent copy is an ENABLE BLOCKER (W6-A13). The store and paper cash-out stay OFF.
+  - **Also checked on MySQL 8.0 while the throwaway database existed:** the expiry and its give-back (`expired -8` then `reversal +8`
+    after the end date moved, nothing on the third run), and the purge's grouped query (a left child's zero set removed, a left child's
+    8 Bucks and a current child's 5 kept). Database and user dropped and the copy deleted afterwards.
