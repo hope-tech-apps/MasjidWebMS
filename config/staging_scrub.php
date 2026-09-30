@@ -100,6 +100,16 @@ return [
         'broadcast_deliveries' => 'Provider message ids and error text quoting recipients; cascades from broadcasts, deleted first anyway.',
         'broadcasts' => 'Send history plus explicit audience_contact_ids targeting lists. Staging must start with no sends to replay.',
 
+        // Baskets. `cart_items.payload` carries the answers a line will submit —
+        // on MEC's festival ticket form that is the name of every attendee — and
+        // `carts.token_hash` is the handle that lets whoever holds it read and
+        // edit a basket. Dropping beats nulling on both counts: a basket is
+        // transient by design (nothing in it is reserved, and it expires), so
+        // staging loses nothing real, and no live shopper's token survives into an
+        // environment with weaker access.
+        'cart_items' => 'Answers being submitted, including attendee names; cascades from carts, deleted first anyway.',
+        'carts' => 'Guest basket tokens (hashed handles that grant read/write to the basket) and the contact they belong to.',
+
         // Mobile Contact-Us inbox.
         'contact_us_messages' => 'Free-text inbound messages from app users.',
         'contact_us_replies' => 'What the office wrote BACK to a member of the public, plus the name of the staff member who wrote it. Dropped with the messages it answers — a reply with no message is a fragment of a conversation about a real person, and cascading from contact_us_messages would leave replies to messages this scrub already removed.',
@@ -324,6 +334,29 @@ return [
             'stripe_payment_intent_id',
         ],
 
+        'order_items' => [
+            // The answers a paid basket line will be recorded from — on MEC's festival
+            // ticket form, the name of every attendee (slice 4b). Frozen at checkout,
+            // so it outlives the basket; the sale's amounts and labels do not need it.
+            'payload',
+            // An unsalted sha256 of that payload. A short answer set (a name, an email)
+            // can be guessed back from it, so it goes with the payload it was taken from.
+            'cart_payload_hash',
+        ],
+
+        'orders' => [
+            // A cart checkout's page and payment on the organisation's LIVE account,
+            // nulled as meal_orders null theirs so staging never asks a test-mode
+            // account about a live cs_/pi_ id. The key would replay a live page.
+            'stripe_checkout_session_id',
+            'stripe_payment_intent_id',
+            'idempotency_key',
+            // An unsalted sha256 over the same answers as order_items.cart_payload_hash
+            // (above), so a short answer set can be guessed back from it just the same.
+            // Only ever compared for equality at checkout; NULL just means "no page to reuse".
+            'basket_fingerprint',
+        ],
+
         'meal_order_top_ups' => [
             // A paid order's top-up page and its payment, on the organisation's live
             // account: nulled as meal_orders null theirs, so staging never asks a
@@ -463,6 +496,15 @@ return [
             'registration_status' => 'fixed:unregistered', // force the sender un-registered so staging cannot believe it may text
         ],
 
+        'orders' => [
+            'buyer_email' => 'email',
+            // What the shopper typed at the basket page, next to the address: the name and phone
+            // a meal order and a gift's donor are recorded from. Anonymised as meal_orders' own
+            // customer_name and customer_phone are, so the rows stay readable on staging.
+            'buyer_name' => 'full_name',
+            'buyer_phone' => 'phone',
+        ],
+
         'meal_orders' => [
             'customer_name' => 'full_name',
             'customer_phone' => 'phone',
@@ -600,6 +642,7 @@ return [
         'app_version_settings.maintenance_message' => 'The maintenance banner copy shown to every app user.',
         'meal_menu_items.name' => 'A dish on a public lunch menu.',
         'meal_menu_items.name_ar' => 'The same dish in Arabic.',
+        'order_items.price_snapshot' => 'What settlement records the line from: amounts and tier labels (form), a menu item name and its frozen price (meal), the intended gift (donation). The answers themselves live in `payload`, which is nulled beside it.',
         'meal_order_items.item_name' => 'A snapshot of the menu item at order time — what was bought, not who bought it. The buyer\'s name, phone and email on meal_orders are all anonymised.',
         'meal_menus.notes' => 'Operational notes on a public menu ("collect at the side door"). Kept because the pickup flow reads it; if a tenant is ever found using it for customer names, move it to `anonymise` with `free_text`.',
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',

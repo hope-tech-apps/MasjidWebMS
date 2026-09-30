@@ -11,6 +11,7 @@ use App\Models\GroupPost;
 use App\Models\Masjid;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
+use App\Models\Order;
 use App\Models\User;
 use App\Support\ScrubStrategies;
 use App\Support\TenantContext;
@@ -402,6 +403,33 @@ class StagingScrubTest extends TestCase
         // "Return to payment" would all fail on it, where a NULL opens a fresh page.
         $this->assertSame(0, DB::table('form_responses')->whereNotNull('stripe_checkout_session_id')->count());
         $this->assertSame(0, DB::table('form_responses')->whereNotNull('stripe_payment_intent_id')->count());
+    }
+
+    #[Test]
+    public function a_baskets_fingerprint_never_reaches_staging(): void
+    {
+        // An unsalted sha256 over the basket's answers (the same input as
+        // order_items.cart_payload_hash, which is nulled): a short answer set can be
+        // guessed back from it, so it goes with the rest of the order's handles.
+        $order = Order::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjidA->id,
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'order_number' => 'SCRUB001',
+            'buyer_email' => 'real-buyer@example.org',
+            'status' => Order::STATUS_PENDING,
+            'total_minor' => 5000,
+            'currency' => 'usd',
+            'charge_account_id' => 'acct_live',
+            'basket_fingerprint' => hash('sha256', 'a short answer set'),
+            'idempotency_key' => 'idem_live',
+        ]);
+
+        $this->assertNotNull(DB::table('orders')->where('id', $order->id)->value('basket_fingerprint'), 'the fixture seeds it');
+
+        $this->runScrub();
+
+        $this->assertNull(DB::table('orders')->where('id', $order->id)->value('basket_fingerprint'));
+        $this->assertNull(DB::table('orders')->where('id', $order->id)->value('idempotency_key'), 'and the handle nulled beside it still is');
     }
 
     #[Test]

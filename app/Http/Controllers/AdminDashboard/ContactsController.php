@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Contacts\UpdateContactRequest;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\HistoricalOrder;
+use App\Support\CartTables;
 use App\Support\Errors;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -176,7 +177,8 @@ class ContactsController extends Controller
     /**
      * Merge a contact (typically a placeholder "Unidentified Card ####") into
      * another member — existing (target_contact_id) or newly created. Moves the
-     * source's donations and card last-4 onto the target, then removes the source.
+     * source's donations, cart orders, meal orders and card last-4 onto the target,
+     * then removes the source.
      *
      * All queries run in the bound-tenant context, so BelongsToMasjid scopes every
      * move to this masjid — a merge can't reach across tenants.
@@ -330,6 +332,32 @@ class ContactsController extends Controller
             // registration's payer is unchanged (DECISIONS.md 2026-09-25).
             \App\Models\Registration::where('contact_id', $source->id)
                 ->where('source', \App\Models\Registration::SOURCE_HISTORICAL)
+                ->update(['contact_id' => $target->id]);
+
+            // A paid basket and a lunch order follow their buyer as well.
+            // `orders.contact_id` and `meal_orders.contact_id` are `nullOnDelete`,
+            // so the force-delete below would leave a sale the office keeps keyed
+            // to nobody, and the member portal lists both by `contact_id` beside
+            // the typed address (MemberPurchases): the survivor would lose every
+            // purchase whose typed address is not their own verified one, while
+            // their gifts and Wix orders, which moved above, still showed.
+            //
+            // bin/deploy makes this code live BEFORE `migrate`, so for that window
+            // there is no `orders` table and the move would answer 500 on every
+            // merge. With no table there is no order to move. Only a table that
+            // genuinely is not there skips: `existsOrFail()` lets a check that
+            // could not be answered throw, which rolls the whole merge back. A
+            // false "absent" would skip the move and the force-delete below would
+            // null every paid order the source held (CartTables). `meal_orders`
+            // is an old table and needs no such question. `carts.contact_id`
+            // cascades off the force-delete, and an open basket is not moved: it
+            // is the shopper's half-finished choice, not a record.
+            if (CartTables::existsOrFail('orders')) {
+                \App\Models\Order::where('contact_id', $source->id)
+                    ->update(['contact_id' => $target->id]);
+            }
+
+            \App\Models\MealOrder::where('contact_id', $source->id)
                 ->update(['contact_id' => $target->id]);
 
             foreach ($source->cards as $card) {

@@ -22,6 +22,10 @@ class DonationReceipt extends Model
 {
     use HasFactory, BelongsToMasjid;
 
+    /** The two states the column allows. Nothing in the application writes `void` yet. */
+    public const STATUS_ISSUED = 'issued';
+    public const STATUS_VOID = 'void';
+
     protected $fillable = [
         'masjid_id',
         'donation_id',

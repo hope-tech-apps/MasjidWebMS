@@ -3,6 +3,8 @@
 
 use App\Http\Controllers\Api\V1\AnnouncementsController;
 use App\Http\Controllers\Api\V1\AppointmentRequestsController;
+use App\Http\Controllers\Api\V1\CartOrdersController;
+use App\Http\Controllers\Api\V1\CartsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\FormResponsePaymentsController;
 use App\Http\Controllers\Api\V1\FormStaffSessionsController;
@@ -82,6 +84,45 @@ Route::prefix('v1')->group(function () {
     Route::post('/form-responses/{uuid}/checkout', [FormResponsePaymentsController::class, 'checkout'])
         ->whereUuid('uuid')
         ->middleware('throttle:form-checkout');
+
+    // The universal basket (brief 5; DECISIONS.md 2026-09-29): one basket, one Stripe page,
+    // for form places, dishes and gifts together. No auth: the organisation is the
+    // `masjid-id` header (PublicTenant), the basket is its `Cart-Token` header, and every
+    // query is filtered by masjid_id by hand. The token is returned once, in the body of
+    // POST /carts, because CORS exposes no response header.
+    //
+    // DARK BY DEFAULT: every route sits behind `cart.enabled`, which answers the 404 an
+    // unknown route gets until config/cart.php switches the basket on (and for any
+    // organisation its allowlist leaves out). The routes are registered either way, so the
+    // route cache is the same in both states, and the middleware runs before the throttles.
+    //
+    // Each route that writes or reads a basket has its own named limiter, keyed by the
+    // token's HMAC; the payment-state read is keyed by the order's uuid, like the form's.
+    // NOTHING here marks an order paid: only the Stripe webhook does.
+    Route::middleware('cart.enabled')->group(function () {
+        Route::post('/carts', [CartsController::class, 'store'])
+            ->middleware('throttle:cart-create');
+
+        Route::get('/cart', [CartsController::class, 'show'])
+            ->middleware('throttle:cart-read');
+
+        Route::post('/cart/items', [CartsController::class, 'addItem'])
+            ->middleware('throttle:cart-write');
+
+        Route::delete('/cart/items/{id}', [CartsController::class, 'removeItem'])
+            ->whereNumber('id')
+            ->middleware('throttle:cart-write');
+
+        Route::post('/cart/acknowledge', [CartsController::class, 'acknowledge'])
+            ->middleware('throttle:cart-write');
+
+        Route::post('/cart/checkout', [CartsController::class, 'checkout'])
+            ->middleware('throttle:cart-checkout');
+
+        Route::get('/cart-orders/{uuid}', [CartOrdersController::class, 'show'])
+            ->whereUuid('uuid')
+            ->middleware('throttle:cart-order-status');
+    });
 
     // Public appointment requests (Community vertical, T-021) — the free
     // clinic's intake. An unauthenticated DB write like the form submissions

@@ -13,6 +13,7 @@ use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\Member\MemberAuthController;
 use App\Http\Controllers\Mobile\Member\MemberDeviceController;
 use App\Http\Controllers\Mobile\Member\MemberInterestsController;
+use App\Http\Controllers\Mobile\Member\MemberPurchasesController;
 use App\Http\Controllers\Mobile\Member\MemberRecurringGivingController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\NotificationsController;
@@ -294,6 +295,53 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                             Route::post('/{uuid}/cancel', 'cancel');
                             Route::patch('/{uuid}', 'updateAmount');
                         });
+                    });
+
+                /*
+                | "Your orders" — what THIS member bought, from every place they bought it
+                | (the basket, the Wix history, the festival form, the lunch order), read
+                | only. Which purchases are theirs is App\Services\Member\MemberPurchases:
+                | confirmed to their VERIFIED address, or keyed to their contact, inside
+                | their organisation.
+                |
+                | The whole stack the recurring-giving routes have, and a limiter of their
+                | own. The inline throttle here carries a PREFIX, because an inline bucket
+                | is keyed on the caller alone: without one, opening this screen would spend
+                | the allowance of the monthly-giving screen beside it, and the other way round.
+                |
+                | No `where` constraint on {source} or {id}: MemberPurchasesController turns
+                | a junk handle, an unknown source, a miss and someone else's order into ONE
+                | 404, and a router 404 would be a second, different one.
+                |
+                | The gifts and the receipt PDF are in the same group: a gift is the member's
+                | by `contact_id`, and its receipt by the gift it belongs to.
+                |
+                | DARK until config/member_portal.php switches it on: `member.portal` answers
+                | the router's own 404, ranked ahead of authentication and the throttles.
+                |
+                | Named `mobile.member.me.*`, like the leaving routes above, so that a 401, 403
+                | or 429 from the stack or the limiter carries the empty `data` object the
+                | iPhone app's `Response<T>` decoder needs (App\Support\MobileErrorEnvelope,
+                | matched on the route name). A new route in this realm needs that prefix.
+                */
+                Route::prefix('/me')
+                    ->name('mobile.member.me.')
+                    ->middleware('member.portal')
+                    ->controller(MemberPurchasesController::class)
+                    ->group(function () {
+                        Route::middleware('throttle:30,1,member-portal')->group(function () {
+                            Route::get('/orders', 'orders')->name('orders.index');
+                            Route::get('/orders/{source}/{id}', 'order')->name('orders.show');
+                            Route::get('/gifts', 'gifts')->name('gifts.index');
+                        });
+
+                        // The receipt PDF is the heavy read (dompdf renders it on every
+                        // call), so it is on the budget of the money verbs beside it, and on
+                        // a bucket of its own: fetching a few receipts must not lock the
+                        // screens that list them.
+                        Route::middleware('throttle:20,1,member-receipt')
+                            ->get('/receipts/{id}/pdf', 'receiptPdf')
+                            ->name('receipts.pdf');
                     });
             });
 

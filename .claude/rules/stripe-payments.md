@@ -7,6 +7,12 @@ paths:
   - "app/Http/Controllers/Mobile/DonationsController.php"
   - "app/Http/Controllers/Api/V1/FormSubmissionsController.php"
   - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
+  - "app/Services/Forms/**"
+  - "app/Services/Cart/**"
+  - "app/Http/Controllers/Api/V1/CartsController.php"
+  - "app/Http/Controllers/Api/V1/CartOrdersController.php"
+  - "app/Http/Middleware/EnsureCartEnabled.php"
+  - "app/Console/Commands/PruneCarts.php"
 ---
 # Stripe payments (CRM donations — Connect Standard + direct charges)
 
@@ -157,6 +163,13 @@ persisted before the call, webhook-only advancement). On top of them:
   (`FormResponse::findByUuidForMasjid`). `FormResponse::markPaid()` is true on the
   unpaid→paid transition only, and that is when the receipt and the coordinator
   email go. **A form row is never emailed while it is unpaid.**
+- **The row is written by `App\Services\Forms\FormResponseWriter`, and it asks no
+  question.** The public submit asks its gates (open, window, capacity, date claim, staff
+  code, replay) under the form's row lock and then calls the writer; the cart calls ONLY
+  the writer, after the shopper has paid, so a payment that lands after a close or at the
+  last place is still recorded. The writer never opens or reads a Stripe session, never
+  emails, and never settles: a card row is written unpaid, and the caller settles it with
+  `markPaid()` and emails only when that returns true. Do not add a gate to it.
 - **Charged from the row's snapshot** (`amount_due_minor`, `fee_covered_minor`,
   `total_minor`), written at submit by `App\Support\FormPayment`, the only
   float-to-cents conversion. Never recomputed at call time, and the lines are
@@ -502,6 +515,249 @@ and every money path treats them as someone else's record:
   spelling: DonationMetrics and the ledger/CSV apply it when no `source` is chosen, annual
   statements and ModuleFacts always. A new report of money received must start from it.
 - The webhook never sees them (no Stripe ids, `hist_…` idempotency keys).
+
+## The universal cart settles from the webhook — records exist ONLY ONCE PAID (DECISIONS.md 2026-09-28)
+
+One Checkout Session for a whole basket (`CartCheckoutService`), one signed webhook to
+settle it (`CartPaymentService` inbound, `CartSettlementService` in one transaction).
+Direct charge on the ONE connected account, exactly the rules above.
+
+- **Nothing is written for a line until the payment lands.** No pending form response, meal
+  order or donation exists while the shopper is on the card screen. The webhook creates
+  each record already paid, through the three writers, called unchanged and asking no
+  question: `FormResponseWriter::write()`, `MealOrderCreator::create()`,
+  `DonationService::createPendingDonation()`. A payment after a form closed or filled, a
+  menu closed or a fund was deactivated is STILL recorded (logged at warning). Do not add a
+  gate to a writer or to settlement.
+- **Snapshot at checkout, never re-ask at settlement.** `order_items.payload` and
+  `price_snapshot` are written when the page opens. A form's snapshot is
+  `FormPayment::quote($form, $answers, false, true)` and its total must equal the line's
+  charge or the checkout is refused. Settlement never re-quotes: a quote depends on the date
+  (tiers) and the card switch, and a null one would throw after the money was taken.
+  `payload` holds attendee names and is nulled by the staging scrub.
+- **Routing.** `metadata.cart_order_uuid` (the org's own account) or `metadata.cart_charge_ref`
+  (a holder's account). `StripeWebhookController::dispatch()` asks the cart question LAST,
+  only when no older question matched, so a cart event never books a Donation, a
+  registration, a meal order or a form response through an old arm, and no old payload routes
+  differently. Tenancy is `event.account`: own account = the masjid holding it, then the order
+  by uuid WITHIN that masjid; linked = the order by `charge_ref`, then `hash_equals` of the
+  pinned `charge_account_id` and of the recorded session id.
+- **Paid means `payment_status === 'paid'`.** `checkout.session.completed` and
+  `checkout.session.async_payment_succeeded` share a handler; `payment_intent.succeeded`
+  settles idempotently if the session event has not; `checkout.session.expired` moves
+  pending to expired only. **Production's Connect endpoint does NOT subscribe to
+  `checkout.session.expired`, `checkout.session.async_payment_succeeded`,
+  `checkout.session.async_payment_failed` or `payment_intent.payment_failed`** (ASSUMPTIONS
+  "PM-A6", checked 2026-09-30): there a basket's order never becomes `expired` through a
+  webhook, a delayed debit that succeeds still settles through `payment_intent.succeeded`, and
+  one that fails never arrives, so `cart:prune` is what clears a stale `pending` order. Do not
+  write code that waits for an `expired` order to appear. Refusals (no account, unknown account, foreign uuid, amount or
+  currency mismatch) are logged at warning and return 200: a retry could never succeed.
+- **Settlement is one `DB::transaction` on the default connection.** Lock the order row (paid:
+  return; a DIFFERENT payment intent on a paid order is a logged double charge, never recorded
+  over the first). Amount and currency must equal `orders.total_minor` / `currency`, else the
+  order stays pending and nothing is settled. Mark paid, then per line WITHOUT a `record_id`
+  (the per-line idempotency; keys `cart:item:<id>`, a shape the public form door's `^[A-Za-z0-9_-]{8,64}$` cannot produce): write, settle, link. A failure on any
+  line rolls back EVERYTHING and is rethrown, so the webhook answers 500 and Stripe retries a
+  paid basket that could not be recorded; that is the one place settlement throws.
+- **Forms:** lock the form row, `earlier()` then `write(..., LEG_ONLINE, $snapshot, [], key)`
+  with NO `reserveOn`, catching `UniqueConstraintViolationException` to answer with the first
+  row; `markPaid($pi)`. **Meals:** the menu is read `withTrashed`; a deleted dish keeps its
+  snapshot name and loses only its item id; `markPaid($pi)` under a row lock. **Donations:**
+  `markSucceeded()` with the basket's payment intent and `fee`/`net` left NULL (the basket's
+  one fee cannot be split honestly per line); the pending check is ours because
+  `markSucceeded()` has no guard; the donation's charged amount must equal the line's charge
+  so the receipt's gross is right; `ZakatDesignation` is still the only place zakat is decided.
+- **Emails and receipts go AFTER the commit, only for a line whose settle call returned
+  true**: `FormNotifier::submitted`, `LunchOrderMailer::confirmation` (claims its own send),
+  and the donation receipt through `ReceiptService` (delivered by the controller's existing
+  once-only `deliverReceipt`). Never from inside the transaction: a rollback would leave an
+  email for nothing.
+- **A paid basket is closed, but only of what it paid for.** Settlement locks the cart BEFORE the order
+  (checkout's order, so no deadlock) and, after the lines are recorded, removes from the cart ONLY the
+  lines this order paid for (matched by `buyable_type`, `buyable_id`, the canonical hash of the
+  line's payload, `order_items.cart_payload_hash`, stamped at checkout, AND the quantity, because
+  `POST /cart/acknowledge` edits a line's quantity in place and the payload hash does not see it; one
+  order line removes one cart line; ASSUMPTIONS #36 is closed), then sets `Cart::STATUS_CHECKED_OUT` only when nothing is left. A line added after the page
+  opened (page A paid as it expired, page B opened for X + Y) is never dropped unpaid. After the commit
+  it expires the cart's OTHER still-pending pages through `CartCheckoutService::closeOtherPages()` (the
+  checkout's own `closePage()`), so a page holding paid lines can never charge them again; a Stripe
+  failure there is logged, never thrown. `CartCheckoutService::checkout()` and `acknowledge()` refuse a
+  cart that is not open, and checkout refuses a basket whose fingerprint already has a PAID order on the
+  same cart (belt and braces). Never reopen a basket to "try again".
+- **The session event after the payment intent's backfills, and settles nothing.** When the order
+  is already paid and a session event carries `customer_details` or a session id
+  (`CartSettlementService::backfillLocked()`), it fills the donation's contact and session id and
+  a meal order's PLACEHOLDER name, phone and e-mail (never over a real value), then queues the
+  steps the intent had to skip: `linkFromCheckoutSession`, `issueFor` and the controller's
+  once-only `deliverReceipt()`, and `LunchOrderMailer::confirmation()` (claims its own send). A gift
+  that already has a contact queues nothing, so a replay does nothing. `CartSettlementResult::settled`
+  stays false for a backfill. **The donor link and the delivery are claimed atomically per line**
+  (`order_items.receipt_claimed_at`, `UPDATE ... WHERE receipt_claimed_at IS NULL`, in
+  `donorAndReceiptStep()`): both success events queue the step for one gift and the controller's
+  `deliverReceipt()` is check-then-send, so only the step that changed 1 row links the donor and hands
+  the receipt on. A step with no address and no contact yet claims nothing (it only issues the receipt);
+  a claim that delivers nothing, or fails, is released. `deliverReceipt()` is best-effort, so the step
+  hands the line's id back with the receipt and `StripeWebhookController::handleCartEvent()` releases
+  the claim (`CartSettlementService::releaseReceiptClaim()`) when `receipt_delivered_at` is still null
+  after the send; a delivered receipt keeps its claim. `deliverReceipt()` itself is unchanged except that
+  its two failure logs (the send, the PDF render) carry the exception CLASS and never its message: a
+  transport's message quotes the recipient (`DonationReceiptPdfTest` pins it).
+- **A linked basket's form row is pinned** in the settlement transaction: `charge_account_id` =
+  the order's pin, `charge_masjid_id` = the organisation holding that account, as
+  `FormResponseCheckoutService` pins a linked row. The pin gives staff the right refund instruction
+  (`FormChargeAccount::refundInstruction`); the row's `charge_ref` is left null (it is unique per row).
+  **The pin does NOT drive a per-row refund or dispute flag.**
+- **A refund or dispute on a basket's charge flags the ORDER, never a line.** A basket has one charge and
+  one payment intent; a partial refund's event says how much (`amount_refunded`), never which line.
+  `charge.refunded` / `charge.dispute.created` go to `CartPaymentService::handleChargeFlag()` BEFORE the
+  form arm: the order is found by its `stripe_payment_intent_id`, accepted only when its pinned account
+  equals `event.account` (`hash_equals`) and it belongs to the masjid holding that account (a linked
+  order belongs to the child, so a `charge_ref` order is accepted on its pinned account alone). It sets
+  `orders.charge_flag` (`refunded` | `partially_refunded` | `disputed`; a dispute is never downgraded),
+  `charge_refunded_minor` (the latest amount, never added to) and `charge_flagged_at`, and logs a WARNING
+  naming the order number and saying the lines cannot be attributed automatically, so staff reconcile it.
+  An order that names the payment but is NOT PAID yet is flagged all the same, with a WARNING saying it
+  was flagged before settlement recorded it (Stripe does not redeliver a refund or dispute); a charge no
+  order carries writes nothing and logs at INFO. An order names its payment ahead of settlement ONLY through
+  the checkout-SESSION event of the page the app opened (`recordPaymentIntent()`: the session id must equal
+  `orders.stripe_checkout_session_id`, and the intent is written once, `whereNull`, outside the settlement
+  transaction, so a refusal or a throw does not lose it). A `payment_intent.succeeded` records its intent only
+  when it settles the order: it names the order by metadata, which a holder's own users can write on their
+  account, so a stray or forged PaymentIntent must never take the write-once slot. Settlement records the
+  intent that PAID, replacing any other. The holder of `event.account` is the LIVE organisation,
+  a trashed one only when none is live (`CartPaymentService::accountHolder()`, shared with settlement).
+  Idempotent, never throws (the deploy-window table check, `CartTables::existsOrFail('orders')`, is inside the same
+  try/catch, so a database that cannot answer it is logged at error and cannot stop the form arm that runs next; the form arm's own check, `CartTables::has('order_items')`, fails safe: a check that throws reads as absent and the row is flagged as before the cart). `FormResponsePaymentService::handleChargeFlag()` excludes every form row an
+  `order_items` line points at (`record_type='form_response'`); every other row is one per payment intent
+  and behaves exactly as before.
+- **`amount_due` and `entry_count` on a cart form row are what checkout froze**
+  (`price_snapshot.legacy_amount_due`, `entry_count`, from the same cleaned answers), written over
+  the writer's live figures after `write()`. The writer is unchanged.
+- **Adaptive Pricing is off on every cart page** (`adaptive_pricing => ['enabled' => false]`, own
+  and linked). A `payment_intent.succeeded` in another currency than the order's is skipped at INFO
+  and left to the session event; only the session event may warn "did not match ... refund it".
+- Known limits: a meal line is one meal order per dish (one confirmation e-mail each); an
+  order opened without a buyer name or phone (a late or legacy one) takes the buyer's contact,
+  else the payer's Stripe details, else a plain label; an unknown line type or a form/fund/menu
+  hard-deleted since checkout fails the settlement loudly (retried, never half-recorded).
+
+### The public basket endpoints (slice 5, DECISIONS.md 2026-09-29)
+
+`CartsController` and `CartOrdersController` (routes/api_v1.php, prefix /api/v1) EXPOSE the
+services above. `CartLineAdder` adds a line; pricing, checkout and acknowledge are the
+services, called as they are. Rules a change here must keep:
+
+- **Dark by default.** Every route is behind the `cart.enabled` middleware
+  (`EnsureCartEnabled`): `config/cart.php` `enabled` (`CART_ENABLED`, false) and `masjid_ids`
+  (`CART_MASJID_IDS`; empty = every organisation once on; a malformed list fails CLOSED to
+  nobody). Off, or off for the header's organisation, is the router's own not-found exception:
+  the same bytes as an unknown route, before any throttle or query. The routes are registered
+  either way, so the route cache is the same. **The gate is FIRST in the SORTED stack:** Laravel
+  re-sorts a route's middleware by its priority list, where `ThrottleRequests` outranks the `api`
+  group's `SubstituteBindings`, so `bootstrap/app.php` ranks `EnsureCartEnabled` ahead of
+  `ThrottleRequests` (`prependToPriorityList`). Without that a dark cart ran the limiter closures
+  (database reads), wrote rate-limit rows, carried `X-RateLimit-*` on its 404 and answered 429 to the
+  21st `POST /carts` of an hour. `CartEndpointsGateTest` reads the sorted stack
+  (`Router::gatherRouteMiddleware`), never the order a route lists it in.
+- **The house `/api/v1` idiom.** Organisation = the `masjid-id` header int-cast (`<= 0` is
+  400), then `PublicTenant::exists()`. The routes bind no tenant, so EVERY query filters
+  `masjid_id` by hand (scope bypassed with `withoutMasjidScope()` on purpose) and every create
+  stamps it. Envelope `{status, message, data}`; a validation error is 422
+  `{status:'failed', data:{field:[...]}}` (form-encoded booleans coerced first).
+- **The token.** `POST /carts` returns 32 random bytes as hex ONCE, in the JSON body (CORS
+  exposes no response header) and never again. The database keeps `Cart::hashToken()`:
+  HMAC-SHA256 on `APP_KEY` (the FamilyInviteService construction, not a bare SHA-256), looked
+  up by indexed equality AND the header's organisation. A wrong token, another organisation's
+  basket, an expired one, a missing header and an offboarded organisation are ONE 404, byte for
+  byte. Sliding expiry: every successful write pushes `expires_at` `cart.ttl_days` out.
+- **A line is validated as its own door validates it, then PRICED before it is kept.** Form:
+  `withoutUnusedPriceAnswers`, `FormSchema::validator`, `only()` (the payload is the validated
+  answers); a form with `fileFields() !== []` is refused (422, one sentence). Meal: quantity
+  1..99, a catalogue line's pickup read in the ORGANISATION's timezone and stored as an
+  absolute instant. Donation: `amount_minor` 100..99999999, `zakat` only when the giver
+  answered, `recurring` refused. The line is inserted under the basket's row lock, the whole
+  basket is priced by `CartPricer`, and a line that comes back `gone` is rolled back and
+  refused with the source's own reason. At most `cart.max_lines` (25) lines.
+- **`client_line_key` is the replay guard** (`^[A-Za-z0-9_-]{8,64}$`, unique per basket): the
+  same key and request returns the line it made without validating or pricing again; the same
+  key with a different request (compared by the keyed `client_line_hash`) is a 409. A filled
+  `website` honeypot is a fake 200 that writes nothing.
+- **The door gates live in the line sources**, so checkout re-asks them: the `giving` module off
+  (`DonationLineSource`), the `jummah_lunch` capability off (`MealLineSource`), a form that
+  asks for a file (`FormLineSource`), and a form line whose answers reserve a date
+  (`FormLineSource::RESERVES_A_DATE`, `Form::reservedDateIn()`): the form door claims that date
+  under the form's lock and a basket settles with no hold, so the line is `gone` ("book that
+  date on the form's own page"), a 422 at add and a notice at checkout, while a line on the same
+  form that reserves nothing (the choice-priced "Individual Iftar") stays payable.
+  `canAcceptDonations()` is the payee rule (`CartPricer::ownAccount()`), not repeated.
+- **Checkout** takes `{buyer:{name,email,phone}, return_path, website}`: name
+  `required|max:120`, email `required|email:rfc|max:190`, phone `required|max:32` when the
+  basket has a dish, else optional. That read precedes the basket lock, so the endpoint also passes
+  `requirePhoneForMeals: true` and `CartCheckoutService::checkout()` asks it again UNDER the lock
+  (`PHONE_REQUIRED`, a 422): a dish another tab added in between is otherwise charged with no
+  number for the kitchen to ring. The return base is `FormPaymentReturn::base()` exactly as the
+  form door builds it; a refusal is its one message. A changed basket is a 409 whose body is the
+  priced view exactly as `GET /cart` returns it (each line's quantity, unit price and status, the
+  total, `notices` and `view_fingerprint`), so the page shows what it is asked to accept before
+  it acknowledges; any other refusal is a 422 sentence. An open page is handed back only for the
+  same basket AND the same buyer email (trimmed, case-insensitive): a corrected address closes
+  the old page as a changed basket does and opens a new one, so the page and the receipt carry
+  what was typed last. A page handed back still takes the name and phone typed last. The buyer
+  is frozen on `orders.buyer_name` / `buyer_phone` / `buyer_email`: settlement records a meal
+  order under them (over Stripe's, and over the `Online order N` placeholder, which stays the
+  fallback) and a gift's donor falls back to them when Stripe's `customer_details` lack them.
+  Staging anonymises both columns and NULLS `orders.basket_fingerprint` (an unsalted sha256 over the
+  answers, like `order_items.cart_payload_hash`); `MemberAccountDeletion` clears them on an unpaid order.
+- **The status read is payment state ONLY** (`GET /cart-orders/{uuid}`, `whereUuid`):
+  `{status: pending|paid|expired, order_number, total_minor, currency}`, built field by field.
+  The uuid is a bearer; the limiter is keyed by it (30/h) with a 300/min per-connection guard
+  for a made-up uuid, as the form status read is. The lunch and kitchen reads return a name and
+  sit on a per-IP limiter, so they are NOT the pattern.
+- **A fund a basket still needs cannot be deleted.** `FundsController::destroy` answers 409 while a
+  `donation` order line for the fund sits on a `pending` order, or on a `paid` order whose LINE has no
+  `record_id` yet: settlement of a gift line throws when its fund is gone (money taken, no gift). The
+  guard skips itself while the cart tables do not exist (the deploy window before `migrate`).
+- **The member portal is DARK behind its own switch** (`config/member_portal.php`,
+  `MEMBER_PORTAL_ENABLED` false, `MEMBER_PORTAL_MASJID_IDS` fail-closed like the cart's). The four `me/orders`,
+  `me/orders/{source}/{id}`, `me/gifts`, `me/receipts/{id}/pdf` routes carry `member.portal`
+  (`EnsureMemberPortalEnabled`, keyed on the ROUTE's `{masjid_id}`); off is the router's own 404,
+  ranked ahead of AUTHENTICATION (`prependToPriorityList(before: AuthenticatesRequests)`), not just the
+  throttles, so an unauthenticated probe cannot tell it from a missing route. It is also the same
+  status, headers and body: the gate throws a `DarkRouteException` after the route has matched, and
+  `MobileErrorEnvelope` (which puts `data:{}` on every other refusal of a `mobile.member.me.*` route)
+  skips that one class, so a dark route has no `data` key, like a path that matches no route. It stays dark until the
+  owner picks its client and answers ASSUMPTIONS #61 (a gift and a Wix order are listed by `contact_id`
+  alone). `MemberPortalGateTest` reads the sorted stack; a suite that drives the routes calls
+  `turnMemberPortalOn()`.
+- **The view says only what the page draws.** Never a line's payload (the answers), the payee
+  account, or any fingerprint but the one `acknowledge` needs.
+- **Throttles** (`AppServiceProvider`, limits in `config/cart.php`): `cart-create` 200/h per
+  IP|masjid (a festival venue is one Wi-Fi address, and an abandoned basket is one cheap row
+  `cart:prune` removes; `CART_CREATE_PER_HOUR`); `cart-write` (add, remove, acknowledge) 120/h, `cart-read` 600/h and
+  `cart-checkout` 20/h per token DIGEST, with a token that names no live basket sent to a
+  per-connection bucket of the same size instead; a 429 says the wait in its body.
+- **Retention.** `cart:prune` (daily 03:41) deletes OPEN baskets whose expiry is more than a
+  day past, lines and answers with them, unless a PENDING order's page could still be paid. A
+  payment that lands for an order whose basket is gone still settles and records every line:
+  settlement writes from `order_items`, never the basket, and `orders.cart_id` is nullOnDelete
+  (`CartPruneTest` proves it). It also deletes an UNPAID order, with its lines
+  (`order_items.order_id` cascades), because an order NEVER becomes `expired` on production (the
+  Connect endpoint does not subscribe to `checkout.session.expired`), so a `pending` one is swept
+  as well as an `expired` one. Both statuses follow ONE rule, on `checkout_expires_at`: with NO
+  payment intent on record it goes once its page closed more than 7 days ago
+  (`cart.prune.expired_order_days`); WITH an intent on record (written ahead of settlement by the
+  session event of its own page, or at settlement) only once it closed more than 30 days ago
+  (`cart.prune.pending_with_payment_days`, floor 7), because a delayed debit from an earlier page can
+  still be clearing (a shopper who checks out again expires the old order) and a debit that succeeded
+  would have settled through `payment_intent.succeeded`: an order still unpaid that long is a payment
+  to reconcile in Stripe. Exactly 7 or 30 days is kept. Each of those is logged at WARNING as it is
+  deleted, one WARNING per chunk of 100 listing EVERY order of the chunk (order number, organisation
+  id, payment intent, amount, currency; no buyer), because the rows are gone afterwards and that
+  line is what staff reconcile from. NEVER a `paid` order, and having an intent is not being paid
+  (only `status` says that). The baskets and orders hold the buyer's name, phone and email and the
+  attendee names in the lines. It prints its counts and logs them (`Log::info`, "Cart retention
+  sweep completed.", zeros included), because `schedule:run` discards stdout (`routes/console.php`).
 
 ## Tenancy note
 

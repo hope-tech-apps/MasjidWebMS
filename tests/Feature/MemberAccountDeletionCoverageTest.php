@@ -114,11 +114,18 @@ class MemberAccountDeletionCoverageTest extends TestCase
             // donations the same order produced.
             'historical_orders' => ['contact_id'],
             'meal_orders' => ['contact_id'],
+            // 2026-09-28: a cart checkout — a sale the organisation keeps, beside the
+            // other two sales above. Its unpaid basket is LOGIN plumbing instead.
+            'orders' => ['contact_id'],
             'registrants' => ['contact_id'],
             'registrations' => ['contact_id'],
         ], MemberAccountDeletion::OFFICE_RECORDS);
 
         $this->assertSame([
+            // 2026-09-27: an unpaid basket. Not a sale (a paid one becomes the
+            // office records above), and its items can carry attendee names, so
+            // it is cleared with the account rather than keeping the contact.
+            'carts' => ['contact_id'],
             'contact_login_codes' => ['contact_id'],
             // 2026-09-24: the office's 7-day portal invite links. Login
             // plumbing — a keyed digest, an address and three timestamps, and

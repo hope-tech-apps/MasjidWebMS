@@ -83,6 +83,76 @@ class DonationService
     }
 
     /**
+     * Persist a `pending` one-time donation row and NOTHING else: no Stripe
+     * Session, no Stripe call, no email. This is the row build that
+     * createDonationCheckout has always done before opening Stripe, moved here
+     * unchanged so a second caller can write the identical row.
+     *
+     * It deliberately re-checks NO gate. Whether giving is on, whether the org
+     * can take card gifts, whether the fund is active and the amount bounds are
+     * asked by the caller (DonationsController for the public door) BEFORE the
+     * shopper is sent to pay. The universal cart calls this AFTER the shopper
+     * has paid: money that has already moved must be recorded even if the fund
+     * was deactivated or giving was switched off in the meantime, so a gate here
+     * would turn a taken payment into an unrecorded one. A gate belongs in the
+     * caller, never in this write.
+     *
+     * masjid_id is set explicitly because the public flow runs UNBOUND (no
+     * tenant middleware), so the BelongsToMasjid creating hook does not stamp it.
+     *
+     * Zakat is decided in ONE place, App\Support\ZakatDesignation::resolve. The
+     * caller may pass only the giver's own answer (`zakat`, null = did not say);
+     * `is_zakat` and `zakat_source` are not options and are never read from
+     * $options, so nothing can set them around the rule.
+     *
+     * The two inputs a cart legitimately owns are optional; absent, they take the
+     * values the public door has always used:
+     *   - `application_fee_amount`: default self::applicationFee($intendedAmount).
+     *     Stored null when it is 0 or less (Stripe rejects a zero fee, and the
+     *     column has always been null rather than 0). A cart that takes ONE fee on
+     *     a shared payment passes its own apportioned figure, or 0 for none.
+     *   - `idempotency_key`: default 'checkout_' . a fresh uuid. Must be unique.
+     *
+     * The row is written with `source` at its DB default ('stripe') and no
+     * payment_method, which is the correct shape for a card gift; it is not an
+     * offline row. Settlement (markSucceeded, receipt) is the caller's job.
+     *
+     * @param  array{contact_id?:int|null,zakat?:bool|null,application_fee_amount?:int|null,idempotency_key?:string}  $options
+     */
+    public function createPendingDonation(
+        Masjid $masjid,
+        Fund $fund,
+        int $intendedAmount,
+        bool $donorCoversFees,
+        array $options = []
+    ): Donation {
+        $currency = strtolower((string) config('services.stripe.currency', 'usd'));
+
+        $chargedAmount = $donorCoversFees ? self::grossUp($intendedAmount) : $intendedAmount;
+        $applicationFee = array_key_exists('application_fee_amount', $options)
+            ? (int) $options['application_fee_amount']
+            : self::applicationFee($intendedAmount);
+        $idempotencyKey = $options['idempotency_key'] ?? 'checkout_' . Str::uuid();
+        $zakat = ZakatDesignation::resolve($options['zakat'] ?? null, $fund);
+
+        return Donation::create([
+            'masjid_id' => $masjid->id,
+            'contact_id' => $options['contact_id'] ?? null,
+            'fund_id' => $fund->id,
+            'type' => 'one_time',
+            'is_zakat' => $zakat['is_zakat'],
+            'zakat_source' => $zakat['zakat_source'],
+            'intended_amount' => $intendedAmount,
+            'charged_amount' => $chargedAmount,
+            'currency' => $currency,
+            'donor_covers_fees' => $donorCoversFees,
+            'status' => 'pending',
+            'application_fee_amount' => $applicationFee > 0 ? $applicationFee : null,
+            'idempotency_key' => $idempotencyKey,
+        ]);
+    }
+
+    /**
      * Persist a pending donation and open a Stripe Checkout Session for it as a
      * DIRECT charge on the masjid's connected account.
      *
@@ -102,31 +172,23 @@ class DonationService
         bool $donorCoversFees,
         array $options = []
     ): array {
-        $currency = strtolower((string) config('services.stripe.currency', 'usd'));
-
-        $chargedAmount = $donorCoversFees ? self::grossUp($intendedAmount) : $intendedAmount;
-        $applicationFee = self::applicationFee($intendedAmount);
-        $idempotencyKey = 'checkout_' . Str::uuid();
-        $zakat = ZakatDesignation::resolve($options['zakat'] ?? null, $fund);
-
-        // Persist BEFORE talking to Stripe. masjid_id is set explicitly because
-        // the public donation flow runs UNBOUND (no tenant middleware), so the
-        // BelongsToMasjid creating hook does not stamp it here.
-        $donation = Donation::create([
-            'masjid_id' => $masjid->id,
+        // Persist BEFORE talking to Stripe. The row build lives in
+        // createPendingDonation so the universal cart can write the same row
+        // without opening a Session of its own; every value below is read back
+        // off that row so this door and the cart cannot disagree about it.
+        $donation = $this->createPendingDonation($masjid, $fund, $intendedAmount, $donorCoversFees, [
             'contact_id' => $options['contact_id'] ?? null,
-            'fund_id' => $fund->id,
-            'type' => 'one_time',
-            'is_zakat' => $zakat['is_zakat'],
-            'zakat_source' => $zakat['zakat_source'],
-            'intended_amount' => $intendedAmount,
-            'charged_amount' => $chargedAmount,
-            'currency' => $currency,
-            'donor_covers_fees' => $donorCoversFees,
-            'status' => 'pending',
-            'application_fee_amount' => $applicationFee > 0 ? $applicationFee : null,
-            'idempotency_key' => $idempotencyKey,
+            'zakat' => $options['zakat'] ?? null,
         ]);
+
+        $currency = $donation->currency;
+        $chargedAmount = $donation->charged_amount;
+        $applicationFee = (int) $donation->application_fee_amount;
+        $idempotencyKey = $donation->idempotency_key;
+        $zakat = [
+            'is_zakat' => $donation->is_zakat,
+            'zakat_source' => $donation->zakat_source,
+        ];
 
         $paymentIntentData = [
             'metadata' => [

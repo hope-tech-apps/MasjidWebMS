@@ -294,7 +294,8 @@ from a controller.
   (401 from the guard or `member.active`, 403 from `family.tenant`, 429) gain
   `data: {}` through `App\Support\MobileErrorEnvelope`, hooked with
   `$exceptions->respond()` in bootstrap/app.php and matched on the route name
-  `mobile.member.me.*`. A new leaving route must carry that name prefix. The
+  `mobile.member.me.*`. A new leaving route must carry that name prefix, and so
+  must the member portal's read routes (orders, gifts, receipts). The
   member sign-in 410 carries `data` too. Other API routes' error bodies are
   deliberately unchanged.
 - **The public page is not a directory.** The picker is `Masjid::listed()` and

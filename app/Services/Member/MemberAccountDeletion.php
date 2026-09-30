@@ -3,12 +3,15 @@
 namespace App\Services\Member;
 
 use App\Models\AppSignupCode;
+use App\Models\Cart;
 use App\Models\Contact;
+use App\Models\Order;
 use App\Models\ContactLoginCode;
 use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
+use App\Support\CartTables;
 use App\Support\ContactIdentity;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
@@ -132,6 +135,10 @@ class MemberAccountDeletion
         // which the same order's gifts already sit in.
         'historical_orders' => ['contact_id'],
         'meal_orders' => ['contact_id'],
+        // 2026-09-28: a cart checkout — a sale the organisation keeps, like
+        // meal_orders and historical_orders. (Its unpaid BASKET is login plumbing,
+        // listed in LOGIN_RECORDS below and cleared with the account.)
+        'orders' => ['contact_id'],
         'registrants' => ['contact_id'],
         'registrations' => ['contact_id'],
     ];
@@ -140,7 +147,26 @@ class MemberAccountDeletion
      * Tables that hold a contact id but are the LOGIN's plumbing, which this
      * service clears itself. They never keep a contact.
      */
+    /**
+     * Office records that count only in a given state. An order is a sale only once it
+     * is PAID: an abandoned checkout — a page opened and never paid — is not a record
+     * the office keeps, and counting it would make a member who once pressed "pay" and
+     * walked away impossible to erase (checkout review, 2026-09-28).
+     *
+     * @var array<string, array<string, string>>
+     */
+    public const OFFICE_RECORD_CONDITIONS = [
+        'orders' => ['status' => 'paid'],
+    ];
+
     public const LOGIN_RECORDS = [
+        // 2026-09-27: an UNPAID basket. Not a sale — nothing in it is reserved,
+        // and once paid, the real office records (donations, form responses,
+        // meal orders) are created by their own services and listed above. What
+        // is left here is the shopper's own half-finished choice, whose items can
+        // hold attendee names, so it goes with the deletion. The FK cascades
+        // (carts.contact_id cascadeOnDelete) and cart_items cascade from carts.
+        'carts' => ['contact_id'],
         'contact_login_codes' => ['contact_id'],
         // The office's 7-day portal links (2026-09-24). Login plumbing, not an
         // office record: the row holds a keyed digest, an address and three
@@ -318,6 +344,31 @@ class MemberAccountDeletion
                 ->where('contact_id', $contact->id)
                 ->delete();
 
+            // Baskets are LOGIN plumbing. On the erased path the FK cascade clears them,
+            // but a KEPT contact is never force-deleted, so the cascade never fires and
+            // the unpaid basket — attendee names in its lines — would outlive the request.
+            // Delete them here, on both paths; cart_items go with them by cascade.
+            //
+            // Both steps ask first whether the cart's tables exist: bin/deploy makes this code
+            // live before `migrate`, and a member's Delete account (an App Store requirement)
+            // must not answer 500 in that window. With no table there is nothing to clear. The
+            // strict question, not the fail-safe one: this path deletes, and a check that could
+            // not be answered must roll the deletion back, never read as "no table, nothing to
+            // keep" (CartTables).
+            if (CartTables::existsOrFail('carts')) {
+                Cart::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('contact_id', $contact->id)
+                    ->delete();
+            }
+
+            // An abandoned checkout (never paid) is not a sale, so it keeps nothing — but
+            // it still carries the address, name and phone the shopper typed. Clear them. A
+            // PAID order is an office record and keeps its buyer, as meal_orders keep theirs.
+            if (CartTables::existsOrFail('orders')) {
+                $this->clearUnpaidCheckouts($contact);
+            }
+
             // App sign-in codes for whichever address could sign straight back in:
             // the proven one, or both when that is unknown.
             $codeAddresses = $proven !== null ? [$proven] : array_values(array_unique(array_filter([$address, $officeEmail])));
@@ -484,6 +535,69 @@ class MemberAccountDeletion
         return $this->delete($contact, $via, $ip, $email);
     }
 
+    /**
+     * Take the buyer's details off the member's UNPAID orders (pending or expired), in this
+     * organisation only. A paid order is a sale and is never touched here.
+     *
+     * Two ways an unpaid order is the member's:
+     *
+     *  - by id: `orders.contact_id`, for a basket opened while signed in;
+     *  - by address: the public basket endpoints always write `contact_id` NULL, so a member's own
+     *    abandoned checkout holds only what they typed. Its `buyer_email` is theirs when it is
+     *    EXACTLY their `login_email` or their `email`.
+     *
+     * "Exactly" is decided in PHP, not by the database. `buyer_email`, like `contacts.login_email`,
+     * is compared under `utf8mb4_unicode_ci` on production, where `victim@gmail.com` equals
+     * `victim@gmaíl.com`: the query is only a shortlist and ContactIdentity::keepExactMatches()
+     * drops the look-alikes, so a checkout typed at somebody else's look-alike address keeps its
+     * buyer, and this account's deletion never reaches into it.
+     *
+     * The lines' answers (`order_items.payload`) are left alone on purpose: a `pending` order can
+     * still be paid by a delayed method and settlement writes its records from them. `cart:prune`
+     * removes the whole order, lines included, once its page is long closed.
+     */
+    private function clearUnpaidCheckouts(Contact $contact): void
+    {
+        $cleared = ['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null];
+
+        Order::withoutMasjidScope()
+            ->where('masjid_id', $contact->masjid_id)
+            ->where('contact_id', $contact->id)
+            ->where('status', '!=', Order::STATUS_PAID)
+            ->update($cleared);
+
+        $addresses = [];
+
+        foreach ([$contact->login_email, $contact->email] as $address) {
+            $typed = $this->normalise($address);
+
+            if ($typed !== null) {
+                $addresses[$typed] = (string) $address;
+            }
+        }
+
+        foreach ($addresses as $shortlist => $address) {
+            $exact = ContactIdentity::keepExactMatches(
+                Order::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('status', '!=', Order::STATUS_PAID)
+                    ->whereNotNull('buyer_email')
+                    ->whereRaw('LOWER(buyer_email) = LOWER(?)', [$shortlist])
+                    ->get(['id', 'buyer_email']),
+                'buyer_email',
+                $address,
+            );
+
+            if ($exact->isNotEmpty()) {
+                Order::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('status', '!=', Order::STATUS_PAID)
+                    ->whereIn('id', $exact->pluck('id')->all())
+                    ->update($cleared);
+            }
+        }
+    }
+
     /** Lower-cased and trimmed, with an empty address read as none. */
     private function normalise(?string $address): ?string
     {
@@ -529,12 +643,25 @@ class MemberAccountDeletion
         // roster row is still the office's record, and model scopes would hide
         // both. Every query is keyed on this contact's id.
         foreach (self::OFFICE_RECORDS as $table => $columns) {
+            // A cart table that migrate has not created yet (the deploy window) holds nothing. A
+            // check that cannot be answered is not "holds nothing": a false "absent" here would
+            // skip the look at `orders` and let a member with paid orders be erased, so it throws.
+            if (in_array($table, CartTables::NAMES, true) && ! CartTables::existsOrFail($table)) {
+                continue;
+            }
+
             $held = DB::table($table)
                 ->where(function ($query) use ($columns, $contact) {
                     foreach ($columns as $column) {
                         $query->orWhere($column, $contact->id);
                     }
                 })
+                // Explicit rather than where([]): what an empty array does to a query is
+                // not something to rely on in the code that decides whose data survives.
+                ->when(
+                    isset(self::OFFICE_RECORD_CONDITIONS[$table]),
+                    fn ($query) => $query->where(self::OFFICE_RECORD_CONDITIONS[$table]),
+                )
                 ->exists();
 
             if ($held) {
