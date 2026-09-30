@@ -14,6 +14,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
@@ -83,8 +84,16 @@ class MintClassBucks extends Command
             if (! SchoolSettings::classStore($masjid)) {
                 $run['skipped_off']++;
 
-                if (! $dry && $this->pauseCounting($masjid)) {
-                    $run['paused']++;
+                // Inside the same per-organisation guard as the sweep: this runs for EVERY
+                // store-OFF organisation each hour (all of them until the grant is given), so one
+                // that throws must not fail the run (P4, the point's W5/W6 delta review).
+                try {
+                    if (! $dry && $this->pauseCounting($masjid)) {
+                        $run['paused']++;
+                    }
+                } catch (Throwable $e) {
+                    $run['failures']++;
+                    Log::warning('bucks:mint failed to pause organisation '.$masjid->id.': '.$e->getMessage());
                 }
 
                 continue;
@@ -126,6 +135,14 @@ class MintClassBucks extends Command
      */
     private function pauseCounting(Masjid $masjid): bool
     {
+        // THE DEPLOY WINDOW: the code goes out before `migrate` has run, and then
+        // `bucks_swept_at` does not exist yet. Reading it would throw on every store-OFF
+        // organisation, every hour, until the migration lands. Nothing has been swept with the
+        // store on before that column exists, so there is nothing to pause: skip.
+        if (! Schema::hasColumn('masjid_points_settings', 'bucks_swept_at')) {
+            return false;
+        }
+
         $row = MasjidPointsSetting::withoutMasjidScope()
             ->where('masjid_id', $masjid->id)
             ->whereNotNull('bucks_swept_at')

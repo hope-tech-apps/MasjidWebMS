@@ -499,8 +499,9 @@ class ClassStoreSchemaTest extends TestCase
         // 100200 (the converted-week stamp), 100300 (the rate, start day and paper switch) and
         // 100400 (each week's rate and points) run BEFORE 100100 in a rollback, so without their
         // own guard they would drop what the rows were worked out from and only then reach the
-        // ledger's refusal.
-        foreach ([2 => ['behavior_weeks', 'prizes_converted_at'], 3 => ['masjid_points_settings', 'points_per_buck'], 4 => ['prize_ledger_entries', 'week_rate']] as $i => [$table, $column]) {
+        // ledger's refusal. 100500 (the swept-with-the-store-on mark) is guarded the same way (P4, the
+        // point's W5/W6 delta review): dropping it would let the next sweep pay out a pause.
+        foreach ([2 => ['behavior_weeks', 'prizes_converted_at'], 3 => ['masjid_points_settings', 'points_per_buck'], 4 => ['prize_ledger_entries', 'week_rate'], 5 => ['masjid_points_settings', 'bucks_swept_at']] as $i => [$table, $column]) {
             $migration = require base_path(self::MIGRATIONS[$i]);
 
             try {

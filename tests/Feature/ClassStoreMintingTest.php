@@ -740,6 +740,34 @@ class ClassStoreMintingTest extends TestCase
         $this->assertNotNull(DB::table('masjid_points_settings')->where('masjid_id', $this->school->id)->value('bucks_swept_at'));
     }
 
+    #[Test]
+    public function new_code_before_migrate_does_not_throw_for_a_store_off_school_or_write_anything(): void
+    {
+        // THE DEPLOY WINDOW (P4, the point's W5/W6 delta review): the code is out and `migrate`
+        // has not run, so `bucks_swept_at` does not exist. Every store-OFF organisation used to make
+        // the hourly run throw.
+        $this->week1Points();
+        Schema::table('masjid_points_settings', fn ($t) => $t->dropColumn('bucks_swept_at'));
+        $this->assertFalse(Schema::hasColumn('masjid_points_settings', 'bucks_swept_at'));
+
+        // Store OFF everywhere: only the pause path runs.
+        $this->storeOn(null, false);
+        $before = DB::table('masjid_points_settings')->get()->map(fn ($r) => (array) $r)->all();
+
+        $this->assertStringContainsString('0 failure(s)', $this->mint(['--dry-run' => true]));
+        $this->assertStringContainsString('0 failure(s)', $this->mint());
+        $this->assertSame(0, PrizeLedgerEntry::query()->count());
+        $this->assertSame($before, DB::table('masjid_points_settings')->get()->map(fn ($r) => (array) $r)->all(), 'a settings row was written');
+
+        // Store ON beside it: that school's own sweep cannot write its mark either, and it is one
+        // school failing inside its guard, not the run. Exit 0, nothing minted.
+        $this->storeOn();
+        $this->assertSame(0, Artisan::call('bucks:mint', ['--dry-run' => true]));
+        $this->assertSame(0, Artisan::call('bucks:mint'));
+        $this->assertSame(0, PrizeLedgerEntry::query()->count());
+        $this->assertSame(0, DB::table('behavior_weeks')->whereNotNull('prizes_converted_at')->count());
+    }
+
     // --------------------------- review fixes: bucks_from is a day, and the frozen weeks
 
     #[Test]

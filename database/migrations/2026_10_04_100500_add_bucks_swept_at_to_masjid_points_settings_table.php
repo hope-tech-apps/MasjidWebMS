@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -28,6 +29,19 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Guarded like the other W6 migrations' down()s (2026_10_04_100200 to 100400): while any
+        // Manara Bucks ledger row exists, dropping this column would lose the mark that tells a
+        // paused school from one that was never on, and the next sweep would pay the weeks of a
+        // pause out in one run. A partial rollback refuses rather than quietly losing that.
+        $rows = Schema::hasTable('prize_ledger_entries') ? DB::table('prize_ledger_entries')->count() : 0;
+
+        if ($rows > 0) {
+            throw new RuntimeException(
+                "Refusing to roll back: {$rows} Manara Bucks ledger entr(ies) exist, and this migration holds "
+                .'the mark that a school was swept with the store on, which keeps a paused store from paying out the pause. The ledger is append-only: export and clear it deliberately first.'
+            );
+        }
+
         Schema::table('masjid_points_settings', function (Blueprint $table) {
             $table->dropColumn('bucks_swept_at');
         });
