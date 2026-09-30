@@ -645,11 +645,13 @@ class TeacherSubjectAccessTest extends TestCase
     }
 
     #[Test]
-    public function another_subjects_work_is_refused_exactly_as_untagged_work_is_status_and_body(): void
+    public function another_subjects_work_is_refused_exactly_as_untagged_work_and_as_a_missing_id_status_and_body(): void
     {
         $this->assign([GroupStaff::SUBJECT_QURAN]);
         $arabic = $this->work('Arabic quiz', 'Arabic Language');
         $untagged = $this->work('Old work', null);
+        // An id that names no work at all: what a walk of ids gets for every id that is not there.
+        $missing = (new ClassAssignment())->forceFill(['id' => $arabic->id + 1000]);
 
         $scores = ['scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 9]]];
         $edit = $this->body(['title' => 'Hijacked', 'subject' => "Qur'an"]);
@@ -661,17 +663,26 @@ class TeacherSubjectAccessTest extends TestCase
             'destroy' => fn (ClassAssignment $w) => $this->deleteJson($this->url("/assignments/{$w->id}")),
         ];
 
-        // Both with debug on (the test default: the message is the exception's own) and off (production's).
+        // The body a refusal sends, with the id the CALLER sent taken out of the one place it appears: debug mode
+        // echoes the model and that id ("No query results for model [...] 12"), and nothing else may differ.
+        $body = fn ($response, ClassAssignment $w): string => json_encode(
+            ['message' => str_replace((string) $w->id, '#', (string) $response->json('message'))] + $response->json()
+        );
+
+        // With debug on (the message is the exception's own, model and id included) and off (production's).
         foreach ([true, false] as $debug) {
             config(['app.debug' => $debug]);
 
             foreach ($calls as $verb => $call) {
                 $other = $call($arabic);
                 $none = $call($untagged);
+                $absent = $call($missing);
 
                 $this->assertSame(404, $other->getStatusCode(), "{$verb}: another subject's work");
                 $this->assertSame($none->getStatusCode(), $other->getStatusCode(), $verb);
-                $this->assertSame($none->getContent(), $other->getContent(), "{$verb}: byte for byte, debug ".json_encode($debug));
+                $this->assertSame($absent->getStatusCode(), $other->getStatusCode(), "{$verb}: a missing id");
+                $this->assertSame($body($none, $untagged), $body($other, $arabic), "{$verb}: untagged work, debug ".json_encode($debug));
+                $this->assertSame($body($absent, $missing), $body($other, $arabic), "{$verb}: a missing id, byte for byte, debug ".json_encode($debug));
                 $this->assertStringNotContainsString('Arabic', $other->getContent(), $verb);
             }
         }

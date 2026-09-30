@@ -22,6 +22,7 @@ use App\Support\SchoolSettings;
 use App\Support\SimpleMark;
 use App\Support\SubjectFence;
 use App\Support\SubjectKey;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -609,9 +610,10 @@ class GradebookController extends TeacherController
      * One piece of work of this class, by id, or a 404.
      *
      * To a limited teacher, work in a subject they do not teach and work with NO
-     * subject are the same thing: not there. Both answer the one plain 404 (status
-     * and body alike), so the refusal neither names a subject nor confirms that
-     * work exists behind the id (review F4, 2026-09-29). It used to be a 403 that
+     * subject are the same thing: not there. Both answer what an id that names no work
+     * answers (status and body alike, with debug on as well as off), so the refusal
+     * neither names a subject nor confirms that work exists behind the id (reviews F4
+     * and G3, 2026-09-29). It used to be a 403 that
      * said "You do not teach Arabic Language in this class", which told a Qur'an
      * teacher walking ids that Arabic work was there. The 403 stays for a subject
      * the teacher TYPES (`refuseWork`), which reveals nothing they did not write.
@@ -621,7 +623,10 @@ class GradebookController extends TeacherController
         $assignment = $group->assignments()->findOrFail($assignmentId);
 
         if (! SubjectFence::allows($limits, $assignment->subject_key)) {
-            abort(Response::HTTP_NOT_FOUND);
+            // The exception `findOrFail` above throws for an id that names nothing, not a bare
+            // abort(404): with debug on the body carries the model and the id, and a bare abort
+            // would answer differently to a missing id (review G3).
+            throw (new ModelNotFoundException())->setModel(ClassAssignment::class, [$assignmentId]);
         }
 
         return $assignment;
