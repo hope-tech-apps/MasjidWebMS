@@ -5818,3 +5818,60 @@ executed. They ran on the CI box on SQLite, 83/83 at 5690ed6f (the pre-rebase ti
 is still true, and is now what #47 says: CI's MySQL job runs migrations only, so the union, the shortlist keys and the
 `LOWER(TRIM())` comparisons have never executed on MySQL, and this fix round was written without PHP and has run on neither
 driver.
+
+## 2026-09-30 — Pre-merge fixes (group A)
+
+Off the ship-critic (`design/ship-critic-2026-09-30.json`), on `fix/cart-premerge-a` (base 3345ac28). Group B works the money path in a sibling worktree on disjoint files. Written without PHP: nothing here has run. Each fix has a NEW test that, read against the old code, fails without it; the last line of each says which.
+
+(A1) THE MEMBER PORTAL GOES DARK BEHIND A SWITCH, AND STAYS DARK UNTIL THE OWNER PICKS ITS CLIENT AND ANSWERS ASSUMPTIONS #61.
+`config/member_portal.php`: `enabled` (`MEMBER_PORTAL_ENABLED`, default false; a typo reads as off) and `masjid_ids`
+(`MEMBER_PORTAL_MASJID_IDS`; empty = every organisation once on; a malformed list becomes `[0]`, nobody, by the same parser
+as `config/cart.php`). `EnsureMemberPortalEnabled` (alias `member.portal`, on the `/me` group of `routes/api.php`) reads the
+ROUTE's `{masjid_id}` (these routes carry the organisation in the URL, unlike the cart's header) and throws the router's own
+`NotFoundHttpException`, so a dark route is the same bytes as an unknown one. It is ranked ahead of authentication with
+`prependToPriorityList(before: AuthenticatesRequests::class, ...)`: the cart gate was ranked ahead of `ThrottleRequests`, which
+outranks nothing above authentication, so a portal gate behind `auth:family` would answer an unauthenticated probe with a 401
+where a missing route answers 404. Alternatives: (a) unregister the routes when off, rejected because the route cache would
+then differ between states, as the cart's decision says; (b) a `crm`-style capability, rejected because the owner has not
+chosen a client and a per-organisation capability row is a production data change. The suites that drive the routes turn the
+portal on in their setUp (`BuildsMemberPortal::turnMemberPortalOn()`). Tests: `MemberPortalGateTest` (off is the router's 404
+with no token, a junk token and a real one; the token is never looked at (`last_used_at` stays null); the `mobile` limiter closure
+never runs; no rate-limit header; 35 calls never reach a 429; the SORTED stack from `Router::gatherRouteMiddleware` puts the gate
+before `Authenticate` and every `ThrottleRequests` on all four routes; the allowlist, the fail-closed `[0]`, the master switch over
+the allowlist, the route's id over a header), `MemberPortalConfigTest` (the env parser). Fails without the fix: every "off" test
+(there was no gate, so the routes answered 401/200).
+(A2) A FUND CANNOT BE DELETED WHILE A BASKET LINE STILL NEEDS IT. `FundsController::destroy` answers 409 with one sentence while an
+`order_items` row of type `donation` for that fund sits on a `pending` order, or on a `paid` order with `record_id` null (the
+LINE's `record_id`: `orders` has none). Settlement of a gift line throws when the fund is gone, and for a paid basket that is a
+payment taken with no gift recorded and a webhook Stripe retries for ever. Funds stay hard-deleted; deactivating is the answer the
+sentence gives. The check skips itself when the cart tables do not exist yet (the deploy window before `migrate`). Alternative:
+soft-deleting funds, rejected as a schema change to a table that the mobile app, receipts and reports all read. Tests:
+`FundDeleteBasketGuardTest` (pending refused, paid-unrecorded refused, paid-recorded / expired / another fund's line / a meal line
+with the same number / no basket at all still delete). Fails without the fix: the two refusals.
+(A3) THE STAGING SCRUB NULLS `orders.basket_fingerprint`, an unsalted sha256 over the same answers as `order_items.cart_payload_hash`
+(which was already nulled): a short answer set can be guessed back from it. It is only compared for equality at checkout, so NULL
+costs staging nothing. Test: `StagingScrubTest::a_baskets_fingerprint_never_reaches_staging`; `StagingScrubCoverageTest` needs no change
+(the name matches no PII token) and still holds (the column exists). Fails without the fix.
+(A4) `StripeWebhookController::deliverReceipt` LOGS THE EXCEPTION CLASS, NOT ITS MESSAGE, for a failed send and for a failed PDF render.
+A transport's message quotes the recipient ("550 no such user donor@example.org"). The donation id stays in the context, which is what
+staff need. It is the live donation path too, and the change is an improvement there. Test:
+`DonationReceiptPdfTest::a_failed_receipt_send_is_logged_by_class_and_never_quotes_the_recipient` (a transport whose refusal quotes the
+address, a `MessageLogged` listener as the spy). Fails without the fix.
+(A5) TEST ONLY: `FormSubmissionTest` now asserts the public door stores `device_id`, the request IP and the (1000-character) user agent on the
+FormResponse. The writer's own test hands it a made-up origin; dropping the door's `$origin` array left every door suite green. Passes
+against the code as it stands (it pins a behaviour that exists); it fails if the door stops passing the origin.
+(A6) `bin/deploy`'s "every application class is loadable" regex allows any run of `final|abstract|readonly`. Before it, `final readonly class`
+(12 files: the cart's line outcomes and sources, the settlement result, the Studio value objects, `FormCharge`) was skipped, so a broken
+autoload entry for one passed the gate. `grep -rlE '^(final |abstract )?(class|interface|trait|enum) ' app | wc -l` = 939 (before);
+`grep -rlE '^((final|abstract|readonly) +)*(class|interface|trait|enum) ' app | wc -l` = 951 (after). Test: `DeployClassGateRegexTest`
+reads the regex OUT of `bin/deploy` (no copy to drift) and checks every declaration form plus that no file under `app/` is skipped. Fails without
+the fix (the readonly forms and the whole-tree walk).
+(A7) `WixContactImport`'s UNDO CHECK APPLIES THE SAME CONDITIONS DELETION USES. `heldBy()` walked `OFFICE_RECORDS + LOGIN_RECORDS` without
+`OFFICE_RECORD_CONDITIONS`, so once the cart is on an unpaid or expired order would hold a contact against an undo, and so would an
+abandoned basket. Now an order counts only when `paid`, and `carts` is skipped (it cascades away with the contact, and a signed-in shopper's
+login columns hold the undo on their own). Tests: `WixContactImportTest::undo_is_not_held_by_an_unpaid_checkout_or_an_abandoned_basket` (fails
+without the fix), `undo_is_still_refused_once_an_imported_contact_has_a_paid_order` (passes with or without it: it pins the other direction).
+(A8) DOCS. ASSUMPTIONS #61 now covers the imported Wix orders as well as the gifts (both listed by `contact_id` alone); ASSUMPTIONS "PM-A6" records
+the Connect endpoint's subscription list and recommends the owner/ops call to add `checkout.session.expired` and `payment_intent.payment_failed`,
+noting the code has no `payment_intent.payment_failed` arm today; `.claude/rules/stripe-payments.md` "Universal cart" carries the portal
+switch, the fund-delete guard, the scrub, the log line and the subscription fact.
