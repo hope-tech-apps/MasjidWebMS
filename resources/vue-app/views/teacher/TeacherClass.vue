@@ -1266,7 +1266,7 @@
                                             @change="onWeekPick">
                                         <option :value="null">—</option>
                                         <option v-for="w in curriculum.weeks" :key="w.week_no" :value="w.week_no">
-                                            {{ w.week_no }} · {{ w.focus }}
+                                            {{ w.week_no }} · {{ w.focus }}{{ w.objective ? ` · ${w.objective}` : '' }}
                                         </option>
                                     </select>
                                     <input v-else v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
@@ -1451,7 +1451,7 @@
                                     <ul v-if="stdOpen === f.key && stdMatches.length" :id="`std-${f.key}-list`"
                                         role="listbox" class="list-group position-absolute w-100 shadow tc-std-list">
                                         <template v-for="(m, i) in stdMatches"
-                                                  :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`">
+                                                  :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}|${m.objective ?? ''}`">
                                             <!-- Where the form's own grade and subject end: a
                                                  heading, not an option, so it cannot be picked. -->
                                             <li v-if="!m.in_scope && (i === 0 || stdMatches[i - 1].in_scope)"
@@ -1471,6 +1471,7 @@
                                                 <span class="fw-semibold text-nowrap">{{ m.standard_code || 'No code' }}</span>
                                                 <span>{{ m.focus }}</span>
                                             </div>
+                                            <div v-if="m.objective" class="text-muted small" dir="auto">{{ m.objective }}</div>
                                             <div class="text-muted tc-std-meta">
                                                 {{ m.grade_label }} · {{ m.subject }} · {{ weeksLabel(m.weeks) }}
                                             </div>
@@ -2438,6 +2439,7 @@ import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-relat
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
+import { islamicIntegration, outcomeFill } from '@/core/helpers/lessonPlanPrefill';
 import {
     averageLines, blankWorkForm, effectiveWeight, fencedNote, firstFieldError, isCombinedGuideColumn, isUntyped, percentText, subjectLine, untypedInWork, untypedListNote, untypedNote,
     mayChangeWeights, NOT_AVERAGED, SIMPLE_SCALE, weightNote, weightsFormFrom, weightsRequest, workFormFrom, workFormReady, workRequest,
@@ -3083,6 +3085,21 @@ const autoFill = (k: string, v: unknown, typedIn = ''): boolean => {
     return value !== current;
 };
 
+/**
+ * The school's Learning Outcome onto the plan's outcomes list, under the same
+ * rule as autoFill (see outcomeFill): only where the teacher has written none or
+ * the guide wrote the only one there. True when the list changed.
+ */
+const autoFillOutcome = (outcome: unknown): boolean => {
+    if (planHidden.value.has('learning_outcomes')) return false;
+    const next = outcomeFill(planForm.value.learning_outcomes, outcome == null ? null : String(outcome),
+        autoFilled.value.learning_outcomes);
+    if (!next) return false;
+    planForm.value.learning_outcomes = next;
+    autoFilled.value.learning_outcomes = next[0];
+    return true;
+};
+
 /** Open every section the guide just wrote into, so a fill is never hidden. */
 const openFilledSections = () => {
     for (const sec of visiblePlanSections.value) {
@@ -3165,14 +3182,13 @@ const prefillFromGuide = async (auto = false) => {
         let wrote = autoFill('standard_code', cell.standard_code);
         wrote = autoFill('objective', cell.objective) || wrote;
         wrote = autoFill('assessment_formative', cell.assessment_formative) || wrote;
+        wrote = autoFillOutcome(cell.learning_outcome) || wrote;
 
         // Cross-subject integration, written from the same week's sibling cells
         // so a teacher is not asked to remember what Science is doing.
         const siblings = (cell.siblings ?? []) as { subject: string; focus: string }[];
-        const islamic = siblings.find((s) => /Qur|Islamic/i.test(s.subject));
-        wrote = autoFill('cross_integration_islamic', islamic?.focus) || wrote;
-        const others = siblings.filter((s) => s !== islamic)
-            .map((s) => `${s.subject}: ${s.focus}`).join('\n');
+        const { islamic, others } = islamicIntegration(siblings);
+        wrote = autoFill('cross_integration_islamic', islamic) || wrote;
         wrote = autoFill('cross_integration_subject', others) || wrote;
 
         // A saved plan's fields are the teacher's, so a week pick on it can
@@ -3325,7 +3341,10 @@ const pickStandard = async (m: any) => {
     // An uncoded row (the Islamic Studies column) clears the search text out
     // of the code box rather than leaving "wudu" standing as a standard.
     autoFill('standard_code', m.standard_code, typedIn);
-    autoFill('objective', m.focus);
+    // The school's own Objective where the row has one; the Focus Skill otherwise,
+    // as a week prefill does (CurriculumWeek::toPrefillArray).
+    autoFill('objective', m.objective ?? m.focus);
+    autoFillOutcome(m.learning_outcome);
     autoFill('assessment_formative', m.assessment_formative);
 
     const f = planForm.value;

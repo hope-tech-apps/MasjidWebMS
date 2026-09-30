@@ -24,7 +24,13 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * The subject list is DISTINCT over the tenant's own imported rows rather than a
  * constant, so the day the school authors an Arabic pacing column it appears in
- * the picker with no code change.
+ * the picker with no code change. That day has come: the school's separated
+ * Quarter 1 plan (Pre-K to Grade 2) gave Qur'an, Arabic Language and Islamic
+ * Studies their own weekly rows, each with the school's own Objective and
+ * Learning Outcome beside the Focus Skill.
+ *
+ * `objective` and `learning_outcome` are added to a payload ONLY when the row has
+ * them, so every row from the July guide answers byte for byte as it always did.
  */
 class CurriculumController extends TeacherController
 {
@@ -49,13 +55,13 @@ class CurriculumController extends TeacherController
             ? CurriculumWeek::query()
                 ->where('grade_label', $grade)->where('subject', $subject)
                 ->orderBy('week_no')
-                ->get(['week_no', 'quarter', 'focus', 'standard_code'])
+                ->get(['week_no', 'quarter', 'focus', 'objective', 'standard_code'])
                 ->map(fn (CurriculumWeek $w): array => [
                     'week_no' => (int) $w->week_no,
                     'quarter' => $w->quarter !== null ? (int) $w->quarter : null,
                     'focus' => $w->focus,
                     'standard_code' => $w->standard_code,
-                ])
+                ] + ($w->objective !== null ? ['objective' => $w->objective] : []))
             : collect();
 
         // The cell itself, only when all three are named. This is what the
@@ -190,8 +196,8 @@ class CurriculumController extends TeacherController
 
         $rows = CurriculumWeek::query()
             ->orderBy('grade_label')->orderBy('subject')->orderBy('week_no')
-            ->get(['grade_label', 'subject', 'week_no', 'quarter', 'focus',
-                'standard_code', 'assessment_note', 'source_label']);
+            ->get(['grade_label', 'subject', 'week_no', 'quarter', 'focus', 'objective',
+                'learning_outcome', 'standard_code', 'assessment_note', 'source_label']);
 
         // One suggestion per distinct wording of a standard. The guide repeats
         // a code across weeks, often with a different focus each time (a
@@ -208,7 +214,10 @@ class CurriculumController extends TeacherController
             }
 
             $codeMatched = $codeMatched || ($codeQuery && $score >= self::CODE_MATCH);
-            $key = implode("\0", [$row->grade_label, $row->subject, (string) $row->standard_code, $row->focus]);
+            // The objective is part of the wording: the school's plan repeats a
+            // code and focus ("K.QUR.MEM.1 Memorization") in two weeks with a
+            // different Objective each time, and those are two things to pick.
+            $key = implode("\0", [$row->grade_label, $row->subject, (string) $row->standard_code, $row->focus, (string) $row->objective]);
 
             if (! isset($found[$key])) {
                 $found[$key] = [
@@ -247,7 +256,7 @@ class CurriculumController extends TeacherController
                 /** @var CurriculumWeek $row */
                 $row = $f['row'];
 
-                return [
+                $match = [
                     'standard_code' => $row->standard_code,
                     // The guide's weekly focus, NOT the standard's official
                     // wording, which the guide does not carry.
@@ -264,6 +273,18 @@ class CurriculumController extends TeacherController
                     // not, so the list can say where its own suggestions end.
                     'in_scope' => $f['in_scope'],
                 ];
+
+                // The school's own Objective and Learning Outcome, only on the
+                // rows that have them, so an older row's payload is unchanged.
+                if ($row->objective !== null) {
+                    $match['objective'] = $row->objective;
+                }
+
+                if ($row->learning_outcome !== null) {
+                    $match['learning_outcome'] = $row->learning_outcome;
+                }
+
+                return $match;
             })
             ->values()
             ->all();
@@ -444,13 +465,14 @@ class CurriculumController extends TeacherController
             return 0;
         }
 
-        // Every typed word must meet a word of the row. The focus is the row's
-        // own words: a typed word meets one it starts ("fract" → "Fractions")
+        // Every typed word must meet a word of the row. The focus (with the
+        // Objective and Learning Outcome, where the school's plan gives them) is
+        // the row's own words: a typed word meets one it starts ("fract" → "Fractions")
         // or another form of it ("counting" → "Count", "tajweed" → "Tajwīd").
         // The grade and subject labels only narrow ("math fractions") and meet
         // by their start alone — as roots, "Pre-Kindergarten" would answer
         // every "pre…" and "Studies" every "student".
-        $focus = self::tokens((string) $row->focus);
+        $focus = self::tokens(trim($row->focus . ' ' . $row->objective . ' ' . $row->learning_outcome));
         $labels = self::tokens($row->subject . ' ' . $row->grade_label);
 
         $inFocus = false;

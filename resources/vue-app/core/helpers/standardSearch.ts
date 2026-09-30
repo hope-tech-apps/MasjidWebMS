@@ -25,6 +25,9 @@
 export interface StandardMatch {
     standard_code: string | null;
     focus: string;
+    /** The school's own Objective and Learning Outcome, present only on rows that have them. */
+    objective?: string | null;
+    learning_outcome?: string | null;
     grade_label: string;
     subject: string;
     weeks: number[];

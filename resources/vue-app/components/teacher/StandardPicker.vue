@@ -40,7 +40,7 @@
             <ul v-if="state.open && state.matches.length" :id="`${inputId}-list`" role="listbox"
                 class="list-group position-absolute w-100 shadow sp-list">
                 <template v-for="(m, i) in state.matches"
-                          :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}`">
+                          :key="`${m.grade_label}|${m.subject}|${m.standard_code}|${m.focus}|${m.objective ?? ''}`">
                     <li v-if="!m.in_scope && (i === 0 || state.matches[i - 1].in_scope)" role="presentation"
                         class="list-group-item py-1 px-2 text-uppercase text-muted fw-semibold sp-divider"
                         @mousedown.prevent>
@@ -55,6 +55,7 @@
                             <span class="fw-semibold text-nowrap">{{ m.standard_code || 'No code' }}</span>
                             <span dir="auto">{{ m.focus }}</span>
                         </div>
+                        <div v-if="m.objective" class="text-muted small" dir="auto">{{ m.objective }}</div>
                         <div class="text-muted sp-meta">{{ m.grade_label }} · {{ m.subject }} · {{ weeksLabel(m.weeks) }}</div>
                     </li>
                 </template>
