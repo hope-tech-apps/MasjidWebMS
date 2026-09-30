@@ -491,10 +491,12 @@ class CartPruneTest extends TestCase
         $paidWithIntent = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(400), 'pi_prune_paid'));
         $paidBare = $this->withLines($this->orderFor($cart, Order::STATUS_PAID, now()->subDays(400)));
 
-        $this->artisan('cart:prune')
-            ->expectsOutputToContain('Pruned 0 pending order(s) with no payment')
-            ->expectsOutputToContain('and 0 pending order(s) with a payment intent')
-            ->assertExitCode(0);
+        // Both phrases are on ONE output line, and expectsOutputToContain lets a line meet only one
+        // expectation, so the output is read once and each phrase asserted on it.
+        $this->assertSame(0, Artisan::call('cart:prune'));
+        $output = Artisan::output();
+        $this->assertStringContainsString('Pruned 0 pending order(s) with no payment', $output);
+        $this->assertStringContainsString('and 0 pending order(s) with a payment intent', $output);
 
         foreach ([$paidWithIntent, $paidBare] as $kept) {
             $this->assertNotNull(Order::withoutMasjidScope()->find($kept->id));

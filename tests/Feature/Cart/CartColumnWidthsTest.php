@@ -195,7 +195,7 @@ class CartColumnWidthsTest extends TestCase
         $this->assertSame(Order::CHARGE_FLAG_PARTIALLY_REFUNDED, $order->fresh()->charge_flag, 'premise: the partial refund was recorded');
 
         $declared = $this->declared();
-        $checked = 0;
+        $checked = [];
 
         foreach (['carts', 'cart_items', 'orders', 'order_items'] as $table) {
             foreach (DB::table($table)->get() as $row) {
@@ -204,7 +204,7 @@ class CartColumnWidthsTest extends TestCase
                         continue;
                     }
 
-                    $checked++;
+                    $checked[$table] = ($checked[$table] ?? 0) + 1;
                     $this->assertLessThanOrEqual(
                         $declared["{$table}.{$column}"],
                         mb_strlen($value),
@@ -214,6 +214,10 @@ class CartColumnWidthsTest extends TestCase
             }
         }
 
-        $this->assertGreaterThan(40, $checked, 'premise: the rows were read, so the loop above checked something');
+        // Premise: every one of the four tables contributed a checked value, so the loop above read
+        // real rows from each and did not pass by looking at nothing.
+        foreach (['carts', 'cart_items', 'orders', 'order_items'] as $table) {
+            $this->assertGreaterThan(0, $checked[$table] ?? 0, "premise: {$table} rows were read and checked");
+        }
     }
 }
