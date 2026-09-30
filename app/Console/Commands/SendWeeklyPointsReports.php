@@ -63,12 +63,15 @@ use Throwable;
  *
  * ## At most once, claimed in the database
  *
- * behavior_weeks is the claim (BehaviorWeek::claim): an insert-or-ignore then a
- * conditional UPDATE, so overlapping runs, a retried run and a second server cannot
- * send a class's report twice. The price is that a crash between the claim and the mail
- * loses that week's notice for that class rather than repeating it; the portal report
- * is there either way. A run that finds nobody to tell claims nothing, so a guardian
- * who signs in later that day is still picked up by the next hourly run.
+ * behavior_weeks is the claim (BehaviorWeek::claim): an insert that swallows ONLY a
+ * unique-key violation (the (group, week) row is already there), then a conditional
+ * UPDATE, so overlapping runs, a retried run and a second server cannot send a
+ * class's report twice. Any other failure of the insert is thrown and lands in the
+ * per-class handler below as a failure, never as "already sent". The price is that a
+ * crash between the claim and the mail loses that week's notice for that class rather
+ * than repeating it; the portal report is there either way. A run that finds nobody
+ * to tell claims nothing, so a guardian who signs in later that day is still picked up
+ * by the next hourly run.
  *
  * ## Fail-soft, and it leaves a trace
  *

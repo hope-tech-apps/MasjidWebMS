@@ -1597,6 +1597,38 @@ class WeeklyPointsReportTest extends TestCase
     }
 
     #[Test]
+    public function the_biss_schedule_row_is_stamped_with_one_instant_so_its_own_rollback_always_finds_it(): void
+    {
+        $migration = require base_path('database/migrations/2026_10_02_130000_seed_points_report_schedule_for_biss.php');
+
+        Masjid::forceCreate([
+            'id' => 18, 'name' => 'Burlington Islamic Sunday School', 'email' => 'x@y.test', 'phone' => '+15550000018',
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St', 'latitude' => 0.0, 'longitude' => 0.0,
+            'crm_enabled' => true, 'org_type' => 'school',
+        ]);
+
+        // A clock that moves a second every time it is read: the worst case of "two now() calls straddling a
+        // second". Two reads would stamp created_at and updated_at a second apart, and down()'s guard (a row
+        // saved since is not ours) would then take the seed's own row for someone else's and leave it.
+        $ticks = 0;
+        Carbon::setTestNow(function () use (&$ticks) {
+            return Carbon::parse('2026-10-01 12:00:00', 'UTC')->addSeconds($ticks++);
+        });
+
+        try {
+            $migration->up();
+            $row = DB::table('masjid_points_settings')->where('masjid_id', 18)->first();
+            $this->assertNotNull($row);
+            $this->assertSame($row->created_at, $row->updated_at, 'one instant for both stamps');
+
+            $migration->down();
+            $this->assertSame(0, DB::table('masjid_points_settings')->count(), 'its own rollback finds and removes the row');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    #[Test]
     public function the_biss_schedule_migration_refuses_a_non_school_and_a_deleted_organisation_even_with_the_right_name(): void
     {
         $migration = require base_path('database/migrations/2026_10_02_130000_seed_points_report_schedule_for_biss.php');

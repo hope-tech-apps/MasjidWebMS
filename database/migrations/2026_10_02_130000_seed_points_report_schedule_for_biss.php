@@ -47,12 +47,16 @@ return new class extends Migration
             return;
         }
 
+        // ONE instant for both stamps: two now() calls can straddle a second, and down() reads
+        // `updated_at != created_at` as "saved since", so it would skip the row it wrote.
+        $now = now();
+
         DB::table('masjid_points_settings')->insert([
             'masjid_id' => self::MASJID_ID,
             'report_weekday' => self::WEEKDAY,
             'report_time' => self::TIME,
-            'created_at' => now(),
-            'updated_at' => now(),
+            'created_at' => $now,
+            'updated_at' => $now,
         ]);
     }
 
