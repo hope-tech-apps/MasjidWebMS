@@ -30,12 +30,16 @@
             <button v-if="hasMore" type="button" class="btn btn-link btn-sm p-0 text-decoration-none" :disabled="moreBusy" @click="loadMore">
                 {{ t('bucks_more') }}
             </button>
+            <!-- Older lines that could not be read are said under the ones shown: the balance and the
+                 history already on screen are still true, so they stay. -->
+            <p v-if="moreFailed" class="text-danger small mb-0">{{ t('bucks_failed') }}</p>
         </template>
     </div>
 </template>
 
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
+import { appendPage } from '@/core/helpers/classStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
@@ -63,6 +67,7 @@ const entries = ref<any[]>([]);
 const page = ref(1);
 const lastPage = ref(1);
 const moreBusy = ref(false);
+const moreFailed = ref(false);
 let alive = true;
 onBeforeUnmount(() => { alive = false; });
 
@@ -112,14 +117,17 @@ async function load() {
 async function loadMore() {
     if (moreBusy.value || !hasMore.value) return;
     moreBusy.value = true;
+    moreFailed.value = false;
     try {
         const res = await fetchPage(page.value + 1);
         if (!res) return;
-        entries.value = entries.value.concat(rowsOf(res.data?.data));
+        // A line written since the first page was read (the hourly mint, a prize) pushes the pages
+        // along by one: the next page then starts with a line already shown, and it is not drawn twice.
+        entries.value = appendPage(entries.value, rowsOf(res.data?.data));
         page.value = Number(res.data?.data?.current_page ?? page.value + 1);
         lastPage.value = Number(res.data?.data?.last_page ?? lastPage.value);
     } catch {
-        if (alive) failed.value = true;
+        if (alive) moreFailed.value = true;
     } finally {
         moreBusy.value = false;
     }

@@ -126,6 +126,81 @@ test('teacher: a retry after a lost response sends the SAME request id; after a 
     screen.unmount();
 });
 
+test('teacher: a gift the server had already recorded (a replay) is said, so a second gift is not silently swallowed', async () => {
+    const { api } = teacherApi({ post: () => Promise.resolve(ok({ entry: {}, balance: 1, replayed: true })) });
+    const screen = await mountTeacher(api);
+
+    click(screen.button('Amira'));
+    await flush();
+    click(screen.button('Give'));
+    await flush();
+
+    assert.match(screen.text(), /already gone through, so no more Bucks were taken/);
+    screen.unmount();
+});
+
+/** A teacher API whose reads start failing the moment a write succeeds: the write stands, the reload does not. */
+function reloadFailsAfterWrite() {
+    let broken = false;
+    const answer = () => { broken = true; return Promise.resolve(ok({})); };
+    const t = teacherApi({
+        post: answer,
+        put: answer,
+        history: () => ok(page([{ ...line(7, -2), kind: 'redeemed', prize_title: 'Sticker', reversible: true }], 1, 1), { balance: 3 }),
+    });
+    const read = t.api.get;
+    t.api.get = async (url: string) => { if (broken) throw new Error('Network Error'); return read(url); };
+
+    return t;
+}
+
+test('teacher: an undo that went through but whose reload failed does not say it could not be undone', async () => {
+    const { api, calls } = reloadFailsAfterWrite();
+    const g = globalThis as any;
+    const hadWindow = 'window' in g;
+    const before = g.window;
+    g.window = { ...(before ?? {}), confirm: () => true };
+    try {
+        const screen = await mountTeacher(api);
+        click(screen.button('Amira'));
+        await flush();
+        click(screen.button('Undo'));
+        await flush();
+
+        assert.equal(calls.filter((c) => c.verb === 'post' && c.url.endsWith('/reverse')).length, 1);
+        assert.doesNotMatch(screen.text(), /could not be undone/);
+        assert.match(screen.text(), /That was undone, but the screen could not reload/);
+        screen.unmount();
+    } finally {
+        if (hadWindow) g.window = before; else delete g.window;
+    }
+});
+
+test('teacher: a prize added whose reload failed does not say it could not be saved', async () => {
+    const added = reloadFailsAfterWrite();
+    const screen = await mountTeacher(added.api);
+    const field = (id: string) => screen.all((n) => n.props.id === id)[0];
+    type(field('cs-title'), 'Kite');
+    type(field('cs-cost'), '3');
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+    assert.equal(added.calls.filter((c) => c.verb === 'post' && c.url.endsWith('/prizes')).length, 1);
+    assert.doesNotMatch(screen.text(), /could not be saved/);
+    assert.match(screen.text(), /That prize was saved, but the screen could not reload/);
+    screen.unmount();
+});
+
+test('teacher: a prize retired whose reload failed does not say it could not be changed', async () => {
+    const retired = reloadFailsAfterWrite();
+    const screen = await mountTeacher(retired.api);
+    click(screen.button('Retire'));
+    await flush();
+    assert.equal(retired.calls.filter((c) => c.verb === 'put').length, 1);
+    assert.doesNotMatch(screen.text(), /could not be changed/);
+    assert.match(screen.text(), /That prize was changed, but the screen could not reload/);
+    screen.unmount();
+});
+
 test('teacher: the students are buttons, so a keyboard reaches every one of them', async () => {
     const { api } = teacherApi();
     const screen = await mountTeacher(api);
@@ -202,6 +277,7 @@ function familyModules(api: any) {
     return {
         '@/core/services/FamilyApiService': { default: api, rowsOf: (n: any) => (Array.isArray(n) ? n : Array.isArray(n?.data) ? n.data : []) },
         '@/views/family/familyI18n': { useFamilyLang: () => ({ t: (k: string, x?: string) => (x ? `${k}(${x})` : k), locale: vue.ref('en') }) },
+        '@/core/helpers/classStore': classStore,
     };
 }
 
@@ -239,6 +315,26 @@ test('family: "show earlier" is one request per tap while it is busy, and a fail
     more.reject(new Error('Network Error'));
     await flush();
     assert.match(screen.text(), /bucks_failed/);
+    assert.match(screen.text(), /bucks_balance 4/, 'the balance already read is still true, so it stays');
+    assert.equal(screen.all((n) => n.tag === 'li').length, 1, 'and so does the history already shown');
+    screen.unmount();
+});
+
+test('family: "show earlier" never draws a line twice when a line was written between the pages', async () => {
+    const api = {
+        get: (url: string) => Promise.resolve(url.includes('?page=2&')
+            // One line was written after page 1 was read: page 2 starts with the last line already shown.
+            ? ok(page([line(76), line(75), line(74)], 2, 2), { balance: 4, points_per_buck: 1 })
+            : ok(page(Array.from({ length: 25 }, (_, i) => line(100 - i)), 1, 2), { balance: 4, points_per_buck: 1 })),
+    };
+    const screen = await mountSfc('views/family/FamilyBucks.vue', { base: '/api/family/masjids/1/groups/2', memberId: 11 }, familyModules(api));
+    await flush();
+    assert.equal(screen.all((n) => n.tag === 'li').length, 25);
+
+    click(screen.button('bucks_more'));
+    await flush();
+
+    assert.equal(screen.all((n) => n.tag === 'li').length, 27);
     screen.unmount();
 });
 

@@ -61,6 +61,7 @@
                             </li>
                         </ul>
                         <p v-if="giveError" class="text-danger small">{{ giveError }}</p>
+                        <p v-else-if="giveNote" class="text-muted small">{{ giveNote }}</p>
 
                         <template v-if="settings?.paper_bucks_enabled">
                             <h3 class="text-uppercase text-muted small">Pay out on paper</h3>
@@ -219,6 +220,8 @@ const historyMoreError = ref('');
 const balance = ref<number | null>(null);
 const busy = ref(false);
 const giveError = ref('');
+// Not an error: the server had already recorded this exact write (a replay), so nothing new was taken.
+const giveNote = ref('');
 const prizeError = ref('');
 const form = ref<PrizeForm>(blankPrizeForm());
 const editingId = ref<number | null>(null);
@@ -287,7 +290,7 @@ async function select(id: number, keepMessage = false) {
     historyMoreError.value = '';
     historyPage.value = 1;
     historyLastPage.value = 1;
-    if (!keepMessage) giveError.value = '';
+    if (!keepMessage) { giveError.value = ''; giveNote.value = ''; }
     balance.value = students.value.find((s) => s.membership_id === id)?.balance ?? null;
     try {
         const res = await TeacherApiService.get(`${props.base}/members/${id}/bucks?page=1&per_page=25`);
@@ -337,13 +340,18 @@ async function give(p: StorePrize) {
     const key = `redeem:${selectedId.value}:${p.id}`;
     busy.value = true;
     giveError.value = '';
+    giveNote.value = '';
     let saved = false;
     try {
         // One id per WRITE: a double-tap, or a retry after a lost response, is a replay on the server,
         // not a second deduction. The id is kept until the write succeeds or is refused for good.
-        await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/redeem`, { prize_id: p.id, request_id: requestIds.idFor(key) });
+        const res = await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/redeem`, { prize_id: p.id, request_id: requestIds.idFor(key) });
         requestIds.succeeded(key);
         saved = true;
+        // A replay answers with the row an earlier tap wrote (its response was lost). Said, so a
+        // teacher who meant a SECOND gift knows this one was not it; the id is spent, so the next
+        // tap is a new gift.
+        if (res?.data?.data?.replayed) giveNote.value = 'That gift had already gone through, so no more Bucks were taken. Give it again if you meant a second one.';
     } catch (e) {
         requestIds.failed(key, (e as any)?.response?.status);
         giveError.value = apiErrorText(e, 'That prize could not be given.');
@@ -364,11 +372,20 @@ async function undo(e: any) {
     if (busy.value || !window.confirm('Undo this? The Bucks go back to the student in a new line; the old line stays.')) return;
     busy.value = true;
     giveError.value = '';
+    giveNote.value = '';
+    let saved = false;
     try {
         await TeacherApiService.post(`${props.base}/prize-entries/${e.id}/reverse`, {});
-        await refresh();
+        saved = true;
     } catch (err) {
         giveError.value = apiErrorText(err, 'That could not be undone.');
+    }
+
+    try {
+        if (saved) await refresh();
+    } catch {
+        // The undo stands; only the reload failed. Saying it failed would be untrue.
+        giveError.value = 'That was undone, but the screen could not reload. Refresh the page to see the new balance.';
     } finally {
         busy.value = false;
     }
@@ -379,6 +396,7 @@ async function cashOut() {
     const key = `cashout:${selectedId.value}:${Number(cashAmount.value)}`;
     busy.value = true;
     giveError.value = '';
+    giveNote.value = '';
     let saved = false;
     try {
         await TeacherApiService.post(`${props.base}/members/${selectedId.value}/prizes/cash-out`, { amount: Number(cashAmount.value), request_id: requestIds.idFor(key) });
@@ -406,11 +424,12 @@ async function savePrize() {
     if (!prizeFormReady(form.value) || busy.value) return;
     busy.value = true;
     prizeError.value = '';
+    let saved = false;
     try {
         if (editingId.value === null) await TeacherApiService.post(`${props.base}/prizes`, prizeRequest(form.value));
         else await TeacherApiService.put(`${props.base}/prizes/${editingId.value}`, prizeEditRequest(form.value, editingFrom.value ?? { stock: null }));
+        saved = true;
         resetForm();
-        await refresh();
     } catch (e) {
         prizeError.value = apiErrorText(e, 'That prize could not be saved.');
         // The count moved under the form (a prize was given): the message says so, and the form now
@@ -421,6 +440,14 @@ async function savePrize() {
                 editingFrom.value = prizes.value.find((p) => p.id === editingId.value) ?? editingFrom.value;
             } catch { /* the message above already says what happened */ }
         }
+    }
+
+    try {
+        if (saved) await refresh();
+    } catch {
+        // Saved, and the form is already cleared: a teacher told it failed would add it again (a
+        // duplicate title the server refuses) or edit it twice.
+        prizeError.value = 'That prize was saved, but the screen could not reload. Refresh the page to see it.';
     } finally {
         busy.value = false;
     }
@@ -430,11 +457,18 @@ async function toggleActive(p: StorePrize) {
     if (busy.value) return;
     busy.value = true;
     prizeError.value = '';
+    let saved = false;
     try {
         await TeacherApiService.put(`${props.base}/prizes/${p.id}`, { is_active: !p.is_active });
-        await refresh();
+        saved = true;
     } catch (e) {
         prizeError.value = apiErrorText(e, 'That prize could not be changed.');
+    }
+
+    try {
+        if (saved) await refresh();
+    } catch {
+        prizeError.value = 'That prize was changed, but the screen could not reload. Refresh the page to see it.';
     } finally {
         busy.value = false;
     }
