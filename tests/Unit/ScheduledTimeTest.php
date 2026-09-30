@@ -80,4 +80,20 @@ class ScheduledTimeTest extends TestCase
             Carbon::setTestNow();
         }
     }
+
+    #[Test]
+    public function an_hour_that_happens_twice_when_the_clocks_go_back_is_its_first_occurrence(): void
+    {
+        // The point's W5 review, g. New York falls back at 02:00 EDT on 2026-11-01, so
+        // 01:30 happens twice: 05:30 UTC (EDT) and 06:30 UTC (EST). A teacher who picks
+        // 01:30 gets the first, and the answer is fixed, not whatever the server's zone says.
+        $at = ScheduledTime::parse('2026-11-01T01:30', self::NY);
+
+        $this->assertNotNull($at);
+        $this->assertSame('2026-11-01 05:30:00', $at->setTimezone('UTC')->format('Y-m-d H:i:s'));
+
+        // Either side of the repeated hour is unambiguous.
+        $this->assertSame('2026-11-01 04:59:00', ScheduledTime::parse('2026-11-01T00:59', self::NY)->setTimezone('UTC')->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-11-01 07:00:00', ScheduledTime::parse('2026-11-01T02:00', self::NY)->setTimezone('UTC')->format('Y-m-d H:i:s'));
+    }
 }

@@ -153,6 +153,22 @@ SELECT COUNT(*) FROM jobs WHERE payload LIKE '%BroadcastMail%';
 
 Both results empty (or held) means the rollback is safe for newsletters.
 
+## Rolling back scheduled stories and conversations (T-002.4)
+
+A **code-only** rollback past the scheduling release is not neutral: old code reads every story as out, so every
+story still waiting for its time becomes visible to families at once, and scheduled conversations simply stop being
+sent (nothing else sends them). Before rolling back:
+
+1. List what is waiting, per school: `php artisan groups:publish-due --dry-run` (read-only), and in tinker
+   `GroupPost::withoutMasjidScope()->whereNull('announced_at')->whereNull('publish_failed_at')->whereNull('deleted_at')->count()`
+   and `GroupMessageSchedule::withoutMasjidScope()->whereIn('status', ['scheduled', 'sending'])->count()`.
+2. With the office, either publish each waiting item now (Send now) or cancel it, so nothing is waiting.
+3. Only then roll back the code. To roll the schema back too, `migrate:rollback` the two scheduling migrations:
+   their `down()`s REFUSE while any story or conversation is still waiting or sending, so step 2 is enforced.
+
+The sweep runs every minute and logs one info line per run to the **monitors** channel; a story or conversation more
+than 10 minutes past its time and still not out is an ERROR on the default channel.
+
 ## Scheduler cron
 
 `routes/console.php` schedules `tokens:prune-expired` daily (keeps the

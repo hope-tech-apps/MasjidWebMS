@@ -25,6 +25,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -367,6 +368,14 @@ class ScheduledClassStoryTest extends TestCase
         ]);
 
         $this->assertNull(DB::table('group_posts')->find($id)->published_at);
+        $this->assertContains($id, $this->familyIds());
+
+        // And the sweep leaves it alone: it is neither claimed nor emailed (the point's W5 review, f).
+        Artisan::call('groups:publish-due');
+        $row = DB::table('group_posts')->find($id);
+        $this->assertNull($row->published_at);
+        $this->assertNull($row->announced_at);
+        $this->assertSame(0, $this->classStoryJobs());
         $this->assertContains($id, $this->familyIds());
     }
 
@@ -855,6 +864,23 @@ class ScheduledClassStoryTest extends TestCase
     }
 
     #[Test]
+    public function rolling_the_migration_back_refuses_while_a_story_is_still_waiting_to_go_out(): void
+    {
+        // The point's W5 review, a: dropping the columns would make it visible at once.
+        $this->scheduledPost('+2 days');
+        $migration = require database_path('migrations/2026_10_04_100000_add_scheduling_to_group_posts_table.php');
+
+        try {
+            $migration->down();
+            $this->fail('the rollback went ahead with a waiting story');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('still waiting to go out', $e->getMessage());
+        }
+
+        $this->assertTrue(Schema::hasColumn('group_posts', 'published_at'), 'nothing was dropped');
+    }
+
+    #[Test]
     public function a_story_is_invisible_to_a_school_that_did_not_write_it(): void
     {
         $a = $this->makeMasjid();
@@ -886,32 +912,6 @@ class ScheduledClassStoryTest extends TestCase
         $this->assertSame('Scheduled in Beta', GroupPost::withoutMasjidScope()->findOrFail($inB->id)->body);
     }
 
-    #[Test]
-    public function the_migration_stamps_every_existing_story_published_and_announced_on_the_day_it_was_written(): void
-    {
-        $migration = require database_path('migrations/2026_10_04_100000_add_scheduling_to_group_posts_table.php');
-
-        $migration->down();
-        $this->assertFalse(Schema::hasColumn('group_posts', 'published_at'));
-
-        $wrote = '2026-09-20 09:30:00';
-        DB::table('group_posts')->insert([
-            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
-            'body' => 'Live before the deploy', 'created_at' => $wrote, 'updated_at' => $wrote,
-        ]);
-        // A soft-deleted one too: the query builder does not apply the scope.
-        DB::table('group_posts')->insert([
-            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
-            'body' => 'Deleted before the deploy', 'created_at' => $wrote, 'updated_at' => $wrote, 'deleted_at' => $wrote,
-        ]);
-
-        $migration->up();
-
-        foreach (DB::table('group_posts')->get() as $row) {
-            $this->assertSame($wrote, $row->published_at, 'no story may be left without a published_at');
-            $this->assertSame($wrote, $row->announced_at, 'the first sweep must not announce a story that is already live');
-        }
-    }
 
     // ====================== OUTAGE: a late sweep delays a story, it never leaks one
 
@@ -1121,9 +1121,14 @@ class ScheduledClassStoryTest extends TestCase
             ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
         $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
 
-        // The day it goes out is allowed, and so is a later one.
+        // The day it goes out is refused too: the nightly purge (03:10 UTC) would delete it
+        // that morning, before it went out (the point's W5 review, item 2). The next day is fine.
         $this->asTeacher()
             ->postJson($this->teacherUrl('/posts'), ['body' => 'a', 'send_at' => '2026-10-20T10:00', 'retained_until' => '2026-10-20'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
+        $this->asTeacher()
+            ->postJson($this->teacherUrl('/posts'), ['body' => 'a', 'send_at' => '2026-10-20T10:00', 'retained_until' => '2026-10-21'])
             ->assertCreated();
 
         // Edit: an explicit window onto a waiting story that closes before it goes out.
@@ -1131,7 +1136,12 @@ class ScheduledClassStoryTest extends TestCase
         $this->asTeacher()
             ->putJson($this->teacherUrl("/posts/{$post->id}"), ['retained_until' => '2026-10-07'])
             ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
-        $this->assertSame('2026-10-20', $post->fresh()->retained_until->toDateString());
+        $this->assertSame('2026-10-21', $post->fresh()->retained_until->toDateString());
+
+        // Edit: a window closing ON the send day is refused as well.
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/posts/{$post->id}"), ['retained_until' => '2026-10-20'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
 
         // Edit: moving the story past a window the author chose.
         $this->asTeacher()
@@ -1144,6 +1154,30 @@ class ScheduledClassStoryTest extends TestCase
             ->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-28T10:00', 'retained_until' => '2027-01-01'])
             ->assertOk();
         $this->assertSame('2027-01-01', $post->fresh()->retained_until->toDateString());
+    }
+
+    #[Test]
+    public function the_nightly_purge_never_deletes_a_story_that_is_still_waiting_to_go_out(): void
+    {
+        // The point's W5 review, item 2: whatever its window says, a story that has not gone
+        // out is not purged. A cancelled or refused one is not waiting, so it still goes.
+        $waiting = $this->scheduledPost('+2 days');
+        $waiting->forceFill(['retained_until' => '2026-01-01'])->save();
+
+        $cancelled = $this->scheduledPost('+3 days', null, 'Cancelled one');
+        $cancelled->forceFill(['retained_until' => '2026-01-01'])->save();
+        $cancelled->delete();
+
+        $refused = $this->scheduledPost('+4 days', null, 'Refused one');
+        $refused->forceFill(['retained_until' => '2026-01-01', 'publish_failed_at' => now(), 'publish_failure' => 'The author no longer teaches this class.'])->save();
+
+        $out = $this->makePost();
+        $out->forceFill(['retained_until' => '2026-01-01'])->save();
+
+        $due = GroupPost::withoutMasjidScope()->dueForPurge()->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $expected = collect([$cancelled->id, $refused->id, $out->id])->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $this->assertSame($expected, $due);
+        $this->assertNotContains((int) $waiting->id, $due, 'a waiting story is never due for purge');
     }
 
     #[Test]
@@ -1222,5 +1256,33 @@ class ScheduledClassStoryTest extends TestCase
         $this->asTeacher()->deleteJson($this->teacherUrl("/posts/{$sixteenth}"))->assertOk();
 
         $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))->assertOk()->assertJsonCount(16, 'data.data');
+    }
+
+    #[Test]
+    public function a_parent_who_withdraws_consent_between_scheduling_and_sending_gets_nothing(): void
+    {
+        // The point's W5 review, item 10: right by construction (recipients are read when
+        // the email is sent, not when the story is scheduled); pinned here.
+        $later = $this->scheduledPost('+1 hour');
+        $this->withdrawConsent($this->parentB);
+
+        Carbon::setTestNow(now()->addHours(2));
+        Artisan::call('groups:publish-due');
+        $this->assertNotNull($later->fresh()->announced_at);
+        $this->assertSame(1, $this->classStoryJobs());
+
+        Mail::fake();
+        $job = Bus::dispatched(SendGroupNotificationJob::class)->first();
+        app()->call([$job, 'handle']);
+
+        $a = (string) $this->parentA->fresh()->login_email;
+        $b = (string) $this->parentB->fresh()->login_email;
+        Mail::assertSent(\App\Mail\GroupUpdateNudgeMail::class, fn ($m) => $m->hasTo($a));
+        Mail::assertNotSent(\App\Mail\GroupUpdateNudgeMail::class, fn ($m) => $m->hasTo($b));
+        $feed = $this->asParent($this->parentB)->getJson($this->familyUrl('/posts'));
+        $this->assertTrue(
+            $feed->status() === 403 || ! in_array((int) $later->id, array_map('intval', (array) $feed->json('data.data.*.id')), true),
+            'nor can they read it'
+        );
     }
 }

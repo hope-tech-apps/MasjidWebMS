@@ -15,6 +15,7 @@ use App\Models\GroupThreadRead;
 use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Groups\GroupThreadWriter;
+use App\Services\Groups\ScheduledSendGate;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -789,5 +790,114 @@ class ScheduledGroupMessageTest extends TestCase
         foreach ([$sentFuture, $failedFuture, $cancelledNull, $failedNull] as $kept) {
             $this->assertNotNull(GroupMessageSchedule::withoutMasjidScope()->find($kept->id), "{$kept->subject} was purged inside its window");
         }
+    }
+
+    // ============== the child is resolved once (the point's W5 review, item 1)
+
+    #[Test]
+    public function a_child_who_leaves_between_the_gate_and_the_write_fails_the_item_and_never_nudges_the_class(): void
+    {
+        $item = $this->schedule(null, $this->aboutChild());
+
+        // The race: the sweep's own look at the child finds nobody (they left a moment
+        // ago). Before the fix the write resolved the child a second time, got null, and
+        // opened a participant conversation about nobody, whose notice went to the whole
+        // class. Now that one answer is the one the write uses, so the item fails.
+        $gate = \Mockery::mock(ScheduledSendGate::class, [app(\App\Support\GroupAudience::class), app(GroupThreadWriter::class)])->makePartial();
+        $gate->shouldReceive('aboutMembership')->andReturnNull();
+        $this->app->instance(ScheduledSendGate::class, $gate);
+
+        Carbon::setTestNow(self::DUE);
+        Artisan::call('groups:publish-due');
+
+        $fresh = $item->fresh();
+        $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $fresh->status);
+        $this->assertNull($fresh->sent_thread_id);
+        $this->assertSame(0, GroupThread::withoutMasjidScope()->where('group_id', $this->class->id)->count(), 'no conversation about nobody');
+        Bus::assertNotDispatched(SendGroupNotificationJob::class);
+    }
+
+    #[Test]
+    public function the_writer_refuses_a_conversation_about_one_child_with_no_child(): void
+    {
+        app(TenantContext::class)->set($this->school->id);
+
+        try {
+            app(GroupThreadWriter::class)->open($this->class, (int) $this->teacher->id, 'About nobody', GroupThread::SCOPE_PARTICIPANT, null, 'Words');
+            $this->fail('a participant conversation with no participant was written');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('needs that child', $e->getMessage());
+        }
+
+        $this->assertSame(0, GroupThread::withoutMasjidScope()->where('group_id', $this->class->id)->count());
+        Bus::assertNotDispatched(SendGroupNotificationJob::class);
+    }
+
+    #[Test]
+    public function a_transient_database_error_while_writing_hands_the_item_back_and_the_next_run_sends_it(): void
+    {
+        // The point's W5 review, item 3: a deadlock used to fail the item for good.
+        $item = $this->schedule();
+
+        $pdo = new \PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock');
+        $pdo->errorInfo = ['40001', 1213, 'Deadlock found when trying to get lock; try restarting transaction'];
+        $deadlock = new \Illuminate\Database\QueryException('mysql', 'insert into group_threads ...', [], $pdo);
+
+        $writer = \Mockery::mock(GroupThreadWriter::class)->makePartial();
+        $writer->shouldReceive('open')->once()->andThrow($deadlock)->ordered();
+        $writer->shouldReceive('open')->passthru()->ordered();
+        $this->app->instance(GroupThreadWriter::class, $writer);
+
+        Carbon::setTestNow(self::DUE);
+        Artisan::call('groups:publish-due');
+
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status, 'a deadlock is not a failure');
+        $this->assertNull($item->fresh()->failure_reason);
+        $this->assertSame(0, GroupThread::withoutMasjidScope()->where('group_id', $this->class->id)->count(), 'the rolled-back write left nothing');
+
+        Carbon::setTestNow(Carbon::parse(self::DUE)->addMinute());
+        Artisan::call('groups:publish-due');
+
+        $this->assertSame(GroupMessageSchedule::STATUS_SENT, $item->fresh()->status);
+        $this->assertSame(1, GroupThread::withoutMasjidScope()->where('group_id', $this->class->id)->count());
+    }
+
+    #[Test]
+    public function any_other_error_while_writing_fails_the_item_with_a_reason_the_author_sees(): void
+    {
+        $item = $this->schedule();
+
+        $writer = \Mockery::mock(GroupThreadWriter::class)->makePartial();
+        $writer->shouldReceive('open')->andThrow(new \RuntimeException('disk full'));
+        $this->app->instance(GroupThreadWriter::class, $writer);
+
+        Carbon::setTestNow(self::DUE);
+        Artisan::call('groups:publish-due');
+
+        $fresh = $item->fresh();
+        $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $fresh->status);
+        $this->assertStringContainsString('could not be sent', (string) $fresh->failure_reason);
+        // The author's Scheduled list shows it, with the reason.
+        $this->asTeacher()->getJson($this->teacherUrl('/scheduled-messages'))
+            ->assertOk()->assertJsonPath('data.data.0.status', 'failed');
+    }
+
+    #[Test]
+    public function a_roster_merge_treats_a_conversation_scheduled_about_a_child_as_a_record_about_them(): void
+    {
+        // The point's W5 review, e: without this, a merge could drop the child's row and the
+        // pending conversation would fail silently at its time.
+        $item = $this->schedule(null, $this->aboutChild());
+        $membership = GroupMembership::withoutMasjidScope()->findOrFail($this->childA->id);
+        $merge = app(\App\Services\Groups\RosterMergeService::class);
+        $carries = new \ReflectionMethod($merge, 'carriesRecordsAboutAChild');
+
+        $this->assertTrue($carries->invoke($merge, $membership), 'a waiting conversation about the child is a record');
+
+        $item->forceFill(['status' => GroupMessageSchedule::STATUS_FAILED])->save();
+        $this->assertTrue($carries->invoke($merge, $membership), 'a failed one can be moved again, so it is still a record');
+
+        $item->forceFill(['status' => GroupMessageSchedule::STATUS_CANCELLED])->save();
+        $this->assertFalse($carries->invoke($merge, $membership), 'a cancelled one is not');
     }
 }

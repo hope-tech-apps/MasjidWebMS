@@ -397,16 +397,21 @@ class ScheduledSweepTest extends TestCase
     }
 
     #[Test]
-    public function every_run_writes_one_warning_line_and_leaves_the_tenant_as_it_found_it(): void
+    public function every_run_writes_one_info_line_to_the_monitors_channel_and_leaves_the_tenant_as_it_found_it(): void
     {
+        // The point's W5 review, item 6: the per-minute proof of run is info on the
+        // monitors channel, not a WARNING on the default one.
+        $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
         Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
         $tenant = app(TenantContext::class);
 
         $this->sweep();
 
-        Log::shouldHaveReceived('warning')->once()->withArgs(
+        $monitors->shouldHaveReceived('info')->once()->withArgs(
             fn ($message) => str_starts_with((string) $message, 'groups:publish-due:')
         );
+        Log::shouldNotHaveReceived('warning', [\Mockery::on(fn ($m) => str_starts_with((string) $m, 'groups:publish-due: stories'))]);
 
         // Unbound in, unbound out.
         $this->assertNull($tenant->get());
@@ -732,6 +737,7 @@ class ScheduledSweepTest extends TestCase
         });
 
         Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn(\Mockery::spy(\Psr\Log\LoggerInterface::class));
         $this->goTo(self::DUE);
         $this->sweep();
 
@@ -1068,6 +1074,7 @@ class ScheduledSweepTest extends TestCase
         $this->goTo(self::DUE);
 
         $gate = \Mockery::mock(ScheduledSendGate::class);
+        $gate->shouldReceive('aboutMembership')->andReturn(null);
         $gate->shouldReceive('authorRefusal')->andReturnUsing(function () use ($item): string {
             // The author cancels in the instant between the claim and the answer.
             GroupMessageSchedule::withoutMasjidScope()->whereKey($item->id)->update(['status' => GroupMessageSchedule::STATUS_CANCELLED]);
@@ -1081,5 +1088,27 @@ class ScheduledSweepTest extends TestCase
         $fresh = $item->fresh();
         $this->assertSame(GroupMessageSchedule::STATUS_CANCELLED, $fresh->status, 'a cancelled item was marked failed');
         $this->assertNull($fresh->failure_reason);
+    }
+
+    #[Test]
+    public function a_story_stuck_more_than_ten_minutes_past_its_time_is_an_error_somebody_sees(): void
+    {
+        // The point's W5 review, item 6. Simulate a story that keeps failing to be released.
+        $post = $this->scheduledPost('+1 minute');
+        $this->partialMock(\App\Services\Groups\GroupStoryPublisher::class, function ($mock) {
+            $mock->shouldReceive('announce')->andThrow(new \RuntimeException('queue down'));
+        });
+
+        Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn(\Mockery::spy(\Psr\Log\LoggerInterface::class));
+
+        $this->goTo(now()->addMinutes(5)->toDateTimeString());
+        $this->sweep();
+        Log::shouldNotHaveReceived('error', [\Mockery::on(fn ($m) => str_contains((string) $m, 'past their time'))]);
+
+        $this->goTo(now()->addMinutes(10)->toDateTimeString());
+        $this->sweep();
+        Log::shouldHaveReceived('error')->withArgs(fn ($m) => str_contains((string) $m, '1 scheduled stories and 0 scheduled conversations are more than 10 minutes past their time'));
+        $this->assertNull($post->fresh()->announced_at);
     }
 }

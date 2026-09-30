@@ -56,14 +56,20 @@ class GroupStoryPublisher
             return false;
         }
 
-        SendGroupNotificationJob::dispatch(
-            (int) $post->masjid_id,
-            (int) $post->group_id,
-            GroupNotificationEvent::CLASS_STORY,
-            aboutContactId: null,
-            authorUserId: $post->author_user_id !== null ? (int) $post->author_user_id : null,
-            authorContactId: null,
-        );
+        // The story is out (announced) by now. A queue that cannot take the email must
+        // not undo that or fail the run: log it loudly (the point's W5 review, item 4).
+        try {
+            SendGroupNotificationJob::dispatch(
+                (int) $post->masjid_id,
+                (int) $post->group_id,
+                GroupNotificationEvent::CLASS_STORY,
+                aboutContactId: null,
+                authorUserId: $post->author_user_id !== null ? (int) $post->author_user_id : null,
+                authorContactId: null,
+            );
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('groups: class story '.$post->getKey().' is out, but its email could not be queued ('.get_class($e).')');
+        }
 
         return true;
     }

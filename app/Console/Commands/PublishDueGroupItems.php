@@ -111,7 +111,14 @@ class PublishDueGroupItems extends Command
         );
 
         $this->info($line);
-        Log::warning($line);
+        // The proof that the sweep ran goes to the monitors channel at info: once a
+        // minute it is 1,440 lines a day, which would bury real warnings on the default
+        // channel (the point's W5 review, item 6).
+        Log::channel('monitors')->info($line);
+
+        if (! $dryRun) {
+            $this->warnIfStuck();
+        }
 
         return self::SUCCESS;
     }
@@ -216,11 +223,19 @@ class PublishDueGroupItems extends Command
         $this->withTenant((int) $item->masjid_id, function () use ($item, $gate, $writer, &$run): void {
             $group = Group::withoutMasjidScope()->find($item->group_id);
 
-            // 2. THE GATES, asked again now.
+            // 2. THE GATES, asked again now. The child is resolved ONCE and that same
+            // membership is what the write names: resolving it again for the write let a
+            // child who left in between reach open() as a participant conversation about
+            // nobody, whose notice then went to the whole class (the point's W5 review, 1).
+            $aboutId = $item->about_membership_id !== null ? (int) $item->about_membership_id : null;
+            $about = $group !== null ? $gate->aboutMembership($group, $aboutId) : null;
+
             $reason = $group === null
                 ? 'The class no longer exists.'
                 : ($gate->authorRefusal($item->author_user_id !== null ? (int) $item->author_user_id : null, $group)
-                    ?? $gate->aboutRefusal($group, $item->about_membership_id !== null ? (int) $item->about_membership_id : null, $item->isAboutOneChild()));
+                    ?? ($item->isAboutOneChild() && $about === null
+                        ? $gate->aboutRefusal($group, $aboutId, true) ?? 'The child has left the class or is no longer on its roster.'
+                        : null));
 
             if ($reason !== null) {
                 $this->markFailed($item, $reason);
@@ -236,7 +251,7 @@ class PublishDueGroupItems extends Command
                     (int) $item->author_user_id,
                     (string) $item->subject,
                     (string) $item->scope,
-                    $gate->aboutMembership($group, $item->about_membership_id !== null ? (int) $item->about_membership_id : null),
+                    $item->isAboutOneChild() ? $about : null,
                     (string) $item->body,
                     [],
                     null,
@@ -261,11 +276,80 @@ class PublishDueGroupItems extends Command
 
                 $run['sent']++;
             } catch (Throwable $e) {
+                // A deadlock or a lock-wait timeout says nothing about the item: the thread
+                // rolled back with the transaction, so hand it back for the next minute's run
+                // instead of failing it for good (the point's W5 review, item 3). Anything
+                // else fails it; the author sees it as "Not sent" with the reason in the
+                // Scheduled list, which is where they look after scheduling.
+                if ($this->isTransient($e)) {
+                    GroupMessageSchedule::withoutMasjidScope()
+                        ->whereKey($item->id)
+                        ->where('status', GroupMessageSchedule::STATUS_SENDING)
+                        ->update(['status' => GroupMessageSchedule::STATUS_SCHEDULED, 'updated_at' => now()]);
+                    $run['reclaimed']++;
+                    Log::warning('groups:publish-due: conversation '.$item->id.' hit a transient database error and goes again next run ('.get_class($e).')');
+
+                    return;
+                }
+
                 $this->markFailed($item, 'It could not be sent because of an error, so nothing was sent. Edit it to try again.');
                 $run['failed']++;
                 Log::warning('groups:publish-due: conversation '.$item->id.' failed to write ('.get_class($e).')');
             }
         });
+    }
+
+    /**
+     * A failure worth retrying rather than recording: MySQL deadlock (1213), lock-wait
+     * timeout (1205), serialization failure (SQLSTATE 40001), and SQLite's "database is
+     * locked". Walks the previous-exception chain, since the writer may wrap them.
+     */
+    private function isTransient(Throwable $e): bool
+    {
+        for ($x = $e; $x !== null; $x = $x->getPrevious()) {
+            if ($x instanceof \Illuminate\Database\QueryException || $x instanceof \PDOException) {
+                $info = $x instanceof \Illuminate\Database\QueryException ? $x->errorInfo : ($x->errorInfo ?? null);
+                $state = (string) ($info[0] ?? $x->getCode());
+                $driverCode = (int) ($info[1] ?? 0);
+
+                if ($state === '40001' || in_array($driverCode, [1205, 1213], true)
+                    || str_contains(strtolower($x->getMessage()), 'database is locked')) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The sweep now decides when a story becomes visible, so an item that is well past
+     * its time and still not out is a fault somebody must hear about: an ERROR on the
+     * default channel (the point's W5 review, item 6). Ten minutes is ten missed runs.
+     * A cron that has stopped altogether runs nothing, this included; the monitors line
+     * above going quiet is that signal.
+     */
+    private function warnIfStuck(): void
+    {
+        $cutoff = now()->subMinutes(10);
+
+        $stories = GroupPost::withoutMasjidScope()
+            ->whereNull('announced_at')
+            ->whereNull('publish_failed_at')
+            ->where('published_at', '<=', $cutoff)
+            ->count();
+
+        $conversations = GroupMessageSchedule::withoutMasjidScope()
+            ->where('status', GroupMessageSchedule::STATUS_SCHEDULED)
+            ->where('send_at', '<=', $cutoff)
+            ->count();
+
+        if ($stories + $conversations > 0) {
+            Log::error(sprintf(
+                'groups:publish-due: %d scheduled stories and %d scheduled conversations are more than 10 minutes past their time and still not out',
+                $stories, $conversations
+            ));
+        }
     }
 
     private function markFailed(GroupMessageSchedule $item, string $reason): void

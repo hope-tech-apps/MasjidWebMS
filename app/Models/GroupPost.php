@@ -261,7 +261,15 @@ class GroupPost extends Model
     {
         return $query->withTrashed()
             ->whereNotNull('retained_until')
-            ->whereDate('retained_until', '<=', $asOf ?? now()->toDateString());
+            ->whereDate('retained_until', '<=', $asOf ?? now()->toDateString())
+            // Never a story still waiting to go out: its window may close before its
+            // day through a legacy row or a bug, and deleting it would be silent. A
+            // cancelled (trashed) or refused one is not waiting, so it still goes.
+            ->where(function (Builder $q): void {
+                $q->whereNotNull('announced_at')
+                    ->orWhereNotNull('deleted_at')
+                    ->orWhereNotNull('publish_failed_at');
+            });
     }
 
     /**

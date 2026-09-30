@@ -89,9 +89,12 @@ Schedule::command('groups:purge-feed')->dailyAt('03:10')->withoutOverlapping();
 Schedule::command('groups:notify-reactions')->hourlyAt(20)->withoutOverlapping(55);
 
 // Scheduled class stories and new conversations (T-002.4, 2026-09-29): "Send later".
-// Every minute, because a teacher who says 07:30 means 07:30. A STORY is visible to
-// families by the clock alone (GroupPost::scopePublished); this sweep refuses one whose
-// author left the class BEFORE its time and sends the class-story email once it is out.
+// Every minute, because a teacher who says 07:30 means 07:30. A STORY is out only once
+// this sweep has announced it (GroupPost::scopePublished asks published_at <= now AND
+// announced_at): it refuses one whose author left the class and, for the rest, stamps
+// announced_at and sends the class-story email. A stopped sweep delays stories; it never
+// leaks one. Its run line goes to the monitors channel; a story stuck 10 minutes past its
+// time is an ERROR.
 // A CONVERSATION exists only because this sweep writes it, at its time, through the same
 // writer a live one uses, after asking its gates again. Both are claimed by an UPDATE, so
 // an overlapping run sends nothing twice. withoutOverlapping(5), not the bare call: a run

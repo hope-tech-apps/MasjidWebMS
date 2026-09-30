@@ -804,6 +804,13 @@ class RosterMergeService
                 // the FK nulls at the database regardless of that column.
                 ->withTrashed()
                 ->where('about_membership_id', $membership->getKey())
+                ->exists()
+            // A conversation SCHEDULED about this child (T-002.4; waiting, sending, or
+            // failed and able to be moved) is a record about them too: merging the row away would leave it naming nobody, and the send
+            // gate would then refuse it silently at its time (the point's W5 review, e).
+            || \App\Models\GroupMessageSchedule::withoutMasjidScope()
+                ->where('about_membership_id', $membership->getKey())
+                ->whereIn('status', [\App\Models\GroupMessageSchedule::STATUS_SCHEDULED, \App\Models\GroupMessageSchedule::STATUS_SENDING, \App\Models\GroupMessageSchedule::STATUS_FAILED])
                 ->exists();
     }
 

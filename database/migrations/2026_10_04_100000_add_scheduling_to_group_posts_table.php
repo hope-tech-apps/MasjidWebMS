@@ -11,10 +11,12 @@ use Illuminate\Support\Facades\Schema;
  *
  * FOUR NULLABLE COLUMNS ON group_posts, and what each one means:
  *
- *   published_at       WHEN FAMILIES MAY SEE IT. Every family read goes through
- *                      GroupPost::scopePublished(), which asks `published_at <= now`, so
- *                      a story in the future is invisible by the clock, whether or not
- *                      any sweep has run. An ordinary post is stamped "now" by the model.
+ *   published_at       WHEN IT IS DUE. Every family read goes through
+ *                      GroupPost::scopePublished(), which asks `published_at <= now` AND
+ *                      `announced_at IS NOT NULL` (since the review-fix round): a
+ *                      scheduled story is out only once the sweep has announced it, so a
+ *                      sweep that has not run delays a story and can never leak one. An
+ *                      ordinary post is stamped "now" and announced by the model.
  *   announced_at       WHEN THE CLASS-STORY EMAIL WAS DISPATCHED. NULL = not yet. The
  *                      `groups:publish-due` sweep claims a due story with an UPDATE
  *                      guarded by `announced_at IS NULL`, so it is announced at most once.
@@ -25,10 +27,14 @@ use Illuminate\Support\Facades\Schema;
  *
  * NULLABLE, NOT NOT NULL DEFAULT (a deviation from the first plan, RECON-PLAN section
  * 3.1 rule 4): a NOT NULL `published_at` needs `->change()` on a live table, which
- * SQLite rebuilds; and during the deploy seconds an old-code INSERT that knows nothing
- * of the column must still succeed. The model always sets it, and the scope reads a NULL
- * as "published" (a legacy row), so an old-code insert is visible at once, exactly as it
- * was before this migration.
+ * SQLite rebuilds; and after a CODE-ONLY rollback, old code that knows nothing of the
+ * column must still insert. The model always sets it, and the scope reads a NULL as
+ * "published" (a legacy row).
+ *
+ * THE DEPLOY WINDOW runs the other way (the point's W5 review, b): bin/deploy checks out
+ * the NEW code before it migrates, so for a few seconds new code runs on the OLD schema
+ * and every family read that selects `published_at` fails until this migration finishes.
+ * Ship it after school hours (groups.md, DECISIONS).
  *
  * BACKFILL: `published_at` and `announced_at` both become `created_at` on every existing
  * row, soft-deleted ones included (the query builder does not apply the SoftDeletes
@@ -69,6 +75,20 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Dropping these columns makes every waiting story visible at once (the scope
+        // goes back to "everything"), so refuse while any story is still waiting or due
+        // and unannounced (the point's W5 review, a). Cancel or publish them first.
+        $waiting = DB::table('group_posts')
+            ->whereNull('deleted_at')
+            ->whereNull('announced_at')
+            ->whereNull('publish_failed_at')
+            ->whereNotNull('published_at')
+            ->count();
+
+        if ($waiting > 0) {
+            throw new \RuntimeException("Refusing to roll back scheduled stories: {$waiting} story(ies) still waiting to go out would become visible at once. Cancel or publish them first.");
+        }
+
         Schema::table('group_posts', function (Blueprint $table) {
             $table->dropIndex('group_posts_masjid_group_published_idx');
             $table->dropIndex('group_posts_announce_due_idx');

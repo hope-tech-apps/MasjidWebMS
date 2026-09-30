@@ -70,6 +70,12 @@ class GroupThreadWriter
         ?string $retainedUntil = null,
         ?callable $inTransaction = null,
     ): array {
+        // A conversation about one child with no child would be addressed to nobody in
+        // particular, and its notice would fall to the whole class. Never write one.
+        if ($scope === GroupThread::SCOPE_PARTICIPANT && $about === null) {
+            throw new \InvalidArgumentException('A conversation about one child needs that child.');
+        }
+
         $hasFirstMessage = ($body !== null && trim($body) !== '') || $uploads !== [];
 
         [$thread, $message] = DB::transaction(function () use (
@@ -117,14 +123,23 @@ class GroupThreadWriter
         // guardian(s); a group-wide thread reaches the feed audience (the job decides
         // from aboutContactId). afterCommit + fail-soft.
         if ($hasFirstMessage) {
-            SendGroupNotificationJob::dispatch(
-                (int) $group->masjid_id,
-                (int) $group->id,
-                GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
-                aboutContactId: $about?->contact_id,
-                authorUserId: $authorUserId,
-                authorContactId: null,
-            )->afterCommit();
+            // The conversation is written and committed by now. A queue that cannot take
+            // the notice must not turn a SENT conversation into an error for the caller
+            // (the sweep would count it failed): log it loudly and go on (the point's W5
+            // review, item 4). The notice for that one conversation is lost; the log line
+            // names it.
+            try {
+                SendGroupNotificationJob::dispatch(
+                    (int) $group->masjid_id,
+                    (int) $group->id,
+                    GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
+                    aboutContactId: $about?->contact_id,
+                    authorUserId: $authorUserId,
+                    authorContactId: null,
+                )->afterCommit();
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('groups: conversation '.$thread->id.' was sent, but its email notice could not be queued ('.get_class($e).')');
+            }
         }
 
         return [$thread, $message];

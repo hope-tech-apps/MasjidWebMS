@@ -223,7 +223,12 @@ class GroupPostsController extends Controller
             //
             // NOT for a scheduled story: nobody may hear of it before they can read
             // it. `groups:publish-due` sends this same email when its time comes.
-            if ($sendAt === null) {
+            //
+            // Decided from the SAVED row, not from the request: a story timed for the
+            // minute that turns between validation and INSERT is announced by the
+            // model's creating hook, and the sweep will then never claim it, so the
+            // email is ours to send (the point's W5 review, item 5).
+            if ($post->announced_at !== null) {
                 SendGroupNotificationJob::dispatch(
                     (int) $group->masjid_id,
                     (int) $group->id,
@@ -306,10 +311,10 @@ class GroupPostsController extends Controller
         if ($goesOutAt !== null
             && ($moves || array_key_exists('retained_until', $fields))
             && $keptUntil !== null
-            && Carbon::parse($keptUntil)->toDateString() < $goesOutAt->toDateString()) {
+            && Carbon::parse($keptUntil)->toDateString() <= $goesOutAt->toDateString()) {
             return response()->json([
                 'status' => 'failed',
-                'data' => ['retained_until' => ['Keep it until the day it goes out or later, or it would be deleted before anybody read it.']],
+                'data' => ['retained_until' => ['Keep it until after the day it goes out, or the overnight clean-up could delete it before anybody read it.']],
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

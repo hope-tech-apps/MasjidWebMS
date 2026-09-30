@@ -199,7 +199,17 @@ class GroupMessageSchedulesController extends Controller
             ->update($fields + ['updated_at' => now()]);
 
         if ($changed !== 1) {
-            return $this->noLongerEditable($item->fresh());
+            // MySQL counts CHANGED rows, not matched ones: an identical re-save in the
+            // same second (a double-clicked Send now) changes nothing and reports 0. So
+            // the count alone cannot say "a sweep took it"; the row can (the point's W5
+            // review, item 7). Still waiting or failed = our no-op; anything else = gone.
+            $fresh = $item->fresh(['author:id,name', 'aboutMembership.contact:id,first_name,last_name']);
+
+            if ($fresh !== null && in_array($fresh->status, [GroupMessageSchedule::STATUS_SCHEDULED, GroupMessageSchedule::STATUS_FAILED], true)) {
+                return $this->respond($fresh, $request->user());
+            }
+
+            return $this->noLongerEditable($fresh ?? $item);
         }
 
         return $this->respond($item->fresh(['author:id,name', 'aboutMembership.contact:id,first_name,last_name']), $request->user());

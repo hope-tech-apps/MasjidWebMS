@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -81,6 +82,16 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Dropping the table would silently drop conversations still waiting to be sent
+        // (the point's W5 review, a). Refuse while any is scheduled or sending.
+        if (Schema::hasTable('group_message_schedules')) {
+            $pending = DB::table('group_message_schedules')->whereIn('status', ['scheduled', 'sending'])->count();
+
+            if ($pending > 0) {
+                throw new \RuntimeException("Refusing to roll back scheduled conversations: {$pending} still waiting or being sent would be lost. Cancel them first.");
+            }
+        }
+
         Schema::dropIfExists('group_message_schedules');
     }
 };

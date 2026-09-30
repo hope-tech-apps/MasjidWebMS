@@ -5499,3 +5499,31 @@ Reply-To bounces.
   - SPA: ScheduledItems.vue (a note instead of the words; Cancel only) and scheduledSend.ts (canCancel, contentHidden).
 - **Widening it** (the office reads drafts) is a deliberate owner decision, not a default.
 
+## 2026-09-30 — W5 fold of the point's review (items 1–10, a–h)
+
+- **Done with tests:**
+  - (1) The child is resolved once; open() refuses participant scope with no child.
+  - (2) retained_until must be after the send day; the purge skips a waiting story.
+  - (3) A deadlock or lock-wait is handed back for the next run; any other error is `failed` and shown in the author's
+    Scheduled list.
+  - (6) The run line goes to the monitors channel at info; stuck > 10 min is an ERROR.
+  - (7) An identical same-second re-save is not "no longer editable".
+  - (10) Withdrawn consent gets nothing.
+  - (a) Both scheduling migrations' down() refuse while items wait.
+  - (b)(d) Docblocks corrected.
+  - (e) The roster merge treats a scheduled/sending/failed conversation about a child as a record about them.
+  - (f) The legacy row is left alone by the sweep; the duplicate backfill test is removed.
+  - (g) DST fall-back test.
+- **(4) A queue that cannot take the email** after a story or conversation is out: logged at ERROR ("sent, email not
+  queued"), not counted as a failure, and the item stays sent. There is NO re-dispatch path: that email is lost and
+  the log names the item. Accepted as the smaller change; revisit if it is ever seen.
+- **(5) The minute-boundary race:** store() decides the email from the saved row (announced_at set by the creating
+  hook), not from the request. No test reproduces the sub-second race (ScheduledTime refuses send_at == now); the
+  ordinary-post email tests cover the path.
+- **(8) Gates re-checked inside open()'s transaction: NOT done.** After (1) the only window left is the author's
+  standing changing in the milliseconds between the gate and the write; the point rated it low.
+- **(c) Backfill timezone:** on production 2026-09-30 the point read MySQL session/global time_zone = SYSTEM,
+  system = UTC, now() = utc_timestamp(), so `published_at = created_at` cannot move a story into the future. The mysql
+  connection is NOT pinned to +00:00 (a global config change); re-check this if the database's time zone ever changes.
+- **(9)** Rollback runbook: deploy/README.md, "Rolling back scheduled stories and conversations".
+

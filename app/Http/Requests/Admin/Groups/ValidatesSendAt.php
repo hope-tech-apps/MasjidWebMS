@@ -44,9 +44,10 @@ trait ValidatesSendAt
     }
 
     /**
-     * An explicit `retained_until` may not close before the day the story goes out: the
-     * nightly purge deletes on that date alone, so an earlier one would delete a story
-     * (and its photos) that never went out.
+     * An explicit `retained_until` must close AFTER the day the story goes out: the nightly
+     * purge (03:10 UTC) deletes on that date alone, so a window closing on or before the
+     * send day could delete a story (and its photos) that never went out (the point's
+     * W5 review, item 2: the send day itself used to be accepted).
      */
     protected function checkRetentionAfterSend(Validator $validator): void
     {
@@ -66,8 +67,8 @@ trait ValidatesSendAt
             return; // the `date` rule reports it
         }
 
-        if ($keptUntil < $at->toDateString()) {
-            $validator->errors()->add('retained_until', 'Keep it until the day it goes out or later, or it would be deleted before anybody read it.');
+        if ($keptUntil <= $at->toDateString()) {
+            $validator->errors()->add('retained_until', 'Keep it until after the day it goes out, or the overnight clean-up could delete it before anybody read it.');
         }
     }
 }
