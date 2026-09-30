@@ -5272,3 +5272,23 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   [Qur'an, general], which counted the general plan as the teacher's; the 409 now needs two plans under their own subjects, Qur'an and the combined
   "Qur'an & Islamic Studies"). Alternative: keep the rename for a limited teacher when the only plan they can see is a subject's, not the general one.
   Rejected: the point's rule is that a by-day save never retypes another subject's plan, and the old screen is not what the day view uses.
+
+- **W3/W4 folds (2026-09-29): F8 stays client-side, and any future native family grades screen must withhold the weighted figure while `untyped_excluded` > 0.**
+  F8 hides a family's weighted figure in the SPA (`familySeesWeighted`), not in the payload: the family and teacher endpoints stay byte-identical
+  (`FamilyGradesTest`'s parity test) and the family payload keeps carrying `weighting` and `untyped_excluded`. The delta review found no native app in
+  `~/Developer` that reads `weighting`, `by_type` or `untyped_excluded` or calls a grades endpoint, so the hide covers every current surface. Rule for the
+  day one does: a native family grades screen must not draw `summary.weighting.percent`, `level_mean` or a subject's `weighted_percent` while
+  `weighting.untyped_excluded > 0` (a family would read "100% across 1 piece" above a plain 60 of 90), or the server must stop sending the weighted figure
+  in that state. Alternative: move the rule into `Family\GradesController` now. Rejected for now: it breaks the parity test on purpose and there is
+  no client that needs it.
+
+- **W3/W4 folds (2026-09-29, second round G1, G3, G4, G5): four small ones.** G1: the family class screen's link to the weekly report page follows the
+  school's grant (`weekly_report`, `points_weekly_report`) alone and sits outside the "This week" block, which keeps the class's opt-in gate: the Friday
+  email goes to every class in a granted school, so a family whose class has not opted in still gets the page the email is about. G3: another subject's work
+  answers the `ModelNotFoundException` an id that names no work answers, so the body matches a missing id with debug on as well (it was a bare `abort(404)`).
+  G4: the BISS schedule seed `2026_10_02_130000` up() stamps `created_at` and `updated_at` from one `now()`, so down()'s "saved since" guard cannot skip the
+  row it wrote; this edits an applied migration's up(), allowed once because no persistent database has run it (staging was checked 2026-09-29 20:15 ET
+  and has none of W3/W4's migrations; production has none) and the change is the timing of one data row, not the schema. G5: one predicate (`isUntyped`)
+  decides which work "has no type", so simple-scale work is never badged or counted as waiting for one, in the teacher's list or the office's; the office
+  list shows "not averaged" for a bare simple piece and the untyped note under the list; and the reason for a missing weighted figure is "N pieces have no
+  type, left out" while any is waiting for a type, and "never averaged" only when none is.
