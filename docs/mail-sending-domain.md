@@ -47,29 +47,32 @@ Rejected:
 - **Keep tapcraft.tech.** P5 fails, and every parent sees another company's name.
 
 **One consequence, handled in this branch.** `manara.hopetechapps.com` is also Studio's managed
-suffix (`<slug>.manara.hopetechapps.com`). Resend's return path is `send.manara.hopetechapps.com`,
-so `send` is now in `config('cloudflare.reserved_labels')`. An organisation holding it would put a
-CNAME where the MX and SPF records must live. No organisation held it (checked read-only on
-production 2026-09-29: no `masjids.slug = send`, no `masjid_domains` host `send.%`).
+suffix (`<slug>.manara.hopetechapps.com`). Resend's return paths are `send.manara` and
+`rsend.manara`, so both are now in `config('cloudflare.reserved_labels')`. An organisation holding
+one would claim the name the bounce and SPF records live on. No organisation held either (checked
+read-only on production 2026-09-29 and 2026-09-30: no such `masjids.slug`, no such
+`masjid_domains` host).
 
 ## 3. DNS records (Cloudflare zone `hopetechapps.com`, id `859eddb9bce48f4f35e6197f6c0b8e15`)
 
-All **DNS only** (grey cloud; MX and TXT cannot be proxied anyway), TTL Auto. Names are as the
-Cloudflare dashboard wants them, relative to the zone.
+**Created by Resend itself** on 2026-09-30 at 03:08:32Z, when the domain was added with Resend's
+Cloudflare auto-configure. All DNS only.
 
-| # | Type | Name | Content | Priority | Purpose |
-|---|---|---|---|---|---|
-| 1 | TXT | `resend._domainkey.manara` | `p=MIGfMA0…` (the public key Resend shows when the domain is created) | | **DKIM**: Resend signs with `d=manara.hopetechapps.com`. |
-| 2 | MX | `send.manara` | `feedback-smtp.us-east-1.amazonses.com` | 10 | **Return path**: bounces and complaints go back to Resend. |
-| 3 | TXT | `send.manara` | `v=spf1 include:amazonses.com ~all` | | **SPF** for the return-path domain. |
+| Type | Name | Content | Purpose |
+|---|---|---|---|
+| TXT | `resend._domainkey.manara` | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCkCNFDXbTJ…IDAQAB` (1024-bit RSA; checked with `openssl pkey`) | **DKIM**: Resend signs with `d=manara.hopetechapps.com`. |
+| CNAME | `send.manara` | `send.forge.rmta.net` | **Return path** on Resend's own servers. Through the CNAME it answers MX `10 feedback.forge.rmta.net` and SPF `v=spf1 ip4:52.3.252.119 ip4:44.222.39.36 ip4:199.249.231.0/24 ~all`. |
+| CNAME | `rsend.manara` | `rsend.forge.rmta.net` | **Second return path**, on Amazon SES us-east-1: MX `10 feedback-smtp.us-east-1.amazonses.com`, SPF `include:amazonses.com`. |
 
-- **Record 1 does not exist until the domain is created in Resend.** It is generated per domain.
-  Copy it exactly from Resend's DNS tab. It is a public key, safe to paste anywhere.
-- **Rows 2 and 3 assume the `us-east-1` region**, the one tapcraft.tech uses
-  (`send.tapcraft.tech MX 10 feedback-smtp.us-east-1.amazonses.com`). If another region is picked
-  in Resend, use the values Resend shows.
-- **Alignment.** DKIM `d=` equals the From domain (strict). The SPF domain `send.manara…` shares the
-  organisational domain `hopetechapps.com` with the From domain (relaxed). Both pass DMARC.
+- **This is not the record set this document first listed.** The first draft had the older
+  direct MX and SPF TXT at `send.manara`, the ones tapcraft.tech still carries. A domain added
+  today gets CNAMEs to `forge.rmta.net`, so Resend can move its servers without a DNS change on our
+  side. A guarded write script refused to add the older pair because the CNAME was already there.
+  Nothing was written by hand.
+- **Alignment.** DKIM `d=` equals the From domain (strict). Both return-path names share the
+  organisational domain `hopetechapps.com` with the From domain (relaxed SPF alignment). Both pass
+  DMARC.
+- `send` and `rsend` are reserved Studio labels for this reason (section 2).
 - **DMARC comes from the zone apex, through Cloudflare DMARC Management (owner's choice,
   2026-09-29).** DMARC Management works on apex domains only
   (developers.cloudflare.com/dmarc-management/enable). Enabling it in the `hopetechapps.com` zone
@@ -99,11 +102,11 @@ Each step marked **YES** waits for the owner's explicit go.
    **manara.hopetechapps.com** only, name `manara-production`. Keep the key out of chat; it goes in
    through hidden prompts only (steps 4 and 5).
 3. **Owner, in Cloudflare:** `hopetechapps.com` → Email → DMARC Management → Enable, and accept
-   the record it offers (`_dmarc.hopetechapps.com`, `p=none`).
-   **YES: DNS.** Add records 1 to 3 (above) in `hopetechapps.com`. Check with
-   `dig TXT resend._domainkey.manara.hopetechapps.com +short` and the same for `send.manara`
-   (MX and TXT), and `dig TXT _dmarc.hopetechapps.com +short`. Then press Verify in Resend until the
-   domain reads Verified.
+   the record it offers (`_dmarc.hopetechapps.com`, `p=none`). **DNS:** the section 3 records
+   (Resend's auto-configure writes them). Check with
+   `dig TXT resend._domainkey.manara.hopetechapps.com +short`, `dig MX send.manara.hopetechapps.com
+   +short`, `dig MX rsend.manara.hopetechapps.com +short` and `dig TXT _dmarc.hopetechapps.com
+   +short`. Resend must read the domain as Verified before the staging send.
 4. **YES: staging.** `scripts/ship.sh staging feat/manara-sending-domain` (check the box's
    `git reflog` first; it is shared). Then the owner runs, in their own terminal (`-t`, because the
    key prompt needs a TTY):

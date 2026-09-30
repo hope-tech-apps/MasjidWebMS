@@ -5360,9 +5360,10 @@ Decision: Manara mail moves from `notifications@tapcraft.tech` to
 name stays the organisation's. The switch is production's `MAIL_FROM_ADDRESS` plus a new Resend key
 scoped to the new domain, which is also the rotation the 2026-08-26 key exposure is owed. No mail
 class changes: every Mailable already reads `config('mail.from.address')`, now pinned by
-tests/Feature/MailSendingDomainTest.php. `send` joins `cloudflare.reserved_labels`, because
-Resend's return path (`send.manara.hopetechapps.com`, MX + SPF) sits in Studio's managed
-namespace, where an organisation's CNAME would displace it.
+tests/Feature/MailSendingDomainTest.php. `send` and `rsend` join `cloudflare.reserved_labels`,
+because Resend's return paths (`send.manara` and `rsend.manara`, CNAMEs to `forge.rmta.net` that
+Resend's auto-configure created) sit in Studio's managed namespace, where an organisation's record
+would displace them.
 Alternatives: `notifications@hopetechapps.com`. Rejected: the root is Hope Tech's Zoho mailbox
 domain with no DMARC, so school volume and any complaint spike would land on the company's own
 mail, and adding DMARC there would govern Zoho too. A deeper name such as

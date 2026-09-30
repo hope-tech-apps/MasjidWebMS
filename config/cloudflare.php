@@ -49,11 +49,12 @@ return [
     // `preview` is the live-preview host (preview.manara.hopetechapps.com,
     // owner decision 2026-09-24): it serves no tenant, and an org holding that
     // label would turn every editor's preview pane into its site.
-    // `send` is Resend's return path for mail from manara.hopetechapps.com
-    // (MX + SPF TXT at send.manara.hopetechapps.com, docs/mail-sending-domain.md):
-    // an org's CNAME cannot share that name, and taking it would stop the
-    // bounce and SPF records that let school mail through.
-    'reserved_labels' => ['www', 'api', 'admin', 'app', 'staging', 'portal', 'mail', 'manara', 'mec', 'alrazi', 'preview', 'send'],
+    // `send` and `rsend` are Resend's return paths for mail from
+    // manara.hopetechapps.com (CNAMEs to Resend's servers, created by Resend
+    // 2026-09-30, docs/mail-sending-domain.md). An org's record cannot share
+    // either name, and taking one would stop the bounce and SPF records that
+    // let school mail through.
+    'reserved_labels' => ['www', 'api', 'admin', 'app', 'staging', 'portal', 'mail', 'manara', 'mec', 'alrazi', 'preview', 'send', 'rsend'],
 
     // Custom domains one Pages project may carry: 100 on Free, 250 on Pro, 500
     // on Business (developers.cloudflare.com/pages/platform/limits, "Last
