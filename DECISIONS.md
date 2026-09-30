@@ -5829,9 +5829,9 @@ Off the ship-critic (`design/ship-critic-2026-09-30.json`), on `fix/cart-premerg
 as `config/cart.php`). `EnsureMemberPortalEnabled` (alias `member.portal`, on the `/me` group of `routes/api.php`) reads the
 ROUTE's `{masjid_id}` (these routes carry the organisation in the URL, unlike the cart's header) and throws the router's own
 `NotFoundHttpException`, so a dark route is the same bytes as an unknown one. It is ranked ahead of authentication with
-`prependToPriorityList(before: AuthenticatesRequests::class, ...)`: the cart gate was ranked ahead of `ThrottleRequests`, which
-outranks nothing above authentication, so a portal gate behind `auth:family` would answer an unauthenticated probe with a 401
-where a missing route answers 404. Alternatives: (a) unregister the routes when off, rejected because the route cache would
+`prependToPriorityList(before: AuthenticatesRequests::class, ...)`. The cart gate is only ranked ahead of `ThrottleRequests`, and
+authentication ranks ahead of the throttles, so a portal gate placed the same way would run behind `auth:family` and answer an
+unauthenticated probe with a 401 where a missing route answers 404. Alternatives: (a) unregister the routes when off, rejected because the route cache would
 then differ between states, as the cart's decision says; (b) a `crm`-style capability, rejected because the owner has not
 chosen a client and a per-organisation capability row is a production data change. The suites that drive the routes turn the
 portal on in their setUp (`BuildsMemberPortal::turnMemberPortalOn()`). Tests: `MemberPortalGateTest` (off is the router's 404

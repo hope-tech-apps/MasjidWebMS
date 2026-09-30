@@ -545,13 +545,19 @@ Direct charge on the ONE connected account, exactly the rules above.
 - **Paid means `payment_status === 'paid'`.** `checkout.session.completed` and
   `checkout.session.async_payment_succeeded` share a handler; `payment_intent.succeeded`
   settles idempotently if the session event has not; `checkout.session.expired` moves
-  pending to expired only. Refusals (no account, unknown account, foreign uuid, amount or
+  pending to expired only. **Production's Connect endpoint does NOT subscribe to
+  `checkout.session.expired`, `checkout.session.async_payment_succeeded`,
+  `checkout.session.async_payment_failed` or `payment_intent.payment_failed`** (ASSUMPTIONS
+  "PM-A6", checked 2026-09-30): there a basket's order never becomes `expired` through a
+  webhook, a delayed debit that succeeds still settles through `payment_intent.succeeded`, and
+  one that fails never arrives, so `cart:prune` is what clears a stale `pending` order. Do not
+  write code that waits for an `expired` order to appear. Refusals (no account, unknown account, foreign uuid, amount or
   currency mismatch) are logged at warning and return 200: a retry could never succeed.
 - **Settlement is one `DB::transaction` on the default connection.** Lock the order row (paid:
   return; a DIFFERENT payment intent on a paid order is a logged double charge, never recorded
   over the first). Amount and currency must equal `orders.total_minor` / `currency`, else the
   order stays pending and nothing is settled. Mark paid, then per line WITHOUT a `record_id`
-  (the per-line idempotency; keys `cart_item_<id>`): write, settle, link. A failure on any
+  (the per-line idempotency; keys `cart:item:<id>`, a shape the public form door's `^[A-Za-z0-9_-]{8,64}$` cannot produce): write, settle, link. A failure on any
   line rolls back EVERYTHING and is rethrown, so the webhook answers 500 and Stripe retries a
   paid basket that could not be recorded; that is the one place settlement throws.
 - **Forms:** lock the form row, `earlier()` then `write(..., LEG_ONLINE, $snapshot, [], key)`
@@ -594,7 +600,9 @@ Direct charge on the ONE connected account, exactly the rules above.
   a claim that delivers nothing, or fails, is released. `deliverReceipt()` is best-effort, so the step
   hands the line's id back with the receipt and `StripeWebhookController::handleCartEvent()` releases
   the claim (`CartSettlementService::releaseReceiptClaim()`) when `receipt_delivered_at` is still null
-  after the send; a delivered receipt keeps its claim. `deliverReceipt()` itself is unchanged.
+  after the send; a delivered receipt keeps its claim. `deliverReceipt()` itself is unchanged except that
+  its two failure logs (the send, the PDF render) carry the exception CLASS and never its message: a
+  transport's message quotes the recipient (`DonationReceiptPdfTest` pins it).
 - **A linked basket's form row is pinned** in the settlement transaction: `charge_account_id` =
   the order's pin, `charge_masjid_id` = the organisation holding that account, as
   `FormResponseCheckoutService` pins a linked row. The pin gives staff the right refund instruction
@@ -692,12 +700,26 @@ services, called as they are. Rules a change here must keep:
   is frozen on `orders.buyer_name` / `buyer_phone` / `buyer_email`: settlement records a meal
   order under them (over Stripe's, and over the `Online order N` placeholder, which stays the
   fallback) and a gift's donor falls back to them when Stripe's `customer_details` lack them.
-  Staging anonymises both columns; `MemberAccountDeletion` clears them on an unpaid order.
+  Staging anonymises both columns and NULLS `orders.basket_fingerprint` (an unsalted sha256 over the
+  answers, like `order_items.cart_payload_hash`); `MemberAccountDeletion` clears them on an unpaid order.
 - **The status read is payment state ONLY** (`GET /cart-orders/{uuid}`, `whereUuid`):
   `{status: pending|paid|expired, order_number, total_minor, currency}`, built field by field.
   The uuid is a bearer; the limiter is keyed by it (30/h) with a 300/min per-connection guard
   for a made-up uuid, as the form status read is. The lunch and kitchen reads return a name and
   sit on a per-IP limiter, so they are NOT the pattern.
+- **A fund a basket still needs cannot be deleted.** `FundsController::destroy` answers 409 while a
+  `donation` order line for the fund sits on a `pending` order, or on a `paid` order whose LINE has no
+  `record_id` yet: settlement of a gift line throws when its fund is gone (money taken, no gift). The
+  guard skips itself while the cart tables do not exist (the deploy window before `migrate`).
+- **The member portal is DARK behind its own switch** (`config/member_portal.php`,
+  `MEMBER_PORTAL_ENABLED` false, `MEMBER_PORTAL_MASJID_IDS` fail-closed like the cart's). The four `me/orders`,
+  `me/orders/{source}/{id}`, `me/gifts`, `me/receipts/{id}/pdf` routes carry `member.portal`
+  (`EnsureMemberPortalEnabled`, keyed on the ROUTE's `{masjid_id}`); off is the router's own 404,
+  ranked ahead of AUTHENTICATION (`prependToPriorityList(before: AuthenticatesRequests)`), not just the
+  throttles, so an unauthenticated probe cannot tell it from a missing route. It stays dark until the
+  owner picks its client and answers ASSUMPTIONS #61 (a gift and a Wix order are listed by `contact_id`
+  alone). `MemberPortalGateTest` reads the sorted stack; a suite that drives the routes calls
+  `turnMemberPortalOn()`.
 - **The view says only what the page draws.** Never a line's payload (the answers), the payee
   account, or any fingerprint but the one `acknowledge` needs.
 - **Throttles** (`AppServiceProvider`, limits in `config/cart.php`): `cart-create` 200/h per
