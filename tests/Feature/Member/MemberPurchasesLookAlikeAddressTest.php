@@ -55,6 +55,8 @@ class MemberPurchasesLookAlikeAddressTest extends TestCase
     {
         parent::setUp();
 
+        $this->turnMemberPortalOn();
+
         $this->foldAccentsLikeUnicodeCi();
 
         $this->a = $this->org();

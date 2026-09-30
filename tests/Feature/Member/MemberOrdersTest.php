@@ -49,6 +49,8 @@ class MemberOrdersTest extends TestCase
     {
         parent::setUp();
 
+        $this->turnMemberPortalOn();
+
         $this->a = $this->org();
         $this->b = $this->org();
         $this->me = $this->member($this->a, 'amina@example.test');

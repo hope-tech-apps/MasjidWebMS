@@ -316,6 +316,9 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                 | The gifts and the receipt PDF are in the same group: a gift is the member's
                 | by `contact_id`, and its receipt by the gift it belongs to.
                 |
+                | DARK until config/member_portal.php switches it on: `member.portal` answers
+                | the router's own 404, ranked ahead of authentication and the throttles.
+                |
                 | Named `mobile.member.me.*`, like the leaving routes above, so that a 401, 403
                 | or 429 from the stack or the limiter carries the empty `data` object the
                 | iPhone app's `Response<T>` decoder needs (App\Support\MobileErrorEnvelope,
@@ -323,6 +326,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                 */
                 Route::prefix('/me')
                     ->name('mobile.member.me.')
+                    ->middleware('member.portal')
                     ->controller(MemberPurchasesController::class)
                     ->group(function () {
                         Route::middleware('throttle:30,1,member-portal')->group(function () {

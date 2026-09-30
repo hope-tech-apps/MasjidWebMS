@@ -187,6 +187,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // unknown route gets until config/cart.php switches the basket on, and for
             // any organisation its allowlist leaves out. See EnsureCartEnabled.
             'cart.enabled' => \App\Http\Middleware\EnsureCartEnabled::class,
+            // The member portal's "Your orders" routes (routes/api.php, `me/orders` and
+            // friends): the same 404 an unknown route gets until config/member_portal.php
+            // switches the portal on, and for any organisation its allowlist leaves out.
+            // See EnsureMemberPortalEnabled.
+            'member.portal' => \App\Http\Middleware\EnsureMemberPortalEnabled::class,
             // After a successful write, purge the organisation's pages from the
             // public renderer's cache so the save is live at once. Works in
             // terminate(), after the response; no-op when unconfigured. On the
@@ -212,6 +217,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToPriorityList(
             before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
             prepend: \App\Http\Middleware\EnsureCartEnabled::class,
+        );
+
+        // The member portal's gate ranks ahead of AUTHENTICATION, which itself ranks ahead of
+        // the throttles: a dark portal route must not answer an unauthenticated probe with a
+        // 401 (a missing route would not), spend a limiter, or carry a rate-limit header.
+        // AuthenticatesRequests is the interface `auth:family` (Authenticate) implements, the
+        // first auth middleware Laravel's own priority list ranks. See EnsureMemberPortalEnabled
+        // and MemberPortalGateTest.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            prepend: \App\Http\Middleware\EnsureMemberPortalEnabled::class,
         );
     })
     ->withExceptions(function (Exceptions $exceptions) {

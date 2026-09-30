@@ -1,0 +1,246 @@
+<?php
+
+namespace Tests\Feature\Member;
+
+use App\Http\Middleware\EnsureMemberPortalEnabled;
+use Illuminate\Auth\Middleware\Authenticate;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Routing\Middleware\ThrottleRequests;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+
+/**
+ * The member portal's "Your orders" routes are DARK until the owner picks the organisation
+ * that gets them (DECISIONS.md 2026-09-30, config/member_portal.php): off, each answers the
+ * same 404 an unknown route does, BEFORE authentication and BEFORE the throttles, so a probe
+ * with no token cannot tell a dark route from a missing one. What the routes return once on
+ * is MemberOrdersTest's and MemberGiftsAndReceiptsTest's business; both switch the portal
+ * on in their setUp.
+ */
+class MemberPortalGateTest extends TestCase
+{
+    use BuildsMemberPortal;
+    use RefreshDatabase;
+
+    /** @var array<string, string> route name => the path under the organisation, with a sample id */
+    private const ROUTES = [
+        'mobile.member.me.orders.index' => 'me/orders',
+        'mobile.member.me.orders.show' => 'me/orders/manara/00000000-0000-4000-8000-000000000000',
+        'mobile.member.me.gifts.index' => 'me/gifts',
+        'mobile.member.me.receipts.pdf' => 'me/receipts/1/pdf',
+    ];
+
+    #[Test]
+    public function the_portal_is_off_unless_it_is_switched_on(): void
+    {
+        $this->assertFalse(config('member_portal.enabled'), 'the shipped default is OFF');
+        $this->assertSame([], config('member_portal.masjid_ids'), 'and empty means every organisation, once on');
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor(7));
+    }
+
+    #[Test]
+    public function off_every_portal_route_is_the_same_404_as_a_route_that_does_not_exist(): void
+    {
+        config(['app.debug' => false]);
+        $org = $this->org();
+        $me = $this->member($org);
+
+        $unknown = $this->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
+
+        foreach (self::ROUTES as $path) {
+            // Without a token, with a junk one, and with a real member's.
+            $this->assertSame($unknown, $this->getJson($this->portalUrl($org, $path))->assertNotFound()->getContent(), "{$path}: no token");
+
+            Auth::forgetGuards();
+            $junk = $this->withHeader('Authorization', 'Bearer 1|not-a-real-token')->getJson($this->portalUrl($org, $path));
+            $this->assertSame($unknown, $junk->assertNotFound()->getContent(), "{$path}: junk token");
+
+            $real = $this->asMember($me)->getJson($this->portalUrl($org, $path));
+            $this->assertSame($unknown, $real->assertNotFound()->getContent(), "{$path}: a real member's token");
+        }
+    }
+
+    #[Test]
+    public function off_no_authentication_is_attempted_no_limiter_runs_and_no_rate_limit_header_appears(): void
+    {
+        config(['app.debug' => false]);
+        $org = $this->org();
+        $me = $this->member($org);
+        $token = $me->createMemberToken();
+
+        $ran = 0;
+        RateLimiter::for('mobile', function () use (&$ran) {
+            $ran++;
+
+            return Limit::none();
+        });
+
+        foreach (self::ROUTES as $path) {
+            Auth::forgetGuards();
+            $this->unbound();
+
+            $response = $this->withHeader('Authorization', 'Bearer ' . $token->plainTextToken)
+                ->getJson($this->portalUrl($org, $path))
+                ->assertNotFound();
+
+            $response->assertHeaderMissing('X-RateLimit-Limit');
+            $response->assertHeaderMissing('X-RateLimit-Remaining');
+            $response->assertHeaderMissing('Retry-After');
+        }
+
+        // A real token that is looked up is stamped (Sanctum's last_used_at); this one never was.
+        $this->assertNull($token->accessToken->fresh()->last_used_at, 'the token was never looked at');
+        $this->assertSame(0, $ran, 'the `mobile` limiter closure never ran');
+    }
+
+    #[Test]
+    public function off_a_flood_is_still_a_bare_404_never_a_429(): void
+    {
+        config(['app.debug' => false]);
+        $org = $this->org();
+        $unknown = $this->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
+
+        // Past the inline `throttle:30,1,member-portal` bucket: were the throttle ahead of the
+        // gate, the 31st call would be its 429.
+        for ($attempt = 1; $attempt <= 35; $attempt++) {
+            $this->assertSame($unknown, $this->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound()->getContent(), "attempt {$attempt}");
+        }
+    }
+
+    #[Test]
+    public function the_gate_runs_before_authentication_and_before_every_throttle_on_each_route(): void
+    {
+        // The middleware aliases, groups and priority list reach the router when the HTTP
+        // kernel is built, which the first request does. Without it the names below would
+        // stay unresolved and unsorted.
+        $this->app->make(HttpKernel::class);
+        $router = app('router');
+
+        foreach (self::ROUTES as $name => $path) {
+            $route = Route::getRoutes()->getByName($name);
+            $this->assertNotNull($route, "{$name} is registered");
+
+            // The SORTED, resolved stack: the order a request runs it in. `gatherMiddleware()`
+            // is the order the route LISTS it in, which Laravel re-sorts by its priority list.
+            $stack = $router->gatherRouteMiddleware($route);
+
+            $gate = array_search(EnsureMemberPortalEnabled::class, $stack, true);
+            $this->assertNotFalse($gate, "{$name} is behind the portal gate");
+
+            $ranked = array_keys(array_filter(
+                $stack,
+                static fn ($middleware): bool => is_string($middleware)
+                    && (str_starts_with($middleware, Authenticate::class . ':') || str_starts_with($middleware, ThrottleRequests::class . ':'))
+            ));
+
+            $this->assertNotSame([], $ranked, "{$name} has authentication and throttles to run behind the gate");
+
+            foreach ($ranked as $later) {
+                $this->assertLessThan($later, $gate, "{$name}: the gate runs before {$stack[$later]}");
+            }
+        }
+    }
+
+    #[Test]
+    public function switched_on_the_routes_answer(): void
+    {
+        $org = $this->org();
+        $me = $this->member($org);
+        $this->turnMemberPortalOn();
+
+        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertOk();
+        $this->asMember($me)->getJson($this->portalUrl($org, 'me/gifts'))->assertOk();
+    }
+
+    #[Test]
+    public function on_an_unauthenticated_call_is_the_stacks_401_not_the_gates_404(): void
+    {
+        $org = $this->org();
+        $this->turnMemberPortalOn();
+
+        $this->getJson($this->portalUrl($org, 'me/orders'))->assertUnauthorized();
+    }
+
+    #[Test]
+    public function an_allowlist_leaves_every_other_organisation_dark(): void
+    {
+        config(['app.debug' => false]);
+        $listed = $this->org();
+        $other = $this->org();
+        $listedMember = $this->member($listed);
+        $otherMember = $this->member($other);
+
+        config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => [$listed->id]]);
+
+        $unknown = $this->getJson($this->portalUrl($other, 'no-such-route'))->assertNotFound()->getContent();
+
+        $this->asMember($listedMember)->getJson($this->portalUrl($listed, 'me/orders'))->assertOk();
+
+        // The unlisted organisation's own member gets the router's 404, not their orders.
+        $response = $this->asMember($otherMember)->getJson($this->portalUrl($other, 'me/orders'));
+        $this->assertSame($unknown, $response->assertNotFound()->getContent());
+    }
+
+    #[Test]
+    public function the_organisation_is_the_routes_not_a_header(): void
+    {
+        $listed = $this->org();
+        $other = $this->org();
+        $otherMember = $this->member($other);
+
+        config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => [$listed->id]]);
+
+        // A `masjid-id` header naming the listed organisation cannot open another one's URL.
+        $this->asMember($otherMember)
+            ->withHeader('masjid-id', (string) $listed->id)
+            ->getJson($this->portalUrl($other, 'me/orders'))
+            ->assertNotFound();
+    }
+
+    #[Test]
+    public function a_list_that_failed_closed_admits_nobody(): void
+    {
+        $org = $this->org();
+        $me = $this->member($org);
+
+        // config/member_portal.php turns a malformed MEMBER_PORTAL_MASJID_IDS into [0]
+        // (MemberPortalConfigTest).
+        config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => [0]]);
+
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor($org->id));
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor(0));
+        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound();
+    }
+
+    #[Test]
+    public function the_master_switch_wins_over_the_allowlist(): void
+    {
+        $org = $this->org();
+        $me = $this->member($org);
+
+        config(['member_portal.enabled' => false, 'member_portal.masjid_ids' => [$org->id]]);
+
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor($org->id));
+        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound();
+    }
+
+    #[Test]
+    public function enabled_for_admits_only_the_ids_the_list_names(): void
+    {
+        config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => [7, 12]]);
+
+        $this->assertTrue(EnsureMemberPortalEnabled::enabledFor(7));
+        $this->assertTrue(EnsureMemberPortalEnabled::enabledFor(12));
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor(8));
+        $this->assertFalse(EnsureMemberPortalEnabled::enabledFor(0));
+
+        config(['member_portal.masjid_ids' => []]);
+
+        $this->assertTrue(EnsureMemberPortalEnabled::enabledFor(8), 'an empty list means every organisation');
+    }
+}

@@ -31,6 +31,15 @@ use Illuminate\Support\Str;
  */
 trait BuildsMemberPortal
 {
+    /**
+     * The portal is dark unless config/member_portal.php says otherwise (DECISIONS.md
+     * 2026-09-30); the suites that drive its routes switch it on for every organisation.
+     */
+    protected function turnMemberPortalOn(): void
+    {
+        config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => []]);
+    }
+
     protected function unbound(): void
     {
         app(TenantContext::class)->forgetTenant();
