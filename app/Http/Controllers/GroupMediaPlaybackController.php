@@ -91,14 +91,25 @@ class GroupMediaPlaybackController extends Controller
         // No withTrashed(), matching downloadAttachment exactly: a post an
         // admin hid this morning stops playing this morning. And a story that is
         // not OUT yet (scheduled, or refused at release) plays only for the staff
-        // who may see a scheduled story: the author previewing the video she
+        // who may read a scheduled story: its author previewing the video she
         // attached. A family viewer, or a ticket for a guessed post id, gets a 404
         // exactly as the feed gives one. The stream re-asks this per range, for
         // the viewer the ticket names, like every other question here.
         $posts = $group->posts();
 
         if (! $this->audience->mayReadUnpublished($viewer, $group)) {
-            $posts = $posts->published();
+            // The office reads a scheduled story's words only if it wrote it (S14,
+            // 2026-09-30); every other story the office may address is metadata, with
+            // no way to its video.
+            $ownToo = $viewer instanceof \App\Models\User && $this->audience->mayCancelScheduled($viewer, $group);
+
+            $posts = $posts->where(function ($q) use ($viewer, $ownToo): void {
+                $q->published();
+
+                if ($ownToo) {
+                    $q->orWhere('group_posts.author_user_id', $viewer->getKey());
+                }
+            });
         }
 
         $post = $posts->findOrFail($post_id);

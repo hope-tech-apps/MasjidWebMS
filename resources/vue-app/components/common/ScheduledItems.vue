@@ -6,9 +6,11 @@
         One component for both, drawn from the same row shape (core/helpers/scheduledSend
         `storyRow` / `messageRow`), so the two lists cannot drift. It makes no request: it
         raises `send-now`, `cancel` and `save`, and each screen's own client (the teacher's
-        or the office's) does the call. Edit, Send now and Cancel are offered only when the
-        server said this viewer may (`canChange`: the author and the office). A co-teacher
-        SEES the row and is offered nothing that would be refused.
+        or the office's) does the call. Edit and Send now are offered only when the server
+        said this viewer may (`canChange`: the author), Cancel when `canCancel` (the author
+        and the office). Since S14 (2026-09-30) the office sees a waiting item's time and
+        author but not its words (`contentHidden`). A co-teacher SEES the row and is
+        offered nothing that would be refused.
     -->
     <section v-if="rows.length || error" class="card border-0 shadow-sm mb-4" data-test="scheduled-list"
              :aria-label="`Scheduled ${kindLabel}`">
@@ -57,27 +59,30 @@
                         </span>
                     </div>
 
-                    <p class="small mt-2 mb-1" style="white-space: pre-wrap;">{{ row.body }}</p>
+                    <p v-if="row.contentHidden" class="small mt-2 mb-1 text-muted fst-italic" data-test="scheduled-content-hidden">
+                        The text is visible to the class's teachers until it is sent.
+                    </p>
+                    <p v-else class="small mt-2 mb-1" style="white-space: pre-wrap;">{{ row.body }}</p>
 
                     <p v-if="row.status === 'failed'" class="small text-danger mb-1" role="alert" data-test="scheduled-failure">
                         {{ failureText(row) }}
                     </p>
 
-                    <div v-if="row.canChange && row.status !== 'sending'" class="d-flex flex-wrap gap-2 mt-2">
+                    <div v-if="(row.canChange || row.canCancel) && row.status !== 'sending'" class="d-flex flex-wrap gap-2 mt-2">
                         <template v-if="confirmingKey === keyOf(row)">
                             <span class="small align-self-center">Cancel this {{ row.kind === 'story' ? 'story' : 'message' }}?</span>
                             <button type="button" class="btn btn-sm btn-danger" :disabled="busy" @click="confirm(row)">Yes, cancel it</button>
                             <button type="button" class="btn btn-sm btn-link text-muted" @click="confirmingKey = null">Keep it</button>
                         </template>
                         <template v-else>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="busy" @click="startEdit(row)">Edit</button>
-                            <button v-if="row.status !== 'failed'" type="button" class="btn btn-sm btn-outline-success"
+                            <button v-if="row.canChange" type="button" class="btn btn-sm btn-outline-secondary" :disabled="busy" @click="startEdit(row)">Edit</button>
+                            <button v-if="row.canChange && row.status !== 'failed'" type="button" class="btn btn-sm btn-outline-success"
                                     :disabled="busy" @click="$emit('send-now', row)">Send now</button>
-                            <button type="button" class="btn btn-sm btn-outline-danger" :disabled="busy" @click="confirmingKey = keyOf(row)">Cancel</button>
+                            <button v-if="row.canCancel" type="button" class="btn btn-sm btn-outline-danger" :disabled="busy" @click="confirmingKey = keyOf(row)">Cancel</button>
                         </template>
                     </div>
                     <p v-else-if="row.status !== 'sending'" class="small text-muted fst-italic mb-0">
-                        Only the author or the office can change this.
+                        Only the author can change this, and the author or the office can cancel it.
                     </p>
                 </template>
             </li>

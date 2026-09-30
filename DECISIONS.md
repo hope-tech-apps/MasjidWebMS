@@ -5477,3 +5477,25 @@ organisational-domain fallback. No `_dmarc.manara` record, which would take its 
 dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
 Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
 Reply-To bounces.
+
+## 2026-09-30 — W5 S14 decided (point): the office sees and cancels, but cannot read, a scheduled item before it is sent
+
+- **Supersedes** the "Decision to confirm (S14 reading)" above, which let the office read scheduled items.
+- **Rule.** Before an item (a class story or a new conversation) is sent:
+  - The class's teachers and the author read it in full.
+  - The author edits, moves and sends it now.
+  - The office (`manage contacts`) sees its metadata only: class, author, scheduled time, kind, audience (`one_child`
+    without the child's name), status, failure reason. Payloads carry `content_hidden: true` and omit title, subject,
+    body and attachments. The office may CANCEL it, but edit, move and send-now are 403.
+  - An office administrator who also teaches the class is a teacher here.
+- **Why** (the point): a conversation about one child is then no more visible before it is sent than after it, when
+  the office reads it only through roster standing. A draft is not a disclosure the office needs in order to stop it:
+  cancelling needs the time and the author, not the words.
+- **Where.**
+  - GroupAudience::mayReadUnpublished (teachers of the class) and mayCancelScheduled (teachers + office).
+  - The admin GroupPostsController (metadataOnly, readablePostsFor for attachments/playback) and
+    GroupMessageSchedulesController (metadataOnly).
+  - GroupMediaPlaybackController.
+  - SPA: ScheduledItems.vue (a note instead of the words; Cancel only) and scheduledSend.ts (canCancel, contentHidden).
+- **Widening it** (the office reads drafts) is a deliberate owner decision, not a default.
+

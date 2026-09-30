@@ -811,11 +811,16 @@ conversations only (S11), text only (S13): a `send_at`/`send_now` on a reply or 
   `stale_claim_minutes` (10) wrote nothing (atomic with the thread) and is handed back. Edit, Send now
   and Cancel are each one guarded UPDATE, so a sweep that claims between the page load and the click
   wins cleanly and the click is told "no longer editable".
-- **Who**: the author and the office edit, send now (PUT `send_now`, the sweep sends within a minute)
-  and cancel; a co-teacher sees the Scheduled list and is refused. Both realms mount
-  `GroupMessageSchedulesController` (teacher: `teacher.leads`; admin: `manage contacts`), and the
-  controller asks `mayReadUnpublished` again. The office reads a scheduled conversation's words
-  without roster standing (S14 needs it to edit or cancel): OWNER TO CONFIRM.
+- **Who** (S14 as decided by the point, 2026-09-30): the author edits, sends now (PUT `send_now`, the
+  sweep sends within a minute) and cancels; a co-teacher sees the Scheduled list with the words and is
+  offered nothing that would be refused. The OFFICE (`manage contacts`) sees that an item waits, when,
+  who wrote it, its kind and audience (`one_child` names no child) and may CANCEL it, but gets no
+  subject, body or attachments (`content_hidden: true`) and may not edit, move or send it now (403).
+  So a conversation about one child is no more visible before it is sent than after it, when roster
+  standing governs. Seams: `GroupAudience::mayReadUnpublished` (the class's teachers; the author reads
+  their own through the controller) and `mayCancelScheduled` (the class's teachers and the office).
+  Both realms mount `GroupMessageSchedulesController` (teacher: `teacher.leads`; admin: `manage
+  contacts`). An office administrator who also teaches the class reads and moves as a teacher.
 - Retention: `retained_until` counts from `send_at`; `groups:purge-feed` deletes finished rows
   (sent, failed, cancelled), never a waiting or sending one.
 

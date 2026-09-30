@@ -105,6 +105,9 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // answers false for anything that is not a staff `User` (a parent, null, an
         // unrecognized principal), for exactly the reason the others do.
         'mayReadUnpublished',
+        // The twenty-first (S14, 2026-09-30): whether a principal may see an item's
+        // metadata and cancel it before its time. Same answer for a non-User.
+        'mayCancelScheduled',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -316,7 +319,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(20, $seen);
+        $this->assertCount(21, $seen);
     }
 
     #[Test]

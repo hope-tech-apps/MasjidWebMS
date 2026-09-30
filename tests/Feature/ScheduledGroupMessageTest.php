@@ -292,9 +292,16 @@ class ScheduledGroupMessageTest extends TestCase
         $this->asTeacher($stranger)->getJson($this->teacherUrl('/scheduled-messages'))->assertForbidden();
         $this->asUser($this->office(manage: false))->getJson($this->adminUrl('/scheduled-messages'))->assertForbidden();
 
-        // The office.
-        $this->asUser($this->office())->getJson($this->adminUrl('/scheduled-messages'))
-            ->assertOk()->assertJsonPath('data.data.0.id', $item->id);
+        // The office: that it waits, when, and who wrote it, never the words (S14, point, 2026-09-30).
+        $officeList = $this->asUser($this->office())->getJson($this->adminUrl('/scheduled-messages'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $item->id)
+            ->assertJsonPath('data.data.0.content_hidden', true)
+            ->assertJsonPath('data.data.0.can_cancel', true)
+            ->assertJsonPath('data.data.0.can_change', false)
+            ->assertJsonMissingPath('data.data.0.body')
+            ->assertJsonMissingPath('data.data.0.subject');
+        $this->assertStringNotContainsString('School resumes on Sunday.', $officeList->getContent());
 
         // A parent has no route to it at all.
         $this->asParent($this->parentA)->getJson($this->familyUrl('/scheduled-messages'))->assertNotFound();
@@ -360,7 +367,7 @@ class ScheduledGroupMessageTest extends TestCase
     }
 
     #[Test]
-    public function the_author_and_the_office_edit_reschedule_and_cancel(): void
+    public function the_author_edits_and_the_office_only_cancels(): void
     {
         $item = $this->schedule();
         $url = $this->teacherUrl("/scheduled-messages/{$item->id}");
@@ -371,11 +378,15 @@ class ScheduledGroupMessageTest extends TestCase
             ->assertJsonPath('data.send_at_local', '2026-10-06T09:15');
         $this->assertSame('2026-10-06 13:15:00', $item->fresh()->send_at->toDateTimeString());
 
-        // The office edits the teacher's item through its own realm.
+        // S14 (point, 2026-09-30): the office sees that it waits and may cancel it, but neither
+        // reads, rewrites, moves nor sends it now: the words stay with the class's teachers.
         $office = $this->office();
         $adminUrl = $this->adminUrl("/scheduled-messages/{$item->id}");
-        $this->asUser($office)->putJson($adminUrl, ['body' => 'Office words'])->assertOk();
-        $this->assertSame('Office words', $item->fresh()->body);
+        $this->asUser($office)->putJson($adminUrl, ['body' => 'Office words'])->assertForbidden();
+        $this->asUser($office)->putJson($adminUrl, ['send_at' => '2026-10-07T09:00'])->assertForbidden();
+        $this->asUser($office)->putJson($adminUrl, ['send_now' => true])->assertForbidden();
+        $this->assertSame('New words', $item->fresh()->body);
+        $this->assertSame('2026-10-06 13:15:00', $item->fresh()->send_at->toDateTimeString());
 
         $this->asUser($office)->deleteJson($adminUrl)->assertOk()->assertJsonPath('data.status', 'cancelled');
         $this->assertSame(GroupMessageSchedule::STATUS_CANCELLED, $item->fresh()->status);
@@ -692,7 +703,15 @@ class ScheduledGroupMessageTest extends TestCase
         Artisan::call('groups:publish-due');
         $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $item->fresh()->status);
 
+        // Since S14 (point, 2026-09-30) changing a conversation needs its words, so the one who can
+        // reach this gate is an office administrator who ALSO teaches the class. The office alone is
+        // refused before the gate (the_author_edits_and_the_office_only_cancels).
         $office = $this->office();
+        $this->class->staff()->attach($office->id, [
+            'masjid_id' => $this->school->id,
+            'role' => GroupStaff::ROLE_TEACHER,
+            'assigned_at' => now(),
+        ]);
         $url = $this->adminUrl("/scheduled-messages/{$item->id}");
         Carbon::setTestNow(self::NOW);
 

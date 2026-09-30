@@ -57,6 +57,9 @@ class GroupPostsController extends Controller
     /** The school's zone, resolved once per request (a Masjid lookup). */
     private ?string $zone = null;
 
+    /** @var array<int,bool> group id => may the caller read its unpublished stories (one check per class per request) */
+    private array $leaderCache = [];
+
     public function __construct(private GroupAudience $audience, private GroupStoryPublisher $publisher)
     {
     }
@@ -76,14 +79,14 @@ class GroupPostsController extends Controller
         // THE SCHEDULED LIST is a separate view of the same table: the stories that are
         // not out yet (waiting, or refused at release), soonest first. Only the staff
         // who may see a scheduled story may ask for it (a teacher of the class, the
-        // office), and that is the WHOLE gate: the office edits and cancels a teacher's
-        // scheduled story (S14) without being on the roster, and a story that has not
-        // gone out is not yet a disclosure to anybody. The FEED below is unchanged, and an
-        // administrator who is not on the roster still cannot read it back. The default
-        // feed shows what families see, for staff too, so a story does not appear in it
-        // the moment it is scheduled.
+        // office), and that is the WHOLE gate. The office sees each item's METADATA and
+        // may cancel it; it does not read the words (S14, 2026-09-30), so serialize()
+        // leaves the title, body and attachments out of what it is handed. The FEED below
+        // is unchanged, and an administrator who is not on the roster still cannot read
+        // it back. The default feed shows what families see, for staff too, so a story
+        // does not appear in it the moment it is scheduled.
         if ($request->boolean('scheduled')) {
-            if (! $this->audience->mayReadUnpublished($request->user(), $group)) {
+            if (! $this->audience->mayCancelScheduled($request->user(), $group)) {
                 abort(403, 'You are not entitled to the scheduled stories of this group.');
             }
 
@@ -146,10 +149,11 @@ class GroupPostsController extends Controller
     {
         $group = Group::findOrFail($group_id);
 
-        // A story that is not out yet is read by the staff who manage it (a teacher of
+        // A story that is not out yet is shown to the staff who manage it (a teacher of
         // the class, the office) without the feed gate, exactly as the Scheduled list
-        // is: it is not yet a disclosure to anybody. Everything else, including a
-        // missing id, asks the feed gate first as it always has.
+        // is: it is not yet a disclosure to anybody. The office is handed its metadata
+        // only (serialize() decides, per story). Everything else, including a missing
+        // id, asks the feed gate first as it always has.
         $candidate = $this->postsFor($group, $request->user())
             ->with(['author:id,name', 'attachments'])
             ->find($post_id);
@@ -261,7 +265,7 @@ class GroupPostsController extends Controller
         $group = Group::findOrFail($group_id);
         $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
 
-        $this->authorizeScheduledWrite($request->user(), $post);
+        $this->authorizeScheduledWrite($request->user(), $post, editing: true);
 
         // Moving a story's time. Only a story that has NOT gone out: once families
         // have read one, "reschedule" would mean pulling it back, which is a
@@ -403,23 +407,31 @@ class GroupPostsController extends Controller
     }
 
     /**
-     * Who may change or cancel a story that is NOT out yet: its author and the office
-     * (S14). A co-teacher may SEE it in the Scheduled list and may not touch it.
+     * Who may change or cancel a story that is NOT out yet.
+     *
+     *   - CANCEL (delete): its author and the office (`manage contacts`), as before.
+     *   - EDIT, RESCHEDULE, SEND NOW (`$editing`): those of them who may also READ it:
+     *     the author, or an office login that is also a teacher of the class. The
+     *     office on its own may not (S14, 2026-09-30): changing the words needs them.
+     *
+     * A co-teacher may SEE a scheduled story and may not touch it.
      *
      * Deliberately not asked of a story that is out: those were already editable and
      * deletable by any teacher of the class, and this slice does not change that.
      */
-    private function authorizeScheduledWrite(?User $user, GroupPost $post): void
+    private function authorizeScheduledWrite(?User $user, GroupPost $post, bool $editing = false): void
     {
         if ($post->isPublished()) {
             return;
         }
 
-        if ($this->maySchedule($user, $post)) {
+        if ($this->maySchedule($user, $post) && (! $editing || $this->mayReadContent($user, $post))) {
             return;
         }
 
-        abort(403, 'Only the author or the office can change a story that has not gone out.');
+        abort(403, $editing
+            ? 'Only the author can change a story that has not gone out. The office can cancel it.'
+            : 'Only the author or the office can cancel a story that has not gone out.');
     }
 
     private function maySchedule(?User $user, GroupPost $post): bool
@@ -429,16 +441,68 @@ class GroupPostsController extends Controller
     }
 
     /**
-     * The group's stories AS THIS CALLER MAY SEE THEM. Staff who may see a scheduled
-     * story (a teacher of the class, the office) address every story; anybody else
-     * this controller serves (an administrator who is on the roster only as a parent,
-     * say) addresses the stories that are out, exactly as a family does.
+     * May this caller read what a story SAYS (title, body, attachments)? A story that
+     * is out: anyone this controller let reach it. One that is not: a teacher of the
+     * class (GroupAudience::mayReadUnpublished) or the author. The office that is
+     * neither sees it as metadata only (S14, 2026-09-30).
+     */
+    private function mayReadContent(?User $user, GroupPost $post): bool
+    {
+        if ($post->isPublished()) {
+            return true;
+        }
+
+        if ($user === null) {
+            return false;
+        }
+
+        if ((int) $post->author_user_id === (int) $user->id) {
+            return true;
+        }
+
+        return $this->leaderCache[(int) $post->group_id]
+            ??= $this->audience->mayReadUnpublished($user, $post->group ?? Group::findOrFail($post->group_id));
+    }
+
+    /**
+     * The group's stories AS THIS CALLER MAY ADDRESS THEM. Staff who may see a
+     * scheduled story (a teacher of the class, the office) address every story; the
+     * office is then answered with metadata only (mayReadContent). Anybody else this
+     * controller serves (an administrator who is on the roster only as a parent, say)
+     * addresses the stories that are out, exactly as a family does.
      */
     private function postsFor(Group $group, ?User $user): \Illuminate\Database\Eloquent\Relations\HasMany|\Illuminate\Database\Eloquent\Builder
     {
         $posts = $group->posts();
 
-        return $this->audience->mayReadUnpublished($user, $group) ? $posts : $posts->published();
+        return $this->audience->mayCancelScheduled($user, $group) ? $posts : $posts->published();
+    }
+
+    /**
+     * The group's stories AS THIS CALLER MAY READ THEIR CONTENT: the ones that are out,
+     * plus, for a teacher of the class, every one, plus, for anybody else, the ones
+     * they wrote. The door for attachments and playback: the office's metadata view
+     * of a scheduled story has no way to its photos.
+     */
+    private function readablePostsFor(Group $group, ?User $user): \Illuminate\Database\Eloquent\Relations\HasMany|\Illuminate\Database\Eloquent\Builder
+    {
+        $posts = $group->posts();
+
+        if ($this->audience->mayReadUnpublished($user, $group)) {
+            return $posts;
+        }
+
+        // An author who is neither a teacher of the class nor the office never
+        // reached an unpublished story of it, and still does not.
+        $ownToo = $user instanceof User && $this->audience->mayCancelScheduled($user, $group);
+
+        return $posts->where(function ($q) use ($user, $ownToo): void {
+            $q->published();
+
+            if ($ownToo) {
+                $q->orWhere('group_posts.author_user_id', $user->getKey());
+            }
+        });
     }
 
     /**
@@ -561,7 +625,7 @@ class GroupPostsController extends Controller
         // explicit and 404s an id that names no organization at all.
         Masjid::findOrFail($masjid_id);
         $group = Group::findOrFail($group_id);
-        $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
+        $post = $this->readablePostsFor($group, $request->user())->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_MEDIA);
@@ -609,7 +673,7 @@ class GroupPostsController extends Controller
     {
         Masjid::findOrFail($masjid_id);
         $group = Group::findOrFail($group_id);
-        $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
+        $post = $this->readablePostsFor($group, $request->user())->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
         $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_MEDIA);
@@ -668,6 +732,10 @@ class GroupPostsController extends Controller
      */
     private function serialize(GroupPost $post, $masjid_id, $group_id, bool $mayReceiveMedia, ?array $signals = null): array
     {
+        if (! $this->mayReadContent(request()->user(), $post)) {
+            return $this->metadataOnly($post);
+        }
+
         $attachments = $mayReceiveMedia
             ? $post->attachments->map(fn ($attachment) => $attachment->toAudienceArray() + [
                 // The only link that exists for one of these: back at the
@@ -716,7 +784,8 @@ class GroupPostsController extends Controller
             'publish_failure' => $post->publish_failure,
             // Author and office only: a co-teacher sees a scheduled story and is not
             // offered the buttons that would be refused.
-            'can_change_schedule' => $post->isPublished() || $this->maySchedule(request()->user(), $post),
+            'can_change_schedule' => $post->isPublished() || ($this->maySchedule(request()->user(), $post) && $this->mayReadContent(request()->user(), $post)),
+            'content_hidden' => false,
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a reader who
             // simply has no photos this week is not confused with one who is not
@@ -727,6 +796,35 @@ class GroupPostsController extends Controller
             // the four empty buttons are still what the screen draws from.
             'reactions' => $signals['reactions'] ?? Reactions::summarize(collect(), false, null, null),
         ] + $this->seenFields($signals);
+    }
+
+    /**
+     * A story that is not out yet, as the OFFICE reads it (S14, 2026-09-30): where it
+     * stands, never what it says. `title`, `body`, `attachments`, `media_withheld`,
+     * `reactions` and the `seen_*` fields are ABSENT, not null and not blanked: a
+     * client cannot render words it was never sent, and the day the office's door is
+     * widened is a deliberate change here, not a flag somebody flips. `content_hidden`
+     * says why they are missing. The office may cancel (DELETE); it may not edit,
+     * move or send now, so `can_change_schedule` is false.
+     *
+     * @return array<string,mixed>
+     */
+    private function metadataOnly(GroupPost $post): array
+    {
+        return [
+            'id' => $post->id,
+            'group_id' => $post->group_id,
+            'kind' => 'story',
+            'audience' => 'class',
+            'author' => $post->author ? ['id' => $post->author->id, 'name' => $post->author->name] : null,
+            'published_at' => optional($post->published_at ?? $post->created_at)->toIso8601String(),
+            'published_at_local' => ScheduledTime::local($post->published_at ?? $post->created_at, $this->zone()),
+            'status' => $post->hasFailedToPublish() ? 'failed' : ($post->isScheduled() ? 'scheduled' : 'published'),
+            'publish_failure' => $post->publish_failure,
+            'can_change_schedule' => false,
+            'can_cancel' => $this->maySchedule(request()->user(), $post),
+            'content_hidden' => true,
+        ];
     }
 
     /**

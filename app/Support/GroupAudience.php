@@ -323,20 +323,41 @@ class GroupAudience
     }
 
     /**
-     * May this principal see a class story that is NOT OUT yet — one scheduled for
-     * later, or one the sweep refused to release (T-002.4)?
+     * May this principal READ an item (a class story, a conversation) that is NOT OUT
+     * yet: its words, its title, its attachments (T-002.4, S14 as decided 2026-09-30)?
      *
      * Deliberately NARROWER than reading the feed. Reading the feed reaches a
      * consented guardian and a participant, and an office administrator who is also a
      * parent of the class reads it through the email bridge as that parent; none of
-     * them may see a story before its time. The two doors in are the ones S14 names:
-     * a teacher of the class (`group_staff`, "co-teachers see") and the office, which
-     * is `manage contacts` (the permission the admin realm's write routes carry, and
-     * the only one that edits or cancels somebody else's scheduled item).
+     * them may see an item before its time.
      *
-     * A Contact is never in: a parent has no way to a story before its time.
+     * One door: a teacher of the class (`group_staff`, "co-teachers see"). The office
+     * (`manage contacts`) is NOT in: a conversation about one child is then no more
+     * visible before it is sent than after it, when the office reads it only through
+     * roster standing. The office's part is mayCancelScheduled(): it sees WHEN an item
+     * goes and who wrote it, and may cancel it. An item's own author reads it too, but
+     * that is a fact about the item, so the controllers add it; this asks about the
+     * class only. No SuperAdmin exemption: nothing else in this class gives one, and a
+     * SuperAdmin is "the office" here only by holding `manage contacts`.
+     *
+     * A Contact is never in: a parent has no way to an item before its time.
      */
     public function mayReadUnpublished(?Authenticatable $principal, Group $group): bool
+    {
+        return $this->isLeaderOf($principal, $group);
+    }
+
+    /**
+     * May this principal SEE THE METADATA of, and CANCEL, an item that is not out yet
+     * (class, author, time, kind, audience, status, failure reason; never the words)?
+     *
+     * The two doors S14 names: a teacher of the class, and the office, which is
+     * `manage contacts` (the permission the admin realm's write routes carry). A wider
+     * door than mayReadUnpublished() on purpose: that is the whole of the office's
+     * part. Editing, rescheduling and sending now stay with the author (and need the
+     * words, so they need mayReadUnpublished() or authorship).
+     */
+    public function mayCancelScheduled(?Authenticatable $principal, Group $group): bool
     {
         if (! $principal instanceof User) {
             return false;

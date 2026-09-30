@@ -452,14 +452,39 @@ class ScheduledClassStoryTest extends TestCase
     }
 
     #[Test]
-    public function the_office_sees_the_scheduled_list_through_the_admin_realm(): void
+    public function the_office_sees_a_scheduled_story_in_the_list_as_metadata_and_cannot_open_it(): void
     {
         $later = $this->scheduledPost();
+        $this->withPhoto($later);
         $office = $this->guardianOnlyAdmin(manage: true);
 
+        // S14 (point, 2026-09-30): the office sees WHEN it goes and who wrote it, never the words.
         $this->asUser($office)->getJson($this->adminUrl('/posts?scheduled=1'))
-            ->assertOk()->assertJsonPath('data.data.0.id', $later->id);
-        $this->asUser($office)->getJson($this->adminUrl("/posts/{$later->id}"))->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $later->id)
+            ->assertJsonPath('data.data.0.content_hidden', true)
+            ->assertJsonPath('data.data.0.can_cancel', true)
+            ->assertJsonPath('data.data.0.can_change_schedule', false)
+            ->assertJsonMissingPath('data.data.0.body')
+            ->assertJsonMissingPath('data.data.0.title')
+            ->assertJsonMissingPath('data.data.0.attachments');
+        $this->assertStringNotContainsString(
+            'Tomorrow',
+            $this->asUser($office)->getJson($this->adminUrl('/posts?scheduled=1'))->getContent(),
+            'no part of the words reaches the office before the story goes out'
+        );
+        // Opening it gives the same metadata, never the words or the photo.
+        $one = $this->asUser($office)->getJson($this->adminUrl("/posts/{$later->id}"))
+            ->assertOk()
+            ->assertJsonPath('data.content_hidden', true)
+            ->assertJsonMissingPath('data.body')
+            ->assertJsonMissingPath('data.title')
+            ->assertJsonMissingPath('data.attachments');
+        $this->assertStringNotContainsString('Tomorrow', $one->getContent());
+
+        // The class's teacher still reads it in full.
+        $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))
+            ->assertOk()->assertJsonPath('data.data.0.content_hidden', false)->assertJsonPath('data.data.0.body', $later->body);
     }
 
     #[Test]
@@ -473,13 +498,18 @@ class ScheduledClassStoryTest extends TestCase
         $this->asUser($office)->getJson($this->adminUrl('/posts'))->assertForbidden();
         $this->asUser($office)->getJson($this->adminUrl("/posts/{$out->id}"))->assertForbidden();
 
-        // A story that has not gone out is not yet a disclosure to anybody, and S14 says the
-        // office edits and cancels it: so it reads, changes and cancels the scheduled ones.
+        // S14 as decided (point, 2026-09-30): the office sees that a story is waiting and may
+        // cancel it, but neither reads it nor moves it. The words stay with the class's teachers.
         $this->asUser($office)->getJson($this->adminUrl('/posts?scheduled=1'))
-            ->assertOk()->assertJsonPath('data.data.0.id', $later->id)->assertJsonPath('data.data.0.can_change_schedule', true);
-        $this->asUser($office)->getJson($this->adminUrl("/posts/{$later->id}"))->assertOk();
+            ->assertOk()->assertJsonPath('data.data.0.id', $later->id)
+            ->assertJsonPath('data.data.0.can_change_schedule', false)
+            ->assertJsonPath('data.data.0.content_hidden', true)
+            ->assertJsonMissingPath('data.data.0.body');
+        $this->asUser($office)->getJson($this->adminUrl("/posts/{$later->id}"))
+            ->assertOk()->assertJsonPath('data.content_hidden', true)->assertJsonMissingPath('data.body');
         $this->asUser($office)->putJson($this->adminUrl("/posts/{$later->id}"), ['send_at' => '2026-10-06T09:00'])
-            ->assertOk()->assertJsonPath('data.published_at_local', '2026-10-06T09:00');
+            ->assertForbidden();
+        $this->assertSame($later->published_at->toDateTimeString(), $later->fresh()->published_at->toDateTimeString());
         $this->asUser($office)->deleteJson($this->adminUrl("/posts/{$later->id}"))->assertOk();
     }
 
@@ -502,16 +532,24 @@ class ScheduledClassStoryTest extends TestCase
     }
 
     #[Test]
-    public function the_audience_decision_names_exactly_teachers_and_the_office(): void
+    public function reading_an_unsent_item_is_for_the_class_teachers_and_cancelling_it_also_for_the_office(): void
     {
         $audience = app(GroupAudience::class);
         app(TenantContext::class)->set($this->school->id);
 
+        // S14 (point, 2026-09-30): reading the words is the class's teachers only.
         $this->assertTrue($audience->mayReadUnpublished($this->teacher, $this->class));
-        $this->assertTrue($audience->mayReadUnpublished($this->guardianOnlyAdmin(manage: true), $this->class));
+        $this->assertFalse($audience->mayReadUnpublished($this->guardianOnlyAdmin(manage: true), $this->class));
         $this->assertFalse($audience->mayReadUnpublished($this->guardianOnlyAdmin(), $this->class));
         $this->assertFalse($audience->mayReadUnpublished($this->parentA, $this->class));
         $this->assertFalse($audience->mayReadUnpublished(null, $this->class));
+
+        // Seeing that it waits, and cancelling it: the class's teachers and the office.
+        $this->assertTrue($audience->mayCancelScheduled($this->teacher, $this->class));
+        $this->assertTrue($audience->mayCancelScheduled($this->guardianOnlyAdmin(manage: true), $this->class));
+        $this->assertFalse($audience->mayCancelScheduled($this->guardianOnlyAdmin(), $this->class));
+        $this->assertFalse($audience->mayCancelScheduled($this->parentA, $this->class));
+        $this->assertFalse($audience->mayCancelScheduled(null, $this->class));
     }
 
     #[Test]
@@ -737,13 +775,16 @@ class ScheduledClassStoryTest extends TestCase
     }
 
     #[Test]
-    public function the_office_edits_and_cancels_a_teachers_scheduled_story(): void
+    public function the_office_cancels_but_cannot_edit_a_teachers_scheduled_story(): void
     {
         $post = $this->scheduledPost();
         $office = $this->guardianOnlyAdmin(manage: true);
 
-        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['body' => 'Office edit'])->assertOk();
-        $this->assertSame('Office edit', $post->fresh()->body);
+        // S14 (point, 2026-09-30): editing needs the words, and the words are the teachers'.
+        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['body' => 'Office edit'])->assertForbidden();
+        $this->assertSame('Tomorrow we visit the garden.', $post->fresh()->body);
+        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['send_now' => true])->assertForbidden();
+        $this->assertTrue($post->fresh()->isScheduled());
 
         $this->asUser($office)->deleteJson($this->adminUrl("/posts/{$post->id}"))->assertOk();
         $this->assertNotNull(GroupPost::withoutMasjidScope()->withTrashed()->find($post->id)->deleted_at);
@@ -1028,7 +1069,15 @@ class ScheduledClassStoryTest extends TestCase
         $this->sweep();   // refused now
         $this->assertNotNull($post->fresh()->publish_failed_at);
 
-        $office = $this->guardianOnlyAdmin(manage: true);
+        // Since S14 (point, 2026-09-30) moving a story needs its words, so the one who can reach
+        // this gate is an office administrator who ALSO teaches the class (a teacher reads, the
+        // office moves). The office alone is refused before the gate, and that is pinned elsewhere.
+        $office = $this->makeAdmin();
+        $this->class->staff()->attach($office->id, [
+            'masjid_id' => $this->school->id,
+            'role' => GroupStaff::ROLE_TEACHER,
+            'assigned_at' => now(),
+        ]);
 
         foreach ([['send_at' => '2026-10-20T09:00'], ['send_now' => true]] as $move) {
             $response = $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), $move)->assertStatus(422);
@@ -1053,7 +1102,9 @@ class ScheduledClassStoryTest extends TestCase
         $this->authorLeaves();
         $office = $this->guardianOnlyAdmin(manage: true);
 
-        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['send_now' => true])->assertStatus(422);
+        // Since S14 (point, 2026-09-30) the office may not send it now at all: sending now
+        // needs the words. Either refusal keeps the story in.
+        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['send_now' => true])->assertForbidden();
 
         $this->assertNotContains($post->id, $this->familyIds());
         $this->assertSame(0, $this->classStoryJobs());

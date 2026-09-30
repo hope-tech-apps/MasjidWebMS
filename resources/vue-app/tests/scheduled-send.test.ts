@@ -177,3 +177,47 @@ test('a failed row says the way out when the author has left the class', () => {
     assert.match(list, /author has left the class/);
     assert.match(list, /cancel it and write it again/);
 });
+
+test('S14: the office sees that an item waits and may cancel it, but reads no words and is offered no edit', async () => {
+    const { storyRow, messageRow } = await load();
+
+    // What the admin realm sends the office for a waiting story: metadata only.
+    const story = storyRow({
+        id: 11, published_at_local: '2026-10-05T10:00', status: 'scheduled', author: { name: 'Ustadh Bilal' },
+        can_change_schedule: false, can_cancel: true, content_hidden: true,
+    });
+    assert.equal(story.contentHidden, true);
+    assert.equal(story.body, '');
+    assert.equal(story.heading, '');
+    assert.equal(story.canChange, false, 'no Edit or Send now for the office');
+    assert.equal(story.canCancel, true, 'the office may cancel');
+
+    // A waiting conversation about one child: the office is not told which child either.
+    const message = messageRow({
+        id: 12, send_at_local: '2026-10-05T10:00', status: 'scheduled', author: { name: 'Ustadh Bilal' },
+        audience: 'one_child', can_change: false, can_cancel: true, content_hidden: true,
+    });
+    assert.equal(message.contentHidden, true);
+    assert.equal(message.about, 'one child');
+    assert.equal(message.canChange, false);
+    assert.equal(message.canCancel, true);
+
+    // Even if a server ever said can_change with the words hidden, no edit is offered.
+    assert.equal(messageRow({ id: 13, status: 'scheduled', can_change: true, content_hidden: true }).canChange, false);
+
+    // The author (words visible): edit and cancel, as before.
+    const own = messageRow({ id: 14, subject: 'Hi', body: 'Words', status: 'scheduled', can_change: true, can_cancel: true, content_hidden: false });
+    assert.equal(own.canChange, true);
+    assert.equal(own.canCancel, true);
+    assert.equal(own.contentHidden, false);
+});
+
+test('S14: the Scheduled list shows a note instead of hidden words and offers only Cancel then', () => {
+    const vue = source('components/common/ScheduledItems.vue');
+    assert.match(vue, /v-if="row\.contentHidden"[\s\S]*?visible to the class's teachers until it is sent/);
+    assert.match(vue, /<p v-else class="small mt-2 mb-1" style="white-space: pre-wrap;">\{\{ row\.body \}\}<\/p>/);
+    assert.match(vue, /v-if="row\.canChange" type="button"[^>]*@click="startEdit\(row\)">Edit/);
+    assert.match(vue, /v-if="row\.canChange && row\.status !== 'failed'"[\s\S]*?Send now/);
+    assert.match(vue, /v-if="row\.canCancel" type="button"[^>]*confirmingKey = keyOf\(row\)">Cancel/);
+    assert.match(vue, /v-if="\(row\.canChange \|\| row\.canCancel\) && row\.status !== 'sending'"/);
+});

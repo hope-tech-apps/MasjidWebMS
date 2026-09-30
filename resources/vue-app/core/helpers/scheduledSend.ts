@@ -107,8 +107,15 @@ export type ScheduledRow = {
     status: 'scheduled' | 'sending' | 'failed';
     /** Why it did not go, for a failed one. */
     failure: string | null;
-    /** Whether THIS viewer may edit, send now or cancel it (the author and the office). */
+    /** Whether THIS viewer may edit or send it now (the author, who can read it). */
     canChange: boolean;
+    /** Whether THIS viewer may cancel it (the author and the office, S14). */
+    canCancel: boolean;
+    /**
+     * The office sees that an item waits, when, and who wrote it, but not its words until it is
+     * sent (S14, decided 2026-09-30): the server leaves heading and body out.
+     */
+    contentHidden: boolean;
     /** A conversation about one child: who. Null for a whole-class one and for a story. */
     about: string | null;
     author: string | null;
@@ -130,7 +137,9 @@ export function storyRow(post: any): ScheduledRow {
         whenLocal: post.published_at_local ?? '',
         status: post.status === 'failed' ? 'failed' : 'scheduled',
         failure: post.publish_failure ?? null,
-        canChange: post.can_change_schedule !== false,
+        canChange: post.can_change_schedule !== false && post.content_hidden !== true,
+        canCancel: post.can_cancel === true || (post.can_cancel === undefined && post.can_change_schedule !== false),
+        contentHidden: post.content_hidden === true,
         about: null,
         author: post.author?.name ?? null,
     };
@@ -148,8 +157,10 @@ export function messageRow(item: any): ScheduledRow {
         whenLocal: item.send_at_local ?? '',
         status,
         failure: item.failure_reason ?? null,
-        canChange: item.can_change === true,
-        about: personName(item.about?.contact),
+        canChange: item.can_change === true && item.content_hidden !== true,
+        canCancel: item.can_cancel === true || (item.can_cancel === undefined && item.can_change === true),
+        contentHidden: item.content_hidden === true,
+        about: item.content_hidden === true && item.audience === 'one_child' ? 'one child' : personName(item.about?.contact),
         author: item.author?.name ?? null,
     };
 }

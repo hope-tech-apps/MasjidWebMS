@@ -28,15 +28,25 @@ use Symfony\Component\HttpFoundation\Response;
  * family endpoint can know it exists. Only NEW conversations (S11); replies are sent
  * when they are written.
  *
- * WHO MAY DO WHAT (S14):
+ * WHO MAY DO WHAT (S14, as decided 2026-09-30):
  *   - see the Scheduled list  the class's teachers (co-teachers see each other's) and
  *                             the office. Both routes are gated: `teacher.leads` in
  *                             the teacher realm, `manage contacts` in the admin realm,
- *                             and the controller asks GroupAudience::mayReadUnpublished
+ *                             and the controller asks GroupAudience::mayCancelScheduled
  *                             again so a route that loses its middleware cannot
- *                             widen who reads a message about a child.
+ *                             widen who sees a message about a child.
+ *   - READ one                the class's teachers and its author
+ *                             (GroupAudience::mayReadUnpublished). The office that is
+ *                             neither sees METADATA only: class, author, time, scope,
+ *                             status, failure reason. `subject`, `body` and the
+ *                             child's name are absent from its payload, because a
+ *                             conversation about one child is then no more visible
+ *                             before it is sent than after it.
  *   - write one               anyone who could open the conversation on the spot.
- *   - edit, send now, cancel  the AUTHOR and the office (`manage contacts`). A
+ *   - edit, send now          the AUTHOR, and an office login that is also a teacher
+ *                             of the class. The office on its own gets a 403: changing
+ *                             words needs reading them. A co-teacher is refused too.
+ *   - cancel                  the AUTHOR and the office (`manage contacts`). A
  *                             co-teacher sees it and is refused (403).
  *
  * EDIT, SEND NOW and CANCEL are each ONE conditional UPDATE guarded by the status,
@@ -54,6 +64,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class GroupMessageSchedulesController extends Controller
 {
+    /** @var array<int,bool> group id => may the caller read its unpublished items (one check per class per request) */
+    private array $leaderCache = [];
+
     public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer, private ScheduledSendGate $gate)
     {
     }
@@ -137,7 +150,7 @@ class GroupMessageSchedulesController extends Controller
         $this->authorizeSeeing($request->user(), $group);
         $item = $group->messageSchedules()->findOrFail($schedule_id);
 
-        $this->authorizeChanging($request->user(), $item);
+        $this->authorizeChanging($request->user(), $item, editing: true);
 
         if (! $item->isEditable()) {
             return $this->noLongerEditable($item);
@@ -215,28 +228,77 @@ class GroupMessageSchedulesController extends Controller
 
     // ------------------------------------------------------------- internals
 
-    /** The class's teachers and the office, and nobody else. */
+    /** The class's teachers and the office, and nobody else: they see the metadata and may cancel. */
     private function authorizeSeeing(?User $user, Group $group): void
     {
-        if (! $this->audience->mayReadUnpublished($user, $group)) {
+        if (! $this->audience->mayCancelScheduled($user, $group)) {
             abort(403, 'You are not entitled to the scheduled conversations of this group.');
         }
     }
 
-    /** The author and the office (S14). A co-teacher sees an item and may not touch it. */
-    private function authorizeChanging(?User $user, GroupMessageSchedule $item): void
+    /**
+     * Cancelling: the author and the office (S14). Editing, rescheduling, sending now
+     * (`$editing`): those of them who may also READ it, so not the office on its own
+     * (S14, 2026-09-30). A co-teacher sees an item and may not touch it.
+     */
+    private function authorizeChanging(?User $user, GroupMessageSchedule $item, bool $editing = false): void
     {
-        if ($this->mayChange($user, $item)) {
+        if ($this->mayCancel($user, $item) && (! $editing || $this->mayReadContent($user, $item))) {
             return;
         }
 
-        abort(403, 'Only the author or the office can change a scheduled conversation.');
+        abort(403, $editing
+            ? 'Only the author can change a scheduled conversation. The office can cancel it.'
+            : 'Only the author or the office can cancel a scheduled conversation.');
     }
 
-    private function mayChange(?User $user, GroupMessageSchedule $item): bool
+    private function mayCancel(?User $user, GroupMessageSchedule $item): bool
     {
         return $user !== null
             && ((int) $item->author_user_id === (int) $user->id || $user->can('manage contacts'));
+    }
+
+    /** May this caller read what the item SAYS: a teacher of its class, or its author. */
+    private function mayReadContent(?User $user, GroupMessageSchedule $item): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        if ($item->author_user_id !== null && (int) $item->author_user_id === (int) $user->id) {
+            return true;
+        }
+
+        return $this->leaderCache[(int) $item->group_id]
+            ??= $this->audience->mayReadUnpublished($user, $item->group ?? Group::findOrFail($item->group_id));
+    }
+
+    /**
+     * A scheduled conversation as the OFFICE reads it (S14, 2026-09-30): where it
+     * stands, never what it says or who it is about. `subject`, `body` and `about`
+     * (the child's name) are ABSENT, not null; `content_hidden` says why. The office
+     * may cancel it and nothing else, so `can_change` is false.
+     *
+     * @return array<string,mixed>
+     */
+    private function metadataOnly(GroupMessageSchedule $item, ?User $viewer, string $zone): array
+    {
+        return [
+            'id' => (int) $item->id,
+            'group_id' => (int) $item->group_id,
+            'kind' => 'thread',
+            'scope' => $item->scope,
+            'audience' => $item->isAboutOneChild() ? 'one_child' : 'class',
+            'send_at' => optional($item->send_at)->toIso8601String(),
+            'send_at_local' => ScheduledTime::local($item->send_at, $zone),
+            'status' => $item->status,
+            'failure_reason' => $item->failure_reason,
+            'author' => $item->author ? ['id' => $item->author->id, 'name' => $item->author->name] : null,
+            'can_change' => false,
+            'can_cancel' => $item->isEditable() && $this->mayCancel($viewer, $item),
+            'content_hidden' => true,
+            'created_at' => optional($item->created_at)->toIso8601String(),
+        ];
     }
 
     /** The sweep's own gates, asked now (ScheduledSendGate), or null when the item may go out. */
@@ -272,6 +334,10 @@ class GroupMessageSchedulesController extends Controller
      */
     private function serialize(GroupMessageSchedule $item, ?User $viewer, string $zone): array
     {
+        if (! $this->mayReadContent($viewer, $item)) {
+            return $this->metadataOnly($item, $viewer, $zone);
+        }
+
         $contact = $item->aboutMembership?->contact;
 
         return [
@@ -294,7 +360,9 @@ class GroupMessageSchedulesController extends Controller
             'failure_reason' => $item->failure_reason,
             'sent_thread_id' => $item->sent_thread_id !== null ? (int) $item->sent_thread_id : null,
             'author' => $item->author ? ['id' => $item->author->id, 'name' => $item->author->name] : null,
-            'can_change' => $item->isEditable() && $this->mayChange($viewer, $item),
+            'can_change' => $item->isEditable() && $this->mayCancel($viewer, $item),
+            'can_cancel' => $item->isEditable() && $this->mayCancel($viewer, $item),
+            'content_hidden' => false,
             'created_at' => optional($item->created_at)->toIso8601String(),
         ];
     }
