@@ -5875,3 +5875,87 @@ without the fix), `undo_is_still_refused_once_an_imported_contact_has_a_paid_ord
 the Connect endpoint's subscription list and recommends the owner/ops call to add `checkout.session.expired` and `payment_intent.payment_failed`,
 noting the code has no `payment_intent.payment_failed` arm today; `.claude/rules/stripe-payments.md` "Universal cart" carries the portal
 switch, the fund-delete guard, the scrub, the log line and the subscription fact.
+## 2026-09-30 — Pre-merge fixes (group B): money path, settlement, prune, deletion
+
+From the ship-critic's confirmed findings and minors (`design/ship-critic-2026-09-30.json`), base `feat/universal-cart` @ 3345ac28.
+Group A (portal switch, office side, tooling, docs) worked in a sibling worktree on disjoint files. NOTHING WAS RUN: there is no
+PHP here, so every test below was written by reading the code it exercises and none has been executed on either driver.
+
+(B1) `orders.charge_flag` is `string(32)`. 'partially_refunded' is 18 characters and the column was 16: MySQL in strict mode refuses
+it (error 1406), SQLite does not, so every partial refund of a basket would have failed to record and been swallowed by
+`handleChargeFlag`'s catch-all. The unshipped migration is edited in place (neither cart migration has run on staging or
+production, per the brief; if that is wrong for staging an ALTER migration is needed instead, ASSUMPTIONS B-5). THE AUDIT of every
+string column in `2026_09_27_090000_create_carts_table` and `2026_09_28_090000_create_orders_table` against everything the code
+writes found one more that was tight: `orders.charge_account_id` was `string(64)` and is copied from `masjids.stripe_account_id`,
+which is `string(255)`; it is now 255 too. Everything else fits, and the widths that decide it are: statuses 16 (longest 'checked_out',
+11; 'pending'/'expired', 7), `recorded_as` 16 ('registration', 12), `buyable_type` 64 ('meal_item', 9), `record_type` 64
+('form_response', 13), currency 3 ('usd'), `order_number` 32 (8), `idempotency_key` 64 ('cart_order_' + uuid = 47), `charge_ref` 40
+('cref_' + 32 = 37, the tightest), `buyer_email` 255 (the door caps it at 190), `buyer_name` 120 and `buyer_phone` 32 (both
+`mb_substr`'d to the column), `label` 255 (a form, fund or dish name, each a `string(255)`; the basket's own copy is `mb_substr`'d),
+`client_line_key` 64 (the door's regex), digests `char(64)` (hex SHA-256/HMAC). `CartColumnWidthsTest` reads the declared widths out
+of both migrations and compares them with the longest value the code writes (a map next to the constants), fails when a new string
+column has no recorded maximum, and reads every string in the rows a real paid and partly refunded basket leaves.
+
+(B2) A refund or dispute before settlement is no longer lost. `CartPaymentService::recordPaymentIntent()` writes
+`orders.stripe_payment_intent_id` (once, `whereNull`, outside any transaction) as soon as a session or payment-intent event has
+resolved the order and matched its page, BEFORE settlement is tried, so it survives a refusal (amount mismatch) or a throw (a fund
+that vanished). `flagOrder` then finds the pending order and flags it with its "flagged before settlement recorded it" warning.
+HAVING AN INTENT IS NOT BEING PAID, proved by grep over `app/`: the only readers of `orders.stripe_payment_intent_id` are
+`flagOrder` (finds the order), `CartSettlementService` (writes it; `noteRepeat` reads it on an already PAID order) and now
+`PruneCarts` (treats pending-with-intent as a payment to reconcile); everything that decides "paid" reads `status`
+(`Order::isPaid()`, `MemberPurchases` `orders.status = paid`, `CartOrdersController`, `CartCheckoutService` PENDING/PAID reads).
+`CartPreSettlementFlagTest::having_an_intent_does_not_make_an_order_paid` pins the model, the payment-state read, the basket and the
+records. One consequence for settlement: an intent recorded early might not be the paying one (a holder's own users can write the
+metadata that identifies an order on their account), so step 3 now records the PAYING intent (`$paymentIntentId ?? recorded`); it
+used to keep whatever was there. CHANGED EXISTING TEST: `CartSettlementTest::an_amount_mismatch_settles_nothing_and_leaves_the_order_pending`
+asserted the intent stayed NULL after a refused settlement, which is the defect; it now asserts the intent is recorded and the order
+is still pending and not paid.
+
+(B3) A form line's record key is `cart:item:<order_item id>` (was `cart_item_<id>`), for tickets (`client_submission_key`, 64 wide)
+and gifts (`donations.idempotency_key`, 255). The public door accepts `^[A-Za-z0-9_-]{8,64}$`, so the old key could be submitted by
+anyone against the same form and settlement's `earlier()` would find THEIR row and mark it paid with the basket's payment; a colon is
+outside that alphabet. `CartSettlementService::lineKey()` is the one place the key is built. Tests: the door's own rule refuses
+`cart:item:42` and accepts `cart_item_42`; a decoy row written under `cart_item_<id>` is neither captured nor marked paid. Existing
+tests that spelled the old key were updated (`CartSettlementTest`, `FormResponseWriterTest`). `.claude/rules/stripe-payments.md:554`
+(group A's file) still says `cart_item_<id>`; not touched here.
+
+(B4) `cart:prune` also deletes `pending` orders, with their lines, because an order never becomes `expired` on production (the
+Connect endpoint does not subscribe to `checkout.session.expired`): with NO intent on record once `checkout_expires_at` is more than
+`expired_order_days` (7) past; WITH an intent once it is more than `cart.prune.pending_with_payment_days` (new, default 30, floor 7,
+env `CART_PRUNE_PENDING_WITH_PAYMENT_DAYS`) past, and that count is logged at WARNING with each order's number, payment intent and
+amount (the rows are gone afterwards; no name, address or answer is logged). A debit that succeeded would have settled through
+`payment_intent.succeeded`, so a pending order with an intent this long after is a payment to reconcile in Stripe. `paid` is never
+touched; each delete names the status (and the missing intent) again so an order that settled or was named between read and delete
+is skipped. Boundaries tested (7 and 30 days exactly are kept), plus dry run, the config floor and the log. CHANGED EXISTING TEST:
+`CartPruneTest::an_expired_order_more_than_a_week_past_its_page_goes_...` kept a pending order 30 days old "however old"; it now
+keeps a pending order 3 days old and a pending-with-intent order exactly 30 days old.
+
+(B5) `CartRefundArmIsolationTest`: the cart arm's own first query throws (a `DB::listen` on `select * from "orders"`) and the form arm
+still flags the refund and the dispute, the webhook answers 200 and the cart arm logs the class only. It passes against the code as
+it stands (the try/catch exists); it fails if the try/catch is removed.
+
+(B6) `App\Support\CartTables::has($table)`: `Schema::hasTable` memoised per process (an existing table for good, a missing one for 30
+seconds so a long-lived worker recovers). Guards the form refund arm's `whereNotExists(order_items)`, the cart's own refund arm (it
+logged a false error line per refund), `MemberAccountDeletion`'s carts and orders steps and its `reasonsToKeep` read of `orders`.
+`CartDeployWindowTest` drops the four tables. Not guarded, outside group B's files or the brief: the `ContactsController` merge, the
+portal routes (dark behind group A's switch), and `WixContactImport`'s undo (a console command).
+
+(B7) `settleLocked`'s first read is MOVED OUT of the transaction, not made a locking read: `settle()` reads
+`(id, masjid_id, cart_id)` of the order before `DB::transaction` opens. Making it `FOR UPDATE` would lock the ORDER before the CART,
+the reverse of checkout's order, and invite the deadlock the cart-first order exists to avoid. Safe because that read only decides
+WHICH cart to lock, an order's `cart_id` never changes except to NULL when its basket is pruned (then there is no cart to lock and
+`closeCart` does nothing, exactly as before), and everything that matters (the cart, the order, the lines) is read afterwards under
+the locks; InnoDB's locking reads see the latest committed rows and do not fix the REPEATABLE READ snapshot, so the first plain read
+now comes after both locks. `CartSettlementLockOrderTest` pins the statement order (basket id before BEGIN, cart lock first inside).
+SQLite cannot show the anomaly; the concurrent case has not run on MySQL.
+
+(B8) `pinToHolder` asks `CartPaymentService::accountHolder()` (now `public static`; live before trashed, and the trashed lookup
+`orderBy('id')`) instead of an unordered `withTrashed()->pluck()->first()`; the link's own holder (`forms_card_via_masjid_id`)
+still wins while it holds the pinned account. `CartPinToHolderTest`.
+
+(B9) Delete account also clears the buyer's name, phone and address on UNPAID (pending or expired) orders in the member's
+organisation whose `buyer_email` is EXACTLY their `login_email` or `email` (`ContactIdentity::keepExactMatches`; the query is only
+`LOWER(buyer_email) = LOWER(?)`, a shortlist), because the public door always writes `contact_id` NULL. Paid orders are never
+touched. `order_items.payload` (attendee names) and `basket_fingerprint` are NOT cleared: a pending order can still be paid by a
+delayed method and settlement writes its records from the payload; `cart:prune` removes the whole order (B4). Tested including a
+look-alike under the `FoldsAccentsLikeUnicodeCi` stand-in, in both directions.
