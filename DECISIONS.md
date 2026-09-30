@@ -5374,5 +5374,9 @@ Rationale and runbook (records, order, owner gates, rollback): docs/mail-sending
 address, framed as the school mails are, with `--from` for a domain not yet in `.env` and
 `--prompt-key` for staging, whose `.env` keeps RESEND_KEY blank. A mailer that delivers nowhere
 (log, array) exits non-zero, so a send into the log file cannot read as a success.
+DMARC (owner, 2026-09-29: Cloudflare DMARC Management): that feature works on apex domains only, so
+it publishes `_dmarc.hopetechapps.com` at `p=none` and `manara.hopetechapps.com` inherits it by the
+organisational-domain fallback. No `_dmarc.manara` record, which would take its reports out of the
+dashboard. `p=none` monitors and does not change delivery, including the company's Zoho mail.
 Known limit: `manara.hopetechapps.com` has no MX, so a reply to mail without an organisation
 Reply-To bounces.

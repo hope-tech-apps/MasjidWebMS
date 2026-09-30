@@ -62,7 +62,6 @@ Cloudflare dashboard wants them, relative to the zone.
 | 1 | TXT | `resend._domainkey.manara` | `p=MIGfMA0…` (the public key Resend shows when the domain is created) | | **DKIM**: Resend signs with `d=manara.hopetechapps.com`. |
 | 2 | MX | `send.manara` | `feedback-smtp.us-east-1.amazonses.com` | 10 | **Return path**: bounces and complaints go back to Resend. |
 | 3 | TXT | `send.manara` | `v=spf1 include:amazonses.com ~all` | | **SPF** for the return-path domain. |
-| 4 | TXT | `_dmarc.manara` | `v=DMARC1; p=none; rua=mailto:<reports inbox>` | | **DMARC**. Not needed for Resend's verification, but Gmail and Yahoo expect it. |
 
 - **Record 1 does not exist until the domain is created in Resend.** It is generated per domain.
   Copy it exactly from Resend's DNS tab. It is a public key, safe to paste anywhere.
@@ -71,11 +70,20 @@ Cloudflare dashboard wants them, relative to the zone.
   in Resend, use the values Resend shows.
 - **Alignment.** DKIM `d=` equals the From domain (strict). The SPF domain `send.manara…` shares the
   organisational domain `hopetechapps.com` with the From domain (relaxed). Both pass DMARC.
-- **DMARC reports inbox.** `p=none` with no `rua` is valid but reports nothing. Use a real mailbox
-  on `hopetechapps.com` (the owner picks it; no report-authorisation record is needed, because it
-  is the same organisational domain), or Cloudflare's DMARC Management address.
-- **DMARC ramp.** Run `p=none` for 2 to 4 weeks. When the reports show only Resend and every
-  message passing, move to `p=quarantine`.
+- **DMARC comes from the zone apex, through Cloudflare DMARC Management (owner's choice,
+  2026-09-29).** DMARC Management works on apex domains only
+  (developers.cloudflare.com/dmarc-management/enable). Enabling it in the `hopetechapps.com` zone
+  (Email → DMARC Management → Enable) adds `_dmarc.hopetechapps.com` at `p=none` with Cloudflare's
+  report address. With no `_dmarc.manara` record, a receiver checking mail from
+  `manara.hopetechapps.com` falls back to that organisational-domain record, and the reports land in
+  the same dashboard. So there is **no `_dmarc.manara` record**: one would split the reports out of
+  the dashboard. `p=none` only monitors. It changes nothing about how the company's Zoho mail or
+  Resend mail is delivered, and it reports on both, which is a gain for Zoho too. Gmail's and
+  Yahoo's "publish DMARC" expectation is met through the same fallback.
+- **DMARC ramp.** Run `p=none` for 2 to 4 weeks. When the reports show every legitimate source
+  passing, tighten. To tighten Manara alone, add `sp=quarantine` to the apex record (it governs
+  every subdomain), or give `_dmarc.manara` its own record, which moves its reports out of the
+  dashboard. Tightening `p=` at the apex also governs Zoho, so check Zoho's DKIM first.
 - Click and open tracking stay **off** in Resend. They need a tracking CNAME, rewrite links
   (including sign-in links) through a third party, and add pixels to mail about children.
 
@@ -90,9 +98,12 @@ Each step marked **YES** waits for the owner's explicit go.
    (us-east-1). Then API Keys → Create → permission **Sending access**, domain
    **manara.hopetechapps.com** only, name `manara-production`. Keep the key out of chat; it goes in
    through hidden prompts only (steps 4 and 5).
-3. **YES: DNS.** Add records 1 to 4 (above) in `hopetechapps.com`. Check with
+3. **Owner, in Cloudflare:** `hopetechapps.com` → Email → DMARC Management → Enable, and accept
+   the record it offers (`_dmarc.hopetechapps.com`, `p=none`).
+   **YES: DNS.** Add records 1 to 3 (above) in `hopetechapps.com`. Check with
    `dig TXT resend._domainkey.manara.hopetechapps.com +short` and the same for `send.manara`
-   (MX and TXT) and `_dmarc.manara`, then press Verify in Resend until the domain reads Verified.
+   (MX and TXT), and `dig TXT _dmarc.hopetechapps.com +short`. Then press Verify in Resend until the
+   domain reads Verified.
 4. **YES: staging.** `scripts/ship.sh staging feat/manara-sending-domain` (check the box's
    `git reflog` first; it is shared). Then the owner runs, in their own terminal (`-t`, because the
    key prompt needs a TTY):
@@ -120,7 +131,7 @@ Each step marked **YES** waits for the owner's explicit go.
 6. **Owner, after a clean day:** revoke the old key in Resend. First check its "last used" there,
    in case anything besides Manara still sends with it. Keep `tapcraft.tech` in Resend for
    TapCraft's own mail.
-7. **After 2 to 4 weeks of clean DMARC reports:** `p=none` → `p=quarantine` (a DNS change, so YES
+7. **After 2 to 4 weeks of clean DMARC reports:** tighten as in section 3 (a DNS change, so YES
    again).
 8. Tell the manara-marketing session that P5 is met.
 
