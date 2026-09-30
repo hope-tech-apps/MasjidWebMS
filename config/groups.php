@@ -226,6 +226,22 @@ return [
         /* Ceiling on the note a teacher may attach to a redemption or a reversal. */
         'max_note_length' => 255,
 
+        /*
+         * Days a class or school-year cutoff waits before bucks:expire acts on it. The
+         * dates come from office screens that accept any date, so a mistyped end date
+         * is given this long to be noticed before it writes every balance off (a date
+         * corrected after that is still undone: BucksExpiry). 0 acts the day after.
+         */
+        'expiry_grace_days' => (int) env('GROUP_BUCKS_EXPIRY_GRACE_DAYS', 7),
+
+        /*
+         * The office's reconciliation shows a class's figures only when it has at
+         * least this many current students. In a smaller class a total IS a child's
+         * balance (one student: exactly); those classes are listed without figures
+         * and left out of the school totals, so no subtraction recovers them.
+         */
+        'reconciliation_min_class_size' => (int) env('GROUP_BUCKS_RECONCILIATION_MIN_CLASS', 5),
+
     ],
 
     /*

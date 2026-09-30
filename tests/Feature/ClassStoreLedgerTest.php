@@ -140,9 +140,17 @@ class ClassStoreLedgerTest extends TestCase
         $this->refusedWith('not_a_student', fn () => $this->redeem($stranger, $prize));
         // A guardian edge names a relationship, not a person to give a prize to.
         $this->refusedWith('not_a_student', fn () => $this->redeem($guardianEdge, $prize));
-        // A child who has left is no longer this room's.
+        // A child who has left is no longer this room's, and the refusal says so (W6-C1): their Bucks stay
+        // on their record, and the teacher is told why they cannot be spent rather than "no such student".
         $this->yusuf->forceFill(['left_on' => now()->subDay()->toDateString()])->save();
-        $this->refusedWith('not_a_student', fn () => $this->redeem($this->yusuf->fresh(), $prize));
+        $this->refusedWith('student_left', fn () => $this->redeem($this->yusuf->fresh(), $prize));
+        try {
+            $this->redeem($this->yusuf->fresh(), $prize);
+        } catch (\App\Support\ClassStoreRefusal $e) {
+            $this->assertStringContainsString('has left this class', $e->getMessage());
+            $this->assertStringContainsString('stay on their record', $e->getMessage());
+        }
+        $this->assertSame(20, $this->balanceOf($this->yusuf), 'nothing is taken, and nothing is lost');
 
         $this->assertSame(0, PrizeLedgerEntry::query()->where('kind', PrizeLedgerEntry::KIND_REDEEMED)->count());
     }
@@ -468,7 +476,12 @@ class ClassStoreLedgerTest extends TestCase
         // are what serialise two teachers redeeming the last stock, or a redemption racing the mint.
         $store = ClassStore::class;
 
-        $this->assertSame(4, substr_count((string) file_get_contents(app_path('Support/ClassStore.php')), 'lockForUpdate()'), 'ClassStore holds four locks: the prize, and the roster row in three places');
+        $this->assertSame(5, substr_count((string) file_get_contents(app_path('Support/ClassStore.php')), 'lockForUpdate()'), 'ClassStore holds five locks: the prize (to redeem it and to edit it), and the roster row in three places');
+
+        // A prize edit compares the stock only under the row's lock, or a stale count could still land.
+        $edit = $this->bodyOf($store, 'updatePrize');
+        $this->assertSame(1, substr_count($edit, 'lockForUpdate()'), 'a prize edit locks the prize row');
+        $this->assertLessThan(strpos($edit, '$current !== $expectedStock'), strpos($edit, 'lockForUpdate()'), 'and compares the stock after taking it');
 
         foreach (['lockStudent', 'reverse', 'appendForSystem'] as $method) {
             $this->assertSame(1, substr_count($this->bodyOf($store, $method), 'lockForUpdate()'), "{$store}::{$method} must lock the student's roster row");
@@ -557,15 +570,24 @@ class ClassStoreLedgerTest extends TestCase
             'replayed' => false,
         ];
 
-        $result = $guarded->invoke(null, $key, $duplicate);
+        $result = $guarded->invoke(null, $key, null, $duplicate);
 
         $this->assertTrue($result['replayed']);
         $this->assertSame($winner->id, $result['entry']->id);
         $this->assertSame(1, PrizeLedgerEntry::query()->where('dedupe_key', $key)->count());
 
+        // The race's loser is a replay only if it asked for the same thing (B11): another prize is a 409.
+        try {
+            $guarded->invoke(null, $key, fn (PrizeLedgerEntry $e): bool => false, $duplicate);
+            $this->fail('a mismatched replay must be refused');
+        } catch (\App\Support\ClassStoreRefusal $e) {
+            $this->assertSame('request_id_reused', $e->reason);
+            $this->assertSame(409, $e->status);
+        }
+
         // A violation with no key of ours to point at is not swallowed.
         $this->expectException(UniqueConstraintViolationException::class);
-        $guarded->invoke(null, null, $duplicate);
+        $guarded->invoke(null, null, null, $duplicate);
     }
 
     #[Test]

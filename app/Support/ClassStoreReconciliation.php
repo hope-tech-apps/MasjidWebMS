@@ -37,6 +37,15 @@ use Illuminate\Support\Facades\Date;
  * change of rate (a week keeps the rate it was minted at, and `expected_minted` uses today's). A
  * difference is therefore a question for the office, not an error, and the view says so.
  * `negative_balances` counts children whose ledger sums below zero: it should always be 0.
+ *
+ * ## A small class shows no figures at all
+ *
+ * In a class of one, "held now" IS that child's balance; in a class of two, with one child
+ * holding, the same. So a class with fewer current students than
+ * `groups.bucks.reconciliation_min_class_size` (default 5) is listed by name with
+ * `suppressed: true` and NO figures, and is left out of the school totals as well, because a
+ * total that included it would give its figures back by subtraction. Its teachers still see
+ * it on their own screen; the office sees that it exists and why it shows nothing.
  */
 final class ClassStoreReconciliation
 {
@@ -54,6 +63,19 @@ final class ClassStoreReconciliation
         $settings = ClassStoreSettings::for((int) $masjid->id);
         $window = self::window($tz, $settings['bucks_from'], $weeks);
         $from = $settings['bucks_from'] === null ? null : BucksMinter::startInstant($settings['bucks_from'], $tz);
+        $minSize = self::minClassSize();
+
+        // Current students per class, counted in the database; a class below the minimum shows nothing.
+        $sizes = GroupMembership::query()
+            ->whereIn('group_id', $groups->pluck('id')->all())
+            ->participants()->current()
+            ->groupBy('group_id')
+            ->selectRaw('group_id, COUNT(*) as students')
+            ->pluck('students', 'group_id')
+            ->map(fn ($v): int => (int) $v);
+
+        [$shown, $small] = $groups->partition(fn (Group $g) => (int) ($sizes[$g->id] ?? 0) >= $minSize);
+        $groups = $shown->values();
         $groupIds = $groups->pluck('id')->map(fn ($id): int => (int) $id)->all();
 
         $byKind = PrizeLedgerEntry::query()
@@ -99,6 +121,13 @@ final class ClassStoreReconciliation
 
         $sum = fn (string $field): int => (int) $classes->sum($field);
 
+        // Listed, named, and nothing else: no figure, and none of it in the totals below.
+        $suppressed = $small->map(fn (Group $group): array => [
+            'group_id' => (int) $group->id,
+            'name' => $group->name,
+            'suppressed' => true,
+        ])->values();
+
         return [
             'settings' => [
                 'points_per_buck' => $settings['points_per_buck'],
@@ -112,7 +141,10 @@ final class ClassStoreReconciliation
                 'from' => $window === [] ? null : end($window)->startDate(),
                 'to' => $window === [] ? null : $window[0]->lastDate(),
             ],
-            'classes' => $classes,
+            // In the caller's display order: the shown classes, then the ones too small to show.
+            'classes' => $classes->map(fn (array $c): array => $c + ['suppressed' => false])->concat($suppressed)->values(),
+            'min_class_size' => $minSize,
+            'suppressed_classes' => $suppressed->count(),
             'totals' => [
                 'minted' => $sum('minted'),
                 'redeemed' => $sum('redeemed'),
@@ -127,6 +159,12 @@ final class ClassStoreReconciliation
                 'window_difference' => $sum('window_difference'),
             ],
         ];
+    }
+
+    /** The fewest current students a class needs for its figures to be shown (never below 1). */
+    public static function minClassSize(): int
+    {
+        return max(1, (int) config('groups.bucks.reconciliation_min_class_size', 5));
     }
 
     /**

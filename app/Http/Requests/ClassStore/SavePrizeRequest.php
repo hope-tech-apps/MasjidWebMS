@@ -24,7 +24,13 @@ use Illuminate\Contracts\Validation\Validator;
  *    framework's empty-string-to-null pass already reads as null;
  *  - `is_active` arrives as the string "true" or "false" from the form-encoded SPA, so it is
  *    coerced here, server-side, where a cached bundle cannot get round it
- *    (.claude/rules/shipping.md).
+ *    (.claude/rules/shipping.md). An ABSENT, null or empty `is_active` means NO CHANGE: it
+ *    used to go through filter_var, which reads null and '' as false, so a client that sent
+ *    the field empty silently retired the prize;
+ *  - on an update, a `stock` must come with `expected_stock`, the number the editor LOADED
+ *    (null for unlimited). The save compares it with the row under a lock and answers 409
+ *    `stock_changed` when a redemption has moved it since, instead of writing a stale count
+ *    over the prizes that were given meanwhile (ClassStore::updatePrize).
  *
  * On an update every field is optional, so a retire is `{is_active: false}` alone.
  */
@@ -33,9 +39,16 @@ class SavePrizeRequest extends BaseFormRequest
     protected function prepareForValidation(): void
     {
         if ($this->has('is_active')) {
-            $this->merge([
-                'is_active' => filter_var($this->input('is_active'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
-            ]);
+            $raw = $this->input('is_active');
+
+            if ($raw === null || $raw === '') {
+                // No value is no change (never "false": filter_var(null) is false).
+                $this->offsetUnset('is_active');
+            } else {
+                $this->merge([
+                    'is_active' => filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
+                ]);
+            }
         }
 
         if (is_string($this->input('title'))) {
@@ -58,7 +71,43 @@ class SavePrizeRequest extends BaseFormRequest
             'cost_bucks' => [$required, 'integer', 'min:1', 'max:'.Prize::MAX_COST],
             'stock' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:'.Prize::MAX_STOCK],
             'is_active' => ['sometimes', 'boolean'],
+            // On an update only: required alongside `stock`, and compared under the row lock.
+            'expected_stock' => $this->updating()
+                ? ['present_with:stock', 'nullable', 'integer', 'min:0', 'max:'.Prize::MAX_STOCK]
+                : ['exclude'],
         ];
+    }
+
+    /**
+     * What this request changes, field by field, in the types the row stores: only the fields
+     * the body carries, and `is_active` only when it carried a value (see above).
+     *
+     * @return array<string,mixed>
+     */
+    public function changes(): array
+    {
+        $out = [];
+
+        foreach (['title', 'description', 'cost_bucks', 'stock', 'is_active'] as $field) {
+            if (! $this->exists($field)) {
+                continue;
+            }
+
+            $out[$field] = match ($field) {
+                'cost_bucks' => $this->integer('cost_bucks'),
+                'stock' => $this->filled('stock') ? $this->integer('stock') : null,
+                'is_active' => (bool) $this->boolean('is_active'),
+                default => $this->input($field),
+            };
+        }
+
+        return $out;
+    }
+
+    /** The stock the editor loaded (null = unlimited), for the compare under the lock. */
+    public function expectedStock(): ?int
+    {
+        return $this->filled('expected_stock') ? $this->integer('expected_stock') : null;
     }
 
     public function after(): array

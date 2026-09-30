@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\DB;
  * A balance is written off at each of:
  *   - the day after a class's `ends_on`, and
  *   - the day after the last day of each of the school's calendar years (SchoolCalendar),
- * as soon as that day has passed on the SCHOOL's clock. A class with no end date in a school
+ * once that day is `expiry_grace_days` old on the SCHOOL's clock (below). A class with no end date in a school
  * with no calendar never expires: nothing is invented for it.
  *
  * ## An expiry is a SET, and it can be run again for the same cutoff
@@ -38,6 +38,19 @@ use Illuminate\Support\Facades\DB;
  * between the hourly mint (:10) and this sweep (:40) in which those bucks show; they are gone
  * by the next expiry run.
  *
+ * ## A mistyped date must not wipe a class, and a corrected one gives it back
+ *
+ * The cutoffs come from dates the office types (a class's `ends_on`, a school year's
+ * `last_day`), and any date is accepted there. So a cutoff acts only once it is
+ * `groups.bucks.expiry_grace_days` days old (default 7): a wrong date typed on Monday is
+ * normally seen and corrected long before it takes anything. And when a cutoff that has
+ * already been written off DISAPPEARS (the date was corrected, or moved later), every
+ * `expired` row written for it is given back by a compensating `reversal` row pointing at it
+ * (`dedupe_key = reversal:{expired entry}`, once, under the student's lock). A cutoff that
+ * merely moved later is then written off again when the new one is due. A cutoff that still
+ * exists but is not yet due (the grace was raised) is left alone: only a date that no longer
+ * exists is undone. Both halves are append-only: nothing written is ever edited.
+ *
  * The retention purge then removes a child's rows only when EVERY one of them is due
  * (PrizeLedgerEntry::purgeDueSets), and every row is stamped from its own date, so the sweep
  * cannot separate what was earned from what was spent and leave a partial or negative balance.
@@ -47,25 +60,29 @@ use Illuminate\Support\Facades\DB;
  */
 final class BucksExpiry
 {
+    /** How many days a cutoff waits before it acts, from config (never below zero). */
+    public static function graceDays(): int
+    {
+        return max(0, (int) config('groups.bucks.expiry_grace_days', 7));
+    }
+
     /**
-     * The cutoffs ('Y-m-d', the first day AFTER the class or the year) that have passed for
-     * this class, oldest first.
+     * EVERY cutoff this class has ('Y-m-d', the first day AFTER the class or the year), due or
+     * not, oldest first: the set an `expired` row's cutoff is checked against to see whether its
+     * date still exists at all.
      *
      * @return list<string>
      */
-    public static function cutoffs(Group $group, SchoolCalendar $calendar): array
+    public static function allCutoffs(Group $group, SchoolCalendar $calendar): array
     {
-        $today = $calendar->today();
         $cutoffs = [];
 
-        if ($group->ends_on !== null && $group->ends_on->toDateString() < $today) {
+        if ($group->ends_on !== null) {
             $cutoffs[] = $group->ends_on->copy()->addDay()->toDateString();
         }
 
         foreach ($calendar->years() as $year) {
-            if ($year->last_day->toDateString() < $today) {
-                $cutoffs[] = $year->last_day->copy()->addDay()->toDateString();
-            }
+            $cutoffs[] = $year->last_day->copy()->addDay()->toDateString();
         }
 
         $cutoffs = array_values(array_unique($cutoffs));
@@ -75,11 +92,32 @@ final class BucksExpiry
     }
 
     /**
-     * @return array{students:int,bucks:int}
+     * The cutoffs that are DUE for this class: passed on the school's clock and at least
+     * graceDays() old, oldest first.
+     *
+     * @return list<string>
+     */
+    public static function cutoffs(Group $group, SchoolCalendar $calendar): array
+    {
+        $latest = CarbonImmutable::parse($calendar->today())->subDays(self::graceDays())->toDateString();
+
+        return array_values(array_filter(
+            self::allCutoffs($group, $calendar),
+            fn (string $cutoff): bool => $cutoff <= $latest,
+        ));
+    }
+
+    /**
+     * @return array{students:int,bucks:int,restored_students:int,restored_bucks:int}
      */
     public static function forClass(Masjid $masjid, Group $group, SchoolCalendar $calendar, bool $dry = false): array
     {
-        $out = ['students' => 0, 'bucks' => 0];
+        $out = ['students' => 0, 'bucks' => 0, 'restored_students' => 0, 'restored_bucks' => 0];
+
+        // First give back what was written off for a date that no longer exists, so a cutoff that
+        // moved to a date already due is written off again below from the restored balance.
+        self::restoreVanished($group, self::allCutoffs($group, $calendar), $dry, $out);
+
         $cutoffs = self::cutoffs($group, $calendar);
 
         if ($cutoffs === []) {
@@ -150,5 +188,72 @@ final class BucksExpiry
         }
 
         return $out;
+    }
+
+    /**
+     * Give back every `expired` row of this class whose cutoff is not among `$existing` (its
+     * date was corrected or moved later), once each, as a `reversal` pointing at it.
+     *
+     * @param  list<string>  $existing
+     * @param  array{students:int,bucks:int,restored_students:int,restored_bucks:int}  $out
+     */
+    private static function restoreVanished(Group $group, array $existing, bool $dry, array &$out): void
+    {
+        $rows = PrizeLedgerEntry::withoutMasjidScope()
+            ->where('group_id', $group->id)
+            ->where('kind', PrizeLedgerEntry::KIND_EXPIRED)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('prize_ledger_entries as undo')
+                    ->whereColumn('undo.reverses_entry_id', 'prize_ledger_entries.id');
+            })
+            ->orderBy('id')
+            ->get(['id', 'group_membership_id', 'amount', 'dedupe_key']);
+
+        $restored = [];
+
+        foreach ($rows as $row) {
+            $cutoff = self::cutoffOf((string) $row->dedupe_key);
+
+            // A row whose key names no cutoff is not this sweep's to judge; one whose cutoff still
+            // exists (due or not) stands.
+            if ($cutoff === null || in_array($cutoff, $existing, true)) {
+                continue;
+            }
+
+            $amount = -((int) $row->amount);
+
+            if ($amount < 1) {
+                continue;
+            }
+
+            if ($dry) {
+                $restored[(int) $row->group_membership_id] = true;
+                $out['restored_bucks'] += $amount;
+
+                continue;
+            }
+
+            $entry = ClassStore::appendForSystem($group, (int) $row->group_membership_id, fn (int $balance): array => [
+                'kind' => PrizeLedgerEntry::KIND_REVERSAL,
+                'amount' => $amount,
+                'reverses_entry_id' => (int) $row->id,
+                'note' => 'Expiry undone: the end date it came from was corrected.',
+                'dedupe_key' => 'reversal:'.$row->id,
+            ]);
+
+            if ($entry !== null) {
+                $restored[(int) $row->group_membership_id] = true;
+                $out['restored_bucks'] += $amount;
+            }
+        }
+
+        $out['restored_students'] += count($restored);
+    }
+
+    /** The cutoff an `expired` row was written for, from its key `expired:{m}:{cutoff}:{n}`. */
+    public static function cutoffOf(string $dedupeKey): ?string
+    {
+        return preg_match('/^expired:\d+:(\d{4}-\d{2}-\d{2})(?::\d+)?$/', $dedupeKey, $m) === 1 ? $m[1] : null;
     }
 }

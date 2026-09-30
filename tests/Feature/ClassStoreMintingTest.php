@@ -51,6 +51,9 @@ class ClassStoreMintingTest extends TestCase
         $this->storeOn();
         $this->freeze('2026-10-12 09:00');
         $this->startFrom(self::WEEK1);
+        // The expiry tests below are about WHAT is written off; the grace period before a cutoff
+        // acts has its own tests (the ones that set it), so it is 0 here unless a test says otherwise.
+        config(['groups.bucks.expiry_grace_days' => 0]);
     }
 
     protected function tearDown(): void
@@ -854,6 +857,119 @@ class ClassStoreMintingTest extends TestCase
         $this->expire();
         $this->expire();
         $this->assertSame(1, $this->ledger($this->amira)->where('kind', PrizeLedgerEntry::KIND_EXPIRED)->count());
+    }
+
+    #[Test]
+    public function a_cutoff_waits_the_grace_period_before_it_writes_anything_off(): void
+    {
+        config(['groups.bucks.expiry_grace_days' => 7]);
+        $this->credit($this->amira, 9, '2026-10-04');
+        // A class that ended on Friday the 9th: its cutoff is Saturday the 10th.
+        $this->class->forceFill(['ends_on' => '2026-10-09'])->save();
+
+        $this->expire();
+        $this->assertSame(9, $this->balanceOf($this->amira), 'two days after the cutoff, nothing is taken');
+
+        $this->freeze('2026-10-16 23:00');
+        $this->expire();
+        $this->assertSame(9, $this->balanceOf($this->amira), 'six days after, still nothing');
+
+        $this->freeze('2026-10-17 09:00');
+        $this->expire();
+        $this->assertSame(0, $this->balanceOf($this->amira), 'seven days after the cutoff it acts');
+        $this->assertSame('expired:'.$this->amira->id.':2026-10-10:1', $this->ledger($this->amira)->last()->dedupe_key);
+    }
+
+    #[Test]
+    public function a_mistyped_end_date_that_is_corrected_gives_the_bucks_back_once(): void
+    {
+        $this->credit($this->amira, 9, '2026-10-04');
+        $spent = ClassStore::redeem($this->class, $this->amira, $this->prize(['cost_bucks' => 2]), $this->teacher)['entry'];
+        // The office typed October for a class that runs to December.
+        $this->class->forceFill(['ends_on' => '2026-10-09'])->save();
+        $this->expire();
+        $this->assertSame(0, $this->balanceOf($this->amira));
+        $expired = $this->ledger($this->amira)->last();
+
+        // A teacher cannot undo a prize across an expiry that stands.
+        try {
+            ClassStore::reverse($this->class, $spent, $this->teacher);
+            $this->fail('a reversal across a standing expiry must be refused');
+        } catch (\App\Support\ClassStoreRefusal $e) {
+            $this->assertSame('expired', $e->reason);
+        }
+
+        $this->class->forceFill(['ends_on' => '2026-12-18'])->save();
+        $out = $this->expire();
+
+        $this->assertSame(7, $this->balanceOf($this->amira), 'the write-off is given back in full');
+        $back = $this->ledger($this->amira)->last();
+        $this->assertSame(PrizeLedgerEntry::KIND_REVERSAL, $back->kind);
+        $this->assertSame(7, $back->amount);
+        $this->assertSame($expired->id, $back->reverses_entry_id);
+        $this->assertSame('reversal:'.$expired->id, $back->dedupe_key);
+        $this->assertSame(-7, $expired->fresh()->amount, 'append-only: the expired row itself is untouched');
+        $this->assertStringContainsString('restored 7 buck(s)', $out);
+
+        // Once: the next runs write nothing more.
+        $this->expire();
+        $this->expire();
+        $this->assertSame(7, $this->balanceOf($this->amira));
+        $this->assertSame(1, $this->ledger($this->amira)->where('kind', PrizeLedgerEntry::KIND_REVERSAL)->count());
+
+        // And the prize can be undone again, now that no expiry stands after it.
+        ClassStore::reverse($this->class, $spent, $this->teacher);
+        $this->assertSame(9, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function an_end_date_moved_later_but_already_due_is_given_back_and_written_off_again(): void
+    {
+        $this->credit($this->amira, 6, '2026-09-27');
+        $this->class->forceFill(['ends_on' => '2026-10-02'])->save();
+        $this->expire();
+        $this->assertSame(0, $this->balanceOf($this->amira));
+
+        // Corrected to the 9th: the 3rd's write-off is given back, and the 10th's (already due) takes it again.
+        $this->credit($this->amira, 3, '2026-10-04');
+        $this->class->forceFill(['ends_on' => '2026-10-09'])->save();
+        $this->expire();
+
+        $this->assertSame(0, $this->balanceOf($this->amira));
+        $kinds = $this->ledger($this->amira)->map(fn ($e) => $e->kind.':'.$e->amount)->all();
+        $this->assertSame(['earned:6', 'expired:-6', 'earned:3', 'reversal:6', 'expired:-9'], $kinds);
+        $this->assertSame('expired:'.$this->amira->id.':2026-10-10:1', $this->ledger($this->amira)->last()->dedupe_key);
+    }
+
+    #[Test]
+    public function a_cutoff_that_still_exists_but_is_not_yet_due_is_not_given_back(): void
+    {
+        $this->credit($this->amira, 5, '2026-10-04');
+        $this->class->forceFill(['ends_on' => '2026-10-09'])->save();
+        $this->expire();
+        $this->assertSame(0, $this->balanceOf($this->amira));
+
+        // The grace is raised afterwards: the 10th is no longer DUE, but the date still exists.
+        config(['groups.bucks.expiry_grace_days' => 30]);
+        $this->expire();
+
+        $this->assertSame(0, $this->balanceOf($this->amira), 'only a date that no longer exists is undone');
+        $this->assertSame(0, $this->ledger($this->amira)->where('kind', PrizeLedgerEntry::KIND_REVERSAL)->count());
+    }
+
+    #[Test]
+    public function a_dry_run_says_what_it_would_give_back_and_writes_nothing(): void
+    {
+        $this->credit($this->amira, 4, '2026-10-04');
+        $this->class->forceFill(['ends_on' => '2026-10-09'])->save();
+        $this->expire();
+        $this->class->forceFill(['ends_on' => null])->save();
+        $rows = PrizeLedgerEntry::query()->count();
+
+        $out = $this->expire(['--dry-run' => true]);
+
+        $this->assertStringContainsString('restored 4 buck(s)', $out);
+        $this->assertSame($rows, PrizeLedgerEntry::query()->count());
     }
 
     #[Test]

@@ -332,6 +332,28 @@ class SchoolRecordsExportTest extends TestCase
     }
 
     #[Test]
+    public function the_bucks_ledger_travels_with_the_school_without_the_teachers_note(): void
+    {
+        $row = fn (string $kind, int $amount, ?string $week, ?string $note = null) => \App\Models\PrizeLedgerEntry::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->student->id,
+            'kind' => $kind, 'amount' => $amount, 'week_start' => $week, 'note' => $note, 'prize_title' => $kind === 'redeemed' ? 'Sticker' : null,
+        ]);
+        $row('earned', 7, '2026-10-04');
+        $row('redeemed', -3, null, 'PRIVATE-TEACHER-NOTE about the child');
+
+        $csv = $this->body('bucks_ledger');
+        $rows = array_map('str_getcsv', array_filter(explode("\n", preg_replace('/^\xEF\xBB\xBF/', '', $csv))));
+
+        $this->assertSame(['Entry id', 'Class id', 'Membership id', 'Kind', 'Amount', 'Week start', 'Prize', 'Corrects entry id', 'Occurred at'], $rows[0]);
+        $this->assertCount(3, $rows);
+        $this->assertSame(['earned', '7', '2026-10-04'], [$rows[1][3], $rows[1][4], $rows[1][5]]);
+        $this->assertSame(['redeemed', '-3', 'Sticker'], [$rows[2][3], $rows[2][4], $rows[2][6]]);
+        $this->assertSame((string) $this->student->id, $rows[1][2], 'the membership id re-links it to the enrollments file');
+        $this->assertStringNotContainsString('PRIVATE-TEACHER-NOTE', $csv);
+        $this->assertStringContainsString('bucks_ledger', $this->body('manifest'));
+    }
+
+    #[Test]
     public function the_lesson_plans_file_says_which_subject_each_plan_of_a_day_is(): void
     {
         foreach (['Math' => 'Count to twenty.', 'Science' => 'Sink or float.'] as $subject => $body) {

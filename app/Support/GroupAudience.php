@@ -705,12 +705,24 @@ class GroupAudience
      * still cannot read one child's balance, because that goes through
      * readablePrizeLedgerQuery() and the office holds no standing there. (An office-run
      * school-wide store, which would let an administrator read every child's balance, is
-     * deliberately not built: RECON-PLAN section 6.) The school is the bound tenant, so an
-     * administrator of another school never reaches here with this group.
+     * deliberately not built: RECON-PLAN section 6.)
+     *
+     * THE TENANT IS CHECKED HERE, like every other decision in this class, not assumed from the
+     * route: the group must belong to the school this request bound (the resolver binds a
+     * MasjidAdmin only to a school they hold a membership in, and a SuperAdmin to the one in
+     * the URL), and an unbound request grants nothing. A caller that hands this method another
+     * school's group, from any route, gets false rather than that school's totals on the
+     * strength of a `users.type`.
      */
     public function mayReceiveClassStoreTotals(?Authenticatable $principal, Group $group): bool
     {
         if (! $principal instanceof User) {
+            return false;
+        }
+
+        $tenant = $this->tenant->get();
+
+        if ($tenant === null || (int) $group->masjid_id !== (int) $tenant) {
             return false;
         }
 

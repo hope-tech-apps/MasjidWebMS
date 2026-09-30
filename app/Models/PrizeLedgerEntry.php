@@ -171,14 +171,28 @@ class PrizeLedgerEntry extends Model
      * would leave a negative or an unexplained balance. The rows go through the query
      * builder on purpose, in one statement per school: the model refuses a single-row delete.
      *
+     * AND ONLY A SET THAT IS WORTH NOTHING AND BELONGS TO NOBODY STILL HERE. Being due is not
+     * enough: a child in a school with no calendar and no class end date keeps a balance that
+     * never expires, and a year without a new row would otherwise make that balance vanish.
+     * So a set is removed only when its rows sum to ZERO and the child is no longer enrolled:
+     * their roster row has a `left_on`, or the class ended (`groups.ends_on`) before `$before`.
+     * A still-enrolled child's history, and any balance that is not zero, stays.
+     *
      * @return int how many rows were removed
      */
     public static function purgeDueSets(string $before, ?int $masjidId = null, bool $dryRun = false): int
     {
         $dueMemberships = function (?array $among = null) use ($before, $masjidId) {
             return DB::table('prize_ledger_entries as e')
+                ->join('group_memberships as gm', 'gm.id', '=', 'e.group_membership_id')
+                ->join('groups as g', 'g.id', '=', 'e.group_id')
                 ->when($masjidId !== null, fn ($q) => $q->where('e.masjid_id', $masjidId))
                 ->when($among !== null, fn ($q) => $q->whereIn('e.group_membership_id', $among))
+                // No longer enrolled: left the class, or the class itself has ended.
+                ->where(function ($q) use ($before) {
+                    $q->whereNotNull('gm.left_on')
+                        ->orWhere(fn ($w) => $w->whereNotNull('g.ends_on')->whereDate('g.ends_on', '<', $before));
+                })
                 ->whereNotExists(function ($q) use ($before) {
                     $q->select(DB::raw(1))
                         ->from('prize_ledger_entries as later')
@@ -187,7 +201,9 @@ class PrizeLedgerEntry extends Model
                             $w->whereNull('later.retained_until')->orWhereDate('later.retained_until', '>', $before);
                         });
                 })
-                ->distinct();
+                // Worth nothing: the whole set sums to zero.
+                ->groupBy('e.group_membership_id')
+                ->havingRaw('SUM(e.amount) = 0');
         };
 
         if ($dryRun) {

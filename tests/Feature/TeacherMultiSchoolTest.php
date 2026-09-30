@@ -682,13 +682,16 @@ class TeacherMultiSchoolTest extends TestCase
                 'body' => fn () => ['title' => 'Sweep prize', 'cost_bucks' => 3],
             ],
             'PUT /groups/{group_id}/prizes/{prize_id}' => [
-                'body' => fn () => ['title' => 'Sweep prize edited', 'cost_bucks' => 4, 'stock' => 9],
+                // expected_stock: the world's prize has no limit (a stock edit must say what it loaded).
+                'body' => fn () => ['title' => 'Sweep prize edited', 'cost_bucks' => 4, 'stock' => 9, 'expected_stock' => null],
             ],
             'POST /groups/{group_id}/members/{membership_id}/prizes/redeem' => [
-                'body' => fn (TeacherRealmWorld $w) => ['prize_id' => $w->prize->id],
+                'body' => fn (TeacherRealmWorld $w) => ['prize_id' => $w->prize->id, 'request_id' => 'sweep-redeem-0001'],
                 'refuse' => $bodyRefusal,
             ],
-            'POST /groups/{group_id}/members/{membership_id}/prizes/cash-out' => ['body' => fn () => ['amount' => 1]],
+            // A FIXED request id: the sweep reads a body that differs between the two worlds as one that
+            // names a row, and the id names none (a repeat in a control is a replay, still a 2xx).
+            'POST /groups/{group_id}/members/{membership_id}/prizes/cash-out' => ['body' => fn () => ['amount' => 1, 'request_id' => 'sweep-cashout-0001']],
             'POST /groups/{group_id}/prize-entries/{entry_id}/reverse' => ['body' => fn () => ['note' => 'Sweep.']],
 
             // -- attendance

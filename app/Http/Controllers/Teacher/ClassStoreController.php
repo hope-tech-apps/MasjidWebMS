@@ -143,7 +143,8 @@ class ClassStoreController extends TeacherController
         try {
             $done = ClassStore::redeem(
                 $group, $membership, $prize, $request->user(),
-                $request->filled('request_id') ? (string) $request->input('request_id') : null,
+                // Required by the request: a write without one is a 422 before it gets here.
+                (string) $request->input('request_id'),
                 $request->filled('note') ? (string) $request->input('note') : null,
             );
         } catch (ClassStoreRefusal $e) {
@@ -187,7 +188,8 @@ class ClassStoreController extends TeacherController
         try {
             $done = ClassStore::cashOut(
                 $group, $membership, $request->integer('amount'), $request->user(),
-                $request->filled('request_id') ? (string) $request->input('request_id') : null,
+                // Required by the request: a write without one is a 422 before it gets here.
+                (string) $request->input('request_id'),
                 $request->filled('note') ? (string) $request->input('note') : null,
             );
         } catch (ClassStoreRefusal $e) {
@@ -291,27 +293,21 @@ class ClassStoreController extends TeacherController
         $group = Group::findOrFail($group_id);
 
         // ONLY this class's own prize: a school-wide prize (the office's) and another class's
-        // are both a MISS here.
-        $prize = Prize::query()->where('group_id', $group->id)->findOrFail($prize_id);
-
-        foreach (['title', 'description', 'cost_bucks', 'stock', 'is_active'] as $field) {
-            if (! $request->exists($field)) {
-                continue;
-            }
-
-            $prize->{$field} = match ($field) {
-                'cost_bucks' => $request->integer('cost_bucks'),
-                'stock' => $request->filled('stock') ? $request->integer('stock') : null,
-                'is_active' => (bool) $request->boolean('is_active'),
-                default => $request->input($field),
-            };
+        // are both a MISS here. Locked, and a new stock compared with the one the editor loaded.
+        try {
+            $prize = ClassStore::updatePrize(
+                Prize::query()->where('group_id', $group->id),
+                $prize_id,
+                $request->changes(),
+                $request->expectedStock(),
+            );
+        } catch (ClassStoreRefusal $e) {
+            return $this->refusal($e);
         }
-
-        $prize->save();
 
         return response()->json([
             'status' => 'success',
-            'data' => ClassStorePayload::prize($prize->fresh(), (int) $group->id),
+            'data' => ClassStorePayload::prize($prize, (int) $group->id),
         ], Response::HTTP_OK);
     }
 

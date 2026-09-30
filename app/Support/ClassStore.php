@@ -29,9 +29,11 @@ use Illuminate\Support\Facades\DB;
  *    invariant is ALSO checked after the write: if the child's balance would be below zero,
  *    the transaction is rolled back. A balance can never go negative, with or without the
  *    lock, and a test proves it without one.
- *  - IDEMPOTENT. A `request_id` from the client (one per click) makes a double-tap a replay,
- *    not a second deduction; a reversal is unique per entry by construction. A replay returns
- *    the row it already wrote and touches nothing.
+ *  - IDEMPOTENT. A `request_id` from the client (one per write, required at the HTTP door)
+ *    makes a double-tap or a retry a replay, not a second deduction; a reversal is unique per
+ *    entry by construction. A replay returns the row it already wrote and touches nothing, and
+ *    ONLY when it asks for the same thing: the same id with another prize (or another cash-out
+ *    amount) is a 409 `request_id_reused`, never the first row passed off as the second's.
  *  - THE PRIZE MUST BE THIS SCHOOL'S AND EITHER SCHOOL-WIDE OR THIS CLASS'S OWN. Another
  *    school's prize (invisible through the tenant scope) and another class's are refused.
  *  - STOCK is optional (NULL = unlimited). It is decremented in the same transaction as the
@@ -114,12 +116,13 @@ final class ClassStore
         ?string $note = null,
     ): array {
         $key = $requestId !== null ? self::keyFor('redeemed', (int) $membership->id, $requestId) : null;
+        $same = fn (PrizeLedgerEntry $e): bool => $e->prize_id !== null && (int) $e->prize_id === (int) $prize->getKey();
 
-        return self::guarded($key, function () use ($group, $membership, $prize, $by, $key, $note): array {
+        return self::guarded($key, $same, function () use ($group, $membership, $prize, $by, $key, $note, $same): array {
             $student = self::lockStudent($group, $membership);
 
             if ($key !== null && ($existing = self::existing($key)) !== null) {
-                return ['entry' => $existing, 'replayed' => true];
+                return self::replay($existing, $same);
             }
 
             // Locked with the student: two classes racing for the last one are serialised too.
@@ -182,7 +185,7 @@ final class ClassStore
     {
         $key = 'reversal:'.$entry->id;
 
-        return self::guarded($key, function () use ($group, $entry, $by, $key, $note): array {
+        return self::guarded($key, null, function () use ($group, $entry, $by, $key, $note): array {
             // The roster row of the student the entry belongs to, locked before anything is read.
             $student = GroupMembership::query()->whereKey($entry->group_membership_id)->lockForUpdate()->first();
 
@@ -199,11 +202,17 @@ final class ClassStore
             }
 
             // An expiry closes the student's balance for good: giving bucks back after it would
-            // hand a child bucks their class no longer has.
+            // hand a child bucks their class no longer has. An expiry that was itself given back
+            // (its end date was corrected, BucksExpiry) no longer closes anything.
             $expiredSince = PrizeLedgerEntry::query()
                 ->where('group_membership_id', $student->id)
                 ->where('kind', PrizeLedgerEntry::KIND_EXPIRED)
                 ->where('id', '>', $entry->id)
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('prize_ledger_entries as undo')
+                        ->whereColumn('undo.reverses_entry_id', 'prize_ledger_entries.id');
+                })
                 ->exists();
 
             if ($expiredSince) {
@@ -255,12 +264,13 @@ final class ClassStore
         }
 
         $key = $requestId !== null ? self::keyFor('cashedout', (int) $membership->id, $requestId) : null;
+        $same = fn (PrizeLedgerEntry $e): bool => (int) $e->amount === -$amount;
 
-        return self::guarded($key, function () use ($group, $membership, $amount, $by, $key, $note): array {
+        return self::guarded($key, $same, function () use ($group, $membership, $amount, $by, $key, $note, $same): array {
             $student = self::lockStudent($group, $membership);
 
             if ($key !== null && ($existing = self::existing($key)) !== null) {
-                return ['entry' => $existing, 'replayed' => true];
+                return self::replay($existing, $same);
             }
 
             if (self::rawBalance((int) $student->id) < $amount) {
@@ -277,6 +287,46 @@ final class ClassStore
             self::assertNotNegative((int) $student->id);
 
             return ['entry' => $entry, 'replayed' => false];
+        });
+    }
+
+    /**
+     * Edit a prize: the row is LOCKED (the same lock a redemption takes on it) and a new
+     * `stock` is written only if the stock is still what the editor loaded (`$expectedStock`),
+     * so a count typed on a screen opened before a redemption can never put the given prize
+     * back on the shelf. A mismatch is a 409 `stock_changed` and writes nothing. `$scope` says
+     * whose shelf (a class's own, or the school-wide list); a prize outside it is a 404.
+     *
+     * @param  Builder<Prize>  $scope
+     * @param  array<string,mixed>  $changes  SavePrizeRequest::changes()
+     *
+     * @throws ClassStoreRefusal
+     */
+    public static function updatePrize(Builder $scope, int|string $prizeId, array $changes, ?int $expectedStock): Prize
+    {
+        return DB::transaction(function () use ($scope, $prizeId, $changes, $expectedStock): Prize {
+            $prize = $scope->clone()->whereKey($prizeId)->lockForUpdate()->firstOrFail();
+
+            if (array_key_exists('stock', $changes)) {
+                $current = $prize->stock === null ? null : (int) $prize->stock;
+
+                if ($current !== $expectedStock) {
+                    throw new ClassStoreRefusal(
+                        'stock_changed',
+                        'The number left changed to '.($current === null ? 'no limit' : $current)
+                            .' while this was being edited (a prize was given or given back). Nothing was saved; check the number and save again.',
+                        409,
+                    );
+                }
+            }
+
+            foreach ($changes as $field => $value) {
+                $prize->{$field} = $value;
+            }
+
+            $prize->save();
+
+            return $prize->fresh();
         });
     }
 
@@ -334,12 +384,16 @@ final class ClassStore
 
     /**
      * Run a write in a transaction. A repeated `dedupe_key` that loses the race on the
-     * unique index becomes a replay of the row that won, not an error.
+     * unique index becomes a replay of the row that won, not an error (and, like any replay,
+     * only if it asked for the same thing: `$same`).
      *
+     * @param  (callable(PrizeLedgerEntry):bool)|null  $same
      * @param  callable():array{entry:PrizeLedgerEntry,replayed:bool}  $work
      * @return array{entry:PrizeLedgerEntry,replayed:bool}
+     *
+     * @throws ClassStoreRefusal
      */
-    private static function guarded(?string $key, callable $work): array
+    private static function guarded(?string $key, ?callable $same, callable $work): array
     {
         try {
             return DB::transaction($work);
@@ -350,11 +404,40 @@ final class ClassStore
                 throw $e;
             }
 
-            return ['entry' => $existing, 'replayed' => true];
+            return self::replay($existing, $same);
         }
     }
 
-    /** The student's roster row, locked, and only if they are a CURRENT participant of THIS class. */
+    /**
+     * The answer to a request id already used: the row it wrote, when this request asks for the
+     * same thing, and a 409 otherwise (the screen reused an id for a different write, which must
+     * not come back as if the second write had been done).
+     *
+     * @param  (callable(PrizeLedgerEntry):bool)|null  $same
+     * @return array{entry:PrizeLedgerEntry,replayed:bool}
+     *
+     * @throws ClassStoreRefusal
+     */
+    private static function replay(PrizeLedgerEntry $existing, ?callable $same): array
+    {
+        if ($same !== null && ! $same($existing)) {
+            throw new ClassStoreRefusal(
+                'request_id_reused',
+                'That request id was already used for a different prize or amount. Nothing new was written; try again.',
+                409,
+            );
+        }
+
+        return ['entry' => $existing, 'replayed' => true];
+    }
+
+    /**
+     * The student's roster row, locked, and only if they are a CURRENT participant of THIS class.
+     *
+     * A child who has LEFT the class gets their own refusal, saying why (owner question W6-C1):
+     * their Bucks stay on their record here, and what happens to them on a move or a withdrawal
+     * is not decided yet, so nothing can be spent from this class meanwhile.
+     */
     private static function lockStudent(Group $group, GroupMembership $membership): GroupMembership
     {
         $student = GroupMembership::query()->whereKey($membership->getKey())->lockForUpdate()->first();
@@ -363,9 +446,15 @@ final class ClassStore
             $student === null
             || (int) $student->group_id !== (int) $group->id
             || ! in_array($student->role, GroupMembership::PARTICIPANT_ROLES, true)
-            || $student->hasLeft()
         ) {
             throw new ClassStoreRefusal('not_a_student', 'That id names no current student of this class.');
+        }
+
+        if ($student->hasLeft()) {
+            throw new ClassStoreRefusal(
+                'student_left',
+                'That student has left this class. Their Manara Bucks stay on their record here, but they cannot be spent in this class.',
+            );
         }
 
         return $student;

@@ -16,7 +16,8 @@ use Throwable;
  *
  * Hourly (routes/console.php, withoutOverlapping), for a school that has the `class_store`
  * grant only. The rules (the cutoffs, one `expired` row per child and cutoff, only what was
- * minted before the cutoff, never below zero) live in App\Support\BucksExpiry.
+ * minted before the cutoff, never below zero, a grace period before a cutoff acts, and a
+ * write-off given back when its date is corrected) live in App\Support\BucksExpiry.
  *
  * Every group is considered, active or not: a class that has been switched off at year end is
  * exactly the one whose bucks should end. Fail-soft per class; ONE line per run on the
@@ -49,6 +50,8 @@ class ExpireClassBucks extends Command
             'classes' => 0,
             'students' => 0,
             'bucks' => 0,
+            'restored_students' => 0,
+            'restored_bucks' => 0,
             'failures' => 0,
         ];
 
@@ -80,6 +83,8 @@ class ExpireClassBucks extends Command
                         $run['classes']++;
                         $run['students'] += $one['students'];
                         $run['bucks'] += $one['bucks'];
+                        $run['restored_students'] += $one['restored_students'];
+                        $run['restored_bucks'] += $one['restored_bucks'];
                     } catch (Throwable $e) {
                         $run['failures']++;
                         Log::warning('bucks:expire failed for class '.$group->id.': '.$e->getMessage());
@@ -94,12 +99,14 @@ class ExpireClassBucks extends Command
         Log::channel('monitors')->info('bucks:expire', $run);
 
         $this->line(sprintf(
-            'bucks:expire%s: %d organisation(s), %d class(es), %d student(s) expired %d buck(s), %d failure(s).',
+            'bucks:expire%s: %d organisation(s), %d class(es), %d student(s) expired %d buck(s), %d student(s) restored %d buck(s), %d failure(s).',
             $dry ? ' (dry run)' : '',
             $run['organisations'],
             $run['classes'],
             $run['students'],
             $run['bucks'],
+            $run['restored_students'],
+            $run['restored_bucks'],
             $run['failures'],
         ));
 

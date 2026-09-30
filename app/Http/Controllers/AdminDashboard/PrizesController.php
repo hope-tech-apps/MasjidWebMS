@@ -7,7 +7,9 @@ use App\Http\Requests\ClassStore\SavePrizeRequest;
 use App\Models\Group;
 use App\Models\Masjid;
 use App\Models\Prize;
+use App\Support\ClassStore;
 use App\Support\ClassStorePayload;
+use App\Support\ClassStoreRefusal;
 use App\Support\ClassStoreReconciliation;
 use App\Support\GroupAudience;
 use App\Support\TenantContext;
@@ -70,24 +72,14 @@ class PrizesController extends Controller
     public function update(SavePrizeRequest $request, $masjid_id, $prize_id): JsonResponse
     {
         // Only the school-wide list: a class's own prize is its teachers', and is a MISS here.
-        $prize = Prize::query()->schoolWide()->findOrFail($prize_id);
-
-        foreach (['title', 'description', 'cost_bucks', 'stock', 'is_active'] as $field) {
-            if (! $request->exists($field)) {
-                continue;
-            }
-
-            $prize->{$field} = match ($field) {
-                'cost_bucks' => $request->integer('cost_bucks'),
-                'stock' => $request->filled('stock') ? $request->integer('stock') : null,
-                'is_active' => (bool) $request->boolean('is_active'),
-                default => $request->input($field),
-            };
+        // Locked, and a new stock compared with the one the editor loaded (ClassStore::updatePrize).
+        try {
+            $prize = ClassStore::updatePrize(Prize::query()->schoolWide(), $prize_id, $request->changes(), $request->expectedStock());
+        } catch (ClassStoreRefusal $e) {
+            return response()->json(['status' => 'error', 'reason' => $e->reason, 'message' => $e->getMessage()], $e->status);
         }
 
-        $prize->save();
-
-        return response()->json(['status' => 'success', 'data' => ClassStorePayload::prize($prize->fresh(), null)], Response::HTTP_OK);
+        return response()->json(['status' => 'success', 'data' => ClassStorePayload::prize($prize, null)], Response::HTTP_OK);
     }
 
     /**

@@ -240,9 +240,11 @@ class ClassStoreSchemaTest extends TestCase
         $entry($this->amira, 10, $past);
         $entry($this->amira, -4, $future);
 
-        // Yusuf: every row due. The whole set goes, and nothing is left partial.
+        // Yusuf: every row due, the set spent to nothing, and he has left the class. The whole set
+        // goes, and nothing is left partial.
         $entry($this->yusuf, 8, $past);
-        $entry($this->yusuf, -3, $yesterday);
+        $entry($this->yusuf, -8, $yesterday);
+        $this->leave($this->yusuf);
 
         $removed = PrizeLedgerEntry::purgeDueSets(now()->toDateString());
 
@@ -250,6 +252,43 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertSame(6, $this->balanceOf($this->amira), 'her set is intact, so the balance is still explained');
         $this->assertSame(2, PrizeLedgerEntry::query()->where('group_membership_id', $this->amira->id)->count());
         $this->assertSame(0, PrizeLedgerEntry::query()->where('group_membership_id', $this->yusuf->id)->count());
+    }
+
+    /** The child leaves the class (the office's withdrawal: a stamped `left_on`). */
+    private function leave(GroupMembership $m, string $on = '2026-01-01'): void
+    {
+        DB::table('group_memberships')->where('id', $m->id)->update(['left_on' => $on]);
+    }
+
+    #[Test]
+    public function the_purge_never_erases_a_still_enrolled_childs_set_or_a_balance_that_is_not_zero(): void
+    {
+        $due = now()->subDays(10)->toDateString();
+        $row = fn (GroupMembership $m, int $amount) => PrizeLedgerEntry::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $m->id,
+            'kind' => $amount >= 0 ? PrizeLedgerEntry::KIND_EARNED : PrizeLedgerEntry::KIND_REDEEMED,
+            'amount' => $amount, 'retained_until' => $due,
+        ]);
+
+        // Amira is still in the class, in a school with no calendar and no end date: her 6 Bucks
+        // never expire, and a year with no new row must not make them vanish. Nor her history at 0.
+        $row($this->amira, 6);
+        // Yusuf has left, but still holds 2: a balance that is not zero is not the sweep's to erase.
+        $row($this->yusuf, 5);
+        $row($this->yusuf, -3);
+        $this->leave($this->yusuf);
+
+        $this->assertSame(0, PrizeLedgerEntry::purgeDueSets(now()->toDateString()));
+        $this->assertSame(6, $this->balanceOf($this->amira));
+        $this->assertSame(2, $this->balanceOf($this->yusuf));
+
+        // Spent to nothing while still enrolled: kept. Once the class has ended: gone, as a set.
+        $row($this->amira, -6);
+        $this->assertSame(0, PrizeLedgerEntry::purgeDueSets(now()->toDateString()), 'still enrolled');
+        $this->class->forceFill(['ends_on' => now()->subDays(3)->toDateString()])->save();
+        $this->assertSame(2, PrizeLedgerEntry::purgeDueSets(now()->toDateString()));
+        $this->assertSame(0, PrizeLedgerEntry::query()->where('group_membership_id', $this->amira->id)->count());
+        $this->assertSame(2, PrizeLedgerEntry::query()->where('group_membership_id', $this->yusuf->id)->count(), 'his 2 Bucks stay');
     }
 
     #[Test]
@@ -261,7 +300,8 @@ class ClassStoreSchemaTest extends TestCase
             'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
             'kind' => PrizeLedgerEntry::KIND_EARNED, 'amount' => 4, 'retained_until' => now()->subYear()->toDateString(),
         ]);
-        $kept = $this->credit($this->amira, 2); // retention 0: retained_until stays NULL
+        $kept = $this->credit($this->amira, -4); // retention 0: retained_until stays NULL
+        $this->leave($this->amira);
 
         $this->assertNull($kept->fresh()->retained_until);
         $this->assertSame(0, PrizeLedgerEntry::purgeDueSets(now()->toDateString()));
@@ -283,7 +323,8 @@ class ClassStoreSchemaTest extends TestCase
         $this->freeze('2026-10-04 12:00');
         $first = $this->credit($this->amira, 2);
         $this->freeze('2026-10-20 12:00');
-        $second = $this->credit($this->amira, 2);
+        $second = $this->credit($this->amira, -2);
+        $this->leave($this->amira);
 
         $this->assertSame('2026-11-03', $first->fresh()->retained_until->toDateString());
         $this->assertSame('2026-11-19', $second->fresh()->retained_until->toDateString());
@@ -297,10 +338,12 @@ class ClassStoreSchemaTest extends TestCase
     public function the_group_retention_sweep_command_includes_the_ledger_and_says_so(): void
     {
         $this->credit($this->amira, 3);
+        $this->credit($this->amira, -3);
+        $this->leave($this->amira);
         DB::table('prize_ledger_entries')->update(['retained_until' => now()->subDay()->toDateString()]);
 
         $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('groups:purge-feed'));
-        $this->assertStringContainsString('1 bucks ledger row(s)', \Illuminate\Support\Facades\Artisan::output());
+        $this->assertStringContainsString('2 bucks ledger row(s)', \Illuminate\Support\Facades\Artisan::output());
         $this->assertSame(0, PrizeLedgerEntry::query()->count());
     }
 

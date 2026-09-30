@@ -80,8 +80,8 @@ class ClassStoreApiTest extends TestCase
             $this->getJson($this->teacherUrl($path))->assertForbidden();
         }
 
-        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id])->assertForbidden();
-        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 1])->assertForbidden();
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
+        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 1, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
         $this->postJson($this->teacherUrl('/prize-entries/1/reverse'))->assertForbidden();
         $this->postJson($this->teacherUrl('/prizes'), ['title' => 'X', 'cost_bucks' => 1])->assertForbidden();
         $this->putJson($this->teacherUrl('/prizes/'.$prize->id), ['cost_bucks' => 1])->assertForbidden();
@@ -214,13 +214,13 @@ class ClassStoreApiTest extends TestCase
             [$retired, 'prize_retired'],
             [$foreign, 'prize_unknown'],
         ] as [$prize, $reason]) {
-            $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id])
+            $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => 'rq-'.uniqid()])
                 ->assertStatus(422)
                 ->assertJsonPath('status', 'error')
                 ->assertJsonPath('reason', $reason);
         }
 
-        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => 999999])->assertStatus(422)->assertJsonPath('reason', 'prize_unknown');
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => 999999, 'request_id' => 'rq-'.uniqid()])->assertStatus(422)->assertJsonPath('reason', 'prize_unknown');
         $this->postJson($this->redeemUrl($this->amira), [])->assertStatus(422)->assertJsonPath('status', 'failed');
         $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $dear->id, 'request_id' => 'bad id with spaces'])->assertStatus(422);
 
@@ -239,19 +239,19 @@ class ClassStoreApiTest extends TestCase
         // A guardian edge names a relationship, not a student: 403 at the door, not a quiet 422 from the service.
         $edge = GroupMembership::query()->where('contact_id', $this->amiraParent->id)->firstOrFail();
         $this->credit($this->amira, 10);
-        $this->postJson($this->redeemUrl($edge), ['prize_id' => $prize->id])->assertForbidden();
-        $this->postJson($this->teacherUrl('/members/'.$edge->id.'/prizes/cash-out'), ['amount' => 1])->assertForbidden();
+        $this->postJson($this->redeemUrl($edge), ['prize_id' => $prize->id, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
+        $this->postJson($this->teacherUrl('/members/'.$edge->id.'/prizes/cash-out'), ['amount' => 1, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
         $this->getJson($this->teacherUrl('/members/'.$edge->id.'/bucks'))->assertForbidden();
 
         // A student of a class this teacher leads in name only.
-        $this->postJson($this->redeemUrl($stranger), ['prize_id' => $prize->id])->assertNotFound();
+        $this->postJson($this->redeemUrl($stranger), ['prize_id' => $prize->id, 'request_id' => 'rq-'.uniqid()])->assertNotFound();
         $this->getJson($this->teacherUrl('/members/'.$stranger->id.'/bucks'))->assertNotFound();
 
         // The other class's teacher may not run THIS class's store.
         $colleague = $this->teacherOf($this->school, $other);
         $this->actAs($colleague);
         $this->getJson($this->teacherUrl('/bucks'))->assertForbidden();
-        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id])->assertForbidden();
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
         $this->getJson($this->teacherUrl('/bucks', null, $other))->assertOk();
 
         $this->assertSame(20, $this->balanceOf($stranger));
@@ -264,7 +264,7 @@ class ClassStoreApiTest extends TestCase
         $co = $this->teacherOf($this->school, $this->class);
         $this->actAs($co);
 
-        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $this->prize(['cost_bucks' => 2])->id])->assertCreated()
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $this->prize(['cost_bucks' => 2])->id, 'request_id' => 'rq-'.uniqid()])->assertCreated()
             ->assertJsonPath('data.balance', 8)
             ->assertJsonPath('data.entry.created_by.id', $co->id);
     }
@@ -334,7 +334,7 @@ class ClassStoreApiTest extends TestCase
     {
         $this->credit($this->amira, 30);
 
-        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 10])
+        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 10, 'request_id' => 'rq-'.uniqid()])
             ->assertForbidden()->assertJsonPath('reason', 'paper_bucks_off');
         $this->getJson($this->teacherUrl('/bucks/handout'))->assertForbidden()->assertJsonPath('reason', 'paper_bucks_off');
 
@@ -354,7 +354,7 @@ class ClassStoreApiTest extends TestCase
         $rows = PrizeLedgerEntry::query()->count();
 
         $refusals = [
-            $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 5]),
+            $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 5, 'request_id' => 'rq-'.uniqid()]),
             $this->getJson($this->teacherUrl('/bucks/handout')),
             $this->postJson($this->teacherUrl('/prize-entries/'.$cashed->id.'/reverse')),
         ];
@@ -383,13 +383,13 @@ class ClassStoreApiTest extends TestCase
         $one = $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 47, 'request_id' => 'cashout-0001'])->assertCreated();
         $this->assertSame(13, $one->json('data.balance'));
         $this->assertSame(['20' => 2, '10' => 0, '5' => 1, '1' => 2], $one->json('data.entry.breakdown'));
-        $two = $this->postJson($this->teacherUrl('/members/'.$this->yusuf->id.'/prizes/cash-out'), ['amount' => 25])->assertCreated();
+        $two = $this->postJson($this->teacherUrl('/members/'.$this->yusuf->id.'/prizes/cash-out'), ['amount' => 25, 'request_id' => 'rq-'.uniqid()])->assertCreated();
         $this->assertTrue($this->getJson($this->teacherUrl('/bucks'))->json('data.settings.paper_bucks_enabled'));
 
         $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 47, 'request_id' => 'cashout-0001'])
             ->assertOk()->assertJsonPath('data.replayed', true);
-        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 500])->assertStatus(422)->assertJsonPath('reason', 'not_enough_bucks');
-        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 0])->assertStatus(422);
+        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 500, 'request_id' => 'rq-'.uniqid()])->assertStatus(422)->assertJsonPath('reason', 'not_enough_bucks');
+        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 0, 'request_id' => 'rq-'.uniqid()])->assertStatus(422);
 
         $hand = $this->getJson($this->teacherUrl('/bucks/handout'))->assertOk();
         $this->assertSame('2026-10-12', $hand->json('data.date'));
@@ -426,9 +426,9 @@ class ClassStoreApiTest extends TestCase
         $this->assertSame($this->school->id, $row->masjid_id);
         $this->assertSame($this->teacher->id, $row->created_by_user_id);
 
-        $this->putJson($this->teacherUrl('/prizes/'.$id), ['cost_bucks' => 6, 'stock' => 3])->assertOk()->assertJsonPath('data.cost_bucks', 6)->assertJsonPath('data.stock', 3);
+        $this->putJson($this->teacherUrl('/prizes/'.$id), ['cost_bucks' => 6, 'stock' => 3, 'expected_stock' => 10])->assertOk()->assertJsonPath('data.cost_bucks', 6)->assertJsonPath('data.stock', 3);
         // Blank means unlimited.
-        $this->putJson($this->teacherUrl('/prizes/'.$id), ['stock' => null])->assertOk()->assertJsonPath('data.stock', null)->assertJsonPath('data.in_stock', true);
+        $this->putJson($this->teacherUrl('/prizes/'.$id), ['stock' => null, 'expected_stock' => 3])->assertOk()->assertJsonPath('data.stock', null)->assertJsonPath('data.in_stock', true);
         // Retire, in the form encoding the SPA sends ("false" is a string there).
         $this->put($this->teacherUrl('/prizes/'.$id), ['is_active' => 'false'], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.is_active', false);
         $this->assertFalse(Prize::query()->find($id)->is_active);
@@ -545,7 +545,7 @@ class ClassStoreApiTest extends TestCase
         $list = collect($this->getJson($this->adminUrl('/prizes'))->assertOk()->json('data'));
         $this->assertSame(['Certificate'], $list->pluck('title')->all(), "a class's own prize is not on the office list");
 
-        $this->putJson($this->adminUrl('/prizes/'.$row->id), ['stock' => null, 'cost_bucks' => 9])->assertOk()->assertJsonPath('data.stock', null);
+        $this->putJson($this->adminUrl('/prizes/'.$row->id), ['stock' => null, 'expected_stock' => 20, 'cost_bucks' => 9])->assertOk()->assertJsonPath('data.stock', null);
         $this->put($this->adminUrl('/prizes/'.$row->id), ['is_active' => 'false'], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.is_active', false);
         $this->putJson($this->adminUrl('/prizes/'.$classPrize->id), ['cost_bucks' => 1])->assertNotFound();
         $this->postJson($this->adminUrl('/prizes'), ['title' => 'certificate', 'cost_bucks' => 1])->assertStatus(422);
@@ -621,6 +621,8 @@ class ClassStoreApiTest extends TestCase
     #[Test]
     public function the_reconciliation_reports_class_totals_and_never_names_a_child(): void
     {
+        // A class of two: figures are shown only because this test lowers the minimum (see the suppression test).
+        config(['groups.bucks.reconciliation_min_class_size' => 2]);
         $this->credit($this->amira, 12, '2026-10-04');
         $this->credit($this->yusuf, 5, '2026-10-04');
         ClassStoreLedgerHelper::redeem($this, $this->amira, $this->prize(['cost_bucks' => 4]));
@@ -651,6 +653,8 @@ class ClassStoreApiTest extends TestCase
     #[Test]
     public function the_reconciliation_compares_the_ledger_with_the_points_it_came_from(): void
     {
+        // A class of two: figures are shown only because this test lowers the minimum (see the suppression test).
+        config(['groups.bucks.reconciliation_min_class_size' => 2]);
         $this->freeze('2026-10-12 09:00');
         MasjidPointsSetting::withoutMasjidScope()->updateOrCreate(['masjid_id' => $this->school->id], ['bucks_from' => '2026-10-04']);
         $this->awardAt('2026-10-05 10:00', $this->amira, 5);
@@ -789,7 +793,7 @@ class ClassStoreApiTest extends TestCase
 
         // And a parent has no way into the teacher's realm at all.
         $this->asParent($this->amiraParent)->getJson($this->teacherUrl('/bucks'))->assertUnauthorized();
-        $this->asParent($this->amiraParent)->postJson($this->redeemUrl($this->amira), ['prize_id' => $this->prize()->id])->assertUnauthorized();
+        $this->asParent($this->amiraParent)->postJson($this->redeemUrl($this->amira), ['prize_id' => $this->prize()->id, 'request_id' => 'rq-'.uniqid()])->assertUnauthorized();
         $this->assertSame(99, $this->balanceOf($this->yusuf));
     }
 
@@ -833,6 +837,200 @@ class ClassStoreApiTest extends TestCase
         $rows = collect($res->json('data.data'))->keyBy('id');
         $this->assertTrue($rows[$spent->id]['is_reversed']);
         $this->assertSame(['reversal', 'redeemed', 'earned'], collect($res->json('data.data'))->pluck('kind')->all());
+    }
+
+    // ------------------------------------------------ the W6 point review, Gate B
+
+    #[Test]
+    public function a_redemption_or_a_cash_out_without_a_request_id_is_refused_and_writes_nothing(): void
+    {
+        $this->credit($this->amira, 12);
+        $this->paperOn();
+        $prize = $this->prize(['cost_bucks' => 5]);
+        $rows = PrizeLedgerEntry::query()->count();
+
+        // Flaky school wifi and a retry: without an id the second tap is a second deduction, so none is accepted.
+        foreach ([
+            [$this->redeemUrl($this->amira), ['prize_id' => $prize->id]],
+            [$this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => '']],
+            [$this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => null]],
+            [$this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out'), ['amount' => 3]],
+        ] as [$url, $body]) {
+            $this->postJson($url, $body)->assertStatus(422)->assertJsonPath('status', 'failed')->assertJsonStructure(['data' => ['request_id']]);
+        }
+
+        $this->assertSame($rows, PrizeLedgerEntry::query()->count());
+        $this->assertSame(12, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function a_request_id_replayed_with_another_prize_or_amount_is_a_409_and_writes_nothing(): void
+    {
+        $this->credit($this->amira, 20);
+        $this->paperOn();
+        $sticker = $this->prize(['title' => 'Sticker', 'cost_bucks' => 5, 'stock' => 4]);
+        $pencil = $this->prize(['title' => 'Pencil', 'cost_bucks' => 3, 'stock' => 4]);
+
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $sticker->id, 'request_id' => 'same-id-0001'])->assertCreated();
+
+        // The same id for ANOTHER prize is not a replay of the first: answering with the sticker's row
+        // beside the pencil would tell the teacher a pencil was given when nothing was.
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $pencil->id, 'request_id' => 'same-id-0001'])
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'request_id_reused');
+        $this->assertSame(15, $this->balanceOf($this->amira));
+        $this->assertSame(4, $pencil->fresh()->stock);
+        $this->assertSame(3, $sticker->fresh()->stock);
+
+        // The true replay still answers 200 with the first row.
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $sticker->id, 'request_id' => 'same-id-0001'])->assertOk()->assertJsonPath('data.replayed', true);
+
+        $cash = $this->teacherUrl('/members/'.$this->amira->id.'/prizes/cash-out');
+        $this->postJson($cash, ['amount' => 4, 'request_id' => 'cash-id-0001'])->assertCreated();
+        $this->postJson($cash, ['amount' => 5, 'request_id' => 'cash-id-0001'])->assertStatus(409)->assertJsonPath('reason', 'request_id_reused');
+        $this->postJson($cash, ['amount' => 4, 'request_id' => 'cash-id-0001'])->assertOk()->assertJsonPath('data.replayed', true);
+        $this->assertSame(11, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function a_balance_that_moves_under_a_redemption_is_a_409_balance_changed_and_nothing_is_taken(): void
+    {
+        $this->credit($this->amira, 12);
+        $prize = $this->prize(['cost_bucks' => 5, 'stock' => 2]);
+        $rows = PrizeLedgerEntry::query()->count();
+
+        // SQLite has no row lock, so a second write lands between the balance read and the insert: 10
+        // Bucks go elsewhere first. The post-write check sees -3 and rolls the whole redemption back.
+        $fired = false;
+        DB::beforeExecuting(function (string $query) use (&$fired) {
+            if (! $fired && str_starts_with($query, 'insert into "prize_ledger_entries"')) {
+                $fired = true;
+                DB::table('prize_ledger_entries')->insert([
+                    'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+                    'kind' => 'redeemed', 'amount' => -10, 'dedupe_key' => 'redeemed:'.$this->amira->id.':the-other-tap', 'occurred_at' => now(),
+                ]);
+            }
+        });
+
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $prize->id, 'request_id' => 'moving-bal-01'])
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('reason', 'balance_changed');
+
+        $this->assertTrue($fired);
+        $this->assertSame($rows, PrizeLedgerEntry::query()->count(), 'nothing of the refused write is left');
+        $this->assertSame(12, $this->balanceOf($this->amira));
+        $this->assertSame(2, $prize->fresh()->stock);
+    }
+
+    #[Test]
+    public function undoing_a_prize_after_the_balance_expired_is_a_422_expired_and_writes_nothing(): void
+    {
+        $this->credit($this->amira, 9, '2026-10-04');
+        $spent = ClassStoreLedgerHelper::redeem($this, $this->amira, $this->prize(['cost_bucks' => 5]));
+        PrizeLedgerEntry::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'group_membership_id' => $this->amira->id,
+            'kind' => PrizeLedgerEntry::KIND_EXPIRED, 'amount' => -4, 'dedupe_key' => 'expired:'.$this->amira->id.':2026-10-10:1',
+        ]);
+        $rows = PrizeLedgerEntry::query()->count();
+
+        $this->postJson($this->teacherUrl('/prize-entries/'.$spent->id.'/reverse'))
+            ->assertStatus(422)
+            ->assertJsonPath('reason', 'expired');
+
+        $this->assertSame($rows, PrizeLedgerEntry::query()->count());
+        $this->assertSame(0, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function a_stock_edit_against_a_count_that_has_moved_is_a_409_and_the_prizes_given_stay_given(): void
+    {
+        $this->credit($this->amira, 20);
+        $mine = $this->prize(['title' => 'Bookmark', 'group_id' => $this->class->id, 'cost_bucks' => 2, 'stock' => 3]);
+
+        // The teacher opens the edit form at 3; a co-teacher gives one meanwhile.
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $mine->id, 'request_id' => 'give-bookmark-1'])->assertCreated();
+        $this->assertSame(2, $mine->fresh()->stock);
+
+        $this->putJson($this->teacherUrl('/prizes/'.$mine->id), ['stock' => 5, 'expected_stock' => 3, 'cost_bucks' => 4])
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'stock_changed');
+        $this->assertSame(2, $mine->fresh()->stock, 'the stale 3 (or 5) is not written over the one given');
+        $this->assertSame(2, $mine->fresh()->cost_bucks, 'and nothing else of that save landed');
+
+        $this->putJson($this->teacherUrl('/prizes/'.$mine->id), ['stock' => 5, 'expected_stock' => 2])->assertOk()->assertJsonPath('data.stock', 5);
+        // A stock with no count to compare is refused; an edit that does not touch the stock needs none.
+        $this->putJson($this->teacherUrl('/prizes/'.$mine->id), ['stock' => 7])->assertStatus(422)->assertJsonStructure(['data' => ['expected_stock']]);
+        $this->putJson($this->teacherUrl('/prizes/'.$mine->id), ['cost_bucks' => 3])->assertOk()->assertJsonPath('data.cost_bucks', 3)->assertJsonPath('data.stock', 5);
+
+        // The office's school-wide list, in the form encoding its screen sends ('' is "no limit").
+        $wide = $this->prize(['title' => 'Certificate', 'cost_bucks' => 2, 'stock' => 4]);
+        $this->postJson($this->redeemUrl($this->amira), ['prize_id' => $wide->id, 'request_id' => 'give-certif-01'])->assertCreated();
+        $this->actAs($this->admin);
+        $this->put($this->adminUrl('/prizes/'.$wide->id), ['stock' => '10', 'expected_stock' => '4'], ['Accept' => 'application/json'])
+            ->assertStatus(409)->assertJsonPath('reason', 'stock_changed');
+        $this->assertSame(3, $wide->fresh()->stock);
+        $this->put($this->adminUrl('/prizes/'.$wide->id), ['stock' => '', 'expected_stock' => '3'], ['Accept' => 'application/json'])
+            ->assertOk()->assertJsonPath('data.stock', null);
+        $this->put($this->adminUrl('/prizes/'.$wide->id), ['stock' => '6', 'expected_stock' => ''], ['Accept' => 'application/json'])
+            ->assertOk()->assertJsonPath('data.stock', 6);
+    }
+
+    #[Test]
+    public function an_absent_null_or_empty_is_active_changes_nothing_and_only_a_real_false_retires(): void
+    {
+        $mine = $this->prize(['title' => 'Bookmark', 'group_id' => $this->class->id, 'cost_bucks' => 2]);
+        $url = $this->teacherUrl('/prizes/'.$mine->id);
+
+        $this->putJson($url, ['is_active' => null])->assertOk()->assertJsonPath('data.is_active', true);
+        $this->put($url, ['is_active' => ''], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.is_active', true);
+        $this->putJson($url, ['cost_bucks' => 4])->assertOk()->assertJsonPath('data.is_active', true);
+        $this->assertTrue($mine->fresh()->is_active, 'filter_var(null) is false: that must never retire a prize');
+
+        $this->putJson($url, ['is_active' => 'maybe'])->assertStatus(422);
+        $this->put($url, ['is_active' => 'false'], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.is_active', false);
+        // And null does not bring one back either.
+        $this->putJson($url, ['is_active' => null])->assertOk()->assertJsonPath('data.is_active', false);
+
+        $wide = $this->prize(['title' => 'Certificate']);
+        $this->actAs($this->admin);
+        $this->put($this->adminUrl('/prizes/'.$wide->id), ['is_active' => '', 'cost_bucks' => '7'], ['Accept' => 'application/json'])
+            ->assertOk()->assertJsonPath('data.is_active', true)->assertJsonPath('data.cost_bucks', 7);
+        // A new prize with an empty switch is active, as one with none.
+        $this->post($this->adminUrl('/prizes'), ['title' => 'Badge', 'cost_bucks' => '2', 'is_active' => ''], ['Accept' => 'application/json'])
+            ->assertCreated()->assertJsonPath('data.is_active', true);
+    }
+
+    #[Test]
+    public function the_reconciliation_shows_no_figures_for_a_class_below_the_minimum_and_leaves_it_out_of_the_totals(): void
+    {
+        // Grade 3 has two students; one holds 12. At the default minimum (5) its "held now" would be her balance.
+        $this->credit($this->amira, 12);
+        $big = Group::factory()->create(['masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => 'Grade 5']);
+        foreach (range(1, 5) as $i) {
+            $kid = $this->enrol($this->school, $big, Contact::factory()->create(['masjid_id' => $this->school->id, 'email' => null]));
+            $this->credit($kid, 1);
+        }
+
+        $this->actAs($this->admin);
+        $data = $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk()->json('data');
+
+        $this->assertSame(5, $data['min_class_size']);
+        $this->assertSame(1, $data['suppressed_classes']);
+        $small = collect($data['classes'])->firstWhere('group_id', $this->class->id);
+        $this->assertSame(['group_id' => $this->class->id, 'name' => 'Grade 3', 'suppressed' => true], $small, 'named, and no figure at all');
+        $shown = collect($data['classes'])->firstWhere('group_id', $big->id);
+        $this->assertFalse($shown['suppressed']);
+        $this->assertSame(5, $shown['outstanding']);
+        // Left out of the totals too: 17 there would give Grade 3's 12 back by subtraction.
+        $this->assertSame(5, $data['totals']['outstanding']);
+        $this->assertSame(5, $data['totals']['minted']);
+
+        // A student who has left does not count towards the size.
+        DB::table('group_memberships')->where('group_id', $big->id)->limit(1)->update(['left_on' => '2026-01-01']);
+        $data = $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk()->json('data');
+        $this->assertSame(2, $data['suppressed_classes']);
+        $this->assertSame(0, $data['totals']['outstanding']);
     }
 }
 

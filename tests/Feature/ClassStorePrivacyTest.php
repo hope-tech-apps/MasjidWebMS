@@ -208,6 +208,36 @@ class ClassStorePrivacyTest extends TestCase
         }
     }
 
+    #[Test]
+    public function the_offices_totals_decision_checks_the_bound_school_not_just_the_users_type(): void
+    {
+        $other = $this->newSchool('Elsewhere');
+        $otherClass = app(TenantContext::class)->runWithout(fn () => Group::factory()->create([
+            'masjid_id' => $other->id, 'kind' => Group::KIND_CLASS, 'name' => 'Grade 9',
+        ]));
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+
+        // Bound to this school: its own administrator and its class's teacher read the totals.
+        $this->assertTrue($this->audience()->mayReceiveClassStoreTotals($this->admin, $this->class));
+        $this->assertTrue($this->audience()->mayReceiveClassStoreTotals($this->teacher, $this->class));
+
+        // Another school's class, handed to the decision from this school's request: never, whatever
+        // the caller's users.type says. (It used to grant on the type alone.)
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($this->admin, $otherClass));
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($super, $otherClass));
+
+        // No school bound at all: nobody, the class's own teacher included.
+        app(TenantContext::class)->forgetTenant();
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($this->admin, $this->class));
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($super, $this->class));
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($this->teacher, $this->class));
+
+        // A SuperAdmin bound to that school (from its URL) reads its totals, and not this one's.
+        app(TenantContext::class)->set($other->id);
+        $this->assertTrue($this->audience()->mayReceiveClassStoreTotals($super, $otherClass));
+        $this->assertFalse($this->audience()->mayReceiveClassStoreTotals($super, $this->class));
+    }
+
     // ------------------------------------------------------------ across schools
 
     #[Test]
@@ -228,11 +258,11 @@ class ClassStorePrivacyTest extends TestCase
 
         // B's URL: not this teacher's school at all.
         $this->getJson($this->teacherUrl('/bucks', $b, $classB))->assertForbidden();
-        $this->postJson($this->teacherUrl('/members/'.$kidB->id.'/prizes/redeem', $b, $classB), ['prize_id' => $prizeB->id])->assertForbidden();
+        $this->postJson($this->teacherUrl('/members/'.$kidB->id.'/prizes/redeem', $b, $classB), ['prize_id' => $prizeB->id, 'request_id' => 'rq-'.uniqid()])->assertForbidden();
 
         // A's URL with B's ids: the tenant scope makes them not exist.
-        $this->postJson($this->teacherUrl('/members/'.$kidB->id.'/prizes/redeem'), ['prize_id' => $prizeA->id])->assertNotFound();
-        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/redeem'), ['prize_id' => $prizeB->id])->assertStatus(422)->assertJsonPath('reason', 'prize_unknown');
+        $this->postJson($this->teacherUrl('/members/'.$kidB->id.'/prizes/redeem'), ['prize_id' => $prizeA->id, 'request_id' => 'rq-'.uniqid()])->assertNotFound();
+        $this->postJson($this->teacherUrl('/members/'.$this->amira->id.'/prizes/redeem'), ['prize_id' => $prizeB->id, 'request_id' => 'rq-'.uniqid()])->assertStatus(422)->assertJsonPath('reason', 'prize_unknown');
         $this->postJson($this->teacherUrl('/prize-entries/'.$entryB->id.'/reverse'))->assertNotFound();
         $this->putJson($this->teacherUrl('/prizes/'.$prizeB->id), ['cost_bucks' => 1])->assertNotFound();
         $this->getJson($this->teacherUrl('/members/'.$kidB->id.'/bucks'))->assertNotFound();
