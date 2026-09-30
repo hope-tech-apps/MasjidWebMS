@@ -739,11 +739,16 @@ A teacher or the office writes a class story, or opens a NEW conversation, to go
 by `ScheduledClassStoryTest` and `ScheduledGroupMessageTest`; each guard below was removed in turn
 and a test went red (DECISIONS.md, school side quest W5).
 
-**Stories: the CLOCK publishes, the sweep announces.** `group_posts.published_at` is when families
-may see it; every family read goes through `GroupPost::scopePublished()` (`published_at <= now` and
-not `publish_failed_at`), with no sweep in the loop. A NULL `published_at` reads as out (a row from
-code that predates the column); the model stamps the rest, so an ordinary post is out the moment it
-is written.
+**Stories: a story is out when its time has come AND the sweep has announced it.**
+`group_posts.published_at` is when families may see it; every family read goes through
+`GroupPost::scopePublished()` (`published_at <= now` AND `announced_at IS NOT NULL`, and not
+`publish_failed_at`). The announcement is what makes the S15 author gate independent of the sweep's
+timing: `announced_at` is stamped by an ordinary post's own write, and for a scheduled story ONLY by
+`GroupStoryPublisher::announce()` after the gate passed, so a late, killed or absent sweep DELAYS a
+story and can never let one out that the gate has not passed, nor leave one on screen that the gate
+then pulls back. `GroupPost::isPublished()` / `isScheduled()` are the row-level twins of the scopes:
+keep the three in step. A NULL `published_at` reads as out (a row from code that predates the
+column); the model stamps the rest, so an ordinary post is out the moment it is written.
 
 - **A family site that forgets `->published()` serves tomorrow's story today.** The sites are:
   `Family\GroupPostsController` `index`, `show`, `markSeen` (W2), `setReaction` (PUT and DELETE, W2),
@@ -758,15 +763,28 @@ is written.
   staff feed (`index`) shows what families see; the Scheduled list is `GET .../posts?scheduled=1`.
   The office manages a scheduled story without roster standing (a story not out is not yet a
   disclosure); the feed gate is unchanged. `show` and the attachment routes use `postsFor()`.
-- **`announced_at`** is the class-story email's claim (an UPDATE guarded by `announced_at IS NULL`):
-  at most once, whoever gets there first (sweep, "Send now"). The migration backfills it to
-  `created_at` so the ten live stories are never re-announced; the model stamps it for a story that is
-  already out when written. A story scheduled ahead dispatches NOTHING at creation.
-- **S15: the author left the class.** The sweep looks `groups.scheduling.lookahead_seconds` (120)
-  AHEAD and refuses such a story BEFORE its time (`publish_failed_at` + `publish_failure`), because
-  visibility follows the clock and a refusal after it would leave the story on screen for up to a
-  minute. A failed story is excluded by the scope whatever the clock says, so it never appears when
-  its time passes. A new `send_at` (or `send_now`) puts it back.
+- **`announced_at`** is the class-story email's claim AND what makes a due story visible: an UPDATE
+  guarded by `announced_at IS NULL`, `publish_failed_at IS NULL` and `published_at <= now`, so at most
+  once, whoever gets there first (sweep, "Send now"), and never for a story moved to a later time after
+  the sweep listed it. The migration backfills it to `created_at` so the ten live stories are never
+  re-announced; the model stamps it for a story that is already out when written. A story scheduled
+  ahead dispatches NOTHING at creation. A story moved by `PUT` is decided on the row under
+  `lockForUpdate`, so the sweep cannot announce a story that is being moved, and a story it announced
+  a moment earlier is not pulled back (422).
+- **S15: the author left the class.** The sweep asks the gate for every story that is due, and refuses
+  one whose author may no longer send it (`publish_failed_at` + `publish_failure`). A refused story
+  was never announced, so it was never visible and nothing is pulled back, however late the sweep runs
+  (an outage, a killed run holding the `withoutOverlapping` mutex for its 5 minutes). Looking
+  `groups.scheduling.lookahead_seconds` (120) ahead only lets the office read the refusal a little
+  before the time. A failed story is excluded by the scope whatever the clock says. A new `send_at` or
+  `send_now` asks the gate AGAIN at once (story and conversation): an author who may still send puts
+  it back; one who may not gets a 422 saying to cancel it and write it again, and nothing changes.
+- **The Scheduled lists are ONE page holding every pending item** (`?scheduled=1` and
+  `scheduled-messages`): a month of daily stories is 30 rows, and an item the list does not show
+  cannot be edited, sent now or cancelled. The paginator shape is kept, so no client changed.
+- **A `retained_until` may not close before the day the story goes out** (422, on create and on edit,
+  including moving a story past a window its author chose): the nightly purge deletes on that date
+  alone and would delete the story and its photos unsent.
 - **Edit / Send now / Cancel** are the existing PUT and DELETE. `send_at`/`send_now` on a story that has
   gone out is a 422; the author and the office change a scheduled story, a co-teacher only sees it
   (`authorizeScheduledWrite`; an already-published story is as editable as it always was).

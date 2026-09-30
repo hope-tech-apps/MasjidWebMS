@@ -5107,7 +5107,8 @@ answers; each carries its alternative.
 - **2026-09-29 (school side quest W5, T-002.4): "Send later" for class stories and NEW conversations.** Built on `b9bb63f4`
   (integrate/w3-w4), branch `feat/school-w5-scheduling`. S11 to S15 of the delivery plan, as answered by default; rules in
   `.claude/rules/groups.md` ("Scheduled class stories and new conversations").
-  - **Stories: the clock publishes, the sweep announces.** `group_posts.published_at` (visibility), `announced_at` (the email's claim),
+  - **Stories: the clock publishes, the sweep announces.** (Amended 2026-09-30, see the review-fix round below: a due story is visible only
+    once announced.) `group_posts.published_at` (visibility), `announced_at` (the email's claim),
     `publish_failed_at` + `publish_failure` (S15). Every family read goes through `GroupPost::scopePublished()`; the sites are the feed,
     one story, W2's seen POST and reaction PUT and DELETE, a photo download, a playback ticket and the playback stream, and
     `ScheduledClassStoryTest` asks each of them for a future story after proving the door is open for an ordinary one. Feeds order by
@@ -5117,7 +5118,7 @@ answers; each carries its alternative.
     author left the class is "not sent, shown as failed with the reason" and the plan's two columns cannot say "failed": with only
     `published_at`, a refused story would appear when its time passed. `scopePublished()` excludes a failed row whatever the clock says.
     Also nullable `published_at` (plan section 3.1 rule 4) with NULL read as "out" so an old-code insert in the deploy seconds stays visible.
-  - **Look-ahead.** Visibility follows the clock, so a refusal after the time would leave a story on screen for up to a minute. The sweep asks the
+  - **Look-ahead.** (Superseded 2026-09-30: it no longer keeps a refused story hidden, it only shows the refusal early.) The sweep asks the
     author gate `groups.scheduling.lookahead_seconds` (120) BEFORE the time. An estimate: two sweeps' worth.
   - **Conversations live in `group_message_schedules` until their time**, written through `GroupThreadWriter` (extracted from
     `GroupThreadsController::store`, one send path) with the `sent` stamp inside its transaction. Gates re-run at send time
@@ -5155,3 +5156,46 @@ answers; each carries its alternative.
   - **Not done, on purpose.** Photos on a scheduled conversation (S13), scheduling a reply (S11), a staff push (the staff app is parked), and any
     change to the Friday report (unaffected). Unknown, needs investigation: how many families a scheduled story reaches at BISS is 0 until BISS is
     onboarded; and a sweep this frequent has no production timing yet.
+
+- **2026-09-30 (school side quest W5, review-fix round): confirmed findings fixed.** Branch `feat/school-w5-scheduling`. Each fix has a test that
+  fails without it, proved by reverting the fix: 13 fix-reverting mutants and 24 guard-removing mutants (37 in all), every one killed on the
+  droplet. One (N14, the gate never binding the class's school) survived the first version of its test, which only asserted the tenant was
+  restored; the test now binds ANOTHER school first and asserts the gate still answers correctly, and the mutant dies. Harness and results:
+  `/root/manara-ci-w5-mut.py` and `/root/manara-ci-w5-mut-results.jsonl` on the droplet, copied to the side-quest folder `w5-logs/`. Three SPA mutants
+  (the 30-day boundary, a blank failure reason, the office story tab's date) and one text mutant (the way-out hint) were killed by `npm run test:spa`.
+  - **S15 no longer depends on the sweep's timing (decision).** The review showed a story became visible on the clock alone, and only the sweep,
+    looking 120 s ahead, could refuse it; a killed run holds the `withoutOverlapping(5)` mutex for 5 minutes, so a removed author's story could
+    reach families and then be pulled back. Chosen: option (a). `GroupPost::scopePublished()` (and `isPublished()`) now also require
+    `announced_at IS NOT NULL`, and for a scheduled story only `GroupStoryPublisher::announce()`, called by the sweep after the gate passed,
+    sets it. An outage therefore delays a story by however long it lasts and cannot leak one. The claim also requires `published_at <= now`,
+    so a story moved after the sweep listed it is not announced early. `scopeScheduled`/`scopeUnpublished` follow (a due story not yet
+    announced is still on the Scheduled list). The earlier claim "worst case up to a minute, a failed story never appears" is replaced by
+    "never appears, however late the sweep is; a late sweep delays a story". Rejected: (b) failing pending stories where `group_staff` rows are
+    removed (many removal paths, and the sweep would still be the only place the gate is asked). Cost: a story is one sweep later than its
+    minute when the sweep is late; on a healthy box it is at most the sweep's own minute (the sweep announces a due story in the run that
+    finds it).
+  - **The race between "reschedule" and the sweep.** The `PUT` now decides the move on the row under `lockForUpdate` inside its transaction and
+    answers 422 if the story is out by then; the sweep's claim waits on that lock and then finds the new time. Neither an early email nor a
+    silent pull-back of an announced story remains. Proven with a hook that announces in the instant before the transaction begins.
+  - **A new time or "Send now" asks the gates at once (decision).** For a failed item whose author left (or whose child left), the sweep
+    would refuse the new time again about two minutes before it, with no way forward in the UI. Now `PUT` with `send_at`/`send_now`, story and
+    conversation, asks the same gate first and answers 422 "... cancel it and write it again". This also closes a bypass: "Send now" on a
+    story skipped the sweep, and so the gate. Rejected: reassigning the author to the editor (it would put the office's name on what a teacher
+    wrote to families).
+  - **The Scheduled lists show everything.** One page as long as the list (bounded by what people scheduled; the paginator shape is kept).
+    Rejected: teaching three clients to follow `last_page`.
+  - **`retained_until` may not close before the story goes out** (422, create and edit). The purge deletes on that date alone.
+  - **The office story tab dates a story by `published_at`**, like the family and teacher screens.
+  - **Tests added for guards that had none** (every one killed by its mutant on the droplet): the update paths' 30-day and past-time bounds for
+    stories and conversations; the purge window on finished schedule rows (past, future, null, and a failed row inside it); the sweep's
+    `announced_at` and `publish_failed_at` filters and both batch caps; dry runs (a due story, stale claims, `--masjid`); the read-receipt
+    cutoff (`published_at`, not `created_at`); rolled-over calendar dates; the family payload's `published_at`; the SuperAdmin author; the
+    message reschedule's retention day; the claim's own status and time guards and `markFailed`'s status guard; the gate's tenant binding and
+    restore; the 5-minute claim staying fresh; `can_change` false for a sending item; the exact 30-day boundary and a blank failure reason in
+    the SPA helper.
+  - **Equivalent survivors, recorded so a later mutation run does not re-report them** (each verified equivalent by reading the routing):
+    `postsFor` on the staff `update` and `destroy` (the routes already require `manage contacts` or `teacher.leads`, so `mayReadUnpublished`
+    is true for anyone who gets there); the admin PUT, DELETE and GET permission middleware (the controller re-gates through
+    `mayReadUnpublished` and `mayChange`); `authorizeSeeing` on update and destroy; `required_if` on the send-at rule (the lookup yields
+    the same 422); the race-only claim guards on the `sent` stamp.
+  - **Not fixed on purpose.** Nothing in the confirmed list was declined.
