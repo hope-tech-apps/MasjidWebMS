@@ -18,7 +18,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * GroupThreadWriter at its `send_at`.
  *
  * STATUS is a PHP constant set, never a DB enum:
- *   scheduled  waiting; the author and the office may edit or cancel it.
+ *   scheduled  waiting; only the author may edit, move or send it now; the author and the
+ *              office may cancel it.
  *   sending    claimed by a sweep (an UPDATE guarded by status = scheduled); the write
  *              and the move to `sent` are ONE transaction, so a claim that goes stale
  *              wrote nothing and may be handed back.

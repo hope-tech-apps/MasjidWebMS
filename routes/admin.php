@@ -1390,7 +1390,7 @@ Route::prefix('admin')->group(function () {
 
                 // Scheduled NEW conversations (T-002.4): written now, opened later by
                 // `groups:publish-due`. The office reads AND writes here through `manage
-                // contacts` (S14: the author and the office edit, send now and cancel),
+                // contacts` (S14, P1: only the author edits, moves or sends now; the author and the office cancel),
                 // and the controller asks GroupAudience::mayReadUnpublished again. Not
                 // threads: nothing here reaches a reader before its time. Story
                 // scheduling is `send_at` on the post routes above and needs no route.

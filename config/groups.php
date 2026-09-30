@@ -144,6 +144,13 @@ return [
          */
         'stale_claim_minutes' => (int) env('GROUP_SCHEDULE_STALE_CLAIM_MINUTES', 10),
 
+        /*
+         * How long after its time a conversation that hits a "transient" database error is
+         * still handed back for another try. Past it, the error is recorded as a failure the
+         * author sees ("Not sent"), so an error that never clears cannot retry for ever.
+         */
+        'transient_retry_minutes' => (int) env('GROUP_SCHEDULE_TRANSIENT_RETRY_MINUTES', 120),
+
         /* Most items one sweep releases, so a long outage cannot become one very long run. */
         'batch' => (int) env('GROUP_SCHEDULE_BATCH', 200),
 

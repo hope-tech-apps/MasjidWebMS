@@ -1126,37 +1126,86 @@ class ScheduledSweepTest extends TestCase
     }
 
     #[Test]
-    public function the_health_check_counts_a_conversation_but_never_a_refused_cancelled_or_not_yet_late_item_and_names_no_one(): void
+    public function the_health_check_counts_a_waiting_story_and_a_stuck_conversation_but_never_a_refused_cancelled_or_not_yet_late_item_and_names_no_one(): void
     {
-        $now = now();
-        $late = $now->copy()->subMinutes(11);
+        // The stories are written in the FUTURE and the clock moved afterwards: a story created
+        // with a past `published_at` is stamped `announced_at` at birth (GroupPost's creating
+        // hook), which would exclude it on that alone and leave the refused and soft-delete
+        // exclusions in GroupsSweepHealth untested. Here all of them really wait (announced_at NULL).
+        $waiting = $this->scheduledPost('+1 minute');
+        $refused = $this->scheduledPost('+1 minute');
+        $cancelled = $this->scheduledPost('+1 minute');
+        $announced = $this->scheduledPost('+1 minute');
+        $notYetLate = $this->scheduledPost('+5 minutes');
 
-        // Stuck: a conversation still `scheduled` 11 minutes late.
-        GroupMessageSchedule::create([
-            'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
-            'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => 'Secret subject', 'body' => 'Secret body',
-            'send_at' => $late,
-        ]);
-        // Not stuck: late by nine minutes, late but failed, late but being sent, late but cancelled.
-        foreach ([[GroupMessageSchedule::STATUS_SCHEDULED, 9], [GroupMessageSchedule::STATUS_FAILED, 30],
-            [GroupMessageSchedule::STATUS_SENDING, 30], [GroupMessageSchedule::STATUS_CANCELLED, 30]] as [$status, $minutes]) {
+        $this->goTo(now()->addMinutes(12)->toDateTimeString());
+        $now = now();
+
+        foreach ([$waiting, $refused, $cancelled, $announced, $notYetLate] as $post) {
+            $this->assertNull($post->fresh()->announced_at, 'the fixture must really be waiting');
+        }
+        $refused->forceFill(['publish_failed_at' => $now])->save();
+        $cancelled->delete();
+        $announced->forceFill(['announced_at' => $now])->save();
+
+        // Stuck: a conversation still `scheduled` 11 minutes late, and one wedged in `sending`
+        // 30 minutes late (a failure in the sweep's gate phase leaves exactly that).
+        foreach ([[GroupMessageSchedule::STATUS_SCHEDULED, 11, 'Secret subject'], [GroupMessageSchedule::STATUS_SENDING, 30, 'Secret subject two']] as [$status, $minutes, $subject]) {
+            GroupMessageSchedule::create([
+                'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+                'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => $subject, 'body' => 'Secret body',
+                'send_at' => $now->copy()->subMinutes($minutes), 'status' => $status,
+            ]);
+        }
+        // Not stuck: late by nine minutes (scheduled or being sent), late but failed, late but cancelled.
+        foreach ([[GroupMessageSchedule::STATUS_SCHEDULED, 9], [GroupMessageSchedule::STATUS_SENDING, 9],
+            [GroupMessageSchedule::STATUS_FAILED, 30], [GroupMessageSchedule::STATUS_CANCELLED, 30]] as [$status, $minutes]) {
             GroupMessageSchedule::create([
                 'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
                 'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => 'x', 'body' => 'x',
                 'send_at' => $now->copy()->subMinutes($minutes), 'status' => $status,
             ]);
         }
-        // Stories: one refused, one cancelled (soft-deleted), one announced: none is stuck.
-        $refused = $this->scheduledPost('-30 minutes');
-        $refused->forceFill(['publish_failed_at' => $now])->save();
-        $this->scheduledPost('-30 minutes')->delete();
-        $this->scheduledPost('-30 minutes')->forceFill(['announced_at' => $now])->save();
 
         $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
         Log::spy();
         Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
 
         $this->assertSame(0, Artisan::call('groups:sweep-health'));
+
+        $expected = fn ($m) => str_contains((string) $m, '1 scheduled stories and 2 scheduled conversations are more than 10 minutes')
+            && ! str_contains((string) $m, 'Secret');
+        Log::shouldHaveReceived('error')->once()->withArgs($expected);
+        $monitors->shouldHaveReceived('error')->once()->withArgs($expected);
+    }
+
+    #[Test]
+    public function a_conversation_that_keeps_failing_inside_the_sweeps_gate_phase_is_reported_as_stuck(): void
+    {
+        // PublishDueGroupItems claims the row BEFORE its gates run, and the gates sit outside
+        // the write's try: a gate that throws leaves the row `sending`, the stale-claim handback
+        // returns it after ten minutes and the same run claims it again. So it is `sending`
+        // whenever the health check looks, and the check must count it.
+        $item = GroupMessageSchedule::create([
+            'masjid_id' => $this->class->masjid_id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+            'scope' => \App\Models\GroupThread::SCOPE_GROUP, 'subject' => 'Secret subject', 'body' => 'Secret body',
+            'send_at' => now()->addMinute(),
+        ]);
+        $this->partialMock(ScheduledSendGate::class, function ($mock) {
+            $mock->shouldReceive('authorRefusal')->andThrow(new \RuntimeException('gate down'));
+        });
+
+        $monitors = \Mockery::spy(\Psr\Log\LoggerInterface::class);
+        Log::spy();
+        Log::shouldReceive('channel')->with('monitors')->andReturn($monitors);
+
+        foreach ([2, 12, 24] as $minutes) {
+            $this->goTo(Carbon::parse($item->send_at)->subMinute()->addMinutes($minutes)->toDateTimeString());
+            $this->sweep();
+            $this->assertSame(GroupMessageSchedule::STATUS_SENDING, $item->fresh()->status, "at +{$minutes} minutes");
+        }
+
+        Artisan::call('groups:sweep-health');
 
         $expected = fn ($m) => str_contains((string) $m, '0 scheduled stories and 1 scheduled conversations are more than 10 minutes')
             && ! str_contains((string) $m, 'Secret');

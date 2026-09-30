@@ -109,7 +109,8 @@ Schedule::command('groups:publish-due')->everyMinute()->withoutOverlapping(5);
 
 // Is that sweep getting anything out? A story or conversation more than ten minutes past its
 // time and still not out is an ERROR on the monitors channel AND the default channel (counts
-// only); otherwise one info line on monitors. A command of its own, not a step inside the
+// only; a conversation wedged in `sending` counts); otherwise one info line on monitors. If the
+// cron that runs schedule:run stops, this stops too: the absence of the info lines is the signal. A command of its own, not a step inside the
 // sweep, so a sweep that is dead, wedged on its mutex or crashing cannot be the thing that has
 // to notice it (the point's W5/W6 delta review, P5). Every ten minutes is ten missed sweeps.
 // withoutOverlapping(9): a killed run must not hold the mutex past the next tick. See

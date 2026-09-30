@@ -50,8 +50,8 @@ use Tests\TestCase;
  *   photo download, a playback ticket, and the playback stream a ticket buys.
  *
  * Then who ELSE may see one (a teacher of the class, the office; never a parent who
- * is also an administrator), who may change one (the author and the office, not a
- * co-teacher), what the school clock means, and what the sweep does, including the
+ * is also an administrator), who may change one (the author only; the author and the
+ * office may cancel, a co-teacher neither), what the school clock means, and what the sweep does, including the
  * S15 rule: the author left the class, so it is NOT sent and never appears.
  *
  * The sweep that announces and refuses scheduled stories is `ScheduledSweepTest`.
@@ -1121,6 +1121,25 @@ class ScheduledClassStoryTest extends TestCase
         $this->assertSame($goesOutAt, $fresh->published_at->toDateTimeString());
         $this->assertTrue($fresh->isScheduled());
         $this->assertSame(0, $this->classStoryJobs());
+
+        // What the SPA is told. The office that teaches the class reads the story in full,
+        // may not change it, and MAY cancel it: the list must say so in `can_cancel`, since
+        // the SPA draws Cancel from that key (scheduledSend.ts) and would otherwise infer
+        // it from can_change_schedule=false and hide the button. A plain co-teacher gets
+        // neither; the author both.
+        $this->asUser($officeTeacher)->getJson($this->adminUrl('/posts?scheduled=1'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.content_hidden', false)
+            ->assertJsonPath('data.data.0.can_change_schedule', false)
+            ->assertJsonPath('data.data.0.can_cancel', true);
+        $this->asTeacher($co)->getJson($this->teacherUrl('/posts?scheduled=1'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.can_change_schedule', false)
+            ->assertJsonPath('data.data.0.can_cancel', false);
+        $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.can_change_schedule', true)
+            ->assertJsonPath('data.data.0.can_cancel', true);
 
         // The author still edits it.
         $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Author edit'])->assertOk();

@@ -798,6 +798,10 @@ class GroupPostsController extends Controller
             // Author and office only: a co-teacher sees a scheduled story and is not
             // offered the buttons that would be refused.
             'can_change_schedule' => $post->isPublished() || $this->isAuthor(request()->user(), $post),
+            // Cancel is wider than change: the office may cancel a story it reads in full
+            // (it teaches the class) without having written it. Sent explicitly because the
+            // SPA otherwise infers Cancel from can_change_schedule (scheduledSend.ts).
+            'can_cancel' => ! $post->isPublished() && $this->maySchedule(request()->user(), $post),
             'content_hidden' => false,
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a reader who

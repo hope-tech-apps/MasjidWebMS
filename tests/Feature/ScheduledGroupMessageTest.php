@@ -992,6 +992,86 @@ class ScheduledGroupMessageTest extends TestCase
         $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status);
     }
 
+    /** Runs the sweep once at `$at` with the writer's first `open()` throwing `$e`, and returns the item afterwards. */
+    private function sweepWithWriterThrowing(\Throwable $e, string $at, ?GroupMessageSchedule $item = null): GroupMessageSchedule
+    {
+        $item ??= $this->schedule();
+        $writer = \Mockery::mock(GroupThreadWriter::class)->makePartial();
+        $writer->shouldReceive('open')->once()->andThrow($e);
+        $this->app->instance(GroupThreadWriter::class, $writer);
+
+        Carbon::setTestNow($at);
+        Artisan::call('groups:publish-due');
+
+        // Read it, then take it out of the queue, so the next sweep in the same test (which
+        // expects exactly one throw) does not meet it again.
+        $after = $item->fresh();
+        GroupMessageSchedule::withoutMasjidScope()->whereKey($item->id)->update(['status' => GroupMessageSchedule::STATUS_CANCELLED]);
+
+        return $after;
+    }
+
+    #[Test]
+    public function a_permanent_database_error_is_not_retried_because_the_teachers_words_sound_like_a_dropped_connection(): void
+    {
+        // P3 (review): a QueryException's message is the driver's text PLUS the SQL with its bindings
+        // substituted in, and the bindings are the subject and body the teacher typed. A permanent
+        // error (here a foreign-key violation, 1452) on a body that says "we lost connection" was
+        // classed transient and handed back every minute for ever.
+        $pdo = new \PDOException('SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row');
+        $pdo->errorInfo = ['23000', 1452, 'Cannot add or update a child row: a foreign key constraint fails'];
+
+        foreach (['Sorry, we lost connection at the end of the call.', 'The server has gone away for the weekend', 'Connection refused at the gate'] as $n => $words) {
+            $item = $this->schedule(null, ['subject' => "Words {$n}", 'body' => $words]);
+            $fk = new \Illuminate\Database\QueryException('mysql', 'insert into group_threads (subject, body) values (?, ?)', ["Words {$n}", $words], $pdo);
+            $this->assertStringContainsString(strtolower($words), strtolower($fk->getMessage()), 'the fixture must carry the words in its message');
+
+            $fresh = $this->sweepWithWriterThrowing($fk, self::DUE, $item);
+
+            $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $fresh->status, "a permanent error on \"{$words}\" was retried");
+            $this->assertStringContainsString('could not be sent', (string) $fresh->failure_reason);
+            Carbon::setTestNow(self::NOW);
+        }
+    }
+
+    #[Test]
+    public function a_dropped_connection_is_recognised_by_its_text_or_its_int_code_when_there_is_no_errorinfo(): void
+    {
+        foreach ([
+            ['text: server has gone away', new \PDOException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away')],
+            ['text: lost connection', new \PDOException('SQLSTATE[HY000]: General error: 2013 Lost connection to MySQL server during query')],
+            ['int code 2006', new \PDOException('driver said something we do not match', 2006)],
+            ['int code 1040', new \PDOException('driver said something we do not match', 1040)],
+            ['wrapped: a QueryException with no errorInfo around the raw driver error', new \Illuminate\Database\QueryException('mysql', 'insert ...', [], new \PDOException('MySQL server has gone away'))],
+        ] as [$label, $e]) {
+            $fresh = $this->sweepWithWriterThrowing($e, self::DUE, $this->schedule(null, ['subject' => $label]));
+
+            $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $fresh->status, "{$label} was not retried");
+            Carbon::setTestNow(self::NOW);
+        }
+    }
+
+    #[Test]
+    public function a_transient_error_stops_being_retried_once_the_item_is_two_hours_late(): void
+    {
+        // An error that never clears must not go round every minute for ever (warning a minute,
+        // the health check paging every ten): past groups.scheduling.transient_retry_minutes the
+        // item fails and the author is told.
+        $pdo = new \PDOException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away');
+        $pdo->errorInfo = ['HY000', 2006, 'MySQL server has gone away'];
+        $dropped = fn () => new \Illuminate\Database\QueryException('mysql', 'insert ...', [], $pdo);
+
+        $item = $this->schedule(null, ['subject' => 'Early']);
+        $early = $this->sweepWithWriterThrowing($dropped(), Carbon::parse(self::DUE)->addMinutes(90)->toDateTimeString(), $item);
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $early->status, 'inside the window it is handed back');
+
+        Carbon::setTestNow(self::NOW);
+        $item = $this->schedule(null, ['subject' => 'Late']);
+        $late = $this->sweepWithWriterThrowing($dropped(), Carbon::parse(self::DUE)->addMinutes(130)->toDateTimeString(), $item);
+        $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $late->status, 'past the window it is recorded as a failure');
+        $this->assertStringContainsString('could not be sent', (string) $late->failure_reason);
+    }
+
     #[Test]
     public function any_other_error_while_writing_fails_the_item_with_a_reason_the_author_sees(): void
     {

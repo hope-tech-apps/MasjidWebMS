@@ -17,10 +17,18 @@ use Illuminate\Support\Facades\Log;
  * sweep's code path but the two tables it empties.
  *
  * "Stuck" is a story nobody has announced (not announced, not refused, not deleted) or a
- * conversation still `scheduled` whose time passed more than ten minutes ago. Ten minutes is
- * ten missed sweeps. A `sending` conversation is not counted: the sweep's own stale-claim
- * handback deals with it. A refused story and a failed conversation are not stuck: somebody
- * decided that, and the author sees it.
+ * conversation still `scheduled` OR `sending` whose time passed more than ten minutes ago. Ten
+ * minutes is ten missed sweeps. A `sending` row IS counted: a legitimate claim lasts
+ * milliseconds, but a failure in the sweep's gate phase (before its try) leaves the row
+ * `sending`, the stale-claim handback returns it after ten minutes and the same run claims it
+ * again, so it is `sending` whenever this command looks and only this count can see it. A
+ * refused story and a failed conversation are not stuck: somebody decided that, and the author
+ * sees it.
+ *
+ * What this cannot see: if the scheduler itself (the cron that runs `schedule:run`) has
+ * stopped, this command stops with the sweep, and silence is all there is. The signal for
+ * that is the absence of the `monitors` info lines, which both commands write every run
+ * (deploy/README.md, "Rolling back scheduled stories and conversations").
  *
  * Stuck: one ERROR on the `monitors` channel AND one on the default channel (production's
  * LOG_LEVEL=warning keeps errors there, and the monitors channel is what on-call is wired
@@ -48,7 +56,7 @@ class GroupsSweepHealth extends Command
             ->count();
 
         $conversations = GroupMessageSchedule::withoutMasjidScope()
-            ->where('status', GroupMessageSchedule::STATUS_SCHEDULED)
+            ->whereIn('status', [GroupMessageSchedule::STATUS_SCHEDULED, GroupMessageSchedule::STATUS_SENDING])
             ->where('send_at', '<=', $cutoff)
             ->count();
 

@@ -108,8 +108,10 @@ export type GroupPost = {
     status?: 'published' | 'scheduled' | 'failed';
     /** Why a `failed` story did not go out, in words a teacher can act on. */
     publish_failure?: string | null;
-    /** The author and the office may edit, send now or cancel; a co-teacher only sees. */
+    /** Only the author may edit, move or send now; a story that is out is always true. */
     can_change_schedule?: boolean;
+    /** The author and the office (`manage contacts`) may cancel a story that has not gone out; a co-teacher may not. */
+    can_cancel?: boolean;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */

@@ -162,7 +162,7 @@ sent (nothing else sends them). Before rolling back:
 1. List what is waiting, per school: `php artisan groups:publish-due --dry-run` (read-only), and in tinker
    `GroupPost::withoutMasjidScope()->whereNull('announced_at')->whereNull('publish_failed_at')->whereNull('deleted_at')->count()`
    and `GroupMessageSchedule::withoutMasjidScope()->whereIn('status', ['scheduled', 'sending'])->count()`.
-2. With the office, either publish each waiting item now (Send now) or cancel it, so nothing is waiting.
+2. With the office, clear every waiting item. Only an item's AUTHOR can Send now (everyone else, SuperAdmin included, gets 403), so the office can only cancel; ask each author to send theirs now, or cancel it and have it written again after the rollback, so nothing is waiting.
 3. Only then roll back the code. To roll the schema back too, `migrate:rollback` the two scheduling migrations:
    their `down()`s REFUSE while any story or conversation is still waiting or sending, so step 2 is enforced.
 
@@ -170,7 +170,7 @@ The sweep (`groups:publish-due`) runs every minute and logs one info line per ru
 separate command, `groups:sweep-health`, runs every ten minutes and checks the database directly (so a dead sweep cannot
 be the thing that has to report itself): a story or conversation more than 10 minutes past its time and still not out is
 an ERROR on both the **monitors** and the default channel (counts only); otherwise it writes one info line to
-**monitors**. After a rollback that removes the sweep, remove or expect the alert from `groups:sweep-health` too: it
+**monitors**. A conversation left in `sending` counts too. Neither command can report a stopped scheduler: if the cron that runs `schedule:run` is dead, the sweep and this check are both silent, and the signal is the ABSENCE of their info lines on **monitors** (one a minute from the sweep, one every ten minutes from the check). After a rollback that removes the sweep, remove or expect the alert from `groups:sweep-health` too: it
 reads the same tables, and only the waiting items it counts need to be cleared (step 2 above).
 
 ## Scheduler cron

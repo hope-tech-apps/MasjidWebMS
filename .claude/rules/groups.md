@@ -786,7 +786,8 @@ column); the model stamps the rest, so an ordinary post is out the moment it is 
   including moving a story past a window its author chose): the nightly purge deletes on that date
   alone and would delete the story and its photos unsent.
 - **Edit / Send now / Cancel** are the existing PUT and DELETE. `send_at`/`send_now` on a story that has
-  gone out is a 422; the author and the office change a scheduled story, a co-teacher only sees it
+  gone out is a 422; ONLY THE AUTHOR edits, moves or sends a scheduled story now (403 for anyone else,
+  SuperAdmin included), the author and the office (`manage contacts`) cancel it, and a co-teacher only sees it
   (`authorizeScheduledWrite`; an already-published story is as editable as it always was).
   `retained_until` counts from the day it goes OUT; a window the system stamped follows a new time.
 - The family payload gains `published_at` (the date it shows); the staff payload gains
@@ -820,7 +821,9 @@ conversations only (S11), text only (S13): a `send_at`/`send_now` on a reply or 
   standing governs. Seams: `GroupAudience::mayReadUnpublished` (the class's teachers; the author reads
   their own through the controller) and `mayCancelScheduled` (the class's teachers and the office).
   Both realms mount `GroupMessageSchedulesController` (teacher: `teacher.leads`; admin: `manage
-  contacts`). An office administrator who also teaches the class reads and moves as a teacher.
+  contacts`). An office administrator who also teaches the class reads it as a teacher and may cancel it, but unless
+  she wrote it she may not edit, move or send it now (403); the story payload says so in `can_change_schedule`
+  (false) and `can_cancel` (true), and the SPA draws Cancel from `can_cancel`.
 - Retention: `retained_until` counts from `send_at`; `groups:purge-feed` deletes finished rows
   (sent, failed, cancelled), never a waiting or sending one.
 
@@ -831,8 +834,13 @@ honoured; stored in the application zone. In the future and at most `groups.sche
 kept. The Vue field labels the zone the SERVER names, never the browser's.
 
 **The sweep.** `groups:publish-due`, every minute, `withoutOverlapping(5)` (a killed run must not hold the
-mutex for 24 hours), one WARNING line per run. Runs unbound and binds each item's own tenant, restoring
-the previous binding. `--masjid=` narrows, `--dry-run` changes nothing.
+mutex for 24 hours), one info line per run on the `monitors` channel. Runs unbound and binds each item's own tenant, restoring
+the previous binding. `--masjid=` narrows, `--dry-run` changes nothing. `groups:sweep-health` (every ten minutes, a command of its
+own) counts stories and conversations (`scheduled` OR `sending`) more than ten minutes past their time and
+logs an ERROR with the counts; it stops when the scheduler cron stops, so silence from both is the signal.
+A `transient` database error hands a conversation back only while it is less than
+`groups.scheduling.transient_retry_minutes` (120) past its time, judged on the DRIVER's text, never on the
+exception message (which carries the teacher's words as bindings).
 
 **Deploy.** Deploy AFTER HOURS: `bin/deploy` checks out new PHP before it migrates, and the family
 reads select `published_at`, so the seconds between fail. Run the migrations up, down and up on staging

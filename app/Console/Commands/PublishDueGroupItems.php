@@ -60,8 +60,9 @@ use Throwable;
  * then handled with the tenant bound to ITS OWN masjid_id and the previous binding put
  * back in a `finally`, because the writer's models stamp `masjid_id` from the bound
  * tenant. `--masjid=` narrows to one school; `--dry-run` reports and changes nothing.
- * ONE log line per run, at WARNING: production runs LOG_LEVEL=warning, and an info line
- * would be written and dropped, leaving no proof the sweep ever ran.
+ * ONE line per run, at info on the `monitors` channel (production runs LOG_LEVEL=warning, so
+ * the default channel would drop it). Whether the sweep is getting anything out is judged by
+ * `groups:sweep-health`, a command of its own.
  */
 class PublishDueGroupItems extends Command
 {
@@ -277,7 +278,7 @@ class PublishDueGroupItems extends Command
                 // instead of failing it for good (the point's W5 review, item 3). Anything
                 // else fails it; the author sees it as "Not sent" with the reason in the
                 // Scheduled list, which is where they look after scheduling.
-                if ($this->isTransient($e)) {
+                if ($this->isTransient($e) && $this->stillWorthRetrying($item)) {
                     GroupMessageSchedule::withoutMasjidScope()
                         ->whereKey($item->id)
                         ->where('status', GroupMessageSchedule::STATUS_SENDING)
@@ -318,7 +319,16 @@ class PublishDueGroupItems extends Command
                     $driverCode = $x->getCode();
                 }
 
-                $message = strtolower($x->getMessage());
+                // The text of the DRIVER's own error only. A QueryException's message is the
+                // driver message plus the SQL with its bindings substituted in, and the
+                // bindings of this write are the subject and body a teacher typed: matching
+                // on it would class a permanent error (a foreign key, a too-long value) as a
+                // dropped connection because of what the teacher wrote. So for a
+                // QueryException the text is `errorInfo[2]`; its previous link, the raw
+                // PDOException, is examined on its own turn of this loop.
+                $message = strtolower($x instanceof \Illuminate\Database\QueryException
+                    ? (string) ($info[2] ?? '')
+                    : $x->getMessage());
 
                 if ($state === '40001' || in_array($driverCode, [1205, 1213, 2006, 2013, 1040, 2002], true)
                     || str_contains($message, 'database is locked')
@@ -331,6 +341,20 @@ class PublishDueGroupItems extends Command
         }
 
         return false;
+    }
+
+    /**
+     * The cap on hand-backs. Nothing counts attempts (and a migration for it is not worth it),
+     * so the bound is how long the item has been due: past `transient_retry_minutes` a
+     * "transient" error that keeps coming back is treated as the failure it is, and the author
+     * is told, instead of the item being retried every minute for ever with a warning each
+     * time and the health check paging every ten minutes.
+     */
+    private function stillWorthRetrying(GroupMessageSchedule $item): bool
+    {
+        $minutes = max(1, (int) config('groups.scheduling.transient_retry_minutes', 120));
+
+        return $item->send_at !== null && $item->send_at->gt(now()->subMinutes($minutes));
     }
 
     private function markFailed(GroupMessageSchedule $item, string $reason): void

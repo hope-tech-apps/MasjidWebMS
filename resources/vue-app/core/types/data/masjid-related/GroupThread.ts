@@ -153,7 +153,7 @@ export type ScheduledMessage = {
     failure_reason: string | null;
     sent_thread_id: number | null;
     author: { id: number; name: string } | null;
-    /** The author and the office only; a co-teacher sees the item and may not touch it. */
+    /** The author only (edit, move, send now); the office and a co-teacher see the item and may not change it. */
     can_change: boolean;
     created_at: string | null;
 };
