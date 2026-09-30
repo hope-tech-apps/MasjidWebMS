@@ -363,11 +363,7 @@ class MemberAccountDeletion
             // it still carries the address, name and phone the shopper typed. Clear them. A
             // PAID order is an office record and keeps its buyer, as meal_orders keep theirs.
             if (CartTables::has('orders')) {
-                Order::withoutMasjidScope()
-                    ->where('masjid_id', $contact->masjid_id)
-                    ->where('contact_id', $contact->id)
-                    ->where('status', '!=', Order::STATUS_PAID)
-                    ->update(['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null]);
+                $this->clearUnpaidCheckouts($contact);
             }
 
             // App sign-in codes for whichever address could sign straight back in:
@@ -534,6 +530,69 @@ class MemberAccountDeletion
         }
 
         return $this->delete($contact, $via, $ip, $email);
+    }
+
+    /**
+     * Take the buyer's details off the member's UNPAID orders (pending or expired), in this
+     * organisation only. A paid order is a sale and is never touched here.
+     *
+     * Two ways an unpaid order is the member's:
+     *
+     *  - by id: `orders.contact_id`, for a basket opened while signed in;
+     *  - by address: the public basket endpoints always write `contact_id` NULL, so a member's own
+     *    abandoned checkout holds only what they typed. Its `buyer_email` is theirs when it is
+     *    EXACTLY their `login_email` or their `email`.
+     *
+     * "Exactly" is decided in PHP, not by the database. `buyer_email`, like `contacts.login_email`,
+     * is compared under `utf8mb4_unicode_ci` on production, where `victim@gmail.com` equals
+     * `victim@gmaíl.com`: the query is only a shortlist and ContactIdentity::keepExactMatches()
+     * drops the look-alikes, so a checkout typed at somebody else's look-alike address keeps its
+     * buyer, and this account's deletion never reaches into it.
+     *
+     * The lines' answers (`order_items.payload`) are left alone on purpose: a `pending` order can
+     * still be paid by a delayed method and settlement writes its records from them. `cart:prune`
+     * removes the whole order, lines included, once its page is long closed.
+     */
+    private function clearUnpaidCheckouts(Contact $contact): void
+    {
+        $cleared = ['buyer_email' => null, 'buyer_name' => null, 'buyer_phone' => null];
+
+        Order::withoutMasjidScope()
+            ->where('masjid_id', $contact->masjid_id)
+            ->where('contact_id', $contact->id)
+            ->where('status', '!=', Order::STATUS_PAID)
+            ->update($cleared);
+
+        $addresses = [];
+
+        foreach ([$contact->login_email, $contact->email] as $address) {
+            $typed = $this->normalise($address);
+
+            if ($typed !== null) {
+                $addresses[$typed] = (string) $address;
+            }
+        }
+
+        foreach ($addresses as $shortlist => $address) {
+            $exact = ContactIdentity::keepExactMatches(
+                Order::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('status', '!=', Order::STATUS_PAID)
+                    ->whereNotNull('buyer_email')
+                    ->whereRaw('LOWER(buyer_email) = LOWER(?)', [$shortlist])
+                    ->get(['id', 'buyer_email']),
+                'buyer_email',
+                $address,
+            );
+
+            if ($exact->isNotEmpty()) {
+                Order::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('status', '!=', Order::STATUS_PAID)
+                    ->whereIn('id', $exact->pluck('id')->all())
+                    ->update($cleared);
+            }
+        }
     }
 
     /** Lower-cased and trimmed, with an empty address read as none. */
