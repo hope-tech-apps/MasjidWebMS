@@ -3,6 +3,7 @@
 namespace Tests\Feature\Member;
 
 use App\Http\Middleware\EnsureMemberPortalEnabled;
+use App\Models\Masjid;
 use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
@@ -27,13 +28,58 @@ class MemberPortalGateTest extends TestCase
     use BuildsMemberPortal;
     use RefreshDatabase;
 
-    /** @var array<string, string> route name => the path under the organisation, with a sample id */
+    /**
+     * @var array<string, string> route name => the path under `/me`, with a sample id.
+     *
+     * `portalUrl()` already puts `me/` in front of what it is given; a path here that began
+     * `me/` too would be `/me/me/...`, a route that does not exist, and every "off" test
+     * would pass with no gate at all (assertTheRouteIsReal is what stops that).
+     */
     private const ROUTES = [
-        'mobile.member.me.orders.index' => 'me/orders',
-        'mobile.member.me.orders.show' => 'me/orders/manara/00000000-0000-4000-8000-000000000000',
-        'mobile.member.me.gifts.index' => 'me/gifts',
-        'mobile.member.me.receipts.pdf' => 'me/receipts/1/pdf',
+        'mobile.member.me.orders.index' => 'orders',
+        'mobile.member.me.orders.show' => 'orders/manara/00000000-0000-4000-8000-000000000000',
+        'mobile.member.me.gifts.index' => 'gifts',
+        'mobile.member.me.receipts.pdf' => 'receipts/1/pdf',
     ];
+
+    /**
+     * The PREMISE of every "off" assertion: the URL is a REAL route. Switched ON for everyone,
+     * an unauthenticated call to it answers the auth stack's 401, which a path no route matches
+     * can never do (it answers the router's 404). Without this, a URL typo makes each 404
+     * assertion below true of a route that never existed, with or without the gate.
+     *
+     * The switch is put back as the caller had it.
+     */
+    private function assertTheRouteIsReal(Masjid $org, string $path): void
+    {
+        $before = config('member_portal');
+        $this->turnMemberPortalOn();
+
+        try {
+            $response = $this->bare()->getJson($this->portalUrl($org, $path));
+
+            $this->assertSame(
+                401,
+                $response->getStatusCode(),
+                "{$path} is not a real route: switched on it answers the portal's 401, not the router's 404"
+            );
+        } finally {
+            config(['member_portal' => $before]);
+        }
+    }
+
+    /**
+     * A request that carries no credentials. Headers set with `withHeader()` STAY on the test
+     * for every later call, and a guard remembers its user, so a "no token" call after an
+     * `asMember()` is a member's call unless both are dropped first.
+     */
+    private function bare(): static
+    {
+        Auth::forgetGuards();
+        $this->unbound();
+
+        return $this->flushHeaders();
+    }
 
     #[Test]
     public function the_portal_is_off_unless_it_is_switched_on(): void
@@ -50,14 +96,16 @@ class MemberPortalGateTest extends TestCase
         $org = $this->org();
         $me = $this->member($org);
 
-        $unknown = $this->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
+        $unknown = $this->bare()->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
 
         foreach (self::ROUTES as $path) {
-            // Without a token, with a junk one, and with a real member's.
-            $this->assertSame($unknown, $this->getJson($this->portalUrl($org, $path))->assertNotFound()->getContent(), "{$path}: no token");
+            // The premise: this is a real route, so the 404 below is the gate's.
+            $this->assertTheRouteIsReal($org, $path);
 
-            Auth::forgetGuards();
-            $junk = $this->withHeader('Authorization', 'Bearer 1|not-a-real-token')->getJson($this->portalUrl($org, $path));
+            // Without a token, with a junk one, and with a real member's.
+            $this->assertSame($unknown, $this->bare()->getJson($this->portalUrl($org, $path))->assertNotFound()->getContent(), "{$path}: no token");
+
+            $junk = $this->bare()->withHeader('Authorization', 'Bearer 1|not-a-real-token')->getJson($this->portalUrl($org, $path));
             $this->assertSame($unknown, $junk->assertNotFound()->getContent(), "{$path}: junk token");
 
             $real = $this->asMember($me)->getJson($this->portalUrl($org, $path));
@@ -72,6 +120,10 @@ class MemberPortalGateTest extends TestCase
         $org = $this->org();
         $me = $this->member($org);
         $token = $me->createMemberToken();
+
+        foreach (self::ROUTES as $path) {
+            $this->assertTheRouteIsReal($org, $path);
+        }
 
         $ran = 0;
         RateLimiter::for('mobile', function () use (&$ran) {
@@ -105,10 +157,12 @@ class MemberPortalGateTest extends TestCase
         $org = $this->org();
         $unknown = $this->getJson($this->portalUrl($org, 'no-such-route'))->assertNotFound()->getContent();
 
+        $this->assertTheRouteIsReal($org, 'orders');
+
         // Past the inline `throttle:30,1,member-portal` bucket: were the throttle ahead of the
         // gate, the 31st call would be its 429.
         for ($attempt = 1; $attempt <= 35; $attempt++) {
-            $this->assertSame($unknown, $this->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound()->getContent(), "attempt {$attempt}");
+            $this->assertSame($unknown, $this->bare()->getJson($this->portalUrl($org, 'orders'))->assertNotFound()->getContent(), "attempt {$attempt}");
         }
     }
 
@@ -153,8 +207,8 @@ class MemberPortalGateTest extends TestCase
         $me = $this->member($org);
         $this->turnMemberPortalOn();
 
-        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertOk();
-        $this->asMember($me)->getJson($this->portalUrl($org, 'me/gifts'))->assertOk();
+        $this->asMember($me)->getJson($this->portalUrl($org, 'orders'))->assertOk();
+        $this->asMember($me)->getJson($this->portalUrl($org, 'gifts'))->assertOk();
     }
 
     #[Test]
@@ -163,7 +217,9 @@ class MemberPortalGateTest extends TestCase
         $org = $this->org();
         $this->turnMemberPortalOn();
 
-        $this->getJson($this->portalUrl($org, 'me/orders'))->assertUnauthorized();
+        foreach (self::ROUTES as $path) {
+            $this->bare()->getJson($this->portalUrl($org, $path))->assertUnauthorized();
+        }
     }
 
     #[Test]
@@ -179,10 +235,14 @@ class MemberPortalGateTest extends TestCase
 
         $unknown = $this->getJson($this->portalUrl($other, 'no-such-route'))->assertNotFound()->getContent();
 
-        $this->asMember($listedMember)->getJson($this->portalUrl($listed, 'me/orders'))->assertOk();
+        $this->asMember($listedMember)->getJson($this->portalUrl($listed, 'orders'))->assertOk();
+
+        // The premise: the unlisted organisation's URL is a real route (on for everyone, it
+        // answers the portal's 401).
+        $this->assertTheRouteIsReal($other, 'orders');
 
         // The unlisted organisation's own member gets the router's 404, not their orders.
-        $response = $this->asMember($otherMember)->getJson($this->portalUrl($other, 'me/orders'));
+        $response = $this->asMember($otherMember)->getJson($this->portalUrl($other, 'orders'));
         $this->assertSame($unknown, $response->assertNotFound()->getContent());
     }
 
@@ -195,10 +255,12 @@ class MemberPortalGateTest extends TestCase
 
         config(['member_portal.enabled' => true, 'member_portal.masjid_ids' => [$listed->id]]);
 
+        $this->assertTheRouteIsReal($other, 'orders');
+
         // A `masjid-id` header naming the listed organisation cannot open another one's URL.
         $this->asMember($otherMember)
             ->withHeader('masjid-id', (string) $listed->id)
-            ->getJson($this->portalUrl($other, 'me/orders'))
+            ->getJson($this->portalUrl($other, 'orders'))
             ->assertNotFound();
     }
 
@@ -214,7 +276,8 @@ class MemberPortalGateTest extends TestCase
 
         $this->assertFalse(EnsureMemberPortalEnabled::enabledFor($org->id));
         $this->assertFalse(EnsureMemberPortalEnabled::enabledFor(0));
-        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound();
+        $this->assertTheRouteIsReal($org, 'orders');
+        $this->asMember($me)->getJson($this->portalUrl($org, 'orders'))->assertNotFound();
     }
 
     #[Test]
@@ -226,7 +289,8 @@ class MemberPortalGateTest extends TestCase
         config(['member_portal.enabled' => false, 'member_portal.masjid_ids' => [$org->id]]);
 
         $this->assertFalse(EnsureMemberPortalEnabled::enabledFor($org->id));
-        $this->asMember($me)->getJson($this->portalUrl($org, 'me/orders'))->assertNotFound();
+        $this->assertTheRouteIsReal($org, 'orders');
+        $this->asMember($me)->getJson($this->portalUrl($org, 'orders'))->assertNotFound();
     }
 
     #[Test]
