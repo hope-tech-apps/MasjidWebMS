@@ -214,9 +214,11 @@ class CartColumnWidthsTest extends TestCase
             }
         }
 
-        // Premise: every one of the four tables contributed a checked value, so the loop above read
-        // real rows from each and did not pass by looking at nothing.
-        foreach (['carts', 'cart_items', 'orders', 'order_items'] as $table) {
+        // Premise: each table a paid basket leaves rows in contributed a checked value, so the loop
+        // above read real rows and did not pass by looking at nothing. cart_items is not among them:
+        // settlement removes the lines an order paid for, so a paid basket's cart_items are gone
+        // (their widths are pinned against the declared columns by the test above).
+        foreach (['carts', 'orders', 'order_items'] as $table) {
             $this->assertGreaterThan(0, $checked[$table] ?? 0, "premise: {$table} rows were read and checked");
         }
     }
