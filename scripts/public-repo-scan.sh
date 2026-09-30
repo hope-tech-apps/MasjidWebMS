@@ -24,7 +24,9 @@
 #     unless the id says it is fake (contains "test", "fake", "example",
 #     "sample" or "xxx"). Fixtures use scrubbed ids like pi_fake_000001.
 #   - Email addresses outside the reserved domains (example.com/.net/.org and
-#     any .test, .example, .invalid or .localhost name).
+#     any .test, .example, .invalid or .localhost name) and the platform's own
+#     system addresses (@hopetechapps.com and its subdomains, e.g. the
+#     notifications@ sender). Those name a service, not a person.
 set -euo pipefail
 
 BASE=""
@@ -36,7 +38,10 @@ for arg in "$@"; do
     esac
 done
 
-if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+# No base, a push that created the branch (all zeros), or a base this clone does
+# not have (a force-push rewrote it away): diff from the merge base with main.
+if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+    || ! git rev-parse --verify -q "$BASE^{commit}" >/dev/null; then
     git fetch -q origin main 2>/dev/null || true
     BASE="$(git merge-base HEAD origin/main)"
 fi
@@ -64,7 +69,8 @@ emails="$(printf '%s\n' "$added" \
     | grep -oE '^[^:]+: .*' \
     | grep -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
     | grep -vE '@([A-Za-z0-9-]+\.)*(example\.(com|net|org)|[A-Za-z0-9-]+\.(test|example|invalid|localhost))\b' \
-    | grep -vE '@(example\.(com|net|org))\b' || true)"
+    | grep -vE '@(example\.(com|net|org))\b' \
+    | grep -vE '@([A-Za-z0-9-]+\.)*hopetechapps\.com\b' || true)"
 [ -n "$emails" ] && problems+=$'\nEmail addresses outside the reserved domains:\n'"$emails"$'\n'
 
 if [ "$STRICT" -eq 1 ]; then
