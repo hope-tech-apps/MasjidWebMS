@@ -147,11 +147,19 @@ class GroupPost extends Model
     /**
      * THE ONE DOOR EVERY FAMILY READ GOES THROUGH: stories that are out.
      *
-     * A story is out when its `published_at` has come and it was not refused at
-     * release (`publish_failed_at`). A NULL `published_at` is read as out: only a
-     * row written by code that predates the column (the deploy seconds, an import
-     * with raw SQL) can carry one, and before scheduling existed such a row was
-     * visible. Everything else in the system stamps the column.
+     * A story is out when its `published_at` has come, it was not refused at release
+     * (`publish_failed_at`), AND it has been announced (`announced_at`). The last
+     * condition is what makes the S15 author gate independent of the sweep's timing:
+     * `announced_at` is stamped by an ordinary post's own write, and for a scheduled
+     * story ONLY by GroupStoryPublisher::announce(), which the sweep calls after the
+     * gate said yes. A sweep that is late, killed or not running at all therefore
+     * DELAYS a story; it can never let one out that the gate has not passed, and it can
+     * never leave a story on screen that the gate then pulls back.
+     *
+     * A NULL `published_at` is read as out: only a row written by code that predates
+     * the column (the deploy seconds, an import with raw SQL) can carry one, and before
+     * scheduling existed such a row was visible. Everything else in the system stamps
+     * the column, and the migration backfilled `announced_at` for every existing row.
      *
      * Chained on `$group->posts()` at every parent-facing site (the feed, one
      * story, the seen POST, a reaction, an attachment, a playback ticket and the
@@ -166,30 +174,47 @@ class GroupPost extends Model
         return $query
             ->whereNull($query->getModel()->qualifyColumn('publish_failed_at'))
             ->where(function (Builder $when) use ($query, $now): void {
-                $column = $query->getModel()->qualifyColumn('published_at');
+                $model = $query->getModel();
+                $column = $model->qualifyColumn('published_at');
+                $announced = $model->qualifyColumn('announced_at');
 
-                $when->whereNull($column)->orWhere($column, '<=', $now);
+                $when->whereNull($column)->orWhere(function (Builder $out) use ($column, $announced, $now): void {
+                    $out->where($column, '<=', $now)->whereNotNull($announced);
+                });
             });
     }
 
-    /** Stories waiting for their time: in the future and not refused. */
+    /** Stories waiting to go out: not refused, and either before their time or not yet announced. */
     public function scopeScheduled(Builder $query, $asOf = null): Builder
     {
         return $query
             ->whereNull($query->getModel()->qualifyColumn('publish_failed_at'))
-            ->where($query->getModel()->qualifyColumn('published_at'), '>', $asOf ?? now());
+            ->whereNotNull($query->getModel()->qualifyColumn('published_at'))
+            ->where($this->notYetOut($query, $asOf ?? now()));
     }
 
-    /** Stories NOT out: waiting for their time, or refused at release. The Scheduled list. */
+    /** Stories NOT out: waiting for their time or their announcement, or refused at release. The Scheduled list. */
     public function scopeUnpublished(Builder $query, $asOf = null): Builder
     {
         $now = $asOf ?? now();
         $failed = $query->getModel()->qualifyColumn('publish_failed_at');
         $at = $query->getModel()->qualifyColumn('published_at');
 
-        return $query->where(function (Builder $q) use ($failed, $at, $now): void {
-            $q->whereNotNull($failed)->orWhere($at, '>', $now);
+        return $query->where(function (Builder $q) use ($failed, $at, $query, $now): void {
+            $q->whereNotNull($failed)->orWhere(function (Builder $waiting) use ($at, $query, $now): void {
+                $waiting->whereNotNull($at)->where($this->notYetOut($query, $now));
+            });
         });
+    }
+
+    /** `published_at` in the future, or the story not announced yet (the negation of "out", for a stamped row). */
+    private function notYetOut(Builder $query, $now): \Closure
+    {
+        $model = $query->getModel();
+        $at = $model->qualifyColumn('published_at');
+        $announced = $model->qualifyColumn('announced_at');
+
+        return fn (Builder $q) => $q->where($at, '>', $now)->orWhereNull($announced);
     }
 
     /** Stories the sweep refused to release. */
@@ -206,17 +231,20 @@ class GroupPost extends Model
             ->orderByDesc('group_posts.id');
     }
 
+    /** The row-level twin of scopePublished(): keep the two identical. */
     public function isPublished($asOf = null): bool
     {
         return $this->publish_failed_at === null
-            && ($this->published_at === null || $this->published_at->lte($asOf ?? now()));
+            && ($this->published_at === null
+                || ($this->published_at->lte($asOf ?? now()) && $this->announced_at !== null));
     }
 
+    /** Waiting to go out: the twin of scopeScheduled(). */
     public function isScheduled($asOf = null): bool
     {
         return $this->publish_failed_at === null
             && $this->published_at !== null
-            && $this->published_at->gt($asOf ?? now());
+            && ($this->published_at->gt($asOf ?? now()) || $this->announced_at === null);
     }
 
     public function hasFailedToPublish(): bool

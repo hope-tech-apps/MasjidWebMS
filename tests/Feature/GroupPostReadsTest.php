@@ -697,6 +697,30 @@ class GroupPostReadsTest extends TestCase
     }
 
     #[Test]
+    public function the_recording_cutoff_is_when_a_story_went_out_not_when_it_was_typed(): void
+    {
+        $this->switchOn();
+        $since = now()->subDays(3)->toDateString();
+        config(['groups.story_reads.since' => $since]);
+
+        // Typed BEFORE recording began, released AFTER it (a scheduled story): receipts were being kept.
+        $typedEarly = $this->makePost(body: 'Typed early, released late');
+        GroupPost::withoutMasjidScope()->whereKey($typedEarly->id)->update(['created_at' => now()->subDays(10), 'published_at' => now()->subDay()]);
+
+        // Typed AFTER recording began, but it went out before it (published_at is what counts).
+        $typedLate = $this->makePost(body: 'Typed late, released early');
+        GroupPost::withoutMasjidScope()->whereKey($typedLate->id)->update(['created_at' => now()->subDay(), 'published_at' => now()->subDays(10)]);
+
+        $rows = collect($this->asTeacher()->getJson($this->teacherUrl('/posts'))->assertOk()->json('data.data'))->keyBy('id');
+
+        $this->assertArrayNotHasKey('seen_tracked', $rows[$typedEarly->id], 'a story released under recording was called untracked because of when it was typed');
+        $this->assertSame(0, $rows[$typedEarly->id]['seen_count']);
+
+        $this->assertFalse($rows[$typedLate->id]['seen_tracked'], 'a story released before recording was called tracked because of when it was typed');
+        $this->assertArrayNotHasKey('seen_count', $rows[$typedLate->id]);
+    }
+
+    #[Test]
     public function the_schema_is_what_the_code_assumes(): void
     {
         $this->assertTrue(Schema::hasColumns('group_post_reads', [

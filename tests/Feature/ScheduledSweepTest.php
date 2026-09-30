@@ -13,7 +13,9 @@ use App\Models\GroupStaff;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
 use App\Models\User;
+use App\Console\Commands\PublishDueGroupItems;
 use App\Services\Groups\GroupThreadWriter;
+use App\Services\Groups\ScheduledSendGate;
 use App\Support\TenantContext;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -776,7 +778,7 @@ class ScheduledSweepTest extends TestCase
 
         $this->goTo(self::DUE);
         // Another sweep is writing $fresh right now; a killed one abandoned $stale.
-        GroupMessageSchedule::withoutMasjidScope()->whereKey($fresh->id)->update(['status' => 'sending', 'updated_at' => now()->subMinute()]);
+        GroupMessageSchedule::withoutMasjidScope()->whereKey($fresh->id)->update(['status' => 'sending', 'updated_at' => now()->subMinutes(5)]);
         GroupMessageSchedule::withoutMasjidScope()->whereKey($stale->id)->update(['status' => 'sending', 'updated_at' => now()->subMinutes(11)]);
 
         $output = $this->sweep();
@@ -857,5 +859,227 @@ class ScheduledSweepTest extends TestCase
         $this->sweep();
 
         $this->assertSame(GroupMessageSchedule::STATUS_SENT, $item->fresh()->status);
+    }
+
+    // ============================================ a refusal is made once, not every minute
+
+    #[Test]
+    public function a_refused_story_is_refused_once_and_later_runs_leave_it_and_its_reason_alone(): void
+    {
+        $post = $this->scheduledPost('+1 minute');
+        GroupStaff::withoutMasjidScope()->where('user_id', $this->teacher->id)->delete();
+
+        $this->assertStringContainsString('stories announced=0 refused=1', $this->sweep());
+        $first = $post->fresh()->publish_failed_at->toDateTimeString();
+
+        Carbon::setTestNow(now()->addMinutes(5));
+
+        $this->assertStringContainsString('stories announced=0 refused=0', $this->sweep());
+        $this->assertSame($first, $post->fresh()->publish_failed_at->toDateTimeString(), 'a refused story was refused again');
+    }
+
+    // ================================================================ the batch cap
+
+    #[Test]
+    public function stories_already_announced_do_not_crowd_a_due_story_out_of_a_full_batch(): void
+    {
+        config(['groups.scheduling.batch' => 2]);
+
+        // Three stories long since out (announced when written), older than the due one.
+        $this->makePost(body: 'One');
+        $this->makePost(body: 'Two');
+        $this->makePost(body: 'Three');
+        $due = $this->scheduledPost('+1 hour');
+
+        Carbon::setTestNow(now()->addHours(2));
+
+        $this->assertStringContainsString('stories announced=1', $this->sweep());
+        $this->assertNotNull($due->fresh()->announced_at, 'a due story was never reached: old stories fill the batch');
+        $this->assertSame(1, $this->classStoryJobs());
+    }
+
+    #[Test]
+    public function one_run_announces_no_more_stories_than_the_batch_and_the_next_run_takes_the_rest(): void
+    {
+        config(['groups.scheduling.batch' => 2]);
+        foreach (['A', 'B', 'C'] as $body) {
+            $this->scheduledPost('+1 hour', body: $body);
+        }
+        Carbon::setTestNow(now()->addHours(2));
+
+        $this->assertStringContainsString('stories announced=2', $this->sweep());
+        $this->assertSame(2, $this->classStoryJobs());
+
+        $this->assertStringContainsString('stories announced=1', $this->sweep());
+        $this->assertSame(3, $this->classStoryJobs());
+    }
+
+    #[Test]
+    public function one_run_sends_no_more_conversations_than_the_batch_and_the_next_run_sends_the_rest(): void
+    {
+        config(['groups.scheduling.batch' => 2]);
+        $items = [];
+        foreach (['One', 'Two', 'Three'] as $subject) {
+            $items[] = $this->schedule(null, ['subject' => $subject]);
+        }
+        $this->goTo(self::DUE);
+
+        $this->assertStringContainsString('conversations sent=2', $this->sweep());
+        $this->assertSame(2, GroupThread::withoutMasjidScope()->count());
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $items[2]->fresh()->status);
+
+        $this->assertStringContainsString('conversations sent=1', $this->sweep());
+        $this->assertSame(3, GroupThread::withoutMasjidScope()->count());
+    }
+
+    // ================================================================ dry runs and --masjid
+
+    #[Test]
+    public function a_dry_run_counts_a_due_story_its_author_may_still_send_and_announces_nothing(): void
+    {
+        $due = $this->scheduledPost('+1 minute');
+        Carbon::setTestNow(now()->addMinutes(2));
+
+        $output = $this->sweep(['--dry-run' => true]);
+
+        $this->assertStringContainsString('[dry-run]', $output);
+        $this->assertStringContainsString('stories announced=1', $output);
+        $this->assertNull($due->fresh()->announced_at, 'a dry run claimed the story');
+        $this->assertSame(0, $this->classStoryJobs(), 'a dry run sent the class-story email');
+
+        // The control: the same story, a real run.
+        $this->sweep();
+        $this->assertNotNull($due->fresh()->announced_at);
+        $this->assertSame(1, $this->classStoryJobs());
+    }
+
+    #[Test]
+    public function a_dry_run_and_a_narrowed_sweep_do_not_hand_back_a_claim_they_were_not_asked_about(): void
+    {
+        $mine = $this->schedule(null, ['subject' => 'Mine']);
+        app(TenantContext::class)->forgetTenant();
+
+        $otherClass = Group::factory()->create([
+            'masjid_id' => $this->otherSchool->id, 'kind' => Group::KIND_CLASS, 'name' => 'Theirs', 'slug' => 'theirs',
+        ]);
+        $foreign = $this->makeTeacher($this->otherSchool, $otherClass, 'Foreign Teacher');
+        $theirs = GroupMessageSchedule::create([
+            'masjid_id' => $this->otherSchool->id, 'group_id' => $otherClass->id, 'author_user_id' => $foreign->id,
+            'scope' => GroupThread::SCOPE_GROUP, 'subject' => 'Theirs', 'body' => 'Their words', 'send_at' => self::DUE,
+        ]);
+
+        $this->goTo(self::DUE);
+        foreach ([$mine, $theirs] as $row) {
+            GroupMessageSchedule::withoutMasjidScope()->whereKey($row->id)
+                ->update(['status' => 'sending', 'updated_at' => now()->subMinutes(30)]);
+        }
+
+        // A dry run reports both and hands back neither.
+        $this->assertStringContainsString('reclaimed=2', $this->sweep(['--dry-run' => true]));
+        $this->assertSame('sending', $mine->fresh()->status, 'a dry run handed a claim back');
+        $this->assertSame('sending', $theirs->fresh()->status, 'a dry run handed a claim back');
+
+        // A sweep narrowed to the other school touches only that school's claim.
+        $this->assertStringContainsString('reclaimed=1', $this->sweep(['--masjid' => $this->otherSchool->id]));
+        $this->assertSame('sending', $mine->fresh()->status, 'a sweep for another school handed this school\'s claim back');
+        $this->assertSame(GroupMessageSchedule::STATUS_SENT, $theirs->fresh()->status);
+    }
+
+    // ================================================================ the gate itself
+
+    #[Test]
+    public function a_super_administrator_author_may_send_to_any_class(): void
+    {
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+
+        $story = $this->scheduledPost('+1 minute', $super);
+        $this->assertNull(app(ScheduledSendGate::class)->authorRefusal($super->id, $this->class));
+
+        Carbon::setTestNow(now()->addMinutes(2));
+        $this->assertStringContainsString('stories announced=1 refused=0', $this->sweep());
+        $this->assertNotNull($story->fresh()->announced_at);
+        $this->assertNull($story->fresh()->publish_failed_at);
+    }
+
+    #[Test]
+    public function the_gate_binds_the_items_school_for_its_questions_and_puts_back_what_it_found(): void
+    {
+        $gate = app(ScheduledSendGate::class);
+        $tenant = app(TenantContext::class);
+
+        // Unbound (a console run): the author's standing is still read in the class's own school.
+        $tenant->forgetTenant();
+        $this->assertNull($gate->authorRefusal($this->teacher->id, $this->class), 'the gate read the author unbound');
+        $this->assertNull($gate->aboutRefusal($this->class, $this->childA->id, true), 'the gate read the child unbound');
+        $this->assertNull($tenant->get(), 'the gate left a school bound');
+
+        // Bound to somebody else's school (a request that runs the command): the questions
+        // are still asked in the CLASS's school, and what was bound is put back exactly.
+        $tenant->set($this->otherSchool->id);
+        $this->assertNull($gate->authorRefusal($this->teacher->id, $this->class), 'the gate read the author under another school');
+        $this->assertNull($gate->aboutRefusal($this->class, $this->childA->id, true), 'the gate read the child under another school');
+        $this->assertSame($this->otherSchool->id, $tenant->get(), 'the gate did not restore the tenant it found');
+    }
+
+    // ================================================== the claim's own guards, without the list's help
+
+    /** @return array<string,int> */
+    private function callSendMessage(int $id, ?ScheduledSendGate $gate = null): array
+    {
+        $command = app(PublishDueGroupItems::class);
+        $method = new \ReflectionMethod($command, 'sendMessage');
+        $method->setAccessible(true);
+        $run = ['announced' => 0, 'refused' => 0, 'sent' => 0, 'failed' => 0, 'reclaimed' => 0, 'errors' => 0];
+
+        $method->invokeArgs($command, [$id, now(), $gate ?? app(ScheduledSendGate::class), app(GroupThreadWriter::class), false, &$run]);
+
+        return $run;
+    }
+
+    #[Test]
+    public function the_claim_refuses_an_item_whose_time_has_not_come_even_when_handed_its_id(): void
+    {
+        $item = $this->schedule();   // due on the 5th; it is the 1st
+
+        $run = $this->callSendMessage($item->id);
+
+        $this->assertSame(0, $run['sent'] + $run['failed']);
+        $this->assertSame(GroupMessageSchedule::STATUS_SCHEDULED, $item->fresh()->status);
+        $this->nothingWritten();
+    }
+
+    #[Test]
+    public function the_claim_refuses_an_item_that_is_no_longer_waiting_even_when_handed_its_id(): void
+    {
+        $item = $this->schedule();
+        $item->forceFill(['status' => GroupMessageSchedule::STATUS_CANCELLED])->save();
+        $this->goTo(self::DUE);
+
+        $this->callSendMessage($item->id);
+
+        $this->assertSame(GroupMessageSchedule::STATUS_CANCELLED, $item->fresh()->status);
+        $this->nothingWritten();
+    }
+
+    #[Test]
+    public function a_refusal_does_not_overwrite_an_item_somebody_cancelled_while_the_gates_were_being_asked(): void
+    {
+        $item = $this->schedule();
+        $this->goTo(self::DUE);
+
+        $gate = \Mockery::mock(ScheduledSendGate::class);
+        $gate->shouldReceive('authorRefusal')->andReturnUsing(function () use ($item): string {
+            // The author cancels in the instant between the claim and the answer.
+            GroupMessageSchedule::withoutMasjidScope()->whereKey($item->id)->update(['status' => GroupMessageSchedule::STATUS_CANCELLED]);
+
+            return 'The author no longer teaches this class.';
+        });
+        $gate->shouldReceive('aboutRefusal')->andReturn(null);
+
+        $this->callSendMessage($item->id, $gate);
+
+        $fresh = $item->fresh();
+        $this->assertSame(GroupMessageSchedule::STATUS_CANCELLED, $fresh->status, 'a cancelled item was marked failed');
+        $this->assertNull($fresh->failure_reason);
     }
 }

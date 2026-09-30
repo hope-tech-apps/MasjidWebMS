@@ -143,3 +143,37 @@ test('the family portal shows when a story went OUT, not when it was typed', () 
     assert.match(view, /post\.published_at \?\? post\.created_at/);
     assert.doesNotMatch(view, /when\(post\.created_at\)/);
 });
+
+test('the last instant the server allows, exactly max days on, is offered and one minute past it is not', async () => {
+    const { sendAtError, schoolMax } = await load();
+    const tz = 'America/New_York';
+
+    // The server allows `send_at <= now + 30 days` (ScheduledTime::refusal refuses only `>`).
+    const last = schoolMax(tz, 30, NOW);
+
+    assert.equal(last, '2026-10-31T08:00');
+    assert.equal(sendAtError(last, tz, 30, NOW), null);
+    assert.match(sendAtError('2026-10-31T08:01', tz, 30, NOW) ?? '', /at most 30 days/);
+});
+
+test('a failed row with a blank reason still says something, whether the reason is missing or empty', async () => {
+    const { failureText } = await load();
+
+    for (const failure of [null, undefined, '']) {
+        assert.match(failureText({ status: 'failed', failure: failure as any }), /Edit it to choose a new time/, `reason ${JSON.stringify(failure)}`);
+    }
+});
+
+test('the office story tab dates a story by when it went out, like the family and teacher screens', () => {
+    const view = source('views/dashboard/groups/GroupStoryTab.vue');
+
+    assert.match(view, /formatDateTime\(post\.published_at \?\? post\.created_at\)/);
+    assert.doesNotMatch(view, /formatDateTime\(post\.created_at\)/);
+});
+
+test('a failed row says the way out when the author has left the class', () => {
+    const list = source('components/common/ScheduledItems.vue');
+
+    assert.match(list, /author has left the class/);
+    assert.match(list, /cancel it and write it again/);
+});

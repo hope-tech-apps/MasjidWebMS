@@ -10,24 +10,28 @@ use App\Models\GroupPost;
 /**
  * Releasing a class story that was scheduled (T-002.4).
  *
- * VISIBILITY AND ANNOUNCEMENT ARE TWO DIFFERENT THINGS, and only one of them is this
- * class's business. Whether a family can SEE a story is the clock:
- * GroupPost::scopePublished() asks `published_at <= now`, on every family read, with
- * no sweep in the loop. This class does the other half: the class-story EMAIL, sent
- * once, and the refusal of a story whose author may no longer send it.
+ * A SCHEDULED STORY IS OUT WHEN ITS TIME HAS COME *AND* THIS CLASS HAS ANNOUNCED IT.
+ * GroupPost::scopePublished() asks `published_at <= now AND announced_at IS NOT NULL`
+ * on every family read, so the S15 author gate does not depend on the sweep running
+ * inside some window before the time: a sweep that is late or down delays the story,
+ * and a story is never on a family's screen that the gate has not passed.
  *
- * announce() is the email. It CLAIMS the story with an UPDATE guarded by
- * `announced_at IS NULL` and dispatches only if that update changed a row, so two
- * overlapping sweeps, a retry and "Send now" racing the sweep all produce one email.
- * The price is the honest one every claim in this codebase pays: a crash between the
- * claim and the dispatch loses that email rather than repeating it (the story itself
- * is on screen regardless).
+ * announce() is that step. It CLAIMS the story with an UPDATE guarded by
+ * `announced_at IS NULL`, `publish_failed_at IS NULL` and `published_at <= now`, and
+ * dispatches the class-story email only if that update changed a row, so two
+ * overlapping sweeps, a retry and "Send now" racing the sweep all produce one email,
+ * and a story that was moved to a later time after the sweep listed it is not claimed
+ * (and not emailed) early. The price is the honest one every claim in this codebase
+ * pays: a crash between the claim and the dispatch loses that email rather than
+ * repeating it (the story itself is on screen regardless).
  *
- * refuse() is S15: the author left the class before the send time. The story is NOT
- * announced and, because scopePublished() excludes a failed row whatever the clock
- * says, never becomes visible when its time passes. The teacher and the office see it
- * in the Scheduled list with the reason, and may edit it (a new time puts it back) or
- * cancel it.
+ * refuse() is S15: the author left the class before the story went out. The story is
+ * NOT announced and, because scopePublished() excludes a failed row whatever the clock
+ * says, never becomes visible. Because a story is invisible until announced, refusing
+ * one whose time has already passed pulls nothing back from anybody's screen. The
+ * teacher and the office see it in the Scheduled list with the reason. A new time puts
+ * it back only if its author may still send it (GroupPostsController::update asks the
+ * gate again at once); otherwise it is cancelled and written again.
  */
 class GroupStoryPublisher
 {
@@ -45,6 +49,7 @@ class GroupStoryPublisher
             ->whereKey($post->getKey())
             ->whereNull('announced_at')
             ->whereNull('publish_failed_at')
+            ->where('published_at', '<=', now())
             ->update(['announced_at' => now()]) === 1;
 
         if (! $claimed) {

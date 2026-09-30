@@ -11,6 +11,7 @@ use App\Models\GroupMessageSchedule;
 use App\Models\GroupThread;
 use App\Models\User;
 use App\Services\Groups\GroupThreadWriter;
+use App\Services\Groups\ScheduledSendGate;
 use App\Support\GroupAudience;
 use App\Support\ScheduledTime;
 use Illuminate\Http\Request;
@@ -53,7 +54,7 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class GroupMessageSchedulesController extends Controller
 {
-    public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer)
+    public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer, private ScheduledSendGate $gate)
     {
     }
 
@@ -63,7 +64,7 @@ class GroupMessageSchedulesController extends Controller
         $group = Group::findOrFail($group_id);
         $this->authorizeSeeing($request->user(), $group);
 
-        $items = $group->messageSchedules()
+        $pending = $group->messageSchedules()
             ->whereIn('status', [
                 GroupMessageSchedule::STATUS_SCHEDULED,
                 GroupMessageSchedule::STATUS_SENDING,
@@ -71,8 +72,11 @@ class GroupMessageSchedulesController extends Controller
             ])
             ->with(['author:id,name', 'aboutMembership.contact:id,first_name,last_name'])
             ->orderBy('send_at')
-            ->orderBy('id')
-            ->paginate($request->query('per_page', 50));
+            ->orderBy('id');
+
+        // ONE PAGE HOLDING EVERYTHING: an item the list does not show cannot be edited,
+        // sent now or cancelled (S14). The paginator shape is kept so no client changes.
+        $items = $pending->paginate(max(1, (clone $pending)->count()));
 
         $zone = ScheduledTime::schoolTimezone();
         $items->through(fn (GroupMessageSchedule $item) => $this->serialize($item, $request->user(), $zone));
@@ -142,6 +146,17 @@ class GroupMessageSchedulesController extends Controller
         $fields = $request->safe()->only(['subject', 'body']);
         $sendNow = $request->boolean('send_now');
         $sendAt = $request->sendAt();
+
+        if (($sendNow || $sendAt !== null) && ($why = $this->refusalNow($group, $item)) !== null) {
+            // The gates are asked again AT ONCE: a new time or "Send now" on an item whose
+            // author left the class (or whose child left the roster) would only be
+            // refused again by the sweep with the same words, so the answer is given
+            // here, while the person editing can still act on it.
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['send_at' => ["{$why} It cannot be put back in the queue: cancel it and write it again."]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         if ($sendNow || $sendAt !== null) {
             // A new time is a new chance: a FAILED item is put back in the queue, and
@@ -222,6 +237,13 @@ class GroupMessageSchedulesController extends Controller
     {
         return $user !== null
             && ((int) $item->author_user_id === (int) $user->id || $user->can('manage contacts'));
+    }
+
+    /** The sweep's own gates, asked now (ScheduledSendGate), or null when the item may go out. */
+    private function refusalNow(Group $group, GroupMessageSchedule $item): ?string
+    {
+        return $this->gate->authorRefusal($item->author_user_id !== null ? (int) $item->author_user_id : null, $group)
+            ?? $this->gate->aboutRefusal($group, $item->about_membership_id !== null ? (int) $item->about_membership_id : null, $item->isAboutOneChild());
     }
 
     private function noLongerEditable(GroupMessageSchedule $item)

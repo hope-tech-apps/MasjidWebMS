@@ -42,4 +42,32 @@ trait ValidatesSendAt
             $validator->errors()->add('send_at', $why);
         }
     }
+
+    /**
+     * An explicit `retained_until` may not close before the day the story goes out: the
+     * nightly purge deletes on that date alone, so an earlier one would delete a story
+     * (and its photos) that never went out.
+     */
+    protected function checkRetentionAfterSend(Validator $validator): void
+    {
+        if (! $this->filled('send_at') || ! $this->filled('retained_until')) {
+            return;
+        }
+
+        $at = $this->sendAt();
+
+        if ($at === null) {
+            return;
+        }
+
+        try {
+            $keptUntil = \Illuminate\Support\Carbon::parse((string) $this->input('retained_until'))->toDateString();
+        } catch (\Throwable) {
+            return; // the `date` rule reports it
+        }
+
+        if ($keptUntil < $at->toDateString()) {
+            $validator->errors()->add('retained_until', 'Keep it until the day it goes out or later, or it would be deleted before anybody read it.');
+        }
+    }
 }

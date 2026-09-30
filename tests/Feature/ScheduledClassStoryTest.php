@@ -155,6 +155,22 @@ class ScheduledClassStoryTest extends TestCase
         return $admin;
     }
 
+    /** The minute-by-minute sweep, run now: it is what announces a scheduled story (and so makes it visible). */
+    private function sweep(array $args = []): string
+    {
+        Artisan::call('groups:publish-due', $args);
+
+        return Artisan::output();
+    }
+
+    private function authorLeaves(?User $author = null): void
+    {
+        GroupStaff::withoutMasjidScope()
+            ->where('user_id', ($author ?? $this->teacher)->id)
+            ->where('group_id', $this->class->id)
+            ->delete();
+    }
+
     private function classStoryJobs(): int
     {
         return Bus::dispatched(SendGroupNotificationJob::class, fn ($job) => $job->event === GroupNotificationEvent::CLASS_STORY)->count();
@@ -277,8 +293,15 @@ class ScheduledClassStoryTest extends TestCase
 
         $this->flushHeaders()->get($url)->assertNotFound();
 
-        // The same ticket the moment it is out.
-        $later->forceFill(['published_at' => now()])->save();
+        // The same ticket the moment it is out (its time has come and the sweep announced it).
+        Carbon::setTestNow(now()->addDays(3));
+        $this->sweep();
+
+        // (A ticket is short-lived, so the one asked after the wait is minted after it.)
+        $url = GroupMedia::postTicket(
+            $this->school->id, $this->class->id, $later->id, $video->id,
+            GroupMedia::VIEWER_FAMILY, $this->parentA->id
+        );
 
         $this->flushHeaders()->get($url)->assertOk();
     }
@@ -312,9 +335,11 @@ class ScheduledClassStoryTest extends TestCase
         $later = $this->scheduledPost('+1 hour');
 
         Carbon::setTestNow(now()->addHour()->subSecond());
+        $this->sweep();
         $this->assertNotContains($later->id, $this->familyIds());
 
         Carbon::setTestNow(now()->addSecond());
+        $this->sweep();
         $this->assertContains($later->id, $this->familyIds());
         $this->asParent($this->parentA)->getJson($this->familyUrl("/posts/{$later->id}"))->assertOk();
     }
@@ -353,6 +378,7 @@ class ScheduledClassStoryTest extends TestCase
         $typedFirst->forceFill(['created_at' => now()->subDays(5)])->save();
         Carbon::setTestNow(now()->addHours(2));
         $typedLater = $this->makePost();   // out at +2h, typed at +2h
+        $this->sweep();                    // announces the scheduled one, now due
 
         // The scheduled one went out at +1h; the other at +2h; newest first is
         // therefore the one typed later, then the scheduled one, both by published_at.
@@ -370,6 +396,7 @@ class ScheduledClassStoryTest extends TestCase
     {
         $post = $this->scheduledPost('+1 hour');
         Carbon::setTestNow(now()->addHours(2));
+        $this->sweep();
 
         $json = $this->asParent($this->parentA)->getJson($this->familyUrl("/posts/{$post->id}"))->assertOk();
 
@@ -517,9 +544,10 @@ class ScheduledClassStoryTest extends TestCase
         $this->assertNull(GroupPostReaction::withoutMasjidScope()->sole()->notified_at);
 
         Carbon::setTestNow(now()->addDays(2));
+        $this->sweep();   // announces the story, which is what puts it out
         Artisan::call('groups:notify-reactions', ['--settle' => 0]);
 
-        Bus::assertDispatchedTimes(SendGroupNotificationJob::class, 1);
+        $this->assertSame(1, Bus::dispatched(SendGroupNotificationJob::class, fn ($job) => $job->event === GroupNotificationEvent::REACTION)->count());
         $this->assertNotNull(GroupPostReaction::withoutMasjidScope()->sole()->notified_at);
     }
 
@@ -842,5 +870,306 @@ class ScheduledClassStoryTest extends TestCase
             $this->assertSame($wrote, $row->published_at, 'no story may be left without a published_at');
             $this->assertSame($wrote, $row->announced_at, 'the first sweep must not announce a story that is already live');
         }
+    }
+
+    // ====================== OUTAGE: a late sweep delays a story, it never leaks one
+
+    #[Test]
+    public function a_sweep_that_is_down_at_the_time_delays_a_story_and_the_next_sweep_releases_it(): void
+    {
+        $post = $this->scheduledPost('+1 hour');
+
+        // The time comes and passes with no sweep at all (a killed run, a held mutex, cron down).
+        Carbon::setTestNow(now()->addHour()->addMinutes(10));
+
+        $this->assertNotContains($post->id, $this->familyIds());
+        $this->asParent($this->parentA)->getJson($this->familyUrl("/posts/{$post->id}"))->assertNotFound();
+        $this->asParent($this->parentA)->putJson($this->familyUrl("/posts/{$post->id}/reactions/ameen"))->assertNotFound();
+        $this->assertSame(0, $this->classStoryJobs());
+
+        // The office still sees it in its Scheduled list, as waiting.
+        $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))
+            ->assertOk()->assertJsonPath('data.data.0.status', 'scheduled');
+
+        $this->sweep();
+
+        $this->assertContains($post->id, $this->familyIds());
+        $this->assertSame(1, $this->classStoryJobs());
+    }
+
+    #[Test]
+    public function a_story_whose_author_left_is_never_on_a_family_screen_however_late_the_sweep_is(): void
+    {
+        $post = $this->scheduledPost('+1 hour');
+        $this->authorLeaves();
+
+        // No sweep runs in the two minutes before the time, nor after it: the story is
+        // due, and on the clock alone it would be visible to every family.
+        Carbon::setTestNow(now()->addHour()->addMinutes(10));
+        $this->assertNotContains($post->id, $this->familyIds(), 'a story whose author left was readable before the sweep asked');
+        $this->asParent($this->parentA)->getJson($this->familyUrl("/posts/{$post->id}"))->assertNotFound();
+
+        // The sweep comes back: it refuses, and nobody ever saw it, so nothing is pulled back.
+        $this->assertStringContainsString('refused=1', $this->sweep());
+        $this->assertNotContains($post->id, $this->familyIds());
+        $this->assertSame(0, $this->classStoryJobs());
+        $this->assertNull($post->fresh()->announced_at);
+        $this->assertNotNull($post->fresh()->publish_failed_at);
+    }
+
+    #[Test]
+    public function only_the_announcement_makes_a_due_story_visible_and_the_row_agrees_with_the_query(): void
+    {
+        $due = $this->scheduledPost('+1 hour');
+        Carbon::setTestNow(now()->addHours(2));
+
+        // Due but not announced: not out, on the query and on the row, still on the Scheduled list.
+        $this->assertFalse($due->fresh()->isPublished());
+        $this->assertTrue($due->fresh()->isScheduled());
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->published()->count());
+        $this->assertSame(1, GroupPost::withoutMasjidScope()->unpublished()->count());
+        $this->assertSame(1, GroupPost::withoutMasjidScope()->scheduled()->count());
+
+        $this->sweep();
+
+        $this->assertTrue($due->fresh()->isPublished());
+        $this->assertFalse($due->fresh()->isScheduled());
+        $this->assertSame(1, GroupPost::withoutMasjidScope()->published()->count());
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->unpublished()->count());
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->scheduled()->count());
+    }
+
+    #[Test]
+    public function the_announcement_claim_refuses_a_story_whose_time_has_not_come(): void
+    {
+        $post = $this->scheduledPost('+1 day');
+
+        $this->assertFalse(app(\App\Services\Groups\GroupStoryPublisher::class)->announce($post));
+
+        $this->assertNull($post->fresh()->announced_at);
+        $this->assertSame(0, $this->classStoryJobs());
+    }
+
+    #[Test]
+    public function a_reschedule_that_races_the_sweep_neither_emails_early_nor_pulls_back_an_announced_story(): void
+    {
+        $post = $this->scheduledPost('+1 minute');
+        Carbon::setTestNow(now()->addMinutes(2));   // due, and waiting for the sweep
+
+        // The sweep announces it in the instant between the controller's first look at the
+        // row and the transaction that moves it.
+        $once = false;
+        DB::connection()->beforeStartingTransaction(function () use ($post, &$once): void {
+            if ($once) {
+                return;
+            }
+            $once = true;
+            app(\App\Services\Groups\GroupStoryPublisher::class)->announce($post);
+        });
+
+        $due = $post->fresh()->published_at->toDateTimeString();
+
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-20T09:00'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+
+        $fresh = $post->fresh();
+        $this->assertSame($due, $fresh->published_at->toDateTimeString(), 'an announced story was moved back to a later time');
+        $this->assertNotNull($fresh->announced_at);
+        $this->assertSame(1, $this->classStoryJobs());
+        $this->assertContains($post->id, $this->familyIds());
+    }
+
+    #[Test]
+    public function a_due_story_that_was_not_announced_yet_can_still_be_rescheduled_and_is_then_emailed_at_the_new_time(): void
+    {
+        $post = $this->scheduledPost('+1 minute');
+        Carbon::setTestNow(now()->addMinutes(2));
+
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-20T09:00'])->assertOk();
+
+        $this->sweep();
+        $this->assertSame(0, $this->classStoryJobs(), 'a story moved to a later time was emailed early');
+        $this->assertNotContains($post->id, $this->familyIds());
+
+        Carbon::setTestNow('2026-10-20 13:30:00');
+        $this->sweep();
+        $this->assertSame(1, $this->classStoryJobs());
+        $this->assertContains($post->id, $this->familyIds());
+    }
+
+    // ===================== the family payload's date, and the office story tab's
+
+    #[Test]
+    public function the_family_payload_dates_a_released_story_by_when_it_went_out_not_when_it_was_typed(): void
+    {
+        $post = $this->scheduledPost('+3 days');   // typed 2026-10-01 12:00, out 2026-10-04 12:00
+        Carbon::setTestNow(now()->addDays(3)->addMinute());
+        $this->sweep();
+
+        $feed = $this->asParent($this->parentA)->getJson($this->familyUrl('/posts'))->assertOk();
+        $one = $this->asParent($this->parentA)->getJson($this->familyUrl("/posts/{$post->id}"))->assertOk();
+
+        foreach ([$feed->json('data.data.0'), $one->json('data')] as $payload) {
+            $this->assertSame('2026-10-04 12:00:00', Carbon::parse($payload['published_at'])->utc()->toDateTimeString());
+            $this->assertSame('2026-10-01 12:00:00', Carbon::parse($payload['created_at'])->utc()->toDateTimeString());
+        }
+    }
+
+    // ======================= a new time or "Send now" asks the author gate again, at once
+
+    #[Test]
+    public function a_new_time_or_send_now_on_a_story_whose_author_left_is_refused_with_the_way_out_and_changes_nothing(): void
+    {
+        $post = $this->scheduledPost('+1 day');
+        $this->authorLeaves();
+        $this->sweep();   // not inside the look-ahead: still waiting
+        Carbon::setTestNow(now()->addDay()->addMinute());
+        $this->sweep();   // refused now
+        $this->assertNotNull($post->fresh()->publish_failed_at);
+
+        $office = $this->guardianOnlyAdmin(manage: true);
+
+        foreach ([['send_at' => '2026-10-20T09:00'], ['send_now' => true]] as $move) {
+            $response = $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), $move)->assertStatus(422);
+            $this->assertStringContainsString('no longer teaches this class', $response->json('data.send_at.0'));
+            $this->assertStringContainsString('cancel it and write it again', $response->json('data.send_at.0'));
+        }
+
+        $fresh = $post->fresh();
+        $this->assertNotNull($fresh->publish_failed_at, 'a refused story was put back although its author may not send it');
+        $this->assertNull($fresh->announced_at);
+        $this->assertNotContains($post->id, $this->familyIds());
+        $this->assertSame(0, $this->classStoryJobs());
+
+        // Cancelling it, the way out, works.
+        $this->asUser($office)->deleteJson($this->adminUrl("/posts/{$post->id}"))->assertOk();
+    }
+
+    #[Test]
+    public function send_now_on_a_waiting_story_whose_author_left_does_not_put_it_out(): void
+    {
+        $post = $this->scheduledPost('+2 days');
+        $this->authorLeaves();
+        $office = $this->guardianOnlyAdmin(manage: true);
+
+        $this->asUser($office)->putJson($this->adminUrl("/posts/{$post->id}"), ['send_now' => true])->assertStatus(422);
+
+        $this->assertNotContains($post->id, $this->familyIds());
+        $this->assertSame(0, $this->classStoryJobs());
+    }
+
+    // ================================ a kept-until date that closes before the story goes out
+
+    #[Test]
+    public function a_retention_date_before_the_day_a_story_goes_out_is_refused_on_create_and_on_edit(): void
+    {
+        // Create: goes out on the 20th, "keep until" the 7th.
+        $this->asTeacher()
+            ->postJson($this->teacherUrl('/posts'), ['body' => 'x', 'send_at' => '2026-10-20T10:00', 'retained_until' => '2026-10-07'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
+
+        // The day it goes out is allowed, and so is a later one.
+        $this->asTeacher()
+            ->postJson($this->teacherUrl('/posts'), ['body' => 'a', 'send_at' => '2026-10-20T10:00', 'retained_until' => '2026-10-20'])
+            ->assertCreated();
+
+        // Edit: an explicit window onto a waiting story that closes before it goes out.
+        $post = GroupPost::withoutMasjidScope()->sole();
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/posts/{$post->id}"), ['retained_until' => '2026-10-07'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
+        $this->assertSame('2026-10-20', $post->fresh()->retained_until->toDateString());
+
+        // Edit: moving the story past a window the author chose.
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-28T10:00'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['retained_until']]);
+        $this->assertSame('2026-10-20 14:00:00', $post->fresh()->published_at->toDateTimeString());
+
+        // Moving it and choosing the window together is fine.
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-28T10:00', 'retained_until' => '2027-01-01'])
+            ->assertOk();
+        $this->assertSame('2027-01-01', $post->fresh()->retained_until->toDateString());
+    }
+
+    #[Test]
+    public function a_story_that_is_already_out_keeps_the_retention_edit_it_always_had(): void
+    {
+        $post = $this->makePost();
+
+        // A window in the past on a story that is out is not this slice's business.
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['retained_until' => '2026-01-01'])->assertOk();
+        $this->assertSame('2026-01-01', $post->fresh()->retained_until->toDateString());
+    }
+
+    // ======================================= the update path holds the same bounds as create
+
+    #[Test]
+    public function rescheduling_a_story_is_held_to_the_same_bounds_as_scheduling_it(): void
+    {
+        $post = $this->scheduledPost('+2 days');
+        $before = $post->fresh()->published_at->toDateTimeString();
+
+        foreach ([
+            'in the past' => '2026-09-30T10:00',
+            'right now' => '2026-10-01T08:00',
+            'after 30 days' => '2026-10-31T08:01',
+            'a day that does not exist' => '2026-09-31T10:00',
+            'not a date' => 'next tuesday',
+        ] as $why => $value) {
+            $this->asTeacher()
+                ->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => $value])
+                ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+            $this->assertSame($before, $post->fresh()->published_at->toDateTimeString(), "{$why} moved the story");
+        }
+
+        // And through the office's realm.
+        $this->asUser($this->guardianOnlyAdmin(manage: true))
+            ->putJson($this->adminUrl("/posts/{$post->id}"), ['send_at' => '2026-09-30T10:00'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+        $this->assertSame($before, $post->fresh()->published_at->toDateTimeString());
+
+        // The last allowed minute.
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$post->id}"), ['send_at' => '2026-10-31T07:59'])->assertOk();
+    }
+
+    #[Test]
+    public function a_date_that_does_not_exist_is_refused_not_rolled_onto_the_next_month(): void
+    {
+        // 31 September rolls to 1 October 10:00: inside the window, so only the
+        // calendar check stands between this and a story quietly scheduled for a
+        // different day than the one that was typed.
+        $this->asTeacher()
+            ->postJson($this->teacherUrl('/posts'), ['body' => 'x', 'send_at' => '2026-09-31T10:00'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
+    }
+
+    // ========================================= the Scheduled list is ONE page holding everything
+
+    #[Test]
+    public function the_scheduled_list_holds_every_waiting_story_so_the_sixteenth_can_still_be_cancelled(): void
+    {
+        $ids = [];
+        for ($i = 1; $i <= 17; $i++) {
+            $ids[] = $this->scheduledPost("+{$i} hours", body: "Story {$i}")->id;
+        }
+
+        $list = $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))->assertOk();
+
+        $this->assertSame($ids, array_map('intval', $list->json('data.data.*.id')), 'the list stopped at one page');
+        $this->assertSame(17, $list->json('data.total'));
+        $this->assertSame(1, $list->json('data.last_page'));
+
+        // The one past the old page of 15, editable and cancellable.
+        $sixteenth = $ids[15];
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$sixteenth}"), ['body' => 'Edited'])->assertOk();
+        $this->asTeacher()->deleteJson($this->teacherUrl("/posts/{$sixteenth}"))->assertOk();
+
+        $this->asTeacher()->getJson($this->teacherUrl('/posts?scheduled=1'))->assertOk()->assertJsonCount(16, 'data.data');
     }
 }

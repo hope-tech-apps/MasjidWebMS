@@ -32,6 +32,9 @@ class StoreGroupPostRequest extends GroupPostFormRequest
 
     public function withValidator(Validator $validator): void
     {
-        $validator->after(fn (Validator $v) => $this->checkSendAt($v));
+        $validator->after(function (Validator $v): void {
+            $this->checkSendAt($v);
+            $this->checkRetentionAfterSend($v);
+        });
     }
 }

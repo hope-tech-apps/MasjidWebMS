@@ -23,6 +23,7 @@ use App\Support\Reactions;
 use App\Models\GroupPostReaction;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -90,12 +91,17 @@ class GroupPostsController extends Controller
                 $request->user(), $group, GroupAudience::DISCLOSURE_MEDIA
             );
 
-            $posts = $group->posts()
+            $scheduled = $group->posts()
                 ->unpublished()
                 ->with(['author:id,name', 'attachments'])
                 ->orderBy('published_at')
-                ->orderBy('id')
-                ->paginate($request->query('per_page', 15));
+                ->orderBy('id');
+
+            // ONE PAGE HOLDING EVERYTHING. A teacher may schedule a month of daily stories
+            // (S12), and a story the list does not show is a story nobody can edit, send
+            // now or cancel (S14). Same paginator shape as the feed, so no client changes;
+            // the page is as long as the list, which is bounded by what people scheduled.
+            $posts = $scheduled->paginate(max(1, (clone $scheduled)->count()));
 
             $posts = $posts->through(fn (GroupPost $post) => $this->serialize(
                 $post, $masjid_id, $group_id, $mayReceiveMedia, null
@@ -265,19 +271,59 @@ class GroupPostsController extends Controller
         $moves = $sendNow || $sendAt !== null;
 
         if ($moves && $post->isPublished()) {
+            return $this->cannotBeMoved('This story has already gone out, so its time can no longer be changed.');
+        }
+
+        // S15 IS ASKED AGAIN AT ONCE. A new time (or "Send now") on a story whose author
+        // may no longer send it would only be refused again by the sweep, with the same
+        // words, about two minutes before the new time; and "Send now" would skip the
+        // sweep and put it out. So the answer is given here, while the person who is
+        // editing can still act on it.
+        if ($moves && ($why = $this->publisher->refusal($post, $group)) !== null) {
+            return $this->cannotBeMoved("{$why} It cannot be put back in the queue: cancel it and write it again.");
+        }
+
+        $fields = $request->safe()->only(['title', 'body', 'retained_until']);
+        $goesOutAt = null;
+
+        if ($moves) {
+            $goesOutAt = $sendNow ? now() : $sendAt;
+            $fields += $this->retentionFollowing($post, $goesOutAt, $fields);
+        } elseif (! $post->isPublished()) {
+            $goesOutAt = $post->published_at;
+        }
+
+        // A window that closes before the story goes out would have the nightly purge
+        // delete it (and its photos) unsent, with nothing in the Scheduled list to say so.
+        $keptUntil = array_key_exists('retained_until', $fields)
+            ? $fields['retained_until']
+            : $post->retained_until?->toDateString();
+
+        if ($goesOutAt !== null
+            && ($moves || array_key_exists('retained_until', $fields))
+            && $keptUntil !== null
+            && Carbon::parse($keptUntil)->toDateString() < $goesOutAt->toDateString()) {
             return response()->json([
                 'status' => 'failed',
-                'data' => ['send_at' => ['This story has already gone out, so its time can no longer be changed.']],
+                'data' => ['retained_until' => ['Keep it until the day it goes out or later, or it would be deleted before anybody read it.']],
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
         try {
-            DB::transaction(function () use ($request, $post, $moves, $sendNow, $sendAt) {
-                $fields = $request->safe()->only(['title', 'body', 'retained_until']);
-
+            $moved = DB::transaction(function () use ($request, $post, $moves, $fields, $goesOutAt): bool {
                 if ($moves) {
-                    $goesOutAt = $sendNow ? now() : $sendAt;
-                    $fields += $this->retentionFollowing($post, $goesOutAt, $fields);
+                    // THE MOVE IS DECIDED ON THE ROW AS IT IS NOW, under its lock. The
+                    // check above read the row earlier; in the seconds since, the sweep
+                    // may have announced it (then it is out, and moving it would pull
+                    // back a story families were told about). The sweep's own claim
+                    // waits on this lock and then finds the new time, so it cannot
+                    // announce a story that is being moved.
+                    $current = GroupPost::query()->whereKey($post->getKey())->lockForUpdate()->first();
+
+                    if ($current === null || $current->isPublished()) {
+                        return false;
+                    }
+
                     // A new time is a new chance: a story that had been refused at
                     // release is scheduled afresh, and re-asked at its new time.
                     $fields['published_at'] = $goesOutAt;
@@ -290,15 +336,22 @@ class GroupPostsController extends Controller
                 }
 
                 GroupPostAttachments::store($post, $this->uploads($request));
+
+                return true;
             });
 
-            $fresh = $post->fresh()->load(['author:id,name', 'attachments']);
+            if (! $moved) {
+                return $this->cannotBeMoved('This story has already gone out, so its time can no longer be changed.');
+            }
 
             // "Send now" is out this instant, so it is announced this instant, by the
-            // same claim the sweep makes: at most one email whoever gets there first.
+            // same claim the sweep makes: at most one email whoever gets there first. A
+            // story is out only once announced, so this comes BEFORE the response is read.
             if ($sendNow) {
-                $this->publisher->announce($fresh);
+                $this->publisher->announce($post->fresh());
             }
+
+            $fresh = $post->fresh()->load(['author:id,name', 'attachments']);
 
             return response()->json([
                 'status' => 'success',
@@ -314,6 +367,14 @@ class GroupPostsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function cannotBeMoved(string $message)
+    {
+        return response()->json([
+            'status' => 'failed',
+            'data' => ['send_at' => [$message]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     /**

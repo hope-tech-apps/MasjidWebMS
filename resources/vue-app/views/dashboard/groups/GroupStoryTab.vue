@@ -92,7 +92,7 @@
                         <div>
                             <div v-if="post.title" class="fw-semibold">{{ post.title }}</div>
                             <div class="small text-muted">
-                                {{ post.author?.name || 'Unknown' }} &middot; {{ formatDateTime(post.created_at) }}
+                                {{ post.author?.name || 'Unknown' }} &middot; {{ formatDateTime(post.published_at ?? post.created_at) }}
                             </div>
                         </div>
                         <button class="btn btn-sm btn-outline-danger" @click="confirmDelete(post)" title="Remove">

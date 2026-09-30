@@ -129,9 +129,10 @@ return [
 
         /*
          * How far BEFORE a story's time the sweep already asks "may it still go
-         * out?". Visibility follows the clock, not the sweep, so a story whose
-         * author left the class must be refused BEFORE its time arrives or it would
-         * be on screen for up to a minute first. Two sweeps' worth.
+         * out?". This only lets the office see a refusal a little before the time.
+         * It is NOT what keeps a refused story off families' screens: a scheduled
+         * story is visible only once the sweep has announced it, after the gate
+         * passed, so an outage delays a story and never leaks one.
          */
         'lookahead_seconds' => (int) env('GROUP_SCHEDULE_LOOKAHEAD_SECONDS', 120),
 

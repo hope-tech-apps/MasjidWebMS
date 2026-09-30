@@ -28,7 +28,8 @@
                     <SendLaterField :enabled="true" always-on v-model="draft.at" :timezone="timezone" :max-days="maxDays"
                                     :error="draftChanged(row) ? draftError : null" />
                     <p v-if="row.status === 'failed'" class="small text-muted mt-2 mb-0">
-                        Choose a new time to put it back in the queue.
+                        Choose a new time to put it back in the queue. If the author has left the class, it
+                        cannot go back: cancel it and write it again.
                     </p>
                     <div class="d-flex gap-2 mt-2">
                         <button type="button" class="btn btn-sm btn-success" :disabled="busy || !draftReady" @click="save(row)">

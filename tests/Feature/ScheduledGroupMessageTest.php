@@ -607,4 +607,168 @@ class ScheduledGroupMessageTest extends TestCase
         $this->assertNull(GroupMessageSchedule::withoutMasjidScope()->find($item->id));
         $this->assertSame(0, DB::table('group_message_schedules')->count());
     }
+
+    // ============================== the update path holds the same bounds as create
+
+    #[Test]
+    public function rescheduling_a_conversation_is_held_to_the_same_bounds_as_scheduling_it(): void
+    {
+        $item = $this->schedule();
+        $url = $this->teacherUrl("/scheduled-messages/{$item->id}");
+
+        foreach ([
+            'in the past' => '2026-09-30T10:00',
+            'right now' => '2026-10-01T08:00',
+            'after 30 days' => '2026-10-31T08:01',
+            'a day that does not exist' => '2026-09-31T10:00',
+            'not a date' => 'soon',
+        ] as $why => $value) {
+            $this->asTeacher()->putJson($url, ['send_at' => $value])
+                ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+            $this->assertSame(self::DUE, $item->fresh()->send_at->toDateTimeString(), "{$why} moved the conversation");
+        }
+
+        // The office's realm asks the same.
+        $this->asUser($this->office())
+            ->putJson($this->adminUrl("/scheduled-messages/{$item->id}"), ['send_at' => '2026-09-30T10:00'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['send_at']]);
+        $this->assertSame(self::DUE, $item->fresh()->send_at->toDateTimeString());
+
+        // The last allowed minute.
+        $this->asTeacher()->putJson($url, ['send_at' => '2026-10-31T07:59'])->assertOk();
+    }
+
+    #[Test]
+    public function rescheduling_moves_the_retention_window_to_the_new_send_day(): void
+    {
+        config(['groups.messaging.retention_days' => 365]);
+        $item = $this->schedule();
+        $this->assertSame('2027-10-05', $item->retained_until->toDateString());
+
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/scheduled-messages/{$item->id}"), ['send_at' => '2026-10-20T09:00'])
+            ->assertOk();
+
+        // 20 Oct 2026 + 365 days, counted from the day it goes out, not from the edit.
+        $this->assertSame('2027-10-20', $item->fresh()->retained_until->toDateString());
+    }
+
+    // ============================== the Scheduled list is ONE page holding everything
+
+    #[Test]
+    public function the_scheduled_list_holds_every_pending_conversation_so_the_fifty_first_can_still_be_cancelled(): void
+    {
+        app(TenantContext::class)->forgetTenant();
+
+        $ids = [];
+        for ($i = 1; $i <= 52; $i++) {
+            $ids[] = GroupMessageSchedule::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id, 'author_user_id' => $this->teacher->id,
+                'scope' => GroupThread::SCOPE_GROUP, 'subject' => "Conversation {$i}", 'body' => 'Words',
+                'send_at' => now()->addDays(2)->addMinutes($i), 'status' => GroupMessageSchedule::STATUS_SCHEDULED,
+            ])->id;
+        }
+
+        $list = $this->asTeacher()->getJson($this->teacherUrl('/scheduled-messages'))->assertOk();
+
+        $this->assertSame($ids, array_map('intval', $list->json('data.data.*.id')), 'the list stopped at one page');
+        $this->assertSame(52, $list->json('data.total'));
+        $this->assertSame(1, $list->json('data.last_page'));
+
+        $this->asTeacher()->deleteJson($this->teacherUrl("/scheduled-messages/{$ids[50]}"))
+            ->assertOk()->assertJsonPath('data.status', 'cancelled');
+    }
+
+    // ============================ a new time or "Send now" asks the gates again, at once
+
+    #[Test]
+    public function a_new_time_or_send_now_for_an_author_who_left_is_refused_with_the_way_out_and_changes_nothing(): void
+    {
+        $item = $this->schedule();
+        GroupStaff::withoutMasjidScope()->where('user_id', $this->teacher->id)->where('group_id', $this->class->id)->delete();
+
+        // Fail it the way the sweep does.
+        Carbon::setTestNow(self::DUE);
+        Artisan::call('groups:publish-due');
+        $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $item->fresh()->status);
+
+        $office = $this->office();
+        $url = $this->adminUrl("/scheduled-messages/{$item->id}");
+        Carbon::setTestNow(self::NOW);
+
+        foreach ([['send_at' => '2026-10-06T10:00'], ['send_now' => true]] as $move) {
+            $response = $this->asUser($office)->putJson($url, $move)->assertStatus(422);
+            $this->assertStringContainsString('no longer teaches this class', $response->json('data.send_at.0'));
+            $this->assertStringContainsString('cancel it and write it again', $response->json('data.send_at.0'));
+        }
+
+        $fresh = $item->fresh();
+        $this->assertSame(GroupMessageSchedule::STATUS_FAILED, $fresh->status, 'a refused conversation was put back in the queue');
+        $this->assertSame('The author no longer teaches this class.', $fresh->failure_reason);
+
+        // A text edit alone is still allowed, and cancelling is the way out.
+        $this->asUser($office)->putJson($url, ['body' => 'Rewritten'])->assertOk();
+        $this->asUser($office)->deleteJson($url)->assertOk()->assertJsonPath('data.status', 'cancelled');
+    }
+
+    #[Test]
+    public function a_new_time_for_a_conversation_about_a_child_who_left_is_refused_at_once(): void
+    {
+        $item = $this->schedule(null, $this->aboutChild());
+        GroupMembership::withoutMasjidScope()->whereKey($this->childA->id)->update(['left_on' => now()->subDay()->toDateString()]);
+
+        $response = $this->asTeacher()
+            ->putJson($this->teacherUrl("/scheduled-messages/{$item->id}"), ['send_at' => '2026-10-06T10:00'])
+            ->assertStatus(422);
+
+        $this->assertStringContainsString('child', $response->json('data.send_at.0'));
+        $this->assertSame(self::DUE, $item->fresh()->send_at->toDateTimeString());
+    }
+
+    // ================================================ what the list offers a sending item
+
+    #[Test]
+    public function a_conversation_being_sent_is_not_offered_edit_or_cancel(): void
+    {
+        $item = $this->schedule();
+
+        $this->asTeacher()->getJson($this->teacherUrl('/scheduled-messages'))
+            ->assertJsonPath('data.data.0.can_change', true);
+
+        $item->forceFill(['status' => GroupMessageSchedule::STATUS_SENDING])->save();
+
+        $this->asTeacher()->getJson($this->teacherUrl('/scheduled-messages'))
+            ->assertJsonPath('data.data.0.status', 'sending')
+            ->assertJsonPath('data.data.0.can_change', false);
+    }
+
+    // ============================================================ the purge window
+
+    #[Test]
+    public function the_purge_honours_each_finished_rows_own_window_and_keeps_a_failed_row_inside_it(): void
+    {
+        $finish = function (string $subject, string $status, ?string $until): GroupMessageSchedule {
+            $row = $this->schedule(null, ['subject' => $subject]);
+            $row->forceFill(['status' => $status, 'retained_until' => $until])->save();
+
+            return $row;
+        };
+
+        $sentPast = $finish('Sent, window closed', GroupMessageSchedule::STATUS_SENT, '2026-01-01');
+        $cancelledPast = $finish('Cancelled, window closed', GroupMessageSchedule::STATUS_CANCELLED, '2026-01-01');
+        $failedPast = $finish('Failed, window closed', GroupMessageSchedule::STATUS_FAILED, '2026-01-01');
+        $sentFuture = $finish('Sent, window open', GroupMessageSchedule::STATUS_SENT, '2027-01-01');
+        $failedFuture = $finish('Failed, window open', GroupMessageSchedule::STATUS_FAILED, '2027-01-01');
+        $cancelledNull = $finish('Cancelled, no window', GroupMessageSchedule::STATUS_CANCELLED, null);
+        $failedNull = $finish('Failed, no window', GroupMessageSchedule::STATUS_FAILED, null);
+
+        Artisan::call('groups:purge-feed');
+
+        foreach ([$sentPast, $cancelledPast, $failedPast] as $gone) {
+            $this->assertNull(GroupMessageSchedule::withoutMasjidScope()->find($gone->id), "{$gone->subject} outlived its window");
+        }
+        foreach ([$sentFuture, $failedFuture, $cancelledNull, $failedNull] as $kept) {
+            $this->assertNotNull(GroupMessageSchedule::withoutMasjidScope()->find($kept->id), "{$kept->subject} was purged inside its window");
+        }
+    }
 }

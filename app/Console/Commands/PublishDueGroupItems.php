@@ -18,18 +18,20 @@ use Throwable;
  *
  * Every minute. Two jobs, and they are not the same kind of job:
  *
- * ## Class stories: the sweep ANNOUNCES; the clock PUBLISHES
+ * ## Class stories: the sweep GATES and ANNOUNCES; the clock and the announcement PUBLISH
  *
- * A scheduled story is a `group_posts` row with a future `published_at`, and families
- * see it the instant that time passes because every family read filters on it
- * (GroupPost::scopePublished). This sweep does what the clock cannot:
+ * A scheduled story is a `group_posts` row with a future `published_at`. Families see
+ * it only when its time has passed AND it has been announced (GroupPost::scopePublished
+ * asks both), and only this sweep announces a scheduled story, after the gate said yes:
  *
- *   - it asks, BEFORE the time arrives, whether the author may still send it (the S15
- *     rule: the author left the class), looking `groups.scheduling.lookahead_seconds`
- *     ahead so a refusal lands before the story is on anyone's screen, and marks a
- *     refused story FAILED with the reason. A failed story never becomes visible.
- *   - once the time has come it CLAIMS the story and sends the class-story email, once
- *     (GroupStoryPublisher::announce).
+ *   - it asks whether the author may still send it (the S15 rule: the author left the
+ *     class) and marks a refused story FAILED with the reason. A failed story never
+ *     becomes visible. Looking `groups.scheduling.lookahead_seconds` ahead only lets the
+ *     office read that refusal a little before the time; it is NOT what keeps the story
+ *     hidden, so a killed run, a held mutex or a cron outage delays a story and cannot
+ *     leak one.
+ *   - once the time has come it CLAIMS the story (which is what makes it visible) and
+ *     sends the class-story email, once (GroupStoryPublisher::announce).
  *
  * ## New conversations: the sweep WRITES
  *
