@@ -332,6 +332,20 @@
 
             <!-- -------------------------------------------------- children -->
             <section v-else-if="tab === 'children'">
+                <!-- The weekly report page: only where the school has the report
+                     on (`points_weekly_report`), the same switch the Friday email
+                     answers to. Off means no link and no page (review F1). Off the
+                     class's own opt-in (the "This week" figure in each child's card):
+                     the email goes to every class in a granted school, so a family
+                     whose class has not opted in still gets a link to the page the
+                     email is about (review G1). One link for the class, here above
+                     the children: the page is the class's, not a child's, so it is
+                     not repeated in every card. -->
+                <div v-if="weeklyReportOn(group)" class="mb-3">
+                    <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
+                        {{ t('weekly_report_open') }}
+                    </router-link>
+                </div>
                 <div v-for="child in group.children" :key="child.membership_id" class="card border-0 shadow-sm mb-3">
                     <div class="card-body">
                         <div class="d-flex align-items-center gap-3 mb-3">
@@ -383,19 +397,6 @@
                                 <span>{{ t('points_all_weeks') }}</span>
                                 <span dir="ltr">{{ signedPoints(points[child.membership_id].all.totals?.points) }}</span>
                             </div>
-                        </div>
-
-                        <!-- The weekly report page: only where the school has the report
-                             on (`points_weekly_report`), the same switch the Friday email
-                             answers to. Off means no link and no page (review F1). Kept
-                             OUT of the "This week" block above and off the class's own
-                             opt-in: the email goes to every class in a granted school, so
-                             a family whose class has not opted in still gets a link to the
-                             page the email is about (review G1). -->
-                        <div v-if="weeklyReportOn(group)" class="mb-3">
-                            <router-link :to="`/family/${masjidId}/classes/${groupId}/report`" class="small text-decoration-none">
-                                {{ t('weekly_report_open') }}
-                            </router-link>
                         </div>
 
                         <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">

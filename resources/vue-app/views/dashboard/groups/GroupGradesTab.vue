@@ -20,7 +20,7 @@
             <!-- The office sets these, not only reads them: a class whose teachers are
                  all limited to some subjects has nobody else who may. Never read-only
                  here, unlike the teacher's panel (which is for a limited teacher). -->
-            <div class="d-flex justify-content-end mb-2">
+            <div v-if="canOfferWeights" class="d-flex justify-content-end mb-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" :aria-expanded="showWeights" @click="toggleWeights">
                     <i class="bi bi-sliders me-1"></i>{{ weightingEnabled ? 'Weights' : 'Set weights' }}
                 </button>
@@ -277,8 +277,8 @@
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
 import {
-    averageLines, firstFieldError, isUntyped, pointsPercentText, subjectLine, untypedInWork, untypedListNote, weightNote,
-    weightsClearCall, weightsFormFrom, weightsRequest, weightsSaveCall, type WeightsCall,
+    averageLines, isUntyped, mayOfferWeights, pointsPercentText, subjectLine, untypedInWork, untypedListNote, weightNote,
+    weightsClearCall, weightsFailure, weightsFormFrom, weightsRequest, weightsSaveCall, type WeightsCall,
 } from '@/core/helpers/gradebook';
 import { computed, onMounted, ref } from 'vue';
 
@@ -313,6 +313,8 @@ const weightingEnabled = ref(false);
 const workTypes = ref<{ key: string; label: string }[]>([]);
 const weightMax = ref(100);
 const showWeights = ref(false);
+// Not offered while the gradebook failed to load or holds no types: the panel would open empty.
+const canOfferWeights = computed(() => mayOfferWeights(loadError.value, workTypes.value));
 const weightsForm = ref<Record<string, string>>({});
 const savingWeights = ref(false);
 const weightsSaved = ref(false);
@@ -423,7 +425,7 @@ const sendWeights = async (call: WeightsCall, failed: string) => {
         // Clearing removes every piece's own weight, and the badges on the list read them.
         await load(true);
     } catch (e: any) {
-        weightsError.value = firstFieldError(e, failed);
+        weightsError.value = weightsFailure(e, failed);
     } finally {
         savingWeights.value = false;
     }

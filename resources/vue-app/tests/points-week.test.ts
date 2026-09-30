@@ -111,6 +111,13 @@ test('the class screen and the report page go through those two answers', () => 
     // The block needs the class's opt-in; the link to the report needs the school's switch.
     assert.match(cls, /<div v-if="showsThisWeek\(group\) && points\[child\.membership_id\]\?\.week"/);
     assert.match(cls, /<div v-if="weeklyReportOn\(group\)" class="mb-3">\s*<router-link :to="`\/family\/\$\{masjidId\}\/classes\/\$\{groupId\}\/report`"/);
+    // ONE link for the class: in the children tab, ahead of the per-child loop, never inside it.
+    const children = cls.slice(cls.indexOf(`<section v-else-if="tab === 'children'">`), cls.indexOf(`<section v-else-if="tab === 'reports'">`));
+    const link = children.indexOf('weeklyReportOn(group)');
+    const loop = children.indexOf('v-for="child in group.children"');
+    assert.ok(link !== -1 && loop !== -1, 'the children tab has the link and the child loop');
+    assert.ok(link < loop, 'the report link sits above the child loop, so it is not printed once per child');
+    assert.equal((children.match(/weeklyReportOn\(group\)/g) ?? []).length, 1);
     // A class that will not show the week is not asked for one.
     assert.match(cls, /setPoints: showsThisWeek\(group\.value\) \?/);
     // No other link to the report anywhere on the screen.
@@ -156,11 +163,12 @@ test('the report link is not inside the "This week" block, so the block\'s opt-i
     const block = divBlock(cls, start);
     assert.ok(block.length > 300 && block.includes('points_this_week'), 'the whole block was read');
 
-    // Not one link to the report in it, and the one link there is sits after it, gated on the grant alone.
+    // Not one link to the report in it, and the one link there is sits outside it (once per class, above the
+    // child loop), gated on the grant alone.
     assert.doesNotMatch(block, /\/report`/);
     assert.doesNotMatch(block, /weeklyReportOn/);
     const link = cls.indexOf('<div v-if="weeklyReportOn(group)"');
-    assert.ok(link > start + block.length, 'the link comes after the block ends');
+    assert.ok(link < start || link > start + block.length, 'the link is not inside the block');
     assert.equal(divBlock(cls, link).includes('/report`'), true);
     assert.doesNotMatch(divBlock(cls, link), /showsThisWeek/, 'and does not ask about the class\'s opt-in');
 });

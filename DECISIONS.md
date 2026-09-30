@@ -5356,6 +5356,9 @@ Not run: `php -l`, PHPUnit, `artisan`, or any SQL (no PHP on this machine). The 
   [Qur'an, general], which counted the general plan as the teacher's; the 409 now needs two plans under their own subjects, Qur'an and the combined
   "Qur'an & Islamic Studies"). Alternative: keep the rename for a limited teacher when the only plan they can see is a subject's, not the general one.
   Rejected: the point's rule is that a by-day save never retypes another subject's plan, and the old screen is not what the day view uses.
+  Accepted after the point's second-round review: a by-day PUT with NO subject edits the class's general plan for a limited teacher too (it upserts on the
+  empty subject key). That is the access they already have by id (a plan with no subject is shared), and the empty subject is an explicit choice, not a
+  resolution of "the day's plan"; the `LessonPlanController` docblock says so.
 
 - **W3/W4 folds (2026-09-29): F8 stays client-side, and any future native family grades screen must withhold the weighted figure while `untyped_excluded` > 0.**
   F8 hides a family's weighted figure in the SPA (`familySeesWeighted`), not in the payload: the family and teacher endpoints stay byte-identical
