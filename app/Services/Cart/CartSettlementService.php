@@ -20,6 +20,7 @@ use App\Services\Forms\FormResponseWriter;
 use App\Services\Lunch\LunchOrderMailer;
 use App\Services\Lunch\MealOrderCreator;
 use App\Services\Receipts\ReceiptService;
+use App\Services\Stripe\CartPaymentService;
 use App\Services\Stripe\DonationService;
 use App\Support\FormNotifier;
 use App\Support\FormSchema;
@@ -667,11 +668,17 @@ class CartSettlementService
         }
 
         $account = (string) $order->charge_account_id;
-        $holders = Masjid::withTrashed()->where('stripe_account_id', $account)->pluck('id')->map(fn ($id): int => (int) $id);
         $via = $masjid?->forms_card_via_masjid_id === null ? null : (int) $masjid->forms_card_via_masjid_id;
 
-        // The link's own holder when it still holds the pinned account, else whoever does.
-        $holder = $via !== null && $holders->contains($via) ? $via : ($holders->first() ?? $via);
+        // The link's own holder when it still holds the pinned account (a trashed one too: its
+        // money is still recorded), else whoever holds it NOW, a live organisation before a
+        // trashed one and the same one every time: the lookup a refund of this basket makes.
+        // An unordered `withTrashed()->pluck()->first()` could name a trashed organisation that
+        // once held the account, and the receipt and the refund instruction would send staff there.
+        $viaHolds = $via !== null
+            && Masjid::withTrashed()->whereKey($via)->where('stripe_account_id', $account)->exists();
+        $holder = $viaHolds ? $via : (CartPaymentService::accountHolder($account)?->id ?? $via);
+        $holder = $holder === null ? null : (int) $holder;
 
         if ($holder === null) {
             Log::error('A linked cart registration was paid on an account no organisation holds; it is recorded pinned to the account alone.', $this->context($order));

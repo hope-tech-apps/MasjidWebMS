@@ -296,7 +296,7 @@ class CartPaymentService
             return;
         }
 
-        $holder = $this->accountHolder($account);
+        $holder = self::accountHolder($account);
 
         $order = $candidates->first(fn (Order $o): bool => hash_equals((string) $o->charge_account_id, $account)
             && ($o->charge_ref !== null || ($holder !== null && (int) $o->masjid_id === (int) $holder->id)));
@@ -388,12 +388,15 @@ class CartPaymentService
      * trashed one (an offboarded organisation's money is still recorded). A soft-deleted and a
      * live organisation can share an account id (the unique index covers live rows only), so
      * "the first of either" could name the trashed one; one lookup, used by settlement's
-     * `resolve()` and by a refund's `flagOrder()`, keeps the two answering alike.
+     * `resolve()`, by a refund's `flagOrder()` and by the settlement's pin of a linked
+     * registration (CartSettlementService::pinToHolder), keeps them answering alike. Several
+     * trashed organisations can share an id too, so the trashed lookup is ordered: the same
+     * answer every time, not whichever row the database returns first.
      */
-    private function accountHolder(string $account): ?Masjid
+    public static function accountHolder(string $account): ?Masjid
     {
         return Masjid::where('stripe_account_id', $account)->first()
-            ?? Masjid::onlyTrashed()->where('stripe_account_id', $account)->first();
+            ?? Masjid::onlyTrashed()->where('stripe_account_id', $account)->orderBy('id')->first();
     }
 
     /**
@@ -424,7 +427,7 @@ class CartPaymentService
             return null;
         }
 
-        $masjid = $this->accountHolder($account);
+        $masjid = self::accountHolder($account);
 
         if ($masjid === null) {
             Log::warning('A cart payment event is for a connected account no organisation holds; nothing was recorded.', [
