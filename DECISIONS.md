@@ -6053,7 +6053,7 @@ losing a flag on a real order in silence). Alternative for the strict question: 
 up to 30 seconds stale and these paths delete data, so `existsOrFail()` asks again (one statement on a path that runs rarely). Tests: `CartDeployWindowTest`
 (`the_fail_safe_question_answers_absent_and_warns_once_and_a_failure_is_never_remembered`, `the_strict_question_lets_a_failed_check_propagate_and_says_false_only_for_a_table_that_is_missing`,
 `the_strict_question_does_not_trust_a_remembered_absence`, `what_an_account_deletion_keeps_a_member_for_is_not_decided_by_an_orders_check_that_threw`,
-`an_account_deletion_whose_baskets_check_threw_is_rolled_back_whole`); the existing `CartRefundArmIsolationTest` is unchanged and still needs the cart arm to use the strict
+`an_account_deletion_whose_baskets_check_threw_is_rolled_back_whole`, and, from c85b8bbb, `an_account_deletion_whose_unpaid_checkout_check_threw_is_rolled_back_whole`); the existing `CartRefundArmIsolationTest` is unchanged and still needs the cart arm to use the strict
 question (its check must reach the arm's catch and log at error). Fails without the fix: the last two fail if deletion used `has()` (the member is erased, or the
 deletion carries on past the failed step).
 

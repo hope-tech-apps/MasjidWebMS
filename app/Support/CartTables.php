@@ -30,9 +30,10 @@ use Throwable;
  *    and it lets a failed check propagate. Use it on any path that deletes or moves data: a false
  *    "absent" there would skip the look at `orders`, and a member holding paid orders (the
  *    organisation's records) would be erased, a merge would leave its source's orders to be nulled
- *    by the foreign key, and an import's undo would delete a contact orders still name. The caller's
- *    transaction rolls back and the operator sees an error, which is the right answer to "I could
- *    not tell".
+ *    by the foreign key, and an import's undo would delete a contact orders still name. On those
+ *    paths the caller's transaction rolls back and the operator sees an error, which is the right
+ *    answer to "I could not tell". CartPaymentService::handleChargeFlag also asks the strict question,
+ *    but inside its own catch: the failure is logged at error and the webhook still answers.
  *
  * The rule, in one line: only a genuinely missing table skips; a failed check fails closed on any
  * path that deletes or moves data.
