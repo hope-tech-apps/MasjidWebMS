@@ -18,6 +18,7 @@ import {
     isCombinedGuideColumn,
     isUntyped,
     mayChangeWeights,
+    mayOfferWeights,
     NOT_AVERAGED,
     NOT_AVERAGED_WHY,
     percentText,
@@ -28,6 +29,8 @@ import {
     untypedNote,
     weightNote,
     weightsClearCall,
+    weightsFailure,
+    WEIGHTS_NOT_PERMITTED,
     weightsFormFrom,
     weightsRequest,
     weightsSaveCall,
@@ -522,7 +525,7 @@ test('the office weights panel is not read-only: inputs, Save and Clear are alwa
     // Success and errors, the way the neighbouring panels put them.
     assert.match(panel, /<p v-if="weightsSaved" class="text-success small mt-2 mb-0">/);
     assert.match(panel, /<p v-if="weightsError" class="text-danger small mt-2 mb-0" role="alert">\{\{ weightsError \}\}<\/p>/);
-    assert.match(view, /weightsError\.value = firstFieldError\(e, failed\);/);
+    assert.match(view, /weightsError\.value = weightsFailure\(e, failed\);/);
 
     // The teacher's limited-teacher machinery has no place here, and the old "read-only" line is gone.
     for (const teacherOnly of ['canChangeWeights', 'mayChangeWeights', 'weights-read-only', 'my_subjects']) {
@@ -570,14 +573,14 @@ async function runOfficePanel(answer: (call: { url: string; payload: unknown }) 
     let reloads = 0;
     const build = new AsyncFunction(
         'held', 'base', 'workTypes', 'weightMax', 'ApiService', 'load',
-        'weightsRequest', 'weightsFormFrom', 'weightsSaveCall', 'weightsClearCall', 'firstFieldError',
+        'weightsRequest', 'weightsFormFrom', 'weightsSaveCall', 'weightsClearCall', 'weightsFailure',
         `const { weights, weightingEnabled, weightsForm, savingWeights, weightsSaved, weightsError, confirmClearWeights } = held;\n${block}\nreturn { saveWeights, clearWeights };`
     );
     const { saveWeights, clearWeights } = await build(
         held, { value: adminBase }, { value: types }, { value: 100 },
         { put: async (url: string, payload: unknown) => { sent.push({ url, payload }); return { data: answer({ url, payload }) }; } },
         async (quiet: boolean) => { assert.equal(quiet, true, 'the re-read is the quiet one'); reloads++; },
-        weightsRequest, weightsFormFrom, weightsSaveCall, weightsClearCall, firstFieldError
+        weightsRequest, weightsFormFrom, weightsSaveCall, weightsClearCall, weightsFailure
     );
 
     return { held, sent, saveWeights, clearWeights, reloads: () => reloads };
@@ -622,12 +625,12 @@ test('the office panel clears: one PUT of clear, then the weights are gone and t
     assert.equal(p.reloads(), 1, 'clearing removes every piece\'s own weight, so the list is re-read');
 });
 
-test('a refused save or clear shows the server\'s words and never says Saved', async () => {
+test('a refused save or clear shows readable words and never says Saved', async () => {
     const refuse = (status: number, message: string) => () => { throw { response: { status, data: { status: 'failed', message } } }; };
 
     const forbidden = await runOfficePanel(refuse(403, 'User does not have the right permissions.'), typedFive);
     await forbidden.saveWeights();
-    assert.equal(forbidden.held.weightsError.value, 'User does not have the right permissions.');
+    assert.equal(forbidden.held.weightsError.value, WEIGHTS_NOT_PERMITTED, 'a 403 is worded as a permission, not the raw message');
     assert.equal(forbidden.held.weightsSaved.value, false);
     assert.equal(forbidden.held.savingWeights.value, false, 'the button frees up');
     assert.equal(forbidden.reloads(), 0);
@@ -734,4 +737,35 @@ test('"never averaged" is the reason for no weighted figure only while no work i
     assert.equal(averageLines(summary(4)).some((l) => l.note === NOT_AVERAGED_WHY), false);
     // The fenced label still follows the line.
     assert.equal(averageLines(summary(4), true)[0].label, 'Weighted average (your subjects)');
+});
+
+// ---------------------------------------------------------------- the office Weights control, refused or unloaded
+
+test('Weights is not offered after a failed first load or with no types, and is offered once the gradebook is read', () => {
+    assert.equal(mayOfferWeights('The gradebook could not be loaded.', []), false, 'failed first load: no types, an error');
+    assert.equal(mayOfferWeights('The gradebook could not be loaded.', types), false, 'an error hides it even with types held from an earlier read');
+    assert.equal(mayOfferWeights('', []), false, 'no types: the panel would open empty and Save would refuse');
+    assert.equal(mayOfferWeights('', types), true);
+
+    const view = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+    assert.match(view, /const canOfferWeights = computed\(\(\) => mayOfferWeights\(loadError\.value, workTypes\.value\)\);/);
+    assert.match(view, /<div v-if="canOfferWeights" class="d-flex justify-content-end mb-2">\s*<button[^>]*@click="toggleWeights"/);
+});
+
+test('a 403 on a weights change reads as a permission sentence, not the raw message; other failures are unchanged', () => {
+    const raw = { response: { status: 403, data: { status: 'error', message: 'User does not have the right permissions.' } } };
+    assert.equal(weightsFailure(raw, 'The weights could not be saved.'), WEIGHTS_NOT_PERMITTED);
+    assert.doesNotMatch(weightsFailure(raw, 'x'), /right permissions/);
+    assert.equal(weightsFailure({ response: { status: 422, data: { data: { weights: ['At least one type of work has to count.'] } } } }, 'x'),
+        'At least one type of work has to count.');
+    assert.equal(weightsFailure({}, 'The weights could not be cleared.'), 'The weights could not be cleared.');
+});
+
+test('the office panel shows the permission sentence when the save is refused with a 403', async () => {
+    const p = await runOfficePanel(() => { throw { response: { status: 403, data: { message: 'User does not have the right permissions.' } } }; }, typedFive);
+    await p.saveWeights();
+
+    assert.equal(p.held.weightsError.value, WEIGHTS_NOT_PERMITTED);
+    assert.equal(p.held.weightsSaved.value, false);
+    assert.equal(p.held.savingWeights.value, false);
 });
