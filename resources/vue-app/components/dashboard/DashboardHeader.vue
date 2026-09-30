@@ -187,10 +187,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', focusSearchOnShortcu
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const shortcutLabel = isMac ? '⌘K' : 'Ctrl K';
 function focusSearchOnShortcut(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        (document.getElementById('dashboard_search_input') as HTMLInputElement | null)?.focus();
-    }
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k' || event.defaultPrevented) return;
+
+    // Inside a text field or a rich editor, Ctrl/Cmd-K belongs to that field
+    // (the page builder's "insert link", for one). Only take it elsewhere.
+    const target = event.target as HTMLElement | null;
+    const search = document.getElementById('dashboard_search_input');
+    const editable = !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+    if (editable && target !== search) return;
+
+    event.preventDefault();
+    (search as HTMLInputElement | null)?.focus();
 }
 
 // Routing
