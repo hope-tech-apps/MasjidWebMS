@@ -190,7 +190,7 @@ import GroupMessagePhoto from './GroupMessagePhoto.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupPost } from '@/core/types/data/masjid-related/GroupPost';
 import { useGroupFeedStore } from '@/stores/masjid/groupFeedStore';
-import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
+import { apiErrorText, isForbidden, uploadErrorText } from '@/core/services/ApiErrors';
 import { preparePhoto } from '@/core/helpers/preparePhoto';
 import { planMediaPick, videoLimitHint, type MediaLimits } from '@/core/helpers/mediaPick';
 import Swal from 'sweetalert2';
@@ -270,13 +270,22 @@ const addMediaLabel = computed<string>(() => {
     return videos > 1 ? 'Add photos or videos' : videos === 1 ? 'Add photos or video' : 'Add photos';
 });
 
-/** The server's limits, as the shared pick rule reads them (mediaPick.ts). */
-const mediaLimits = computed<MediaLimits>(() => ({
-    maxImages: feedStore.feedMeta?.max_images_per_post ?? 8,
-    maxVideos: feedStore.feedMeta?.max_videos_per_post ?? 0,
-    maxVideoKb: feedStore.feedMeta?.max_video_size_kb ?? 0,
-    maxVideosTotalKb: feedStore.feedMeta?.max_videos_total_kb ?? 0,
-}));
+/**
+ * The server's limits, as the shared pick rule reads them (mediaPick.ts), or null
+ * until the feed has loaded: a pick made before then is left to the server, not
+ * refused on a guess. An images limit of 0 is the server's "no limit".
+ */
+const mediaLimits = computed<MediaLimits | null>(() => {
+    const meta = feedStore.feedMeta;
+    if (!meta) return null;
+
+    return {
+        maxImages: (meta.max_images_per_post ?? 0) > 0 ? meta.max_images_per_post : Infinity,
+        maxVideos: meta.max_videos_per_post ?? 0,
+        maxVideoKb: meta.max_video_size_kb ?? 0,
+        maxVideosTotalKb: meta.max_videos_total_kb ?? 0,
+    };
+});
 
 const uploadHint = computed<string>(() => {
     const meta = feedStore.feedMeta;
@@ -290,7 +299,7 @@ const uploadHint = computed<string>(() => {
         // real difference a teacher should know before posting — a clip is kept
         // for a shorter time than the photos beside it.
         parts.push(
-            videoLimitHint(mediaLimits.value)
+            videoLimitHint(mediaLimits.value as MediaLimits)
             + (meta.video_retention_days ? `, kept ${meta.video_retention_days} days` : '')
         );
     }
@@ -435,7 +444,9 @@ const onFilesChosen = async (event: Event) => {
 
     // A pick REPLACES the selection here (this box has "clear", not "add more"), so
     // the limits are applied to the pick alone. Same rule as the shared picker.
-    const { accepted, note } = planMediaPick<File>([], picked, mediaLimits.value);
+    const { accepted, note } = mediaLimits.value
+        ? planMediaPick<File>([], picked, mediaLimits.value)
+        : { accepted: picked, note: '' };
     pickNote.value = note;
 
     const pick = ++pickCount;
@@ -473,7 +484,7 @@ const submitPost = async () => {
         await loadPosts(1);
         Swal.fire({ icon: 'success', title: scheduled ? 'Scheduled' : 'Posted', timer: 1600, showConfirmButton: false });
     } catch (error) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to publish the post.') });
+        Swal.fire({ icon: 'error', title: 'Error!', text: uploadErrorText(error, 'Failed to publish the post.') });
     } finally {
         posting.value = false;
     }

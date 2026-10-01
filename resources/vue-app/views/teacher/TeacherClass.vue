@@ -2471,7 +2471,7 @@
 
 <script setup lang="ts">
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
-import { apiErrorText } from '@/core/services/ApiErrors';
+import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
@@ -2483,7 +2483,7 @@ import ScheduledItems from '@/components/common/ScheduledItems.vue';
 import { useSendLater } from '@/composables/useSendLater';
 import { messageRow, storyRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
-import { pickerLimits } from '@/core/helpers/mediaPick';
+import { isVideoFile, pickerLimits } from '@/core/helpers/mediaPick';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -5223,7 +5223,7 @@ const withPhotos = (fields: Record<string, string | number>, media: File[]): For
     const form = new FormData();
     Object.entries(fields).forEach(([key, value]) => form.append(key, String(value)));
     media.forEach((file) => form.append(
-        (file.type || '').startsWith('video/') ? 'videos[]' : 'images[]',
+        isVideoFile(file) ? 'videos[]' : 'images[]',
         file,
         file.name,
     ));
@@ -5232,10 +5232,7 @@ const withPhotos = (fields: Record<string, string | number>, media: File[]): For
 
 // nginx answers an oversized request itself, as HTML, so apiErrorText would
 // only have axios's "status code 413" to show.
-const photoErrorText = (e: any, fallback: string): string =>
-    e?.response?.status === 413
-        ? 'That is too large to send together. Try fewer photos, or a shorter video.'
-        : apiErrorText(e, fallback);
+const photoErrorText = (e: any, fallback: string): string => uploadErrorText(e, fallback);
 
 // ============================================================ STORY
 const posts = ref<any[]>([]);

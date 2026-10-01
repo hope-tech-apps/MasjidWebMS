@@ -2,6 +2,7 @@ import { defineStore } from "pinia"
 import { ref } from "vue"
 import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
+import { isVideoFile } from "@/core/helpers/mediaPick";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
@@ -29,7 +30,7 @@ import {
  * roster may open a thread and still get a 403 posting into it — the UI has to
  * survive that, not assume the compose box always works.
  *
- * Since 2026-09-24 the office may attach PHOTOS AND ONE VIDEO here, matching what
+ * Since 2026-09-24 the office may attach PHOTOS AND VIDEOS here, matching what
  * teachers could already do — no server change was needed, because the admin
  * `storeMessage` and the shared FormRequests already read both bags. Parents
  * still attach NOTHING: the family realm's own request validates `body` only.
@@ -63,7 +64,7 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
         const videoKey = threadsMeta.value?.video_upload_key ?? 'videos';
 
         media.forEach((file) => body.append(
-            `${(file.type || '').startsWith('video/') ? videoKey : imageKey}[]`,
+            `${isVideoFile(file) ? videoKey : imageKey}[]`,
             file,
         ));
     }

@@ -6758,6 +6758,21 @@ ONE post or message add up to; one clip may still be the full 100MB.
 - **The teacher screen reads the server's limits.** Its three pickers passed nothing and ran on the component's
   built-in default (one video), so a server limit never reached the people who asked for this. They now bind
   `pickerLimits(meta, …)` from the posts and threads lists.
+- **Where the 192MB is true.** The two hosts staff use in production are served by nginx directly. Staging and the
+  marketing host sit behind a proxy that refuses a body over about 100MB, so a request over that cannot be exercised
+  on staging; the staging check for this change uses small clips (count and total with a lowered total), and the
+  arithmetic is held by `UploadCeilingTest`.
+- **A file the browser gives no type.** `isVideoFile` falls back to the extension (mp4, m4v, mov, webm), and the three
+  places that split one list into the `images` and `videos` bags use it, so such a clip meets the video limits instead
+  of being sent as a photo and refused after the upload.
+- **Over the ceiling anyway** (a 413 from nginx or PHP, which no validation sentence can reach): every upload screen
+  now says "That is too large to send together. Send fewer photos or videos at once, and the rest in another post."
+  The office screens showed axios's "status code 413" before.
+- **Known, not changed here.** (1) The family portal asks for one playback ticket per video tile as the page opens,
+  and those count against the family rate limit; three videos per post makes a busy class page more likely to reach
+  it (the tiles that are refused show the file name, not a player). Ticket on view or on press is the fix, next wave.
+  (2) Two simultaneous API edits can each pass the count on the same story; no screen sends media on an edit, so it
+  takes a hand-written client to do it.
 Alternatives: raise the server ceilings to ~400MB now (a production server change, and three times the disk exposure);
 lower the per-video size so three fit (takes away the 100MB single clip teachers have today); upload each video in its
 own request (the right long-term shape, a larger change to the upload path).

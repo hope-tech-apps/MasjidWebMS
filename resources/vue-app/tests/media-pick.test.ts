@@ -149,5 +149,39 @@ test('every picker reads the server limits and uses the one rule', () => {
 
     const officeStory = source('views/dashboard/groups/GroupStoryTab.vue');
     assert.match(officeStory, /planMediaPick<File>\(\[\], picked, mediaLimits\.value\)/);
-    assert.match(officeStory, /maxVideosTotalKb: feedStore\.feedMeta\?\.max_videos_total_kb/);
+    assert.match(officeStory, /maxVideosTotalKb: meta\.max_videos_total_kb/);
+});
+
+test('a clip the browser gives no type is still a video, by its extension', () => {
+    assert.equal(isVideoFile({ name: 'recital.MOV', type: '', size: 1 }), true);
+    assert.equal(isVideoFile({ name: 'clip.m4v', type: '', size: 1 }), true);
+    assert.equal(isVideoFile({ name: 'photo.jpg', type: '', size: 1 }), false);
+    // A stated type wins over the name.
+    assert.equal(isVideoFile({ name: 'odd.mov', type: 'image/jpeg', size: 1 }), false);
+
+    // So it meets the video limits instead of slipping through as a photo.
+    const untyped = { name: 'big.mov', type: '', size: 101 * MB };
+    assert.deepEqual(planMediaPick([], [untyped], LIMITS).accepted, []);
+});
+
+test('one rule splits the list into the two bags, and one sentence answers a 413', () => {
+    for (const file of ['views/teacher/TeacherClass.vue', 'stores/masjid/groupFeedStore.ts', 'stores/masjid/groupThreadsStore.ts']) {
+        const text = source(file);
+        assert.match(text, /isVideoFile\(file\) \?/, `${file} splits by isVideoFile`);
+        assert.doesNotMatch(text, /\(file\.type \|\| ''\)\.startsWith\('video\/'\) \?/, `${file} has no second copy of the rule`);
+    }
+
+    const errors = source('core/services/ApiErrors.ts');
+    assert.match(errors, /status === 413/);
+    assert.match(errors, /the rest in another post/);
+    for (const file of ['views/teacher/TeacherClass.vue', 'views/dashboard/groups/GroupStoryTab.vue', 'views/dashboard/groups/GroupThreadsTab.vue']) {
+        assert.match(source(file), /uploadErrorText\(/, `${file} uses the upload sentence`);
+    }
+});
+
+test('the office story box applies no limit before the server has sent any', () => {
+    const officeStory = source('views/dashboard/groups/GroupStoryTab.vue');
+    assert.match(officeStory, /if \(!meta\) return null;/);
+    assert.match(officeStory, /mediaLimits\.value\s*\? planMediaPick<File>\(\[\], picked, mediaLimits\.value\)\s*: \{ accepted: picked, note: '' \}/);
+    assert.match(officeStory, /\(meta\.max_images_per_post \?\? 0\) > 0 \? meta\.max_images_per_post : Infinity/);
 });

@@ -303,10 +303,9 @@ class GroupVideoAttachmentsTest extends TestCase
             ])
             ->assertStatus(422);
 
-        $this->assertSame(
-            'The videos in one post may add up to 0MB. Send the others in another post.',
-            $response->json('data.videos.0')
-        );
+        // The sentence itself, with a real total, is pinned in the_total_names_megabytes_...
+        $this->assertStringContainsString('The videos in one post may add up to', (string) $response->json('data.videos.0'));
+        $this->assertStringContainsString('Send the others in another post.', (string) $response->json('data.videos.0'));
         $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
         $this->assertSame([], Storage::disk($this->disk())->allFiles());
 
