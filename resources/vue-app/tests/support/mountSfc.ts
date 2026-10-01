@@ -22,8 +22,19 @@ const require = createRequire(import.meta.url);
 const sfc = require('@vue/compiler-sfc');
 const vue = require('vue');
 
-// vModelText reads `document.activeElement` when a bound value changes under a field.
-if (typeof (globalThis as any).document === 'undefined') (globalThis as any).document = { activeElement: null };
+// vModelText reads `document.activeElement` when a bound value changes under a field. A screen that moves
+// focus asks the document for an element by id, so the stub finds one among the roots that are mounted.
+const mountedRoots = new Set<any>();
+if (typeof (globalThis as any).document === 'undefined') {
+    (globalThis as any).document = {
+        activeElement: null,
+        getElementById(id: string) {
+            const find = (n: any): any => (n.kind === 'el' && n.props.id === id ? n : n.children.map(find).find(Boolean) ?? null);
+            for (const root of mountedRoots) { const hit = find(root); if (hit) return hit; }
+            return null;
+        },
+    };
+}
 
 export class Node {
     kind: 'el' | 'text' | 'comment';
@@ -58,6 +69,26 @@ export class Node {
     }
 
     get disabled(): boolean { return this.props.disabled === true || this.props.disabled === ''; }
+
+    /** Focus, as far as a screen can tell: the document's active element becomes this one. */
+    focus() { (globalThis as any).document.activeElement = this; }
+
+    /** The first element under this one whose attribute matches `[name="value"]`, the one selector a screen asks for. */
+    querySelector(selector: string): Node | null {
+        const match = /^\[([\w-]+)="([^"]*)"\]$/.exec(selector);
+        if (!match) throw new Error(`mountSfc: querySelector supports [attr="value"] only, not ${selector}`);
+        const [, name, value] = match;
+        const find = (n: Node): Node | null => {
+            for (const child of n.children) {
+                if (child.kind === 'el' && String(child.props[name]) === value) return child;
+                const deeper = find(child);
+                if (deeper) return deeper;
+            }
+            return null;
+        };
+
+        return find(this);
+    }
 }
 
 const nodeOps = {
@@ -184,6 +215,7 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
     // instead of vanishing into a console the runner does not show.
     app.config.errorHandler = (e: any) => { componentErrors.push(e); };
     app.mount(root);
+    mountedRoots.add(root);
 
     const walk = (n: Node, test: (n: Node) => boolean, acc: Node[]) => {
         if (n.kind === 'el' && n !== root && test(n)) acc.push(n);
@@ -200,7 +232,7 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
             return found[0];
         },
         text: () => root.textContent,
-        unmount: () => app.unmount(),
+        unmount: () => { mountedRoots.delete(root); app.unmount(); },
     };
 }
 
