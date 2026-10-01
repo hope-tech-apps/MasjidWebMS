@@ -5,12 +5,14 @@ namespace App\Http\Requests\Admin\PageSections;
 use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
 use App\Http\Requests\Concerns\ValidatesEmbedContent;
+use App\Http\Requests\Concerns\ValidatesShopSection;
 use App\Http\Requests\Concerns\ValidatesVideoSection;
 use Illuminate\Validation\Rules\Enum;
 
 class UpdatePageSectionRequest extends BaseFormRequest
 {
     use ValidatesEmbedContent;
+    use ValidatesShopSection;
     use ValidatesVideoSection;
 
     protected function prepareForValidation(): void
@@ -42,7 +44,15 @@ class UpdatePageSectionRequest extends BaseFormRequest
     public function rules(): array
     {
         $rules = [
-            'section_type' => ['sometimes', new Enum(SectionType::class)],
+            'section_type' => [
+                'sometimes',
+                new Enum(SectionType::class),
+                // A type governed by a grant (the shop) is created, or switched to, only by an
+                // organisation that has it; see the trait.
+                function ($attribute, $value, $fail) {
+                    $this->validateGrantedSectionType($value, $fail);
+                },
+            ],
             'title' => 'nullable|string|max:255',
             'content' => [
                 'sometimes',
@@ -55,6 +65,8 @@ class UpdatePageSectionRequest extends BaseFormRequest
                     $this->validateEmbedContent($value, $fail);
                     // A video's layout and width are one of the renderer's words; see the trait.
                     $this->validateVideoContent($value, $fail);
+                    // A shop's four keys and their bounds; see the trait.
+                    $this->validateShopContent($value, $fail);
                 },
             ],
             'order' => 'nullable|integer',

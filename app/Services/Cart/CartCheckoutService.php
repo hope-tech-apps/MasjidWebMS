@@ -109,6 +109,9 @@ class CartCheckoutService
     private const BUYER_NAME_MAX = 120;
     private const BUYER_PHONE_MAX = 32;
 
+    /** The two parameters that carry the buyer's address to Stripe; a refusal naming either drops both. */
+    private const EMAIL_PARAMS = ['customer_email', 'payment_intent_data[receipt_email]'];
+
     /** Refused when the basket's sizes moved under two attempts in a row. */
     public const SIZES_MOVED = 'Your basket changed while it was being checked out. Please try again.';
 
@@ -718,19 +721,28 @@ class CartCheckoutService
         $email = self::usableEmail($buyerEmail);
         if ($email !== null) {
             $params['customer_email'] = $email;
+            // Stripe's own itemised receipt, to the buyer, on every basket. It is a direct charge on
+            // the organisation's account, so without this a receipt goes out only if that account
+            // happens to have "successful payments" emails switched on; named here, Stripe sends it
+            // in live mode whatever the account's setting. It is the one receipt that lists a mixed
+            // basket line by line, and for a shop line it is the only one (settlement mails nothing
+            // for a product). A gift in the basket also gets its own DonationReceiptMail: accepted.
+            $params['payment_intent_data']['receipt_email'] = $email;
         }
 
         try {
             $session = $this->createCheckoutSession($params, $account, (string) $order->idempotency_key);
         } catch (InvalidRequestException $e) {
-            // Retry ONLY when Stripe named the address. Any other refusal (an amount, a
-            // parameter) would fail the same way again — and the message is never
-            // logged, because Stripe's quotes the address.
-            if (! isset($params['customer_email']) || $e->getStripeParam() !== 'customer_email') {
+            // Retry ONLY when Stripe named the address, in either place it is sent. Any other
+            // refusal (an amount, a parameter) would fail the same way again — and the message
+            // is never logged, because Stripe's quotes the address.
+            if (! isset($params['customer_email']) || ! in_array($e->getStripeParam(), self::EMAIL_PARAMS, true)) {
                 throw $e;
             }
 
-            unset($params['customer_email']);
+            // The page still opens, without the address in either place: the shopper types it on
+            // Stripe's page, and the receipt then follows the account's own setting.
+            unset($params['customer_email'], $params['payment_intent_data']['receipt_email']);
             // A NEW key: a refused key belongs to its parameters.
             $order->forceFill(['idempotency_key' => 'cart_order_' . Str::uuid()])->save();
             $session = $this->createCheckoutSession($params, $account, (string) $order->idempotency_key);

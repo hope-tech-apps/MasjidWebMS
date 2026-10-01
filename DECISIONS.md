@@ -6968,6 +6968,107 @@ Alternatives: raise the server ceilings to ~400MB now (a production server chang
 lower the per-video size so three fit (takes away the 100MB single clip teachers have today); upload each video in its
 own request (the right long-term shape, a larger change to the upload path).
 
+## 2026-10-01 — `shop` section type (owner: "a small section in the web page editor to add any shop component to a page")
+Decision: `SectionType::SHOP` (`shop`, "Shop"), content `heading`, `category`, `max_items` (1 to 24, default 8),
+`show_view_all` (default on), exactly as mec-wix-migration `design/brief-shop-section.md`. It stores no product, price or
+size: the renderer fetches the products from the public shop API, keeps those whose `category` equals the section's (null or
+empty means every category), shows the first `max_items`, and links to `/shop` when `show_view_all`. `usesExternalData()` is
+true. Both `getImageFieldsForSectionType` copies name it with no fields. `SectionContentBinder` and `PageSectionResource` are
+untouched (the binder's `default` arm returns the stored content).
+Calls the brief left open:
+- **A capability gate for a section type did not exist; it is copied from the nearest one.** `requiresModule()` only knows
+  modules, and `moduleIsOff()` fails open on any key that is not a module, so it cannot say "no `shop` grant, no section". No
+  type was gated by a grant, and the palette is documented as global. The mechanism is the shop's own:
+  `ProductLineSource::reprice()` asks `$org->hasCapability('shop')` (fails closed) from the ORGANISATION, and the `capability:`
+  gate's refusal is worded "{label} is not switched on for this organisation". So `SectionType::requiresGrant()` is a new
+  exhaustive `match` beside `requiresModule()`, the one palette filter goes where section-types.md says to put one
+  (`PageSectionsController@sectionTypes`, validation stays ungated for reading), and the creation gate is `ValidatesShopSection`
+  on the four requests.
+- **A grant is the opposite of a module.** A module is on until switched off, so its type stays offered and only says so
+  (`moduleOffNote`). A grant is off until given, so its type is not offered without it.
+- **The organisation decides, never the viewer, SuperAdmin included.** The public shop API answers the dark 404 for an
+  organisation without the grant whoever built the section, so a SuperAdmin creating one there would build a section that draws
+  nothing. (The `capability:` middleware lets a SuperAdmin through; this rule is about the data, not the screen.)
+- **What is gated is the offering and the creation, nothing else.** A section already of the type stays readable, editable and
+  deletable after the grant is switched off, and the public page payload still lists it; the renderer shows nothing because the
+  shop API 404s. Editing an existing shop section is allowed because it is neither a creation nor a change to the type; changing
+  one away and back is refused (the way back is a change to it).
+- **Unknown content keys are refused, not dropped.** The brief offered either "as the other types do"; the other types do
+  neither (they store whatever is sent). Refusing is loud, needs no mutation hook and cannot lose an apply script's key quietly.
+  Absent keys are accepted (the renderer reads an absent key as its default), so a row made through the API may hold fewer than
+  the four.
+- **Strict types on content.** `max_items` must be an integer (not "8", not 8.5) and `show_view_all` a boolean (not "yes", not 1):
+  the renderer reads the stored value as it is. Heading and category count characters, not bytes.
+- **Not listed in `withoutRenderer()`.** That list's one sentence ends "do not publish the sign-up form on a page instead", which
+  is about an unrendered registration block and would be false on a shop section; changing it to be per type is a new mechanism.
+  And the type is offered only to an organisation with the grant today (MEC), whose renderer is being built. Like `video`, the
+  renderer must ship before a MEC page carries a shop section: until it does, the section draws nothing.
+- **The stored-type lookup was split out of `ValidatesEmbedContent::resolvedSectionType()`** (`storedSectionType()`) so the grant
+  rule can tell "already a shop" from "being changed to one". The lookup, including its tenant scoping, is unchanged.
+- **The editor reads the categories itself.** `GET /api/admin/masjids/{id}/shop/products?per_page=100` is not in this branch
+  (it ships just before this one); until then the call 404s and the editor shows the plain text input with "Leave empty for all
+  categories". The list is read from `data` or `data.data`, so a paginated or a plain answer both work. A category over 60
+  characters is not offered, since the server would refuse to save it.
+- **No i18n strings.** The brief asks for them in every locale file; the page-builder editors carry their strings inline in
+  English (all thirty-one), and the only locale files in the SPA (`views/family/locales`) belong to the family portal. Adding
+  admin i18n would be a parallel system, so the editor follows the editors.
+- **Palette pins updated on purpose** (as with `video`): the exact type count (28 to 29), `LATER_TYPES` in the school and community
+  suites, and the exact list of external-data types, which now ends with `shop`. Two suites that read the whole palette for an
+  organisation without the grant now expect one type fewer, or are given the grant.
+Not run: `php artisan test` (the brief allows `php -l` and `npm run test:spa` only). `ShopSectionTypeTest` and the five edited
+suites have not been executed; `npm run test:spa` is green (660).
+Unknown, needs investigation: what the iOS and Android apps do with an unknown `shop` section. The API passes `platforms`
+through without filtering (`PageSectionResource`), as it does for `video`; a MEC placement of `["web"]` is the safe one until it
+is known.
+
+## 2026-10-01 — Shop admin screens and the shop section: what the browser run and the point's review changed
+
+- **The pager (found by driving the screens in a browser).** The shared `Pagination` emits its starting page as it mounts. The shop
+  screens started it at 0, so the pickup list re-asked for `page=0`, got a 422, and showed that error over a list that had
+  just loaded. Both lists now start at 1 and load only on a real move (`shouldLoadPage`).
+- **A typed price (the point's review).** `parseMajorToMinor` stripped every comma, so "19,99" was read as 1999.00. A comma is
+  now accepted only as thousands grouping (`^\d{1,3}(,\d{3})+(\.\d*)?$`); any other comma is refused with "Use a point for cents,
+  like 19.99". The helper is shared with the fee plans, which take the same rule.
+- **A picture answer's version (the point's review).**
+  - Every picture call moves `lock_version` on by exactly one, and its answer is the whole product.
+  - The editor used to adopt the answer's version outright. A colleague's save made in between was then silently overwritten by
+    the next Save.
+  - The editor now adopts it only when it is the version it held plus one (`pictureAnswerVersion`). On any other value it keeps
+    the version the form loaded, so the next Save is refused (409), and it shows "Changed elsewhere … Reload" at once. The
+    pictures always refresh from the answer.
+- **A shop section is a WEBSITE section for now (the point's call).**
+  - The native apps have not been checked against a section type they do not know.
+  - `PageSectionsController` therefore refuses, with a 422 on `platforms`, a placement that would show a shop section in the
+    mobile app. This covers store, update and attach. No platforms at all means both, so that is refused too.
+  - `SectionFormModal` unticks and locks Mobile for the type.
+  - **V1.1:** check the iOS and Android apps against an unknown `shop` section, then lift this.
+- **Deferred to v1.1 from the same review:**
+  - the pickup actions sit in a seventh, sideways-scrolling column on a phone;
+  - handing out the last row of a later page reloads onto an empty page;
+  - a 403 still shows the tabs and "New product";
+  - a stock-below-sold hint;
+  - an unsaved-changes guard.
+
+## 2026-10-01 — Every basket payment asks Stripe to send its receipt to the buyer
+
+- **The gap (the point's review of the renderer's shop pages).** A shop purchase mails the parent nothing from Manara:
+  `settleProduct` sends no mail, and B2 added no Mailable. The basket's page set `customer_email` but no `receipt_email`. It is
+  a direct charge on the organisation's account, so Stripe's receipt went out only if that account happened to have
+  "successful payments" emails on. The site tells the parent a receipt was emailed.
+- **The fix.** `CartCheckoutService::openPage` sets `payment_intent_data.receipt_email` to the buyer's address, for EVERY basket.
+  Stripe then sends its itemised receipt in live mode whatever the account's setting; it is the one receipt that lists a mixed
+  basket line by line. A gift in the basket also gets its own `DonationReceiptMail`: the duplication is accepted (the point's
+  call). No address means no parameter.
+- **A refused address.** A refusal that names either `customer_email` or `payment_intent_data[receipt_email]` drops BOTH and
+  opens the page on a new idempotency key, as before.
+- **Proof.** `CartCheckoutServiceTest`: present with a usable address; absent with none, an empty one or an unusable one; both
+  dropped on a refusal naming either parameter. Three mutants killed.
+- **Recorded for v1.1, not built:**
+  - A paid basket's token stays live until its expiry, and add, remove and checkout answer 422 "This basket has already been
+    paid for." The renderer matches that sentence to start a new basket, so `CartLineAdder::CLOSED` and `PAID_MESSAGE` must
+    NOT be reworded. A machine-readable code (`data.code = 'basket_closed'`) beside the unchanged sentence is the v1.1 change.
+  - The order status read allows 30 reads an hour per order (`cart.throttle.order_status_per_hour`); a poller must back off.
+
 ## 2026-10-01 — An unread count on the teacher Messages tab (W7-3, teacher feedback; branch feat/school-w7-unread-badge)
 Decision: staff see how many messages from other people they have not seen: a pill on the Messages tab, an "N new" chip
 beside the class name, "N new" on each conversation row, a count on each My Classes card, and the same on the office's

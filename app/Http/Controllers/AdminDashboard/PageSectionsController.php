@@ -14,6 +14,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 class PageSectionsController extends Controller
 {
+    /** Why a shop section cannot be placed in the mobile app yet. */
+    public const SHOP_WEB_ONLY = 'A shop section can be shown on the website only for now. Untick Mobile and save again.';
+
     /**
      * Display sections for a specific page
      */
@@ -57,6 +60,10 @@ class PageSectionsController extends Controller
             $page = $masjid->pages()->findOrFail($page_id);
 
             $validated = $request->validated();
+
+            if ($refusal = $this->shopPlacementRefusal($validated['section_type'], $validated['platforms'] ?? null)) {
+                return $refusal;
+            }
 
             // Create new section in the sections library
             $sectionData = [
@@ -133,6 +140,15 @@ class PageSectionsController extends Controller
             $currentPlatforms = $section->pivot->platforms;
 
             $validated = $request->validated();
+
+            // Judged on what the placement WILL be: the type and the platforms this request sends,
+            // else the stored ones.
+            if ($refusal = $this->shopPlacementRefusal(
+                $validated['section_type'] ?? $section->section_type,
+                array_key_exists('platforms', $validated) ? $validated['platforms'] : $currentPlatforms
+            )) {
+                return $refusal;
+            }
 
             // Build update set only with provided keys
             $sectionData = collect($validated)->only(['section_type', 'title', 'content', 'settings', 'is_active'])->toArray();
@@ -235,7 +251,11 @@ class PageSectionsController extends Controller
             $sectionId = $request->input('section_id');
 
             // Verify section belongs to same masjid
-            $masjid->sections()->findOrFail($sectionId);
+            $librarySection = $masjid->sections()->findOrFail($sectionId);
+
+            if ($refusal = $this->shopPlacementRefusal($librarySection->section_type, $request->validated()['platforms'] ?? null)) {
+                return $refusal;
+            }
 
             // Check if already attached
             if ($page->sections()->where('sections.id', $sectionId)->exists()) {
@@ -278,10 +298,20 @@ class PageSectionsController extends Controller
             // The ORGANISATION's switches, never the viewer's: a SuperAdmin
             // building a page for an organisation with Events switched off must
             // read the same note its own admin would. The palette itself is not
-            // filtered (.claude/rules/section-types.md).
+            // filtered (.claude/rules/section-types.md), with ONE exception: a type
+            // that requiresGrant() (the shop) is offered only when this organisation
+            // HAS that grant. Fail closed, as hasCapability() is: no organisation
+            // found means no grant. This is the only place the palette is filtered;
+            // validation gates the same type's creation (ValidatesShopSection) and
+            // nothing gates reading or deleting a section already of it.
             $masjid = Masjid::find($masjid_id);
 
-            $types = collect(SectionType::cases())->map(fn($type) => [
+            $offered = collect(SectionType::cases())
+                ->filter(fn($type) => $type->requiresGrant() === null
+                    || $masjid?->hasCapability($type->requiresGrant()) === true)
+                ->values();
+
+            $types = $offered->map(fn($type) => [
                 'value' => $type->value,
                 'label' => $type->label(),
                 'description' => $type->description(),
@@ -342,6 +372,30 @@ class PageSectionsController extends Controller
             'created_at' => $section->created_at?->toISOString(),
             'updated_at' => $section->updated_at?->toISOString(),
         ];
+    }
+
+    /**
+     * A SHOP section is a WEBSITE section for now (the point's call, 2026-10-01): the native apps
+     * have not been checked against a section type they do not know, so a placement that would show
+     * one in the mobile app is refused with a sentence, in the envelope every validation failure
+     * uses. No platforms at all means BOTH (normalizePlatforms), so that is refused too: the editor
+     * sends `["web"]` for this type. Lifting this once the apps are checked is recorded as v1.1.
+     *
+     * @param  mixed  $type  a SectionType or its stored string
+     * @param  mixed  $platforms  the placement's platforms as sent or as stored
+     */
+    private function shopPlacementRefusal(mixed $type, mixed $platforms): ?\Illuminate\Http\JsonResponse
+    {
+        $value = $type instanceof \BackedEnum ? $type->value : (string) $type;
+
+        if ($value !== SectionType::SHOP->value || ! in_array('mobile', $this->normalizePlatforms($platforms), true)) {
+            return null;
+        }
+
+        return response()->json([
+            'status' => 'failed',
+            'data' => ['platforms' => [self::SHOP_WEB_ONLY]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     /**
@@ -444,6 +498,10 @@ class PageSectionsController extends Controller
             // into `video_url` and nowhere else). `section_images` registers no
             // conversions, so a video in it is stored as uploaded.
             SectionType::VIDEO => ['video_url', 'poster_url'],
+            // The shop stores no image: the renderer draws each product's own, from the
+            // shop API. Said here, and not left to `default`, so the type is visibly
+            // accounted for in both copies of this map.
+            SectionType::SHOP => [],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };

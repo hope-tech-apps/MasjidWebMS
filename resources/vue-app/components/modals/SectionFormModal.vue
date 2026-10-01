@@ -141,10 +141,12 @@
                                         id="attachPlatformMobile"
                                         value="mobile"
                                         v-model="attachPlatforms"
+                                        :disabled="attachWebOnly"
                                     />
                                     <label class="form-check-label" for="attachPlatformMobile">Mobile</label>
                                 </div>
                             </div>
+                            <small v-if="attachWebOnly" class="form-text text-muted">{{ WEB_ONLY_NOTE }}</small>
                         </div>
                     </div>
 
@@ -281,11 +283,13 @@
                                         id="platformMobile"
                                         value="mobile"
                                         v-model="formData.platforms"
+                                        :disabled="webOnly"
                                     />
                                     <label class="form-check-label" for="platformMobile">Mobile</label>
                                 </div>
                             </div>
-                            <small class="form-text text-muted">
+                            <small v-if="webOnly" class="form-text text-muted">{{ WEB_ONLY_NOTE }}</small>
+                            <small v-else class="form-text text-muted">
                                 Controls where this section is shown. Leave both checked to display everywhere.
                             </small>
                         </div>
@@ -348,7 +352,8 @@
 <script setup lang="ts">
 import { PageSection, SectionType } from '@/core/types/data/masjid-related/PageSection';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
-import { ref, computed, onMounted, shallowRef, provide } from 'vue';
+import { isWebOnlySectionType, webOnlyPlatforms } from '@/core/helpers/shopSection';
+import { ref, computed, onMounted, shallowRef, provide, watch } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
 import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
 import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
@@ -383,6 +388,7 @@ import ProvidersDirectorySectionEditor from '@/components/sections/editors/Provi
 import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
 import OfferingSectionEditor from '@/components/sections/editors/OfferingSectionEditor.vue';
 import VideoSectionEditor from '@/components/sections/editors/VideoSectionEditor.vue';
+import ShopSectionEditor from '@/components/sections/editors/ShopSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -446,6 +452,24 @@ const selectedSection = computed(() => {
     return sectionsLibrary.value.find(s => s.id === selectedSectionId.value);
 });
 
+/**
+ * A shop section is a website section for now: the server refuses a placement that would show
+ * one in the mobile app (PageSectionsController::SHOP_WEB_ONLY), so the form never offers it.
+ */
+const WEB_ONLY_NOTE = 'A shop section is shown on the website only for now.';
+const webOnly = computed(() => isWebOnlySectionType(formData.value.section_type));
+const attachWebOnly = computed(() => isWebOnlySectionType(selectedSection.value?.section_type));
+
+watch(webOnly, (only) => {
+    if (only) formData.value.platforms = webOnlyPlatforms();
+}, { flush: 'sync' });
+watch(() => formData.value.platforms, (platforms) => {
+    if (webOnly.value && (platforms?.length !== 1 || platforms[0] !== 'web')) formData.value.platforms = webOnlyPlatforms();
+}, { deep: true });
+watch(attachWebOnly, (only) => {
+    if (only) attachPlatforms.value = webOnlyPlatforms();
+});
+
 /** The server's record for the type of the library section being attached (its module note). */
 const attachTypeInfo = computed(() => {
     const type = selectedSection.value?.section_type;
@@ -500,6 +524,9 @@ const editorMap: Record<SectionType, any> = {
     // An MP4 uploaded to this site. Same rule again: the import and this entry land
     // together, or the dropdown offers Video with a blank editor pane.
     'video': VideoSectionEditor,
+    // Products from the online shop. Same rule again: the import and this entry land
+    // together, or an organisation with the shop grant is offered Shop with a blank pane.
+    'shop': ShopSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

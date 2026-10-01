@@ -73,6 +73,13 @@ export type MasjidDashboardRoute =
     '/masjid/zakat' |
     '/masjid/funds' |
     '/masjid/jummah-lunch' |
+    // The online shop (`shop` capability): one sidebar entry, which lands on Products; the editor and
+    // the pickup list are screens of it.
+    '/masjid/shop' |
+    '/masjid/shop/products' |
+    '/masjid/shop/products/new' |
+    `/masjid/shop/products/${number}/edit` |
+    '/masjid/shop/pickup' |
     '/masjid/team' |
     '/masjid/payment-methods' |
     '/masjid/donations' |

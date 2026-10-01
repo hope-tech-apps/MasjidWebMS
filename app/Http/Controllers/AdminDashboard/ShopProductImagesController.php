@@ -39,7 +39,7 @@ class ShopProductImagesController extends Controller
     /**
      * POST .../shop/products/{product_id}/images
      *
-     * `images[]`: JPEG, PNG, GIF or WebP, by bytes and by name, up to 25 MB each
+     * `images[]`: JPEG, PNG, GIF or WebP, by bytes and by name, up to 10 MB each
      * (UploadProductImagesRequest). Refused as a whole, writing nothing, when they would take the
      * product past its eight.
      */

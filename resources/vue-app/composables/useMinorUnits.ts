@@ -116,8 +116,11 @@ export function formatMinorOrDash(
  *    screen;
  *  - an amount so large the conversion could not be exact.
  *
- * Thousands separators and spaces are stripped first, so a pasted "1,500.00"
- * works. Everything else is a message the form shows next to the field.
+ * Spaces are stripped first. A comma is accepted ONLY as real thousands grouping
+ * ("1,500.00", "12,345"), so a pasted amount works; any other comma is refused,
+ * because stripping it would read a decimal comma as a thousand times the price
+ * ("19,99" as 1999.00). Everything else is a message the form shows next to the
+ * field.
  */
 export function parseMajorToMinor(
     input: string,
@@ -125,7 +128,13 @@ export function parseMajorToMinor(
 ): MinorParseResult {
     const code = normalizeCode(currency);
     const exponent = currencyExponent(code);
-    const raw = String(input ?? '').trim().replace(/[\s,]/g, '');
+    const spaceless = String(input ?? '').trim().replace(/\s/g, '');
+
+    if (spaceless.includes(',') && !/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(spaceless)) {
+        return { ok: false, reason: 'Use a point for cents, like 19.99' };
+    }
+
+    const raw = spaceless.replace(/,/g, '');
 
     if (raw === '') {
         return { ok: false, reason: 'Enter an amount.' };

@@ -128,8 +128,11 @@ class SectionTypeModuleTest extends TestCase
             $this->assertNull($types['announcements_list']['module_off_note']);
             $this->assertNull($types['text']['module_off_note']);
 
-            // The palette is not filtered: every type is still offered, with the key.
-            $this->assertCount(count(SectionType::cases()), $types);
+            // The palette is not filtered by module: every type is still offered, with the
+            // key. The one exception is a type under a GRANT, and these organisations do not
+            // have the shop (ShopSectionTypeTest owns that rule).
+            $this->assertArrayNotHasKey('shop', $types);
+            $this->assertCount(count(SectionType::cases()) - 1, $types);
 
             foreach ($types as $value => $entry) {
                 $this->assertArrayHasKey('module_off_note', $entry, "{$value} has no module_off_note key");

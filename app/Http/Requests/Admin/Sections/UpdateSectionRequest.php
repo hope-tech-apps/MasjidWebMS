@@ -5,12 +5,14 @@ namespace App\Http\Requests\Admin\Sections;
 use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
 use App\Http\Requests\Concerns\ValidatesEmbedContent;
+use App\Http\Requests\Concerns\ValidatesShopSection;
 use App\Http\Requests\Concerns\ValidatesVideoSection;
 use Illuminate\Validation\Rules\Enum;
 
 class UpdateSectionRequest extends BaseFormRequest
 {
     use ValidatesEmbedContent;
+    use ValidatesShopSection;
     use ValidatesVideoSection;
 
     protected function prepareForValidation(): void
@@ -36,7 +38,16 @@ class UpdateSectionRequest extends BaseFormRequest
     {
         $rules = [
             // Allowlisted against the enum — see StoreSectionRequest for the reasoning.
-            'section_type' => ['sometimes', 'required', new Enum(SectionType::class)],
+            'section_type' => [
+                'sometimes',
+                'required',
+                new Enum(SectionType::class),
+                // A type governed by a grant (the shop) is created, or switched to, only by an
+                // organisation that has it; see the trait.
+                function ($attribute, $value, $fail) {
+                    $this->validateGrantedSectionType($value, $fail);
+                },
+            ],
             'title' => 'nullable|string|max:255',
             'content' => [
                 'sometimes',
@@ -50,6 +61,8 @@ class UpdateSectionRequest extends BaseFormRequest
                     $this->validateEmbedContent($value, $fail);
                     // A video's layout and width are one of the renderer's words; see the trait.
                     $this->validateVideoContent($value, $fail);
+                    // A shop's four keys and their bounds; see the trait.
+                    $this->validateShopContent($value, $fail);
                 },
             ],
             'is_active' => 'boolean',

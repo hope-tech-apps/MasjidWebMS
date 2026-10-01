@@ -233,6 +233,10 @@ class SectionsController extends Controller
             // into `video_url` and nowhere else). `section_images` registers no
             // conversions, so a video in it is stored as uploaded.
             SectionType::VIDEO => ['video_url', 'poster_url'],
+            // The shop stores no image: the renderer draws each product's own, from the
+            // shop API. Said here, and not left to `default`, so the type is visibly
+            // accounted for in both copies of this map.
+            SectionType::SHOP => [],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };

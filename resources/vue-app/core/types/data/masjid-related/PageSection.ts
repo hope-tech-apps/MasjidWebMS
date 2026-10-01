@@ -41,7 +41,10 @@ export type SectionType =
     // other type. See App\Enums\SectionType.
     | 'offering'
     // An MP4 uploaded to this site, as a player or a silent looping banner.
-    | 'video';
+    | 'video'
+    // Products from the organisation's online shop. Offered only to an organisation with the
+    // `shop` grant: the server leaves it out of the palette otherwise. See App\Enums\SectionType.
+    | 'shop';
 
 // Base Section
 export type PageSection = {
@@ -90,7 +93,8 @@ export type SectionContent =
     | ProvidersDirectorySectionContent
     | ImpactStatsSectionContent
     | OfferingSectionContent
-    | VideoSectionContent;
+    | VideoSectionContent
+    | ShopSectionContent;
 
 // Individual Section Content Types
 
@@ -259,6 +263,19 @@ export type VideoSectionContent = {
     layout: 'player' | 'banner';
     max_width: 'full' | 'container' | 'narrow';
     background_color: string;
+};
+
+/**
+ * Products from the organisation's online shop. The section stores NO product, price or size:
+ * the renderer fetches them from the public shop API and keeps those whose `category` equals
+ * this one (null or empty means every category). `max_items` is 1 to 24; `show_view_all` adds a
+ * link to /shop.
+ */
+export type ShopSectionContent = {
+    heading: string | null;
+    category: string | null;
+    max_items: number;
+    show_view_all: boolean;
 };
 
 export type LinkListItem = {
