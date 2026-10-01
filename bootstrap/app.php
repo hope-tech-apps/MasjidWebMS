@@ -187,6 +187,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // unknown route gets until config/cart.php switches the basket on, and for
             // any organisation its allowlist leaves out. See EnsureCartEnabled.
             'cart.enabled' => \App\Http\Middleware\EnsureCartEnabled::class,
+            // The shop's public reads (routes/api_v1.php, `shop/products`): the same 404, byte for
+            // byte, until the basket is on for the organisation AND a SuperAdmin has granted it the
+            // `shop` capability. See EnsureShopEnabled.
+            'shop.enabled' => \App\Http\Middleware\EnsureShopEnabled::class,
             // The member portal's "Your orders" routes (routes/api.php, `me/orders` and
             // friends): the same 404 an unknown route gets until config/member_portal.php
             // switches the portal on, and for any organisation its allowlist leaves out.
@@ -217,6 +221,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToPriorityList(
             before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
             prepend: \App\Http\Middleware\EnsureCartEnabled::class,
+        );
+
+        // The shop's public reads are dark by the same rule and ranked the same way, for the same
+        // reason: an unranked gate would run behind `throttle:shop-read`, and a dark shop would
+        // then run the limiter, carry rate-limit headers and, past the allowance, answer 429 where
+        // a route that does not exist answers 404. See EnsureShopEnabled and ShopPublicApiTest.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            prepend: \App\Http\Middleware\EnsureShopEnabled::class,
         );
 
         // The member portal's gate ranks ahead of AUTHENTICATION, which itself ranks ahead of
