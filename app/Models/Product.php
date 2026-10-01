@@ -23,8 +23,9 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * which does not exist on SQLite, where the same rule is a partial index), hidden here so a
  * serialised product reads the same on both drivers.
  *
- * Images are Spatie media in the `product_images` collection (many). The upload endpoints are
- * slice B2's; this slice adds the trait, the collection name and `images()`.
+ * Images are Spatie media in the `product_images` collection (many), at most MAX_IMAGES. The
+ * upload, delete and reorder endpoints are ShopProductImagesController's (slice B2); `images()`
+ * is the only way a product's pictures are read.
  *
  * Tenant-scoped (BelongsToMasjid); the cross-tenant test is tests/Feature/Shop/ProductTenantIsolationTest.php.
  * The public basket runs UNBOUND, so CartPricer and CartLineAdder load a product with the scope
@@ -36,6 +37,9 @@ class Product extends Model implements HasMedia
 
     /** The Spatie collection a product's pictures live in. */
     public const IMAGES = 'product_images';
+
+    /** The most pictures one product may carry (the admin upload refuses the ninth). */
+    public const MAX_IMAGES = 8;
 
     protected $fillable = [
         'masjid_id',
