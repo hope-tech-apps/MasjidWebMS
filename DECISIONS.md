@@ -6692,3 +6692,43 @@ this slice has been run: there is no PHP on the machine it was written on** (ASS
   `CartColumnWidthsTest` and `CartConfigTest` extended; `tests/Mysql/ShopLiveUniquenessTest` and `ShopStockMysqlTest` (group `mysql`)
   run the generated columns and the whole stock path on the engine, on ONE connection: they prove the statements and the
   arithmetic, not a two-connection race.
+
+## 2026-10-01 — Shop B1 ship critic: the checkout's size lock no longer gap-locks other baskets
+
+- **The finding (confirmed, major).** The ship critic was three lenses, each finding put to an adversarial refuter.
+  - `ProductStock::lockBasket()` was a locking range read of `cart_items` (by cart, organisation and type), run in EVERY
+    checkout.
+  - Under InnoDB REPEATABLE READ, a locking read over a non-unique index takes next-key and gap locks even when it matches
+    nothing. So an ordinary basket's checkout, with the shop off everywhere, made other baskets' line adds wait for its whole
+    transaction. Other baskets means any organisation's dish, form or gift, and the transaction includes the Stripe calls.
+  - Behind a slow Stripe, those adds could fail at `innodb_lock_wait_timeout` with a 500. Before B1, a checkout locked only its
+    `carts` row by primary key.
+  - SQLite has no row locks, and the race proof used shop baskets only, so neither showed it.
+- **The fix.**
+  - The basket's sizes are read by `ProductStock::basketVariantIds()` BEFORE the checkout's transaction opens. A plain read
+    there fixes no snapshot and takes no lock.
+  - Inside the transaction, `ProductStock::lock()` locks them by PRIMARY KEY alone. A `masjid_id` condition could let the
+    optimiser range-scan the organisation's index, so the organisation is checked on the returned rows instead.
+  - A basket with no product line takes no extra lock at all, exactly as before the shop.
+  - After pricing: if the priced lines name a size that was not locked (one added between the read and the cart lock), the
+    attempt rolls back having written nothing (`BasketSizesMoved`) and runs once more.
+  - A basket that moves under two attempts is refused with `CartCheckoutService::SIZES_MOVED`.
+- **Also fixed (confirmed, minor).**
+  - A replacement checkout that failed after closing the old page (Stripe failing to open the new one, or the stock refusal)
+    rolled back the old order's `expired`, while its Stripe page stayed expired. The dead page then read as `pending` and held its
+    units for up to 46 minutes.
+  - Every order `markExpired()` touches during an attempt is now marked expired again after a rollback (`keepExpired()`, with the
+    same pending → expired guard).
+- **Proof.**
+  - `ShopStockTest`: the lock-order test now allows only the cart lock before the size lock, requires the size read BEFORE the
+    transaction, and requires a primary-key-only lock statement. New tests: a size added mid-checkout reruns once; one that keeps
+    moving is refused after two attempts with nothing written; a failed replacement leaves the closed page expired and its
+    units free.
+  - Mutants K1-K5: all killed.
+  - `tests/Mysql/ShopCheckoutLocksMysqlTest` reads `performance_schema.data_locks` inside the checkout's transaction. An ordinary
+    basket adds no `cart_items` lock; a shop basket adds only `product_variants|PRIMARY|X,REC_NOT_GAP`.
+- **Refuted, but carried to B2 (it gains editing).**
+  - MySQL's live-slug and live-label unique indexes compare under `utf8mb4_unicode_ci`, which is case- and accent-insensitive,
+    and SQLite's do not. B2's clash checks must compare the same way.
+  - Renaming a size that baskets or sales hold would change what a paid line names. B2 decides whether a held size's label is
+    frozen.

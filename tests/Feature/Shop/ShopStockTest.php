@@ -6,6 +6,7 @@ use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Services\Cart\CartCheckoutRefused;
+use App\Services\Cart\CartCheckoutService;
 use App\Services\Cart\CartPricer;
 use App\Services\Cart\CartSettlementService;
 use App\Services\Cart\ProductStock;
@@ -15,6 +16,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use PHPUnit\Framework\Attributes\Test;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\StripeClient;
 use Tests\Feature\Cart\BuildsBaskets;
 use Tests\Feature\Cart\SignsCartWebhooks;
 use Tests\TestCase;
@@ -199,6 +202,120 @@ class ShopStockTest extends TestCase
             (int) OrderItem::withoutMasjidScope()->where('order_id', $new->id)->where('buyable_type', CartItem::TYPE_PRODUCT)->sum('quantity'),
             'the basket took the last unit again from its own closed page'
         );
+    }
+
+    #[Test]
+    public function a_replacement_page_that_fails_to_open_leaves_the_closed_page_expired_and_its_units_free(): void
+    {
+        $org = $this->shopOrg();
+        $variant = $this->sizeOf($org, ['stock' => 1]);
+        $cart = $this->cart($org);
+        $this->addVariant($cart, $variant, 1);
+        $old = $this->checkoutService()->checkout($cart, self::RETURN_BASE, 'buyer@example.org')['order'];
+
+        // A gift is added, so the open page is closed on Stripe and a new one is asked for; Stripe
+        // then fails to open it. The transaction rolls back, but the closed page stays closed.
+        $this->add($cart, CartItem::TYPE_DONATION, $this->fund($org)->id, 5000);
+        $failing = new class(new StripeClient('sk_test_offline')) extends CartCheckoutService {
+            protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
+            {
+                throw ApiConnectionException::factory('Stripe could not be reached.');
+            }
+
+            protected function retrieveCheckoutSession(string $sessionId, string $connectedAccountId): array
+            {
+                return ['status' => 'open', 'url' => 'https://checkout.stripe.test/existing'];
+            }
+
+            protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void
+            {
+            }
+        };
+
+        try {
+            $failing->checkout($cart, self::RETURN_BASE, 'buyer@example.org');
+            $this->fail('premise: the replacement page fails to open');
+        } catch (ApiConnectionException) {
+        }
+
+        $this->assertSame(Order::STATUS_EXPIRED, $old->fresh()->status, 'expired on Stripe, so expired here, whatever the rollback undid');
+        $this->assertSame(1, Order::withoutMasjidScope()->where('cart_id', $cart->id)->count(), 'the replacement order was rolled back');
+        $this->assertSame([], ProductStock::held((int) $org->id, [(int) $variant->id]), 'a dead page holds no unit');
+    }
+
+    #[Test]
+    public function a_size_added_after_the_sizes_were_read_runs_the_checkout_once_more_with_it_locked(): void
+    {
+        $org = $this->shopOrg();
+        $product = $this->product($org);
+        $first = $this->variant($product, ['label' => 'S', 'stock' => 5]);
+        $late = $this->variant($product, ['label' => 'M', 'stock' => 5]);
+        $cart = $this->cart($org);
+        $this->addVariant($cart, $first, 1);
+
+        // Another tab adds a size between the checkout's read of the basket's sizes and its cart
+        // lock: here, the moment that read has run for the first time.
+        $sizeReads = 0;
+        $added = false;
+        DB::listen(function ($query) use (&$sizeReads, &$added, $cart, $late): void {
+            if (! preg_match('/^select "buyable_id" from "cart_items"/i', $query->sql)) {
+                return;
+            }
+
+            $sizeReads++;
+
+            if (! $added) {
+                $added = true;
+                $this->addVariant($cart, $late, 1);
+            }
+        });
+
+        $order = $this->checkoutService()->checkout($cart, self::RETURN_BASE, 'buyer@example.org')['order'];
+
+        $this->assertSame(2, $sizeReads, 'the first attempt found a size it had not locked and ran again');
+        $this->assertEqualsCanonicalizing(
+            [(int) $first->id, (int) $late->id],
+            OrderItem::withoutMasjidScope()->where('order_id', $order->id)->pluck('buyable_id')->map(fn ($id): int => (int) $id)->all(),
+            'the second attempt sold both sizes, both locked'
+        );
+    }
+
+    #[Test]
+    public function a_basket_whose_sizes_keep_moving_is_refused_after_the_second_attempt_and_writes_nothing(): void
+    {
+        $org = $this->shopOrg();
+        $product = $this->product($org);
+        $first = $this->variant($product, ['label' => 'S', 'stock' => 5]);
+        $lates = [$this->variant($product, ['label' => 'M', 'stock' => 5]), $this->variant($product, ['label' => 'L', 'stock' => 5])];
+        $cart = $this->cart($org);
+        $this->addVariant($cart, $first, 1);
+
+        $sizeReads = 0;
+        $adding = false;
+        DB::listen(function ($query) use (&$sizeReads, &$adding, &$lates, $cart): void {
+            if ($adding || ! preg_match('/^select "buyable_id" from "cart_items"/i', $query->sql)) {
+                return;
+            }
+
+            $sizeReads++;
+            $next = array_shift($lates);
+
+            if ($next !== null) {
+                $adding = true;
+                $this->addVariant($cart, $next, 1);
+                $adding = false;
+            }
+        });
+
+        try {
+            $this->checkoutService()->checkout($cart, self::RETURN_BASE, 'buyer@example.org');
+            $this->fail('a basket that moved under both attempts must be refused');
+        } catch (CartCheckoutRefused $e) {
+            $this->assertSame(CartCheckoutService::SIZES_MOVED, $e->getMessage());
+        }
+
+        $this->assertSame(2, $sizeReads, 'two attempts, no more');
+        $this->assertSame(0, Order::withoutMasjidScope()->where('cart_id', $cart->id)->count(), 'nothing written');
     }
 
     #[Test]
@@ -457,16 +574,25 @@ class ShopStockTest extends TestCase
 
         $this->assertNotNull($firstSizes, 'the sizes are locked inside the transaction');
 
-        // Ahead of it: the cart's own lock and the basket's lines, and nothing else. Any other plain
-        // read (the organisation, the order, the held lines) would fix the snapshot first.
+        // Ahead of it: the cart's own lock, and nothing else. Any plain read (the organisation, the
+        // order, the held lines) would fix the snapshot first, and a locking read of the basket's
+        // lines would gap-lock other baskets' adds on MySQL.
         $this->assertTrue($this->selectsFrom($inside[0], 'carts'), 'the cart is locked first: ' . $inside[0]);
 
         foreach (array_slice($inside, 0, $firstSizes) as $sql) {
             $this->assertTrue(
-                $this->selectsFrom($sql, 'carts') || $this->selectsFrom($sql, 'cart_items'),
-                "a plain read ran before the sizes were locked and would fix the snapshot: {$sql}"
+                $this->selectsFrom($sql, 'carts'),
+                "a read ran before the sizes were locked: {$sql}"
             );
         }
+
+        // The sizes were found BEFORE the transaction opened, and are locked by primary key alone.
+        $this->assertNotSame(
+            [],
+            array_filter(array_slice($log, 0, $begin), fn (string $sql): bool => $this->selectsFrom($sql, 'cart_items')),
+            'the basket\'s sizes are read before the checkout\'s transaction opens'
+        );
+        $this->assertStringNotContainsString('masjid_id', $inside[$firstSizes], 'the size lock is by primary key only: ' . $inside[$firstSizes]);
 
         // After it, the pricer reads the organisation and the held lines, and the stock check
         // reads them again after the order exists.

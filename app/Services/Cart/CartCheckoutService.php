@@ -65,14 +65,20 @@ use Throwable;
  * re-quotes, because a quote depends on the date and on the card switch, and one that
  * came back null would throw AFTER the money was taken.
  *
- * A product line's stock is decided HERE, not at pricing (shop slice B1, ProductStock): the checkout
- * locks every size in the basket FOR UPDATE, in ascending id order, as its first statements after
- * the cart's own lock (before any plain read, so the held-quantity sum is read after the locks are
- * won), and after it has made the order and its lines it counts what other pending orders hold
- * EXCLUDING the order it just made. A shortfall refuses the whole checkout with a sentence naming
- * the line, the transaction rolls the order back, and no Stripe page is opened. An open page that is
- * handed back instead of replaced is not counted a second time: it made no new order, and its own
- * units were held when it was opened.
+ * A product line's stock is decided HERE, not at pricing (shop slice B1, ProductStock): the basket's
+ * sizes are read BEFORE the transaction opens and locked by primary key, in ascending id order, as
+ * its first statements after the cart's own lock (before any plain read, so the held-quantity sum
+ * is read after the locks are won; never a locking range read of `cart_items`, whose gap locks
+ * would make other baskets' adds wait on this checkout's Stripe calls). After pricing, a size the
+ * basket gained in between runs the checkout once more. After it has made the order and its lines
+ * it counts what other pending orders hold EXCLUDING the order it just made. A shortfall refuses
+ * the whole checkout with a sentence naming the line, the transaction rolls the order back, and no
+ * Stripe page is opened. An open page that is handed back instead of replaced is not counted a
+ * second time: it made no new order, and its own units were held when it was opened.
+ *
+ * An order this checkout found dead (its page expired on Stripe or closed by replacing it) stays
+ * expired even when the transaction then rolls back: the Stripe side is not undone by a rollback,
+ * and a dead page left `pending` would hold its sizes' units for up to 46 minutes.
  *
  * A basket that has been PAID is closed (`Cart::STATUS_CHECKED_OUT`, by the settlement
  * transaction) and checkout and acknowledge() refuse it; checkout also refuses a basket
@@ -103,6 +109,17 @@ class CartCheckoutService
     private const BUYER_NAME_MAX = 120;
     private const BUYER_PHONE_MAX = 32;
 
+    /** Refused when the basket's sizes moved under two attempts in a row. */
+    public const SIZES_MOVED = 'Your basket changed while it was being checked out. Please try again.';
+
+    /**
+     * The orders markExpired() expired during the current checkout attempt, re-applied after a
+     * rollback (keepExpired()).
+     *
+     * @var list<int>
+     */
+    private array $expiredHere = [];
+
     public function __construct(
         private readonly StripeClient $stripe,
         private readonly CartPricer $pricer = new CartPricer,
@@ -129,19 +146,65 @@ class CartCheckoutService
         ?string $buyerPhone = null,
         bool $requirePhoneForMeals = false,
     ): array {
-        return DB::transaction(function () use ($cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone, $requirePhoneForMeals): array {
+        for ($attempt = 1; ; $attempt++) {
+            $this->expiredHere = [];
+
+            // Read OUTSIDE the transaction, where a plain read fixes no snapshot and takes no lock
+            // (ProductStock's docblock): an ordinary basket names none and locks nothing extra.
+            $sizes = ProductStock::basketVariantIds($cart);
+
+            try {
+                return $this->checkoutWith($sizes, $cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone, $requirePhoneForMeals);
+            } catch (Throwable $e) {
+                $this->keepExpired();
+
+                if (! $e instanceof BasketSizesMoved) {
+                    throw $e;
+                }
+
+                if ($attempt >= 2) {
+                    throw new CartCheckoutRefused(self::SIZES_MOVED);
+                }
+            }
+        }
+    }
+
+    /**
+     * One checkout attempt, in one transaction, with `$sizes` (ascending ids) as the product sizes
+     * the basket was read to hold just before it opened.
+     *
+     * @param  list<int>  $sizes
+     * @return array{order: Order, url: string}
+     */
+    private function checkoutWith(
+        array $sizes,
+        Cart $cart,
+        string $returnBase,
+        ?string $buyerEmail,
+        ?string $buyerName,
+        ?string $buyerPhone,
+        bool $requirePhoneForMeals,
+    ): array {
+        return DB::transaction(function () use ($sizes, $cart, $returnBase, $buyerEmail, $buyerName, $buyerPhone, $requirePhoneForMeals): array {
             // Re-read under a lock: two tabs pressing "pay" must not open two pages.
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
 
             self::assertOpen($locked);
 
-            // The sizes of any product line, locked BEFORE the first plain read of this transaction:
-            // a locking read sees the latest committed rows and fixes no snapshot, so everything the
-            // pricer and the stock check read after this is read after the locks are won, and a
-            // checkout that waited behind another sees the units it took (ProductStock's docblock).
-            ProductStock::lockBasket($locked);
+            // The sizes of any product line, locked by primary key BEFORE the first plain read of
+            // this transaction: a locking read sees the latest committed rows and fixes no snapshot,
+            // so everything the pricer and the stock check read after this is read after the locks
+            // are won, and a checkout that waited behind another sees the units it took. No locking
+            // read of cart_items: its gap locks would stall other baskets' adds (ProductStock).
+            ProductStock::lock((int) $locked->masjid_id, $sizes);
 
             $priced = $this->pricer->price($locked);
+
+            // A size added to the basket after `$sizes` was read was priced from a snapshot taken
+            // without its lock. Nothing has been written yet: roll back and run once more.
+            if (array_diff(ProductStock::pricedVariantIds($priced), $sizes) !== []) {
+                throw new BasketSizesMoved;
+            }
 
             if ($priced->refusal !== null) {
                 throw new CartCheckoutRefused($priced->refusal);
@@ -764,6 +827,30 @@ class CartCheckoutService
     {
         Order::withoutMasjidScope()
             ->whereKey($order->id)
+            ->where('status', Order::STATUS_PENDING)
+            ->update(['status' => Order::STATUS_EXPIRED]);
+
+        $this->expiredHere[] = (int) $order->id;
+    }
+
+    /**
+     * After a checkout attempt failed: what markExpired() did inside its transaction was rolled
+     * back, but the page it found dead stays dead on Stripe (expired by closePage(), or already
+     * expired). Mark those orders expired again, outside the transaction, with the same guard
+     * (pending → expired only, never a paid order). Otherwise a dead page reads as `pending` and
+     * holds its sizes' units until its expiry plus the grace.
+     */
+    private function keepExpired(): void
+    {
+        $ids = array_values(array_unique($this->expiredHere));
+        $this->expiredHere = [];
+
+        if ($ids === []) {
+            return;
+        }
+
+        Order::withoutMasjidScope()
+            ->whereKey($ids)
             ->where('status', Order::STATUS_PENDING)
             ->update(['status' => Order::STATUS_EXPIRED]);
     }

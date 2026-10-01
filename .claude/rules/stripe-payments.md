@@ -796,10 +796,18 @@ applies to it unchanged; these are the rules specific to it, which a change here
 - **Stock has no hold table** (`ProductStock`): `available = stock - sold_count - held`, NULL stock unlimited. `held` = the quantities on
   the lines of PENDING orders whose `checkout_expires_at` + `cart.shop_hold_grace_minutes` (15) is ahead. Expiry releases nothing:
   an expired or lapsed order just stops matching, a paid one is in `sold_count`, prune deletes the old unpaid ones.
-- **The checkout decides, and locks FIRST.** `ProductStock::lockBasket()` runs right after the cart lock and BEFORE the pricer's first
-  plain read, with locking reads only (the basket's product lines, then the sizes `FOR UPDATE` in ascending id): a locking read fixes no
-  REPEATABLE READ snapshot, a plain one does, so a checkout that read first and locked after would sum `held` from a snapshot older than a
-  competing checkout's commit. `createPendingOrder` then re-counts (`ProductStock::refusal`) after the lines exist and before `openPage()`,
+- **The checkout decides, and locks FIRST.**
+  - The basket's sizes are read by `ProductStock::basketVariantIds()` BEFORE the transaction opens, with a plain read that fixes no
+    snapshot and takes no lock.
+  - Inside the transaction they are locked `FOR UPDATE` by PRIMARY KEY alone, in ascending id, right after the cart lock and BEFORE the
+    pricer's first plain read. A locking read fixes no REPEATABLE READ snapshot and a plain one does, so a checkout that read first
+    and locked after would sum `held` from a snapshot older than a competing checkout's commit.
+  - **Never a locking range read of `cart_items`** (or of a size by organisation). Under REPEATABLE READ it gap-locks other baskets'
+    adds for the whole checkout, Stripe calls included, even when it matches nothing (DECISIONS 2026-10-01). An ordinary basket
+    locks nothing extra.
+  - A size the priced basket names but was not locked (added in between) reruns the attempt once (`BasketSizesMoved`), then refuses
+    with `SIZES_MOVED`.
+  - An order `markExpired()` touched stays expired after the attempt rolls back (`keepExpired()`). `createPendingOrder` then re-counts (`ProductStock::refusal`) after the lines exist and before `openPage()`,
   excluding only the order it just made; a shortfall is a `CartCheckoutRefused` ("{label}: sold out." / "{label}: only N left."), which
   rolls the order back and opens no page. The `held` sum is a PLAIN read: a locking read over `orders` would deadlock with a settlement
   (the lock order is cart, order, size). The pricer leaves out the basket's OWN pending orders (the page about to be reused or replaced

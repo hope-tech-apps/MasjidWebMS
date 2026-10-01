@@ -42,10 +42,25 @@ use Illuminate\Support\Facades\DB;
  * later plain read sees (the reason CartSettlementService::settleLocked() opens with locking reads
  * only). A checkout that read the basket, priced it, and only then took the variant locks would
  * wait behind a competing checkout and then sum the held lines from a snapshot that predates the
- * winner's commit: both would see the last unit free. So lockBasket() runs straight after the
- * cart's own lock, with locking reads only, ahead of the pricer's first plain read; a locking read
- * sees the latest committed rows and fixes no snapshot, so everything read afterwards is read
- * after the locks are held. The held SUM is a plain read on purpose: a locking read over `orders`
+ * winner's commit: both would see the last unit free. So the checkout locks the basket's sizes
+ * straight after the cart's own lock, ahead of the pricer's first plain read; a locking read sees
+ * the latest committed rows and fixes no snapshot, so everything read afterwards is read after the
+ * locks are held.
+ *
+ * ## Why the sizes are found OUTSIDE the transaction
+ *
+ * Which sizes a basket holds is read by basketVariantIds() BEFORE the checkout's transaction opens
+ * (a plain read there fixes no snapshot), and inside it they are locked by PRIMARY KEY only. A
+ * locking read of `cart_items` by cart and type would do it in one step, but under REPEATABLE READ
+ * a locking range read over a non-unique index takes next-key and gap locks even when it matches
+ * nothing: an ordinary basket's checkout would then make OTHER baskets' line adds (any
+ * organisation's dish, form or gift) wait for its whole transaction, Stripe calls included, and
+ * fail at innodb_lock_wait_timeout behind a slow Stripe. Primary-key record locks take no gap, and
+ * a basket with no product line takes no lock at all, exactly as before the shop. A size added
+ * between the read and the cart lock is caught after pricing (the priced lines name a size that
+ * was not locked) and the checkout runs again once (CartCheckoutService::checkout()).
+ *
+ * The held SUM is a plain read on purpose: a locking read over `orders`
  * would queue behind a settlement holding the order row while that settlement waits for the
  * variant this checkout holds, and the two would deadlock (cart, order, variant is the one order).
  * SQLite serialises writers and compiles `lockForUpdate()` to nothing, so it cannot show any of
@@ -135,6 +150,12 @@ final class ProductStock
      * a sale of a size withdrawn since is still recorded against it. A locking read, so what comes
      * back is the latest committed `stock` and `sold_count`.
      *
+     * By PRIMARY KEY alone, so InnoDB takes record locks and no gap: a `masjid_id` condition in the
+     * statement could let the optimiser scan the organisation's index instead, and a locking range
+     * scan there gap-locks every insert of a size for that organisation. The organisation is
+     * checked on the rows instead; a row of another organisation (an id from the browser) is locked
+     * for the moment and never returned.
+     *
      * @param  list<int>  $variantIds
      * @return Collection<int, ProductVariant> by id
      */
@@ -146,43 +167,63 @@ final class ProductStock
 
         return ProductVariant::withoutMasjidScope()
             ->withTrashed()
-            ->where('masjid_id', $masjidId)
             ->whereIn('id', $variantIds)
             ->orderBy('id')
             ->lockForUpdate()
             ->get()
+            ->filter(static fn (ProductVariant $variant): bool => (int) $variant->masjid_id === $masjidId)
             ->keyBy('id');
     }
 
     /**
-     * Take the locks for every product line of a basket, as the FIRST thing a checkout does after
-     * the cart's own lock and before it reads or prices anything (see the class docblock). The
-     * lines are read with a locking read for the same reason. A basket with no product line costs
-     * this one statement and takes nothing.
+     * The sizes a basket's product lines name, ascending: read by the checkout BEFORE its
+     * transaction opens, with a plain read that therefore fixes no snapshot and takes no lock (see
+     * the class docblock). Inside the transaction the checkout locks exactly these by primary key
+     * and then checks, after pricing, that the basket named no other (pricedVariantIds()).
+     *
+     * @return list<int>
      */
-    public static function lockBasket(Cart $cart): void
+    public static function basketVariantIds(Cart $cart): array
     {
-        $ids = CartItem::withoutMasjidScope()
+        return CartItem::withoutMasjidScope()
             ->where('cart_id', $cart->id)
             ->where('masjid_id', $cart->masjid_id)
             ->where('buyable_type', CartItem::TYPE_PRODUCT)
-            ->lockForUpdate()
             ->pluck('buyable_id')
             ->map(static fn ($id): int => (int) $id)
             ->unique()
             ->sort()
             ->values()
             ->all();
+    }
 
-        self::lock((int) $cart->masjid_id, $ids);
+    /**
+     * The sizes the priced basket's product lines name, payable or not: what the pricer read
+     * stock for. Each must have been locked before the pricer ran.
+     *
+     * @return list<int>
+     */
+    public static function pricedVariantIds(PricedBasket $priced): array
+    {
+        $ids = [];
+
+        foreach ($priced->lines as ['item' => $item]) {
+            if ($item->buyable_type === CartItem::TYPE_PRODUCT) {
+                $ids[(int) $item->buyable_id] = true;
+            }
+        }
+
+        ksort($ids);
+
+        return array_keys($ids);
     }
 
     /**
      * The sentence a checkout is refused with when a basket's product lines ask for more of a size
      * than is left, or null when every size has enough. THE DECISION: it runs inside the cart lock
      * and the checkout's transaction, after the order and its lines exist, and a refusal rolls them
-     * back, so no page is opened. Every variant of the basket is locked here (a no-op after
-     * lockBasket(), kept so the check is correct on its own), and what pending orders hold is
+     * back, so no page is opened. Every variant of the basket is locked here (a no-op after the
+     * checkout's own lock of the same rows, kept so the check is correct on its own), and what pending orders hold is
      * counted EXCLUDING `$exceptOrderId`, the order this checkout has just made: it would otherwise
      * hold units against itself.
      *
