@@ -166,6 +166,33 @@ class ShopProductValidationTest extends TestCase
         $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, 'nothing of the refused request was saved');
     }
 
+    #[Test]
+    public function a_currency_that_is_not_text_is_refused_not_a_server_error(): void
+    {
+        $this->assertStoreRefused($this->polo(['currency' => ['usd']]), 'currency', 'a currency that is a list');
+        $this->assertStoreRefused($this->polo(['currency' => 840]), 'currency', 'a currency that is a number');
+    }
+
+    // ------------------------------------------------------------ the slug
+
+    #[Test]
+    public function a_slug_clash_is_judged_the_way_the_unique_index_judges_it(): void
+    {
+        // Production's MySQL compares live slugs case- and accent-blind: Polo and polo are one slug there.
+        $slugs = [];
+        foreach (['Polo', 'polo', 'POLO', 'Pólo'] as $name) {
+            $slugs[] = $this->postJson($this->products(), $this->polo(['name' => $name]))->assertCreated()->json('data.slug');
+        }
+        $this->assertSame(['polo', 'polo-2', 'polo-3', 'polo-4'], $slugs, 'each name slugs to polo, and each clash gets the next suffix');
+
+        // A row an import left with a capital letter still counts as taken: SQLite would let a second
+        // `polo` through, MySQL would not, and the suffix has to decide it the same on both.
+        $legacy = $this->product($this->org, ['name' => 'Legacy', 'slug' => 'Hoodie']);
+        $this->assertSame('Hoodie', $legacy->slug, 'premise: the byte-exact SQLite index allows a capitalised slug');
+
+        $this->postJson($this->products(), $this->polo(['name' => 'hoodie']))->assertCreated()->assertJsonPath('data.slug', 'hoodie-2');
+    }
+
     // ------------------------------------------------------------ stock
 
     #[Test]
@@ -201,6 +228,64 @@ class ShopProductValidationTest extends TestCase
         $this->assertListRefused($polo, [['label' => 'Adult L'], ['label' => 'adult l']], 'variants.1.label', 'the same label in another case');
 
         $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => str_repeat('x', 40)]]])->assertOk();
+    }
+
+    #[Test]
+    public function two_labels_are_the_same_label_when_the_unique_index_would_say_so(): void
+    {
+        // Production's MySQL compares live labels under utf8mb4_unicode_ci, which ignores case AND accents;
+        // SQLite is byte-exact. The check must refuse what the index would, so the office gets a sentence
+        // and not a unique-violation 500.
+        $pairs = [
+            'M and m' => ['M', 'm'],
+            'Medium and Medium with an accent' => ['Medium', 'Médium'],
+            'Strasse and Strasse with an eszett' => ['Strasse', 'Straße'],
+            'a case difference inside a longer label' => ['Adult L', 'ADULT l'],
+            'N and N with a tilde' => ['N', 'Ñ'],
+        ];
+
+        foreach ($pairs as $why => [$first, $second]) {
+            $this->assertStoreRefused($this->polo(['variants' => [['label' => $first], ['label' => $second]]]), 'variants.1.label', $why);
+        }
+
+        // On an update too, and the refusal leaves the product's sizes as they were.
+        $polo = $this->product($this->org);
+        $this->variant($polo, ['label' => 'Large']);
+        $this->assertListRefused($polo, [['label' => 'Large'], ['label' => 'large']], 'variants.1.label', 'an update listing Large and large');
+
+        // Different letters stay different, and a script that is not Latin is never merged by transliteration.
+        $this->postJson($this->products(), $this->polo(['variants' => [['label' => 'M'], ['label' => 'N'], ['label' => 'كبير'], ['label' => 'صغير']]]))
+            ->assertCreated()
+            ->assertJsonCount(4, 'data.variants');
+    }
+
+    #[Test]
+    public function a_new_size_takes_the_place_in_the_list_the_caller_gave_it(): void
+    {
+        $polo = $this->product($this->org);
+        $s = $this->variant($polo, ['label' => 'S', 'sort' => 0]);
+        $l = $this->variant($polo, ['label' => 'L', 'sort' => 2]);
+
+        // The new size sits between the two that exist, with no `sort` of its own: its place is its position.
+        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+            ['id' => $s->id, 'label' => 'S'],
+            ['label' => 'M'],
+            ['id' => $l->id, 'label' => 'L'],
+        ]])->assertOk();
+
+        $this->assertSame(['S', 'M', 'L'], array_column($response->json('data.variants'), 'label'));
+        $this->assertSame([0, 1, 2], array_column($response->json('data.variants'), 'sort'));
+    }
+
+    #[Test]
+    public function a_size_id_that_is_not_a_number_is_refused_on_the_id(): void
+    {
+        $polo = $this->product($this->org);
+        $this->variant($polo, ['label' => 'M']);
+
+        foreach (['abc', 1.5, true, [1], 0, -3] as $id) {
+            $this->assertListRefused($polo, [['id' => $id, 'label' => 'M']], 'variants.0.id', 'a size id of ' . json_encode($id));
+        }
     }
 
     #[Test]

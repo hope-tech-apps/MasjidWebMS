@@ -16,6 +16,11 @@ use Illuminate\Support\Str;
  * organisation is the argument, never the bound tenant, so what is checked is exactly what the
  * unique index will check.
  *
+ * The comparison is the index's, not the bytes': production's MySQL compares slugs under
+ * `utf8mb4_unicode_ci`, so `Polo` and `polo` are one slug there while SQLite keeps them apart. The
+ * read is case-blind (`LOWER(slug)`) and the match goes through LiveText::fold(), so a row left
+ * with another case or an accent by an import still counts as taken on both engines.
+ *
  * Two saves that generate the same slug at once both pass this check; the unique index refuses
  * the second, and ProductWriter::create() retries with a fresh read.
  */
@@ -41,18 +46,21 @@ final class ProductSlug
 
         $taken = Product::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
-            ->where(static fn ($query) => $query->where('slug', $base)->orWhere('slug', 'like', $base . '-%'))
+            ->where(static fn ($query) => $query
+                ->whereRaw('LOWER(slug) = ?', [$base])
+                ->orWhereRaw('LOWER(slug) LIKE ?', [$base . '-%']))
             ->pluck('slug')
-            ->all();
+            ->map(static fn ($slug): string => LiveText::fold((string) $slug))
+            ->flip();
 
-        if (! in_array($base, $taken, true)) {
+        if (! $taken->has(LiveText::fold($base))) {
             return $base;
         }
 
         for ($suffix = 2; ; $suffix++) {
             $candidate = $base . '-' . $suffix;
 
-            if (! in_array($candidate, $taken, true)) {
+            if (! $taken->has(LiveText::fold($candidate))) {
                 return $candidate;
             }
         }

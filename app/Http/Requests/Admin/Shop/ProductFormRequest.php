@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Shop;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Services\Shop\LiveText;
 use App\Services\Shop\ProductWriter;
 use App\Support\FormPayment;
 use Closure;
@@ -61,7 +62,7 @@ abstract class ProductFormRequest extends BaseFormRequest
             // Never stored from here: the product is sold in the platform's currency. A request that
             // NAMES another one is refused rather than quietly overridden, so a client that believes
             // it is selling in pounds finds out (ASSUMPTIONS S-9).
-            'currency' => ['nullable', 'string', function (string $attribute, mixed $value, Closure $fail): void {
+            'currency' => ['bail', 'nullable', 'string', function (string $attribute, mixed $value, Closure $fail): void {
                 if (strtolower(trim((string) $value)) !== ProductWriter::currency()) {
                     $fail('Products are sold in ' . strtoupper(ProductWriter::currency()) . ' only.');
                 }
@@ -75,8 +76,8 @@ abstract class ProductFormRequest extends BaseFormRequest
             'variants.*.id' => $creating
                 ? ['prohibited']
                 : ['bail', 'nullable', 'integer:strict', 'min:1', 'distinct'],
-            // Two sizes may not share a label: checked below in withValidator(), case-blind, because the
-            // unique index on a live label is only as strict as the column's collation.
+            // Two sizes may not share a label: checked below in withValidator(), the way the unique index
+            // compares (case AND accent blind, LiveText::fold), because MySQL's collation is not byte-exact.
             'variants.*.label' => ['bail', 'required', 'string', 'max:' . self::LABEL_MAX],
             'variants.*.enabled' => ['sometimes', 'boolean'],
             'variants.*.price_minor' => array_merge(['nullable'], $this->priceRules()),
@@ -87,8 +88,10 @@ abstract class ProductFormRequest extends BaseFormRequest
 
     /**
      * "Two sizes cannot share a name": after every other rule has passed, so a label that is not a
-     * string never reaches the comparison. Case-blind (M and m), because a MySQL column collation
-     * that ignores case would otherwise turn the same mistake into a duplicate-key error.
+     * string never reaches the comparison. Compared as production's `utf8mb4_unicode_ci` unique index
+     * compares them (LiveText::fold: M and m, Medium and Médium, Strasse and Straße are one label),
+     * because SQLite is byte-exact and a text that passes here and then meets that index is a 500, not
+     * a sentence.
      */
     public function withValidator(Validator $validator): void
     {
@@ -102,7 +105,7 @@ abstract class ProductFormRequest extends BaseFormRequest
                     continue;
                 }
 
-                $key = mb_strtolower($label);
+                $key = LiveText::fold($label);
 
                 if (isset($seen[$key])) {
                     $validator->errors()->add("variants.{$index}.label", 'Two sizes cannot share a name.');
@@ -167,6 +170,21 @@ abstract class ProductFormRequest extends BaseFormRequest
     {
         $validated = $this->validated();
 
-        return array_key_exists('variants', $validated) ? array_values($validated['variants']) : null;
+        if (! array_key_exists('variants', $validated)) {
+            return null;
+        }
+
+        // validated() rebuilds the list one RULE at a time (every `id`, then every `label`, ...), so a row
+        // with no `id` comes back after the rows that have one. The order the caller sent is the order
+        // that decides a new size's place in the list, so it is restored from the raw input's keys.
+        $rows = [];
+
+        foreach (array_keys((array) $this->input('variants', [])) as $key) {
+            if (isset($validated['variants'][$key])) {
+                $rows[] = $validated['variants'][$key];
+            }
+        }
+
+        return $rows;
     }
 }
