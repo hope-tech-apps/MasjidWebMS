@@ -278,10 +278,20 @@ class PageSectionsController extends Controller
             // The ORGANISATION's switches, never the viewer's: a SuperAdmin
             // building a page for an organisation with Events switched off must
             // read the same note its own admin would. The palette itself is not
-            // filtered (.claude/rules/section-types.md).
+            // filtered (.claude/rules/section-types.md), with ONE exception: a type
+            // that requiresGrant() (the shop) is offered only when this organisation
+            // HAS that grant. Fail closed, as hasCapability() is: no organisation
+            // found means no grant. This is the only place the palette is filtered;
+            // validation gates the same type's creation (ValidatesShopSection) and
+            // nothing gates reading or deleting a section already of it.
             $masjid = Masjid::find($masjid_id);
 
-            $types = collect(SectionType::cases())->map(fn($type) => [
+            $offered = collect(SectionType::cases())
+                ->filter(fn($type) => $type->requiresGrant() === null
+                    || $masjid?->hasCapability($type->requiresGrant()) === true)
+                ->values();
+
+            $types = $offered->map(fn($type) => [
                 'value' => $type->value,
                 'label' => $type->label(),
                 'description' => $type->description(),
@@ -444,6 +454,10 @@ class PageSectionsController extends Controller
             // into `video_url` and nowhere else). `section_images` registers no
             // conversions, so a video in it is stored as uploaded.
             SectionType::VIDEO => ['video_url', 'poster_url'],
+            // The shop stores no image: the renderer draws each product's own, from the
+            // shop API. Said here, and not left to `default`, so the type is visibly
+            // accounted for in both copies of this map.
+            SectionType::SHOP => [],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };
