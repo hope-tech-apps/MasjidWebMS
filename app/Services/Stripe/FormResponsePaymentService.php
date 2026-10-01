@@ -172,8 +172,12 @@ class FormResponsePaymentService
             ? FormResponse::query()
                 ->where('stripe_payment_intent_id', $intentId)
                 // bin/deploy makes this code live before `migrate`: until order_items exists there
-                // is no basket a row could belong to, and asking would answer 500 to a live refund.
-                ->when(CartTables::has('order_items'), fn ($query) => $query->whereNotExists(function ($cart): void {
+                // is no basket a row could belong to, so a genuinely missing table skips the
+                // exclusion. A check that FAILS is not "missing": with the cart switched on, reading
+                // it as absent would let this arm flag a row a basket settled (the cart arm owns that
+                // flag). So it is the strict question, and a failed check throws: the webhook answers
+                // 500, Stripe retries, and the retry flags the row once (ASSUMPTIONS PM-A6b).
+                ->when(CartTables::existsOrFail('order_items'), fn ($query) => $query->whereNotExists(function ($cart): void {
                     $cart->selectRaw('1')
                         ->from('order_items')
                         ->where('order_items.record_type', OrderItem::RECORD_FORM_RESPONSE)

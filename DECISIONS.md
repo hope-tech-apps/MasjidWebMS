@@ -6570,3 +6570,30 @@ Design and slicing: the tuition plan (private workspace), reviewed by the point 
 (2026-09-30). Rule files: .claude/rules/family-ledger.md (new), stripe-payments.md ("Stripe owns the
 billing clock" and "Registration payments record fee/net"), registration-billing-data.md ("Tuition
 autopay"). No code implements this yet; slice 1A builds the ledger.
+
+## 2026-09-30 — Switching the universal cart on for MEC (owner: "Yes, switch it on for MEC")
+
+The owner, in the cart session: switch the cart on for MEC only (`CART_ENABLED=true`, `CART_MASJID_IDS=13`). The member portal stays
+dark (`MEMBER_PORTAL_ENABLED` unset; PM-A1/#61 still stand). The enable blockers, each closed or decided here:
+- PM-A6b, the form refund arm: it now asks the strict `CartTables::existsOrFail('order_items')`. With the cart on, a failed table
+  check read as "absent" would let the FORM arm flag a row a basket settled, and the cart arm owns that flag. So a failed check
+  throws, the webhook answers 500 with the event left unprocessed, and Stripe's retry flags the row once. A genuinely missing table
+  (the deploy window) still skips the exclusion. The fail-safe `has()` is now used only by `cart:prune`. Test:
+  `CartDeployWindowTest::a_live_form_refund_whose_order_items_check_throws_is_refused_for_a_retry_and_flagged_once_on_it`,
+  which replaces the fail-safe test.
+- PM-A6, the events: `payment_intent.payment_failed` is now routed for a basket only (`CartPaymentService::handlePaymentFailed`,
+  info with the decline code, no state change). Cart pages are card only (`payment_method_types => ['card']`), so a decline leaves
+  the page open for another card, and `checkout.session.async_payment_*` cannot occur for a basket. Every other payment intent's
+  failure is acked and ignored as before. `checkout.session.expired` was already handled (pending to expired). The Connect
+  endpoint's subscriptions are the owner's step, after this ships. Until then `cart:prune` ages out stale pending orders. Test:
+  `CartPaymentFailedTest`.
+- #43, MEC's return origin: verified read-only on production. `FormPaymentReturn::base()` admits
+  `https://mec.manara.hopetechapps.com` (MEC's active managed subdomain) for masjid 13 and refuses it for another org.
+  `mec-web.pages.dev` and the reserved domains get no base, which is correct. Pinned by the existing
+  `CartCheckoutEndpointTest::a_confirmed_domain_of_this_organisation_is_the_return_base_and_another_organisations_is_refused`.
+- #44, MEC's grants: already met on production (`giving` and `jummah_lunch` on, the giving module on, `canAcceptDonations()` true,
+  a Stripe account). No change.
+- The canary: `api/v1/cart*` is NOT added to `canary.throttle_allowlist`. A basket is anonymous and token-keyed, and its tenancy is
+  pinned by `CartBasketAccessTest` and `CartTenantIsolationTest`, so the hourly canary could not probe it without a token it does
+  not have. Revisit if a signed-in basket arrives.
+- The live test purchase is the owner's: a $1 donation through the basket, refunded in Stripe.

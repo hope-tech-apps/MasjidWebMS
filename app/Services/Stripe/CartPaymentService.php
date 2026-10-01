@@ -252,6 +252,27 @@ class CartPaymentService
     }
 
     /**
+     * payment_intent.payment_failed on a basket's page: a card attempt was declined. Cart pages
+     * are card only (CartCheckoutService), so this is never a delayed debit that finally failed:
+     * the page stays open and the shopper can try another card, so NOTHING is recorded or
+     * changed. Logged at info with the decline's code (never the card or the shopper) so the
+     * office can see why a basket stopped at payment.
+     */
+    public function handlePaymentFailed(array $intent, ?string $account): void
+    {
+        $order = $this->resolve($intent, $account, self::KIND_INTENT);
+        $error = is_array($intent['last_payment_error'] ?? null) ? $intent['last_payment_error'] : [];
+
+        Log::info('A card attempt on a basket\'s payment page failed; the page stays open, nothing was recorded.', [
+            'order_id' => $order?->id,
+            'masjid_id' => $order?->masjid_id,
+            'payment_intent' => $this->stringOrNull($intent['id'] ?? null),
+            'code' => $this->stringOrNull($error['code'] ?? null),
+            'decline_code' => $this->stringOrNull($error['decline_code'] ?? null),
+        ]);
+    }
+
+    /**
      * charge.refunded / charge.dispute.created on a BASKET's charge: flag the ORDER, never a
      * line. A basket has one charge and one payment intent, and Stripe says only how much of
      * it was refunded, never which line, so any per-line flag would be a guess. The order

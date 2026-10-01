@@ -325,25 +325,32 @@ class CartDeployWindowTest extends TestCase
     }
 
     #[Test]
-    public function a_live_form_refund_is_still_flagged_and_answered_200_when_the_order_items_check_itself_throws(): void
+    public function a_live_form_refund_whose_order_items_check_throws_is_refused_for_a_retry_and_flagged_once_on_it(): void
     {
         $row = $this->pinnedPaidRow();
-        $this->breakTheTableCheck('order_items');
+        $database = $this->breakTheTableCheck('order_items');
+        $event = $this->refund();
 
-        // Without the fail-safe the exception left the form arm, and the webhook answered 500.
-        $this->postWebhook($this->refund())->assertOk();
+        // The check could not be answered, so this delivery is refused rather than guessed: read as
+        // "absent", it would let the form arm flag a row a basket settled once the cart is on.
+        $this->postWebhook($event)->assertStatus(500);
+        $this->assertNull($row->fresh()->charge_flag, 'nothing is flagged on a delivery that could not tell whose row it is');
+        $this->assertNull(
+            DB::table('stripe_webhook_events')->where('stripe_event_id', $event['id'])->value('processed_at'),
+            'the event is left unprocessed, so Stripe\'s retry is not ignored as a duplicate'
+        );
+
+        // Stripe retries the same event; the check answers now, and the row is flagged once.
+        $database->broken = false;
+        $this->postWebhook($event)->assertOk();
 
         $flagged = $row->fresh();
-        $this->assertSame(FormResponse::CHARGE_FLAG_REFUNDED, $flagged->charge_flag, 'the cart exclusion is skipped and the row is flagged exactly as before the cart');
+        $this->assertSame(FormResponse::CHARGE_FLAG_REFUNDED, $flagged->charge_flag);
         $this->assertSame(320, $flagged->charge_refunded_minor);
 
-        // Said once, by class only; and it is not the cart arm's error-level alarm.
-        Log::shouldHaveReceived('warning')
-            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'cart tables could not be looked up')
-                && ($context['exception'] ?? null) === RuntimeException::class
-                && ! str_contains(json_encode($context), 'unavailable'))
-            ->once();
-        Log::shouldNotHaveReceived('error');
+        // A third delivery is the duplicate it is: nothing moves.
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame(320, $row->fresh()->charge_refunded_minor);
     }
 
     #[Test]

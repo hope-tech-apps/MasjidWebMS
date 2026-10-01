@@ -344,6 +344,10 @@ class StripeWebhookController extends Controller
             // account.updated follows, so the stored flags would say "can take charges"
             // forever: cleared here, so every gate that reads them fails closed.
             'account.application.deauthorized' => $this->handleAccountDeauthorized($account, $event),
+            // A card attempt on a page failed (a decline). The page stays open for another try,
+            // so nothing changes; a basket's is logged so the office can see why a shopper stopped.
+            // Every other payment intent is acked and ignored exactly as before.
+            'payment_intent.payment_failed' => $isCart ? $this->handleCartEvent($event['type'], $object, $account) : null,
             default => null, // unhandled event types are acked and ignored.
         };
     }
@@ -384,6 +388,7 @@ class StripeWebhookController extends Controller
             'payment_intent.succeeded' => $this->cartPayments->handlePaymentIntentSucceeded($object, $account),
             'checkout.session.expired' => $this->cartPayments->handleCheckoutExpired($object, $account),
             'checkout.session.async_payment_failed' => $this->cartPayments->handleAsyncPaymentFailed($object, $account),
+            'payment_intent.payment_failed' => $this->cartPayments->handlePaymentFailed($object, $account),
             default => null,
         };
 
