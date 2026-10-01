@@ -383,6 +383,7 @@ import ProvidersDirectorySectionEditor from '@/components/sections/editors/Provi
 import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
 import OfferingSectionEditor from '@/components/sections/editors/OfferingSectionEditor.vue';
 import VideoSectionEditor from '@/components/sections/editors/VideoSectionEditor.vue';
+import ShopSectionEditor from '@/components/sections/editors/ShopSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -500,6 +501,9 @@ const editorMap: Record<SectionType, any> = {
     // An MP4 uploaded to this site. Same rule again: the import and this entry land
     // together, or the dropdown offers Video with a blank editor pane.
     'video': VideoSectionEditor,
+    // Products from the online shop. Same rule again: the import and this entry land
+    // together, or an organisation with the shop grant is offered Shop with a blank pane.
+    'shop': ShopSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);
