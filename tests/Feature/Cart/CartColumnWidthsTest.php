@@ -9,6 +9,7 @@ use App\Models\OrderItem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Feature\Shop\BuildsShop;
 use Tests\TestCase;
 
 /**
@@ -26,6 +27,7 @@ use Tests\TestCase;
 class CartColumnWidthsTest extends TestCase
 {
     use BuildsBaskets;
+    use BuildsShop;
     use RefreshDatabase;
     use SignsCartWebhooks;
 
@@ -185,13 +187,14 @@ class CartColumnWidthsTest extends TestCase
     #[Test]
     public function the_rows_a_real_basket_leaves_all_fit_their_columns(): void
     {
-        // A basket of all three kinds, paid, then partly refunded: every table and every
+        // A basket of all four kinds, paid, then partly refunded: every table and every
         // vocabulary the flow writes, through the code that writes them.
-        $org = $this->org();
+        $org = $this->shopOrg();
         $cart = $this->cart($org);
         $this->add($cart, CartItem::TYPE_FORM, $this->ticketForm($org)->id, 1500, 2, $this->twoTickets());
         $this->add($cart, CartItem::TYPE_MEAL, $this->dish($org)->id, 1200, 2);
         $this->add($cart, CartItem::TYPE_DONATION, $this->fund($org)->id, 5000);
+        $this->addVariant($cart, $this->sizeOf($org, ['stock' => 5]), 2);
 
         $order = $this->placeOrder($cart);
         $this->postWebhook($this->sessionEvent($order))->assertOk();
@@ -208,7 +211,7 @@ class CartColumnWidthsTest extends TestCase
         $declared = $this->declared();
         $checked = [];
 
-        foreach (['carts', 'cart_items', 'orders', 'order_items'] as $table) {
+        foreach (['carts', 'cart_items', 'orders', 'order_items', 'products', 'product_variants', 'product_sales'] as $table) {
             foreach (DB::table($table)->get() as $row) {
                 foreach ((array) $row as $column => $value) {
                     if (! is_string($value) || ! isset($declared["{$table}.{$column}"])) {
@@ -229,7 +232,7 @@ class CartColumnWidthsTest extends TestCase
         // above read real rows and did not pass by looking at nothing. cart_items is not among them:
         // settlement removes the lines an order paid for, so a paid basket's cart_items are gone
         // (their widths are pinned against the declared columns by the test above).
-        foreach (['carts', 'orders', 'order_items'] as $table) {
+        foreach (['carts', 'orders', 'order_items', 'products', 'product_variants', 'product_sales'] as $table) {
             $this->assertGreaterThan(0, $checked[$table] ?? 0, "premise: {$table} rows were read and checked");
         }
     }
