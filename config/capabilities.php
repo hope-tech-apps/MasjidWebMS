@@ -238,6 +238,21 @@ return [
         'listed_when_off' => false,
     ],
 
+    // The online shop (shop slice B1, DECISIONS.md 2026-09-30): products with size variants and
+    // stock, sold through the universal basket as a fourth line type. A grant, OFF for every
+    // organisation of every type, so an organisation that does not have it is byte for byte what
+    // it was: a product line already in a basket is `gone` at pricing and `type: product` is
+    // refused at add (App\Services\Cart\Sources\ProductLineSource asks `hasCapability('shop')`),
+    // and nothing else reads the products tables. A SuperAdmin grants it per organisation.
+    'shop' => [
+        'kind' => 'grant',
+        'group' => 'registration_money',
+        'label' => 'Online shop',
+        'description' => 'Sell products such as school uniforms online, in sizes with their own stock, through the basket. Off: no product can be added to a basket or paid for.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => true,
+    ],
+
     // ------------------------------------------------------------------
     // Modules — default ON; labels are the sidebar titles
     // ------------------------------------------------------------------

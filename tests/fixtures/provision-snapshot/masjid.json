@@ -45,7 +45,8 @@
                     "short_lesson_plan": false,
                     "simple_marking": false,
                     "points_weekly_report": false,
-                    "class_store": false
+                    "class_store": false,
+                    "shop": false
                 },
                 "modules_off": [],
                 "modules_on": [],

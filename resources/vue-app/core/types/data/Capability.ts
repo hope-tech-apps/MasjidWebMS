@@ -30,7 +30,9 @@ export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' |
     // The Friday points report (T-003.3): families and teachers are emailed. A grant, off for everyone.
     | 'points_weekly_report'
     // The class store (T-003.4): points become Manara Bucks that a class store spends. A grant, off for everyone.
-    | 'class_store';
+    | 'class_store'
+    // The online shop (shop slice B1): products with size variants and stock, sold through the basket. A grant, off for everyone.
+    | 'shop';
 
 /** The modules, in catalogue order (Masjid::MODULE_KEYS). CapabilityTsMirrorTest pins it. */
 export const MODULE_KEYS = [
@@ -173,6 +175,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     simple_marking: 'Mark work Excellent, Good or Needs work',
     points_weekly_report: 'Weekly points report',
     class_store: 'Class store (Manara Bucks)',
+    shop: 'Online shop',
 };
 
 /** One organisation a login belongs to, as the SuperAdmin's user screens see it. */
