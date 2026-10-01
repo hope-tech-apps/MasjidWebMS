@@ -41,13 +41,20 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 final class PublicCatalogue
 {
     /**
-     * Every listed product of the organisation, in the order the office set.
+     * The most products one listing returns. The shelf is not paginated (the renderer wants it in one
+     * read), so a hard ceiling keeps a runaway catalogue from becoming a runaway response: the
+     * first 200 in the office's order are returned and the rest are not.
+     */
+    public const LISTING_LIMIT = 200;
+
+    /**
+     * Every listed product of the organisation, in the order the office set, up to LISTING_LIMIT.
      *
      * @return list<array<string,mixed>>
      */
     public static function listing(int $masjidId): array
     {
-        return self::present($masjidId, self::shelf($masjidId)->get());
+        return self::present($masjidId, self::shelf($masjidId)->limit(self::LISTING_LIMIT)->get());
     }
 
     /**

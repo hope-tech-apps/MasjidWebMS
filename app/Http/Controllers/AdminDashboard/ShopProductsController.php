@@ -5,6 +5,7 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Shop\StoreProductRequest;
 use App\Http\Requests\Admin\Shop\UpdateProductRequest;
+use App\Http\Requests\Admin\Shop\UploadProductImagesRequest;
 use App\Models\Product;
 use App\Services\Shop\ProductChangedElsewhere;
 use App\Services\Shop\ProductPayload;
@@ -156,6 +157,7 @@ class ShopProductsController extends Controller
         return [
             'currency' => ProductWriter::currency(),
             'max_images' => Product::MAX_IMAGES,
+            'max_image_mb' => UploadProductImagesRequest::MAX_MB,
         ];
     }
 
