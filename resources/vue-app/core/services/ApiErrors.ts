@@ -69,9 +69,9 @@ export function apiErrorText(error: unknown, fallback: string): string {
  * the photos and videos of one post have a combined ceiling, and the same clips sent
  * in two posts fit.
  */
-export function uploadErrorText(error: unknown, fallback: string): string {
+export function uploadErrorText(error: unknown, fallback: string, noun: 'post' | 'message' = 'post'): string {
     return (error as AxiosError)?.response?.status === 413
-        ? 'That is too large to send together. Send fewer photos or videos at once, and the rest in another post.'
+        ? `That is too large to send together. Send fewer photos or videos at once, and the rest in another ${noun}.`
         : apiErrorText(error, fallback);
 }
 

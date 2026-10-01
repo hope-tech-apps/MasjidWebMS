@@ -34,7 +34,10 @@ class UpdateGroupMessageRequest extends BaseFormRequest
     public function rules(): array
     {
         $rules = [
-            'body' => 'nullable|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
+            // PRESENT, not merely nullable: an edit that does not name the words at all
+            // must not be read as "empty them". A photo message may lose its caption only
+            // when the request says so (`body` sent, and empty).
+            'body' => 'present|nullable|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
         ];
 
         foreach (self::REFUSED as $field) {
@@ -46,7 +49,7 @@ class UpdateGroupMessageRequest extends BaseFormRequest
 
     public function messages(): array
     {
-        $messages = [];
+        $messages = ['body.present' => 'Send the words of the message.'];
 
         foreach (self::REFUSED as $field) {
             $messages[$field . '.prohibited'] = 'Only the words of a sent message can be edited.';

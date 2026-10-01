@@ -7189,3 +7189,21 @@ Alternatives: let the office edit anyone's message (rejected: rewrites a colleag
 and the audit answer the same worry without taking away fixing an old typo); clear reactions on an edit (a one-line
 follow-up if wanted); let families edit their own replies (needs a contact-side audit column, an erasure entry and a
 decision on whether the teacher is told).
+
+## 2026-10-01 — W7 integration folds: the video review's second pass, and an edit must name the words (branch integrate/w7-2-edits)
+- **The office story box always has limits.** An administrator who is not on the class roster may post a story and is
+  refused the feed read, so the feed's `meta` never reached that screen and no limit applied: four large clips would
+  upload and end in a 413. The box now uses the shipped defaults (`DEFAULT_POST_LIMITS`, mirroring config/groups.php)
+  until the server's own limits arrive, and re-plans what is already chosen when they do. The server remains the truth.
+- **A generic file type says nothing.** `application/octet-stream` on a `.mov` is treated as "unknown", so the
+  extension decides, and the clip goes in the videos bag.
+- **The 413 sentence names what is being sent** ("…the rest in another message" on conversation screens), as the
+  server's own refusals do. The test calls the function instead of matching its text, and pins both office uploads.
+- **The office hint explains the videos even when photos have no limit** (an images limit of 0).
+- **Editing a message: `body` must be present.** A PUT that did not name the words was read as "empty them", which
+  blanked a photo message's caption. It is now a 422 and nothing is written.
+- **Known, accepted** (from the slice reviews): an office login that is not on a class roster can no longer edit that
+  class's sent stories (it could read back words it may not open; it can still delete); the "Earlier versions" control
+  shows for an office viewer whose role cannot read them (the refusal is shown in place); a story announced by the
+  sweep in the instant between an edit's check and its lock is stamped Edited without the feed gate having run (the
+  editor is its own author).

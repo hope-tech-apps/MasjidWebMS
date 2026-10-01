@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { isVideoFile, pickerLimits, planMediaPick, videoLimitHint, type MediaLimits } from '../core/helpers/mediaPick.ts';
+import { DEFAULT_POST_LIMITS, isVideoFile, pickerLimits, planMediaPick, videoLimitHint, type MediaLimits } from '../core/helpers/mediaPick.ts';
+import { uploadErrorText } from '../core/services/ApiErrors.ts';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = (relative: string): string => readFileSync(path.join(appRoot, relative), 'utf8');
@@ -156,32 +157,72 @@ test('a clip the browser gives no type is still a video, by its extension', () =
     assert.equal(isVideoFile({ name: 'recital.MOV', type: '', size: 1 }), true);
     assert.equal(isVideoFile({ name: 'clip.m4v', type: '', size: 1 }), true);
     assert.equal(isVideoFile({ name: 'photo.jpg', type: '', size: 1 }), false);
-    // A stated type wins over the name.
+    // A stated type wins over the name; a generic one says nothing, so the name decides.
     assert.equal(isVideoFile({ name: 'odd.mov', type: 'image/jpeg', size: 1 }), false);
+    assert.equal(isVideoFile({ name: 'clip.mov', type: 'application/octet-stream', size: 1 }), true);
+    assert.equal(isVideoFile({ name: 'scan.pdf', type: 'application/octet-stream', size: 1 }), false);
 
     // So it meets the video limits instead of slipping through as a photo.
     const untyped = { name: 'big.mov', type: '', size: 101 * MB };
     assert.deepEqual(planMediaPick([], [untyped], LIMITS).accepted, []);
 });
 
-test('one rule splits the list into the two bags, and one sentence answers a 413', () => {
+test('one rule splits the list into the two bags', () => {
     for (const file of ['views/teacher/TeacherClass.vue', 'stores/masjid/groupFeedStore.ts', 'stores/masjid/groupThreadsStore.ts']) {
         const text = source(file);
         assert.match(text, /isVideoFile\(file\) \?/, `${file} splits by isVideoFile`);
         assert.doesNotMatch(text, /\(file\.type \|\| ''\)\.startsWith\('video\/'\) \?/, `${file} has no second copy of the rule`);
     }
-
-    const errors = source('core/services/ApiErrors.ts');
-    assert.match(errors, /status === 413/);
-    assert.match(errors, /the rest in another post/);
-    for (const file of ['views/teacher/TeacherClass.vue', 'views/dashboard/groups/GroupStoryTab.vue', 'views/dashboard/groups/GroupThreadsTab.vue']) {
-        assert.match(source(file), /uploadErrorText\(/, `${file} uses the upload sentence`);
-    }
 });
 
-test('the office story box applies no limit before the server has sent any', () => {
+test('a 413 is answered in one sentence that names what is being sent', () => {
+    const tooLarge = { response: { status: 413, data: '<html>413 Request Entity Too Large</html>' }, message: 'Request failed with status code 413' };
+
+    assert.equal(
+        uploadErrorText(tooLarge, 'The post could not be published.'),
+        'That is too large to send together. Send fewer photos or videos at once, and the rest in another post.',
+    );
+    assert.equal(
+        uploadErrorText(tooLarge, 'Your reply could not be sent.', 'message'),
+        'That is too large to send together. Send fewer photos or videos at once, and the rest in another message.',
+    );
+
+    // Anything else is the API's own words, or the fallback.
+    const refused = { response: { status: 422, data: { status: 'failed', data: { videos: ['A post may carry at most 3 videos.'] } } } };
+    assert.equal(uploadErrorText(refused, 'fallback'), 'A post may carry at most 3 videos.');
+    assert.equal(uploadErrorText({}, 'The post could not be published.'), 'The post could not be published.');
+});
+
+test('every upload screen uses that sentence, with the right noun', () => {
+    const teacher = source('views/teacher/TeacherClass.vue');
+    assert.match(teacher, /photoErrorText\(e, 'The post could not be published\.'\)/);
+    assert.match(teacher, /photoErrorText\(e, 'That message could not be sent\.', 'message'\)/);
+    assert.match(teacher, /photoErrorText\(e, 'Your reply could not be sent\.', 'message'\)/);
+
+    assert.match(source('views/dashboard/groups/GroupStoryTab.vue'), /uploadErrorText\(error, 'Failed to publish the post\.'\)/);
+
+    // BOTH office conversation uploads: opening one with media, and a reply.
+    const officeThreads = source('views/dashboard/groups/GroupThreadsTab.vue');
+    assert.match(officeThreads, /uploadErrorText\(error, 'Failed to open the conversation\.', 'message'\)/);
+    assert.match(officeThreads, /uploadErrorText\(error, 'Failed to send the message\.', 'message'\)/);
+    assert.equal((officeThreads.match(/uploadErrorText\(/g) ?? []).length, 2);
+});
+
+test('the office story box always has limits: the shipped defaults until the server sends its own', () => {
     const officeStory = source('views/dashboard/groups/GroupStoryTab.vue');
-    assert.match(officeStory, /if \(!meta\) return null;/);
-    assert.match(officeStory, /mediaLimits\.value\s*\? planMediaPick<File>\(\[\], picked, mediaLimits\.value\)\s*: \{ accepted: picked, note: '' \}/);
+
+    // An administrator off the class roster is refused the feed READ, so `meta` never
+    // arrives; with no limit at all, an oversized pick would upload and end in a 413.
+    assert.match(officeStory, /if \(!meta\) return DEFAULT_POST_LIMITS;/);
+    assert.match(officeStory, /planMediaPick<File>\(\[\], picked, mediaLimits\.value\)/);
     assert.match(officeStory, /\(meta\.max_images_per_post \?\? 0\) > 0 \? meta\.max_images_per_post : Infinity/);
+    // What was picked on the stand-in is held to the real limits when they arrive.
+    assert.match(officeStory, /watch\(mediaLimits, \(limits\) => \{[\s\S]*?planMediaPick<File>\(\[\], chosenFiles\.value, limits\)/);
+    // The hint still explains the videos when photos have no limit.
+    assert.doesNotMatch(officeStory, /if \(!meta \|\| !meta\.max_images_per_post\) return '';/);
+
+    // The stand-in is the server's shipped defaults (config/groups.php).
+    assert.deepEqual({ ...DEFAULT_POST_LIMITS }, { maxImages: 8, maxVideos: 3, maxVideoKb: 102400, maxVideosTotalKb: 122880 });
+    const fourBig = [video('a', 90 * MB), video('b', 90 * MB), video('c', 90 * MB), video('d', 90 * MB)];
+    assert.equal(planMediaPick([], fourBig, DEFAULT_POST_LIMITS).accepted.length, 1);
 });

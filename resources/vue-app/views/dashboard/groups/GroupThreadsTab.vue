@@ -536,7 +536,7 @@ const submitThread = async () => {
         await selectThread(thread);
         Swal.fire({ icon: 'success', title: 'Opened', timer: 1600, showConfirmButton: false });
     } catch (error) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: uploadErrorText(error, 'Failed to open the conversation.') });
+        Swal.fire({ icon: 'error', title: 'Error!', text: uploadErrorText(error, 'Failed to open the conversation.', 'message') });
     } finally {
         creating.value = false;
     }
@@ -559,7 +559,7 @@ const submitMessage = async () => {
         Swal.fire({
             icon: 'error',
             title: 'Not sent',
-            text: uploadErrorText(error, 'Failed to send the message.')
+            text: uploadErrorText(error, 'Failed to send the message.', 'message')
         });
     } finally {
         sending.value = false;

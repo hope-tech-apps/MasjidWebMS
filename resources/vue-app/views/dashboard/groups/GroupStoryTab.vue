@@ -207,7 +207,7 @@ import { GroupPost } from '@/core/types/data/masjid-related/GroupPost';
 import { useGroupFeedStore } from '@/stores/masjid/groupFeedStore';
 import { apiErrorText, isForbidden, uploadErrorText } from '@/core/services/ApiErrors';
 import { preparePhoto } from '@/core/helpers/preparePhoto';
-import { planMediaPick, videoLimitHint, type MediaLimits } from '@/core/helpers/mediaPick';
+import { DEFAULT_POST_LIMITS, planMediaPick, videoLimitHint, type MediaLimits } from '@/core/helpers/mediaPick';
 import Swal from 'sweetalert2';
 
 /**
@@ -286,13 +286,14 @@ const addMediaLabel = computed<string>(() => {
 });
 
 /**
- * The server's limits, as the shared pick rule reads them (mediaPick.ts), or null
- * until the feed has loaded: a pick made before then is left to the server, not
- * refused on a guess. An images limit of 0 is the server's "no limit".
+ * The server's limits, as the shared pick rule reads them (mediaPick.ts). Until the
+ * feed has loaded, and for an administrator who is refused the feed READ (so its
+ * `meta` never arrives), the shipped defaults stand in: a pick is never left with no
+ * limit at all. An images limit of 0 is the server's "no limit".
  */
-const mediaLimits = computed<MediaLimits | null>(() => {
+const mediaLimits = computed<MediaLimits>(() => {
     const meta = feedStore.feedMeta;
-    if (!meta) return null;
+    if (!meta) return DEFAULT_POST_LIMITS;
 
     return {
         maxImages: (meta.max_images_per_post ?? 0) > 0 ? meta.max_images_per_post : Infinity,
@@ -304,9 +305,13 @@ const mediaLimits = computed<MediaLimits | null>(() => {
 
 const uploadHint = computed<string>(() => {
     const meta = feedStore.feedMeta;
-    if (!meta || !meta.max_images_per_post) return '';
+    if (!meta) return '';
 
-    const parts = [`Up to ${meta.max_images_per_post} images, ${meta.max_image_size_kb}KB each`];
+    // An images limit of 0 is "no limit": say nothing about a count, and still
+    // explain the videos.
+    const parts = meta.max_images_per_post
+        ? [`Up to ${meta.max_images_per_post} images, ${meta.max_image_size_kb}KB each`]
+        : [];
 
     if (meta.max_videos_per_post) {
         // MB, not the rule's KB: 102400KB is arithmetic nobody should do while
@@ -314,12 +319,23 @@ const uploadHint = computed<string>(() => {
         // real difference a teacher should know before posting — a clip is kept
         // for a shorter time than the photos beside it.
         parts.push(
-            videoLimitHint(mediaLimits.value as MediaLimits)
+            videoLimitHint(mediaLimits.value)
             + (meta.video_retention_days ? `, kept ${meta.video_retention_days} days` : '')
         );
     }
 
     return parts.join(' · ');
+});
+
+// A pick made on the stand-in limits is held to the real ones when they arrive:
+// what no longer fits is taken out, and the note says why.
+watch(mediaLimits, (limits) => {
+    if (!chosenFiles.value.length) return;
+    const { accepted, note } = planMediaPick<File>([], chosenFiles.value, limits);
+    if (accepted.length !== chosenFiles.value.length) {
+        chosenFiles.value = accepted;
+        pickNote.value = note;
+    }
 });
 
 // Lifecycle
@@ -474,9 +490,7 @@ const onFilesChosen = async (event: Event) => {
 
     // A pick REPLACES the selection here (this box has "clear", not "add more"), so
     // the limits are applied to the pick alone. Same rule as the shared picker.
-    const { accepted, note } = mediaLimits.value
-        ? planMediaPick<File>([], picked, mediaLimits.value)
-        : { accepted: picked, note: '' };
+    const { accepted, note } = planMediaPick<File>([], picked, mediaLimits.value);
     pickNote.value = note;
 
     const pick = ++pickCount;

@@ -39,9 +39,12 @@ export type MediaPick<T> = { accepted: T[]; note: string };
  */
 const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm)$/i;
 
+/** Types a browser gives a file it could not identify: they say nothing about what it is. */
+const GENERIC_TYPES = new Set(['application/octet-stream', 'binary/octet-stream', 'application/x-unknown']);
+
 export const isVideoFile = (file: PickedFile): boolean => {
-    const type = file.type || '';
-    return type ? type.startsWith('video/') : VIDEO_EXTENSIONS.test(file.name || '');
+    const type = (file.type || '').toLowerCase();
+    return type && !GENERIC_TYPES.has(type) ? type.startsWith('video/') : VIDEO_EXTENSIONS.test(file.name || '');
 };
 
 const megabytes = (kb: number): number => Math.round(kb / 1024);
@@ -105,6 +108,23 @@ export function planMediaPick<T extends PickedFile>(current: T[], chosen: T[], l
 
     return { accepted, note: notes.join(' ') };
 }
+
+/**
+ * The limits a NEW post is held to when the server has not said (yet, or at all): the
+ * shipped defaults of config/groups.php. A stand-in, never the truth: the server's
+ * `meta` replaces it the moment it arrives, and the server refuses what passes this.
+ *
+ * It exists for the office story box. An administrator who is not on the class roster
+ * may post a story and is refused the feed READ (403), so the feed's `meta` never
+ * reaches that screen; with no limits at all, four 90MB clips would upload for
+ * minutes and end in a 413.
+ */
+export const DEFAULT_POST_LIMITS: MediaLimits = Object.freeze({
+    maxImages: 8,
+    maxVideos: 3,
+    maxVideoKb: 102400,
+    maxVideosTotalKb: 122880,
+});
 
 /** "3 videos up to 100MB each, 120MB together": the limit as a teacher reads it, or ''. */
 export function videoLimitHint(limits: MediaLimits): string {

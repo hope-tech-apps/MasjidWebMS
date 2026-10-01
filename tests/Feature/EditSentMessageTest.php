@@ -403,6 +403,14 @@ class EditSentMessageTest extends TestCase
             'disk' => 'local', 'path' => 'group-messages/p.jpg',
         ]);
 
+        // A request that does not name the words at all is not "empty them": the
+        // caption stays, nothing is stamped and no earlier version is written.
+        $this->asTeacher()
+            ->putJson($this->teacherUrl("/threads/{$thread->id}/messages/{$photo->id}"), [])
+            ->assertStatus(422)
+            ->assertJsonPath('data.body.0', 'Send the words of the message.');
+        $this->assertUntouched($photo, 'A caption');
+
         $this->asTeacher()
             ->putJson($this->teacherUrl("/threads/{$thread->id}/messages/{$photo->id}"), ['body' => ''])
             ->assertOk()

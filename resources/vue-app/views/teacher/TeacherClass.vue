@@ -4131,7 +4131,7 @@ const createThread = async () => {
         composePhotos.value = [];
         await loadThreads();
     } catch (e: any) {
-        composeError.value = photoErrorText(e, 'That message could not be sent.');
+        composeError.value = photoErrorText(e, 'That message could not be sent.', 'message');
     } finally {
         sendingCompose.value = false;
     }
@@ -5294,7 +5294,7 @@ const withPhotos = (fields: Record<string, string | number>, media: File[]): For
 
 // nginx answers an oversized request itself, as HTML, so apiErrorText would
 // only have axios's "status code 413" to show.
-const photoErrorText = (e: any, fallback: string): string => uploadErrorText(e, fallback);
+const photoErrorText = (e: any, fallback: string, noun: 'post' | 'message' = 'post'): string => uploadErrorText(e, fallback, noun);
 
 // ============================================================ STORY
 const posts = ref<any[]>([]);
@@ -5578,7 +5578,7 @@ const sendReply = async () => {
         await rereadOpenThread();
         await loadThreads();
     } catch (e: any) {
-        replyError.value = photoErrorText(e, 'Your reply could not be sent.');
+        replyError.value = photoErrorText(e, 'Your reply could not be sent.', 'message');
     } finally {
         sendingReply.value = false;
     }
