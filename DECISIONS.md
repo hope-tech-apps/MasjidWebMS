@@ -6597,3 +6597,98 @@ dark (`MEMBER_PORTAL_ENABLED` unset; PM-A1/#61 still stand). The enable blockers
   pinned by `CartBasketAccessTest` and `CartTenantIsolationTest`, so the hourly canary could not probe it without a token it does
   not have. Revisit if a signed-in basket arrives.
 - The live test purchase is the owner's: a $1 donation through the basket, refunded in Stripe.
+
+## 2026-09-30 — Shop slice B1: products, size variants, stock without a hold table, and a fourth cart line (branch feat/shop-b1, off 6de704bc)
+
+The plan is `mec-wix-migration/design/shop-plan-2026-09-30.md` (the point's review is binding) and the brief is
+`design/brief-shop-b1.md`. This slice is the money core: the catalogue tables, a product as a fourth basket line type, stock, and
+the settlement arm. It ships DARK behind the new `shop` grant (OFF for every organisation type), so nothing changes for anyone
+until a SuperAdmin grants it. No admin API, no public read API, no pickup list and no confirmation e-mail: those are B2. **Nothing in
+this slice has been run: there is no PHP on the machine it was written on** (ASSUMPTIONS, shop slice B1, S1).
+
+- **The grant.** `shop` is a `grant` in group `registration_money`, label "Online shop", defaults all false, and `listed_when_off`
+  TRUE as the brief says. Consequence for the point: TeamController lists every grant that is not `listed_when_off => false` as a
+  chip even while it is off, so every organisation's Team & Access screen gains an "Online shop" chip (off). TeamController's own
+  docblock says `listed_when_off => false` exists so that "adding a grant never adds an 'off' chip to every organisation's screen",
+  and class_store and the other recent grants use it. One word flips it, and nothing else reads the key. Mirrored where 9c0a4add mirrored class_store: `Capability.ts` (union and label), `OrganisationModulesTest`,
+  the three provision snapshots and `set-capability-responses.json`.
+- **The tables.** `products`, `product_variants` (soft-deleting) and `product_sales`; integer minor units; `BelongsToMasjid` on all
+  three. Unique among LIVE rows: a product's slug per organisation, a size's label per product, as a partial index on SQLite and as
+  a VIRTUAL generated column plus a unique index on MySQL (`live_slug`, `live_label`), hidden on the models and listed under
+  `never_write` in the staging scrub. VIRTUAL, not STORED: `migrations.md` says STORED, but the two shipped migrations that use this
+  technique (`masjids.active_owner_user_id`, `masjid_user.default_key`) record that an ALTER adding a STORED column rebuilt the table
+  and failed on foreign keys in production, and that a unique index on a VIRTUAL column works on 8.0+. I followed the shipped,
+  production-run migrations and said so in the migration's docblock; the rules file's line is the one that disagrees.
+  `product_sales`: `order_id` and `order_item_id` RESTRICT (a paid order is never pruned; a masjid hard-delete with a paid shop order
+  is therefore refused, which is deliberate), `order_item_id` UNIQUE (one sale per line), and `product_id` and `variant_id` are plain
+  indexed ids with NO key, because either may be trashed, even removed, after it sold: the snapshot columns are the truth. It holds
+  no buyer data (the pickup list reads the buyer from the order), so it has no contact column and `MemberAccountDeletionCoverageTest`
+  needed nothing. An index on `order_items (buyable_type, buyable_id)` serves the stock hold's read.
+- **Stock without a hold table.** `available = stock - sold_count - held`; NULL stock is unlimited. `held` is the quantity on the lines
+  of PENDING orders whose `checkout_expires_at` plus `cart.shop_hold_grace_minutes` (default 15, floor 0) is still ahead, so a unit is
+  held 31 + 15 = 46 minutes at most. Nothing releases: paid moves a unit into `sold_count` at settlement, an expired order stops
+  matching, prune deletes the old ones. All of it is `App\Services\Cart\ProductStock`.
+  - **Where it is asked.** The pricer (advisory: a notice before the card screen), the checkout (the decision), settlement (the count).
+  - **The checkout locks FIRST.** `ProductStock::lockBasket()` runs straight after the cart's own lock, before the pricer's first
+    plain read, with locking reads only (the basket's product lines, then those sizes `FOR UPDATE` in ascending id). Reason: under
+    REPEATABLE READ the first plain SELECT fixes the snapshot, so a checkout that priced first and locked after would wait behind a
+    competing checkout and then sum `held` from a snapshot older than the winner's commit; both would see the last unit free. That
+    is the brief's "lock every variant ... re-compute available" made correct: the lock cannot sit between the order insert and the
+    re-count, because the re-count's plain read would already be pinned to an old snapshot. The brief's own check still runs where it
+    said (`createPendingOrder`, after the lines, before `openPage()`), re-locking the same rows (a no-op) and excluding the order it
+    just made; a shortfall throws `CartCheckoutRefused` ("{label}: sold out." / "{label}: only N left."), the transaction rolls the
+    order back, and no page is opened.
+  - **The `held` sum is a plain read on purpose.** A locking read over `orders` would queue behind a settlement holding the order row
+    while that settlement waits for the size this checkout holds: the lock order is cart, order, size, and a checkout that took the
+    order rows after the size would invert it.
+  - **Own basket excluded in the pricer, only the new order in the decision.** The pricer leaves out the basket's OWN pending orders
+    (the page about to be reused or replaced must not count against its own basket: the brief's "must not count the reused order
+    twice"; the reuse path makes no new order, so it runs no second check). The decision excludes only the order it just made, so it
+    is conservative: a stale pending order of the same basket that opened no page (which `reuseOpenPage` cannot see) still counts and
+    refuses with a sentence. That cannot arise today (a checkout closes the basket's earlier page before it opens another);
+    `ShopStockTest::the_decision_is_taken_inside_the_checkout...` builds it by hand to prove the decision is independent of the pricer.
+  - **Two lines of one size clamp together, sequentially.** The pricer allocates in line-id order: each line gets what the earlier
+    lines left. Subtracting every OTHER line's request would clamp both to nothing.
+  - **A stale-snapshot oversell is still possible, only through a late webhook.** A payment that reaches the webhook after the grace
+    can find its unit re-sold. That is the point's decision: record, flag, alert, never refuse, never refund (below).
+- **Pricing** (`ProductLineSource`, called from `CartPricer`). The size is loaded with `masjid_id` (another organisation's is a miss,
+  a trashed one too), then: the `shop` grant (else `gone`, "The shop is not available."); the product live, active, and the size
+  enabled; the product's currency equal to the basket's (a product in another currency is `gone`, not sold at its number in ours);
+  quantity 1..20 (above is clamped and told); unit = the size's `price_minor` else the product's `base_price_minor`, at least 1; a
+  changed price is `repriced` ("The price changed while this was in your basket."); stock `gone` at none ("Sold out.") or clamped and
+  told ("Only N left, so this was reduced to N."). Paid into the organisation's own account, as food and gifts are.
+- **Adding.** `type: product` takes `variant_id` and `quantity` 1..20; the grant is asked FIRST, so a dark shop gives one sentence
+  for a real id and a made-up one; another organisation's size and a missing one are the same 422 field error. The line carries
+  payload `{product_id}`, label "{product} ({size})", `recorded_as` `sale`, `buyable_type` `product_variant`. The replay hash is
+  `variant_id` and `quantity`. A request for more than is left is KEPT and clamped with a notice, as a dish is clamped to its cap.
+- **Checkout freezes the sale.** `order_items.payload` is null and `price_snapshot` is `{product_id, variant_id, product_name,
+  variant_label, unit_minor, quantity, total_minor}`: everything settlement writes the sale from, nothing personal.
+- **Settlement** (`settleProduct`, dispatched on `product_variant`). Before the line loop it locks every size of the order's shop
+  lines in ascending id, so two orders sharing two sizes cannot deadlock (and a checkout locks in the same order); the order stays
+  cart, order, size. Then per line: the size under its lock (trashed rows included), `sold_count += qty`, a `product_sales` row from
+  the snapshot, the line linked (`record_type` `product_sale`). Idempotent by `record_id`, with a belt: a sale that already names the
+  line (unique) is relinked and counts nothing twice. A trashed, disabled or product-off size is still settled (a warning says so). A size
+  REMOVED outright is recorded from its snapshot alone, with a warning and no stock to move: unlike a form or a fund (whose
+  records have foreign keys), nothing here needs the row, and a retry loop on taken money would help nobody.
+  **Oversold**: if `sold_count` then exceeds `stock` the sale is still recorded, flagged `oversold`, and an ERROR on the `monitors`
+  channel (so `OPS_ALERT_EMAIL` fires) names the order number, the order id, the organisation, the size and its counts, with no
+  buyer detail. It is raised AFTER the commit, as the e-mails are, so a rolled-back sale never alerts. It never refuses and never
+  refunds. The pickup-list and order banners the review asked for are B2's; the flag they will read is `product_sales.oversold`.
+- **Refunds and disputes stay order-level.** No product arm: `CartPaymentService` flags the order, a refund does not restock and
+  does not touch a sale (`ShopSettlementTest::a_refund_or_dispute_flags_the_order...`).
+- **The member portal does not list product sales in this slice.** `MemberPurchases` has no source for them, so there was nothing to
+  exclude beside the form and meal exclusions; a member sees a shop purchase only as a line of the cart order that holds it (the
+  `manara` source). A later source for `product_sales` must use `notOwnedByACart(..., OrderItem::RECORD_PRODUCT_SALE)` or one purchase
+  is listed twice; the class docblock says so. The constant exists for that.
+- **`CartTables::NAMES` gains `product_sales`, before `order_items`.** Its consumers: `cart:prune` skips a night (an info line) until
+  the shop migration has run, which is right and changes nothing once it has; the deploy-window tests drop the names in order and a
+  FK child now precedes its parents; `MemberAccountDeletion::OFFICE_RECORDS`, the Wix undo and the contact merge look at `orders`
+  and `carts` only and have no `product_sales` column to ask about.
+- **Staging scrub.** `products.name`, `products.description`, `product_variants.label`, `product_sales.product_name` and
+  `product_sales.variant_label` are `reviewed_keep` with a reason (catalogue text, not personal data); `live_slug` and `live_label` are
+  `never_write`.
+- **Tests.** `tests/Feature/Shop/`: `ShopCapabilityTest`, `ShopSchemaTest`, `ProductTenantIsolationTest` (one method per model, as
+  `TenantScopingCoverageTest` reads them), `ProductLineTest`, `CartAddProductTest`, `ShopStockTest`, `ShopSettlementTest`;
+  `CartColumnWidthsTest` and `CartConfigTest` extended; `tests/Mysql/ShopLiveUniquenessTest` and `ShopStockMysqlTest` (group `mysql`)
+  run the generated columns and the whole stock path on the engine, on ONE connection: they prove the statements and the
+  arithmetic, not a two-connection race.

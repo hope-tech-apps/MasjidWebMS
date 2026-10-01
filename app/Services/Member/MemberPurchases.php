@@ -52,6 +52,12 @@ use Illuminate\Support\Facades\DB;
  *     the caller;
  *   - a form response or meal order that an `order_items` row records is LEFT OUT: the
  *     cart order already lists it, and listing both would count one purchase twice;
+ *   - shop product sales (`product_sales`, `OrderItem::RECORD_PRODUCT_SALE`) are NOT a source here: a
+ *     sale is the office's pickup record and holds no buyer data of its own, and a member sees a shop
+ *     purchase only as a line of the cart order that holds it (the first bullet), so there is
+ *     nothing to leave out beside the form and meal exclusions above. A future source for them must
+ *     exclude cart-owned rows the same way (`notOwnedByACart(..., OrderItem::RECORD_PRODUCT_SALE)`),
+ *     or one purchase would be listed twice.
  *   - donations: `contact_id` is the caller and the gift succeeded. That link was made at
  *     settlement from the address the giver TYPED, which `donations` does not keep, so a gift
  *     cannot be held to the verified address the way an order is (ASSUMPTIONS #61, an owner

@@ -782,6 +782,44 @@ services, called as they are. Rules a change here must keep:
   attendee names in the lines. It prints its counts and logs them (`Log::info`, "Cart retention
   sweep completed.", zeros included), because `schedule:run` discards stdout (`routes/console.php`).
 
+### The shop: a fourth line type (shop slice B1, DECISIONS.md 2026-09-30)
+
+A basket line can buy a SIZE of a product (`CartItem::TYPE_PRODUCT` = `product_variant`; `recorded_as` `sale`). Everything above
+applies to it unchanged; these are the rules specific to it, which a change here must keep:
+
+- **Dark behind the `shop` grant** (`config/capabilities.php`, OFF for every org type). It is asked FIRST at add
+  (`CartLineAdder::productLine`: a dark shop gives one sentence for a real id and a made-up one) and again at every pricing
+  (`ProductLineSource`: `gone`, "The shop is not available."). Settlement never asks it: money taken is recorded.
+- **The line is a variant, never the product**, loaded with `masjid_id` by hand (the basket runs unbound). Payload `{product_id}`;
+  quantity 1..20; unit = the size's `price_minor` else the product's `base_price_minor`, at least 1; a product in another currency
+  than the basket's is `gone`; a changed price is `repriced` and told before Stripe; paid into the organisation's own account.
+- **Stock has no hold table** (`ProductStock`): `available = stock - sold_count - held`, NULL stock unlimited. `held` = the quantities on
+  the lines of PENDING orders whose `checkout_expires_at` + `cart.shop_hold_grace_minutes` (15) is ahead. Expiry releases nothing:
+  an expired or lapsed order just stops matching, a paid one is in `sold_count`, prune deletes the old unpaid ones.
+- **The checkout decides, and locks FIRST.** `ProductStock::lockBasket()` runs right after the cart lock and BEFORE the pricer's first
+  plain read, with locking reads only (the basket's product lines, then the sizes `FOR UPDATE` in ascending id): a locking read fixes no
+  REPEATABLE READ snapshot, a plain one does, so a checkout that read first and locked after would sum `held` from a snapshot older than a
+  competing checkout's commit. `createPendingOrder` then re-counts (`ProductStock::refusal`) after the lines exist and before `openPage()`,
+  excluding only the order it just made; a shortfall is a `CartCheckoutRefused` ("{label}: sold out." / "{label}: only N left."), which
+  rolls the order back and opens no page. The `held` sum is a PLAIN read: a locking read over `orders` would deadlock with a settlement
+  (the lock order is cart, order, size). The pricer leaves out the basket's OWN pending orders (the page about to be reused or replaced
+  must not count against itself) and allocates a size's units to the basket's lines in id order, so two lines of one size clamp together.
+  A reused page makes no new order and so runs no second check.
+- **Checkout freezes the sale**: `order_items.payload` null, `price_snapshot` `{product_id, variant_id, product_name, variant_label,
+  unit_minor, quantity, total_minor}`. Settlement writes the sale from it and asks the catalogue nothing.
+- **Settlement** (`settleProduct`): every size of the order's shop lines is locked in ascending id before the loop (cart, order, size),
+  the size is read withTrashed under its lock, `sold_count += qty`, a `product_sales` row is written from the snapshot, and the line is
+  linked (`record_type` `product_sale`). Idempotent by `record_id`, and by the sale's unique `order_item_id`. A trashed, disabled or
+  removed size is still settled (a removed one records the sale alone, with a warning). **Oversold** (`sold_count > stock`, only through
+  a webhook later than the grace): the sale is recorded with `oversold` true and an ERROR goes to the `monitors` channel (the order
+  number and the size, no buyer detail), raised AFTER the commit. Never refused, never auto-refunded.
+- **Refunds and disputes stay order-level**: there is no product arm, and a refund does not restock or touch a sale.
+- **`product_sales` holds no buyer data** (the pickup list reads the buyer from the order, whose columns are classified and scrubbed),
+  has RESTRICT keys to the order and its line (a paid order is never pruned) and plain ids to the product and size (either may be
+  trashed after selling). It is in `CartTables::NAMES`, before `order_items`.
+- **The member portal does not list product sales** (`MemberPurchases` has no source for them): a member sees a shop purchase only as a
+  line of the cart order that holds it. A future source must exclude cart-owned rows with `notOwnedByACart(..., RECORD_PRODUCT_SALE)`.
+
 ## Tenancy note
 
 `Fund`, `Donation`, `DonationReceipt` use `App\Models\Concerns\BelongsToMasjid`
