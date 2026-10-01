@@ -6822,7 +6822,10 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   `api` macro would drop.
 - **Not changed.** Staging scrub, `MemberAccountDeletionCoverageTest`, `TenantScopingCoverageTest` and `StagingScrubCoverageTest` demand nothing
   new (no table, no column, no model). `CartColumnWidthsTest`'s map already holds the widths B2 validates to; only its comment was updated.
-  The admin SPA (B3) and the renderer (C) are not in this slice.
+  The tenancy canary plans public GET collections from the route table (`ProbeCatalog`); `GET /api/v1/shop/products` is DECLINED there, behind
+  `throttle:shop-read`, which is not in `canary.throttle_allowlist`, exactly as the basket's `GET /cart` is, so the hourly canary neither spends the
+  limiter nor reads the dark 404 as an unreachable endpoint; `/{slug}` takes a parameter and is never planned. The admin SPA (B3) and the
+  renderer (C) are not in this slice.
 - **Tests.** `tests/Feature/Shop/`: `ShopProductsAdminTest`, `ShopProductValidationTest`, `ShopProductImagesTest`, `ShopPickupListTest`,
   `ShopPublicApiTest`, `ShopAdminGateTest` (capability, permission and tenant on every route, walked from the router), and the traits
   `BuildsShopAdmin`. Written without being run (S-12).
