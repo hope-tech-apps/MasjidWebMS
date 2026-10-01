@@ -6793,7 +6793,7 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   Widths are the columns': `ShopProductValidationTest` reads the migration and compares (SQLite ignores a varchar's length).
 - **Pictures.** Spatie media, collection `product_images`, on the library's default disk as the gallery uses (`MEDIA_DISK`, `public`). The
   upload rule is the one every image upload in the admin has (`ValidatesVideoSection::sectionUploadRules`): `mimes` reads the bytes, `extensions`
-  pins the client's file NAME (the library keeps it on the public disk and the web server picks the Content-Type from it), 25 MB each
+  pins the client's file NAME (the library keeps it on the public disk and the web server picks the Content-Type from it), 25 MB each (10 MB since the fix round, below)
   (the library's own ceiling); SVG is not on the list. At most 8 per product: the count is taken under the product's row lock, so two
   uploads at once cannot both pass, and an upload that would take it past eight is refused AS A WHOLE (not even the first file is
   kept). Reorder takes the full list of the product's picture ids and writes Spatie's `order_column`: an id that is not this product's is a
@@ -6809,8 +6809,9 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   `charge_flag` for a person to judge (ASSUMPTIONS S-18). Search matches the order number or the buyer name, case-blind, `%` and `_`
   literal (`LOWER(col) LIKE ? ESCAPE '!'`, because a backslash escape means different things in a MySQL and a SQLite string). Newest paid
   first, `per_page` 1 to 100 (default 25).
-- **The header counts** (`meta.summary`) are ONE grouped query over the whole organisation, per product and size, in UNITS: still to hand out,
-  collected, and oversold and not refunded (an oversold sale since refunded no longer needs the banner). The filters do not move it. It is
+- **The header counts** (`meta.summary`) are ONE grouped query over the whole organisation, per product and size: `to_hand_out` and `collected` in
+  UNITS, and (since the fix round, below) `oversold_open` in LINES; it was oversold units not refunded, which kept counting a sale the office had
+  dealt with. The filters do not move it. It is
   grouped by the names the sales carry, so a product renamed after it sold shows as two lines for the same size rather than hiding a name.
 - **Collect and undo.** `POST .../collect` is the form roster's check-in for a sale: stamped by the FIRST press only (a repeat answers "Already
   handed out." with the first collector kept), on the locked row. It is refused with a sentence on a refunded or disputed order, and that
@@ -6858,3 +6859,67 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   - So only a hand-run SQL delete reaches this. The wait is one checkout's length, and it blocks only the adding of sizes.
 - **The rule:** never hard-delete a `product_variants` or `products` row on production. A cleanup that needs to must first remove
   every `cart_items` line naming it.
+
+## 2026-10-01 — B2 critic fix round: a sale's resolution, locks, a script-independent fold and stale editors (branch feat/shop-b2, rebased onto the shipped B1 d2fbee5d)
+
+The brief is `design/brief-shop-b2-fixes.md`: six minor findings of the B2 critic, plus the point's two additions (the picture limit, the public cap).
+B1 is in production, so its migration is untouched; ONE new migration, `2026_10_06_100200_add_resolution_and_lock_version_to_shop_tables`
+(Blueprint only, every name by hand, a real `down()`), adds the columns below. `php -l` was the only thing run: nothing else was, and the suite has still
+not run (ASSUMPTIONS S-12). Each item is its own commit.
+
+1. **A sale's resolution.** `product_sales.resolution` (string 16, nullable: `refunded` | `substituted`), `resolved_at`, `resolved_by_user_id` (nullable
+   FK to users, hand-named `product_sales_resolved_by_foreign`, nullOnDelete as `collected_by_user_id` is). `POST .../shop/sales/{sale}/resolve
+   {resolution}` and `DELETE .../resolve`, both `manage donations`, both answering `{status, message, data: row}` as collect does and both logging the
+   actor the way collect does (ids and the vocabulary word only; a clear logs what it was and who had set it). Resolving is idempotent: the SAME
+   word again changes nothing and keeps the FIRST resolver and moment; a DIFFERENT word replaces the resolution, and the sale then carries who set THAT
+   one (S-33). `refunded` takes the sale off "to hand out" (list, summary and row `to_hand_out`), like a fully refunded order, and `collect` refuses it
+   with a sentence; `substituted` STAYS to hand out (the substitute is what is handed over) and only ends the need for anyone's call. `oversold` itself is
+   never cleared: it is a fact; `resolution` is what was done. A row's `refunded` stays the ORDER's flag. Rows carry `resolution`, `resolved_at` and
+   `resolved_by {id, name}`; the CSV gets a `Resolution` column after `Charge flag`. No buyer data and no free text, so nothing for the staging scrub.
+2. **collect locks the order.** After the sale's own lock, collect reads the order's `charge_flag` with `lockForUpdate()`, so a refund or dispute being
+   recorded at that moment is waited for, not raced. Lock order: sale, then order. Settlement locks the order and then INSERTS new sales (it never locks an
+   existing sale row), and the refund arm (`CartPaymentService::flagOrder`) locks the order and nothing else, so there is no cycle; the docblock says so.
+3. **`oversold_open` replaces `oversold` in the summary.** It COUNTS SALES (lines), not units: oversold, the order not refunded or disputed, `resolution`
+   NULL and not collected. Units overstated the work (one line of 5 is one decision), and a resolved or handed-over line kept counting.
+4. **No gap-locking read of sizes.** `create()` takes no locking read of sizes at all (a product made in the transaction has none). `update()` locks the
+   product row FOR UPDATE (it serialises every writer of the product and its sizes), checks `lock_version`, and then, when the request carries a list,
+   locks the sizes THE ROWS NAME by primary key alone, ascending, through `ProductStock::lock()` (the lock a checkout takes before it writes an order
+   line; no `product_id` or `masjid_id` in the statement, because under REPEATABLE READ a locking range read gap-locks: B1's ship blocker, 740e5db1);
+   ownership is checked on the rows afterwards (a size that is not this product's live size is the 404). ONLY THEN are the live sizes read (a plain
+   `get()`), and the `order_items` that name a renamed size (also plain), so both see every line a competing checkout committed, and a renamed size is
+   always one of the request rows: the frozen-label guarantee holds. No consistent read comes before the first lock: the route binds the product in
+   the controller, BEFORE the transaction, in autocommit, and the request's validation reads nothing, so the transaction's snapshot is fixed after the
+   locks. `delete()` finds the sizes with a plain read under the product lock and soft-deletes them by primary key after the same locks, not by a
+   `product_id` range. All three run in `DB::transaction(..., 3)` (a deadlock victim retries; no Stripe call, mail or file is in any of them). The writer
+   never writes `sold_count`: a test saves after a settlement moved it and reads the statements.
+5. **A script-independent fold and a backstop.** `LiveText::fold()` is NFKD (the `intl` Normalizer), then every mark (`\p{M}`) and every format
+   character (`\p{Cf}`: soft hyphen, ZWSP, ZWJ, ZWNJ, directional marks) and the Hangul fillers stripped, white space collapsed and the ends trimmed (MySQL 8.4's
+   unicode_ci is PAD SPACE), lower case, then Latin runs transliterated (`ß` to `ss`). So `Е`/`Ё`, `أطفال`/`اطفال` (hamza), `آ`/`ا` (madda), `XL`/`X­L`,
+   `M`/`M `/` M`, `Medium`/`Médium` are each one label, and two different Arabic or Cyrillic words stay two. Without `intl` the Normalizer step is
+   skipped (the fallback still folds case, space, format characters, decomposed marks and every Latin accent; precomposed `Ё`, `أ`, `آ` would be told apart:
+   S-29). Whatever the fold misses meets the index, and `ProductWriter` CATCHES the violation: one naming `live_label` (MySQL) or `product_variants.label`
+   (SQLite's wording) becomes a 422 on `variants` ("Two sizes of one product cannot share a name."); one naming `live_slug` / `products.slug` is retried
+   with the next suffix, five tries in all, and after the fifth a 422 on `name` ("Another product took that name just now. Try saving again."), never a 500.
+6. **Stale editors are refused.** `products.lock_version` (unsigned int, default 0). EVERY successful `update()` adds one under the product lock, a
+   sizes-only save included; so does every picture upload, delete and reorder (they change what the editor shows), by one atomic UPDATE. Every product
+   answer carries `lock_version` (show, index, store, update and the three picture answers). `PUT products/{id}` REQUIRES `lock_version` (`integer:strict`,
+   a missing one is a 422 on `lock_version`); under the lock a different value is HTTP 409 with the body exactly
+   `{"status":"failed","message":"This product was changed by someone else. Reload it and make your change again."}` and nothing is written. The
+   Studio draft's check (`StudioDraftsController`, `lock_version`) was the precedent; its 409 body is `{status:'conflict', message, data}`, but the body
+   here is the one the point pinned for the SPA, without `data` (S-32). The picture endpoints need no `lock_version` of their own.
+
+**The point's two additions.** A picture is at most 10 MB (`UploadProductImagesRequest::MAX_MB`; "Each picture can be at most 10 MB."), because
+production's `post_max_size` is 110M and eight at the old 25 MB (200 MB) could never arrive and failed as a bare 413 (S-16 closed); `meta.max_image_mb` is 10,
+beside `max_images`. `PublicCatalogue::listing()` returns at most 200 products (`LISTING_LIMIT`), in the order the office set; the shape is unchanged and a
+product past the 200th is still reachable by its own slug (S-19 now bounded).
+
+**Deferred to v1.1, not built:** a collect-only or shop-specific permission; the oversold alert wording when an admin lowers a stock below sold plus held; a
+deleted product's pictures staying on the public disk; the upload writing files inside the database transaction; reorder and delete of pictures not taking the
+product's row lock first (they bump the version with one atomic UPDATE instead, which is enough for the version but takes no lock for the media rows themselves);
+a pixel-dimension cap on pictures.
+
+**For B3 (the new fields, pinned):** every product answer carries `lock_version` (int); PUT sends it back (422 if missing, 409 if stale, then reload and
+repeat); sales rows add `resolution` (null | "refunded" | "substituted"), `resolved_at` (ISO 8601 | null), `resolved_by` ({id, name} | null), and
+`to_hand_out` is false for "refunded"; summary rows are `{product_id, variant_id, product_name, variant_label, to_hand_out, collected, oversold_open}`
+(`oversold_open` replaces `oversold` and counts lines); `POST|DELETE .../shop/sales/{sale_id}/resolve`; the CSV's last column is `Resolution`; products
+`meta` is `{currency, max_images, max_image_mb}`. For C: nothing changes except the 200-product ceiling.
