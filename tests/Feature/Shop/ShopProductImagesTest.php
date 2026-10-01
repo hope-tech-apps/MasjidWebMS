@@ -172,7 +172,7 @@ class ShopProductImagesTest extends TestCase
             'image bytes named as a page' => UploadedFile::fake()->create('page.html', 10, 'image/jpeg'),
             'image bytes named as a script' => UploadedFile::fake()->create('shell.php', 10, 'image/jpeg'),
             'a page named as an image' => UploadedFile::fake()->create('photo.jpg', 10, 'text/html'),
-            'one kilobyte over 25 MB' => UploadedFile::fake()->create('huge.jpg', UploadProductImagesRequest::MAX_KB + 1, 'image/jpeg'),
+            'one kilobyte over 10 MB' => UploadedFile::fake()->create('huge.jpg', UploadProductImagesRequest::MAX_KB + 1, 'image/jpeg'),
         ];
 
         foreach ($refused as $why => $file) {
@@ -181,6 +181,12 @@ class ShopProductImagesTest extends TestCase
             $this->assertArrayHasKey('images.0', $response->json('data'), "{$why} was not refused on the file");
             $this->assertSame(0, $this->pictureCount($polo), "{$why} was stored anyway");
         }
+
+        // The sentence says the limit, and eight of them fit the server's post_max_size (110M in production).
+        $huge = $this->upload($polo, [UploadedFile::fake()->create('huge.jpg', UploadProductImagesRequest::MAX_KB + 1, 'image/jpeg')])->assertStatus(422);
+        $this->assertSame('Each picture can be at most 10 MB.', $huge->json('data')['images.0'][0]);
+        $this->assertSame(10240, UploadProductImagesRequest::MAX_KB);
+        $this->assertLessThan(110 * 1024, Product::MAX_IMAGES * UploadProductImagesRequest::MAX_KB, 'a full request of eight must be able to arrive');
 
         // The four kinds, in either case of extension, and the size ceiling itself, are in.
         $this->upload($polo, [
@@ -267,6 +273,53 @@ class ShopProductImagesTest extends TestCase
         $this->assertSame(1, (int) Media::query()->findOrFail($a)->order_column);
         $this->assertSame(2, (int) Media::query()->findOrFail($b)->order_column);
         $this->assertSame(1, (int) Media::query()->findOrFail($theirs)->order_column, 'the other product\'s picture was not moved');
+    }
+
+    // ------------------------------------------------------------ the editor's version
+
+    #[Test]
+    public function a_picture_added_removed_or_moved_moves_the_lock_version_and_the_answer_carries_it(): void
+    {
+        $polo = $this->product($this->org);
+        $version = fn (): int => (int) Product::query()->findOrFail($polo->id)->lock_version;
+
+        $this->assertSame(0, $version());
+
+        $upload = $this->upload($polo, [$this->jpeg('a.jpg'), $this->jpeg('b.jpg')])->assertCreated();
+        $this->assertSame(1, $upload->json('data.lock_version'), 'one bump for the upload, however many files');
+        [$a, $b] = array_column($upload->json('data.images'), 'id');
+
+        $moved = $this->putJson($this->imagesUrl($polo, '/order'), ['order' => [$b, $a]])->assertOk();
+        $this->assertSame(2, $moved->json('data.lock_version'));
+
+        $removed = $this->deleteJson($this->imagesUrl($polo, '/' . $a))->assertOk();
+        $this->assertSame(3, $removed->json('data.lock_version'));
+        $this->assertSame(3, $version());
+
+        // Refused requests move nothing.
+        $this->putJson($this->imagesUrl($polo, '/order'), ['order' => [$b, 999999]])->assertNotFound();
+        $this->deleteJson($this->imagesUrl($polo, '/999999'))->assertNotFound();
+        $this->upload($polo, [UploadedFile::fake()->create('notes.pdf', 10, 'application/pdf')])->assertStatus(422);
+        $this->assertSame(3, $version());
+    }
+
+    #[Test]
+    public function an_editor_that_read_the_product_before_a_picture_changed_is_refused_as_stale(): void
+    {
+        $polo = $this->product($this->org);
+        $this->variant($polo, ['label' => 'M']);
+
+        $opened = (int) $this->getJson($this->shopUrl($this->org, '/products/' . $polo->id))->assertOk()->json('data.lock_version');
+
+        // Somebody else adds a picture.
+        $this->upload($polo, [$this->jpeg('late.jpg')])->assertCreated();
+
+        // The first editor saves what it showed: refused, nothing written.
+        $this->putProduct($this->org, $polo->id, ['name' => 'Stale name'], $opened)->assertStatus(409);
+        $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name);
+
+        // At the version the picture upload left, it goes through.
+        $this->putProduct($this->org, $polo->id, ['name' => 'Fresh name'])->assertOk();
     }
 
     // ------------------------------------------------------------ the whole key
