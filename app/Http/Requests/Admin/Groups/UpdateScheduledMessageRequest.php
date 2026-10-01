@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Groups;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\LineEndings;
 use Illuminate\Contracts\Validation\Validator;
 
 /**
@@ -23,6 +24,8 @@ class UpdateScheduledMessageRequest extends BaseFormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->merge(LineEndings::normalised($this, ['body']));
+
         if ($this->has('send_now')) {
             $this->merge([
                 'send_now' => filter_var($this->input('send_now'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),

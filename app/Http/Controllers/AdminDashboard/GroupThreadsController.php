@@ -25,6 +25,7 @@ use App\Support\GroupMedia;
 use App\Support\GroupMessageAttachments;
 use App\Support\GroupMessageSignals;
 use App\Support\GroupThreadUnread;
+use App\Support\LineEndings;
 use App\Support\ScheduledTime;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
@@ -432,7 +433,9 @@ class GroupThreadsController extends Controller
             // Last write wins and both versions are audited.
             $locked = $thread->messages()->whereKey($message->id)->lockForUpdate()->firstOrFail();
 
-            if (trim((string) $locked->body) === trim($body)) {
+            // Line endings are not words: a message stored with "\r\n" (multipart, before
+            // 2026-10-01) and saved untouched must leave no history row (LineEndings).
+            if (trim(LineEndings::normalise($locked->body)) === trim($body)) {
                 return $locked;
             }
 

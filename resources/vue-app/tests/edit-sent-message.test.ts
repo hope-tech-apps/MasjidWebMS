@@ -31,6 +31,27 @@ test('save is on only for a valid draft that really changes the words', async ()
     assert.equal(canSaveEdit('   ', text), false);
 });
 
+test('a line ending is not a change of words', async () => {
+    const { canSaveEdit, isUnchanged } = await load();
+    // A message sent from a multipart form was stored with CRLF; the editor's textarea hands back LF.
+    const stored = { body: 'Line one\r\nLine two', attachments: [] };
+
+    assert.equal(isUnchanged('Line one\nLine two', stored.body), true);
+    assert.equal(canSaveEdit('Line one\nLine two', stored), false, 'Save is not offered');
+    assert.equal(canSaveEdit('Line one\r\nLine two', stored), false);
+    assert.equal(canSaveEdit('Line one\nLine three', stored), true, 'a real change still is one');
+});
+
+test('the earlier-versions disclosure is named by its own words, with its state', () => {
+    const vue = source('components/common/MessageEditHistory.vue');
+
+    // A fixed aria-label said "Show earlier versions" even while the list was open, and hid
+    // the button's own text ("Hide earlier versions") from a screen reader.
+    assert.doesNotMatch(vue, /aria-label=/);
+    assert.match(vue, /:aria-expanded="open \? 'true' : 'false'"/);
+    assert.match(vue, /\{\{ open \? 'Hide earlier versions' : 'Earlier versions' \}\}/);
+});
+
 test('a message with a photo or video may lose its words; one whose media is withheld counts too', async () => {
     const { canSaveEdit, editProblem, messageHasMedia } = await load();
     const photo = { body: 'A caption', attachments: [{ id: 1 }] };

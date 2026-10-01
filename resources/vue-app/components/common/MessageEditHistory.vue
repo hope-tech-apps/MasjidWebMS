@@ -7,7 +7,7 @@
     -->
     <div class="message-edit-history mt-1">
         <button type="button" class="btn btn-link btn-sm p-0 small text-muted" :aria-expanded="open ? 'true' : 'false'"
-                aria-label="Show earlier versions of this message" @click="toggle">
+                @click="toggle">
             {{ open ? 'Hide earlier versions' : 'Earlier versions' }}
         </button>
 

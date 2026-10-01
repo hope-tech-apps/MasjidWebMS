@@ -28,18 +28,34 @@ export const draftOf = (post: EditableStory): StoryDraft => ({
     body: post.body ?? '',
 });
 
+/**
+ * One line ending. A story created from a multipart form was stored with "\r\n", and a
+ * textarea hands back "\n": the same words. Without this an untouched story reads as
+ * changed the moment its text box is typed in and put back, and Save is offered for nothing.
+ */
+const lines = (text: string): string => text.replace(/\r\n?/g, '\n');
+
 /** The request fields: title and text ONLY. Attachments are not edited here. */
 export const storyEditFields = (draft: StoryDraft): { title: string; body: string } => ({
     title: draft.heading.trim(),
-    body: draft.body.trim(),
+    body: lines(draft.body).trim(),
 });
 
 /** Has the draft moved away from the story? A save that changes nothing is not offered. */
 export const storyEditChanged = (draft: StoryDraft, post: EditableStory): boolean => {
     const now = storyEditFields(draft);
 
-    return now.title !== (post.title ?? '').trim() || now.body !== (post.body ?? '').trim();
+    return now.title !== (post.title ?? '').trim() || now.body !== lines(post.body ?? '').trim();
 };
+
+/**
+ * Which story's form is open once a save of `savedId` has come back.
+ *
+ * The form that was saved closes. Any OTHER form stays as it is: a save that finishes
+ * while a second story is open must not close that one and drop what was typed in it.
+ */
+export const editingAfterSave = <Id extends number | string>(editingId: Id | null, savedId: Id): Id | null =>
+    editingId === savedId ? null : editingId;
 
 /** May the form be submitted: there is text, and something changed. */
 export const storyEditReady = (draft: StoryDraft, post: EditableStory): boolean =>

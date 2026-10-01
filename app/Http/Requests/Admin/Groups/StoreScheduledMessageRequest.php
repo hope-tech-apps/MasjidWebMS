@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Groups;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\LineEndings;
 use App\Models\GroupThread;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Validation\Rule;
@@ -29,6 +30,12 @@ use Illuminate\Validation\Rule;
 class StoreScheduledMessageRequest extends BaseFormRequest
 {
     use ValidatesSendAt;
+
+    /** The text is a message once it goes out, so it is stored with the one line ending a message has (LineEndings). */
+    protected function prepareForValidation(): void
+    {
+        $this->merge(LineEndings::normalised($this, ['body']));
+    }
 
     public function rules(): array
     {

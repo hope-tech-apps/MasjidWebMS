@@ -13,6 +13,7 @@ use App\Models\GroupPost;
 use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Groups\GroupStoryPublisher;
+use App\Support\LineEndings;
 use App\Support\ScheduledTime;
 use App\Support\Errors;
 use App\Support\GroupAudience;
@@ -390,7 +391,7 @@ class GroupPostsController extends Controller
 
                 $post->fill($fields);
 
-                if ($out && ($post->isDirty(['title', 'body']) || $this->uploads($request) !== [])) {
+                if ($out && ($this->wordsChanged($post) || $this->uploads($request) !== [])) {
                     $post->edited_at = now();
                 }
 
@@ -440,12 +441,32 @@ class GroupPostsController extends Controller
     private function changesWords(GroupPost $post, array $fields, Request $request): bool
     {
         foreach (['title', 'body'] as $key) {
-            if (array_key_exists($key, $fields) && ($fields[$key] ?? null) !== $post->{$key}) {
+            if (array_key_exists($key, $fields)
+                && LineEndings::normalise($fields[$key] ?? null) !== LineEndings::normalise($post->{$key})) {
                 return true;
             }
         }
 
         return $this->uploads($request) !== [];
+    }
+
+    /**
+     * Did the title or the text really change, on the filled model, before it is saved?
+     *
+     * Not `isDirty` alone: a story created before 2026-10-01 holds the "\r\n" a multipart
+     * form sent, and its edit arrives with "\n" (LineEndings). That is the same story, and
+     * stamping it "Edited" would tell families something changed when nothing did.
+     */
+    private function wordsChanged(GroupPost $post): bool
+    {
+        foreach (['title', 'body'] as $key) {
+            if ($post->isDirty($key)
+                && LineEndings::normalise($post->getOriginal($key)) !== LineEndings::normalise($post->{$key})) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function cannotBeMoved(string $message)
@@ -492,8 +513,13 @@ class GroupPostsController extends Controller
      *
      * A co-teacher may SEE a scheduled story and may not touch it.
      *
-     * Deliberately not asked of a story that is out: those were already editable and
-     * deletable by any teacher of the class, and this slice does not change that.
+     * Not asked of a story that is OUT; this method returns at once for one. Who may
+     * EDIT a story that is out is decided in update() (W7-2a, 2026-10-01): the realm's
+     * write gate and then the feed READ gate, so the class's teachers and office staff
+     * who may read the class feed. An office administrator who is not on the class
+     * roster can no longer edit a sent story (she could before, without being able to
+     * read it); she can still delete one, which destroy() decides and this slice left
+     * as it was.
      */
     private function authorizeScheduledWrite(?User $user, GroupPost $post, bool $editing = false): void
     {

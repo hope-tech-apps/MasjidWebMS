@@ -101,7 +101,7 @@
                         <div class="d-flex gap-2">
                             <!-- After it is sent: title and text only, from the server's own `can_edit`. -->
                             <button v-if="canEditStory(post) && editingStoryId !== post.id" class="btn btn-sm btn-outline-secondary"
-                                    aria-label="Edit this story" title="Edit" data-test="story-edit" @click="startStoryEdit(post)">
+                                    aria-label="Edit this story" title="Edit" data-test="story-edit" :disabled="storyEditBusy" @click="startStoryEdit(post)">
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <button class="btn btn-sm btn-outline-danger" aria-label="Remove this story" @click="confirmDelete(post)" title="Remove">

@@ -28,6 +28,8 @@ class UpdateGroupPostRequest extends GroupPostFormRequest
      */
     protected function prepareForValidation(): void
     {
+        parent::prepareForValidation();
+
         if ($this->has('send_now')) {
             $this->merge([
                 'send_now' => filter_var($this->input('send_now'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),

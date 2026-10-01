@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Groups;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\LineEndings;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Validator;
 
@@ -42,6 +43,18 @@ abstract class GroupPostFormRequest extends BaseFormRequest
      * ceiling and its own count. See config/groups.php ("video").
      */
     public const VIDEO_UPLOAD_KEY = 'videos';
+
+    /**
+     * The words arrive with ONE line ending, however they were sent.
+     *
+     * Everything that extends this is posted as a multipart form when it carries a file,
+     * and a multipart form sends a textarea's line breaks as "\r\n"; the edit of the same
+     * text is sent as "\n". See LineEndings. A subclass with its own hook calls this one.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->merge(LineEndings::normalised($this, ['body']));
+    }
 
     /**
      * Rules for the image bag, identical on create and on edit.

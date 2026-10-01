@@ -30,7 +30,10 @@ use Illuminate\Support\Facades\Schema;
  * erased message does not survive in this table. Nothing on disk hangs off it,
  * so no model hook is needed for the bytes.
  *
- * The index is named by hand: the generated name would pass 64 characters.
+ * The index is named by hand to keep it short and to match the table's other
+ * hand-named indexes. It did not have to be: the generated name,
+ * `group_message_edits_masjid_id_group_message_id_id_index`, is 55 characters,
+ * inside MySQL's 64.
  * Blueprint only — no raw SQL, no driver guard.
  */
 return new class extends Migration

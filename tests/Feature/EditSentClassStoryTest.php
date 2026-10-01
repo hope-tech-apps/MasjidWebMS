@@ -197,6 +197,41 @@ class EditSentClassStoryTest extends TestCase
     }
 
     #[Test]
+    public function a_difference_of_line_endings_alone_is_not_an_edit(): void
+    {
+        // Created the way the SPA creates a story: a multipart form, which sends a
+        // textarea's line breaks as "\r\n". It is stored with "\n".
+        $id = $this->asTeacher()
+            ->post($this->teacherUrl('/posts'), ['title' => 'Our day', 'body' => "Line one\r\nLine two"])
+            ->assertSuccessful()
+            ->json('data.id');
+
+        $created = GroupPost::withoutMasjidScope()->findOrFail($id);
+        $this->assertSame("Line one\nLine two", $created->body);
+
+        // Saved untouched from the edit form, which sends "\n": nothing changed.
+        $this->asTeacher()->putJson($this->teacherUrl("/posts/{$id}"), ['title' => 'Our day', 'body' => "Line one\nLine two"])
+            ->assertOk()->assertJsonPath('data.edited_at', null);
+        $this->assertNull($this->row($created)->edited_at);
+
+        // A story written BEFORE this still holds "\r\n". The same untouched save, in
+        // either line ending, must not tell families it was edited.
+        $old = $this->makePost(body: "Old one\r\nOld two");
+        $this->assertSame("Old one\r\nOld two", $this->row($old)->body);
+
+        foreach (["Old one\nOld two", "Old one\r\nOld two"] as $same) {
+            $this->edit($old, ['title' => 'Our day', 'body' => $same])
+                ->assertOk()->assertJsonPath('data.edited_at', null);
+            $this->assertNull($this->row($old)->edited_at);
+        }
+
+        // A change of words on the same story still counts.
+        $this->edit($old, ['body' => "Old one\nOld three"])->assertOk();
+        $this->assertNotNull($this->row($old)->edited_at);
+        $this->assertSame("Old one\nOld three", $this->row($old)->body);
+    }
+
+    #[Test]
     public function adding_a_file_to_a_sent_story_counts_as_an_edit(): void
     {
         $post = $this->makePost(body: 'Same words.');

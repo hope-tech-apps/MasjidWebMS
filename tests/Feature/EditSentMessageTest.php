@@ -380,6 +380,44 @@ class EditSentMessageTest extends TestCase
     }
 
     #[Test]
+    public function a_difference_of_line_endings_alone_is_not_an_edit(): void
+    {
+        $thread = $this->privateThread();
+
+        // Sent the way the SPA sends a message: a multipart form, whose line breaks are
+        // "\r\n". It is stored with "\n".
+        $id = $this->asTeacher()
+            ->post($this->teacherUrl("/threads/{$thread->id}/messages"), ['body' => "Line one\r\nLine two"])
+            ->assertSuccessful()
+            ->json('data.id');
+
+        $sent = GroupMessage::withoutMasjidScope()->findOrFail($id);
+        $this->assertSame("Line one\nLine two", $sent->body);
+
+        // Saved untouched from the editor, which sends "\n".
+        $this->asTeacher()->putJson($this->teacherUrl("/threads/{$thread->id}/messages/{$id}"), ['body' => "Line one\nLine two"])
+            ->assertOk()->assertJsonPath('data.edited_at', null);
+        $this->assertUntouched($sent, "Line one\nLine two");
+
+        // A message sent BEFORE this still holds "\r\n": the same untouched save, in
+        // either line ending, writes no history row and no marker.
+        $old = $this->message($thread, $this->teacher, "Old one\r\nOld two");
+        $url = $this->teacherUrl("/threads/{$thread->id}/messages/{$old->id}");
+
+        foreach (["Old one\nOld two", "Old one\r\nOld two"] as $same) {
+            $this->asTeacher()->putJson($url, ['body' => $same])->assertOk()->assertJsonPath('data.edited_at', null);
+        }
+
+        $this->assertUntouched($old, "Old one\r\nOld two");
+
+        // A change of words still leaves its one row, holding what was replaced.
+        $this->asTeacher()->putJson($url, ['body' => "Old one\nOld three"])->assertOk();
+
+        $this->assertSame("Old one\nOld three", $old->refresh()->body);
+        $this->assertSame("Old one\r\nOld two", GroupMessageEdit::withoutMasjidScope()->sole()->previous_body);
+    }
+
+    #[Test]
     public function a_text_message_cannot_be_emptied_but_a_photo_message_may_lose_its_caption(): void
     {
         $thread = $this->privateThread();

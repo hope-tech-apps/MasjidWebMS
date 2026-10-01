@@ -37,9 +37,15 @@ export function messageHasMedia(message: Pick<EditableMessage, 'attachments' | '
     return (message.attachments?.length ?? 0) > 0 || message.media_withheld === true;
 }
 
-/** The server compares trimmed text, so an edit that only changes whitespace is not one. */
+/** One line ending: a message sent from a multipart form was stored with "\r\n", a textarea yields "\n". */
+const lines = (text: string): string => text.replace(/\r\n?/g, '\n');
+
+/**
+ * The server compares trimmed text with one line ending, so an edit that only changes
+ * surrounding whitespace, or "\r\n" for "\n", is not one.
+ */
 export function isUnchanged(draft: string, original: string | null | undefined): boolean {
-    return draft.trim() === (original ?? '').trim();
+    return lines(draft).trim() === lines(original ?? '').trim();
 }
 
 /**

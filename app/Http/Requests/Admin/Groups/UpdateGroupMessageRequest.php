@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Groups;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\LineEndings;
 
 /**
  * Change the words of a message already sent in a conversation (W7, 2026-10-01).
@@ -30,6 +31,15 @@ class UpdateGroupMessageRequest extends BaseFormRequest
         'images', 'videos', 'subject', 'scope', 'send_at', 'send_now',
         'author_user_id', 'author_contact_id', 'masjid_id', 'group_thread_id',
     ];
+
+    /**
+     * One line ending, as sending has (LineEndings): the message was stored with "\n", and
+     * an edit that arrives with "\r\n" must not read as a change of words.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->merge(LineEndings::normalised($this, ['body']));
+    }
 
     public function rules(): array
     {

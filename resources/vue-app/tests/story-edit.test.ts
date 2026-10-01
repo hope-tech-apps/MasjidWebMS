@@ -137,10 +137,45 @@ test('the shared form has no send time and no file control, and shows the server
 test('a failed save keeps the form open with what was typed, and a good one replaces the row and closes', () => {
     const edit = source('composables/useStoryEdit.ts');
 
-    assert.match(edit, /saved\(await save\(post, storyEditFields\(draft\)\)\);\s*editingId\.value = null;/, 'closes only after the save and the row swap');
+    assert.match(edit, /saved\(await save\(post, storyEditFields\(draft\)\)\);\s*editingId\.value = editingAfterSave\(editingId\.value, post\.id\);/, 'closes only after the save and the row swap, and only its own form');
     assert.match(edit, /catch \(e\) \{\s*error\.value = apiErrorText\(e, /, 'the failure is shown, not thrown');
-    // Not closed on failure: the only place editingId is cleared besides cancel() is after success.
-    assert.equal((edit.match(/editingId\.value = null/g) ?? []).length, 2);
+    // Not closed on failure: the only place editingId is cleared outright is cancel().
+    assert.equal((edit.match(/editingId\.value = null/g) ?? []).length, 1);
+});
+
+test('a save that comes back closes its own form and leaves another story\'s open form alone', async () => {
+    const { editingAfterSave } = await load();
+
+    // The ordinary case: the form that was saved is the one that is open.
+    assert.equal(editingAfterSave(7, 7), null);
+    // Story 7's save comes back while story 9's form is open: 9 stays, with its draft.
+    assert.equal(editingAfterSave(9, 7), 9);
+    // Cancelled while it was saving: nothing reopens.
+    assert.equal(editingAfterSave(null, 7), null);
+
+    // And a second story cannot be opened, or a second save started, while one is in flight.
+    const edit = source('composables/useStoryEdit.ts');
+    assert.match(edit, /const start = \(post: T\) => \{\s*if \(busy\.value\) return;/, 'start refuses while a save is in flight');
+    assert.match(edit, /const submit = async \(post: T, draft: StoryDraft\) => \{\s*if \(busy\.value\) return;/, 'one save at a time');
+
+    for (const rel of [TEACHER, OFFICE]) {
+        assert.match(source(rel), /data-test="story-edit" :disabled="storyEditBusy" @click="startStoryEdit\(post\)"/, `${rel} disables Edit while a save is in flight`);
+    }
+});
+
+test('a line ending is not a change of words', async () => {
+    const { storyEditChanged, storyEditReady, storyEditFields } = await load();
+
+    // A story created from a multipart form was stored with "\\r\\n"; a textarea hands back "\\n".
+    const stored = { title: 'Our day', body: 'Line one\r\nLine two' };
+
+    assert.equal(storyEditChanged({ heading: 'Our day', body: 'Line one\nLine two' }, stored), false);
+    assert.equal(storyEditReady({ heading: 'Our day', body: 'Line one\nLine two' }, stored), false, 'Save is not offered');
+    assert.equal(storyEditChanged({ heading: 'Our day', body: 'Line one\r\nLine two' }, stored), false);
+    // A real change on the same story is still one.
+    assert.equal(storyEditChanged({ heading: 'Our day', body: 'Line one\nLine three' }, stored), true);
+    // What is sent carries one line ending, whatever the draft held.
+    assert.equal(storyEditFields({ heading: '', body: 'a\r\nb\rc' }).body, 'a\nb\nc');
 });
 
 test('the story types carry the two new fields', () => {

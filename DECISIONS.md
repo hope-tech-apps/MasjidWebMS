@@ -7110,10 +7110,13 @@ classes); an env-var floor (rejected: production `.env` edits); moving Messages 
 ## 2026-10-01 — Edit a class story after it is sent, with an "Edited" marker and no re-notification (W7-2a, teacher feedback; branch feat/school-w7-edit-stories)
 Decision: a class story that is OUT can be edited in place by the people who could already change it, and the edit is
 visible: staff and families see "Edited", with the time as a tooltip. Nobody is notified.
-- **Who: unchanged.** The class's teachers and the office (`manage contacts`) edit a story that is out, not only its
-  author (pinned by `ScheduledClassStoryTest` and `GroupFeedTest`); a scheduled story stays author-only. The marker
-  now makes an edit visible where it used to be silent. Narrowing it to the author is a deliberate server change at
-  `authorizeScheduledWrite()` that reverses two tests, and nobody asked for it.
+- **Who: the class's teachers, and the office only where it may read the class feed.** Not only the author (pinned
+  by `ScheduledClassStoryTest` and `GroupFeedTest`); a scheduled story stays author-only. ONE group loses something:
+  an office administrator (`manage contacts`) who is NOT on the class roster could edit a sent story before and
+  cannot now (see "The write hole" below); she can still delete one. For everyone else it is unchanged. The marker
+  makes an edit visible where it used to be silent. Narrowing edits to the author alone is a deliberate server change
+  in `update()` that reverses two tests, and nobody asked for it. (Corrected 2026-10-01: this bullet first read
+  "Who: unchanged", which the write-hole bullet contradicted.)
 - **`group_posts.edited_at`** (nullable datetime, migration `2026_10_08_100000`, no backfill: every existing story
   reads as never edited, which is true). Stamped by `update()` only when a story that is already out has its title or
   body actually changed, or a file added. Not stamped for a scheduled story's edits, a move or "Send now", a save that
@@ -7227,3 +7230,23 @@ decision on whether the teacher is told).
   than fifteen conversations on the teacher screen; the parent reply path advancing the contact's bookmark
   unconditionally; a MySQL-group test of the count query.
 
+
+## 2026-10-01 — Editing after sending, the point's review fold: a line ending is not a change of words, and a save closes only its own form
+- **One line ending, "\n".** A browser sends the same textarea two ways: a multipart form (how a story or a message
+  with a photo is created) carries line breaks as "\r\n", and the edit of that text arrives with "\n". Stored as sent,
+  an untouched save of any multi-line story stamped it "Edited", and an untouched multi-line message got a history
+  row holding the text it still has. `App\Support\LineEndings` normalises at the request boundary (story create and
+  edit, message, new conversation, scheduled message create and edit, message edit), and BOTH sides of every "did the
+  words change" comparison, on the server and in the two SPA helpers, because rows written before this still hold
+  "\r\n". Those rows are not rewritten: no data migration, and the first real edit of one stores "\n".
+- **One story save at a time, and a save closes only its own form.** With a save in flight on story A, Edit could be
+  opened on story B; A's answer then closed B's form and dropped its draft. Edit is now disabled while a save is in
+  flight (and the composable refuses), and a finished save closes the form only when it is still the one open
+  (`editingAfterSave`).
+- **The "Earlier versions" button is named by its own text.** Its fixed aria-label said "Show earlier versions" while
+  the list was open; `aria-expanded` already carries the state.
+- **Next slice, from the same review, not here:** two people editing one sent story is last-write-wins (send
+  `updated_at`, answer 409); a scheduled story announced between an edit's pre-check and its lock during the deploy
+  window answers 500 where 503 was meant; keyboard focus is dropped on Edit, Save and Cancel; Esc discards a message
+  draft unasked; the edit TIME is only a title tooltip (no touch or screen-reader path); `can_edit` on a message does
+  not ask the admin realm's write permission; the closed-conversation check sits outside the lock.
