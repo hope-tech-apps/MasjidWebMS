@@ -251,18 +251,23 @@ class ShopPickupListTest extends TestCase
     // ------------------------------------------------------------ the header counts
 
     #[Test]
-    public function the_summary_counts_units_per_product_and_size_from_one_grouped_query_whatever_the_filters(): void
+    public function the_summary_counts_to_hand_out_and_collected_units_and_open_oversold_lines_from_one_grouped_query(): void
     {
         $hoodie = $this->product($this->org, ['name' => 'Hoodie', 'slug' => 'hoodie']);
         $s = $this->variant($hoodie, ['label' => 'S']);
         $collected = ['collected_at' => now(), 'collected_by_user_id' => $this->admin->id];
+        $resolved = static fn (string $word, int $by): array => ['resolution' => $word, 'resolved_at' => now(), 'resolved_by_user_id' => $by];
 
-        $this->sale($this->m, [], ['quantity' => 2]);                                                                   // to hand out
-        $this->sale($this->m, [], ['quantity' => 1] + $collected);                                                       // collected
-        $this->sale($this->m, [], ['quantity' => 3, 'oversold' => true]);                                                // to hand out AND oversold
-        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_REFUNDED], ['quantity' => 1, 'oversold' => true]);    // refunded: needs no banner now
-        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_DISPUTED], ['quantity' => 4]);                        // disputed: not to hand out
-        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_PARTIALLY_REFUNDED], ['quantity' => 2]);              // partly refunded: still to hand out
+        $this->sale($this->m, [], ['quantity' => 2]);                                                                    // to hand out
+        $this->sale($this->m, [], ['quantity' => 1] + $collected);                                                        // collected
+        $this->sale($this->m, [], ['quantity' => 3, 'oversold' => true]);                                                 // to hand out AND an open oversold line
+        $this->sale($this->m, [], ['quantity' => 2, 'oversold' => true]);                                                 // a second open oversold line (2 lines, 5 units)
+        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_REFUNDED], ['quantity' => 1, 'oversold' => true]);     // the order was refunded: nobody's call
+        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_DISPUTED], ['quantity' => 4]);                         // disputed: not to hand out
+        $this->sale($this->m, ['charge_flag' => Order::CHARGE_FLAG_PARTIALLY_REFUNDED], ['quantity' => 2]);               // partly refunded: still to hand out
+        $this->sale($this->m, [], ['quantity' => 2, 'oversold' => true] + $resolved('substituted', $this->admin->id));    // still to hand out, but nobody's call now
+        $this->sale($this->m, [], ['quantity' => 5, 'oversold' => true] + $resolved('refunded', $this->admin->id));       // refunded by the office: not to hand out, nobody's call
+        $this->sale($this->m, [], ['quantity' => 1, 'oversold' => true] + $collected);                                    // handed over already: collected, nobody's call
         $this->sale($this->l, [], ['quantity' => 1]);
         $this->sale($s, [], ['quantity' => 1] + $collected);
 
@@ -274,12 +279,14 @@ class ShopPickupListTest extends TestCase
         $this->assertCount(1, $grouped, 'the header is ONE grouped query, not one per size');
 
         $expected = [
-            ['product_id' => $this->polo->id, 'variant_id' => $this->m->id, 'product_name' => 'School Polo', 'variant_label' => 'M', 'to_hand_out' => 7, 'collected' => 1, 'oversold' => 3],
-            ['product_id' => $this->polo->id, 'variant_id' => $this->l->id, 'product_name' => 'School Polo', 'variant_label' => 'L', 'to_hand_out' => 1, 'collected' => 0, 'oversold' => 0],
-            ['product_id' => $hoodie->id, 'variant_id' => $s->id, 'product_name' => 'Hoodie', 'variant_label' => 'S', 'to_hand_out' => 0, 'collected' => 1, 'oversold' => 0],
+            // to hand out: 2 + 3 + 2 + 2 (partly refunded) + 2 (substituted) = 11 units; collected 1 + 1 = 2; open oversold: the 3 and the 2, as TWO lines.
+            ['product_id' => $this->polo->id, 'variant_id' => $this->m->id, 'product_name' => 'School Polo', 'variant_label' => 'M', 'to_hand_out' => 11, 'collected' => 2, 'oversold_open' => 2],
+            ['product_id' => $this->polo->id, 'variant_id' => $this->l->id, 'product_name' => 'School Polo', 'variant_label' => 'L', 'to_hand_out' => 1, 'collected' => 0, 'oversold_open' => 0],
+            ['product_id' => $hoodie->id, 'variant_id' => $s->id, 'product_name' => 'Hoodie', 'variant_label' => 'S', 'to_hand_out' => 0, 'collected' => 1, 'oversold_open' => 0],
         ];
 
         $this->assertSame($expected, $response->json('meta.summary'));
+        $this->assertArrayNotHasKey('oversold', $response->json('meta.summary.0'), 'oversold_open REPLACED the old units key');
 
         // Filters move the list, never the header.
         $filtered = $this->getJson($this->sales(['state' => 'collected', 'search' => 'nobody', 'product_id' => $hoodie->id]))->assertOk();
@@ -413,6 +420,189 @@ class ShopPickupListTest extends TestCase
         $this->postJson($this->sales([], '/' . $normal->id . '/collect'))->assertOk()->assertJsonPath('message', 'Handed out.');
     }
 
+    #[Test]
+    public function collect_reads_the_orders_flag_under_a_lock_taken_after_the_sales_own(): void
+    {
+        $sale = $this->sale($this->m);
+
+        // The lock order the docblock promises: the sale, THEN the order, the order's flag read FOR UPDATE.
+        // SQLite compiles `lockForUpdate()` to nothing, so the statements cannot show it; the source and
+        // the order the two rows are read in can.
+        $source = (string) file_get_contents(app_path('Http/Controllers/AdminDashboard/ShopSalesController.php'));
+        $body = substr($source, (int) strpos($source, 'public function collect('), (int) strpos($source, 'public function uncollect(') - (int) strpos($source, 'public function collect('));
+        $saleLock = strpos($body, 'ProductSale::query()->lockForUpdate()');
+        $orderLock = strpos($body, "Order::query()->whereKey(\$sale->order_id)->lockForUpdate()->value('charge_flag')");
+
+        $this->assertNotFalse($saleLock, 'collect locks the sale');
+        $this->assertNotFalse($orderLock, 'collect reads the order\'s flag FOR UPDATE');
+        $this->assertLessThan($orderLock, $saleLock, 'the sale first, then the order');
+
+        DB::enableQueryLog();
+        $this->postJson($this->sales([], '/' . $sale->id . '/collect'))->assertOk();
+        $statements = array_column(DB::getQueryLog(), 'query');
+        DB::disableQueryLog();
+
+        $firstOf = static function (callable $match) use ($statements): ?int {
+            foreach ($statements as $index => $statement) {
+                if ($match($statement)) {
+                    return $index;
+                }
+            }
+
+            return null;
+        };
+
+        $saleRead = $firstOf(static fn (string $q): bool => str_contains($q, 'from "product_sales"') && ! str_contains($q, 'join') && str_contains($q, '"id" = ?'));
+        $orderRead = $firstOf(static fn (string $q): bool => str_contains($q, 'from "orders"') && str_contains($q, '"charge_flag"') && ! str_contains($q, 'join'));
+
+        $this->assertNotNull($saleRead);
+        $this->assertNotNull($orderRead);
+        $this->assertLessThan($orderRead, $saleRead, 'the sale row is read before the order row');
+    }
+
+    // ------------------------------------------------------------ resolve
+
+    #[Test]
+    public function a_sale_resolved_as_refunded_is_not_to_hand_out_refuses_collect_and_says_who_and_when(): void
+    {
+        Log::spy();
+        $sale = $this->sale($this->m, [], ['oversold' => true]);
+
+        $response = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), ['resolution' => 'refunded'])->assertOk();
+
+        $this->assertSame('Marked refunded.', $response->json('message'));
+        $this->assertSame('refunded', $response->json('data.resolution'));
+        $this->assertSame($this->admin->id, $response->json('data.resolved_by.id'));
+        $this->assertSame($this->admin->name, $response->json('data.resolved_by.name'));
+        $this->assertNotNull($response->json('data.resolved_at'));
+        $this->assertFalse($response->json('data.to_hand_out'));
+        $this->assertTrue($response->json('data.oversold'), 'the fact stays: only the resolution says it was dealt with');
+        $this->assertFalse($response->json('data.refunded'), '`refunded` is the ORDER\'s flag; the resolution is the office\'s own word');
+
+        // Off the work list, still on the all list with its resolution.
+        $this->assertSame([], $this->ids());
+        $this->assertSame('refunded', $this->rows(['state' => 'all'])[0]['resolution']);
+
+        // And collect is refused with a sentence: nothing to hand out.
+        $refused = $this->postJson($this->sales([], '/' . $sale->id . '/collect'))->assertStatus(422);
+        $this->assertSame('failed', $refused->json('status'));
+        $this->assertStringContainsString('marked refunded', $refused->json('message'));
+        $this->assertNull(ProductSale::withoutMasjidScope()->findOrFail($sale->id)->collected_at);
+
+        Log::shouldHaveReceived('info')->once()->withArgs(function (...$args) use ($sale): bool {
+            [$message, $context] = $args + [null, null];
+
+            return $message === 'A shop sale was resolved.'
+                && is_array($context)
+                && $context['sale_id'] === $sale->id
+                && $context['actor_user_id'] === $this->admin->id
+                && $context['resolution'] === 'refunded'
+                && $context['was_resolution'] === null
+                && ! array_key_exists('buyer_name', $context);
+        });
+    }
+
+    #[Test]
+    public function a_substituted_sale_stays_to_hand_out_and_can_be_collected(): void
+    {
+        $sale = $this->sale($this->m, [], ['oversold' => true]);
+
+        $response = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), ['resolution' => 'substituted'])->assertOk();
+
+        $this->assertSame('substituted', $response->json('data.resolution'));
+        $this->assertTrue($response->json('data.to_hand_out'), 'the substitute is what is handed over');
+        $this->assertSame([$sale->id], $this->ids());
+
+        $this->postJson($this->sales([], '/' . $sale->id . '/collect'))->assertOk();
+        $this->assertNotNull(ProductSale::withoutMasjidScope()->findOrFail($sale->id)->collected_at);
+    }
+
+    #[Test]
+    public function resolving_is_idempotent_keeps_the_first_resolver_and_a_different_word_replaces_it(): void
+    {
+        Log::spy();
+        $sale = $this->sale($this->m, [], ['oversold' => true]);
+        $second = $this->adminOf($this->org);
+
+        $first = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), ['resolution' => 'refunded'])->assertOk();
+        $firstAt = $first->json('data.resolved_at');
+
+        // The same word again, by a colleague: nothing changes, the first resolver and moment stay.
+        Sanctum::actingAs($second);
+        $again = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), ['resolution' => 'refunded'])->assertOk();
+
+        $this->assertSame('Already marked refunded.', $again->json('message'));
+        $this->assertSame($this->admin->id, $again->json('data.resolved_by.id'));
+        $this->assertSame($firstAt, $again->json('data.resolved_at'));
+
+        // A different word replaces it, and the sale now carries who set THAT one.
+        $changed = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), ['resolution' => 'substituted'])->assertOk();
+
+        $this->assertSame('Marked substituted.', $changed->json('message'));
+        $this->assertSame('substituted', $changed->json('data.resolution'));
+        $this->assertSame($second->id, $changed->json('data.resolved_by.id'));
+        $this->assertTrue($changed->json('data.to_hand_out'));
+
+        Log::shouldHaveReceived('info')->once()->withArgs(function (...$args) use ($sale, $second): bool {
+            [$message, $context] = $args + [null, null];
+
+            return $message === 'A shop sale was resolved.'
+                && is_array($context)
+                && $context['resolution'] === 'substituted'
+                && $context['was_resolution'] === 'refunded'
+                && $context['was_resolved_by_user_id'] === $this->admin->id
+                && $context['actor_user_id'] === $second->id;
+        });
+    }
+
+    #[Test]
+    public function a_resolution_must_be_refunded_or_substituted(): void
+    {
+        $sale = $this->sale($this->m);
+
+        foreach ([['resolution' => 'maybe'], ['resolution' => ''], ['resolution' => null], [], ['resolution' => ['refunded']]] as $body) {
+            $response = $this->postJson($this->sales([], '/' . $sale->id . '/resolve'), $body)->assertStatus(422);
+
+            $this->assertArrayHasKey('resolution', $response->json('data'), json_encode($body));
+        }
+
+        $this->assertNull(ProductSale::withoutMasjidScope()->findOrFail($sale->id)->resolution);
+    }
+
+    #[Test]
+    public function the_resolution_is_cleared_with_a_delete_and_the_log_keeps_what_it_was(): void
+    {
+        $resolver = $this->adminOf($this->org);
+        $sale = $this->sale($this->m, [], ['oversold' => true, 'resolution' => 'refunded', 'resolved_at' => now()->subHour(), 'resolved_by_user_id' => $resolver->id]);
+        Log::spy();
+
+        $response = $this->deleteJson($this->sales([], '/' . $sale->id . '/resolve'))->assertOk();
+
+        $this->assertSame('Resolution cleared.', $response->json('message'));
+        $this->assertNull($response->json('data.resolution'));
+        $this->assertNull($response->json('data.resolved_at'));
+        $this->assertNull($response->json('data.resolved_by'));
+        $this->assertTrue($response->json('data.to_hand_out'));
+
+        $fresh = ProductSale::withoutMasjidScope()->findOrFail($sale->id);
+        $this->assertNull($fresh->resolution);
+        $this->assertNull($fresh->resolved_by_user_id);
+
+        // Nothing to clear is not an error and writes nothing to the log.
+        $this->deleteJson($this->sales([], '/' . $sale->id . '/resolve'))->assertOk()->assertJsonPath('message', 'This sale had no resolution.');
+
+        Log::shouldHaveReceived('info')->once()->withArgs(function (...$args) use ($sale, $resolver): bool {
+            [$message, $context] = $args + [null, null];
+
+            return $message === 'A shop sale\'s resolution was cleared.'
+                && is_array($context)
+                && $context['sale_id'] === $sale->id
+                && $context['actor_user_id'] === $this->admin->id
+                && $context['was_resolution'] === 'refunded'
+                && $context['was_resolved_by_user_id'] === $resolver->id;
+        });
+    }
+
     // ------------------------------------------------------------ a deleted product
 
     #[Test]
@@ -445,6 +635,7 @@ class ShopPickupListTest extends TestCase
         $refunded = $this->sale($this->m, ['paid_at' => now()->subHours(3), 'charge_flag' => Order::CHARGE_FLAG_REFUNDED]);
         $collected = $this->sale($this->m, ['paid_at' => now()->subHours(4), 'buyer_name' => '@SUM(1+1)'], ['collected_at' => now(), 'collected_by_user_id' => $this->admin->id]);
         $partial = $this->sale($this->m, ['paid_at' => now()->subHours(5), 'charge_flag' => Order::CHARGE_FLAG_PARTIALLY_REFUNDED]);
+        $swapped = $this->sale($this->m, ['paid_at' => now()->subHours(6)], ['oversold' => true, 'resolution' => ProductSale::RESOLUTION_SUBSTITUTED, 'resolved_at' => now(), 'resolved_by_user_id' => $this->admin->id]);
 
         $response = $this->get($this->sales(['state' => 'all'], '.csv'))->assertOk();
 
@@ -461,9 +652,9 @@ class ShopPickupListTest extends TestCase
         $this->assertSame([
             'Sale', 'Order number', 'Paid at', 'Buyer name', 'Buyer email', 'Buyer phone',
             'Product', 'Size', 'Quantity', 'Total', 'Currency',
-            'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag',
+            'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag', 'Resolution',
         ], $table[0]);
-        $this->assertCount(6, $table, 'a header and the five sales: state=all');
+        $this->assertCount(7, $table, 'a header and the six sales: state=all');
 
         $byId = [];
         foreach (array_slice($table, 1) as $cells) {
@@ -491,6 +682,8 @@ class ShopPickupListTest extends TestCase
         $this->assertSame('', $byId[$plain->id][15]);
         $this->assertSame('no', $byId[$partial->id][14], 'a partly refunded sale is still to hand out, so the list and the file agree it is not refunded');
         $this->assertSame('partially_refunded', $byId[$partial->id][15]);
+        $this->assertSame('substituted', $byId[$swapped->id][16], 'what the office did about the sale');
+        $this->assertSame('', $byId[$plain->id][16]);
         $this->assertSame($this->admin->name, $byId[$collected->id][12]);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{2,5}$/', $byId[$evil->id][2], 'the organisation\'s own clock, with the zone written out');
         $this->assertSame('', $byId[$plain->id][11], 'not collected: no time');
@@ -501,8 +694,8 @@ class ShopPickupListTest extends TestCase
         $this->assertSame((string) $collected->id, $onlyCollected[1][0]);
 
         $defaults = array_map('str_getcsv', array_values(array_filter(explode("\n", str_replace("\r", '', substr($this->get($this->sales([], '.csv'))->streamedContent(), 3))))));
-        $this->assertSame([(string) $evil->id, (string) $plain->id, (string) $partial->id], [$defaults[1][0], $defaults[2][0], $defaults[3][0]], 'to hand out by default, in the order they were recorded');
-        $this->assertCount(4, $defaults);
+        $this->assertSame([(string) $evil->id, (string) $plain->id, (string) $partial->id, (string) $swapped->id], [$defaults[1][0], $defaults[2][0], $defaults[3][0], $defaults[4][0]], 'to hand out by default (a substituted sale still is), in the order they were recorded');
+        $this->assertCount(5, $defaults);
 
         $this->get($this->sales(['state' => 'maybe'], '.csv'), ['Accept' => 'application/json'])->assertStatus(422);
     }
