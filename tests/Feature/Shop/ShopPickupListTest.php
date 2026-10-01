@@ -444,6 +444,7 @@ class ShopPickupListTest extends TestCase
         $plain = $this->sale($this->l, ['paid_at' => now()->subHours(2), 'buyer_name' => 'Aisha Khan']);
         $refunded = $this->sale($this->m, ['paid_at' => now()->subHours(3), 'charge_flag' => Order::CHARGE_FLAG_REFUNDED]);
         $collected = $this->sale($this->m, ['paid_at' => now()->subHours(4), 'buyer_name' => '@SUM(1+1)'], ['collected_at' => now(), 'collected_by_user_id' => $this->admin->id]);
+        $partial = $this->sale($this->m, ['paid_at' => now()->subHours(5), 'charge_flag' => Order::CHARGE_FLAG_PARTIALLY_REFUNDED]);
 
         $response = $this->get($this->sales(['state' => 'all'], '.csv'))->assertOk();
 
@@ -460,9 +461,9 @@ class ShopPickupListTest extends TestCase
         $this->assertSame([
             'Sale', 'Order number', 'Paid at', 'Buyer name', 'Buyer email', 'Buyer phone',
             'Product', 'Size', 'Quantity', 'Total', 'Currency',
-            'Collected at', 'Collected by', 'Oversold', 'Refunded',
+            'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag',
         ], $table[0]);
-        $this->assertCount(5, $table, 'a header and the four sales: state=all');
+        $this->assertCount(6, $table, 'a header and the five sales: state=all');
 
         $byId = [];
         foreach (array_slice($table, 1) as $cells) {
@@ -484,8 +485,12 @@ class ShopPickupListTest extends TestCase
         $this->assertSame('USD', $byId[$evil->id][10]);
         $this->assertSame('yes', $byId[$evil->id][13]);
         $this->assertSame('no', $byId[$plain->id][13]);
-        $this->assertSame('refunded', $byId[$refunded->id][14]);
-        $this->assertSame('', $byId[$plain->id][14]);
+        $this->assertSame('yes', $byId[$refunded->id][14], 'as the list says it: refunded');
+        $this->assertSame('refunded', $byId[$refunded->id][15], 'and the order\'s own word beside it');
+        $this->assertSame('no', $byId[$plain->id][14]);
+        $this->assertSame('', $byId[$plain->id][15]);
+        $this->assertSame('no', $byId[$partial->id][14], 'a partly refunded sale is still to hand out, so the list and the file agree it is not refunded');
+        $this->assertSame('partially_refunded', $byId[$partial->id][15]);
         $this->assertSame($this->admin->name, $byId[$collected->id][12]);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{2,5}$/', $byId[$evil->id][2], 'the organisation\'s own clock, with the zone written out');
         $this->assertSame('', $byId[$plain->id][11], 'not collected: no time');
@@ -496,8 +501,8 @@ class ShopPickupListTest extends TestCase
         $this->assertSame((string) $collected->id, $onlyCollected[1][0]);
 
         $defaults = array_map('str_getcsv', array_values(array_filter(explode("\n", str_replace("\r", '', substr($this->get($this->sales([], '.csv'))->streamedContent(), 3))))));
-        $this->assertSame([(string) $evil->id, (string) $plain->id], [$defaults[1][0], $defaults[2][0]], 'to hand out by default, in the order they were recorded');
-        $this->assertCount(3, $defaults);
+        $this->assertSame([(string) $evil->id, (string) $plain->id, (string) $partial->id], [$defaults[1][0], $defaults[2][0], $defaults[3][0]], 'to hand out by default, in the order they were recorded');
+        $this->assertCount(4, $defaults);
 
         $this->get($this->sales(['state' => 'maybe'], '.csv'), ['Accept' => 'application/json'])->assertStatus(422);
     }

@@ -89,7 +89,7 @@ class ShopSalesController extends Controller
             Csv::row($out, [
                 'Sale', 'Order number', 'Paid at', 'Buyer name', 'Buyer email', 'Buyer phone',
                 'Product', 'Size', 'Quantity', 'Total', 'Currency',
-                'Collected at', 'Collected by', 'Oversold', 'Refunded',
+                'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag',
             ]);
 
             // The sale id, qualified: the query joins the orders and users tables, which have an `id` too.
@@ -112,7 +112,10 @@ class ShopSalesController extends Controller
                         $this->moment($sale->collected_at, $zone),
                         Csv::text($row['collected_by']['name'] ?? ''),
                         $row['oversold'] ? 'yes' : 'no',
-                        // The order's own word when it carries one: refunded, partially_refunded, disputed.
+                        // As the list says it: refunded or disputed, so never to hand out.
+                        $row['refunded'] ? 'yes' : 'no',
+                        // The order's own word when it carries one (refunded, partially_refunded, disputed),
+                        // so a partly refunded sale, which is still to hand out, is not read as refunded.
                         Csv::text($row['charge_flag'] ?? ''),
                     ]);
                 }
