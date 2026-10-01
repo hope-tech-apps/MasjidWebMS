@@ -644,6 +644,34 @@ class GroupThreadUnreadTest extends TestCase
     }
 
     #[Test]
+    public function a_reply_to_a_conversation_never_opened_writes_no_bookmark_even_when_everything_in_it_is_older_than_the_floor(): void
+    {
+        // The floor keeps old history out of the COUNT. It must not let a reply write a
+        // bookmark over that history: a staff bookmark is the read receipt families see.
+        config(['groups.messaging.unread_since' => self::FLOOR]);
+        $thread = $this->thread();
+        $this->fromParent($thread, '2026-09-20 10:00:00');
+        $this->assertSame(0, $this->threadUnread($thread), 'older than the floor: not counted');
+
+        $this->asTeacher()->postJson($this->teacherUrl("/threads/{$thread->id}/messages"), ['body' => 'Replying without having opened it'])
+            ->assertCreated();
+
+        $this->assertSame(0, GroupThreadRead::withoutMasjidScope()->where('user_id', $this->teacher->id)->count(),
+            'no bookmark: nothing may say the teacher read the earlier message');
+    }
+
+    #[Test]
+    public function the_list_page_size_is_clamped_and_zero_is_not_an_error(): void
+    {
+        $this->thread();
+        $this->thread(null, 'About Yusuf');
+
+        $this->asTeacher()->getJson($this->teacherUrl('/threads?per_page=0'))->assertOk()->assertJsonPath('data.per_page', 1);
+        $this->asTeacher()->getJson($this->teacherUrl('/threads?per_page=100000'))->assertOk()->assertJsonPath('data.per_page', 100);
+        $this->asTeacher()->getJson($this->teacherUrl('/threads'))->assertOk()->assertJsonPath('data.per_page', 15);
+    }
+
+    #[Test]
     public function a_conversation_the_teacher_opens_themselves_marks_them_as_the_reader_of_their_own_first_message(): void
     {
         $this->asTeacher()->postJson($this->teacherUrl('/threads'), [

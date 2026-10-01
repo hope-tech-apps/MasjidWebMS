@@ -4300,12 +4300,23 @@ const unreadMessages = computed(() => unreadNumber(group.value?.unread_messages)
 let lastUnreadRefresh: number | null = null;
 
 // Coming back to this window: a parent may have written while it was behind another
-// one. Only the NUMBER is refreshed (never the whole class, which would blank the
-// screen and lose a half-written reply), and not more than once in a few seconds.
+// one. The whole class is never reloaded (that would blank the screen and lose a
+// half-written reply), and not more than once in a few seconds.
+//
+// Once the conversations have been listed, the LIST is what is refreshed, quietly:
+// it carries the class number too, and without it the tab would say "1 new" while no
+// row says which conversation. A quiet list load touches no draft, no chosen photo
+// and not the open conversation. Before the list exists, only the number is asked for.
 const refreshUnread = async () => {
     if (document.visibilityState === 'hidden' || !group.value) return;
     if (!focusRefreshDue(lastUnreadRefresh, Date.now(), FOCUS_REFRESH_GAP_MS)) return;
     lastUnreadRefresh = Date.now();
+
+    if (threadsLoaded.value) {
+        await loadThreads(true);
+        return;
+    }
+
     try {
         const res = await TeacherApiService.get(base.value);
         if (group.value && res.data?.data) group.value.unread_messages = res.data.data.unread_messages ?? 0;
@@ -5453,11 +5464,21 @@ const messageLater = useSendLater(
 );
 const scheduledMessages = ref<ScheduledRow[]>([]);
 
-const loadThreads = async () => {
-    threadsLoading.value = true;
+/** True once the conversations have been listed (the Messages tab was opened). */
+const threadsLoaded = ref(false);
+
+/**
+ * The conversations of this class. `quiet` is a refresh of a list already on screen
+ * (regained focus, a conversation just opened): no spinner, the scheduled list is
+ * left alone, and a failure keeps the rows that are there. Returns whether the list
+ * (and so the class number) is now the server's.
+ */
+const loadThreads = async (quiet = false): Promise<boolean> => {
+    if (!quiet) threadsLoading.value = true;
     try {
         const res = await TeacherApiService.get(`${base.value}/threads`);
         threads.value = rowsOf(res.data?.data);
+        threadsLoaded.value = true;
         // The class's whole number, exact even when the list is paginated: trust it
         // over any local subtraction.
         if (group.value && res.data?.meta?.unread_total !== undefined) {
@@ -5465,11 +5486,13 @@ const loadThreads = async () => {
         }
         messageScheduling.value = res.data?.meta?.scheduling ?? null;
         messageMedia.value = pickerLimits(res.data?.meta, 'max_images_per_message', 'max_videos_per_message');
-        await loadScheduledMessages();
+        if (!quiet) await loadScheduledMessages();
+        return true;
     } catch {
-        threads.value = [];
+        if (!quiet) threads.value = [];
+        return false;
     } finally {
-        threadsLoading.value = false;
+        if (!quiet) threadsLoading.value = false;
     }
 };
 
@@ -5552,11 +5575,16 @@ const openThread = async (thread: any) => {
         replyPhotos.value = [];
         replyError.value = '';
         openedMessages.value = opened.messages;
-        // Opening it IS reading it: take its count off the class number now, and let
-        // the next list correct the guess.
-        if (group.value) group.value.unread_messages = afterOpening(group.value.unread_messages, thread.unread_count);
+        // Opening it IS reading it, ALL of it: the server cleared whatever had arrived,
+        // which can be more than the row said when the list was loaded. So the number
+        // comes from a fresh list, not from subtracting the row's old count. Only if
+        // that refresh fails is the row's count taken off as a guess.
+        const stale = thread.unread_count;
         thread.unread_count = 0;
         thread.unread = false;
+        if (!(await loadThreads(true)) && group.value) {
+            group.value.unread_messages = afterOpening(group.value.unread_messages, stale);
+        }
     } catch {
         replyError.value = 'That conversation could not be opened.';
     }

@@ -94,11 +94,15 @@ final class GroupThreadUnread
      * Has somebody else written something in this thread that U has not seen yet?
      *
      * The write path's question (a reply may only advance U's bookmark when this is
-     * false), answered by the SAME predicate the counts use.
+     * false), answered by the predicate the counts use, less the floor.
      */
     public static function hasUnseenFromOthers(int $userId, int $threadId): bool
     {
-        return self::unreadQuery($userId)->where('t.id', $threadId)->exists();
+        // NO FLOOR here. The floor keeps old history out of a COUNT; this decides
+        // whether a reply may write a bookmark, and a bookmark is a read receipt
+        // families see. A reply to a conversation never opened must not claim its
+        // earlier messages were read, however old they are.
+        return self::unreadQuery($userId, applyFloor: false)->where('t.id', $threadId)->exists();
     }
 
     /** The floor for a user with no bookmark, in the database's own clock; null = none. */
@@ -117,9 +121,9 @@ final class GroupThreadUnread
     }
 
     /** Messages U has not seen, joined to their live thread and U's bookmark. */
-    private static function unreadQuery(int $userId): Builder
+    private static function unreadQuery(int $userId, bool $applyFloor = true): Builder
     {
-        $floor = self::floor();
+        $floor = $applyFloor ? self::floor() : null;
 
         return GroupMessage::query()
             ->join('group_threads as t', function ($join): void {

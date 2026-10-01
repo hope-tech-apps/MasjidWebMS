@@ -444,6 +444,22 @@ const loadThreads = async (page: number) => {
 };
 
 /**
+ * Re-read the page of conversations on screen without a spinner, and pass the class's
+ * whole number up. A failure keeps what is on screen; returns whether it worked.
+ */
+const refreshQuietly = async (): Promise<boolean> => {
+    try {
+        await threadsStore.fetchThreads(props.groupId, paginationOptions.value?.currentPage ?? 1);
+        if (threadsStore.threadsMeta?.unread_total !== undefined) {
+            emit('unread-total', unreadNumber(threadsStore.threadsMeta.unread_total));
+        }
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+/**
  * The Scheduled list. A refusal (an administrator without `manage contacts`) is not an
  * error to show: they have nothing scheduled to see and the list stays hidden.
  */
@@ -493,10 +509,12 @@ const selectThread = async (thread: GroupThread) => {
     try {
         const cleared = unreadNumber(thread.unread_count);
         await threadsStore.fetchThread(props.groupId, thread.id);
-        // Opening it IS reading it: the row stops saying "new" and the tab's number drops.
+        // Opening it IS reading it, ALL of it: the server cleared whatever had arrived,
+        // which can be more than this row said. The tab's number therefore comes from a
+        // fresh list; the row's old count is subtracted only if that refresh fails.
         thread.unread_count = 0;
         thread.unread = false;
-        if (cleared > 0) emit('opened', cleared);
+        if (!(await refreshQuietly()) && cleared > 0) emit('opened', cleared);
         messageBody.value = '';
         // Switching conversations clears the staged attachments with the draft
         // text, for the same reason: a photo chosen for one family's thread must

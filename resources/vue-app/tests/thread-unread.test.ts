@@ -163,9 +163,10 @@ test('the teacher class screen shows the count on the tab, beside the class name
     assert.match(view, /threadNewLabel\(thread\)/);
     assert.doesNotMatch(view, /v-if="thread\.unread" class="badge bg-success ms-1">New</);
 
-    // Kept true: the list's total wins, opening subtracts, focus refreshes only the number.
+    // Kept true: the list's total wins; opening re-reads the list (subtracting the row's
+    // old count only if that fails); focus refreshes the list once it exists.
     assert.match(view, /group\.value\.unread_messages = unreadNumber\(res\.data\.meta\.unread_total\)/);
-    assert.match(view, /afterOpening\(group\.value\.unread_messages, thread\.unread_count\)/);
+    assert.match(view, /afterOpening\(group\.value\.unread_messages, stale\)/);
     assert.match(view, /window\.addEventListener\('focus', refreshUnread\)/);
     assert.match(view, /document\.addEventListener\('visibilitychange', refreshUnread\)/);
     assert.match(view, /window\.removeEventListener\('focus', refreshUnread\)/);
@@ -228,4 +229,30 @@ test('after a reply the teacher screen re-reads the open conversation before the
     assert.match(teacher, /const rereadOpenThread = async \(\) => \{[\s\S]*?if \(openedThread\.value\?\.id !== thread\.id\) return;/);
     // One reader for opening and re-reading, so both fetch every page.
     assert.equal((teacher.match(/readWholeThread\(/g) ?? []).length, 2);
+});
+
+test('coming back to the window refreshes the LIST once it exists, quietly, and not only the number', () => {
+    const teacher = source('views/teacher/TeacherClass.vue');
+
+    // The tab said "1 new" while no row said which conversation: the focus refresh
+    // wrote only the class number.
+    assert.match(teacher, /if \(threadsLoaded\.value\) \{\s*await loadThreads\(true\);\s*return;\s*\}/);
+    assert.match(teacher, /const loadThreads = async \(quiet = false\): Promise<boolean> => \{/);
+    // Quiet means: no spinner, the scheduled list left alone, and a failure keeps the rows.
+    assert.match(teacher, /if \(!quiet\) threadsLoading\.value = true;/);
+    assert.match(teacher, /if \(!quiet\) await loadScheduledMessages\(\);/);
+    assert.match(teacher, /catch \{\s*if \(!quiet\) threads\.value = \[\];\s*return false;/);
+    assert.match(teacher, /threadsLoaded\.value = true;/);
+});
+
+test('opening a conversation takes the number from a fresh list, not from the row it was opened from', () => {
+    const teacher = source('views/teacher/TeacherClass.vue');
+    // The row may have been loaded before two more messages arrived; the server cleared
+    // all of them, so subtracting the row's old count leaves the tab too high.
+    assert.match(teacher, /if \(!\(await loadThreads\(true\)\) && group\.value\) \{\s*group\.value\.unread_messages = afterOpening\(group\.value\.unread_messages, stale\);/);
+
+    const office = source('views/dashboard/groups/GroupThreadsTab.vue');
+    assert.match(office, /const refreshQuietly = async \(\): Promise<boolean> => \{/);
+    assert.match(office, /if \(!\(await refreshQuietly\(\)\) && cleared > 0\) emit\('opened', cleared\);/);
+    assert.match(office, /emit\('unread-total', unreadNumber\(threadsStore\.threadsMeta\.unread_total\)\);[\s\S]*?return true;/);
 });
