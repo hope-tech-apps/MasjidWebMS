@@ -6,6 +6,7 @@ use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\ProductSale;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
@@ -35,6 +36,7 @@ class CartColumnWidthsTest extends TestCase
         '2026_09_27_090000_create_carts_table.php',
         '2026_09_28_090000_create_orders_table.php',
         '2026_10_06_100000_create_shop_tables.php',
+        '2026_10_06_100200_add_resolution_and_lock_version_to_shop_tables.php',
     ];
 
     protected function setUp(): void
@@ -56,8 +58,8 @@ class CartColumnWidthsTest extends TestCase
 
         foreach (self::MIGRATIONS as $file) {
             $source = (string) file_get_contents(database_path('migrations/' . $file));
-            // [preamble, table, body, table, body, ...]
-            $parts = preg_split("/Schema::create\\('(\\w+)'/", $source, -1, PREG_SPLIT_DELIM_CAPTURE);
+            // [preamble, table, body, table, body, ...]; a table an alter adds to counts as well as one a migration creates.
+            $parts = preg_split("/Schema::(?:create|table)\\('(\\w+)'/", $source, -1, PREG_SPLIT_DELIM_CAPTURE);
 
             for ($i = 1; $i < count($parts); $i += 2) {
                 $table = $parts[$i];
@@ -143,6 +145,7 @@ class CartColumnWidthsTest extends TestCase
             'product_variants.label' => 40,
             'product_sales.product_name' => 120,           // copied from products.name, the same width
             'product_sales.variant_label' => 40,           // copied from product_variants.label, the same width
+            'product_sales.resolution' => $this->longest(ProductSale::RESOLUTIONS), // 'refunded' | 'substituted' (the fix round's migration)
 
             // Stripe ids. 255 is the width of the columns they are copied from
             // (masjids.stripe_account_id) and of the ids Stripe documents.
