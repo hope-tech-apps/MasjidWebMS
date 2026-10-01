@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductSale;
 use App\Models\ProductVariant;
 use App\Models\User;
+use Closure;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -381,6 +382,103 @@ class ShopProductsAdminTest extends TestCase
         $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, 'the whole save rolled back');
         $this->assertSame(['M'], ProductVariant::query()->where('product_id', $polo->id)->pluck('label')->all(), 'and no size was removed');
         $this->assertSame('M', ProductVariant::query()->findOrFail($theirs->id)->label);
+    }
+
+    // ------------------------------------------------------------ a size's name is frozen once an order line names it
+
+    /**
+     * @return array<string, Closure(\App\Models\ProductVariant): void> what makes an order line name a size
+     */
+    private function namingOrders(): array
+    {
+        return [
+            'an open payment page' => fn (ProductVariant $size) => $this->pendingOrderHolding($this->org, $size, 1),
+            'a paid sale' => fn (ProductVariant $size) => $this->paidSale($this->org, $size),
+            'an order that expired' => function (ProductVariant $size): void {
+                $order = $this->pendingOrderHolding($this->org, $size, 1);
+                Order::withoutMasjidScope()->whereKey($order->id)->update(['status' => Order::STATUS_EXPIRED]);
+            },
+        ];
+    }
+
+    #[Test]
+    public function a_size_that_an_order_line_names_cannot_be_renamed_whatever_became_of_the_order(): void
+    {
+        foreach ($this->namingOrders() as $why => $make) {
+            $polo = $this->product($this->org, ['name' => 'School Polo', 'slug' => 'polo-' . uniqid()]);
+            $named = $this->variant($polo, ['label' => 'M', 'stock' => 5]);
+            $make($named);
+
+            $response = $this->putJson($this->products('/' . $polo->id), [
+                'name' => 'Should not be saved',
+                'variants' => [['id' => $named->id, 'label' => 'Medium', 'stock' => 99]],
+            ])->assertStatus(422);
+
+            $this->assertSame('failed', $response->json('status'), $why);
+            $message = $response->json('data')['variants.0.label'][0] ?? '';
+            $this->assertStringContainsString('"M"', $message, "{$why}: the sentence names the size");
+            $this->assertStringContainsString('Switch it off and add a new size instead.', $message, $why);
+
+            // The whole save was refused: the name, the stock and the label are all as they were.
+            $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, "{$why}: the product was not saved");
+            $fresh = ProductVariant::query()->findOrFail($named->id);
+            $this->assertSame('M', $fresh->label, $why);
+            $this->assertSame(5, (int) $fresh->stock, $why);
+        }
+    }
+
+    #[Test]
+    public function a_frozen_size_keeps_every_other_field_editable_and_can_still_be_removed_and_replaced(): void
+    {
+        $polo = $this->product($this->org);
+        $named = $this->variant($polo, ['label' => 'M', 'stock' => 5, 'price_minor' => null, 'enabled' => true, 'sort' => 0]);
+        $free = $this->variant($polo, ['label' => 'L']);
+        $this->paidSale($this->org, $named);
+
+        // Same label: price, stock, enabled and sort change. Another size no order names is renamed in the same save.
+        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+            ['id' => $named->id, 'label' => 'M', 'price_minor' => 2900, 'stock' => 40, 'enabled' => false, 'sort' => 7],
+            ['id' => $free->id, 'label' => 'Large'],
+        ]])->assertOk();
+
+        $fresh = ProductVariant::query()->findOrFail($named->id);
+        $this->assertSame(2900, (int) $fresh->price_minor);
+        $this->assertSame(40, (int) $fresh->stock);
+        $this->assertFalse((bool) $fresh->enabled);
+        $this->assertSame(7, (int) $fresh->sort);
+        $this->assertSame('M', $fresh->label);
+        $this->assertSame('Large', ProductVariant::query()->findOrFail($free->id)->label, 'a size no order names renames freely');
+        $this->assertContains('Large', array_column($response->json('data.variants'), 'label'));
+
+        // The advice the 422 gives works: the size is switched off, and a new one is added under another name.
+        $this->putJson($this->products('/' . $polo->id), ['variants' => [
+            ['id' => $named->id, 'label' => 'M', 'enabled' => false],
+            ['id' => $free->id, 'label' => 'Large'],
+            ['label' => 'Medium'],
+        ]])->assertOk()->assertJsonCount(3, 'data.variants');
+
+        // And a named size may be removed outright (it is soft-deleted; its sale keeps its snapshot).
+        $this->putJson($this->products('/' . $polo->id), ['variants' => [['id' => $free->id, 'label' => 'Large']]])->assertOk();
+        $this->assertTrue(ProductVariant::withoutMasjidScope()->withTrashed()->findOrFail($named->id)->trashed());
+    }
+
+    #[Test]
+    public function swapping_two_names_is_refused_when_either_size_is_named_by_an_order(): void
+    {
+        $polo = $this->product($this->org);
+        $s = $this->variant($polo, ['label' => 'S']);
+        $m = $this->variant($polo, ['label' => 'M']);
+        $this->paidSale($this->org, $m);
+
+        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+            ['id' => $s->id, 'label' => 'M'],
+            ['id' => $m->id, 'label' => 'S'],
+        ]])->assertStatus(422);
+
+        $this->assertArrayHasKey('variants.1.label', $response->json('data'), 'the size an order names is the one refused');
+        $this->assertArrayNotHasKey('variants.0.label', $response->json('data'));
+        $this->assertSame('S', ProductVariant::query()->findOrFail($s->id)->label);
+        $this->assertSame('M', ProductVariant::query()->findOrFail($m->id)->label);
     }
 
     // ------------------------------------------------------------ deleting

@@ -2,6 +2,7 @@
 
 namespace App\Services\Shop;
 
+use App\Models\CartItem;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use Illuminate\Database\Eloquent\Collection;
@@ -10,6 +11,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Everything the admin API writes to the catalogue: a product, its sizes as a list, and its
@@ -35,6 +37,16 @@ use Illuminate\Support\Str;
  * soft-deleted (its `sold_count` and its sales stay where they are; a sale carries its own
  * snapshot). An `id` that is not one of THIS product's live sizes (another organisation's, another
  * product's, a trashed one) is a 404 like any other id, and nothing is saved.
+ *
+ * ## A size's name is frozen once an order line names it
+ *
+ * Once ANY `order_items` row names a size (an open payment page, a paid sale, whatever became of the
+ * order) its label cannot change: a rename would change what that line is called while its sale's
+ * snapshot keeps the old name, and the catalogue would disagree with the order it sold. Such a rename
+ * is a 422 on `variants.N.label` ("switch the size off and add a new one") and the whole save is
+ * refused; the size's price, stock, `enabled` and `sort` stay editable, and the size may still be
+ * removed. The check is made under the sizes' row locks, which a checkout also takes before it
+ * writes a line, so a line written a moment ago is seen.
  *
  * The three steps run in a fixed order because the unique index on a size's label is among LIVE
  * rows: omitted sizes go first (freeing their labels), sizes whose label changes then step aside
@@ -168,6 +180,9 @@ final class ProductWriter
             $kept[$id] = true;
         }
 
+        // A size an order line names keeps its name. Refused before anything is written.
+        $this->refuseRenamedSizesInOrders($product, $existing, $rows);
+
         // 1. A size left out of the list is soft-deleted, before anything claims its label.
         foreach ($existing as $id => $variant) {
             if (! isset($kept[$id])) {
@@ -201,6 +216,53 @@ final class ProductWriter
             // The relation sets `product_id`; BelongsToMasjid stamps `masjid_id`; `sold_count`
             // starts at the column's 0 and is nobody's to set.
             $product->variants()->create($this->variantAttributes($row, true, $position));
+        }
+    }
+
+    /**
+     * @param  Collection<int,ProductVariant>  $existing  this product's live sizes, by id
+     * @param  list<array<string,mixed>>  $rows
+     *
+     * @throws ValidationException when a size named by an order line is given another label
+     */
+    private function refuseRenamedSizesInOrders(Product $product, Collection $existing, array $rows): void
+    {
+        $renamed = [];
+
+        foreach ($rows as $position => $row) {
+            $id = isset($row['id']) ? (int) $row['id'] : null;
+
+            if ($id !== null && $existing[$id]->label !== (string) $row['label']) {
+                $renamed[$position] = $id;
+            }
+        }
+
+        if ($renamed === []) {
+            return;
+        }
+
+        $named = DB::table('order_items')
+            ->where('masjid_id', (int) $product->masjid_id)
+            ->where('buyable_type', CartItem::TYPE_PRODUCT)
+            ->whereIn('buyable_id', array_values($renamed))
+            ->distinct()
+            ->pluck('buyable_id')
+            ->map(static fn ($id): int => (int) $id)
+            ->flip();
+
+        $errors = [];
+
+        foreach ($renamed as $position => $id) {
+            if ($named->has($id)) {
+                $errors["variants.{$position}.label"] = [
+                    'The size "' . $existing[$id]->label . '" is already in a basket or an order, so its name cannot change. '
+                    . 'Switch it off and add a new size instead.',
+                ];
+            }
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
         }
     }
 
