@@ -11,8 +11,14 @@
 | critic, 2026-10-01). The checkout now finds its sizes before its transaction and locks them by
 | primary key. This reads performance_schema.data_locks at the moment Stripe is asked for the page,
 | inside the checkout's transaction, and compares it with the locks held just before the checkout
-| began: an ordinary basket must have taken no lock on `cart_items` at all, and a shop basket only
-| record locks (no gap) on its sizes' primary key. SQLite has no row locks to show.
+| began: an ordinary basket must have taken no lock on `cart_items` at all, and a shop basket no
+| lock on `cart_items` and nothing on `product_variants` but primary-key record locks (no gap, no
+| secondary index, no supremum). SQLite has no row locks to show.
+|
+| The size's own record lock is NOT visible here: RefreshDatabase runs the whole test in one
+| transaction, so the size row was inserted by the very transaction that locks it, and InnoDB lets
+| a transaction's implicit lock on its own fresh row stand in for an explicit one. That the lock
+| makes a competing checkout WAIT is shown with two real connections on staging (ASSUMPTIONS S-2).
 */
 
 use App\Models\Cart;
@@ -79,7 +85,7 @@ it('takes no lock on any basket line in an ordinary checkout', function () {
     expect($onLines)->toBe([]);
 });
 
-it('locks a shop basket\'s sizes by primary key with no gap, and still no basket line', function () {
+it('locks nothing on a shop basket\'s lines and nothing on its sizes but primary-key records', function () {
     $org = $this->shopOrg();
     $variant = $this->sizeOf($org, ['stock' => 5]);
     $cart = $this->cart($org);
@@ -89,6 +95,9 @@ it('locks a shop basket\'s sizes by primary key with no gap, and still no basket
     $onLines = array_filter($added, fn (string $lock): bool => str_starts_with($lock, 'cart_items|'));
     $onSizes = array_values(array_filter($added, fn (string $lock): bool => str_starts_with($lock, 'product_variants|')));
 
-    expect($onLines)->toBe([])
-        ->and($onSizes)->toBe(["product_variants|PRIMARY|X,REC_NOT_GAP|{$variant->id}"]);
+    expect($onLines)->toBe([]);
+
+    foreach ($onSizes as $lock) {
+        expect($lock)->toStartWith('product_variants|PRIMARY|X,REC_NOT_GAP|');
+    }
 });
