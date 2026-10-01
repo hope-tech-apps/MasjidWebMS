@@ -26,6 +26,7 @@ paths:
   - "database/migrations/*_add_scheduling_to_group_posts_table.php"
   - "database/migrations/*_create_group_message_schedules_table.php"
   - "app/Support/GroupAudience.php"
+  - "app/Support/GroupThreadUnread.php"
   - "app/Models/GroupResource.php"
   - "app/Models/GroupResourceRecipient.php"
   - "app/Http/Controllers/Teacher/ResourcesController.php"
@@ -594,6 +595,41 @@ members/guardians channel. What a follow-on slice must not re-decide:
   a thread (show) and on writing, never on the list. A receipt is derived —
   `GroupThreadRead::covers($message)` — and never stored per message. Old rows
   without the id answer by time. It is never an authorization record.
+- **The unread COUNT a staff member sees (2026-10-01) is ONE query,
+  `App\Support\GroupThreadUnread`, and it never writes.** A message is unread
+  for staff user U when somebody else wrote it, its thread is live (a
+  soft-deleted one never counts, a closed one does, a scheduled-unsent
+  conversation is not a `group_messages` row at all), and it is newer than U's
+  bookmark, by message id or, for an old row without one, by time. With NO
+  bookmark only messages at or after `config('groups.messaging.unread_since')`
+  count (a UTC literal in `config/groups.php`, not an env var; null = no
+  floor). **Never seed or backfill a bookmark to make a count start at zero:**
+  staff bookmarks are the read receipts families see, so a seeded row would say
+  "seen by the teacher" about messages nobody opened. The number is delivered as
+  `unread_count` per thread and `meta.unread_total` for the whole class on the
+  thread list (both staff realms), `unread_messages` on the teacher class
+  (`GET .../groups` computes it ONCE for all the teacher's classes, never per
+  class; `GET .../groups/{id}` for one) and on the admin group show (0, not an
+  error, for an office user who cannot read the class's threads). The staff
+  `unread` boolean keeps its key and now means `unread_count > 0`; the family
+  payload is unchanged. The SPAs show it as a pill on the Messages tab, an
+  "N new" chip beside the class name (Messages is the seventh tab and a phone
+  scrolls it away), "N new" on each conversation row and a count on each My
+  Classes card.
+- **Opening a long thread clears it only when its last page is served.** `show`
+  moves the bookmark to the newest message on the page it SERVED, so a
+  conversation longer than one page stalls the count at the unserved tail.
+  `per_page` is therefore honoured up to `GroupThreadsController::
+  MAX_MESSAGES_PER_PAGE` (200; the default stays 50 for the native apps) and
+  both SPAs read every page (`core/helpers/threadUnread.ts` `openWholeThread`).
+  A new screen that opens a thread must do the same, or its count stalls.
+- **A reply advances the writer's bookmark only when nothing from anyone else
+  sits between it and the reply.** Replying from a screen that was open while a
+  parent wrote must not carry the bookmark past that message (it would never be
+  unread, and the receipt would claim it was seen), so `storeMessage` asks
+  `GroupThreadUnread::hasUnseenFromOthers` first and otherwise leaves the
+  bookmark where it is. Opening a thread (`GroupThreadWriter::open`) is
+  unchanged: a new thread has nothing between.
 - **Who is shown whose receipts and reactions is ONE decision,
   `App\Support\GroupMessageSignals`.** Staff (office, teacher) see every
   name. A parent sees staff names and their own `mine`; another parent's
@@ -614,7 +650,8 @@ members/guardians channel. What a follow-on slice must not re-decide:
 Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php` +
 `tests/Feature/GroupMessagePhotosTest.php` +
-`tests/Feature/GroupMessageReactionsTest.php`.
+`tests/Feature/GroupMessageReactionsTest.php` +
+`tests/Feature/GroupThreadUnreadTest.php`.
 
 ## Class story engagement — reactions, read receipts, the reaction digest (2026-09-29)
 

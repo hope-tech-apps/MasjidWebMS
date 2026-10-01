@@ -77,8 +77,12 @@ abstract class TeacherController extends Controller
      * (students) — deliberately NOT the guardians: a teacher's window on a
      * guardian is a message thread, where only the name shows (authorLabel), not
      * a directory of contact details.
+     *
+     * `$unreadMessages` is how many messages from other people this teacher has not
+     * seen in the class (GroupThreadUnread), computed by the CALLER so My Classes
+     * can do one query for every class; null leaves the key out.
      */
-    protected function classPayload(Group $group): array
+    protected function classPayload(Group $group, ?int $unreadMessages = null): array
     {
         $students = $group->memberships()
             ->participants()->current()
@@ -102,7 +106,8 @@ abstract class TeacherController extends Controller
             'my_subjects' => $this->mySubjects($group),
             'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
             'students' => $students->map(fn (GroupMembership $m): array => $this->student($m))->values(),
-        ] + $this->classStoreFlag($group);
+        ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
+          + $this->classStoreFlag($group);
     }
 
     /**

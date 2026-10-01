@@ -6761,3 +6761,41 @@ ONE post or message add up to; one clip may still be the full 100MB.
 Alternatives: raise the server ceilings to ~400MB now (a production server change, and three times the disk exposure);
 lower the per-video size so three fit (takes away the 100MB single clip teachers have today); upload each video in its
 own request (the right long-term shape, a larger change to the upload path).
+
+## 2026-10-01 — An unread count on the teacher Messages tab (W7-3, teacher feedback; branch feat/school-w7-unread-badge)
+Decision: staff see how many messages from other people they have not seen: a pill on the Messages tab, an "N new" chip
+beside the class name, "N new" on each conversation row, a count on each My Classes card, and the same on the office's
+group screen. No migration and no new route; the number is delivered on payloads that already exist.
+- **Reuse `group_thread_reads`, never seed it.** Staff bookmarks are shown to families as read receipts, so a baseline row
+  written to make a count start at zero would tell every parent "seen by the teacher" about messages nobody opened. With no
+  bookmark, only messages at or after `config('groups.messaging.unread_since')` count. That is the literal
+  `'2026-09-28 00:00:00'` (UTC, the Monday of the week this ships: that week's unopened messages show, older history never
+  does), deliberately not an env var: a production `.env` edit is a risk this does not need. Null or absent means no floor.
+- **One grouped query** (`App\Support\GroupThreadUnread`, through `GroupMessage` so the tenant scope applies). My Classes
+  computes it once for every class the teacher leads; a per-class query would grow with the teacher's classes. The thread
+  list carries `unread_count` per row and `meta.unread_total` for the whole class (exact when the list is paginated, and
+  independent of the `scope` filter). The admin group show carries `unread_messages`, counted only over the threads the
+  caller may read, so an office user with no standing in the class gets 0 and the thread list still answers them 403.
+- **The staff `unread` boolean keeps its key** (two native apps and the admin SPA read it) and now means `unread_count > 0`,
+  so the pill and the number cannot disagree. Its old source was wrong in three ways: no bookmark meant every thread with a
+  message was unread, it counted the reader's own and co-teachers' messages, and it was only known once the tab was open.
+- **Long conversations (the count stalled).** `show` moves the bookmark to the newest message on the page it serves, and the
+  teacher screen asked only for page 1 of 50, so a conversation of 51 or more messages could never reach zero, and a
+  teacher could not read past message 50 at all. `per_page` is now honoured up to 200 (default still 50 for the native
+  apps), and both SPAs read every page. The count of the thread returned is the one the LAST page left behind.
+- **A reply from a stale screen no longer swallows a message.** Replying advanced the bookmark to the reply, jumping past a
+  parent message that arrived while the screen was open, which was then never unread (and the receipt said the teacher had
+  seen it). A reply now advances the bookmark only when no other author's message sits between it and the reply.
+- **Not counted:** your own messages; a soft-deleted conversation; a conversation scheduled and not yet sent (it is not a
+  `group_messages` row until the sweep writes it, then it counts for the other teachers and not for its author). A closed
+  conversation still counts.
+- **Phone.** Messages is the seventh tab and the strip scrolls it off screen, so a badge on the tab alone would be invisible
+  exactly where teachers read messages; the chip beside the class name is a button that opens the tab. The tab was not
+  moved into "More".
+- **Keeping it true without a reload.** Opening a conversation subtracts its count locally; the next list's
+  `meta.unread_total` replaces the guess; the class number refreshes when the window regains focus (at most every 15
+  seconds, only the number, never a class reload that would drop a half-written reply).
+- **Not done:** a teacher added to a class later sees that week's history as unread (the floor is global, not per
+  assignment); the My Classes screen does not refresh on focus.
+Alternatives: seed a bookmark per thread at deploy (rejected: false receipts); a per-class query (rejected: cost grows with
+classes); an env-var floor (rejected: production `.env` edits); moving Messages into "More" (rejected: hides it further).

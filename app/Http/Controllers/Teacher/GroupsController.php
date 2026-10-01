@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Teacher;
 
 use App\Models\Group;
+use App\Support\GroupThreadUnread;
+use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -22,9 +24,14 @@ class GroupsController extends TeacherController
     /** Every class this teacher leads. */
     public function index($masjid_id)
     {
+        $groups = $this->taughtGroups();
+
+        // One query for the unread count of every class, never one per class.
+        $unread = GroupThreadUnread::byGroup((int) Auth::id(), $groups->pluck('id')->map(fn ($id) => (int) $id)->all());
+
         return response()->json([
             'status' => 'success',
-            'data' => $this->taughtGroups()->map(fn (Group $g): array => $this->classPayload($g))->values(),
+            'data' => $groups->map(fn (Group $g): array => $this->classPayload($g, $unread[(int) $g->id] ?? 0))->values(),
         ], Response::HTTP_OK);
     }
 
@@ -39,7 +46,10 @@ class GroupsController extends TeacherController
 
         return response()->json([
             'status' => 'success',
-            'data' => $this->classPayload($group),
+            'data' => $this->classPayload(
+                $group,
+                GroupThreadUnread::byGroup((int) Auth::id(), [(int) $group->id])[(int) $group->id] ?? 0
+            ),
         ], Response::HTTP_OK);
     }
 }

@@ -192,6 +192,17 @@ return [
          */
         'max_message_length' => (int) env('GROUP_MESSAGE_MAX_LENGTH', 5000),
 
+        /*
+         * The unread-messages badge's floor, a UTC literal and deliberately NOT an
+         * env var. A staff member who has never opened a conversation has no read
+         * bookmark, and without a floor every message the school ever exchanged
+         * would read as unread on the first day. With one, a conversation they
+         * never opened counts only what was written at or after this moment: that
+         * week's unopened messages show, older history never does. Null or absent
+         * means no floor (tests set it explicitly). See App\Support\GroupThreadUnread.
+         */
+        'unread_since' => '2026-09-28 00:00:00',
+
     ],
 
     /*

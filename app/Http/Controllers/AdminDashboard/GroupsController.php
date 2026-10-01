@@ -10,6 +10,8 @@ use App\Models\GroupMembership;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Support\Errors;
+use App\Support\GroupAudience;
+use App\Support\GroupThreadUnread;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -91,12 +93,21 @@ class GroupsController extends Controller
      * Show one group with its roster. findOrFail is tenant-scoped, so another
      * organization's id resolves to a 404 rather than leaking the row.
      */
-    public function show($masjid_id, $group_id)
+    public function show(Request $request, $masjid_id, $group_id)
     {
         $group = Group::with([
             'memberships.contact',
             'memberships.guardianOf',
         ])->findOrFail($group_id);
+
+        // Messages this user has not seen. Counted only over the conversations
+        // they may read (the same decision the thread list makes), so an office
+        // user with no standing in the class gets 0, not an error.
+        $user = $request->user();
+        $readable = $user !== null ? app(GroupAudience::class)->readableThreadsQuery($user, $group) : null;
+        $group->setAttribute('unread_messages', $readable === null
+            ? 0
+            : (GroupThreadUnread::byGroup((int) $user->id, [(int) $group->id], $readable)[(int) $group->id] ?? 0));
 
         return response()->json([
             'status' => 'success',

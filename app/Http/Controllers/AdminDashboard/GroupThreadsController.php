@@ -22,6 +22,7 @@ use App\Support\GroupAudience;
 use App\Support\GroupMedia;
 use App\Support\GroupMessageAttachments;
 use App\Support\GroupMessageSignals;
+use App\Support\GroupThreadUnread;
 use App\Support\ScheduledTime;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
@@ -69,6 +70,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class GroupThreadsController extends Controller
 {
+    /** The most messages one page of a conversation may carry. */
+    public const MAX_MESSAGES_PER_PAGE = 200;
+
     public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer)
     {
     }
@@ -121,12 +125,23 @@ class GroupThreadsController extends Controller
             ->get()
             ->keyBy('group_thread_id');
 
-        $threads->through(fn (GroupThread $thread) => $this->serializeThread($thread, $reads->get($thread->id)));
+        // ONE grouped query for the page's per-thread counts and the whole class's
+        // total (the badge is exact even when the list is paginated). The total
+        // ignores the ?scope filter: it is the class's number, not this view's.
+        $userId = (int) $request->user()->id;
+        $pageCounts = GroupThreadUnread::byThread(
+            $userId, [(int) $group->id], null, collect($threads->items())->pluck('id')->map(fn ($id) => (int) $id)->all()
+        )[(int) $group->id] ?? [];
+        $unreadTotal = GroupThreadUnread::byGroup($userId, [(int) $group->id], $this->audience->readableThreadsQuery($request->user(), $group))[(int) $group->id] ?? 0;
+
+        $threads->through(fn (GroupThread $thread) => $this->serializeThread(
+            $thread, $reads->get($thread->id), $pageCounts[(int) $thread->id] ?? 0
+        ));
 
         return response()->json([
             'status' => 'success',
             'data' => $threads,
-            'meta' => $this->meta(),
+            'meta' => $this->meta() + ['unread_total' => $unreadTotal],
         ], Response::HTTP_OK);
     }
 
@@ -181,7 +196,8 @@ class GroupThreadsController extends Controller
                 'status' => 'success',
                 'data' => $this->serializeThread(
                     $this->withListAggregates($thread->fresh()),
-                    $this->readMarker($thread, $request->user())
+                    $this->readMarker($thread, $request->user()),
+                    $this->unreadIn($thread, $request->user())
                 ),
                 'meta' => $this->meta(),
             ], Response::HTTP_CREATED);
@@ -214,7 +230,7 @@ class GroupThreadsController extends Controller
             ->with(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments'])
             ->orderBy('created_at')
             ->orderBy('id')
-            ->paginate($request->query('per_page', 50));
+            ->paginate($this->messagesPerPage($request));
 
         // Opening the conversation is reading it — up to the newest message this
         // page actually SERVED, not the newest in the thread: a receipt must not
@@ -235,7 +251,8 @@ class GroupThreadsController extends Controller
             'data' => [
                 'thread' => $this->serializeThread(
                     $this->withListAggregates($thread),
-                    $this->readMarker($thread, $request->user())
+                    $this->readMarker($thread, $request->user()),
+                    $this->unreadIn($thread, $request->user())
                 ),
                 'messages' => $messages,
             ],
@@ -279,8 +296,15 @@ class GroupThreadsController extends Controller
                 // rolls the message back and removes any photo already written.
                 GroupMessageAttachments::store($message, $uploads);
 
-                // You have read what you just wrote.
-                $this->markRead($thread, $request->user(), (int) $message->id);
+                // You have read what you just wrote, but only if nothing from anyone
+                // else sits between your bookmark and it. A reply from a screen that
+                // was open while a parent wrote must not carry the bookmark past that
+                // message: it would never be unread, and the receipt would claim it
+                // was seen.
+                if ($request->user() !== null
+                    && ! GroupThreadUnread::hasUnseenFromOthers((int) $request->user()->id, (int) $thread->id)) {
+                    $this->markRead($thread, $request->user(), (int) $message->id);
+                }
 
                 return $message;
             });
@@ -517,7 +541,8 @@ class GroupThreadsController extends Controller
             'status' => 'success',
             'data' => $this->serializeThread(
                 $this->withListAggregates($thread->fresh()),
-                $this->readMarker($thread, $request->user())
+                $this->readMarker($thread, $request->user()),
+                $this->unreadIn($thread, $request->user())
             ),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
@@ -553,6 +578,28 @@ class GroupThreadsController extends Controller
         }
 
         GroupThreadRead::advance((int) $thread->id, (int) $user->id, null, $upToMessageId);
+    }
+
+    /**
+     * Page size for the conversation. The default stays 50 (the native apps ask for
+     * nothing else); a caller that wants more may, up to a ceiling, so a teacher
+     * can read a long conversation in a few requests and the bookmark (which moves
+     * to the newest message SERVED) reaches the end of it.
+     */
+    private function messagesPerPage(Request $request): int
+    {
+        return max(1, min((int) $request->query('per_page', 50), self::MAX_MESSAGES_PER_PAGE));
+    }
+
+    /** How many messages the caller has not yet seen in one thread. */
+    private function unreadIn(GroupThread $thread, ?User $user): int
+    {
+        if ($user === null) {
+            return 0;
+        }
+
+        return GroupThreadUnread::byThread((int) $user->id, [(int) $thread->group_id], null, [(int) $thread->id])
+            [(int) $thread->group_id][(int) $thread->id] ?? 0;
     }
 
     /** The caller's bookmark on one thread, if any. */
@@ -593,7 +640,7 @@ class GroupThreadsController extends Controller
      *
      * @return array<string,mixed>
      */
-    private function serializeThread(GroupThread $thread, ?GroupThreadRead $read): array
+    private function serializeThread(GroupThread $thread, ?GroupThreadRead $read, int $unreadCount = 0): array
     {
         $about = null;
 
@@ -627,11 +674,12 @@ class GroupThreadsController extends Controller
             'message_count' => (int) ($thread->getAttribute('messages_count') ?? 0),
             'latest_message_at' => optional($latest)->toIso8601String(),
             'last_read_at' => optional($lastRead)->toIso8601String(),
-            // Unread means "there is something newer than my bookmark" — an
-            // empty thread is never unread, and a bookmark taken in the same
-            // second as the newest message counts as read (the marker is
-            // always written after the message it follows).
-            'unread' => $latest !== null && ($lastRead === null || $lastRead->lt($latest)),
+            // How many messages from other people this reader has not seen
+            // (GroupThreadUnread). `unread` keeps its key for the screens and
+            // native apps that read it and now simply means "that is above zero",
+            // so the pill and the number can never disagree.
+            'unread_count' => $unreadCount,
+            'unread' => $unreadCount > 0,
             'created_at' => optional($thread->created_at)->toIso8601String(),
             'updated_at' => optional($thread->updated_at)->toIso8601String(),
         ];
