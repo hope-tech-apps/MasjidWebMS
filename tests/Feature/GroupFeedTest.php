@@ -291,6 +291,11 @@ class GroupFeedTest extends TestCase
     {
         $post = $this->seedPost($this->masjidA, $this->groupA, withImage: false);
 
+        // The edit hands the story back, so it is read-gated like the feed: the office edits
+        // a sent story as someone who may read the class (W7-2a). Off the roster, see
+        // EditSentClassStoryTest.
+        $this->seedMembership($this->masjidA, $this->groupA, $this->personA, GroupMembership::ROLE_LEADER);
+
         Sanctum::actingAs($this->adminA);
 
         $this->putJson($this->postsUrl() . '/' . $post->id, ['body' => 'Corrected.'])

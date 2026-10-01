@@ -60,6 +60,9 @@ class GroupPostsController extends Controller
     /** @var array<int,bool> group id => may the caller read its unpublished stories (one check per class per request) */
     private array $leaderCache = [];
 
+    /** @var array<string,bool> "user id:group id" => may that caller edit a story of it that is out (keyed by caller, so a reused controller instance cannot hand one caller's answer to the next) */
+    private array $editCache = [];
+
     public function __construct(private GroupAudience $audience, private GroupStoryPublisher $publisher)
     {
     }
@@ -264,6 +267,15 @@ class GroupPostsController extends Controller
      *
      * Edits the text and may ADD images. Authorship is not editable: it records
      * who published, and rewriting that would defeat the point of recording it.
+     *
+     * A story that is OUT is edited under the FEED READ GATE, the one `index` and `show`
+     * ask: this call returns the story, so a caller who may not read it may not change
+     * it either (W7-2a). A story that is not out is the author's own words and keeps its
+     * author-only rule, which needs no roster standing.
+     *
+     * An edit to a story that is out stamps `edited_at` (title, body or added files
+     * actually changed) and nothing else: no email, no push, and the read receipts and
+     * reactions stay as they are.
      */
     public function update(UpdateGroupPostRequest $request, $masjid_id, $group_id, $post_id)
     {
@@ -271,6 +283,19 @@ class GroupPostsController extends Controller
         $post = $this->postsFor($group, $request->user())->findOrFail($post_id);
 
         $this->authorizeScheduledWrite($request->user(), $post, editing: true);
+
+        // The story is out: this response hands it back, so it is read-gated like a GET.
+        // `$mayReceiveMedia` is what THIS caller may have of it (a feed-only guardian who
+        // is also an administrator gets the words and not the pictures).
+        $wasOut = $post->isPublished();
+
+        if ($wasOut) {
+            $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_FEED);
+        }
+
+        $mayReceiveMedia = ! $wasOut || $this->audience->mayReceive(
+            $request->user(), $group, GroupAudience::DISCLOSURE_MEDIA
+        );
 
         // Moving a story's time. Only a story that has NOT gone out: once families
         // have read one, "reschedule" would mean pulling it back, which is a
@@ -325,6 +350,17 @@ class GroupPostsController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // DEPLOY WINDOW: for the seconds between the new code and the migration, the row has
+        // no `edited_at`. An edit that has to stamp it is refused (503) BEFORE anything is
+        // written, so the teacher's text is still in her form, rather than failing as a 500
+        // after half the write.
+        if ($wasOut && ! array_key_exists('edited_at', $post->getAttributes()) && $this->changesWords($post, $fields, $request)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'Editing a story that has gone out is briefly unavailable while the system updates. Please try again in a minute.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+
         try {
             $moved = DB::transaction(function () use ($request, $post, $moves, $fields, $goesOutAt): bool {
                 if ($moves) {
@@ -347,9 +383,18 @@ class GroupPostsController extends Controller
                     $fields['publish_failure'] = null;
                 }
 
-                if ($fields !== []) {
-                    $post->update($fields);
+                // Is it out NOW? Read on the row under its lock, so a story the sweep announced a
+                // moment ago counts as out. A story still waiting is not stamped (nobody read
+                // the earlier words), and neither is a save that changed nothing.
+                $out = ! $moves && (GroupPost::query()->whereKey($post->getKey())->lockForUpdate()->first()?->isPublished() ?? false);
+
+                $post->fill($fields);
+
+                if ($out && ($post->isDirty(['title', 'body']) || $this->uploads($request) !== [])) {
+                    $post->edited_at = now();
                 }
+
+                $post->save();
 
                 GroupPostAttachments::store($post, $this->uploads($request));
 
@@ -372,10 +417,10 @@ class GroupPostsController extends Controller
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serialize(
-                    $fresh, $masjid_id, $group_id, true,
+                    $fresh, $masjid_id, $group_id, $mayReceiveMedia,
                     $this->signals($group, [$fresh], $request->user())[(int) $fresh->id] ?? null
                 ),
-                'meta' => $this->meta(true, $group),
+                'meta' => $this->meta($mayReceiveMedia, $group),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -383,6 +428,24 @@ class GroupPostsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Would this request change the words or add a file? (The pre-write twin of the
+     * `isDirty` test inside the transaction, used only to decide whether the missing
+     * column matters.)
+     *
+     * @param array<string,mixed> $fields
+     */
+    private function changesWords(GroupPost $post, array $fields, Request $request): bool
+    {
+        foreach (['title', 'body'] as $key) {
+            if (array_key_exists($key, $fields) && ($fields[$key] ?? null) !== $post->{$key}) {
+                return true;
+            }
+        }
+
+        return $this->uploads($request) !== [];
     }
 
     private function cannotBeMoved(string $message)
@@ -445,6 +508,35 @@ class GroupPostsController extends Controller
         abort(403, $editing
             ? 'Only the author can change a story that has not gone out. The office can cancel it.'
             : 'Only the author or the office can cancel a story that has not gone out.');
+    }
+
+    /**
+     * May this caller edit a story that is OUT? The door update() asks, in the same order:
+     * the realm's write gate (the teacher realm: leads the class; the admin realm: `manage
+     * contacts`), the tenant check of mayCancelScheduled(), then the FEED READ gate. So a
+     * class's teachers and the office, and only those who may also read its feed. Asked once
+     * per class per request.
+     */
+    private function mayEditSent(?User $user, GroupPost $post): bool
+    {
+        if ($user === null || ! $post->isPublished()) {
+            return false;
+        }
+
+        return $this->editCache[$user->getKey().':'.(int) $post->group_id] ??= $this->computeMayEditSent(
+            $user, $post->group ?? Group::findOrFail($post->group_id)
+        );
+    }
+
+    private function computeMayEditSent(User $user, Group $group): bool
+    {
+        $realmDoor = request()->is('api/teacher/*')
+            ? $this->audience->isLeaderOf($user, $group)
+            : $user->can('manage contacts');
+
+        return $realmDoor
+            && $this->audience->mayCancelScheduled($user, $group)
+            && $this->audience->mayReceive($user, $group, GroupAudience::DISCLOSURE_FEED);
     }
 
     private function maySchedule(?User $user, GroupPost $post): bool
@@ -795,6 +887,9 @@ class GroupPostsController extends Controller
             'retained_until' => optional($post->retained_until)->toDateString(),
             'created_at' => optional($post->created_at)->toIso8601String(),
             'updated_at' => optional($post->updated_at)->toIso8601String(),
+            // When the words or files of a story that was already out last changed; null
+            // = never. `updated_at` cannot say this: the sweep and "Send now" bump it too.
+            'edited_at' => optional($post->edited_at)->toIso8601String(),
             // When it goes (or went) OUT to families, and where it stands. `published_at_
             // local` is the school's own clock in the form the Send-later field takes, so
             // the edit form shows what was chosen and not a UTC instant.
@@ -809,6 +904,10 @@ class GroupPostsController extends Controller
             // (it teaches the class) without having written it. Sent explicitly because the
             // SPA otherwise infers Cancel from can_change_schedule (scheduledSend.ts).
             'can_cancel' => ! $post->isPublished() && $this->maySchedule(request()->user(), $post),
+            // True exactly when this caller's PUT would be allowed for a story that is out:
+            // the SPA draws Edit from it and from nothing else. False while it is not out
+            // (a scheduled story is edited through the Scheduled list, by its author).
+            'can_edit' => $this->mayEditSent(request()->user(), $post),
             'content_hidden' => false,
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a reader who
