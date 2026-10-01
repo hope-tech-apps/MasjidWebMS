@@ -5476,17 +5476,42 @@ const saveMessage = (row: ScheduledRow, fields: { heading: string; body: string;
         ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
     }), 'That message could not be saved.');
 
+/** Every page of one conversation, oldest first (see openWholeThread). */
+const readWholeThread = (threadId: number) => openWholeThread<any, any>(async (page) => {
+    const res = await TeacherApiService.get(
+        `${base.value}/threads/${threadId}?per_page=${MESSAGE_PAGE_SIZE}&page=${page}`,
+    );
+    return res.data?.data;
+});
+
+/**
+ * Read the open conversation again, after a reply. A parent may have written while
+ * it was open: the server leaves the reader's bookmark BEHIND such a message (a
+ * reply does not mean "I read what arrived meanwhile"), so only a fresh read puts
+ * it on screen and clears its count. Without this the tab says "1 new" for a
+ * message the teacher cannot see until they close and reopen the conversation.
+ * A failed re-read changes nothing: the reply itself is already shown.
+ */
+const rereadOpenThread = async () => {
+    const thread = openedThread.value;
+    if (!thread) return;
+    try {
+        const opened = await readWholeThread(thread.id);
+        // The teacher may have opened another conversation while this was in flight.
+        if (openedThread.value?.id !== thread.id) return;
+        openedThread.value = opened.thread ?? thread;
+        openedMessages.value = opened.messages;
+    } catch {
+        // Keep what is on screen.
+    }
+};
+
 const openThread = async (thread: any) => {
     try {
         // Every page, oldest first: the server moves the bookmark to the newest message
         // it served, so a conversation longer than one page is only read (and only
         // cleared) once its last page has been fetched.
-        const opened = await openWholeThread<any, any>(async (page) => {
-            const res = await TeacherApiService.get(
-                `${base.value}/threads/${thread.id}?per_page=${MESSAGE_PAGE_SIZE}&page=${page}`,
-            );
-            return res.data?.data;
-        });
+        const opened = await readWholeThread(thread.id);
         openedThread.value = opened.thread ?? thread;
         replyBody.value = '';
         replyPhotos.value = [];
@@ -5515,6 +5540,7 @@ const sendReply = async () => {
         openedMessages.value.push(res.data?.data);
         replyBody.value = '';
         replyPhotos.value = [];
+        await rereadOpenThread();
         await loadThreads();
     } catch (e: any) {
         replyError.value = photoErrorText(e, 'Your reply could not be sent.');

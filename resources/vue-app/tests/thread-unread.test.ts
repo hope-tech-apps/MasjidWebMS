@@ -218,3 +218,14 @@ test('the office screen shows the count on the Messages tab and on each row, and
     assert.match(store, /openWholeThread<GroupMessage, GroupThread>/);
     assert.match(store, /per_page=\$\{MESSAGE_PAGE_SIZE\}&page=\$\{page\}/);
 });
+
+test('after a reply the teacher screen re-reads the open conversation before the list', () => {
+    const teacher = readFileSync(path.join(appRoot, 'views/teacher/TeacherClass.vue'), 'utf8');
+
+    // A parent message that arrived while the conversation was open is only shown,
+    // and only cleared, by a fresh read: the server leaves the bookmark behind it.
+    assert.match(teacher, /replyPhotos\.value = \[\];\s*await rereadOpenThread\(\);\s*await loadThreads\(\);/);
+    assert.match(teacher, /const rereadOpenThread = async \(\) => \{[\s\S]*?if \(openedThread\.value\?\.id !== thread\.id\) return;/);
+    // One reader for opening and re-reading, so both fetch every page.
+    assert.equal((teacher.match(/readWholeThread\(/g) ?? []).length, 2);
+});
