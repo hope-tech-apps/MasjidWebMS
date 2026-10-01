@@ -62,7 +62,7 @@
                                         <td dir="auto">{{ row.variant_label }}</td>
                                         <td class="text-end">{{ row.to_hand_out }}</td>
                                         <td class="text-end">{{ row.collected }}</td>
-                                        <td class="text-end" :class="{ 'text-danger fw-semibold': row.oversold_open > 0 }">{{ row.oversold_open }}</td>
+                                        <td class="text-end" :class="{ 'text-danger fw-semibold': (row.oversold_open ?? 0) > 0 }">{{ row.oversold_open ?? 0 }}</td>
                                     </tr>
                                 </tbody>
                                 <tfoot v-if="summary.length > 1">

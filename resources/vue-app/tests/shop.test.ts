@@ -433,6 +433,9 @@ const summary = [
 test('the header totals add the server\'s own rows, and the filters offer each product and size once', () => {
     assert.deepEqual(summaryTotals(summary), { to_hand_out: 8, collected: 7, oversold_open: 3 });
     assert.deepEqual(summaryTotals([]), { to_hand_out: 0, collected: 0, oversold_open: 0 });
+    // A row from a backend that has not named oversold_open yet is zero, not NaN.
+    const { oversold_open: _named, ...unnamed } = summary[0];
+    assert.equal(summaryTotals([unnamed as any]).oversold_open, 0);
 
     assert.deepEqual(productOptions(summary), [{ id: 5, name: 'Hoodie' }, { id: 6, name: 'Cap' }]);
     assert.deepEqual(sizeOptions(summary, 5), [{ id: 11, label: 'M' }, { id: 12, label: 'L' }]);

@@ -552,7 +552,8 @@ export function summaryTotals(rows: readonly SalesSummaryRow[]): { to_hand_out: 
         (sum, row) => ({
             to_hand_out: sum.to_hand_out + row.to_hand_out,
             collected: sum.collected + row.collected,
-            oversold_open: sum.oversold_open + row.oversold_open,
+            // A backend that has not yet named this column adds nothing, never NaN.
+            oversold_open: sum.oversold_open + (row.oversold_open ?? 0),
         }),
         { to_hand_out: 0, collected: 0, oversold_open: 0 }
     );
