@@ -84,6 +84,22 @@ export function parseSort(text: string): { ok: true; value: number } | { ok: fal
     return { ok: true, value };
 }
 
+/**
+ * The symbol an input shows beside a price ("$" for usd), from Intl. A code Intl does not know is
+ * shown as the code itself, so the input never claims a currency it cannot name.
+ */
+export function currencySymbol(currency: string | null | undefined): string {
+    const code = String(currency ?? '').trim().toUpperCase() || 'USD';
+
+    try {
+        const parts = new Intl.NumberFormat(undefined, { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' }).formatToParts(0);
+
+        return parts.find((part) => part.type === 'currency')?.value ?? code;
+    } catch {
+        return code;
+    }
+}
+
 // --------------------------------------------------------------------------------- the editor form
 
 let rowCounter = 0;

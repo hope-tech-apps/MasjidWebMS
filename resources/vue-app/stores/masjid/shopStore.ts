@@ -56,6 +56,7 @@ export const useShopStore = defineStore('shopStore', () => {
     const productsMeta = ref<ShopMeta>();
     const salesPaginated = ref<PaginatedData<ShopSale>>();
     const salesMeta = ref<SalesMeta>();
+    let salesRequest = 0;
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -185,16 +186,21 @@ export const useShopStore = defineStore('shopStore', () => {
 
     // ----------------------------------------------------------------------------- the pickup list
 
-    /** One page of sales under the full filter set. `meta.summary` is the header and ignores the filters. */
+    /**
+     * One page of sales under the full filter set. `meta.summary` is the header and ignores the filters.
+     *
+     * The rows are NOT cleared first, so a refresh after a hand-out does not blank the table; the screen
+     * decides when to hide it. Only the latest request writes: a slow answer for a filter the admin has
+     * already moved on from must not put its rows over the new ones.
+     */
     async function fetchSales(filters: SaleFilters, page: number = 1, perPage: number | null = null): Promise<void> {
         const id = requireMasjidId();
-
-        if (salesPaginated.value) {
-            salesPaginated.value.data = [];
-        }
+        const mine = ++salesRequest;
 
         const res: AxiosResponse = await ApiService.get(salesListPath(id, filters, page, perPage) as BackendApiRoute);
         const body = expectSuccess(res, 'The pickup list');
+
+        if (mine !== salesRequest) return;
 
         salesPaginated.value = body.data;
         salesMeta.value = body.meta ?? undefined;
