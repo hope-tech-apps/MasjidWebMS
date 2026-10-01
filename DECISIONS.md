@@ -7250,3 +7250,31 @@ decision on whether the teacher is told).
   window answers 500 where 503 was meant; keyboard focus is dropped on Edit, Save and Cancel; Esc discards a message
   draft unasked; the edit TIME is only a title tooltip (no touch or screen-reader path); `can_edit` on a message does
   not ask the admin realm's write permission; the closed-conversation check sits outside the lock.
+
+## 2026-10-01 — An address several contacts hold is nobody's to sign in with (member code door)
+
+- **The bug.** It was found by the social sign-in design's read of this code, and confirmed by reading and by a test.
+  - `MemberSignupService::resolveContact()` answered null both for an address nobody holds and for one SEVERAL contacts hold.
+  - Two contacts of one organisation with the same office `email` and no `login_email` (two members of a family on one
+    address is the ordinary case) therefore looked like a new member to the code door. With a name supplied, `consume()`
+    created a THIRD contact (`email` = `login_email` = the address, `signup_source` `app`) and signed the person in to it,
+    with none of their gifts or orders.
+  - From then on that contact's `login_email` won every sign-in, so merging the two originals no longer brought the history
+    back; the office had to merge three.
+  - Without a name the door answered the 422 "tell us your name", which says nobody here has the address.
+  - The password door already refused the same ambiguity, and the controller's docblock already promised the one 410 for
+    "an address matching two contacts".
+- **The fix.**
+  - `holdersOf()` (public) returns an `AddressHolders`: nobody, one contact, or several. It keeps the same precedence
+    (`login_email` first, then the office `email` only on contacts with no login address) and the same exact-match filter
+    before counting. `resolveContact()` is kept on top of it for the callers that only link.
+  - `consume()` refuses several before its create branch: the one 410, nothing created, nothing adopted, no password, the code
+    spent.
+  - A warning names the organisation and the contacts' ids, never the address, so the office can merge them.
+  - A contact that already signs in with the address is not made ambiguous by office duplicates.
+- **What it means for the office.** A member whose address sits on two contacts cannot sign in until those are merged. That is
+  the right failure: the alternative was a quiet empty account. Any import that pre-creates contacts (the MEC Wix move) must
+  count and resolve duplicate addresses BEFORE members are invited.
+- **Proof.** `MemberSignInSharedAddressTest`, 7 tests: no third contact with a name; the same 410 without one; the code spent
+  and the log naming ids only; signing in on the surviving contact after a merge; the `login_email` holder unaffected by office
+  duplicates; nobody still makes a new member; the three answers and tenancy of `holdersOf()`. Four of them fail on the old code.

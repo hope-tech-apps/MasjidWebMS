@@ -403,7 +403,16 @@ class MemberSignupService
                 return null;
             }
 
-            $contact = $this->resolveContact($email);
+            $holders = $this->holdersOf($email);
+
+            // SEVERAL contacts hold this address: it is not a new member's, and it is not one
+            // contact's to link. Refused before the create branch below, which would otherwise
+            // hand whoever proved the mailbox a NEW empty contact beside their own record.
+            if ($holders->isSeveral()) {
+                return $this->refuseSharedAddress($holders);
+            }
+
+            $contact = $holders->contact;
             $created = false;
 
             if ($contact === null) {
@@ -536,6 +545,26 @@ class MemberSignupService
      */
     private function resolveContact(string $email): ?Contact
     {
+        return $this->holdersOf($email)->contact;
+    }
+
+    /**
+     * Who holds `$email` here: nobody, one contact, or several (AddressHolders). The same
+     * precedence and the same exact-match filter as ever: `login_email` first, and only when no
+     * contact holds it there, the office's `email` on contacts with no login address.
+     *
+     * NONE and SEVERAL are different answers on purpose. Until 2026-10-01 both came back as
+     * "no contact", and the code door then treated two family members sharing an address in
+     * `email` as a brand-new member: with a name supplied it created a THIRD contact, signed the
+     * person in to it with none of their history, and from then on that contact's `login_email`
+     * won every sign-in, so merging the two originals no longer helped. Callers that may CREATE
+     * must ask this, not resolveContact().
+     *
+     * Runs tenant-bound, like every caller. Public for the callers outside this service that
+     * must tell the three cases apart before they write (a social sign-in that links an identity).
+     */
+    public function holdersOf(string $email): AddressHolders
+    {
         // No `limit()` on either query: the candidates are filtered to the exact
         // address before they are counted, and a limit taken first could cut the
         // exact row off behind look-alikes (or leave one exact row standing where
@@ -550,11 +579,11 @@ class MemberSignupService
         );
 
         if ($byLogin->count() === 1) {
-            return $byLogin->first();
+            return AddressHolders::one($byLogin->first());
         }
 
         if ($byLogin->count() > 1) {
-            return null;
+            return AddressHolders::several(self::idsOf($byLogin));
         }
 
         $byEmail = ContactIdentity::keepExactMatches(
@@ -567,7 +596,47 @@ class MemberSignupService
             $email,
         );
 
-        return $byEmail->count() === 1 ? $byEmail->first() : null;
+        return match (true) {
+            $byEmail->count() === 1 => AddressHolders::one($byEmail->first()),
+            $byEmail->count() > 1 => AddressHolders::several(self::idsOf($byEmail)),
+            default => AddressHolders::none(),
+        };
+    }
+
+    /**
+     * The ids of the contacts a match kept (keepExactMatches hands back a plain collection).
+     *
+     * @param  iterable<Contact>  $contacts
+     * @return list<int>
+     */
+    private static function idsOf(iterable $contacts): array
+    {
+        $ids = [];
+
+        foreach ($contacts as $contact) {
+            $ids[] = (int) $contact->getKey();
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Several contacts hold the redeemed address, so it is nobody's to sign in with until the
+     * office merges them. Answered exactly as any other refused redeem: null (the controller's
+     * one 410), nothing created, nothing adopted, no password set, and the code SPENT (this
+     * returns, so the transaction commits the `consumed_at` that opened it).
+     *
+     * The log line is how the office finds out: the organisation and the contacts' ids, never the
+     * address (an address in a log is a disclosure).
+     */
+    private function refuseSharedAddress(AddressHolders $holders): ?array
+    {
+        Log::warning('member sign-in refused: several contacts hold the address; merge them so its owner can sign in', [
+            'masjid_id' => $this->tenant->get(),
+            'contact_ids' => $holders->contactIds,
+        ]);
+
+        return null;
     }
 
     /**
