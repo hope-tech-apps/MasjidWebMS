@@ -244,6 +244,37 @@ class ShopStockTest extends TestCase
         );
     }
 
+    #[Test]
+    public function a_changed_price_is_a_notice_before_the_card_screen_and_the_new_price_is_what_is_charged(): void
+    {
+        $org = $this->shopOrg();
+        $variant = $this->sizeOf($org, ['stock' => 10]);
+        $cart = $this->cart($org);
+        $this->addVariant($cart, $variant, 2, 2500);
+
+        // The owner raises the price while the basket sits there.
+        $variant->product->forceFill(['base_price_minor' => 2700])->save();
+
+        $svc = $this->checkoutService();
+        $refused = $this->refusal($svc, $cart);
+
+        $this->assertSame(
+            [['label' => 'School Polo (M)', 'status' => 'repriced', 'reason' => 'The price changed while this was in your basket.']],
+            $refused->notices(),
+            'told BEFORE the card screen'
+        );
+        $this->assertSame(5400, $refused->priced()->totalMinor, 'the basket the shopper is asked to accept, at its new price');
+        $this->assertSame([], $svc->created, 'no payment page was opened');
+        $this->assertSame(0, Order::withoutMasjidScope()->count());
+
+        // "OK" to what they saw, then the page opens at the new price.
+        $svc->acknowledge($cart, (string) $refused->seen());
+        $order = $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org')['order'];
+
+        $this->assertSame(5400, (int) $order->total_minor);
+        $this->assertSame(2700, (int) OrderItem::withoutMasjidScope()->where('order_id', $order->id)->sole()->unit_amount_minor);
+    }
+
     // ---------------------------------------------------------------- expiry, no release
 
     #[Test]
