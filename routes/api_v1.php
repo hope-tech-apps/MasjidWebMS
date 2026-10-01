@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
 use App\Http\Controllers\Api\V1\ServicesController;
 use App\Http\Controllers\Api\V1\SettingController;
+use App\Http\Controllers\Api\V1\ShopProductsController;
 use App\Http\Controllers\Api\V1\ZakatCalculatorController;
 use Illuminate\Support\Facades\Route;
 
@@ -122,6 +123,23 @@ Route::prefix('v1')->group(function () {
         Route::get('/cart-orders/{uuid}', [CartOrdersController::class, 'show'])
             ->whereUuid('uuid')
             ->middleware('throttle:cart-order-status');
+    });
+
+    // The online shop's public read (shop slice B2; DECISIONS.md 2026-10-01): the products the
+    // renderer draws, by organisation (`masjid-id` header) and by slug. Writes nothing, so the
+    // only limiter is the generous `shop-read`; nothing here can put anything in a basket (that is
+    // POST /cart/items) and nothing is cached, because availability moves with every payment page.
+    //
+    // DARK BY THE SAME RULE AS THE BASKET: `shop.enabled` answers the 404 an unknown route gets
+    // unless the basket is on for the organisation and it has been granted the `shop` capability,
+    // before the limiter runs. The routes are registered either way, so the route cache is the
+    // same in both states. The reads carry no stock, sold or held number, only `sold_out`.
+    Route::middleware('shop.enabled')->prefix('shop')->group(function () {
+        Route::get('/products', [ShopProductsController::class, 'index'])
+            ->middleware('throttle:shop-read');
+
+        Route::get('/products/{slug}', [ShopProductsController::class, 'show'])
+            ->middleware('throttle:shop-read');
     });
 
     // Public appointment requests (Community vertical, T-021) — the free

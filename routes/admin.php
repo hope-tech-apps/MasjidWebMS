@@ -76,6 +76,9 @@ use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
 use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\TeamController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
+use App\Http\Controllers\AdminDashboard\ShopProductImagesController;
+use App\Http\Controllers\AdminDashboard\ShopProductsController;
+use App\Http\Controllers\AdminDashboard\ShopSalesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
@@ -406,6 +409,54 @@ Route::prefix('admin')->group(function () {
                     // (Permission::count() stays 8) — `admin` already means a
                     // SuperAdmin or this organisation's own MasjidAdmin.
                     Route::patch('/menus/{menu_id}/orders/{order_id}/items', 'updateItems');
+                });
+            });
+
+            // THE ONLINE SHOP, the office's half (shop slice B2, DECISIONS.md 2026-10-01): the
+            // catalogue, its pictures, the pickup list and its CSV. Behind `capability:shop` (OFF for
+            // every organisation until a SuperAdmin grants it, so a dark shop answers 403 exactly
+            // as class_store's routes do) and the DONATIONS permissions, `view donations` to read
+            // and `manage donations` to write: the pair the fee plans use for what somebody is
+            // charged, and no new permission (Permission::count() stays 8). Collecting an item
+            // is a write on a record of money taken, so it takes `manage donations` too.
+            //
+            // OUTSIDE `crm`, as the Jummah-lunch board above is: a masjid selling uniforms must
+            // not first switch on the member directory. The pickup list reads the buyer from the
+            // ORDER, never from a contact.
+            //
+            // NOT `renderer.purge`: the public read (routes/api_v1.php) is never cached, so a save
+            // here is live at once without purging anything.
+            Route::prefix('{masjid_id}/shop')->middleware('capability:shop')->group(function () {
+                Route::prefix('products')->controller(ShopProductsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::post('/', 'store')->middleware('permission:manage donations');
+                    Route::get('/{product_id}', 'show')->middleware('permission:view donations')->whereNumber('product_id');
+                    // The product's fields and, when `variants` is sent, its sizes as a list.
+                    Route::put('/{product_id}', 'update')->middleware('permission:manage donations')->whereNumber('product_id');
+                    Route::delete('/{product_id}', 'destroy')->middleware('permission:manage donations')->whereNumber('product_id');
+                });
+
+                // A product's pictures (Spatie media, `product_images`, at most eight). `order` is a
+                // literal path and is registered BEFORE the `{media_id}` wildcard, as the file keeps
+                // its literal paths ahead of its wildcards everywhere else.
+                Route::prefix('products/{product_id}/images')->controller(ShopProductImagesController::class)->group(function () {
+                    Route::post('/', 'store')->middleware('permission:manage donations')->whereNumber('product_id');
+                    Route::put('/order', 'reorder')->middleware('permission:manage donations')->whereNumber('product_id');
+                    Route::delete('/{media_id}', 'destroy')->middleware('permission:manage donations')->whereNumber(['product_id', 'media_id']);
+                });
+
+                // The pickup list: who bought what, and has it been handed over. The CSV is the same
+                // list with the same filters. It is registered ahead of the `sales` group so its
+                // literal path can never be read as a sale. `collect` is stamped by the first press
+                // only and refused on a refunded or disputed order; the DELETE is its undo.
+                Route::get('sales.csv', [ShopSalesController::class, 'export'])->middleware('permission:view donations');
+                Route::prefix('sales')->controller(ShopSalesController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::post('/{sale_id}/collect', 'collect')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    Route::delete('/{sale_id}/collect', 'uncollect')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    // What the office did about a sale (refunded | substituted); the DELETE clears it.
+                    Route::post('/{sale_id}/resolve', 'resolve')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    Route::delete('/{sale_id}/resolve', 'unresolve')->middleware('permission:manage donations')->whereNumber('sale_id');
                 });
             });
 

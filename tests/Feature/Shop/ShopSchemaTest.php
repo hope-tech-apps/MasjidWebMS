@@ -9,9 +9,11 @@ use App\Models\Product;
 use App\Models\ProductSale;
 use App\Models\ProductVariant;
 use App\Models\Service;
+use App\Models\User;
 use App\Support\CartTables;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -42,6 +44,7 @@ class ShopSchemaTest extends TestCase
     private const MIGRATIONS = [
         'database/migrations/2026_10_06_100000_create_shop_tables.php',
         'database/migrations/2026_10_06_100100_add_buyable_index_to_order_items_table.php',
+        'database/migrations/2026_10_06_100200_add_resolution_and_lock_version_to_shop_tables.php',
     ];
 
     protected function setUp(): void
@@ -139,6 +142,49 @@ class ShopSchemaTest extends TestCase
         // The snapshot columns are as wide as what they copy, so a name that fitted fits.
         $this->assertStringContainsString("string('name', 120)", $source);
         $this->assertStringContainsString("string('product_name', 120)", $source);
+    }
+
+    #[Test]
+    public function the_fix_rounds_columns_are_what_mysql_will_also_enforce_and_its_key_is_hand_named(): void
+    {
+        $this->assertSame('varchar', Schema::getColumnType('product_sales', 'resolution'));
+        $this->assertSame('datetime', Schema::getColumnType('product_sales', 'resolved_at'));
+        $this->assertSame('integer', Schema::getColumnType('product_sales', 'resolved_by_user_id'));
+        $this->assertSame('integer', Schema::getColumnType('products', 'lock_version'));
+
+        // The migration declares the widths and the default MySQL will enforce; SQLite cannot show them.
+        $source = (string) file_get_contents(base_path(self::MIGRATIONS[2]));
+        foreach ([
+            "string('resolution', 16)->nullable()", "timestamp('resolved_at')->nullable()", "unsignedBigInteger('resolved_by_user_id')->nullable()",
+            "unsignedInteger('lock_version')->default(0)", "foreign('resolved_by_user_id', 'product_sales_resolved_by_foreign')", '->nullOnDelete()',
+        ] as $declaration) {
+            $this->assertStringContainsString($declaration, $source);
+        }
+        $this->assertLessThanOrEqual(64, strlen('product_sales_resolved_by_foreign'));
+
+        // The key is to users and nulls on delete (SQLite does not keep a key's name, so the name is read from the source above).
+        $keys = collect(Schema::getForeignKeys('product_sales'))->first(static fn (array $key): bool => $key['columns'] === ['resolved_by_user_id']);
+        $this->assertNotNull($keys, 'product_sales has a foreign key on resolved_by_user_id');
+        $this->assertSame('users', $keys['foreign_table']);
+        $this->assertSame('set null', strtolower((string) $keys['on_delete']));
+
+        // A new product starts at version 0.
+        $variant = $this->sizeOf($this->org());
+        $this->assertSame(0, (int) Product::withoutMasjidScope()->findOrFail($variant->product_id)->lock_version);
+
+        // Retiring the login that resolved a sale keeps the sale and what was decided about it.
+        $org = $this->org();
+        $size = $this->sizeOf($org);
+        [$order, $line] = $this->paidLineFor($org, $size);
+        $sale = $this->saleFor($order, $line, $size);
+        $user = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]);
+        $sale->forceFill(['resolution' => ProductSale::RESOLUTION_REFUNDED, 'resolved_at' => now(), 'resolved_by_user_id' => $user->id])->save();
+
+        DB::table('users')->where('id', $user->id)->delete();
+
+        $kept = ProductSale::withoutMasjidScope()->findOrFail($sale->id);
+        $this->assertNull($kept->resolved_by_user_id);
+        $this->assertSame(ProductSale::RESOLUTION_REFUNDED, $kept->resolution);
     }
 
     #[Test]

@@ -31,6 +31,17 @@ class ProductSale extends Model
 {
     use BelongsToMasjid;
 
+    /**
+     * What the office did about a sale (migration 2026_10_06_100200): the money went back, or a
+     * replacement is handed over instead. NULL is "nobody has decided". A refunded sale is never
+     * "to hand out"; a substituted one is, because the substitute is what is handed over.
+     */
+    public const RESOLUTION_REFUNDED = 'refunded';
+
+    public const RESOLUTION_SUBSTITUTED = 'substituted';
+
+    public const RESOLUTIONS = [self::RESOLUTION_REFUNDED, self::RESOLUTION_SUBSTITUTED];
+
     protected $fillable = [
         'masjid_id',
         'order_id',
@@ -45,6 +56,9 @@ class ProductSale extends Model
         'oversold',
         'collected_at',
         'collected_by_user_id',
+        'resolution',
+        'resolved_at',
+        'resolved_by_user_id',
     ];
 
     protected function casts(): array
@@ -59,6 +73,7 @@ class ProductSale extends Model
             'total_minor' => 'integer',
             'oversold' => 'boolean',
             'collected_at' => 'datetime',
+            'resolved_at' => 'datetime',
         ];
     }
 

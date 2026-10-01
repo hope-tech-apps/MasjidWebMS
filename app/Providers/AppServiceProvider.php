@@ -490,6 +490,18 @@ class AppServiceProvider extends ServiceProvider
                     ->by('cart-order-status-connection:' . $request->ip())->response($tooMany);
         });
 
+        // The shop's public reads (GET /api/v1/shop/products and /{slug}, shop slice B2). They write
+        // nothing and the renderer calls them from Cloudflare's shared egress addresses, so, like the
+        // by-host lookup above, the allowance is generous and per connection AND organisation: a
+        // 429 here blanks a shop page, it never serves another organisation's. The gate
+        // (EnsureShopEnabled) ranks ahead of every throttle, so a dark shop never runs this closure.
+        RateLimiter::for('shop-read', fn (Request $request) => Limit::perMinute(600)
+            ->by('shop-read:' . $request->ip() . '|' . (int) $request->header('masjid-id'))
+            ->response(fn (Request $request, array $headers) => response()->json([
+                'status' => 'error',
+                'message' => 'Too many requests just now. Try again in a minute.',
+            ], 429, array_merge($headers, ['Cache-Control' => 'no-store']))));
+
         // Public appointment requests (Community vertical, T-021). Same shape as
         // 'form-submit': an unauthenticated DB write, a legitimate person submits
         // once. Keyed by IP AND target organization so flooding one clinic's
