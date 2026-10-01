@@ -843,6 +843,13 @@ The catalogue is written and read through two doors, and these rules belong to t
 - **The pickup list reads the buyer from the ORDER** (never from `product_sales`, never from a contact) and the sale's names and price from
   its snapshot. A refunded or disputed order (`charge_flag`) is never "to hand out" and refuses `collect`; collecting is stamped by the
   FIRST press only. The CSV is the same query (`PickupList`) through the shared formula-injection guard (`SchoolRecordsCsv::text`).
+  A sale also carries the office's `resolution` (`refunded` | `substituted`, migration 2026_10_06_100200): `refunded` is never to hand out and refuses
+  collect; `substituted` stays to hand out; the header's `oversold_open` counts the oversold LINES nobody has resolved or collected. `collect` locks the
+  sale, then the order's flag (settlement and the refund arm lock the order only, so there is no cycle).
+- **A stale editor is refused** (`products.lock_version`): every update and every picture change adds one under the product lock, every product answer
+  carries it, `PUT` requires it, and a different value is a 409 and writes nothing. The writer locks the product, then the sizes the request names by
+  PRIMARY KEY (never a `product_id` or `masjid_id` range: gap locks), and only then reads the sizes and the lines that name them; it never writes
+  `sold_count`. Clash checks fold like `utf8mb4_unicode_ci` (`LiveText`), and a unique violation is caught and turned into a 422 (labels) or a retry (slugs).
 - **The public read** (`GET /api/v1/shop/products[/{slug}]`) is dark by `shop.enabled` (`EnsureShopEnabled`: the basket on for the
   organisation AND the `shop` grant, else the router's own 404, ranked ahead of every throttle) and says ONLY `sold_out` about stock: no
   stock, sold, held or available number, no oversold flag, no "only N left", at any depth. `ShopPublicApiTest` pins the exact keys and the

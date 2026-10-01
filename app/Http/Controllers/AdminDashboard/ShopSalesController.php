@@ -41,9 +41,10 @@ class ShopSalesController extends Controller
     /**
      * GET .../shop/sales[?state=to_hand_out|collected|all&product_id=&variant_id=&search=&per_page=&page=]
      *
-     * Newest paid first. `meta.summary` is the header: per product and size, units still to hand
-     * out, collected, and oversold and not refunded, over the whole organisation (the filters do
-     * not move it).
+     * Newest paid first. `meta.summary` is the header: per product and size, the UNITS still to hand
+     * out and collected, and `oversold_open`, the LINES that are oversold and still need somebody's
+     * call (order not refunded or disputed, no resolution, not collected), over the whole
+     * organisation (the filters do not move it).
      */
     public function index(IndexShopSalesRequest $request, $masjid_id): JsonResponse
     {
