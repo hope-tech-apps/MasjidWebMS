@@ -170,6 +170,7 @@ export const FA_AF: Record<string, string> = {
     msgs_few: "{x} پیام",
     msgs_many: "{x} پیام",
     msg_you: "شما",
+    msg_edited: "ویرایش شده",
     thread_closed: "مکتب این گفتگو را بسته است.",
     reply_ph: "پاسخ بنویسید…",
     reply_failed: "پاسخ شما ارسال نشد. لطفاً دوباره کوشش کنید.",

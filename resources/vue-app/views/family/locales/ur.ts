@@ -170,6 +170,7 @@ export const UR: Record<string, string> = {
     msgs_few: "{x} پیغامات",
     msgs_many: "{x} پیغامات",
     msg_you: "آپ",
+    msg_edited: "ترمیم شدہ",
     thread_closed: "اسکول نے یہ گفتگو بند کر دی ہے۔",
     reply_ph: "جواب لکھیں…",
     reply_failed: "آپ کا جواب نہیں بھیجا جا سکا۔ براہ کرم دوبارہ کوشش کریں۔",

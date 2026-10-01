@@ -8,9 +8,11 @@ use App\Http\Requests\Admin\Groups\GroupPostFormRequest;
 use App\Http\Requests\Admin\Groups\StoreGroupMessageRequest;
 use App\Jobs\SendGroupNotificationJob;
 use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
+use App\Http\Requests\Admin\Groups\UpdateGroupMessageRequest;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMessage;
+use App\Models\GroupMessageEdit;
 use App\Models\GroupMessageReaction;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
@@ -27,6 +29,7 @@ use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -60,6 +63,10 @@ use Symfony\Component\HttpFoundation\Response;
  * gate + mayReceiveThread() + not closed). Every serialized message carries
  * its reactions and `read_by`, derived from the readers' bookmarks by
  * App\Support\GroupMessageSignals — a staff viewer is shown every name.
+ *
+ * EDITING (W7, 2026-10-01). updateMessage() lets the AUTHOR of a sent staff
+ * message change its words; edits() lets the office read what it said before.
+ * See updateMessage() for the rules and why an edit notifies nobody.
  *
  * Tenant isolation is not hand-rolled: `tenant` middleware binds TenantContext
  * and BelongsToMasjid auto-scopes Group, GroupThread, GroupMessage,
@@ -227,7 +234,8 @@ class GroupThreadsController extends Controller
         $signals = GroupMessageSignals::forMessages($thread, $messages->items(), $request->user());
 
         $messages->through(fn (GroupMessage $message) => $this->serializeMessage(
-            $message, $request, $masjid_id, $group_id, $mayReceiveMedia, $viewerId, $signals[(int) $message->id] ?? null
+            $message, $request, $masjid_id, $group_id, $mayReceiveMedia, $viewerId, $signals[(int) $message->id] ?? null,
+            ! $thread->isClosed()
         ));
 
         return response()->json([
@@ -313,6 +321,163 @@ class GroupThreadsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * PUT .../groups/{group_id}/threads/{thread_id}/messages/{message_id}
+     *
+     * Change the WORDS of a message already sent (W7, 2026-10-01). One method,
+     * mounted in both staff realms (admin under `manage contacts`, teacher under
+     * `teacher.leads`).
+     *
+     *  - WHO: only the message's AUTHOR, a staff account, who can still read the
+     *    conversation. `author_user_id` must equal the signed-in user, which in
+     *    one test refuses a parent's message (no author_user_id), a colleague's,
+     *    and one whose author account was deleted (nulled). The office gets no
+     *    exemption and neither does a SuperAdmin; families do not edit here.
+     *  - WHAT: the body, at the ceiling sending has. Photos, videos, subject and
+     *    scope are refused by the request. An empty body is allowed only when
+     *    the message has an attachment.
+     *  - WHEN: any time, but not in a closed conversation. A message that is
+     *    still only a scheduled conversation is not a row here, so it is a 404;
+     *    its own W5 rules stand.
+     *  - TRACE: GroupMessage has always promised no per-message eraser quietly
+     *    rewrites what a parent was told, so a REAL edit writes the old text to
+     *    group_message_edits and stamps `edited_at`, in one transaction, under a
+     *    row lock. An unchanged body writes and stamps nothing.
+     *  - QUIET: an edit sends no email or push (the nudge for the original went
+     *    out already, and the nudge is content-free), does not touch the
+     *    thread's updated_at (GroupMessage::$touches would float an old
+     *    conversation to the top of every list, so the save runs inside
+     *    GroupThread::withoutTouching: the model being TOUCHED is the one
+     *    named), moves nobody's read marker, and leaves reactions and
+     *    "seen by" as they were.
+     *
+     * Order: the thread is found through the group (foreign id: 404), then the
+     * read gate (403), then the message through the thread (foreign or
+     * other-thread id: 404), the author gate (403), the closed gate (422).
+     */
+    public function updateMessage(UpdateGroupMessageRequest $request, $masjid_id, $group_id, $thread_id, $message_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+        $user = $request->user();
+
+        $this->authorizeThread($user, $group, $thread);
+
+        $message = $thread->messages()->findOrFail($message_id);
+
+        if ($message->author_user_id === null || (int) $message->author_user_id !== (int) $user->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only edit a message you wrote.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        if ($thread->isClosed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This conversation is closed; reopen it to continue.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $body = (string) ($request->input('body') ?? '');
+
+        if ($body === '' && ! $message->attachments()->exists()) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['body' => ['Write a message.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Fail closed, with the author's text still on their screen, for the few
+        // seconds a deploy runs this code before `migrate` has added the audit
+        // table and the marker (never a 500 that loses what they typed).
+        if (! $this->editingIsAvailable()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Editing is not available for a moment. Keep your text and try again shortly.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+
+        $message = DB::transaction(function () use ($thread, $message, $user, $body) {
+            // The lock settles the one real race: the same author in two tabs.
+            // Last write wins and both versions are audited.
+            $locked = $thread->messages()->whereKey($message->id)->lockForUpdate()->firstOrFail();
+
+            if (trim((string) $locked->body) === trim($body)) {
+                return $locked;
+            }
+
+            GroupMessageEdit::create([
+                'group_message_id' => $locked->id,
+                'editor_user_id' => $user->id,
+                'previous_body' => (string) $locked->body,
+            ]);
+
+            GroupThread::withoutTouching(function () use ($locked, $body): void {
+                $locked->forceFill(['body' => $body, 'edited_at' => now()])->save();
+            });
+
+            return $locked;
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->serializeMessage(
+                $message->load(['author:id,name', 'attachments']),
+                $request, $masjid_id, $group_id,
+                $this->audience->mayReceiveThreadMedia($user, $group, $thread),
+                $user->id,
+                GroupMessageSignals::forMessages($thread, [$message], $user)[(int) $message->id] ?? null,
+                ! $thread->isClosed()
+            ),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * GET .../threads/{thread_id}/messages/{message_id}/edits   (admin realm only)
+     *
+     * What an edited message said before each edit, oldest first, for the
+     * office. Behind `manage contacts` on the route and the same thread read
+     * gate as the message itself, so the office reads an earlier text only
+     * where it may read the conversation. No teacher or family variant exists:
+     * the history is the office's audit, and no message payload carries it.
+     */
+    public function edits(Request $request, $masjid_id, $group_id, $thread_id, $message_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+
+        $this->authorizeThread($request->user(), $group, $thread);
+
+        $message = $thread->messages()->findOrFail($message_id);
+
+        if (! $this->editingIsAvailable()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Earlier versions are not available for a moment. Try again shortly.',
+            ], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+
+        $edits = $message->edits()->with('editor:id,name')->orderBy('id')->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'message_id' => (int) $message->id,
+                'edited_at' => optional($message->edited_at)->toIso8601String(),
+                'current_body' => $message->body,
+                'edits' => $edits->map(fn (GroupMessageEdit $edit) => [
+                    'id' => (int) $edit->id,
+                    'previous_body' => $edit->previous_body,
+                    // A name, never an id; null once that account is deleted.
+                    'edited_by' => $edit->editor?->name,
+                    // When this earlier text stopped being the current one.
+                    'replaced_at' => optional($edit->created_at)->toIso8601String(),
+                ])->values()->all(),
+            ],
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -524,6 +689,17 @@ class GroupThreadsController extends Controller
     }
 
     /**
+     * True once `migrate` has added the edit marker and the audit table. A deploy
+     * runs the new code for a few seconds before it, and an edit that needs
+     * either must refuse (503) rather than 500 and lose what the author typed.
+     */
+    private function editingIsAvailable(): bool
+    {
+        return Schema::hasColumn('group_messages', 'edited_at')
+            && Schema::hasTable('group_message_edits');
+    }
+
+    /**
      * Refuse a conversation this caller is not entitled to.
      *
      * 403, not 404, for the same reason as the feed: the group itself is
@@ -654,7 +830,8 @@ class GroupThreadsController extends Controller
         $group_id,
         bool $mayReceiveMedia,
         $viewerId,
-        ?array $signals = null
+        ?array $signals = null,
+        bool $threadOpen = true
     ): array {
         $attachments = $message->relationLoaded('attachments') ? $message->attachments : collect();
 
@@ -683,9 +860,11 @@ class GroupThreadsController extends Controller
                 ])->values()->all()
                 : [],
             'media_withheld' => ! $mayReceiveMedia && $attachments->isNotEmpty(),
-            'is_mine' => $message->author_user_id !== null
-                && $viewerId !== null
-                && (int) $message->author_user_id === (int) $viewerId,
+            'is_mine' => $this->isMine($message, $viewerId),
+            // The author may change the words of their own message while the
+            // conversation is open (updateMessage). This viewer already passed
+            // the read gate to be shown it; the route's write gate is the rest.
+            'can_edit' => $threadOpen && $this->isMine($message, $viewerId),
             // Since T-015f a message may be written by a PARENT. Both principals
             // resolve through GroupMessage::authorLabel(), and the staff surface
             // is told which — a parent's reply must be visibly a parent's, not an
@@ -705,7 +884,18 @@ class GroupThreadsController extends Controller
             'reactions' => $signals['reactions'] ?? [],
             'read_by' => $signals['read_by'] ?? [],
             'created_at' => optional($message->created_at)->toIso8601String(),
+            // Null for a message never edited, and for every row before the
+            // column exists. Never an editor or an earlier text: those are the
+            // office's, behind the `edits` route.
+            'edited_at' => optional($message->edited_at)->toIso8601String(),
         ];
+    }
+
+    private function isMine(GroupMessage $message, $viewerId): bool
+    {
+        return $message->author_user_id !== null
+            && $viewerId !== null
+            && (int) $message->author_user_id === (int) $viewerId;
     }
 
     /**

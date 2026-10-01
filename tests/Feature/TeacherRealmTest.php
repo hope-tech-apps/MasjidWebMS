@@ -228,6 +228,11 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/scheduled-messages/{schedule_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/scheduled-messages/{schedule_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            // Edit the WORDS of a message the teacher sent (W7, 2026-10-01). The reply's
+            // own gate plus the author check: only the author, in a conversation they can
+            // still read and that is still open. No lifecycle verb, no notification, and
+            // the office's `/edits` history has no teacher route (it is a GET anyway).
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',
             // A reaction (🤲 👍 💯 ❓) and its removal, 2026-09-21. The reply's
             // own gate — `teacher.leads`, then mayReceiveThread() and "not

@@ -87,7 +87,25 @@ class GroupMessage extends Model
         // fires no events — GroupThread's force-delete hook covers that path.
         static::deleting(function (self $message): void {
             $message->attachments()->get()->each->delete();
+
+            // An erased message must not survive in its edit history. A query
+            // delete on purpose: GroupMessageEdit refuses a model delete.
+            GroupMessageEdit::withoutMasjidScope()->where('group_message_id', $message->getKey())->delete();
         });
+    }
+
+    /**
+     * What the message said before each edit, oldest first by id. Append-only
+     * (GroupMessageEdit); read by the office only.
+     */
+    public function edits(): HasMany
+    {
+        return $this->hasMany(GroupMessageEdit::class);
+    }
+
+    protected function casts(): array
+    {
+        return ['edited_at' => 'datetime'];
     }
 
     public function thread(): BelongsTo

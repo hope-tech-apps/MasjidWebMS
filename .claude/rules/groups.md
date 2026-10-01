@@ -610,6 +610,16 @@ members/guardians channel. What a follow-on slice must not re-decide:
   content-free digest (see "Class story engagement" below — this reverses the
   2026-09-21 "no notification" rule, 2026-09-29). A new realm that shows
   messages must serialize through `GroupMessageSignals`, not re-derive names.
+- **A sent message can be edited by its author, and every edit leaves a trace (W7, 2026-10-01).**
+  `PUT .../threads/{id}/messages/{id}` in admin and teacher (one method, `updateMessage`): only the staff AUTHOR
+  (`author_user_id` = the caller, which refuses a parent's, a colleague's and an orphaned message), who can still read
+  the thread, in an open conversation, body only, no time window. An unchanged body is a no-op. A real edit writes the
+  old text to the append-only `group_message_edits` and stamps `group_messages.edited_at`, in one transaction under a
+  row lock, inside `withoutTouching` so the thread's `updated_at` and ordering do not move. It sends NO notification
+  and moves no read marker; reactions and "seen by" stay. The office reads the earlier versions at
+  `GET .../messages/{id}/edits` (admin realm only, same read gate); payloads carry `edited_at` (staff and family) and
+  `can_edit` (staff) and never an earlier text. Edit rows go with their message (DB cascade; the model's `deleting`
+  hook). Before `migrate` an edit answers 503, never a 500. Proven by `tests/Feature/EditSentMessageTest.php`.
 
 Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php` +

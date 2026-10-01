@@ -337,6 +337,9 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         msgs_few: "{x} messages",
         msgs_many: "{x} messages",
         msg_you: "You",
+        // The staff author changed the words of a sent message (W7). Only the fact:
+        // the earlier text is the office's and no family screen shows it.
+        msg_edited: "Edited",
         thread_closed: "The school has closed this conversation.",
         reply_ph: "Write a reply…",
         reply_failed: "Your reply could not be sent. Please try again.",
@@ -663,6 +666,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         msgs_few: "{x} رسائل",
         msgs_many: "{x} رسالة",
         msg_you: "أنت",
+        msg_edited: "تم التعديل",
         thread_closed: "أغلقت المدرسة هذه المحادثة.",
         reply_ph: "اكتب رداً…",
         reply_failed: "تعذّر إرسال ردّك. يرجى المحاولة مرة أخرى.",

@@ -4,6 +4,7 @@ import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
+import type { MessageEditRow } from "@/core/helpers/messageEdit";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import {
     GroupMessage,
@@ -257,6 +258,53 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
     }
 
     /**
+     * Change the words of a message this caller sent (W7). 403 if it is not
+     * theirs or they may no longer read the thread, 422 if the conversation is
+     * closed or the text is empty/too long, 503 for the seconds a deploy runs
+     * ahead of its migration. Throws on any of them, so the editor can show the
+     * server's sentence and keep the draft. Resolves with the fresh message.
+     */
+    async function editMessage(
+        groupId: number | string,
+        threadId: number | string,
+        messageId: number | string,
+        messageBody: string
+    ): Promise<GroupMessage> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        const res: AxiosResponse = await ApiService.put(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/threads/${threadId}/messages/${messageId}` as BackendApiRoute,
+            { body: messageBody }
+        );
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Failed to save the edit.');
+    }
+
+    /**
+     * What an edited message said before each edit, oldest first — the office's
+     * audit, admin realm only. Refused (403) unless the caller may read the thread.
+     */
+    async function fetchMessageEdits(
+        groupId: number | string,
+        threadId: number | string,
+        messageId: number | string
+    ): Promise<MessageEditRow[]> {
+        if (!masjidStore.masjid?.id) return [];
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/threads/${threadId}/messages/${messageId}/edits` as BackendApiRoute
+        );
+        if (res.data?.status === 'success') {
+            return res.data.data?.edits ?? [];
+        }
+        throw new Error('Failed to load the earlier versions.');
+    }
+
+    /**
      * Add (`on`) or remove this caller's reaction. Two idempotent verbs server
      * side; resolves with the message's fresh reactions.
      */
@@ -313,6 +361,8 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
         updateScheduled,
         cancelScheduled,
         postMessage,
+        editMessage,
+        fetchMessageEdits,
         setReaction,
         setThreadClosed
     }

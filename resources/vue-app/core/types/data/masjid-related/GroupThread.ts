@@ -82,6 +82,10 @@ export type GroupMessage = {
     attachments?: GroupMessageAttachment[];
     media_withheld?: boolean;
     is_mine?: boolean;
+    /** The author may change the words: their own message, conversation open (W7). */
+    can_edit?: boolean;
+    /** When the author last changed the words; null/absent if never. */
+    edited_at?: string | null;
     /** All four reactions, always, in catalogue order. */
     reactions?: GroupMessageReaction[];
     /** Who has read this message (never its author, never the viewer). */

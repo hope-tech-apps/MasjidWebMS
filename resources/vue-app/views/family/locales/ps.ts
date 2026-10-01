@@ -170,6 +170,7 @@ export const PS: Record<string, string> = {
     msgs_few: "{x} پیغامونه",
     msgs_many: "{x} پیغامونه",
     msg_you: "تاسو",
+    msg_edited: "سمون شوی",
     thread_closed: "ښوونځي دا خبرې اترې بندې کړې دي.",
     reply_ph: "ځواب ولیکئ…",
     reply_failed: "ستاسو ځواب ونه لېږل شو. مهرباني وکړئ بیا هڅه وکړئ.",

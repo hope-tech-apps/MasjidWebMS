@@ -1130,11 +1130,15 @@
                         <div v-for="m in openedMessages" :key="m.id"
                              :class="m.is_mine ? 'align-self-end text-end' : ''" class="tc-bubble" style="max-width: 85%;">
                             <div class="text-muted small">
-                                {{ m.is_mine ? 'You' : (m.author?.name || 'Guardian') }} · {{ when(m.created_at) }}
+                                {{ m.is_mine ? 'You' : (m.author?.name || 'Guardian') }} · {{ when(m.created_at) }}<template v-if="m.edited_at"> · <span :title="when(m.edited_at)">Edited</span></template>
                             </div>
-                            <div v-if="m.body" class="rounded px-3 py-2 d-inline-block text-start"
-                                 :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
-                                 style="white-space: pre-wrap;">{{ m.body }}</div>
+                            <!-- The author may change the words of their own message while the conversation is open. -->
+                            <EditableMessageBody :body="m.body" :can-edit="!!m.can_edit" :has-media="messageHasMedia(m)"
+                                                 :align-end="m.is_mine" :save="(body: string) => editMessage(m, body)">
+                                <div v-if="m.body" class="rounded px-3 py-2 d-inline-block text-start"
+                                     :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
+                                     style="white-space: pre-wrap;">{{ m.body }}</div>
+                            </EditableMessageBody>
                             <div v-if="m.attachments?.length" class="d-flex flex-wrap gap-2 mt-1"
                                  :class="m.is_mine ? 'justify-content-end' : ''">
                                 <TeacherPhoto v-for="a in m.attachments" :key="a.id"
@@ -2476,6 +2480,8 @@ import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
+import EditableMessageBody from '@/components/common/EditableMessageBody.vue';
+import { messageHasMedia, replaceMessage } from '@/core/helpers/messageEdit';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
 // "Send later" and the Scheduled list (T-002.4), shared with the office's tabs.
 import SendLaterField from '@/components/common/SendLaterField.vue';
@@ -5462,6 +5468,16 @@ const sendReply = async () => {
     } finally {
         sendingReply.value = false;
     }
+};
+
+// Change the words of a message YOU sent (W7). Throws on a refusal so the editor
+// shows the server's sentence in place and keeps the draft; on success the list
+// takes the server's answer. No loadThreads(): an edit does not move the
+// conversation in the list.
+const editMessage = async (m: any, body: string) => {
+    if (!openedThread.value) throw new Error('No conversation is open.');
+    const res = await TeacherApiService.put(`${base.value}/threads/${openedThread.value.id}/messages/${m.id}`, { body });
+    if (res.data?.data) openedMessages.value = replaceMessage(openedMessages.value, res.data.data);
 };
 
 // A reaction on a message. Two idempotent verbs, not a toggle, so a double

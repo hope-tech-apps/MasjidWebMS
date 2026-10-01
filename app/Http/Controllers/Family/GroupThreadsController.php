@@ -577,6 +577,10 @@ class GroupThreadsController extends FamilyController
             // Which STAFF have read this message. Never another parent.
             'read_by' => $signals['read_by'] ?? [],
             'created_at' => optional($message->created_at)->toIso8601String(),
+            // When the staff author last changed the words (W7), else null. Only
+            // the fact: never who edited, never the earlier text — those are the
+            // office's, behind the admin realm's `edits` route.
+            'edited_at' => optional($message->edited_at)->toIso8601String(),
         ];
     }
 }
