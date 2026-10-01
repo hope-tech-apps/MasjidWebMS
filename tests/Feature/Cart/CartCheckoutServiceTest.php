@@ -39,6 +39,7 @@ class CartCheckoutServiceTest extends TestCase
             public array $expired = [];
             public ?\Closure $onCreate = null;
             public int $refuseEmailTimes = 0;
+            public string $refusedEmailParam = 'customer_email';
             public ?\Throwable $failCreateWith = null;
             public array $retrieveQueue = [];
             public ?\Throwable $retrieveThrows = null;
@@ -59,7 +60,7 @@ class CartCheckoutServiceTest extends TestCase
                 }
                 if (isset($params['customer_email']) && $this->refuseEmailTimes > 0) {
                     $this->refuseEmailTimes--;
-                    throw InvalidRequestException::factory('Invalid email address', 400, null, null, null, null, 'customer_email');
+                    throw InvalidRequestException::factory('Invalid email address', 400, null, null, null, null, $this->refusedEmailParam);
                 }
                 $this->created[] = ['params' => $params, 'account' => $connectedAccountId, 'key' => $idempotencyKey];
                 $n = count($this->created);
@@ -567,7 +568,25 @@ class CartCheckoutServiceTest extends TestCase
         $this->assertCount(2, $keys, 'refused once, retried once');
         $this->assertNotSame($keys[0], $keys[1], 'a refused key belongs to its parameters');
         $this->assertArrayNotHasKey('customer_email', $svc->created[0]['params']);
+        $this->assertArrayNotHasKey('receipt_email', $svc->created[0]['params']['payment_intent_data'], 'the receipt address goes with it');
         $this->assertSame($keys[1], $order->fresh()->idempotency_key);
+    }
+
+    #[Test]
+    public function a_refusal_naming_the_receipt_address_is_retried_without_either_address(): void
+    {
+        [, $cart] = $this->fullBasket();
+        $svc = $this->service();
+        $svc->refuseEmailTimes = 1;
+        $svc->refusedEmailParam = 'payment_intent_data[receipt_email]';
+        $calls = 0;
+        $svc->onCreate = function () use (&$calls): void { $calls++; };
+
+        $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org');
+
+        $this->assertSame(2, $calls, 'refused once, retried once');
+        $this->assertArrayNotHasKey('customer_email', $svc->created[0]['params']);
+        $this->assertArrayNotHasKey('receipt_email', $svc->created[0]['params']['payment_intent_data']);
     }
 
     #[Test]
@@ -600,5 +619,25 @@ class CartCheckoutServiceTest extends TestCase
         [, $cart2] = $this->fullBasket();
         $svc->checkout($cart2, self::RETURN_BASE, 'buyer@example.org');
         $this->assertSame('buyer@example.org', $svc->created[1]['params']['customer_email']);
+    }
+
+    #[Test]
+    public function stripe_is_told_to_send_its_receipt_to_the_buyer_and_only_when_there_is_an_address(): void
+    {
+        $svc = $this->service();
+
+        // A shop purchase mails nothing from here, and a direct charge sends Stripe's receipt only if
+        // the organisation's own Stripe setting is on: naming the address makes Stripe send it anyway.
+        [, $cart] = $this->fullBasket();
+        $svc->checkout($cart, self::RETURN_BASE, 'buyer@example.org');
+        $this->assertSame('buyer@example.org', $svc->created[0]['params']['payment_intent_data']['receipt_email']);
+        $this->assertSame($svc->created[0]['params']['customer_email'], $svc->created[0]['params']['payment_intent_data']['receipt_email']);
+
+        foreach ([null, '', 'not-an-email'] as $n => $unusable) {
+            [, $other] = $this->fullBasket();
+            $svc->checkout($other, self::RETURN_BASE, $unusable);
+            $this->assertArrayNotHasKey('receipt_email', $svc->created[$n + 1]['params']['payment_intent_data'], 'no address, no receipt parameter');
+            $this->assertArrayNotHasKey('customer_email', $svc->created[$n + 1]['params']);
+        }
     }
 }

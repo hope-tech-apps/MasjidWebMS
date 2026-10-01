@@ -7048,3 +7048,23 @@ is known.
   - a 403 still shows the tabs and "New product";
   - a stock-below-sold hint;
   - an unsaved-changes guard.
+
+## 2026-10-01 — Every basket payment asks Stripe to send its receipt to the buyer
+
+- **The gap (the point's review of the renderer's shop pages).** A shop purchase mails the parent nothing from Manara:
+  `settleProduct` sends no mail, and B2 added no Mailable. The basket's page set `customer_email` but no `receipt_email`. It is
+  a direct charge on the organisation's account, so Stripe's receipt went out only if that account happened to have
+  "successful payments" emails on. The site tells the parent a receipt was emailed.
+- **The fix.** `CartCheckoutService::openPage` sets `payment_intent_data.receipt_email` to the buyer's address, for EVERY basket.
+  Stripe then sends its itemised receipt in live mode whatever the account's setting; it is the one receipt that lists a mixed
+  basket line by line. A gift in the basket also gets its own `DonationReceiptMail`: the duplication is accepted (the point's
+  call). No address means no parameter.
+- **A refused address.** A refusal that names either `customer_email` or `payment_intent_data[receipt_email]` drops BOTH and
+  opens the page on a new idempotency key, as before.
+- **Proof.** `CartCheckoutServiceTest`: present with a usable address; absent with none, an empty one or an unusable one; both
+  dropped on a refusal naming either parameter. Three mutants killed.
+- **Recorded for v1.1, not built:**
+  - A paid basket's token stays live until its expiry, and add, remove and checkout answer 422 "This basket has already been
+    paid for." The renderer matches that sentence to start a new basket, so `CartLineAdder::CLOSED` and `PAID_MESSAGE` must
+    NOT be reworded. A machine-readable code (`data.code = 'basket_closed'`) beside the unchanged sentence is the v1.1 change.
+  - The order status read allows 30 reads an hour per order (`cart.throttle.order_status_per_hour`); a poller must back off.
