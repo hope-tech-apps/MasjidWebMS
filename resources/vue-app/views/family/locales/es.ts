@@ -285,6 +285,8 @@ export const ES: Record<string, string> = {
     reaction_failed: "No se pudo guardar la reacción.",
     // Machine-drafted 2026-09-29 (read-receipt notice).
     story_seen_notice: "La escuela puede ver qué padres y madres han abierto cada novedad de la clase, y cuándo. Los demás padres y madres no pueden verlo.",
+    // MACHINE-DRAFTED 2026-10-01: needs a human review with the rest.
+    story_edited: "Editado",
     // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
     marks_section_simple: "Excelente / Bien / Necesita mejorar",
     simple_mark_3: "Excelente",

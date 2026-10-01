@@ -993,14 +993,23 @@
                     <article v-for="post in posts" :key="post.id" class="card border-0 shadow-sm">
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start gap-2">
-                                <h2 v-if="post.title" class="h6 mb-1">{{ post.title }}</h2>
-                                <button class="btn btn-sm btn-link text-danger p-0 ms-auto"
-                                        :disabled="removingPost === post.id" @click="deletePost(post)">Remove</button>
+                                <h2 v-if="post.title && editingStoryId !== post.id" class="h6 mb-1">{{ post.title }}</h2>
+                                <span class="ms-auto d-flex gap-3">
+                                    <!-- After it is sent: title and text only, from the server's own `can_edit`. -->
+                                    <button v-if="canEditStory(post) && editingStoryId !== post.id" class="btn btn-sm btn-link p-0"
+                                            aria-label="Edit this story" data-test="story-edit" @click="startStoryEdit(post)">Edit</button>
+                                    <button class="btn btn-sm btn-link text-danger p-0"
+                                            :disabled="removingPost === post.id" @click="deletePost(post)">Remove</button>
+                                </span>
                             </div>
                             <p class="text-muted small mb-2">
                                 {{ post.author?.name || 'You' }} · {{ when(post.published_at ?? post.created_at) }}
+                                <span v-if="editedMarker(post.edited_at, when)" class="fst-italic" data-test="story-edited"
+                                      :title="editedMarker(post.edited_at, when)?.title">· Edited</span>
                             </p>
-                            <p class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
+                            <StoryEditForm v-if="editingStoryId === post.id" :post="post" :busy="storyEditBusy" :error="storyEditError"
+                                           class="mb-2" @save="(draft) => submitStoryEdit(post, draft)" @cancel="cancelStoryEdit" />
+                            <p v-else class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
                             <div v-if="post.attachments?.length" class="d-flex flex-wrap gap-2">
                                 <TeacherPhoto v-for="a in post.attachments" :key="a.id"
                                               :src="a.download_path" :name="a.file_name"
@@ -2477,6 +2486,9 @@ import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
+import StoryEditForm from '@/components/common/StoryEditForm.vue';
+import { useStoryEdit } from '@/composables/useStoryEdit';
+import { canEditStory, editedMarker } from '@/core/helpers/storyEdit';
 // "Send later" and the Scheduled list (T-002.4), shared with the office's tabs.
 import SendLaterField from '@/components/common/SendLaterField.vue';
 import ScheduledItems from '@/components/common/ScheduledItems.vue';
@@ -5358,6 +5370,23 @@ const deletePost = async (post: any) => {
         removingPost.value = null;
     }
 };
+
+// Edit a story AFTER it is sent (W7-2a): title and text in place, PUT with those two fields
+// only. The server stamps "Edited", tells nobody, and answers with the story, which replaces
+// the row; a failure stays beside the form.
+const {
+    editingId: editingStoryId, busy: storyEditBusy, error: storyEditError,
+    start: startStoryEdit, cancel: cancelStoryEdit, submit: submitStoryEdit,
+} = useStoryEdit<any>(
+    async (post, fields) => {
+        const res = await TeacherApiService.put(`${base.value}/posts/${post.id}`, { title: fields.title || null, body: fields.body });
+
+        if (!res.data?.data) throw new Error('That story could not be saved.');
+
+        return res.data.data;
+    },
+    (updated) => { posts.value = posts.value.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)); },
+);
 
 // ============================================================ MESSAGES
 const threads = ref<any[]>([]);
