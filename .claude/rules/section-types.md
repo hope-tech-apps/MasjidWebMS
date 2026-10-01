@@ -28,7 +28,7 @@ the failure mode this rule exists to prevent.
 
 | # | File | What |
 |---|---|---|
-| 1 | `app/Enums/SectionType.php` | the `case`, `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `defaultContent()` |
+| 1 | `app/Enums/SectionType.php` | the `case`, `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()`, `defaultContent()` |
 | 2 | `SectionsController::getImageFieldsForSectionType` | image fields, if any |
 | 3 | `PageSectionsController::getImageFieldsForSectionType` | **the same map again** — both controllers own a copy |
 | 4 | `core/types/data/masjid-related/PageSection.ts` | the `SectionType` union, the content type, the `SectionContent` union |
@@ -50,7 +50,7 @@ bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
 the uploaded file name on the public disk, and the web server serves it by its
 extension, so matching bytes named `.html` would be a page on this app's origin.
 
-`label()`, `description()`, `usesExternalData()`, `requiresModule()` and
+`label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
 classifying it is a fatal error at the first call, not a silent wrong default.
 Keep them that way.
@@ -99,8 +99,8 @@ Keep them that way.
 
 ## The palette is GLOBAL, not per-vertical
 
-`PageSectionsController@sectionTypes` maps `SectionType::cases()` with **no
-filter**. Every tenant is offered every type regardless of `org_type`, and
+(One exception: a type that `requiresGrant()`, below.) `PageSectionsController@sectionTypes` maps `SectionType::cases()` with **no
+org-type filter**. Every tenant is offered every type regardless of `org_type`, and
 `config/verticals.php` — whose header comment claims a vertical is partly
 "which page-builder section types are offered" — carries no `section_types`
 key. The comment describes the intent; the code does not implement it.
@@ -120,6 +120,31 @@ If per-vertical offering is ever actually wanted:
   tenant that switches `org_type`, or a section authored before the gate, never
   stops loading. The palette decides what is *offered*; it must never decide
   what is *readable*.
+
+## A type under a GRANT is not offered without it (`shop`)
+
+`SectionType::requiresGrant()` names a grant (`config/capabilities.php`, `kind => grant`), or null. Only `shop` has one,
+and it is the one exception to "the palette is global" above. A grant is the opposite of a module: a module is on until a
+SuperAdmin switches it off, so its type stays offered and says so; a grant is off until given, so its type is not offered.
+
+- **Offered:** `PageSectionsController@sectionTypes`, the one place the palette is filtered, leaves the type out unless
+  `Masjid::hasCapability()` (fails closed) is true for the organisation in the URL. The list is re-indexed, so the payload is
+  still a JSON list.
+- **Created:** `Concerns\ValidatesShopSection::validateGrantedSectionType()` is a closure rule on `section_type` in all four
+  requests. Creating one, or changing a section to one, without the grant is a 422 in the catalogue's own words ("Online shop is
+  not switched on for this organisation, so it cannot have a Shop section.").
+- **From the organisation, never the viewer, SuperAdmin included.** The public shop API answers the dark 404 for an
+  organisation without the grant whoever built the section.
+- **Never gated: reading, editing as the same type, deleting, the public payload.** A section already of the type survives the
+  grant being switched off; the renderer draws nothing because the shop API 404s. Changing one away and back is refused (the way
+  back is a change to it). Do not add a gate to those, and do not hide the type from `index`/`show`.
+- **Content** is four keys, checked strictly by `validateShopContent()` (heading 120 characters, category 60, `max_items` an
+  integer 1 to 24, `show_view_all` a boolean) and an unknown key is refused. The section stores NO product, price or size: the
+  renderer fetches them (`usesExternalData()` is true), so there is nothing to bind and nothing to go stale.
+- **Not in `withoutRenderer()`**: its one sentence is about an unrendered sign-up form and would be false here. Until MEC's
+  renderer ships, a shop section draws nothing; ship the renderer before a page carries one.
+- `ShopSectionTypeTest` pins all of it, including that every other type's `requiresGrant()` is null.
+- The editor has no i18n: no page-builder editor does (the only locale files are the family portal's).
 
 ## A type that shows a switchable module says so, from the ORGANISATION
 

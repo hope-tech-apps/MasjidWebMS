@@ -6732,3 +6732,56 @@ this slice has been run: there is no PHP on the machine it was written on** (ASS
     and SQLite's do not. B2's clash checks must compare the same way.
   - Renaming a size that baskets or sales hold would change what a paid line names. B2 decides whether a held size's label is
     frozen.
+
+## 2026-10-01 — `shop` section type (owner: "a small section in the web page editor to add any shop component to a page")
+Decision: `SectionType::SHOP` (`shop`, "Shop"), content `heading`, `category`, `max_items` (1 to 24, default 8),
+`show_view_all` (default on), exactly as mec-wix-migration `design/brief-shop-section.md`. It stores no product, price or
+size: the renderer fetches the products from the public shop API, keeps those whose `category` equals the section's (null or
+empty means every category), shows the first `max_items`, and links to `/shop` when `show_view_all`. `usesExternalData()` is
+true. Both `getImageFieldsForSectionType` copies name it with no fields. `SectionContentBinder` and `PageSectionResource` are
+untouched (the binder's `default` arm returns the stored content).
+Calls the brief left open:
+- **A capability gate for a section type did not exist; it is copied from the nearest one.** `requiresModule()` only knows
+  modules, and `moduleIsOff()` fails open on any key that is not a module, so it cannot say "no `shop` grant, no section". No
+  type was gated by a grant, and the palette is documented as global. The mechanism is the shop's own:
+  `ProductLineSource::reprice()` asks `$org->hasCapability('shop')` (fails closed) from the ORGANISATION, and the `capability:`
+  gate's refusal is worded "{label} is not switched on for this organisation". So `SectionType::requiresGrant()` is a new
+  exhaustive `match` beside `requiresModule()`, the one palette filter goes where section-types.md says to put one
+  (`PageSectionsController@sectionTypes`, validation stays ungated for reading), and the creation gate is `ValidatesShopSection`
+  on the four requests.
+- **A grant is the opposite of a module.** A module is on until switched off, so its type stays offered and only says so
+  (`moduleOffNote`). A grant is off until given, so its type is not offered without it.
+- **The organisation decides, never the viewer, SuperAdmin included.** The public shop API answers the dark 404 for an
+  organisation without the grant whoever built the section, so a SuperAdmin creating one there would build a section that draws
+  nothing. (The `capability:` middleware lets a SuperAdmin through; this rule is about the data, not the screen.)
+- **What is gated is the offering and the creation, nothing else.** A section already of the type stays readable, editable and
+  deletable after the grant is switched off, and the public page payload still lists it; the renderer shows nothing because the
+  shop API 404s. Editing an existing shop section is allowed because it is neither a creation nor a change to the type; changing
+  one away and back is refused (the way back is a change to it).
+- **Unknown content keys are refused, not dropped.** The brief offered either "as the other types do"; the other types do
+  neither (they store whatever is sent). Refusing is loud, needs no mutation hook and cannot lose an apply script's key quietly.
+  Absent keys are accepted (the renderer reads an absent key as its default), so a row made through the API may hold fewer than
+  the four.
+- **Strict types on content.** `max_items` must be an integer (not "8", not 8.5) and `show_view_all` a boolean (not "yes", not 1):
+  the renderer reads the stored value as it is. Heading and category count characters, not bytes.
+- **Not listed in `withoutRenderer()`.** That list's one sentence ends "do not publish the sign-up form on a page instead", which
+  is about an unrendered registration block and would be false on a shop section; changing it to be per type is a new mechanism.
+  And the type is offered only to an organisation with the grant today (MEC), whose renderer is being built. Like `video`, the
+  renderer must ship before a MEC page carries a shop section: until it does, the section draws nothing.
+- **The stored-type lookup was split out of `ValidatesEmbedContent::resolvedSectionType()`** (`storedSectionType()`) so the grant
+  rule can tell "already a shop" from "being changed to one". The lookup, including its tenant scoping, is unchanged.
+- **The editor reads the categories itself.** `GET /api/admin/masjids/{id}/shop/products?per_page=100` is not in this branch
+  (it ships just before this one); until then the call 404s and the editor shows the plain text input with "Leave empty for all
+  categories". The list is read from `data` or `data.data`, so a paginated or a plain answer both work. A category over 60
+  characters is not offered, since the server would refuse to save it.
+- **No i18n strings.** The brief asks for them in every locale file; the page-builder editors carry their strings inline in
+  English (all thirty-one), and the only locale files in the SPA (`views/family/locales`) belong to the family portal. Adding
+  admin i18n would be a parallel system, so the editor follows the editors.
+- **Palette pins updated on purpose** (as with `video`): the exact type count (28 to 29), `LATER_TYPES` in the school and community
+  suites, and the exact list of external-data types, which now ends with `shop`. Two suites that read the whole palette for an
+  organisation without the grant now expect one type fewer, or are given the grant.
+Not run: `php artisan test` (the brief allows `php -l` and `npm run test:spa` only). `ShopSectionTypeTest` and the five edited
+suites have not been executed; `npm run test:spa` is green (660).
+Unknown, needs investigation: what the iOS and Android apps do with an unknown `shop` section. The API passes `platforms`
+through without filtering (`PageSectionResource`), as it does for `video`; a MEC placement of `["web"]` is the safe one until it
+is known.
