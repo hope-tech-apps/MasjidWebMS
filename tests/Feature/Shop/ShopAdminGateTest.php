@@ -65,7 +65,7 @@ class ShopAdminGateTest extends TestCase
             'GET products' => fn () => $this->getJson($url('/products')),
             'POST products' => fn () => $this->postJson($url('/products'), ['name' => 'Gate Probe', 'base_price_minor' => 100]),
             'GET products/{product_id}' => fn () => $this->getJson($url("/products/{$ids['product']}")),
-            'PUT products/{product_id}' => fn () => $this->putJson($url("/products/{$ids['product']}"), ['name' => 'Gate Probe']),
+            'PUT products/{product_id}' => fn () => $this->putProduct($base, $ids['product'], ['name' => 'Gate Probe']),
             'DELETE products/{product_id}' => fn () => $this->deleteJson($url("/products/{$ids['product']}")),
             'POST products/{product_id}/images' => fn () => $this->withHeaders(['Accept' => 'application/json'])->post($url("/products/{$ids['product']}/images"), $upload()),
             'PUT products/{product_id}/images/order' => fn () => $this->putJson($url("/products/{$ids['product']}/images/order"), ['order' => [$ids['media']]]),
@@ -74,6 +74,8 @@ class ShopAdminGateTest extends TestCase
             'GET sales' => fn () => $this->getJson($url('/sales')),
             'POST sales/{sale_id}/collect' => fn () => $this->postJson($url("/sales/{$ids['sale']}/collect")),
             'DELETE sales/{sale_id}/collect' => fn () => $this->deleteJson($url("/sales/{$ids['sale']}/collect")),
+            'POST sales/{sale_id}/resolve' => fn () => $this->postJson($url("/sales/{$ids['sale']}/resolve"), ['resolution' => 'refunded']),
+            'DELETE sales/{sale_id}/resolve' => fn () => $this->deleteJson($url("/sales/{$ids['sale']}/resolve")),
         ];
     }
 
@@ -113,6 +115,8 @@ class ShopAdminGateTest extends TestCase
             'variants' => ProductVariant::withoutMasjidScope()->withTrashed()->count(),
             'media' => Media::query()->count(),
             'collected' => ProductSale::withoutMasjidScope()->whereNotNull('collected_at')->count(),
+            'resolved' => ProductSale::withoutMasjidScope()->whereNotNull('resolution')->count(),
+            'versions' => Product::withoutMasjidScope()->orderBy('id')->pluck('lock_version')->all(),
             'names' => Product::withoutMasjidScope()->orderBy('id')->pluck('name')->all(),
         ];
     }
@@ -281,6 +285,8 @@ class ShopAdminGateTest extends TestCase
             'DELETE products/{product_id}/images/{media_id}',
             'POST sales/{sale_id}/collect',
             'DELETE sales/{sale_id}/collect',
+            'POST sales/{sale_id}/resolve',
+            'DELETE sales/{sale_id}/resolve',
         ];
 
         foreach ($named as $key) {
@@ -292,7 +298,7 @@ class ShopAdminGateTest extends TestCase
         $this->putJson($this->shopUrl($mine['org'], "/products/{$own['product']}/images/order"), ['order' => [$own['media'], $foreign['media']]])->assertNotFound();
 
         // My product, THEIR size inside the list: a 404, and the whole save rolls back.
-        $this->putJson($this->shopUrl($mine['org'], "/products/{$own['product']}"), [
+        $this->putProduct($mine['org'], $own['product'], [
             'name' => 'Should not be saved',
             'variants' => [['id' => $theirVariant, 'label' => 'Z']],
         ])->assertNotFound();

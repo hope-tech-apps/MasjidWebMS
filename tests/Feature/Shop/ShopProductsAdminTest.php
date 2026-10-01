@@ -181,7 +181,7 @@ class ShopProductsAdminTest extends TestCase
 
         $this->assertSame('school-polo', Product::query()->findOrFail($id)->slug, 'the slug is generated from the name');
 
-        $this->putJson($this->products('/' . $id), ['name' => 'Navy Polo'])->assertOk()->assertJsonPath('data.slug', 'school-polo');
+        $this->putProduct($this->org, $id, ['name' => 'Navy Polo'])->assertOk()->assertJsonPath('data.slug', 'school-polo');
 
         $this->assertSame('school-polo', Product::query()->findOrFail($id)->slug, 'a rename leaves the address the renderer links to');
     }
@@ -193,7 +193,7 @@ class ShopProductsAdminTest extends TestCase
     {
         $legacy = $this->product($this->org, ['currency' => 'gbp']);
 
-        $this->putJson($this->products('/' . $legacy->id), ['name' => 'Renamed'])
+        $this->putProduct($this->org, $legacy->id, ['name' => 'Renamed'])
             ->assertOk()
             ->assertJsonPath('data.currency', 'usd');
 
@@ -210,7 +210,7 @@ class ShopProductsAdminTest extends TestCase
     {
         $polo = $this->product($this->org, ['name' => 'School Polo', 'category' => 'Uniforms', 'base_price_minor' => 2500, 'active' => true, 'sort' => 4]);
 
-        $this->putJson($this->products('/' . $polo->id), ['base_price_minor' => 2800, 'active' => false])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['base_price_minor' => 2800, 'active' => false])->assertOk();
 
         $fresh = Product::query()->findOrFail($polo->id);
         $this->assertSame(2800, (int) $fresh->base_price_minor);
@@ -228,7 +228,7 @@ class ShopProductsAdminTest extends TestCase
         $m = $this->variant($polo, ['label' => 'M', 'stock' => 10, 'sold_count' => 3]);
         $l = $this->variant($polo, ['label' => 'L', 'stock' => null, 'sold_count' => 7]);
 
-        $response = $this->putJson($this->products('/' . $polo->id), [
+        $response = $this->putProduct($this->org, $polo->id, [
             'variants' => [
                 ['id' => $s->id, 'label' => 'S', 'stock' => 8, 'price_minor' => 2000],
                 // Only the keys it carries change: the stock and the price of M are left alone.
@@ -274,10 +274,10 @@ class ShopProductsAdminTest extends TestCase
         $this->variant($polo, ['label' => 'S']);
         $this->variant($polo, ['label' => 'M']);
 
-        $this->putJson($this->products('/' . $polo->id), ['name' => 'Navy Polo'])->assertOk()->assertJsonCount(2, 'data.variants');
+        $this->putProduct($this->org, $polo->id, ['name' => 'Navy Polo'])->assertOk()->assertJsonCount(2, 'data.variants');
         $this->assertSame(2, ProductVariant::query()->where('product_id', $polo->id)->count());
 
-        $this->putJson($this->products('/' . $polo->id), ['variants' => []])->assertOk()->assertJsonCount(0, 'data.variants');
+        $this->putProduct($this->org, $polo->id, ['variants' => []])->assertOk()->assertJsonCount(0, 'data.variants');
         $this->assertSame(0, ProductVariant::query()->where('product_id', $polo->id)->count());
         $this->assertSame(2, ProductVariant::withoutMasjidScope()->withTrashed()->where('product_id', $polo->id)->count(), 'soft-deleted, not removed');
     }
@@ -288,7 +288,7 @@ class ShopProductsAdminTest extends TestCase
         $polo = $this->product($this->org);
         $old = $this->variant($polo, ['label' => 'M', 'stock' => 4, 'sold_count' => 4]);
 
-        $new = $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'stock' => 12]]])
+        $new = $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'stock' => 12]]])
             ->assertOk()
             ->json('data.variants.0');
 
@@ -305,7 +305,7 @@ class ShopProductsAdminTest extends TestCase
         $m = $this->variant($polo, ['label' => 'M']);
         $l = $this->variant($polo, ['label' => 'L']);
 
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $s->id, 'label' => 'M'],
             ['id' => $m->id, 'label' => 'S'],
             ['id' => $l->id, 'label' => 'L'],
@@ -323,7 +323,7 @@ class ShopProductsAdminTest extends TestCase
         $m = $this->variant($polo, ['label' => 'M', 'stock' => 20, 'sold_count' => 12]);
         $this->pendingOrderHolding($this->org, $m, 1);
 
-        $variant = $this->putJson($this->products('/' . $polo->id), ['variants' => [['id' => $m->id, 'label' => 'M', 'stock' => 5]]])
+        $variant = $this->putProduct($this->org, $polo->id, ['variants' => [['id' => $m->id, 'label' => 'M', 'stock' => 5]]])
             ->assertOk()
             ->json('data.variants.0');
 
@@ -346,7 +346,7 @@ class ShopProductsAdminTest extends TestCase
         $m = $this->variant($polo, ['label' => 'M', 'stock' => 10, 'sold_count' => 4]);
         $foreign = $this->shopOrg();
 
-        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $response = $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $m->id, 'label' => 'M', 'sold_count' => 0, 'product_id' => $other->id, 'masjid_id' => $foreign->id],
             ['label' => 'L', 'sold_count' => 99, 'product_id' => $other->id, 'masjid_id' => $foreign->id],
         ]])->assertOk();
@@ -373,7 +373,7 @@ class ShopProductsAdminTest extends TestCase
         $trashed->delete();
 
         foreach ([$theirs->id, $trashed->id, 999999] as $id) {
-            $this->putJson($this->products('/' . $polo->id), [
+            $this->putProduct($this->org, $polo->id, [
                 'name' => 'Should not be saved',
                 'variants' => [['id' => $id, 'label' => 'Z']],
             ])->assertNotFound();
@@ -409,7 +409,7 @@ class ShopProductsAdminTest extends TestCase
             $named = $this->variant($polo, ['label' => 'M', 'stock' => 5]);
             $make($named);
 
-            $response = $this->putJson($this->products('/' . $polo->id), [
+            $response = $this->putProduct($this->org, $polo->id, [
                 'name' => 'Should not be saved',
                 'variants' => [['id' => $named->id, 'label' => 'Medium', 'stock' => 99]],
             ])->assertStatus(422);
@@ -436,7 +436,7 @@ class ShopProductsAdminTest extends TestCase
         $this->paidSale($this->org, $named);
 
         // Same label: price, stock, enabled and sort change. Another size no order names is renamed in the same save.
-        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $response = $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $named->id, 'label' => 'M', 'price_minor' => 2900, 'stock' => 40, 'enabled' => false, 'sort' => 7],
             ['id' => $free->id, 'label' => 'Large'],
         ]])->assertOk();
@@ -451,14 +451,14 @@ class ShopProductsAdminTest extends TestCase
         $this->assertContains('Large', array_column($response->json('data.variants'), 'label'));
 
         // The advice the 422 gives works: the size is switched off, and a new one is added under another name.
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $named->id, 'label' => 'M', 'enabled' => false],
             ['id' => $free->id, 'label' => 'Large'],
             ['label' => 'Medium'],
         ]])->assertOk()->assertJsonCount(3, 'data.variants');
 
         // And a named size may be removed outright (it is soft-deleted; its sale keeps its snapshot).
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['id' => $free->id, 'label' => 'Large']]])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['id' => $free->id, 'label' => 'Large']]])->assertOk();
         $this->assertTrue(ProductVariant::withoutMasjidScope()->withTrashed()->findOrFail($named->id)->trashed());
     }
 
@@ -470,7 +470,7 @@ class ShopProductsAdminTest extends TestCase
         $m = $this->variant($polo, ['label' => 'M']);
         $this->paidSale($this->org, $m);
 
-        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $response = $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $s->id, 'label' => 'M'],
             ['id' => $m->id, 'label' => 'S'],
         ]])->assertStatus(422);

@@ -17,6 +17,7 @@ use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -81,6 +82,22 @@ trait BuildsShopAdmin
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         return $user->fresh();
+    }
+
+    /**
+     * PUT a product the way the SPA does: naming the `lock_version` it last read. Unless the body or the
+     * `$version` argument says otherwise, that is the product's CURRENT version, so a test that is not
+     * about staleness never trips it.
+     *
+     * @param  array<string,mixed>  $body
+     */
+    protected function putProduct(Masjid $org, int $productId, array $body, ?int $version = null): TestResponse
+    {
+        if (! array_key_exists('lock_version', $body)) {
+            $body['lock_version'] = $version ?? (int) Product::withoutMasjidScope()->withTrashed()->whereKey($productId)->value('lock_version');
+        }
+
+        return $this->putJson($this->shopUrl($org, '/products/' . $productId), $body);
     }
 
     protected function shopUrl(Masjid $org, string $path = ''): string

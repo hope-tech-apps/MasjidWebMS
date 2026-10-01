@@ -421,7 +421,7 @@ class ShopPickupListTest extends TestCase
         $sale = $this->sale($this->m);
 
         // Renamed, then deleted, through the API: the pickup list does not follow either.
-        $this->putJson($this->shopUrl($this->org, '/products/' . $this->polo->id), ['name' => 'Navy Polo'])->assertOk();
+        $this->putProduct($this->org, $this->polo->id, ['name' => 'Navy Polo'])->assertOk();
         $this->deleteJson($this->shopUrl($this->org, '/products/' . $this->polo->id))->assertOk();
 
         $rows = $this->rows();

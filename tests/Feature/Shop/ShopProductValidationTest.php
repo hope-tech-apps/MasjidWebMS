@@ -85,7 +85,7 @@ class ShopProductValidationTest extends TestCase
     {
         $before = ProductVariant::withoutMasjidScope()->withTrashed()->where('product_id', $product->id)->orderBy('id')->get(['id', 'label', 'stock', 'price_minor', 'deleted_at'])->toArray();
 
-        $response = $this->putJson($this->products('/' . $product->id), ['variants' => $variants])->assertStatus(422);
+        $response = $this->putProduct($this->org, $product->id, ['variants' => $variants])->assertStatus(422);
 
         $this->assertArrayHasKey($field, $response->json('data'), "{$why}: expected the refusal on {$field}, got " . json_encode($response->json('data')));
         $this->assertSame(
@@ -128,7 +128,7 @@ class ShopProductValidationTest extends TestCase
         $polo = $this->product($this->org, ['base_price_minor' => 2500]);
 
         foreach ([0, -5, FormPayment::MAX_CHARGE_MINOR + 1, 25.5, '2500'] as $price) {
-            $this->putJson($this->products('/' . $polo->id), ['base_price_minor' => $price])->assertStatus(422);
+            $this->putProduct($this->org, $polo->id, ['base_price_minor' => $price])->assertStatus(422);
         }
 
         $this->assertSame(2500, (int) Product::query()->findOrFail($polo->id)->base_price_minor);
@@ -144,9 +144,9 @@ class ShopProductValidationTest extends TestCase
             $this->assertListRefused($polo, [['label' => 'M', 'price_minor' => $price]], 'variants.0.price_minor', 'a size price of ' . json_encode($price));
         }
 
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'price_minor' => 1]]])->assertOk();
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'price_minor' => FormPayment::MAX_CHARGE_MINOR]]])->assertOk();
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'price_minor' => null]]])->assertOk()->assertJsonPath('data.variants.0.price_minor', null);
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'price_minor' => 1]]])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'price_minor' => FormPayment::MAX_CHARGE_MINOR]]])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'price_minor' => null]]])->assertOk()->assertJsonPath('data.variants.0.price_minor', null);
     }
 
     // ------------------------------------------------------------ the currency
@@ -160,7 +160,7 @@ class ShopProductValidationTest extends TestCase
 
         $polo = $this->product($this->org);
 
-        $response = $this->putJson($this->products('/' . $polo->id), ['currency' => 'gbp', 'name' => 'Renamed'])->assertStatus(422);
+        $response = $this->putProduct($this->org, $polo->id, ['currency' => 'gbp', 'name' => 'Renamed'])->assertStatus(422);
 
         $this->assertSame('Products are sold in USD only.', $response->json('data.currency.0'));
         $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, 'nothing of the refused request was saved');
@@ -206,9 +206,9 @@ class ShopProductValidationTest extends TestCase
         }
 
         // Zero is a real stock (sold out on purpose), null is unlimited, and the unsigned-int edge fits.
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'stock' => 0]]])->assertOk()->assertJsonPath('data.variants.0.stock', 0)->assertJsonPath('data.variants.0.available', 0);
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'stock' => null]]])->assertOk()->assertJsonPath('data.variants.0.stock', null)->assertJsonPath('data.variants.0.available', null);
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => 'M', 'stock' => ProductFormRequest::STOCK_MAX]]])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'stock' => 0]]])->assertOk()->assertJsonPath('data.variants.0.stock', 0)->assertJsonPath('data.variants.0.available', 0);
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'stock' => null]]])->assertOk()->assertJsonPath('data.variants.0.stock', null)->assertJsonPath('data.variants.0.available', null);
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => 'M', 'stock' => ProductFormRequest::STOCK_MAX]]])->assertOk();
     }
 
     // ------------------------------------------------------------ sizes
@@ -227,7 +227,7 @@ class ShopProductValidationTest extends TestCase
         $this->assertListRefused($polo, [['label' => 'M'], ['label' => 'M']], 'variants.1.label', 'the same label twice');
         $this->assertListRefused($polo, [['label' => 'Adult L'], ['label' => 'adult l']], 'variants.1.label', 'the same label in another case');
 
-        $this->putJson($this->products('/' . $polo->id), ['variants' => [['label' => str_repeat('x', 40)]]])->assertOk();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['label' => str_repeat('x', 40)]]])->assertOk();
     }
 
     #[Test]
@@ -267,7 +267,7 @@ class ShopProductValidationTest extends TestCase
         $l = $this->variant($polo, ['label' => 'L', 'sort' => 2]);
 
         // The new size sits between the two that exist, with no `sort` of its own: its place is its position.
-        $response = $this->putJson($this->products('/' . $polo->id), ['variants' => [
+        $response = $this->putProduct($this->org, $polo->id, ['variants' => [
             ['id' => $s->id, 'label' => 'S'],
             ['label' => 'M'],
             ['id' => $l->id, 'label' => 'L'],
