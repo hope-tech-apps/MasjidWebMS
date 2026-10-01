@@ -685,7 +685,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // are switched on (the language's `reviewed` flag does not cover it).
         story_seen_notice: "تستطيع المدرسة أن ترى أولياء الأمور الذين فتحوا كل خبر من يوميات الصف، ومتى فتحوه، ولا يستطيع أولياء الأمور الآخرون رؤية ذلك.",
         // MACHINE-DRAFTED 2026-10-01: needs a human review with the rest.
-        story_edited: "معدَّل",
+        story_edited: "تم التعديل",
         choose_avatar: "اختر صورة رمزية",
         handover_starting: "جارٍ البدء…",
         handover_let: "دع {x} يختار",

@@ -287,7 +287,7 @@ export const PS: Record<string, string> = {
     // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts are switched on.
     story_seen_notice: "ښوونځی لیدلی شي چې کوم والدینو د ټولګي هر خبر پرانیستی دی، او کله. نور والدین دا نشي لیدلی.",
     // MACHINE-DRAFTED 2026-10-01: needs a human review with the rest.
-    story_edited: "ایډیټ شوی",
+    story_edited: "سمون شوی",
     // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
     marks_section_simple: "ډېر ښه / ښه / لا کار ته اړتیا لري",
     simple_mark_3: "ډېر ښه",
