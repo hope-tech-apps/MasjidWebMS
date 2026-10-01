@@ -67,7 +67,7 @@ class SetCapabilityDelegatesTest extends TestCase
         $masjid = Masjid::forceCreate([
             'id' => 9001,
             'name' => 'Delegation Masjid',
-            'email' => 'delegation@test.local',
+            'email' => 'delegation@delegation.test',
             'phone' => '+15550009001',
             'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
             'latitude' => 0.0, 'longitude' => 0.0, 'crm_enabled' => true, 'org_type' => 'masjid',
