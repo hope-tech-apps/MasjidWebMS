@@ -413,6 +413,30 @@ export function imageOrderBody(images: readonly Pick<ShopImage, 'id'>[]): { orde
 
 // ------------------------------------------------------------------------------------- the pickup list
 
+/** What a picture answer says the product's version is, and what the editor does with it. */
+export interface PictureAnswerVersion {
+    /** The version the editor's next Save must send. */
+    lockVersion: number;
+    /** A colleague changed the product between this editor's load and its picture action. */
+    changedElsewhere: boolean;
+}
+
+/**
+ * A picture upload, reorder or delete moves `lock_version` on by EXACTLY one
+ * (ProductWriter::bumpVersion), and its answer carries the new value. So the editor adopts the
+ * answer's version only when it is the one it held plus one: that step is its own. Any other
+ * value means somebody else saved the product in between; adopting it would let this editor's next
+ * Save pass the stale check and silently overwrite their price or sizes. The held version is kept
+ * instead (so that Save answers 409) and the editor says so at once.
+ */
+export function pictureAnswerVersion(held: number, answered: number): PictureAnswerVersion {
+    if (Number.isInteger(held) && Number.isInteger(answered) && answered === held + 1) {
+        return { lockVersion: answered, changedElsewhere: false };
+    }
+
+    return { lockVersion: held, changedElsewhere: true };
+}
+
 /**
  * Whether a pager event should load a page. The shared Pagination emits the page it STARTS on as it
  * mounts, and can emit a page below 1 before the list has loaded; the server refuses page 0 (422),

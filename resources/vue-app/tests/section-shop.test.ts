@@ -12,7 +12,7 @@ import {
     SHOP_MAX_ITEMS,
     SHOP_MIN_ITEMS,
     clampShopMaxItems,
-    shopCategoriesFrom,
+    shopCategoriesFrom, isWebOnlySectionType, webOnlyPlatforms, WEB_ONLY_SECTION_TYPES
 } from '../core/helpers/shopSection.ts';
 
 test('the bounds are the server\'s: heading 120, category 60, 1 to 24 products, 8 by default', () => {
@@ -81,4 +81,18 @@ test('a category the server would refuse to save (over 60 characters) is not off
     const atLimit = 'y'.repeat(SHOP_CATEGORY_MAX);
 
     assert.deepEqual(shopCategoriesFrom({ data: [{ category: tooLong }, { category: atLimit }] }), [atLimit]);
+});
+
+test('a shop section is a website section: the form offers it the web placement only', () => {
+    // The server refuses a shop section on a placement that includes the mobile app (422), so the
+    // form must never send one.
+    assert.deepEqual([...WEB_ONLY_SECTION_TYPES], ['shop']);
+    assert.equal(isWebOnlySectionType('shop'), true);
+
+    for (const other of ['text', 'video', 'hero', '', null, undefined, 7]) {
+        assert.equal(isWebOnlySectionType(other), false, `${String(other)} keeps both placements`);
+    }
+
+    assert.deepEqual(webOnlyPlatforms(), ['web']);
+    assert.notEqual(webOnlyPlatforms(), webOnlyPlatforms(), 'a fresh array each time: the form mutates it');
 });

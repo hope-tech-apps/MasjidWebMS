@@ -30,7 +30,7 @@
                     <!-- Somebody else saved this product since it was opened here: nothing is retried. -->
                     <div v-if="conflict" class="alert alert-warning d-flex flex-wrap align-items-center gap-2" role="alert" data-test="conflict">
                         <span class="flex-grow-1">
-                            <strong>Not saved.</strong> {{ conflict }} Reloading shows their version and throws away what you changed here.
+                            <strong>{{ conflictLead }}</strong> {{ conflict }} Reloading shows their version and throws away what you changed here.
                         </span>
                         <button type="button" class="btn btn-sm btn-warning" :disabled="loading" @click="load">Reload</button>
                     </div>
@@ -244,7 +244,7 @@ import ShopTabs from './ShopTabs.vue';
 import { currencyExponent, parseMajorToMinor } from '@/composables/useMinorUnits';
 import {
     blankProductForm, blankVariantRow, buildProductRequest, checkImageFiles, classifyFailure, currencySymbol, errorsFor, formFromProduct,
-    imageHint, imageLimits, moveItem, imageOrderBody, removalWarning, removedVariants, rowErrors, stockLine, unplacedErrors
+    imageHint, imageLimits, moveItem, imageOrderBody, pictureAnswerVersion, removalWarning, removedVariants, rowErrors, stockLine, unplacedErrors
 } from '@/core/helpers/shop';
 import type { EditorForm, EditorRow, FieldErrors, PriceCodec, RowErrors } from '@/core/helpers/shop';
 import type { ShopProduct } from '@/core/types/data/masjid-related/Shop';
@@ -291,6 +291,8 @@ const form = ref<EditorForm>(blankProductForm());
 const fieldErrors = ref<FieldErrors>({});
 const formError = ref('');
 const conflict = ref('');
+/** How the conflict notice opens: a refused Save, or a change noticed from a picture answer. */
+const conflictLead = ref('Not saved.');
 const saving = ref(false);
 
 const busyPictures = ref(false);
@@ -405,6 +407,7 @@ async function save() {
 
     formError.value = '';
     conflict.value = '';
+    conflictLead.value = 'Not saved.';
 
     const built = buildProductRequest(form.value, codec.value, product.value?.lock_version ?? null);
     if (!built.ok) {
@@ -464,9 +467,31 @@ async function save() {
 
 // ---------------------------------------------------------------------------------------- pictures
 
-/** Every picture answer is the whole product: the server's pictures and `lock_version` replace ours, the unsaved fields stay. */
+/**
+ * Every picture answer is the whole product. Its PICTURES always replace ours and the unsaved fields
+ * stay. Its `lock_version` is adopted only when it is ours plus one, which is this editor's own
+ * picture change; a bigger jump is a colleague's save in between, so the version this form loaded
+ * is kept (its next Save is refused with a 409, never a silent overwrite) and the notice is shown
+ * straight away (pictureAnswerVersion).
+ */
 function adoptAnswer(answer: ShopProduct) {
-    product.value = answer;
+    const held = product.value;
+
+    if (!held) {
+        product.value = answer;
+        return;
+    }
+
+    const verdict = pictureAnswerVersion(held.lock_version, answer.lock_version);
+
+    if (!verdict.changedElsewhere) {
+        product.value = answer;
+        return;
+    }
+
+    product.value = { ...held, images: answer.images };
+    conflictLead.value = 'Changed elsewhere.';
+    conflict.value = 'Your picture change is saved, but someone else changed this product while you had it open.';
 }
 
 function pictureFailure(error: unknown, fallback: string): string {

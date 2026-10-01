@@ -408,8 +408,9 @@ test('editor: the picture hint names the limits, and a file over the size or the
 });
 
 test('editor: an upload that is fine goes up, and the answer (the whole product) replaces the pictures and the lock_version', async () => {
+    // Loaded at version 4; this editor's own picture change moves it on by exactly one.
     const { screen, calls } = await mountEditor({ productId: '5' }, shopStoreDouble({
-        uploadImages: async () => product({ images: [picture(1), picture(2)], lock_version: 6 }),
+        uploadImages: async () => product({ images: [picture(1), picture(2)], lock_version: 5 }),
     }));
 
     const file = { name: 'a.jpg', size: 1000, type: 'image/jpeg' };
@@ -419,10 +420,33 @@ test('editor: an upload that is fine goes up, and the answer (the whole product)
     assert.deepEqual(calledWith(calls, 'uploadImages')[0].args, [5, [file]]);
     assert.equal(screen.all((n) => n.tag === 'img').length, 2);
 
-    // The next save carries the lock_version the picture answer brought.
+    // The next save carries the lock_version the picture answer brought, and nothing is flagged.
+    assert.equal(screen.all((n) => n.props['data-test'] === 'conflict').length, 0);
     submit(screen.all((n) => n.tag === 'form')[0]);
     await flush();
-    assert.equal(calledWith(calls, 'updateProduct')[0].args[1].lock_version, 6);
+    assert.equal(calledWith(calls, 'updateProduct')[0].args[1].lock_version, 5);
+    screen.unmount();
+});
+
+test('editor: a picture answer that jumped more than one version keeps the loaded version and says so at once', async () => {
+    // Loaded at 4. A colleague saved (5), then this editor's upload made it 6: adopting 6 would let the
+    // next Save pass the stale check and overwrite the colleague's price or sizes without a word.
+    const { screen, calls } = await mountEditor({ productId: '5' }, shopStoreDouble({
+        uploadImages: async () => product({ name: 'Renamed by a colleague', images: [picture(1)], lock_version: 6 }),
+    }));
+
+    await byId(screen, 'shop-picture-input').props.onChange({ target: { files: [{ name: 'a.jpg', size: 1000, type: 'image/jpeg' }], value: '' } });
+    await flush();
+
+    assert.equal(screen.all((n) => n.tag === 'img').length, 1, 'the pictures are the answer\'s all the same');
+    const notice = screen.all((n) => n.props['data-test'] === 'conflict');
+    assert.equal(notice.length, 1, 'the editor says so straight away, before any Save');
+    assert.match(notice[0].textContent, /Changed elsewhere\./);
+    assert.match(notice[0].textContent, /Your picture change is saved/);
+
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+    assert.equal(calledWith(calls, 'updateProduct')[0].args[1].lock_version, 4, 'Save sends the version this form loaded, so the server answers 409');
     screen.unmount();
 });
 
@@ -444,8 +468,8 @@ test('editor: reordering and deleting a picture send the whole order and the id;
     const swal = swalDouble();
     const { screen, calls } = await mountEditor({ productId: '5' }, shopStoreDouble({
         fetchProduct: async () => ({ product: product({ images: [picture(1), picture(2), picture(3)] }), meta }),
-        reorderImages: async () => product({ images: [picture(2), picture(1), picture(3)] }),
-        deleteImage: async () => product({ images: [picture(2), picture(1)] }),
+        reorderImages: async () => product({ images: [picture(2), picture(1), picture(3)], lock_version: 5 }),
+        deleteImage: async () => product({ images: [picture(2), picture(1)], lock_version: 6 }),
     }), swal);
 
     click(screen.all((n) => n.tag === 'button' && n.props['aria-label'] === 'Move picture 1 later')[0]);

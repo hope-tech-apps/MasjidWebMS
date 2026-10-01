@@ -60,3 +60,19 @@ export function shopCategoriesFrom(body: unknown): string[] | null {
 
     return [...seen].sort((a, b) => a.localeCompare(b));
 }
+
+/**
+ * Section types that may be placed on the WEBSITE only. A shop section is one for now: the native
+ * apps have not been checked against a section type they do not know, and the server refuses a
+ * placement that would show one there (PageSectionsController::SHOP_WEB_ONLY).
+ */
+export const WEB_ONLY_SECTION_TYPES: readonly string[] = ['shop'];
+
+export function isWebOnlySectionType(type: unknown): boolean {
+    return typeof type === 'string' && WEB_ONLY_SECTION_TYPES.includes(type);
+}
+
+/** The one placement such a section takes. A fresh array each time: the form mutates it. */
+export function webOnlyPlatforms(): string[] {
+    return ['web'];
+}

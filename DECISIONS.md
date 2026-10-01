@@ -7020,3 +7020,31 @@ suites have not been executed; `npm run test:spa` is green (660).
 Unknown, needs investigation: what the iOS and Android apps do with an unknown `shop` section. The API passes `platforms`
 through without filtering (`PageSectionResource`), as it does for `video`; a MEC placement of `["web"]` is the safe one until it
 is known.
+
+## 2026-10-01 — Shop admin screens and the shop section: what the browser run and the point's review changed
+
+- **The pager (found by driving the screens in a browser).** The shared `Pagination` emits its starting page as it mounts. The shop
+  screens started it at 0, so the pickup list re-asked for `page=0`, got a 422, and showed that error over a list that had
+  just loaded. Both lists now start at 1 and load only on a real move (`shouldLoadPage`).
+- **A typed price (the point's review).** `parseMajorToMinor` stripped every comma, so "19,99" was read as 1999.00. A comma is
+  now accepted only as thousands grouping (`^\d{1,3}(,\d{3})+(\.\d*)?$`); any other comma is refused with "Use a point for cents,
+  like 19.99". The helper is shared with the fee plans, which take the same rule.
+- **A picture answer's version (the point's review).**
+  - Every picture call moves `lock_version` on by exactly one, and its answer is the whole product.
+  - The editor used to adopt the answer's version outright. A colleague's save made in between was then silently overwritten by
+    the next Save.
+  - The editor now adopts it only when it is the version it held plus one (`pictureAnswerVersion`). On any other value it keeps
+    the version the form loaded, so the next Save is refused (409), and it shows "Changed elsewhere … Reload" at once. The
+    pictures always refresh from the answer.
+- **A shop section is a WEBSITE section for now (the point's call).**
+  - The native apps have not been checked against a section type they do not know.
+  - `PageSectionsController` therefore refuses, with a 422 on `platforms`, a placement that would show a shop section in the
+    mobile app. This covers store, update and attach. No platforms at all means both, so that is refused too.
+  - `SectionFormModal` unticks and locks Mobile for the type.
+  - **V1.1:** check the iOS and Android apps against an unknown `shop` section, then lift this.
+- **Deferred to v1.1 from the same review:**
+  - the pickup actions sit in a seventh, sideways-scrolling column on a phone;
+  - handing out the last row of a later page reloads onto an empty page;
+  - a 403 still shows the tabs and "New product";
+  - a stock-below-sold hint;
+  - an unsaved-changes guard.

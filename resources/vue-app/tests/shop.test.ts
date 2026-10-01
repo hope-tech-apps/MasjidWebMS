@@ -14,6 +14,7 @@ import {
     priceLabel, productOptions, removalWarning, removedVariants, replaceSale, rowErrors, saleStatus, salesCsvPath, salesCsvRequest,
     salesListPath, salesQuery, sizeChips, sizeOptions, stockLine, summaryTotals, unplacedErrors,
     shouldLoadPage,
+    pictureAnswerVersion,
 } from '../core/helpers/shop.ts';
 
 const usd = { exponent: currencyExponent('usd'), parse: (text: string) => parseMajorToMinor(text, 'usd') };
@@ -46,6 +47,28 @@ test('a typed price becomes integer cents, from the digits and never a float', (
     assert.deepEqual(parsePrice('49.5', usd), { ok: true, minor: 4950 });
     assert.deepEqual(parsePrice('1,500.00', usd), { ok: true, minor: 150000 });
     assert.deepEqual(parsePrice('19.99', usd), { ok: true, minor: 1999 }, '19.99 * 100 is 1998.9999999999998 as a float');
+});
+
+test('a comma is thousands grouping or it is refused: "19,99" is never read as 1999.00', () => {
+    assert.deepEqual(parseMajorToMinor('1,500.00', 'usd'), { ok: true, minor: 150000 });
+    assert.deepEqual(parseMajorToMinor('12,345', 'usd'), { ok: true, minor: 1234500 });
+    assert.deepEqual(parseMajorToMinor('1,234,567.89', 'usd'), { ok: true, minor: 123456789 });
+
+    for (const typed of ['19,99', '1,50', '1,5', ',50', '1,,500', '1500,00', '1,5000', '12,34.56']) {
+        const parsed = parseMajorToMinor(typed, 'usd');
+        assert.equal(parsed.ok, false, `"${typed}" must be refused`);
+        assert.equal((parsed as { reason: string }).reason, 'Use a point for cents, like 19.99');
+    }
+
+    assert.equal(parsePrice('19,99', usd).ok, false, 'and the shop editor\'s price field refuses it too');
+});
+
+test('a picture answer\'s version is adopted only when it is this editor\'s own single step', () => {
+    assert.deepEqual(pictureAnswerVersion(3, 4), { lockVersion: 4, changedElsewhere: false });
+    assert.deepEqual(pictureAnswerVersion(3, 5), { lockVersion: 3, changedElsewhere: true }, 'a colleague saved in between');
+    assert.deepEqual(pictureAnswerVersion(3, 3), { lockVersion: 3, changedElsewhere: true }, 'a version that did not move is not ours either');
+    assert.deepEqual(pictureAnswerVersion(3, 2), { lockVersion: 3, changedElsewhere: true });
+    assert.deepEqual(pictureAnswerVersion(3, Number.NaN), { lockVersion: 3, changedElsewhere: true });
 });
 
 test('a price that is empty, zero, negative, over-precise or not a number is refused with a reason', () => {

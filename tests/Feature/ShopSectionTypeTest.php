@@ -149,7 +149,7 @@ class ShopSectionTypeTest extends TestCase
         ];
 
         $created = $this->postJson($this->pageSections($page), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'title' => 'Shop',
             'content' => $content,
             'order' => 1,
@@ -186,7 +186,7 @@ class ShopSectionTypeTest extends TestCase
         ];
 
         $created = $this->postJson($this->library(), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => $content,
         ])->assertStatus(201)->json('data');
 
@@ -201,7 +201,7 @@ class ShopSectionTypeTest extends TestCase
             'show_view_all' => false,
         ];
         $updated = $this->putJson("{$this->library()}/{$created['id']}", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => $replacement,
         ])->assertStatus(200)->json('data');
 
@@ -216,7 +216,7 @@ class ShopSectionTypeTest extends TestCase
         $page = $this->makePage('home');
 
         $this->postJson($this->pageSections($page), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(201);
 
@@ -324,7 +324,7 @@ class ShopSectionTypeTest extends TestCase
         $page = $this->makePage('home');
 
         $created = $this->postJson($this->pageSections($page), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => ['heading' => 'Just a heading'],
         ])->assertStatus(201)->json('data');
 
@@ -364,11 +364,11 @@ class ShopSectionTypeTest extends TestCase
 
         $stores = [
             'page builder' => fn () => $this->postJson($this->pageSections($page), [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => SectionType::SHOP->defaultContent(),
             ]),
             'library' => fn () => $this->postJson($this->library(), [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => SectionType::SHOP->defaultContent(),
             ]),
         ];
@@ -396,11 +396,11 @@ class ShopSectionTypeTest extends TestCase
 
         $changes = [
             'page builder' => fn () => $this->putJson("{$this->pageSections($page)}/{$text->id}", [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => SectionType::SHOP->defaultContent(),
             ]),
             'library' => fn () => $this->putJson("{$this->library()}/{$text->id}", [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => SectionType::SHOP->defaultContent(),
             ]),
         ];
@@ -428,7 +428,7 @@ class ShopSectionTypeTest extends TestCase
 
         // Back to it is a change TO a shop, and the organisation has no shop.
         $this->putJson("{$this->pageSections($page)}/{$shop->id}", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(422)->assertJsonStructure(['data' => ['section_type']]);
 
@@ -442,11 +442,11 @@ class ShopSectionTypeTest extends TestCase
         $page = $this->makePage('home');
 
         $this->postJson($this->pageSections($page), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(201);
         $this->postJson($this->library(), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(201);
 
@@ -454,16 +454,78 @@ class ShopSectionTypeTest extends TestCase
         $viaLibrary = $this->makeSection($this->masjid, 'text', ['text' => 'Hello']);
 
         $this->putJson("{$this->pageSections($page)}/{$viaPage->id}", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(200);
         $this->putJson("{$this->library()}/{$viaLibrary->id}", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(200);
 
         $this->assertSame(SectionType::SHOP, $viaPage->fresh()->section_type);
         $this->assertSame(SectionType::SHOP, $viaLibrary->fresh()->section_type);
+    }
+
+    #[Test]
+    public function a_shop_section_cannot_be_placed_in_the_mobile_app_by_store_update_or_attach(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $page = $this->makePage('home');
+        $refused = ['platforms' => [PageSectionsController::SHOP_WEB_ONLY]];
+        $sections = Section::query()->count();
+
+        // STORE: mobile named, and no platforms at all (which means both).
+        foreach ([['web', 'mobile'], ['mobile'], null] as $platforms) {
+            $payload = ['section_type' => 'shop', 'content' => SectionType::SHOP->defaultContent()];
+            if ($platforms !== null) {
+                $payload['platforms'] = $platforms;
+            }
+
+            $response = $this->postJson($this->pageSections($page), $payload)->assertStatus(422);
+            $this->assertSame('failed', $response->json('status'));
+            $this->assertSame($refused, $response->json('data'));
+        }
+
+        $this->assertSame($sections, Section::query()->count(), 'a refused placement creates no section');
+
+        // UPDATE: a web-only shop section cannot be moved onto mobile, and stays as it was.
+        $shop = $this->makeSection($this->masjid, 'shop', SectionType::SHOP->defaultContent(), $page);
+        $this->putJson("{$this->pageSections($page)}/{$shop->id}", ['platforms' => ['web', 'mobile']])
+            ->assertStatus(422)->assertJsonPath('data', $refused);
+        $this->assertSame(['web'], $page->sections()->withPivot('platforms')->findOrFail($shop->id)->pivot->platforms);
+
+        // UPDATE: a text section shown on both cannot BECOME a shop section there...
+        $text = $this->makeSection($this->masjid, 'text', ['text' => 'Hello'], $page);
+        $this->putJson("{$this->pageSections($page)}/{$text->id}", [
+            'section_type' => 'shop',
+            'content' => SectionType::SHOP->defaultContent(),
+        ])->assertStatus(422)->assertJsonPath('data', $refused);
+        $this->assertSame(SectionType::TEXT, $text->fresh()->section_type);
+
+        // ...but can once the same request takes it off mobile.
+        $this->putJson("{$this->pageSections($page)}/{$text->id}", [
+            'section_type' => 'shop',
+            'platforms' => ['web'],
+            'content' => SectionType::SHOP->defaultContent(),
+        ])->assertStatus(200);
+        $this->assertSame(SectionType::SHOP, $text->fresh()->section_type);
+
+        // ATTACH: a shop section from the library.
+        $library = $this->makeSection($this->masjid, 'shop', SectionType::SHOP->defaultContent());
+        $this->postJson("{$this->pageSections($page)}/attach", ['section_id' => $library->id])
+            ->assertStatus(422)->assertJsonPath('data', $refused);
+        $this->postJson("{$this->pageSections($page)}/attach", ['section_id' => $library->id, 'platforms' => ['mobile']])
+            ->assertStatus(422)->assertJsonPath('data', $refused);
+        $this->assertFalse($page->sections()->where('sections.id', $library->id)->exists(), 'a refused attach attaches nothing');
+        $this->postJson("{$this->pageSections($page)}/attach", ['section_id' => $library->id, 'platforms' => ['web']])
+            ->assertSuccessful();
+
+        // Every other type is placed as before, mobile included.
+        $this->postJson($this->pageSections($page), [
+            'section_type' => 'text',
+            'content' => ['text' => 'Hello'],
+            'platforms' => ['web', 'mobile'],
+        ])->assertStatus(201);
     }
 
     #[Test]
@@ -479,12 +541,12 @@ class ShopSectionTypeTest extends TestCase
             'show_view_all' => true,
         ];
         $onPage = $this->postJson($this->pageSections($page), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => $content,
             'order' => 1,
         ])->assertStatus(201)->json('data');
         $inLibrary = $this->postJson($this->library(), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => $content,
         ])->assertStatus(201)->json('data');
 
@@ -513,7 +575,7 @@ class ShopSectionTypeTest extends TestCase
         // Still editable as the same type (it is neither a creation nor a change to it).
         $this->putJson("{$this->pageSections($page)}/{$onPage['id']}", ['content' => ['max_items' => 3]])->assertStatus(200);
         $this->putJson("{$this->library()}/{$inLibrary['id']}", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => array_merge($content, ['max_items' => 2]),
         ])->assertStatus(200);
 
@@ -543,7 +605,7 @@ class ShopSectionTypeTest extends TestCase
 
         $this->assertNotContains('shop', array_column($this->types($without), 'value'));
         $this->postJson("/api/admin/masjids/{$without->id}/pages/{$page->id}/sections", [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(422)->assertJsonStructure(['data' => ['section_type']]);
 
@@ -551,7 +613,7 @@ class ShopSectionTypeTest extends TestCase
         $this->assertContains('shop', array_column($this->types($this->masjid), 'value'));
         $withPage = $this->makePage('home');
         $this->postJson($this->pageSections($withPage), [
-            'section_type' => 'shop',
+            'section_type' => 'shop', 'platforms' => ['web'],
             'content' => SectionType::SHOP->defaultContent(),
         ])->assertStatus(201);
     }
@@ -647,7 +709,7 @@ class ShopSectionTypeTest extends TestCase
                 $answers = [];
                 foreach (['their shop' => $foreign['shop']->id, 'their text' => $foreign['text']->id, 'no such id' => $missing] as $what => $id) {
                     $response = $this->putJson($url($id), [
-                        'section_type' => 'shop',
+                        'section_type' => 'shop', 'platforms' => ['web'],
                         'content' => SectionType::SHOP->defaultContent(),
                     ]);
                     $answers[$what] = [$response->status(), array_keys((array) $response->json('data'))];
@@ -752,7 +814,8 @@ class ShopSectionTypeTest extends TestCase
         ]);
 
         if ($page !== null) {
-            $page->sections()->attach($section->id, ['order' => $page->sections()->count() + 1, 'platforms' => null]);
+            // A shop section is a website section for now: any other type takes the default (both).
+            $page->sections()->attach($section->id, ['order' => $page->sections()->count() + 1, 'platforms' => $type === 'shop' ? ['web'] : null]);
         }
 
         return $section;
@@ -788,18 +851,18 @@ class ShopSectionTypeTest extends TestCase
 
         return [
             'page store' => fn (array $content) => $this->postJson($this->pageSections($page), [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => $content,
             ]),
             'library store' => fn (array $content) => $this->postJson($this->library(), [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => $content,
             ]),
             'page update' => fn (array $content) => $this->putJson("{$this->pageSections($page)}/{$stored->id}", [
                 'content' => $content,
             ]),
             'library update' => fn (array $content) => $this->putJson("{$this->library()}/{$stored->id}", [
-                'section_type' => 'shop',
+                'section_type' => 'shop', 'platforms' => ['web'],
                 'content' => $content,
             ]),
         ];
