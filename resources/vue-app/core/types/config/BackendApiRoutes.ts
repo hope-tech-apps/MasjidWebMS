@@ -305,3 +305,17 @@ export type BackendApiRoute =
     | `/api/admin/studio/organisations/${number}`
     | `/api/admin/studio/organisations/${number}/preview`
     | `/api/admin/masjids/${string}/brand-assets/regenerate`
+
+    // The online shop (shop slices B2/B3), behind `capability:shop`. Products with their sizes
+    // (the whole list rides in the product's own PUT), a product's pictures, and the pickup list.
+    // `images/order` is spelled out ahead of the picture-id wildcard, as the server registers it;
+    // `sales.csv` is a blob fetch (shopStore.exportSalesCsv), not an ApiService call.
+    | `/api/admin/masjids/${string}/shop/products`
+    | `/api/admin/masjids/${string}/shop/products?${string}`
+    | `/api/admin/masjids/${string}/shop/products/${string}`
+    | `/api/admin/masjids/${string}/shop/products/${string}/images`
+    | `/api/admin/masjids/${string}/shop/products/${string}/images/order`
+    | `/api/admin/masjids/${string}/shop/products/${string}/images/${string}`
+    | `/api/admin/masjids/${string}/shop/sales?${string}`
+    | `/api/admin/masjids/${string}/shop/sales/${string}/collect`
+    | `/api/admin/masjids/${string}/shop/sales/${string}/resolve`
