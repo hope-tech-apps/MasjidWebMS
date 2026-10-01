@@ -15,8 +15,9 @@ use Illuminate\Http\Request;
  *
  * Both routes sit behind `shop.enabled` (EnsureShopEnabled): unless the basket is on for the
  * organisation AND it has been granted the `shop` capability, each answers the 404 an unknown route
- * answers, before anything here runs, so by the time this code runs the header names a live
- * organisation that has the shop and `PublicTenant::exists()` has nothing left to ask.
+ * answers, before anything here runs. The gate asks `PublicTenant::exists()` (the resolver every
+ * `/api/v1` route asks), so by the time this code runs the header names a live organisation that has
+ * the shop, and nothing is asked a second time.
  *
  * ## What leaves
  *

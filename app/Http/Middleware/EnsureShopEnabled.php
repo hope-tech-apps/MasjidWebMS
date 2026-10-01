@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Exceptions\DarkRouteException;
 use App\Models\Masjid;
+use App\Support\PublicTenant;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -24,8 +25,10 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * The organisation is read from the header exactly as the controllers read it
  * (`(int) header('masjid-id')`), so the two can never disagree about which organisation a request is
- * for. `Masjid::query()` leaves out a soft-deleted organisation, which is the offboarding rule
- * PublicTenant::exists() states.
+ * for, and "is it still a live organisation" is asked of PublicTenant::exists(), the one resolver every
+ * unauthenticated `/api/v1` route asks (an offboarded organisation is offboarded everywhere,
+ * PublicTenantLifecycleTest). Two cheap reads on a route that is not hot; the capability needs the
+ * row itself.
  */
 class EnsureShopEnabled
 {
@@ -41,7 +44,7 @@ class EnsureShopEnabled
     /** Whether the shop's public reads are on for this organisation id. */
     public static function enabledFor(int $masjidId): bool
     {
-        if ($masjidId <= 0 || ! EnsureCartEnabled::enabledFor($masjidId)) {
+        if ($masjidId <= 0 || ! EnsureCartEnabled::enabledFor($masjidId) || ! PublicTenant::exists($masjidId)) {
             return false;
         }
 
