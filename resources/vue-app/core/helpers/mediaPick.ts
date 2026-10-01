@@ -31,7 +31,18 @@ export type MediaLimits = {
 
 export type MediaPick<T> = { accepted: T[]; note: string };
 
-export const isVideoFile = (file: PickedFile): boolean => (file.type || '').startsWith('video/');
+/**
+ * A video, by the browser's type, or by its extension when the browser reports no
+ * type at all (it happens with some .mov and .m4v files). Without the fallback such
+ * a clip is counted as a photo: it skips every video limit here and is then sent in
+ * the images bag, which the server refuses only after the whole upload.
+ */
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm)$/i;
+
+export const isVideoFile = (file: PickedFile): boolean => {
+    const type = file.type || '';
+    return type ? type.startsWith('video/') : VIDEO_EXTENSIONS.test(file.name || '');
+};
 
 const megabytes = (kb: number): number => Math.round(kb / 1024);
 

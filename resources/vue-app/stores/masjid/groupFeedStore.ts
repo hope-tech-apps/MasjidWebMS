@@ -2,6 +2,7 @@ import { defineStore } from "pinia"
 import { ref } from "vue"
 import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
+import { isVideoFile } from "@/core/helpers/mediaPick";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
@@ -85,7 +86,7 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
         // field names still come from `meta` rather than a literal, so the
         // client cannot drift from GroupPostFormRequest's constants.
         images.forEach((file) => body.append(
-            `${(file.type || '').startsWith('video/') ? videoKey : uploadKey}[]`,
+            `${isVideoFile(file) ? videoKey : uploadKey}[]`,
             file,
         ));
 

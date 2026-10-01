@@ -994,11 +994,6 @@ class GroupPostsController extends Controller
     }
 
     /**
-     * One upload bag, normalised to a list.
-     *
-     * @return array<int,\Illuminate\Http\UploadedFile>
-     */
-    /**
      * Why the uploads of an edit cannot be added to this story, keyed like a validation
      * failure, or null. A story with its attachments counted as they are now: photos
      * against `max_per_post`, videos against their count and their combined size.
@@ -1039,6 +1034,11 @@ class GroupPostsController extends Controller
         return $errors === [] ? null : $errors;
     }
 
+    /**
+     * One upload bag, normalised to a list.
+     *
+     * @return array<int,\Illuminate\Http\UploadedFile>
+     */
     private function bag(Request $request, string $key): array
     {
         $files = $request->file($key);

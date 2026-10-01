@@ -6733,6 +6733,197 @@ this slice has been run: there is no PHP on the machine it was written on** (ASS
   - Renaming a size that baskets or sales hold would change what a paid line names. B2 decides whether a held size's label is
     frozen.
 
+## 2026-10-01 — Shop slice B2: the admin API, the pickup list and the public read (branch feat/shop-b2, off feat/shop-b1 e24baced)
+
+The brief is `design/brief-shop-b2.md`; the plan and the point's review are `design/shop-plan-2026-09-30.md`. This slice puts three doors on
+B1's tables: the office's catalogue (products, sizes, pictures), the pickup list with its collect, undo and CSV, and the renderer's read.
+Everything stays behind the `shop` grant. **Nothing in this slice has been run: there is no PHP on the machine it was written on**
+(ASSUMPTIONS S-12). No migration, no model column and no new permission: the one model edit is the constant `Product::MAX_IMAGES`.
+
+- **Who may reach the admin routes.** `capability:shop` on the `{masjid_id}/shop` prefix (a dark shop answers 403 with "Online shop is not
+  switched on for this organisation.", exactly as class_store's routes do; a SuperAdmin passes, as for every grant), and per route
+  `permission:view donations` (every GET, the CSV included) or `permission:manage donations` (every write, collect and undo included). The
+  brief said to use what the office already has for orders and money. Jummah-lunch orders and the form roster carry NO `permission:` (only
+  `admin`), so there was nothing to copy there; the one pair that gates what somebody is CHARGED is the fee plans' (`view donations` /
+  `manage donations`, routes/admin.php), and a product's price is exactly that. No permission was minted (`Permission::count()` stays 8;
+  `ShopAdminGateTest` asserts it). The routes sit OUTSIDE `crm`, as the Jummah-lunch board does (its comment: a masjid selling lunch must
+  not first switch on the member directory): the pickup list reads the buyer from the order, not from a contact, so nothing here needs the
+  directory. `ShopAdminGateTest` walks the router and fails for a shop route with another permission, one inside `crm`, or one it has no
+  call for, so a route added later has to bring its gate and its tenancy case.
+- **The currency (closes S-9).** `products.currency` is ALWAYS `config('services.stripe.currency')`, written on every create and every
+  update. A request that names another currency is a 422 ("Products are sold in USD only."), not a quiet override, so a client that thinks it
+  is selling in pounds is told; the platform's own currency in either case is accepted. A product left in another currency by the B1
+  column default is put right by its next save.
+- **The slug** is generated from the name once, at creation, and never changes with a rename (the renderer links to it), and is never read
+  from the body. It is unique among LIVE products of the organisation: a clash gets `-2`, `-3`, and a soft-deleted product frees its slug, so
+  a product re-created under the same name gets the plain one (`ProductSlug`, which reads only live rows, exactly what B1's partial index
+  / `live_slug` column constrains). Two saves that pick the same slug at once are sorted out by the unique index; `ProductWriter::create`
+  retries with a fresh read (five tries). A name that slugs to nothing gets `product`.
+- **A product's sizes are a LIST inside its update** (and, optionally, its create). `variants` absent: the sizes are left alone. A list is the
+  product's whole set: a row with an `id` edits that size, a row without one adds one, a live size left out is SOFT-deleted (its `sold_count` and
+  its sales stay). Within a row an absent key leaves an existing size's value alone and a null clears it (no price of its own; unlimited
+  stock). An `id` that is not one of THIS product's live sizes (another organisation's, another product's, a trashed one, one that is not
+  there) is a 404 like any other id and the whole save rolls back. The writer applies the list in a fixed order, because the unique
+  index on a label is among live rows: omitted sizes first (freeing their labels), sizes whose label changes then step aside under a
+  throwaway label, then the new labels and the new rows. So a size removed and a new one of the same name in one save works, and two
+  sizes may SWAP names (S and M) in one save. `sold_count`, `product_id` and `masjid_id` are never read from a row. The list's order is the
+  order the caller sent (a new size with no `sort` takes its position in it); `validated()` rebuilds the list rule by rule, so the request
+  restores the order from the raw input's keys.
+- **Clash checks compare the way production's index does** (from B1's ship critic). The live-slug and live-label unique indexes compare under
+  `utf8mb4_unicode_ci` on MySQL (case AND accent blind: `Polo` = `polo`, `M` = `m`, `Médium` = `Medium`, `Straße` = `Strasse`), and SQLite's
+  partial indexes are byte-exact, so the suite cannot see a clash the index would refuse. Every clash check B2 makes itself therefore folds
+  both sides through `LiveText::fold()` (Latin letters transliterated with `Str::ascii`, then lower-cased; any other script is only
+  lower-cased, so two different Arabic labels are never merged): the label validation ("Two sizes cannot share a name", a 422 on
+  `variants.N.label`) and the slug suffixing (`ProductSlug`, whose read is also case-blind, `LOWER(slug)`, so a capitalised slug an import left
+  behind still counts as taken). It errs toward calling two texts the same: a sentence or a `-2` is a cheap mistake, a unique-violation 500 is
+  not (ASSUMPTIONS S-26).
+- **A size's name is FROZEN once any `order_items` row names it** (from the same critic): an open payment page, a paid sale, an order that
+  expired, whatever became of it. A rename would change what that line is called while the sale's snapshot keeps the old name. It is a 422 on
+  `variants.N.label` ("The size "M" is already in a basket or an order, so its name cannot change. Switch it off and add a new size instead."),
+  the whole save is refused, and the size's price, stock, `enabled` and `sort` stay editable; it can still be removed (soft-deleted), and a
+  new size can be added beside it. The check is made in `ProductWriter` under the sizes' row locks, so a line a checkout wrote a moment ago is
+  seen (ASSUMPTIONS S-27).
+- **A stock set below what is sold and held is allowed** (the brief asks for this call to be recorded). Stock is the TOTAL for sale, sold units
+  included; typing a number under `sold_count + held` is the office saying "stop selling", and refusing it would make a mistyped total
+  impossible to correct. The answer carries `stock`, `sold_count`, `held` and `available` (never below zero: `ProductStock::available`),
+  so the SPA can say "Total 20 · sold 12 · in baskets 1 · left 7", and the stored `sold_count` is never touched (it moves only at
+  settlement, under the size's row lock). `held` is ONE grouped query for every size on the page.
+- **Money in the request is `integer:strict`**: a JSON number, never a string, a float or a boolean. A price is 1 to
+  `FormPayment::MAX_CHARGE_MINOR` (the ceiling `CartCheckoutService` refuses a basket total at), a stock 0 to the unsigned-int ceiling.
+  Widths are the columns': `ShopProductValidationTest` reads the migration and compares (SQLite ignores a varchar's length).
+- **Pictures.** Spatie media, collection `product_images`, on the library's default disk as the gallery uses (`MEDIA_DISK`, `public`). The
+  upload rule is the one every image upload in the admin has (`ValidatesVideoSection::sectionUploadRules`): `mimes` reads the bytes, `extensions`
+  pins the client's file NAME (the library keeps it on the public disk and the web server picks the Content-Type from it), 25 MB each (10 MB since the fix round, below)
+  (the library's own ceiling); SVG is not on the list. At most 8 per product: the count is taken under the product's row lock, so two
+  uploads at once cannot both pass, and an upload that would take it past eight is refused AS A WHOLE (not even the first file is
+  kept). Reorder takes the full list of the product's picture ids and writes Spatie's `order_column`: an id that is not this product's is a
+  404, a list that leaves one out a 422. The `media` table has no organisation column, so tenancy is the product's: a picture is only ever
+  read through `Product::images()` (which carries `model_type` as well as `model_id`, b5c2f808's rule), and the count behind the cap uses
+  `reorder()` because an ORDER BY on a bare COUNT(*) is an error under ONLY_FULL_GROUP_BY.
+- **The pickup list** (`PickupList`, one query behind the list, its CSV and the row a collect answers with). The buyer (name, e-mail, phone),
+  `paid_at`, the currency and the refund flag are read from the ORDER, joined on the order id AND the organisation; the product name, size,
+  quantity and prices are the sale's snapshot, so a renamed or deleted product does not change what was sold; nothing of the buyer is copied
+  into `product_sales`. States: `to_hand_out` (the default: not collected and the order not refunded or disputed), `collected`, `all`. A
+  mistyped state is a 422, never "everything". **`refunded` is `charge_flag` refunded or disputed**; `partially_refunded` is NOT in it (a
+  refund names an amount, never a line, so the office cannot tell it was this item), so such a sale stays to hand out and carries its
+  `charge_flag` for a person to judge (ASSUMPTIONS S-18). Search matches the order number or the buyer name, case-blind, `%` and `_`
+  literal (`LOWER(col) LIKE ? ESCAPE '!'`, because a backslash escape means different things in a MySQL and a SQLite string). Newest paid
+  first, `per_page` 1 to 100 (default 25).
+- **The header counts** (`meta.summary`) are ONE grouped query over the whole organisation, per product and size: `to_hand_out` and `collected` in
+  UNITS, and (since the fix round, below) `oversold_open` in LINES; it was oversold units not refunded, which kept counting a sale the office had
+  dealt with. The filters do not move it. It is
+  grouped by the names the sales carry, so a product renamed after it sold shows as two lines for the same size rather than hiding a name.
+- **Collect and undo.** `POST .../collect` is the form roster's check-in for a sale: stamped by the FIRST press only (a repeat answers "Already
+  handed out." with the first collector kept), on the locked row. It is refused with a sentence on a refunded or disputed order, and that
+  check comes FIRST: collect never claims "handed out" on money that went back, even for a sale collected before the refund. `DELETE` clears the
+  mark (allowed on a refunded sale too; nothing to undo is a 200). Both write the actor to the log as the office's other actions do (ids and the
+  order's number, never a buyer detail); the undo also logs who had collected it and when, since clearing the stamp would erase that.
+- **The CSV** (`GET .../shop/sales.csv`, same filters, same columns) goes through the SHARED writer and escaper of the school-records exports
+  (`SchoolRecordsCsv`: BOM, RFC 4180 rows, `text()` on every cell a person typed, the phone included because `+` triggers a formula), not a
+  new one. `Refunded` is yes/no, as the list says it (refunded or disputed), and `Charge flag` carries the order's own word beside it, so a partly
+  refunded sale, which is still to hand out, is not read as refunded. Rows come in sale-id order because the shared chunked walk needs an
+  unordered query (the cursor is `product_sales.id`, qualified, because the join has an `id` of its own), times are the organisation's own
+  clock with the zone written out, `Cache-Control: no-store, private`.
+- **The public read** (`GET /api/v1/shop/products`, `/{slug}`, `masjid-id` header). Dark by `shop.enabled` (`EnsureShopEnabled`): the router's
+  own 404 (`DarkRouteException`), ranked ahead of every throttle in `bootstrap/app.php` like the basket's gate, unless the grant is on AND
+  the basket is on for the organisation (`EnsureCartEnabled::enabledFor`). The second half is my addition to the brief (S-20): a listing
+  nobody can put in a basket is a dead storefront, and one gate gives one 404. Listed: active, not deleted, with at least one ENABLED live size;
+  a disabled or deleted size is not shown at all. Per product: name, slug, category, description, `price_minor` (the lowest enabled size's
+  effective price) and `price_varies`, `currency`, picture URLs in order, and sizes as `{id, label, price_minor, sold_out}`. **The point's
+  rule: availability is ONE plain boolean.** No stock, sold, held or available number, no oversold flag, no "only N left" wording, at any depth;
+  a picture is a bare URL string, so it cannot carry a field. `ShopPublicApiTest` pins the exact keys of the product and of each size,
+  the type of every value, and the absence of any key that looks like a figure. A size is `sold_out` when `available` is 0; an unlimited
+  size never is. Four queries however many sizes (products, sizes, pictures, ONE grouped held sum), pinned by a query-count test. No
+  caching: the reads send nothing, so they carry the same default `Cache-Control` the basket's reads do, and a test compares the two.
+  The generous named limiter `shop-read` (600 a minute per connection and organisation) is behind the gate; the renderer reaches us from
+  Cloudflare's shared addresses, as the by-host lookup's does. The `data` key is always present (`[]` for an empty shop), which the
+  `api` macro would drop.
+- **Not changed.** Staging scrub, `MemberAccountDeletionCoverageTest`, `TenantScopingCoverageTest` and `StagingScrubCoverageTest` demand nothing
+  new (no table, no column, no model). `CartColumnWidthsTest`'s map already holds the widths B2 validates to; only its comment was updated.
+  The tenancy canary plans public GET collections from the route table (`ProbeCatalog`); `GET /api/v1/shop/products` is DECLINED there, behind
+  `throttle:shop-read`, which is not in `canary.throttle_allowlist`, exactly as the basket's `GET /cart` is, so the hourly canary neither spends the
+  limiter nor reads the dark 404 as an unreachable endpoint; `/{slug}` takes a parameter and is never planned. The admin SPA (B3) and the
+  renderer (C) are not in this slice.
+- **Tests.** `tests/Feature/Shop/`: `ShopProductsAdminTest`, `ShopProductValidationTest`, `ShopProductImagesTest`, `ShopPickupListTest`,
+  `ShopPublicApiTest`, `ShopAdminGateTest` (capability, permission and tenant on every route, walked from the router), and the traits
+  `BuildsShopAdmin`. Written without being run (S-12).
+
+## 2026-10-01 — A hard-deleted size can still gap-lock product_variants (accepted, documented)
+
+- **Raised by the point's review of the B1 lock fix:** `ProductStock::lock()` is a primary-key `IN` locking read. For an id with no row
+  (a size HARD-deleted while a basket still names it), InnoDB locks the gap where that id would be. Above the current maximum id
+  that gap is the supremum, so new sizes for EVERY organisation wait until that checkout commits, Stripe calls included.
+- **Why it is accepted:**
+  - Sizes and products are only ever SOFT-deleted. B2's admin API trashes rows and never `forceDelete()`s them, and no command or
+    job removes them.
+  - So only a hand-run SQL delete reaches this. The wait is one checkout's length, and it blocks only the adding of sizes.
+- **The rule:** never hard-delete a `product_variants` or `products` row on production. A cleanup that needs to must first remove
+  every `cart_items` line naming it.
+
+## 2026-10-01 — B2 critic fix round: a sale's resolution, locks, a script-independent fold and stale editors (branch feat/shop-b2, rebased onto the shipped B1 d2fbee5d)
+
+The brief is `design/brief-shop-b2-fixes.md`: six minor findings of the B2 critic, plus the point's two additions (the picture limit, the public cap).
+B1 is in production, so its migration is untouched; ONE new migration, `2026_10_06_100200_add_resolution_and_lock_version_to_shop_tables`
+(Blueprint only, every name by hand, a real `down()`), adds the columns below. `php -l` was the only thing run: nothing else was, and the suite has still
+not run (ASSUMPTIONS S-12). Each item is its own commit.
+
+1. **A sale's resolution.** `product_sales.resolution` (string 16, nullable: `refunded` | `substituted`), `resolved_at`, `resolved_by_user_id` (nullable
+   FK to users, hand-named `product_sales_resolved_by_foreign`, nullOnDelete as `collected_by_user_id` is). `POST .../shop/sales/{sale}/resolve
+   {resolution}` and `DELETE .../resolve`, both `manage donations`, both answering `{status, message, data: row}` as collect does and both logging the
+   actor the way collect does (ids and the vocabulary word only; a clear logs what it was and who had set it). Resolving is idempotent: the SAME
+   word again changes nothing and keeps the FIRST resolver and moment; a DIFFERENT word replaces the resolution, and the sale then carries who set THAT
+   one (S-33). `refunded` takes the sale off "to hand out" (list, summary and row `to_hand_out`), like a fully refunded order, and `collect` refuses it
+   with a sentence; `substituted` STAYS to hand out (the substitute is what is handed over) and only ends the need for anyone's call. `oversold` itself is
+   never cleared: it is a fact; `resolution` is what was done. A row's `refunded` stays the ORDER's flag. Rows carry `resolution`, `resolved_at` and
+   `resolved_by {id, name}`; the CSV gets a `Resolution` column after `Charge flag`. No buyer data and no free text, so nothing for the staging scrub.
+2. **collect locks the order.** After the sale's own lock, collect reads the order's `charge_flag` with `lockForUpdate()`, so a refund or dispute being
+   recorded at that moment is waited for, not raced. Lock order: sale, then order. Settlement locks the order and then INSERTS new sales (it never locks an
+   existing sale row), and the refund arm (`CartPaymentService::flagOrder`) locks the order and nothing else, so there is no cycle; the docblock says so.
+3. **`oversold_open` replaces `oversold` in the summary.** It COUNTS SALES (lines), not units: oversold, the order not refunded or disputed, `resolution`
+   NULL and not collected. Units overstated the work (one line of 5 is one decision), and a resolved or handed-over line kept counting.
+4. **No gap-locking read of sizes.** `create()` takes no locking read of sizes at all (a product made in the transaction has none). `update()` locks the
+   product row FOR UPDATE (it serialises every writer of the product and its sizes), checks `lock_version`, and then, when the request carries a list,
+   locks the sizes THE ROWS NAME by primary key alone, ascending, through `ProductStock::lock()` (the lock a checkout takes before it writes an order
+   line; no `product_id` or `masjid_id` in the statement, because under REPEATABLE READ a locking range read gap-locks: B1's ship blocker, 740e5db1);
+   ownership is checked on the rows afterwards (a size that is not this product's live size is the 404). ONLY THEN are the live sizes read (a plain
+   `get()`), and the `order_items` that name a renamed size (also plain), so both see every line a competing checkout committed, and a renamed size is
+   always one of the request rows: the frozen-label guarantee holds. No consistent read comes before the first lock: the route binds the product in
+   the controller, BEFORE the transaction, in autocommit, and the request's validation reads nothing, so the transaction's snapshot is fixed after the
+   locks. `delete()` finds the sizes with a plain read under the product lock and soft-deletes them by primary key after the same locks, not by a
+   `product_id` range. All three run in `DB::transaction(..., 3)` (a deadlock victim retries; no Stripe call, mail or file is in any of them). The writer
+   never writes `sold_count`: a test saves after a settlement moved it and reads the statements.
+5. **A script-independent fold and a backstop.** `LiveText::fold()` is NFKD (the `intl` Normalizer), then every mark (`\p{M}`) and every format
+   character (`\p{Cf}`: soft hyphen, ZWSP, ZWJ, ZWNJ, directional marks) and the Hangul fillers stripped, white space collapsed and the ends trimmed (MySQL 8.4's
+   unicode_ci is PAD SPACE), lower case, then Latin runs transliterated (`ß` to `ss`). So `Е`/`Ё`, `أطفال`/`اطفال` (hamza), `آ`/`ا` (madda), `XL`/`X­L`,
+   `M`/`M `/` M`, `Medium`/`Médium` are each one label, and two different Arabic or Cyrillic words stay two. Without `intl` the Normalizer step is
+   skipped (the fallback still folds case, space, format characters, decomposed marks and every Latin accent; precomposed `Ё`, `أ`, `آ` would be told apart:
+   S-29). Whatever the fold misses meets the index, and `ProductWriter` CATCHES the violation: one naming `live_label` (MySQL) or `product_variants.label`
+   (SQLite's wording) becomes a 422 on `variants` ("Two sizes of one product cannot share a name."); one naming `live_slug` / `products.slug` is retried
+   with the next suffix, five tries in all, and after the fifth a 422 on `name` ("Another product took that name just now. Try saving again."), never a 500.
+6. **Stale editors are refused.** `products.lock_version` (unsigned int, default 0). EVERY successful `update()` adds one under the product lock, a
+   sizes-only save included; so does every picture upload, delete and reorder (they change what the editor shows), by one atomic UPDATE. Every product
+   answer carries `lock_version` (show, index, store, update and the three picture answers). `PUT products/{id}` REQUIRES `lock_version` (`integer:strict`,
+   a missing one is a 422 on `lock_version`); under the lock a different value is HTTP 409 with the body exactly
+   `{"status":"failed","message":"This product was changed by someone else. Reload it and make your change again."}` and nothing is written. The
+   Studio draft's check (`StudioDraftsController`, `lock_version`) was the precedent; its 409 body is `{status:'conflict', message, data}`, but the body
+   here is the one the point pinned for the SPA, without `data` (S-32). The picture endpoints need no `lock_version` of their own.
+
+**The point's two additions.** A picture is at most 10 MB (`UploadProductImagesRequest::MAX_MB`; "Each picture can be at most 10 MB."), because
+production's `post_max_size` is 110M and eight at the old 25 MB (200 MB) could never arrive and failed as a bare 413 (S-16 closed); `meta.max_image_mb` is 10,
+beside `max_images`. `PublicCatalogue::listing()` returns at most 200 products (`LISTING_LIMIT`), in the order the office set; the shape is unchanged and a
+product past the 200th is still reachable by its own slug (S-19 now bounded).
+
+**Deferred to v1.1, not built:** a collect-only or shop-specific permission; the oversold alert wording when an admin lowers a stock below sold plus held; a
+deleted product's pictures staying on the public disk; the upload writing files inside the database transaction; reorder and delete of pictures not taking the
+product's row lock first (they bump the version with one atomic UPDATE instead, which is enough for the version but takes no lock for the media rows themselves);
+a pixel-dimension cap on pictures.
+
+**For B3 (the new fields, pinned):** every product answer carries `lock_version` (int); PUT sends it back (422 if missing, 409 if stale, then reload and
+repeat); sales rows add `resolution` (null | "refunded" | "substituted"), `resolved_at` (ISO 8601 | null), `resolved_by` ({id, name} | null), and
+`to_hand_out` is false for "refunded"; summary rows are `{product_id, variant_id, product_name, variant_label, to_hand_out, collected, oversold_open}`
+(`oversold_open` replaces `oversold` and counts lines); `POST|DELETE .../shop/sales/{sale_id}/resolve`; the CSV's last column is `Resolution`; products
+`meta` is `{currency, max_images, max_image_mb}`. For C: nothing changes except the 200-product ceiling.
+
 ## 2026-10-01 — Three videos in a class story or a message, bounded by their combined size (W7-1, teacher feedback; branch feat/school-w7-video-count)
 Decision: `groups.media.video.max_per_post` goes from 1 to 3 (code default, no production `.env` edit), for a class
 story and for a conversation message alike. A new `groups.media.video.max_total_kb` (120MB) bounds what the videos of
@@ -6758,6 +6949,21 @@ ONE post or message add up to; one clip may still be the full 100MB.
 - **The teacher screen reads the server's limits.** Its three pickers passed nothing and ran on the component's
   built-in default (one video), so a server limit never reached the people who asked for this. They now bind
   `pickerLimits(meta, …)` from the posts and threads lists.
+- **Where the 192MB is true.** The two hosts staff use in production are served by nginx directly. Staging and the
+  marketing host sit behind a proxy that refuses a body over about 100MB, so a request over that cannot be exercised
+  on staging; the staging check for this change uses small clips (count and total with a lowered total), and the
+  arithmetic is held by `UploadCeilingTest`.
+- **A file the browser gives no type.** `isVideoFile` falls back to the extension (mp4, m4v, mov, webm), and the three
+  places that split one list into the `images` and `videos` bags use it, so such a clip meets the video limits instead
+  of being sent as a photo and refused after the upload.
+- **Over the ceiling anyway** (a 413 from nginx or PHP, which no validation sentence can reach): every upload screen
+  now says "That is too large to send together. Send fewer photos or videos at once, and the rest in another post."
+  The office screens showed axios's "status code 413" before.
+- **Known, not changed here.** (1) The family portal asks for one playback ticket per video tile as the page opens,
+  and those count against the family rate limit; three videos per post makes a busy class page more likely to reach
+  it (the tiles that are refused show the file name, not a player). Ticket on view or on press is the fix, next wave.
+  (2) Two simultaneous API edits can each pass the count on the same story; no screen sends media on an edit, so it
+  takes a hand-written client to do it.
 Alternatives: raise the server ceilings to ~400MB now (a production server change, and three times the disk exposure);
 lower the per-video size so three fit (takes away the 100MB single clip teachers have today); upload each video in its
 own request (the right long-term shape, a larger change to the upload path).

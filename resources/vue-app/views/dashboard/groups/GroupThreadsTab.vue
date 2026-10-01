@@ -290,7 +290,7 @@ import { PageChangeData, PaginationOptions } from '@/core/types/elements/Paginat
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { GroupMessage, GroupThread, GroupThreadPayload } from '@/core/types/data/masjid-related/GroupThread';
 import { useGroupThreadsStore } from '@/stores/masjid/groupThreadsStore';
-import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
+import { apiErrorText, isForbidden, uploadErrorText } from '@/core/services/ApiErrors';
 import { threadNewLabel, unreadNumber } from '@/core/helpers/threadUnread';
 import Swal from 'sweetalert2';
 
@@ -524,7 +524,7 @@ const submitThread = async () => {
         await selectThread(thread);
         Swal.fire({ icon: 'success', title: 'Opened', timer: 1600, showConfirmButton: false });
     } catch (error) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to open the conversation.') });
+        Swal.fire({ icon: 'error', title: 'Error!', text: uploadErrorText(error, 'Failed to open the conversation.') });
     } finally {
         creating.value = false;
     }
@@ -547,11 +547,7 @@ const submitMessage = async () => {
         Swal.fire({
             icon: 'error',
             title: 'Not sent',
-            // nginx answers an oversized request itself, as HTML, so apiErrorText
-            // would only have axios's "status code 413" to show.
-            text: (error as any)?.response?.status === 413
-                ? 'That is too large to send together. Try fewer photos, or a shorter video.'
-                : apiErrorText(error, 'Failed to send the message.')
+            text: uploadErrorText(error, 'Failed to send the message.')
         });
     } finally {
         sending.value = false;

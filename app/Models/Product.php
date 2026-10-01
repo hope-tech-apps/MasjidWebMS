@@ -19,12 +19,17 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * false` or soft-deleted, never removed, because a paid line names it (the sale itself keeps a
  * snapshot, so the pricing and settlement code never trusts this row after the fact).
  *
+ * `lock_version` is the editor's guard (migration 2026_10_06_100200): it goes up by one, under the
+ * product's row lock, with every save and every picture change, and a save that names another
+ * version is refused (ProductWriter). It is never mass-assigned.
+ *
  * `slug` is unique per organisation among LIVE rows: a generated column on MySQL (`live_slug`,
  * which does not exist on SQLite, where the same rule is a partial index), hidden here so a
  * serialised product reads the same on both drivers.
  *
- * Images are Spatie media in the `product_images` collection (many). The upload endpoints are
- * slice B2's; this slice adds the trait, the collection name and `images()`.
+ * Images are Spatie media in the `product_images` collection (many), at most MAX_IMAGES. The
+ * upload, delete and reorder endpoints are ShopProductImagesController's (slice B2); `images()`
+ * is the only way a product's pictures are read.
  *
  * Tenant-scoped (BelongsToMasjid); the cross-tenant test is tests/Feature/Shop/ProductTenantIsolationTest.php.
  * The public basket runs UNBOUND, so CartPricer and CartLineAdder load a product with the scope
@@ -36,6 +41,9 @@ class Product extends Model implements HasMedia
 
     /** The Spatie collection a product's pictures live in. */
     public const IMAGES = 'product_images';
+
+    /** The most pictures one product may carry (the admin upload refuses the ninth). */
+    public const MAX_IMAGES = 8;
 
     protected $fillable = [
         'masjid_id',
@@ -58,6 +66,7 @@ class Product extends Model implements HasMedia
             'base_price_minor' => 'integer',
             'active' => 'boolean',
             'sort' => 'integer',
+            'lock_version' => 'integer',
         ];
     }
 

@@ -61,6 +61,21 @@ export function apiErrorText(error: unknown, fallback: string): string {
 }
 
 /**
+ * The message for a failed UPLOAD (a class story, a conversation, a reply).
+ *
+ * A request over the servers' size ceiling is answered by nginx or PHP before the
+ * application runs, as HTML or a bare "Request failed.", so apiErrorText would have
+ * only axios's "status code 413" to show. The sentence says what a teacher can do:
+ * the photos and videos of one post have a combined ceiling, and the same clips sent
+ * in two posts fit.
+ */
+export function uploadErrorText(error: unknown, fallback: string): string {
+    return (error as AxiosError)?.response?.status === 413
+        ? 'That is too large to send together. Send fewer photos or videos at once, and the rest in another post.'
+        : apiErrorText(error, fallback);
+}
+
+/**
  * Whether the caller was refused this disclosure.
  *
  * A 403 on a group surface is ORDINARY, not a bug: reading a class story, a
