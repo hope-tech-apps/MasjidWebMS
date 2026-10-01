@@ -215,7 +215,7 @@ Isolation for memberships is an authorization concern (the resolver + the API
 surface), not a global-scope one.
 
 - **At most one `is_default` row per user, enforced by the database** — a partial
-  unique index on SQLite, the `default_key` STORED generated column on MySQL (see
+  unique index on SQLite, the `default_key` VIRTUAL generated column on MySQL (see
   .claude/rules/migrations.md). It is what makes the single-tenant fallback
   deterministic; do not weaken it to an application check. Moving the default is
   an ordinary update as long as the old row is cleared in the same transaction.
