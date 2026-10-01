@@ -10,6 +10,7 @@ use App\Models\ProductVariant;
 use App\Models\User;
 use Closure;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -382,6 +383,217 @@ class ShopProductsAdminTest extends TestCase
         $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, 'the whole save rolled back');
         $this->assertSame(['M'], ProductVariant::query()->where('product_id', $polo->id)->pluck('label')->all(), 'and no size was removed');
         $this->assertSame('M', ProductVariant::query()->findOrFail($theirs->id)->label);
+    }
+
+    // ------------------------------------------------------------ a stale editor is refused
+
+    #[Test]
+    public function every_product_answer_carries_the_lock_version_and_a_new_product_starts_at_zero(): void
+    {
+        $id = $this->postJson($this->products(), $this->polo())->assertCreated()->assertJsonPath('data.lock_version', 0)->json('data.id');
+
+        $this->getJson($this->products('/' . $id))->assertOk()->assertJsonPath('data.lock_version', 0);
+        $this->assertSame([0], array_column($this->getJson($this->products())->assertOk()->json('data.data'), 'lock_version'));
+
+        $this->putProduct($this->org, $id, ['name' => 'Navy Polo'])->assertOk()->assertJsonPath('data.lock_version', 1);
+        $this->getJson($this->products('/' . $id))->assertJsonPath('data.lock_version', 1);
+        $this->assertSame([1], array_column($this->getJson($this->products())->json('data.data'), 'lock_version'));
+    }
+
+    #[Test]
+    public function a_save_must_name_a_lock_version_and_a_missing_or_malformed_one_is_a_422(): void
+    {
+        $polo = $this->product($this->org);
+        $this->variant($polo, ['label' => 'M']);
+
+        foreach ([[], ['lock_version' => null], ['lock_version' => '0'], ['lock_version' => 0.5], ['lock_version' => -1], ['lock_version' => true], ['lock_version' => [0]]] as $extra) {
+            $response = $this->putJson($this->products('/' . $polo->id), ['name' => 'Navy Polo'] + $extra)->assertStatus(422);
+
+            $this->assertArrayHasKey('lock_version', $response->json('data'), json_encode($extra));
+        }
+
+        $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name, 'nothing was saved');
+        $this->assertSame(0, (int) Product::query()->findOrFail($polo->id)->lock_version);
+    }
+
+    #[Test]
+    public function a_stale_editor_is_refused_with_a_409_and_the_other_editors_work_is_not_put_back(): void
+    {
+        $polo = $this->product($this->org);
+        $s = $this->variant($polo, ['label' => 'S', 'stock' => 5]);
+        $m = $this->variant($polo, ['label' => 'M', 'stock' => 5, 'sort' => 1]);
+
+        // Editors A and B both open the product at version 0, with sizes S and M (M has 5).
+        $opened = $this->getJson($this->products('/' . $polo->id))->assertOk()->json('data');
+        $this->assertSame(0, $opened['lock_version']);
+
+        // A adds XL and raises M's stock to 9: version 1.
+        $this->putProduct($this->org, $polo->id, ['variants' => [
+            ['id' => $s->id, 'label' => 'S', 'stock' => 5],
+            ['id' => $m->id, 'label' => 'M', 'stock' => 9, 'sort' => 1],
+            ['label' => 'XL', 'stock' => 3],
+        ]], 0)->assertOk()->assertJsonPath('data.lock_version', 1);
+
+        // B, still holding version 0 and a list without XL where M has 5, saves a rename of the product.
+        $before = ProductVariant::withoutMasjidScope()->where('product_id', $polo->id)->orderBy('id')->get(['id', 'label', 'stock', 'deleted_at'])->toArray();
+
+        $response = $this->putProduct($this->org, $polo->id, [
+            'name' => 'B renamed it',
+            'variants' => [
+                ['id' => $s->id, 'label' => 'S', 'stock' => 5],
+                ['id' => $m->id, 'label' => 'M', 'stock' => 5, 'sort' => 1],
+            ],
+        ], 0)->assertStatus(409);
+
+        $this->assertSame(
+            ['status' => 'failed', 'message' => 'This product was changed by someone else. Reload it and make your change again.'],
+            $response->json(),
+            'exactly this body'
+        );
+
+        // Nothing of B's was written: XL is still there, M still has 9, the name is as it was, the version too.
+        $this->assertSame($before, ProductVariant::withoutMasjidScope()->where('product_id', $polo->id)->orderBy('id')->get(['id', 'label', 'stock', 'deleted_at'])->toArray());
+        $this->assertSame(['S', 'M', 'XL'], ProductVariant::query()->where('product_id', $polo->id)->orderBy('id')->pluck('label')->all());
+        $this->assertSame(9, (int) ProductVariant::query()->findOrFail($m->id)->stock, 'M\'s stock was not reverted');
+        $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name);
+        $this->assertSame(1, (int) Product::query()->findOrFail($polo->id)->lock_version);
+
+        // B reloads, sees A's work, and saves again at version 1.
+        $reloaded = $this->getJson($this->products('/' . $polo->id))->assertOk()->json('data');
+        $this->assertSame(1, $reloaded['lock_version']);
+        $this->assertSame(['S', 'M', 'XL'], array_column($reloaded['variants'], 'label'));
+
+        $this->putProduct($this->org, $polo->id, ['name' => 'B renamed it'], $reloaded['lock_version'])->assertOk()->assertJsonPath('data.lock_version', 2);
+    }
+
+    #[Test]
+    public function every_successful_save_moves_the_version_on_by_one_and_a_refused_one_does_not(): void
+    {
+        $polo = $this->product($this->org);
+        $m = $this->variant($polo, ['label' => 'M', 'stock' => 5]);
+
+        $version = fn (): int => (int) Product::query()->findOrFail($polo->id)->lock_version;
+
+        $this->assertSame(0, $version());
+
+        // A product-fields-only save.
+        $this->putProduct($this->org, $polo->id, ['category' => 'Uniforms'])->assertOk();
+        $this->assertSame(1, $version());
+
+        // A SIZES-ONLY save changes nothing on the product row itself, and still moves it on.
+        $this->putProduct($this->org, $polo->id, ['variants' => [['id' => $m->id, 'label' => 'M', 'stock' => 6]]])->assertOk()->assertJsonPath('data.lock_version', 2);
+        $this->assertSame(2, $version());
+
+        // Refused saves leave it where it was: a 422 (invalid), a 404 (a size that is not this product's), a 409 (stale).
+        $this->putProduct($this->org, $polo->id, ['base_price_minor' => 0])->assertStatus(422);
+        $this->putProduct($this->org, $polo->id, ['variants' => [['id' => 999999, 'label' => 'Z']]])->assertNotFound();
+        $this->putProduct($this->org, $polo->id, ['name' => 'Stale'], 1)->assertStatus(409);
+        $this->assertSame(2, $version());
+        $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name);
+    }
+
+    // ------------------------------------------------------------ locks, and sold_count never written
+
+    #[Test]
+    public function an_update_locks_the_product_then_the_named_sizes_by_primary_key_and_only_then_reads_the_sizes(): void
+    {
+        $polo = $this->product($this->org);
+        $s = $this->variant($polo, ['label' => 'S']);
+        $m = $this->variant($polo, ['label' => 'M']);
+
+        DB::enableQueryLog();
+        $this->putProduct($this->org, $polo->id, ['variants' => [
+            ['id' => $m->id, 'label' => 'M', 'stock' => 4],
+            ['id' => $s->id, 'label' => 'S'],
+        ]])->assertOk();
+        $statements = array_column(DB::getQueryLog(), 'query');
+        DB::disableQueryLog();
+
+        $variantReads = array_values(array_filter($statements, static fn (string $q): bool => str_starts_with($q, 'select') && str_contains($q, 'from "product_variants"')));
+
+        // The first read of the sizes is the PRIMARY-KEY lock of the rows' ids: `where id in (...) order by id`, and
+        // no product_id or masjid_id range in it (a locking range read gap-locks under REPEATABLE READ).
+        $this->assertGreaterThanOrEqual(2, count($variantReads));
+        $this->assertStringContainsString('"id" in (', $variantReads[0]);
+        $this->assertStringContainsString('order by "id" asc', $variantReads[0], 'ascending, the one order every locker uses');
+        $this->assertStringNotContainsString('product_id', $variantReads[0]);
+        $this->assertStringNotContainsString('masjid_id', $variantReads[0]);
+
+        // Only THEN the product's live sizes, a plain read by product.
+        $this->assertStringContainsString('"product_id" = ?', $variantReads[1]);
+
+        // And the product's own row was locked before either (its select precedes the first read of the sizes).
+        $first = null;
+        foreach ($statements as $index => $statement) {
+            if (str_contains($statement, 'from "product_variants"') && str_starts_with($statement, 'select')) {
+                $first = $index;
+                break;
+            }
+        }
+        $productReads = array_keys(array_filter($statements, static fn (string $q): bool => str_starts_with($q, 'select') && str_contains($q, 'from "products"')));
+        $this->assertGreaterThanOrEqual(2, count(array_filter($productReads, static fn (int $index): bool => $index < $first)), 'the route\'s own read of the product, then the writer\'s locking read of it');
+    }
+
+    #[Test]
+    public function creating_a_product_with_sizes_takes_no_read_of_sizes_at_all(): void
+    {
+        DB::enableQueryLog();
+        $this->postJson($this->products(), $this->polo(['variants' => [['label' => 'S'], ['label' => 'M']]]))->assertCreated();
+        $statements = array_column(DB::getQueryLog(), 'query');
+        DB::disableQueryLog();
+
+        $reads = array_filter($statements, static fn (string $q): bool => str_starts_with($q, 'select') && str_contains($q, 'from "product_variants"'));
+
+        // The response re-reads the finished product's sizes AFTER the transaction; before it, a product made
+        // in the transaction has no sizes to read or lock. So the only reads are those of the answer.
+        $inserts = array_keys(array_filter($statements, static fn (string $q): bool => str_starts_with($q, 'insert into "product_variants"')));
+        $this->assertCount(2, $inserts);
+
+        foreach (array_keys($reads) as $index) {
+            $this->assertGreaterThan(max($inserts), $index, 'no read of sizes before the sizes were written');
+        }
+    }
+
+    #[Test]
+    public function the_transactions_retry_a_deadlock_victim_three_times(): void
+    {
+        $reflection = new \ReflectionClass(\App\Services\Shop\ProductWriter::class);
+        $this->assertSame(3, $reflection->getConstant('DEADLOCK_ATTEMPTS'));
+
+        $source = (string) file_get_contents(app_path('Services/Shop/ProductWriter.php'));
+        $this->assertSame(3, substr_count($source, 'self::DEADLOCK_ATTEMPTS);'), 'create, update and delete each retry');
+    }
+
+    #[Test]
+    public function a_save_after_a_settlement_keeps_the_settled_sold_count_and_never_writes_one(): void
+    {
+        $polo = $this->product($this->org);
+        $m = $this->variant($polo, ['label' => 'M', 'stock' => 20, 'sold_count' => 0]);
+
+        // The editor loaded the size (sold_count 0)...
+        $loaded = ProductVariant::query()->findOrFail($m->id);
+        $this->assertSame(0, (int) $loaded->sold_count);
+
+        // ...a settlement then moved it (what CartSettlementService::settleProduct does, under the size's lock)...
+        ProductVariant::withoutMasjidScope()->whereKey($m->id)->update(['sold_count' => 7]);
+
+        // ...and the save that follows must not put the 0 back, or write any sold_count at all.
+        DB::enableQueryLog();
+        $this->putProduct($this->org, $polo->id, ['variants' => [['id' => $m->id, 'label' => 'M', 'stock' => 25, 'enabled' => true, 'sort' => 3]]])
+            ->assertOk()
+            ->assertJsonPath('data.variants.0.sold_count', 7)
+            ->assertJsonPath('data.variants.0.available', 18);
+        $statements = array_column(DB::getQueryLog(), 'query');
+        DB::disableQueryLog();
+
+        $this->assertSame(7, (int) ProductVariant::query()->findOrFail($m->id)->sold_count);
+
+        $writes = array_filter($statements, static fn (string $q): bool => (str_starts_with($q, 'update') || str_starts_with($q, 'insert')) && str_contains($q, 'product_variants'));
+        $this->assertNotEmpty($writes, 'premise: the size was written');
+
+        foreach ($writes as $statement) {
+            $this->assertStringNotContainsString('sold_count', $statement, 'the writer never writes sold_count');
+        }
     }
 
     // ------------------------------------------------------------ a size's name is frozen once an order line names it
