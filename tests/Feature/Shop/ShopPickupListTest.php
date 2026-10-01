@@ -543,16 +543,18 @@ class ShopPickupListTest extends TestCase
         $this->assertSame($second->id, $changed->json('data.resolved_by.id'));
         $this->assertTrue($changed->json('data.to_hand_out'));
 
-        Log::shouldHaveReceived('info')->once()->withArgs(function (...$args) use ($sale, $second): bool {
+        // Two lines were logged (the first resolution and this change): the constraint goes BEFORE the
+        // count, or `once()` counts every info line.
+        Log::shouldHaveReceived('info')->withArgs(function (...$args) use ($sale, $second): bool {
             [$message, $context] = $args + [null, null];
 
             return $message === 'A shop sale was resolved.'
                 && is_array($context)
                 && $context['resolution'] === 'substituted'
-                && $context['was_resolution'] === 'refunded'
-                && $context['was_resolved_by_user_id'] === $this->admin->id
+                && ($context['was_resolution'] ?? null) === 'refunded'
+                && ($context['was_resolved_by_user_id'] ?? null) === $this->admin->id
                 && $context['actor_user_id'] === $second->id;
-        });
+        })->once();
     }
 
     #[Test]

@@ -334,7 +334,9 @@ class ShopProductValidationTest extends TestCase
 
         DB::enableQueryLog();
         $response = $this->postJson($this->products(), $this->polo(['name' => 'Race Slug']))->assertStatus(422);
-        $attempts = count(array_filter(array_column(DB::getQueryLog(), 'query'), static fn (string $q): bool => str_starts_with($q, 'insert into "products"')));
+        // A refused INSERT never reaches the query log (a statement is logged after it ran), so the
+        // attempts are counted by the slug lookup each one makes first.
+        $attempts = count(array_filter(array_column(DB::getQueryLog(), 'query'), static fn (string $q): bool => str_starts_with($q, 'select "slug" from "products"')));
         DB::disableQueryLog();
 
         $this->assertSame(5, $attempts, 'five tries, no more');
