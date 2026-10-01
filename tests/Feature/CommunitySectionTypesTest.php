@@ -91,6 +91,8 @@ class CommunitySectionTypesTest extends TestCase
         'offering',
         // MEC's home-page clip; VideoSectionTypeTest owns this one.
         'video',
+        // The online shop's products; ShopSectionTypeTest owns this one.
+        'shop',
     ];
 
     protected function setUp(): void
@@ -716,8 +718,9 @@ class CommunitySectionTypesTest extends TestCase
             ->values()
             ->all();
 
+        // `shop` is the one added since: its renderer fetches the products from the shop API.
         $this->assertSame(
-            ['services_list', 'announcements_list', 'gallery', 'events'],
+            ['services_list', 'announcements_list', 'gallery', 'events', 'shop'],
             $external
         );
     }

@@ -105,7 +105,8 @@ class OfferingSectionTypeTest extends TestCase
             ->values()
             ->all();
 
-        $this->assertSame(['services_list', 'announcements_list', 'gallery', 'events'], $external);
+        // `shop` is the one added since: its renderer fetches the products from the public shop API.
+        $this->assertSame(['services_list', 'announcements_list', 'gallery', 'events', 'shop'], $external);
     }
 
     #[Test]
@@ -534,8 +535,9 @@ class OfferingSectionTypeTest extends TestCase
         // arithmetic of the change itself. A section_type is CAST to this enum,
         // so a value that disappears is not "extra data", it is a published row
         // that throws on every read.
-        // 27 with offering; `video` (VideoSectionTypeTest) is the one added since.
-        $this->assertCount(28, SectionType::getValues());
+        // 27 with offering; `video` (VideoSectionTypeTest) and `shop` (ShopSectionTypeTest)
+        // are the two added since.
+        $this->assertCount(29, SectionType::getValues());
         $this->assertContains('offering', SectionType::getValues());
     }
 
