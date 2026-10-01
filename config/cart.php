@@ -102,6 +102,19 @@ return [
     ],
 
     /*
+     * The shop's stock hold (shop slice B1, DECISIONS.md 2026-09-30). There is no hold table: a
+     * PENDING order's product lines are the hold, and a pending order keeps holding its units until
+     * its payment page has lapsed (`orders.checkout_expires_at`) PLUS this many minutes. The page
+     * lives 31 minutes (CartCheckoutService::PAGE_LIFETIME_SECONDS), so a unit is held 46 minutes at
+     * most. The grace is for a payment that lands as the page expires and reaches the webhook late:
+     * until it passes, the units are not offered to anyone else. A webhook later than that can
+     * oversell, and settlement then records the line, flags it and logs an ERROR on `monitors`; it
+     * never refuses the money and never refunds it. 0 is allowed (the hold ends with the page); a
+     * negative or non-numeric value reads as 0, never as a longer hold than was asked for.
+     */
+    'shop_hold_grace_minutes' => max(0, (int) env('CART_SHOP_HOLD_GRACE_MINUTES', 15)),
+
+    /*
      * Named limiters (AppServiceProvider). Each is per hour unless its key says otherwise.
      * A basket's own limiters are keyed by the HMAC of its token (never the token itself,
      * which is a bearer secret and would sit in the cache); a call whose token names no

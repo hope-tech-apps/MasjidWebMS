@@ -7,8 +7,12 @@ use App\Models\CartItem;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Fund;
+use App\Models\Masjid;
 use App\Models\MealMenuItem;
+use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Services\Cart\Sources\FormLineSource;
+use App\Services\Cart\Sources\ProductLineSource;
 use App\Support\FormSchema;
 use App\Support\MasjidTime;
 use Carbon\Carbon;
@@ -36,6 +40,11 @@ use Throwable;
  *     in the range the donation door accepts. `zakat` rides on the line only when the giver
  *     answered, because checkout freezes it and settlement hands it to ZakatDesignation, which
  *     stays the one place zakat is decided. Nothing recurring: a basket is one Stripe payment.
+ *   - product: a SIZE of a product (`variant_id`) and a quantity 1..20. The `shop` capability is
+ *     asked FIRST, so an organisation without it answers one sentence whether or not the id
+ *     exists; the size and its product must be this organisation's, live, and the line carries
+ *     {product_id}. The price is the size's own, else the product's base price, read now; the
+ *     source re-asks everything (active, enabled, currency, stock) when the basket is priced.
  *
  * ## Priced before it is kept
  *
@@ -74,7 +83,7 @@ final class CartLineAdder
 
     /**
      * @param  array<string,mixed>  $body  the request, its shape already validated:
-     *                                     `type` (form|meal|donation), the type's own fields and an
+     *                                     `type` (form|meal|donation|product), the type's own fields and an
      *                                     optional `client_line_key`
      * @return CartItem the line that was added, or the one this key already made
      *
@@ -98,6 +107,7 @@ final class CartLineAdder
             'form' => $this->formLine($cart, $body),
             'meal' => $this->mealLine($cart, $body),
             'donation' => $this->donationLine($cart, $body),
+            'product' => $this->productLine($cart, $body),
             default => throw CartLineRefused::fields(['type' => ['Choose what to add.']]),
         };
 
@@ -164,7 +174,7 @@ final class CartLineAdder
         });
     }
 
-    // ------------------------------------------------------------------ the three lines
+    // ------------------------------------------------------------------ the four lines
 
     /**
      * @param  array<string,mixed>  $body
@@ -293,6 +303,47 @@ final class CartLineAdder
     }
 
     /**
+     * @param  array<string,mixed>  $body
+     * @return array{buyable_type: string, buyable_id: int, recorded_as: string, label: string, quantity: int, unit: int, payload: array<string,mixed>}
+     */
+    private function productLine(Cart $cart, array $body): array
+    {
+        // The grant first, before anything about the size is read: an organisation without the shop
+        // answers the same sentence for a real id and a made-up one, so a dark shop cannot be probed
+        // for what it holds. CartPricer asks it again at every pricing.
+        $org = Masjid::query()->find($cart->masjid_id);
+
+        if ($org === null || ! $org->hasCapability('shop')) {
+            throw CartLineRefused::refused(ProductLineSource::SHOP_OFF);
+        }
+
+        // Hand-filtered, as every read here is: another organisation's size, a trashed one and a
+        // missing one are the same answer.
+        $variant = ProductVariant::withoutMasjidScope()
+            ->where('masjid_id', $cart->masjid_id)
+            ->find((int) $body['variant_id']);
+
+        $product = $variant === null
+            ? null
+            : Product::withoutMasjidScope()->where('masjid_id', $cart->masjid_id)->find($variant->product_id);
+
+        if ($variant === null || $product === null) {
+            throw CartLineRefused::fields(['variant_id' => ['This item is not available.']]);
+        }
+
+        return [
+            'buyable_type' => CartItem::TYPE_PRODUCT,
+            'buyable_id' => (int) $variant->id,
+            'recorded_as' => CartItem::RECORDED_AS_SALE,
+            'label' => ProductLineSource::labelFor($product, $variant),
+            'quantity' => (int) $body['quantity'],
+            // What it costs now, so the basket shows a price the source agrees with.
+            'unit' => (int) ($variant->price_minor ?? $product->base_price_minor),
+            'payload' => ['product_id' => (int) $product->id],
+        ];
+    }
+
+    /**
      * The pickup as an absolute instant, or null when it is missing or unreadable. Read in the
      * organisation's own timezone (a datetime-local value carries none) exactly as the kitchen
      * door reads it, then stored with its offset, because CartPricer and settlement parse it
@@ -357,6 +408,10 @@ final class CartLineAdder
                 'fund_id' => (int) ($body['fund_id'] ?? 0),
                 'amount_minor' => (int) ($body['amount_minor'] ?? 0),
                 'zakat' => is_bool($body['zakat'] ?? null) ? $body['zakat'] : null,
+            ],
+            'product' => [
+                'variant_id' => (int) ($body['variant_id'] ?? 0),
+                'quantity' => (int) ($body['quantity'] ?? 0),
             ],
             default => [],
         };

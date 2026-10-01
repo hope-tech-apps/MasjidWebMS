@@ -8,9 +8,11 @@ use App\Models\Form;
 use App\Models\Fund;
 use App\Models\Masjid;
 use App\Models\MealMenuItem;
+use App\Models\ProductVariant;
 use App\Services\Cart\Sources\DonationLineSource;
 use App\Services\Cart\Sources\FormLineSource;
 use App\Services\Cart\Sources\MealLineSource;
+use App\Services\Cart\Sources\ProductLineSource;
 use App\Services\Stripe\FormChargeAccount;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -27,10 +29,10 @@ use Carbon\CarbonInterface;
  *   - Forms ask FormChargeAccount::for($org) — "the ONE answer to whose account
  *     takes this organisation's FORM card payments". An UNLINKED org answers with
  *     its own account; a LINKED org answers with its holder's.
- *   - Food and donations ask Masjid::canAcceptDonations(), which FormChargeAccount
- *     documents it "never changes, so a linked organisation still takes none of
- *     those". And a linked org is REQUIRED to have no account of its own
- *     (PROBLEM_HAS_OWN_ACCOUNT) — so its food and donation lines are refused.
+ *   - Food, donations and shop products ask Masjid::canAcceptDonations(), which
+ *     FormChargeAccount documents it "never changes, so a linked organisation still takes
+ *     none of those". And a linked org is REQUIRED to have no account of its own
+ *     (PROBLEM_HAS_OWN_ACCOUNT) — so its food, donation and product lines are refused.
  *
  * So: unlinked → everything to its own account; linked → forms to the holder, the
  * rest refused. One payee either way (recurring registrations, which would need a
@@ -46,6 +48,17 @@ use Carbon\CarbonInterface;
  * scope bypassed and masjid_id filtered explicitly — the MealMenu::findByUuidForMasjid
  * pattern — so another organisation's form, fund or dish is simply not found, and
  * its line is "gone". A foreign id is a miss, never a leak and never a charge.
+ *
+ * ## Stock is the one thing a line cannot decide alone
+ *
+ * A product line points at a size (ProductVariant) whose stock is shared by every basket, and by
+ * the other lines of THIS basket. So the pricer prices a basket's product lines in id order and
+ * tells each how many units are still free for it: the size's stock, less what sales and other
+ * shoppers' pending orders hold (ProductStock::held(), which leaves out this basket's own pending
+ * orders: that page is the one about to be reused or replaced, and a basket must not count against
+ * itself), less what the lines before it already claimed. Two lines of one size therefore clamp
+ * together instead of each seeing the other's units as taken. This is advisory, a notice before
+ * the card screen; the decision is CartCheckoutService's, under the size's row lock.
  */
 final class CartPricer
 {
@@ -53,6 +66,7 @@ final class CartPricer
         private readonly FormLineSource $forms = new FormLineSource,
         private readonly MealLineSource $meals = new MealLineSource,
         private readonly DonationLineSource $donations = new DonationLineSource,
+        private readonly ProductLineSource $products = new ProductLineSource,
     ) {}
 
     public function price(Cart $cart, ?CarbonInterface $at = null): PricedBasket
@@ -80,8 +94,20 @@ final class CartPricer
             ->orderBy('id')
             ->get();
 
+        // What other shoppers' pending orders hold of the sizes in this basket, in one read, and what
+        // the basket's own earlier lines have claimed so far. Nothing is asked while the shop is off.
+        $held = $org->hasCapability('shop')
+            ? ProductStock::held(
+                (int) $org->id,
+                $items->where('buyable_type', CartItem::TYPE_PRODUCT)->map(static fn (CartItem $item): int => (int) $item->buyable_id)->unique()->values()->all(),
+                $at,
+                exceptCartId: (int) $cart->id,
+            )
+            : [];
+        $claimed = [];
+
         foreach ($items as $item) {
-            [$outcome, $destination] = $this->priceLine($org, $item, $at);
+            [$outcome, $destination] = $this->priceLine($org, $item, $at, $currency, $held, $claimed);
 
             if ($outcome->isPayable()) {
                 if ($destination === null) {
@@ -118,8 +144,12 @@ final class CartPricer
         return new PricedBasket($lines, $total, $currency, $destination === null ? null : (string) $destination, null, $linked);
     }
 
-    /** @return array{0: CartLineOutcome, 1: ?string} the outcome, and the account it would be paid into */
-    private function priceLine(Masjid $org, CartItem $item, CarbonInterface $at): array
+    /**
+     * @param  array<int, int>  $held  per size, what other shoppers' pending orders hold
+     * @param  array<int, int>  $claimed  per size, what this basket's earlier lines have claimed (added to here)
+     * @return array{0: CartLineOutcome, 1: ?string} the outcome, and the account it would be paid into
+     */
+    private function priceLine(Masjid $org, CartItem $item, CarbonInterface $at, string $currency, array $held, array &$claimed): array
     {
         $label = (string) $item->label;
 
@@ -177,6 +207,34 @@ final class CartPricer
                     $this->donations->reprice($fund, (int) $item->unit_amount_shown_minor, $at, $org),
                     $this->ownAccount($org),
                 ];
+
+            case CartItem::TYPE_PRODUCT:
+                // ProductVariant is tenant-scoped, and this runs unbound: the explicit masjid_id is what
+                // makes another organisation's size a miss. SoftDeletes keeps a trashed size out too.
+                $variant = ProductVariant::withoutMasjidScope()->where('masjid_id', $org->id)->find($item->buyable_id);
+
+                if ($variant === null) {
+                    return [CartLineOutcome::gone($label, 'This is no longer available.'), null];
+                }
+
+                $id = (int) $variant->id;
+                $free = ProductStock::available($variant, $held[$id] ?? 0);
+                $free = $free === null ? null : max(0, $free - ($claimed[$id] ?? 0));
+
+                $outcome = $this->products->reprice(
+                    $variant,
+                    (int) $item->quantity,
+                    (int) $item->unit_amount_shown_minor,
+                    $free,
+                    $org,
+                    $currency,
+                );
+
+                if ($outcome->isPayable()) {
+                    $claimed[$id] = ($claimed[$id] ?? 0) + $outcome->quantity;
+                }
+
+                return [$outcome, $this->ownAccount($org)];
         }
 
         // An unknown type is refused, never guessed at. A basket must not be able to
@@ -185,7 +243,7 @@ final class CartPricer
     }
 
     /**
-     * The account food and donations go to: the org's own, and only when Stripe says
+     * The account food, donations and products go to: the org's own, and only when Stripe says
      * it can charge AND the id is really a connected account.
      *
      * canAcceptDonations() only asks for a non-null id, so on its own it would pass

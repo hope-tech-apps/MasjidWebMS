@@ -11,6 +11,7 @@ use App\Services\Cart\CartLineAdder;
 use App\Services\Cart\CartLineRefused;
 use App\Services\Cart\CartPricer;
 use App\Services\Cart\PricedBasket;
+use App\Services\Cart\Sources\ProductLineSource;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\FormPaymentReturn;
 use App\Support\PublicTenant;
@@ -69,6 +70,7 @@ class CartsController extends Controller
         'form' => CartItem::TYPE_FORM,
         'meal' => CartItem::TYPE_MEAL,
         'donation' => CartItem::TYPE_DONATION,
+        'product' => CartItem::TYPE_PRODUCT,
     ];
 
     /**
@@ -130,7 +132,7 @@ class CartsController extends Controller
     /**
      * POST /api/v1/cart/items
      *
-     * `{type: form|meal|donation, ...}` and an optional `client_line_key`; see CartLineAdder
+     * `{type: form|meal|donation|product, ...}` and an optional `client_line_key`; see CartLineAdder
      * for what each type takes and how a line is validated and priced. Answers the priced
      * basket with the added line's id (`line_id`).
      */
@@ -437,7 +439,7 @@ class CartsController extends Controller
     }
 
     /**
-     * The shape rules for an add, by type. Whether the form, dish or fund exists and is on sale
+     * The shape rules for an add, by type. Whether the form, dish, fund or size exists and is on sale
      * is decided in CartLineAdder from the database; a request body never prices anything.
      *
      * @return array<string, list<mixed>>
@@ -467,6 +469,11 @@ class CartsController extends Controller
                 'amount_minor' => ['required', 'integer', 'min:100', 'max:99999999'],
                 'zakat' => ['nullable', 'boolean'],
                 'recurring' => ['nullable', 'boolean'],
+            ],
+            'product' => [
+                // A SIZE of a product, never the product: it carries the price and the stock.
+                'variant_id' => ['required', 'integer', 'min:1'],
+                'quantity' => ['required', 'integer', 'min:1', 'max:' . ProductLineSource::MAX_QUANTITY],
             ],
             default => [],
         };

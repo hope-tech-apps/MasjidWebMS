@@ -22,6 +22,7 @@ class CartConfigTest extends TestCase
         'CART_WRITE_PER_HOUR',
         'CART_PRUNE_EXPIRED_ORDER_DAYS',
         'CART_PRUNE_PENDING_WITH_PAYMENT_DAYS',
+        'CART_SHOP_HOLD_GRACE_MINUTES',
     ];
 
     protected function tearDown(): void
@@ -117,6 +118,18 @@ class CartConfigTest extends TestCase
 
         foreach (['0', '-3', '1', 'soon'] as $bad) {
             $this->assertSame(7, $this->evaluate(['CART_PRUNE_PENDING_WITH_PAYMENT_DAYS' => $bad])['prune']['pending_with_payment_days'], "CART_PRUNE_PENDING_WITH_PAYMENT_DAYS={$bad}");
+        }
+    }
+
+    #[Test]
+    public function the_shops_stock_hold_outlasts_its_page_by_fifteen_minutes_and_a_typo_cannot_lengthen_it(): void
+    {
+        $this->assertSame(15, $this->evaluate([])['shop_hold_grace_minutes'], 'the brief\'s webhook grace');
+        $this->assertSame(30, $this->evaluate(['CART_SHOP_HOLD_GRACE_MINUTES' => '30'])['shop_hold_grace_minutes']);
+        $this->assertSame(0, $this->evaluate(['CART_SHOP_HOLD_GRACE_MINUTES' => '0'])['shop_hold_grace_minutes'], 'no grace is allowed');
+
+        foreach (['-5', 'soon', ''] as $bad) {
+            $this->assertSame(0, $this->evaluate(['CART_SHOP_HOLD_GRACE_MINUTES' => $bad])['shop_hold_grace_minutes'], "CART_SHOP_HOLD_GRACE_MINUTES={$bad}");
         }
     }
 
