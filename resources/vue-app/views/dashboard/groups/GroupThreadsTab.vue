@@ -449,7 +449,8 @@ const loadThreads = async (page: number) => {
  */
 const refreshQuietly = async (): Promise<boolean> => {
     try {
-        await threadsStore.fetchThreads(props.groupId, paginationOptions.value?.currentPage ?? 1);
+        // keepRows: the list must not empty and refill each time a conversation is opened.
+        await threadsStore.fetchThreads(props.groupId, paginationOptions.value?.currentPage ?? 1, true);
         if (threadsStore.threadsMeta?.unread_total !== undefined) {
             emit('unread-total', unreadNumber(threadsStore.threadsMeta.unread_total));
         }

@@ -256,3 +256,13 @@ test('opening a conversation takes the number from a fresh list, not from the ro
     assert.match(office, /if \(!\(await refreshQuietly\(\)\) && cleared > 0\) emit\('opened', cleared\);/);
     assert.match(office, /emit\('unread-total', unreadNumber\(threadsStore\.threadsMeta\.unread_total\)\);[\s\S]*?return true;/);
 });
+
+test('the office list does not empty and refill when a conversation is opened', () => {
+    const store = source('stores/masjid/groupThreadsStore.ts');
+    // A page change empties the list first; a quiet refresh keeps the rows until the new ones arrive.
+    assert.match(store, /async function fetchThreads\(groupId: number \| string, page: number = 1, keepRows: boolean = false\)/);
+    assert.match(store, /if \(threadsPaginated\.value && !keepRows\) \{\s*threadsPaginated\.value\.data = \[\];/);
+
+    const office = source('views/dashboard/groups/GroupThreadsTab.vue');
+    assert.match(office, /threadsStore\.fetchThreads\(props\.groupId, paginationOptions\.value\?\.currentPage \?\? 1, true\)/);
+});

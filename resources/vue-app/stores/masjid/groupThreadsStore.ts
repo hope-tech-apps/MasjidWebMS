@@ -72,10 +72,15 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
     }
 
     /** Threads for a group, most recently active first. */
-    async function fetchThreads(groupId: number | string, page: number = 1): Promise<void> {
+    /**
+     * `keepRows` is a refresh of a list already on screen (a conversation was just
+     * opened): the rows stay where they are until the new ones arrive. Without it the
+     * list is emptied first, which is right for a page change and a blink for a refresh.
+     */
+    async function fetchThreads(groupId: number | string, page: number = 1, keepRows: boolean = false): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
-        if (threadsPaginated.value) {
+        if (threadsPaginated.value && !keepRows) {
             threadsPaginated.value.data = [];
         }
 
