@@ -6766,8 +6766,23 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   there) is a 404 like any other id and the whole save rolls back. The writer applies the list in a fixed order, because the unique
   index on a label is among live rows: omitted sizes first (freeing their labels), sizes whose label changes then step aside under a
   throwaway label, then the new labels and the new rows. So a size removed and a new one of the same name in one save works, and two
-  sizes may SWAP names (S and M) in one save. Labels may not repeat within the list, case-blind (M and m), because a collation that ignores case
-  would turn the same mistake into a duplicate-key error. `sold_count`, `product_id` and `masjid_id` are never read from a row.
+  sizes may SWAP names (S and M) in one save. `sold_count`, `product_id` and `masjid_id` are never read from a row. The list's order is the
+  order the caller sent (a new size with no `sort` takes its position in it); `validated()` rebuilds the list rule by rule, so the request
+  restores the order from the raw input's keys.
+- **Clash checks compare the way production's index does** (from B1's ship critic). The live-slug and live-label unique indexes compare under
+  `utf8mb4_unicode_ci` on MySQL (case AND accent blind: `Polo` = `polo`, `M` = `m`, `Médium` = `Medium`, `Straße` = `Strasse`), and SQLite's
+  partial indexes are byte-exact, so the suite cannot see a clash the index would refuse. Every clash check B2 makes itself therefore folds
+  both sides through `LiveText::fold()` (Latin letters transliterated with `Str::ascii`, then lower-cased; any other script is only
+  lower-cased, so two different Arabic labels are never merged): the label validation ("Two sizes cannot share a name", a 422 on
+  `variants.N.label`) and the slug suffixing (`ProductSlug`, whose read is also case-blind, `LOWER(slug)`, so a capitalised slug an import left
+  behind still counts as taken). It errs toward calling two texts the same: a sentence or a `-2` is a cheap mistake, a unique-violation 500 is
+  not (ASSUMPTIONS S-26).
+- **A size's name is FROZEN once any `order_items` row names it** (from the same critic): an open payment page, a paid sale, an order that
+  expired, whatever became of it. A rename would change what that line is called while the sale's snapshot keeps the old name. It is a 422 on
+  `variants.N.label` ("The size "M" is already in a basket or an order, so its name cannot change. Switch it off and add a new size instead."),
+  the whole save is refused, and the size's price, stock, `enabled` and `sort` stay editable; it can still be removed (soft-deleted), and a
+  new size can be added beside it. The check is made in `ProductWriter` under the sizes' row locks, so a line a checkout wrote a moment ago is
+  seen (ASSUMPTIONS S-27).
 - **A stock set below what is sold and held is allowed** (the brief asks for this call to be recorded). Stock is the TOTAL for sale, sold units
   included; typing a number under `sold_count + held` is the office saying "stop selling", and refusing it would make a mistyped total
   impossible to correct. The answer carries `stock`, `sold_count`, `held` and `available` (never below zero: `ProductStock::available`),
@@ -6804,8 +6819,10 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
   order's number, never a buyer detail); the undo also logs who had collected it and when, since clearing the stamp would erase that.
 - **The CSV** (`GET .../shop/sales.csv`, same filters, same columns) goes through the SHARED writer and escaper of the school-records exports
   (`SchoolRecordsCsv`: BOM, RFC 4180 rows, `text()` on every cell a person typed, the phone included because `+` triggers a formula), not a
-  new one. Rows come in sale-id order because the shared chunked walk needs an unordered query (the cursor is `product_sales.id`, qualified,
-  because the join has an `id` of its own), times are the organisation's own clock with the zone written out, `Cache-Control: no-store, private`.
+  new one. `Refunded` is yes/no, as the list says it (refunded or disputed), and `Charge flag` carries the order's own word beside it, so a partly
+  refunded sale, which is still to hand out, is not read as refunded. Rows come in sale-id order because the shared chunked walk needs an
+  unordered query (the cursor is `product_sales.id`, qualified, because the join has an `id` of its own), times are the organisation's own
+  clock with the zone written out, `Cache-Control: no-store, private`.
 - **The public read** (`GET /api/v1/shop/products`, `/{slug}`, `masjid-id` header). Dark by `shop.enabled` (`EnsureShopEnabled`): the router's
   own 404 (`DarkRouteException`), ranked ahead of every throttle in `bootstrap/app.php` like the basket's gate, unless the grant is on AND
   the basket is on for the organisation (`EnsureCartEnabled::enabledFor`). The second half is my addition to the brief (S-20): a listing
