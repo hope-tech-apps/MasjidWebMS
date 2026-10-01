@@ -6846,3 +6846,15 @@ Everything stays behind the `shop` grant. **Nothing in this slice has been run: 
 - **Tests.** `tests/Feature/Shop/`: `ShopProductsAdminTest`, `ShopProductValidationTest`, `ShopProductImagesTest`, `ShopPickupListTest`,
   `ShopPublicApiTest`, `ShopAdminGateTest` (capability, permission and tenant on every route, walked from the router), and the traits
   `BuildsShopAdmin`. Written without being run (S-12).
+
+## 2026-10-01 — A hard-deleted size can still gap-lock product_variants (accepted, documented)
+
+- **Raised by the point's review of the B1 lock fix:** `ProductStock::lock()` is a primary-key `IN` locking read. For an id with no row
+  (a size HARD-deleted while a basket still names it), InnoDB locks the gap where that id would be. Above the current maximum id
+  that gap is the supremum, so new sizes for EVERY organisation wait until that checkout commits, Stripe calls included.
+- **Why it is accepted:**
+  - Sizes and products are only ever SOFT-deleted. B2's admin API trashes rows and never `forceDelete()`s them, and no command or
+    job removes them.
+  - So only a hand-run SQL delete reaches this. The wait is one checkout's length, and it blocks only the adding of sizes.
+- **The rule:** never hard-delete a `product_variants` or `products` row on production. A cleanup that needs to must first remove
+  every `cart_items` line naming it.
