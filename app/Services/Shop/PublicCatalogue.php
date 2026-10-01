@@ -24,9 +24,14 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  *
  * ## What is NOT in it
  *
- * No stock number, no sold count, no held count, anywhere. A size is `sold_out` when nothing is
- * available (ProductStock::available() === 0); an unlimited size is never sold out (its availability
- * is null). The renderer learns "can I buy this" and nothing about how many there are.
+ * No stock number, no sold count, no held count, no available count, no oversold flag and no "only N
+ * left" wording, anywhere, at any depth (the point's rule for the public JSON). A size is `sold_out`
+ * when nothing is available (ProductStock::available() === 0), and that ONE plain boolean is all the
+ * public learns about stock; an unlimited size is never sold out (its availability is null). A
+ * picture is a bare URL string, so it cannot carry a field. The admin read (ProductPayload) keeps
+ * every number; this class must never call it. tests/Feature/Shop/ShopPublicApiTest pins the exact
+ * keys of the product and of each size, the type of each value, and the absence of any key that
+ * looks like a figure.
  *
  * ## Cost
  *

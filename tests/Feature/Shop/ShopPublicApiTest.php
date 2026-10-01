@@ -288,16 +288,23 @@ class ShopPublicApiTest extends TestCase
     // ------------------------------------------------------------ no stock numbers
 
     #[Test]
-    public function no_stock_sold_or_held_number_appears_anywhere_in_either_response(): void
+    public function the_public_json_says_only_sold_out_never_a_count_a_flag_or_a_number_of_units_left(): void
     {
         $org = $this->shopOrg();
         $polo = $this->listed($org, 'School Polo', [
-            'M' => ['stock' => 20, 'sold_count' => 12],
-            'L' => ['stock' => null, 'sold_count' => 31],
+            'M' => ['stock' => 20, 'sold_count' => 12],   // some left, one of them held by an open page
+            'L' => ['stock' => null, 'sold_count' => 31], // unlimited
+            'S' => ['stock' => 5, 'sold_count' => 5],     // sold out
+            'XS' => ['stock' => 5, 'sold_count' => 6],    // sold past its stock: the office's red banner exists
         ]);
-        $this->pendingOrderHolding($org, ProductVariant::withoutMasjidScope()->where('product_id', $polo->id)->where('label', 'M')->firstOrFail(), 1);
+        $sizes = ProductVariant::withoutMasjidScope()->where('product_id', $polo->id)->get()->keyBy('label');
+        $this->pendingOrderHolding($org, $sizes['M'], 1);
+        $this->paidSale($org, $sizes['XS'], [], ['oversold' => true]);
+        $this->imageOf($polo, 1);
+        $this->imageOf($polo, 2);
 
-        $forbidden = ['stock', 'sold_count', 'sold', 'held', 'available', 'left', 'remaining', 'quantity', 'count', 'inventory', 'units'];
+        // Every name a count, a flag or "only N left" could travel under, at any depth.
+        $forbiddenKey = '/stock|sold(?!_out$)|held|avail|left|remain|oversold|inventor|unit|quantit|count|reserved|basket/i';
 
         foreach (['/api/v1/shop/products', '/api/v1/shop/products/school-polo'] as $uri) {
             $response = $this->getJson($uri, $this->headers($org))->assertOk();
@@ -307,14 +314,32 @@ class ShopPublicApiTest extends TestCase
             $this->assertCount(1, $products);
 
             foreach ($products as $product) {
+                // The product: exactly these keys, so nothing else is there at this depth.
                 $this->assertSame(self::PRODUCT_KEYS, array_keys($product), "{$uri}: a product carries exactly these keys");
+                $this->assertIsString($product['name']);
+                $this->assertIsString($product['slug']);
+                $this->assertIsInt($product['price_minor']);
+                $this->assertIsBool($product['price_varies']);
+                $this->assertIsString($product['currency']);
 
+                // The pictures: bare URLs, not objects that could carry a field.
+                $this->assertCount(2, $product['images']);
+                foreach ($product['images'] as $image) {
+                    $this->assertIsString($image, "{$uri}: a picture is a URL string and nothing more");
+                }
+
+                // Each size: exactly these keys, and availability is ONE plain boolean.
+                $this->assertCount(4, $product['variants']);
                 foreach ($product['variants'] as $variant) {
                     $this->assertSame(self::VARIANT_KEYS, array_keys($variant), "{$uri}: a size carries exactly these keys");
+                    $this->assertIsInt($variant['id']);
+                    $this->assertIsString($variant['label']);
+                    $this->assertIsInt($variant['price_minor']);
+                    $this->assertIsBool($variant['sold_out'], "{$uri}: availability is a plain boolean, never a number");
                 }
             }
 
-            // Every key at every depth, lists' indexes included.
+            // And, belt and braces, no key anywhere (lists' indexes included) has the look of a stock figure.
             $keys = [];
             $collect = static function (array $node) use (&$collect, &$keys): void {
                 foreach ($node as $key => $value) {
@@ -327,13 +352,26 @@ class ShopPublicApiTest extends TestCase
             };
             $collect($data);
 
-            foreach ($forbidden as $name) {
-                $this->assertNotContains($name, $keys, "{$uri}: `{$name}` is a number the public must not read");
+            foreach ($keys as $key) {
+                $this->assertDoesNotMatchRegularExpression($forbiddenKey, $key, "{$uri}: `{$key}` looks like a stock, sold, held, available or oversold figure");
             }
 
-            $this->assertStringNotContainsString('"stock"', $response->getContent());
-            $this->assertStringNotContainsString('sold_count', $response->getContent());
+            $this->assertDoesNotMatchRegularExpression(
+                '/"(stock|sold_count|sold|held|available|left|remaining|oversold|units|quantity|count)"\s*:/',
+                $response->getContent(),
+                "{$uri}: a count or flag is in the raw body"
+            );
+
+            // What it says instead: which sizes cannot be bought, and nothing about how many there are.
+            $soldOut = collect($products[0]['variants'])->pluck('sold_out', 'label')->all();
+            $this->assertSame(['M' => false, 'L' => false, 'S' => true, 'XS' => true], $soldOut);
         }
+
+        // The numbers do exist for the office: the admin read of the same product keeps every one of them.
+        $this->assertTrue(
+            ProductVariant::withoutMasjidScope()->findOrFail($sizes['M']->id)->sold_count === 12,
+            'premise: the figures are real, so their absence above is the API\'s doing'
+        );
     }
 
     #[Test]
