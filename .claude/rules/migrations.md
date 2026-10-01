@@ -55,10 +55,10 @@ rows, one default row per owner — cannot be written the same way twice:
 - **SQLite** (the suite) has real partial indexes:
   `CREATE UNIQUE INDEX … ON t (col) WHERE deleted_at IS NULL`.
 - **MySQL** (production is 8.4 on DigitalOcean's managed cluster) has **no
-  partial indexes at any version**, so `WHERE …` is unavailable. Use a **STORED
+  partial indexes at any version**, so `WHERE …` is unavailable. Use a **VIRTUAL
   generated column** that collapses "not applicable" to `NULL`, with a plain
   unique index on it:
-  `GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN col END) STORED`.
+  `GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN col END) VIRTUAL`.
   MySQL treats `NULL`s as distinct in a unique index, so exactly the same rows
   end up constrained as under SQLite's partial index. A functional key part
   (`UNIQUE ((expr))`, 8.0.13+) also works on today's server, but the generated
@@ -74,9 +74,15 @@ schema divergence: add it to the model's `$hidden` so serialized payloads stay
 identical on both, and say so in the migration docblock. Worked examples:
 `add_owner_uniqueness_to_masjids_table` (`masjids.active_owner_user_id`, unique
 owner among live rows) and `create_masjid_user_table`
-(`masjid_user.default_key`, one `is_default` membership per user). The generated
-column must be **STORED**, not `VIRTUAL` — MySQL cannot put a virtual column in
-a UNIQUE index.
+(`masjid_user.default_key`, one `is_default` membership per user), and the
+shop's `products` / `product_variants` live slug and label. The generated column
+is **VIRTUAL by default**: InnoDB indexes a virtual column, UNIQUE included (the
+index materialises the value; the row does not), and adding one is a metadata
+change. Adding a STORED column rewrites the table, and that ALTER failed on
+production on 2026-08-11 (see `add_owner_uniqueness_to_masjids_table`'s
+docblock). Use STORED only when the value itself must be materialised in the
+row, not merely indexed. `tests/Mysql/ShopLiveUniquenessTest` proves the
+virtual unique index on MySQL; SQLite cannot.
 
 **Create the index BEFORE an in-migration backfill**, not after. If the data
 being inserted could ever violate it, that ordering aborts the migration loudly
