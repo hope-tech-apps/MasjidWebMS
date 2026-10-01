@@ -828,6 +828,27 @@ applies to it unchanged; these are the rules specific to it, which a change here
 - **The member portal does not list product sales** (`MemberPurchases` has no source for them): a member sees a shop purchase only as a
   line of the cart order that holds it. A future source must exclude cart-owned rows with `notOwnedByACart(..., RECORD_PRODUCT_SALE)`.
 
+### The shop: the office and the public read (shop slice B2, DECISIONS.md 2026-10-01)
+
+The catalogue is written and read through two doors, and these rules belong to them:
+
+- **The admin API** (`routes/admin.php`, `{masjid_id}/shop/...`) is behind `capability:shop` and the DONATIONS permissions (`view donations`
+  to read, `manage donations` to write, collect and undo included), OUTSIDE `crm`, with no new permission (`Permission::count()` stays 8).
+  `ShopAdminGateTest` walks the route table and fails for a shop route that lacks either gate, sits inside `crm`, or has no call in its map.
+- **A product's currency is ALWAYS `config('services.stripe.currency')`**, written on every create and every update (`ProductWriter`); a
+  request naming another is a 422, never a quiet override. A product left in another currency is `gone` at pricing, so this matters.
+- **A size's `sold_count` is nobody's to set**: it moves only at settlement, under the size's row lock. `stock` is the TOTAL for sale, sold
+  units included; setting it below what is sold and held is allowed ("stop selling": `available` reads 0, nothing is refused). Sizes are
+  edited as a LIST inside the product's update; a size left out is soft-deleted, never removed, and a sale carries its own snapshot.
+- **The pickup list reads the buyer from the ORDER** (never from `product_sales`, never from a contact) and the sale's names and price from
+  its snapshot. A refunded or disputed order (`charge_flag`) is never "to hand out" and refuses `collect`; collecting is stamped by the
+  FIRST press only. The CSV is the same query (`PickupList`) through the shared formula-injection guard (`SchoolRecordsCsv::text`).
+- **The public read** (`GET /api/v1/shop/products[/{slug}]`) is dark by `shop.enabled` (`EnsureShopEnabled`: the basket on for the
+  organisation AND the `shop` grant, else the router's own 404, ranked ahead of every throttle) and says ONLY `sold_out` about stock: no
+  stock, sold, held or available number, no oversold flag, no "only N left", at any depth. `ShopPublicApiTest` pins the exact keys and the
+  type of every value. It is never cached (it sends the same default `Cache-Control` the basket's reads do). Only the admin payload
+  (`ProductPayload`) carries the numbers; the public presenter (`PublicCatalogue`) must never call it.
+
 ## Tenancy note
 
 `Fund`, `Donation`, `DonationReceipt` use `App\Models\Concerns\BelongsToMasjid`
