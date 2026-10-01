@@ -7106,3 +7106,23 @@ group screen. No migration and no new route; the number is delivered on payloads
   assignment); the My Classes screen does not refresh on focus.
 Alternatives: seed a bookmark per thread at deploy (rejected: false receipts); a per-class query (rejected: cost grows with
 classes); an env-var floor (rejected: production `.env` edits); moving Messages into "More" (rejected: hides it further).
+
+## 2026-10-01 — Unread badge, review fold: the list is what a regained window refreshes, and an open takes its number from the server
+- **Focus refreshes the LIST once it exists.** The refresh wrote only the class number, so with the Messages tab open
+  the pill said "1 new" while no conversation was marked new. It now reloads the conversation list quietly (no
+  spinner, the scheduled list left alone, a failure keeps the rows): that load touches no draft, no chosen photo and
+  not the open conversation, so the reason for never reloading the CLASS does not apply to it. Before the list has
+  been loaded, only the number is asked for, as before.
+- **Opening a conversation takes the number from a fresh list.** The screens subtracted the row's count as it was when
+  the list was loaded. If more arrived meanwhile, the server cleared all of it and the tab stayed too high. Both staff
+  screens now re-read the list after an open and use `meta.unread_total`; the old subtraction is the fallback when
+  that re-read fails.
+- **A reply never writes a bookmark over messages the reader has not opened, whatever their age.**
+  `hasUnseenFromOthers` applied the unread floor, so a reply to a conversation never opened, whose earlier messages
+  were older than the floor, advanced the bookmark past them. A staff bookmark is the read receipt families see; the
+  floor belongs to the COUNT only.
+- **The conversation list's `per_page` is clamped** (1 to 100, default 15): `per_page=0` was a division by zero.
+- **Next slice, not here:** a later page failing after an earlier one was bookmarked; "Load more" for a class with more
+  than fifteen conversations on the teacher screen; the parent reply path advancing the contact's bookmark
+  unconditionally; a MySQL-group test of the count query.
+

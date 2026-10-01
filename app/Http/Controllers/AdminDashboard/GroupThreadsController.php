@@ -73,6 +73,9 @@ class GroupThreadsController extends Controller
     /** The most messages one page of a conversation may carry. */
     public const MAX_MESSAGES_PER_PAGE = 200;
 
+    /** The most conversations one list page may carry. */
+    private const MAX_THREADS_PER_PAGE = 100;
+
     public function __construct(private GroupAudience $audience, private GroupThreadWriter $writer)
     {
     }
@@ -115,7 +118,7 @@ class GroupThreadsController extends Controller
             ->when($scope !== null, fn ($q) => $q->where('scope', $scope))
             ->orderByDesc('updated_at')
             ->orderByDesc('id')
-            ->paginate($request->query('per_page', 15));
+            ->paginate($this->threadsPerPage($request));
 
         // The caller's bookmarks for just this page, fetched once rather than
         // per row. Keyed by thread so serialization stays a lookup.
@@ -586,6 +589,12 @@ class GroupThreadsController extends Controller
      * can read a long conversation in a few requests and the bookmark (which moves
      * to the newest message SERVED) reaches the end of it.
      */
+    /** The list's page size: 15 by default, never below 1 (a 0 divides by zero), never above the cap. */
+    private function threadsPerPage(Request $request): int
+    {
+        return max(1, min((int) $request->query('per_page', 15), self::MAX_THREADS_PER_PAGE));
+    }
+
     private function messagesPerPage(Request $request): int
     {
         return max(1, min((int) $request->query('per_page', 50), self::MAX_MESSAGES_PER_PAGE));
