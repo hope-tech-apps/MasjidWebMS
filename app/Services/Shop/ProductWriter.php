@@ -124,8 +124,14 @@ final class ProductWriter
                     throw self::twoSizesClash();
                 }
 
-                if ($index !== 'slug' || $attempt >= self::SLUG_ATTEMPTS) {
+                if ($index !== 'slug') {
                     throw $e;
+                }
+
+                // Five tries at the next free suffix: more than that is a name other saves keep taking
+                // as fast as it is read, and the answer is a sentence, not a 500.
+                if ($attempt >= self::SLUG_ATTEMPTS) {
+                    throw ValidationException::withMessages(['name' => ['Another product took that name just now. Try saving again.']]);
                 }
             }
         }
