@@ -100,7 +100,7 @@ import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import ShopTabs from './ShopTabs.vue';
 import { formatMinor } from '@/composables/useMinorUnits';
-import { classifyFailure, priceLabel, sizeChips } from '@/core/helpers/shop';
+import { classifyFailure, priceLabel, shouldLoadPage, sizeChips } from '@/core/helpers/shop';
 import type { SizeChip } from '@/core/helpers/shop';
 import { ButtonProps } from '@/core/types/elements/Buttons';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
@@ -130,7 +130,8 @@ const busyId = ref<number | null>(null);
 
 const newButton: ButtonProps = { title: 'New product', type: 'button', class: 'btn btn-success', disabled: false };
 
-const paginationOptions = ref<PaginationOptions>({ itemsTotal: 0, currentPage: 0, perPage: 25 });
+// Page 1, never 0: the shared Pagination announces its starting page as it mounts.
+const paginationOptions = ref<PaginationOptions>({ itemsTotal: 0, currentPage: 1, perPage: 25 });
 
 const products = computed<ShopProduct[]>(() => (shopStore.productsPaginated?.data ?? []) as ShopProduct[]);
 
@@ -155,7 +156,7 @@ const toast = (icon: 'success' | 'error', text: string) => {
 
 const syncPagination = () => {
     paginationOptions.value.itemsTotal = shopStore.productsPaginated?.total ?? 0;
-    paginationOptions.value.currentPage = shopStore.productsPaginated?.current_page ?? 0;
+    paginationOptions.value.currentPage = shopStore.productsPaginated?.current_page ?? 1;
     paginationOptions.value.perPage = shopStore.productsPaginated?.per_page ?? 25;
 };
 
@@ -178,7 +179,12 @@ async function load(toPage: number = 1) {
     }
 }
 
-const pageChange = (data: PageChangeData) => load(data.toPage);
+/** A real move only: the pager also emits the page it is already on (at mount), and never a page below 1. */
+const pageChange = (data: PageChangeData) => {
+    if (!shouldLoadPage(data.toPage, page.value)) return;
+
+    return load(data.toPage);
+};
 
 const newProduct = () => {
     router.push({ name: 'masjid.shop.productNew' });

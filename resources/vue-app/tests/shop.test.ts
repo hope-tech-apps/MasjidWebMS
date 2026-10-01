@@ -13,6 +13,7 @@ import {
     formatWhen, formFromProduct, imageHint, imageLimits, imageOrderBody, minorToMajorText, moveItem, parsePrice, parseSort, parseStock,
     priceLabel, productOptions, removalWarning, removedVariants, replaceSale, rowErrors, saleStatus, salesCsvPath, salesCsvRequest,
     salesListPath, salesQuery, sizeChips, sizeOptions, stockLine, summaryTotals, unplacedErrors,
+    shouldLoadPage,
 } from '../core/helpers/shop.ts';
 
 const usd = { exponent: currencyExponent('usd'), parse: (text: string) => parseMajorToMinor(text, 'usd') };
@@ -492,4 +493,15 @@ test('paid-at is shown on the organisation\'s clock, with the zone, and survives
     assert.ok(formatWhen(iso, null).length > 0);
     assert.equal(formatWhen(null, 'America/New_York'), '—');
     assert.equal(formatWhen('not a date', 'America/New_York'), 'not a date');
+});
+
+test('the pager\'s mount-time event never reloads a list as page 0 or as the page already shown', () => {
+    // The shared Pagination emits its starting page as it mounts. Page 0 is a 422 on the sales list
+    // ("The page field must be at least 1."), which replaced a list that had just loaded with an error.
+    assert.equal(shouldLoadPage(0, 1), false, 'page 0 is never asked for');
+    assert.equal(shouldLoadPage(-1, 1), false);
+    assert.equal(shouldLoadPage(1.5, 1), false);
+    assert.equal(shouldLoadPage(1, 1), false, 'the page already on screen is not loaded twice');
+    assert.equal(shouldLoadPage(2, 1), true, 'a real move loads');
+    assert.equal(shouldLoadPage(1, 2), true, 'and so does going back');
 });

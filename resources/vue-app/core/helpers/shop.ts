@@ -413,6 +413,15 @@ export function imageOrderBody(images: readonly Pick<ShopImage, 'id'>[]): { orde
 
 // ------------------------------------------------------------------------------------- the pickup list
 
+/**
+ * Whether a pager event should load a page. The shared Pagination emits the page it STARTS on as it
+ * mounts, and can emit a page below 1 before the list has loaded; the server refuses page 0 (422),
+ * which replaced a list that had just loaded with an error.
+ */
+export function shouldLoadPage(toPage: number, currentPage: number): boolean {
+    return Number.isInteger(toPage) && toPage >= 1 && toPage !== currentPage;
+}
+
 export const SALE_TABS: { state: SaleState; label: string }[] = [
     { state: 'to_hand_out', label: 'To hand out' },
     { state: 'collected', label: 'Collected' },

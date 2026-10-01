@@ -218,7 +218,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import ShopTabs from './ShopTabs.vue';
 import { formatMinor } from '@/composables/useMinorUnits';
 import {
-    blankSaleFilters, classifyFailure, formatWhen, productOptions, replaceSale, SALE_TABS, saleStatus, sizeOptions, summaryTotals
+    blankSaleFilters, classifyFailure, formatWhen, productOptions, replaceSale, SALE_TABS, saleStatus, shouldLoadPage, sizeOptions, summaryTotals
 } from '@/core/helpers/shop';
 import type { SaleStatus, Tone } from '@/core/helpers/shop';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
@@ -256,7 +256,8 @@ const busyId = ref<number | null>(null);
 /** A later request supersedes an earlier one: only the latest settles the screen. */
 let loadSequence = 0;
 
-const paginationOptions = ref<PaginationOptions>({ itemsTotal: 0, currentPage: 0, perPage: 25 });
+// Page 1, never 0: the shared Pagination announces its starting page as it mounts.
+const paginationOptions = ref<PaginationOptions>({ itemsTotal: 0, currentPage: 1, perPage: 25 });
 
 const sales = computed<ShopSale[]>(() => (shopStore.salesPaginated?.data ?? []) as ShopSale[]);
 const summary = computed(() => shopStore.salesMeta?.summary ?? []);
@@ -302,7 +303,7 @@ const toast = (icon: 'success' | 'error', text: string) => {
 
 const syncPagination = () => {
     paginationOptions.value.itemsTotal = shopStore.salesPaginated?.total ?? 0;
-    paginationOptions.value.currentPage = shopStore.salesPaginated?.current_page ?? 0;
+    paginationOptions.value.currentPage = shopStore.salesPaginated?.current_page ?? 1;
     paginationOptions.value.perPage = shopStore.salesPaginated?.per_page ?? 25;
 };
 
@@ -336,7 +337,12 @@ async function load(toPage: number = 1, quiet: boolean = false) {
 }
 
 const reload = () => load(1);
-const pageChange = (data: PageChangeData) => load(data.toPage);
+/** A real move only: the pager also emits the page it is already on (at mount), and never a page below 1. */
+const pageChange = (data: PageChangeData) => {
+    if (!shouldLoadPage(data.toPage, page.value)) return;
+
+    return load(data.toPage);
+};
 
 function chooseState(state: SaleState) {
     if (filters.value.state === state) return;
