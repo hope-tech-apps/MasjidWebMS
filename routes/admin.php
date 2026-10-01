@@ -454,6 +454,9 @@ Route::prefix('admin')->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::post('/{sale_id}/collect', 'collect')->middleware('permission:manage donations')->whereNumber('sale_id');
                     Route::delete('/{sale_id}/collect', 'uncollect')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    // What the office did about a sale (refunded | substituted); the DELETE clears it.
+                    Route::post('/{sale_id}/resolve', 'resolve')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    Route::delete('/{sale_id}/resolve', 'unresolve')->middleware('permission:manage donations')->whereNumber('sale_id');
                 });
             });
 

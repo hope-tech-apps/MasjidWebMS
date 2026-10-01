@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Shop\IndexShopSalesRequest;
+use App\Http\Requests\Admin\Shop\ResolveShopSaleRequest;
 use App\Models\Masjid;
 use App\Models\Order;
 use App\Models\ProductSale;
@@ -89,7 +90,7 @@ class ShopSalesController extends Controller
             Csv::row($out, [
                 'Sale', 'Order number', 'Paid at', 'Buyer name', 'Buyer email', 'Buyer phone',
                 'Product', 'Size', 'Quantity', 'Total', 'Currency',
-                'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag',
+                'Collected at', 'Collected by', 'Oversold', 'Refunded', 'Charge flag', 'Resolution',
             ]);
 
             // The sale id, qualified: the query joins the orders and users tables, which have an `id` too.
@@ -117,6 +118,8 @@ class ShopSalesController extends Controller
                         // The order's own word when it carries one (refunded, partially_refunded, disputed),
                         // so a partly refunded sale, which is still to hand out, is not read as refunded.
                         Csv::text($row['charge_flag'] ?? ''),
+                        // What the office did about the sale: refunded or substituted, else blank.
+                        Csv::text($row['resolution'] ?? ''),
                     ]);
                 }
             }, 'product_sales.id', 'id');
@@ -135,8 +138,15 @@ class ShopSalesController extends Controller
      * POST .../shop/sales/{sale_id}/collect: the item has been handed over.
      *
      * Stamped by the first press only. Refused, with a sentence, for a sale whose order was refunded
-     * or is disputed: collecting must never read as "handed over" on money that went back. Checked on
-     * the locked row, so a refund that lands as the button is pressed is seen.
+     * or is disputed, and for a sale the office resolved as refunded: collecting must never read as
+     * "handed over" on money that went back.
+     *
+     * LOCKS, in this order: the SALE row, then the ORDER row (`lockForUpdate()` on its charge flag), so
+     * a refund or dispute that is being recorded at this moment is WAITED FOR and seen, not raced.
+     * There is no cycle with the writers of that flag: settlement locks the order and then INSERTS new
+     * sales (it never locks an existing sale row), and the refund arm (CartPaymentService::flagOrder)
+     * locks the order and nothing else. Only this action takes sale then order, and it takes no
+     * lock a settlement or a refund waits on while holding the order.
      */
     public function collect(Request $request, $masjid_id, $sale_id): JsonResponse
     {
@@ -144,12 +154,16 @@ class ShopSalesController extends Controller
 
         $outcome = DB::transaction(function () use ($actor, $sale_id): array {
             $sale = ProductSale::query()->lockForUpdate()->findOrFail($sale_id);
-            $flag = Order::query()->whereKey($sale->order_id)->value('charge_flag');
+            $flag = Order::query()->whereKey($sale->order_id)->lockForUpdate()->value('charge_flag');
 
             if (PickupList::isRefundedFlag($flag)) {
                 return ['refused', $flag === Order::CHARGE_FLAG_DISPUTED
                     ? 'This order is disputed with the card holder\'s bank, so do not hand anything out until that is settled.'
                     : 'This order was refunded, so there is nothing to hand out.'];
+            }
+
+            if ($sale->resolution === ProductSale::RESOLUTION_REFUNDED) {
+                return ['refused', 'This sale was marked refunded, so there is nothing to hand out. Clear that first if it was a mistake.'];
             }
 
             if ($sale->collected_at !== null) {
@@ -205,6 +219,86 @@ class ShopSalesController extends Controller
         }
 
         return $this->done($sale, $was === null ? 'This sale was not marked collected.' : 'Collected mark undone.');
+    }
+
+    /**
+     * POST .../shop/sales/{sale_id}/resolve  {resolution: refunded|substituted}
+     *
+     * What the office did about a sale (an oversold one above all): `refunded` takes it off the
+     * to-hand-out list and refuses collect; `substituted` leaves it to hand out (the substitute is what
+     * is handed over) and ends the need for anyone's call. Idempotent: the same word again changes
+     * nothing and keeps the FIRST resolver and moment; a DIFFERENT word replaces the resolution (the
+     * current one is what the sale carries, with whoever set it and when). Locked on the sale row; the
+     * actor goes to the log as collect's does, ids only.
+     */
+    public function resolve(ResolveShopSaleRequest $request, $masjid_id, $sale_id): JsonResponse
+    {
+        $actor = $request->user();
+        $resolution = $request->resolution();
+
+        [$result, $sale, $was] = DB::transaction(function () use ($actor, $sale_id, $resolution): array {
+            $sale = ProductSale::query()->lockForUpdate()->findOrFail($sale_id);
+
+            if ($sale->resolution === $resolution) {
+                return ['already', $sale, null];
+            }
+
+            $was = $sale->resolution === null ? null : [
+                'resolution' => (string) $sale->resolution,
+                'by' => $sale->resolved_by_user_id === null ? null : (int) $sale->resolved_by_user_id,
+            ];
+
+            $sale->forceFill([
+                'resolution' => $resolution,
+                'resolved_at' => now(),
+                'resolved_by_user_id' => $actor->getKey(),
+            ])->save();
+
+            return ['resolved', $sale, $was];
+        });
+
+        if ($result === 'resolved') {
+            Log::info('A shop sale was resolved.', $this->logContext($sale, $actor->getKey()) + [
+                'resolution' => $resolution,
+                'was_resolution' => $was['resolution'] ?? null,
+                'was_resolved_by_user_id' => $was['by'] ?? null,
+            ]);
+        }
+
+        return $this->done($sale, $result === 'already' ? "Already marked {$resolution}." : "Marked {$resolution}.");
+    }
+
+    /**
+     * DELETE .../shop/sales/{sale_id}/resolve: clear the resolution ("I marked the wrong one"). Nothing
+     * to clear is not an error. The log keeps what it was and who had set it.
+     */
+    public function unresolve(Request $request, $masjid_id, $sale_id): JsonResponse
+    {
+        $actor = $request->user();
+
+        [$sale, $was] = DB::transaction(function () use ($sale_id): array {
+            $sale = ProductSale::query()->lockForUpdate()->findOrFail($sale_id);
+            $was = null;
+
+            if ($sale->resolution !== null) {
+                $was = [
+                    'resolution' => (string) $sale->resolution,
+                    'by' => $sale->resolved_by_user_id === null ? null : (int) $sale->resolved_by_user_id,
+                ];
+                $sale->forceFill(['resolution' => null, 'resolved_at' => null, 'resolved_by_user_id' => null])->save();
+            }
+
+            return [$sale, $was];
+        });
+
+        if ($was !== null) {
+            Log::info('A shop sale\'s resolution was cleared.', $this->logContext($sale, $actor->getKey()) + [
+                'was_resolution' => $was['resolution'],
+                'was_resolved_by_user_id' => $was['by'],
+            ]);
+        }
+
+        return $this->done($sale, $was === null ? 'This sale had no resolution.' : 'Resolution cleared.');
     }
 
     // ------------------------------------------------------------------------- helpers
