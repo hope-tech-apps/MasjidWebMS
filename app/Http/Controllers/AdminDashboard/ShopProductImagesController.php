@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\Shop\ReorderProductImagesRequest;
 use App\Http\Requests\Admin\Shop\UploadProductImagesRequest;
 use App\Models\Product;
 use App\Services\Shop\ProductPayload;
+use App\Services\Shop\ProductWriter;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +28,11 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * At most Product::MAX_IMAGES pictures per product. The count is taken under the product's row
  * lock, so two uploads at once cannot both pass it. Every answer is the whole product, so the
- * editor refreshes from one response.
+ * editor refreshes from one response, carrying the product's NEW `lock_version`: an upload, a
+ * delete and a reorder each move it on (they change what the editor shows), so a save from a
+ * screen that read the product before them is refused as stale. The endpoints need no
+ * `lock_version` of their own; delete and reorder bump it with one atomic UPDATE and do not take the
+ * product's lock first (deferred, DECISIONS.md).
  */
 class ShopProductImagesController extends Controller
 {
@@ -61,7 +66,10 @@ class ShopProductImagesController extends Controller
             foreach ($files as $file) {
                 $product->addMedia($file)->toMediaCollection(Product::IMAGES);
             }
-        });
+
+            // What the editor shows changed: a screen opened before this is stale.
+            ProductWriter::bumpVersion((int) $product->id);
+        }, 3);
 
         return $this->respond((int) $product_id, Response::HTTP_CREATED);
     }
@@ -72,7 +80,13 @@ class ShopProductImagesController extends Controller
         $product = Product::query()->findOrFail($product_id);
 
         // Through the product's own relation: model_type, model_id and the collection.
-        $product->images()->findOrFail($media_id)->delete();
+        $media = $product->images()->findOrFail($media_id);
+
+        DB::transaction(function () use ($media, $product): void {
+            $media->delete();
+
+            ProductWriter::bumpVersion((int) $product->id);
+        }, 3);
 
         return $this->respond((int) $product->id, Response::HTTP_OK);
     }
@@ -105,7 +119,11 @@ class ShopProductImagesController extends Controller
 
         // Safe to hand over: `setNewOrder` loads by id alone, and every id here was just read
         // through this product's own relation.
-        Media::setNewOrder($wanted);
+        DB::transaction(function () use ($wanted, $product): void {
+            Media::setNewOrder($wanted);
+
+            ProductWriter::bumpVersion((int) $product->id);
+        }, 3);
 
         return $this->respond((int) $product->id, Response::HTTP_OK);
     }

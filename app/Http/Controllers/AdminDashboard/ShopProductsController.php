@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Shop\StoreProductRequest;
 use App\Http\Requests\Admin\Shop\UpdateProductRequest;
 use App\Models\Product;
+use App\Services\Shop\ProductChangedElsewhere;
 use App\Services\Shop\ProductPayload;
 use App\Services\Shop\ProductWriter;
 use App\Support\TenantContext;
@@ -99,12 +100,20 @@ class ShopProductsController extends Controller
      * The product is found through the tenant scope before anything is written, so another
      * organisation's id is a 404 and nothing of it is touched; a size id inside the list that is not
      * one of THIS product's live sizes is a 404 too (ProductWriter), and saves nothing.
+     *
+     * `lock_version` (required) is the version the editor read; under the product's lock a different one
+     * is a 409 `{status: 'failed', message}` and nothing is written. Every success moves it on.
      */
     public function update(UpdateProductRequest $request, $masjid_id, $product_id): JsonResponse
     {
         $product = Product::query()->findOrFail($product_id);
 
-        $this->writer->update($product, $request->productAttributes(), $request->variantRows());
+        try {
+            $this->writer->update($product, $request->productAttributes(), $request->variantRows(), $request->lockVersion());
+        } catch (ProductChangedElsewhere $e) {
+            // Nothing was written. The editor reloads the product and makes its change again.
+            return response()->json(['status' => 'failed', 'message' => $e->getMessage()], Response::HTTP_CONFLICT);
+        }
 
         return $this->respond($this->fresh($product), Response::HTTP_OK);
     }

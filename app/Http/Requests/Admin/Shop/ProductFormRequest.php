@@ -155,7 +155,7 @@ abstract class ProductFormRequest extends BaseFormRequest
     public function productAttributes(): array
     {
         $validated = $this->validated();
-        unset($validated['variants'], $validated['currency']);
+        unset($validated['variants'], $validated['currency'], $validated['lock_version']);
 
         return $validated;
     }

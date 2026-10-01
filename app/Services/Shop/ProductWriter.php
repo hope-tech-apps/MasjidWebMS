@@ -5,6 +5,7 @@ namespace App\Services\Shop;
 use App\Models\CartItem;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Services\Cart\ProductStock;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -52,11 +53,39 @@ use Illuminate\Validation\ValidationException;
  * rows: omitted sizes go first (freeing their labels), sizes whose label changes then step aside
  * under a throwaway label (so S -> M together with M -> S, or a rotation, never meets the index
  * half-way), and only then are the new labels and the new rows written.
+ *
+ * ## A stale editor is refused
+ *
+ * `products.lock_version` goes up by one, under the product's row lock, with every successful update
+ * (a sizes-only save included) and with every picture change (ShopProductImagesController). An update
+ * names the version it read; under the lock a different one is ProductChangedElsewhere (a 409) and
+ * nothing is written, so a screen opened before another editor's save cannot put back what they
+ * changed (a removed size, a corrected stock).
+ *
+ * ## Locks, in this order, and why
+ *
+ * The product row is locked FIRST (FOR UPDATE, by primary key plus the organisation the scope
+ * adds): it serialises every writer of the product and its sizes, so two saves of one product take
+ * turns. Then, for an update that carries a list, the sizes the REQUEST ROWS name are locked by
+ * PRIMARY KEY alone, ascending, through ProductStock::lock(), the lock a checkout takes before it
+ * writes an order line. Only THEN are the product's live sizes and the order lines naming them read,
+ * with PLAIN reads: after those locks they see every line a competing checkout committed, so a size
+ * whose name is about to change is always one of the request rows and its lines are visible.
+ * Nothing in the transaction reads before the first lock: the route binds the product in the
+ * controller, before the transaction, in autocommit, so under REPEATABLE READ the first consistent
+ * read of the transaction is after the locks, and it fixes no stale snapshot. A locking read of
+ * `product_variants` by `product_id` or `masjid_id` is NEVER used (under REPEATABLE READ it takes gap
+ * locks, B1's ship blocker, DECISIONS.md 2026-10-01). A product created in this transaction has no
+ * sizes, so create() takes no locking read of sizes at all. Every transaction here retries a
+ * deadlock victim up to three times: there is no Stripe call, no mail and no file in any of them.
  */
 final class ProductWriter
 {
     /** Tries at a slug that another save took between the read and the insert. */
     private const SLUG_ATTEMPTS = 5;
+
+    /** Tries at a transaction that InnoDB chose as a deadlock victim. */
+    private const DEADLOCK_ATTEMPTS = 3;
 
     /**
      * @param  array<string,mixed>  $attributes  name, category, description, base_price_minor, active, sort
@@ -79,15 +108,23 @@ final class ProductWriter
                     ]);
 
                     if ($variants !== null) {
-                        $this->syncVariants($product, $variants);
+                        // A product made in this transaction has no sizes: nothing to read, nothing to lock.
+                        $this->syncVariants($product, array_values($variants), new Collection);
                     }
 
                     return $product;
-                });
+                }, self::DEADLOCK_ATTEMPTS);
             } catch (UniqueConstraintViolationException $e) {
-                // Only the slug is retried: a size label cannot clash here (the request has already
-                // refused a list that repeats one), so anything else is a real failure.
-                if ($attempt >= self::SLUG_ATTEMPTS || ! str_contains($e->getMessage(), 'slug')) {
+                // The backstop for a clash the request's own check missed (a race, or a collation
+                // equivalence LiveText does not know): two sizes of one product are a 422; a slug
+                // another save took first is retried with the next suffix.
+                $index = self::clashingIndex($e);
+
+                if ($index === 'label') {
+                    throw self::twoSizesClash();
+                }
+
+                if ($index !== 'slug' || $attempt >= self::SLUG_ATTEMPTS) {
                     throw $e;
                 }
             }
@@ -97,38 +134,67 @@ final class ProductWriter
     /**
      * @param  array<string,mixed>  $attributes  any of name, category, description, base_price_minor, active, sort
      * @param  list<array<string,mixed>>|null  $variants
+     * @param  int  $expectedVersion  the `lock_version` the editor read
+     *
+     * @throws ProductChangedElsewhere when the product is no longer at that version
      */
-    public function update(Product $product, array $attributes, ?array $variants): Product
+    public function update(Product $product, array $attributes, ?array $variants, int $expectedVersion): Product
     {
-        return DB::transaction(function () use ($product, $attributes, $variants): Product {
-            // Two saves of one product take turns: the sizes are rewritten as a list.
-            $locked = Product::query()->whereKey($product->id)->lockForUpdate()->firstOrFail();
+        try {
+            return DB::transaction(function () use ($product, $attributes, $variants, $expectedVersion): Product {
+                // Two saves of one product take turns: the sizes are rewritten as a list.
+                $locked = Product::query()->whereKey($product->id)->lockForUpdate()->firstOrFail();
 
-            $changes = Arr::only($attributes, ['name', 'category', 'description', 'base_price_minor', 'active', 'sort']);
+                if ((int) $locked->lock_version !== $expectedVersion) {
+                    throw new ProductChangedElsewhere;
+                }
 
-            if (array_key_exists('base_price_minor', $changes)) {
-                $changes['base_price_minor'] = (int) $changes['base_price_minor'];
+                $rows = $variants === null ? null : array_values($variants);
+                $existing = new Collection;
+
+                if ($rows !== null) {
+                    // The sizes the rows name, by primary key and nothing else, BEFORE the first read of
+                    // the sizes: a checkout takes these locks before it writes a line, so what is read
+                    // next has every committed line in it. Ownership is checked on the rows afterwards.
+                    ProductStock::lock((int) $locked->masjid_id, self::namedIds($rows));
+
+                    $existing = $locked->variants()->get()->keyBy('id');
+                }
+
+                $changes = Arr::only($attributes, ['name', 'category', 'description', 'base_price_minor', 'active', 'sort']);
+
+                if (array_key_exists('base_price_minor', $changes)) {
+                    $changes['base_price_minor'] = (int) $changes['base_price_minor'];
+                }
+
+                if (array_key_exists('active', $changes)) {
+                    $changes['active'] = self::bool($changes['active']);
+                }
+
+                if (array_key_exists('sort', $changes)) {
+                    $changes['sort'] = (int) $changes['sort'];
+                }
+
+                // Always the configured currency, whatever the row held (ASSUMPTIONS S-9).
+                $locked->fill($changes);
+                $locked->currency = self::currency();
+                // Every successful save moves the version, a sizes-only one included.
+                $locked->lock_version = (int) $locked->lock_version + 1;
+                $locked->save();
+
+                if ($rows !== null) {
+                    $this->syncVariants($locked, $rows, $existing);
+                }
+
+                return $locked;
+            }, self::DEADLOCK_ATTEMPTS);
+        } catch (UniqueConstraintViolationException $e) {
+            if (self::clashingIndex($e) === 'label') {
+                throw self::twoSizesClash();
             }
 
-            if (array_key_exists('active', $changes)) {
-                $changes['active'] = self::bool($changes['active']);
-            }
-
-            if (array_key_exists('sort', $changes)) {
-                $changes['sort'] = (int) $changes['sort'];
-            }
-
-            // Always the configured currency, whatever the row held (ASSUMPTIONS S-9).
-            $locked->fill($changes);
-            $locked->currency = self::currency();
-            $locked->save();
-
-            if ($variants !== null) {
-                $this->syncVariants($locked, $variants);
-            }
-
-            return $locked;
-        });
+            throw $e;
+        }
     }
 
     /**
@@ -136,15 +202,36 @@ final class ProductWriter
      * and its order, so the pickup list and the order still read; a basket line that names one of
      * these sizes prices as `gone` from now on, and a pending page that already holds it is still
      * settled (settlement reads sizes withTrashed).
+     *
+     * The sizes are found with a plain read under the product's lock and soft-deleted by PRIMARY KEY
+     * after taking the same locks a checkout takes, never by a `product_id` range.
      */
     public function delete(Product $product): void
     {
         DB::transaction(function () use ($product): void {
             $locked = Product::query()->whereKey($product->id)->lockForUpdate()->firstOrFail();
 
-            $locked->variants()->delete();
+            $ids = $locked->variants()->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+
+            if ($ids !== []) {
+                ProductStock::lock((int) $locked->masjid_id, $ids);
+
+                ProductVariant::withoutMasjidScope()->whereIn('id', $ids)->delete();
+            }
+
             $locked->delete();
-        });
+        }, self::DEADLOCK_ATTEMPTS);
+    }
+
+    /**
+     * Move a product's `lock_version` on by one, atomically (one UPDATE, `lock_version = lock_version + 1`,
+     * which takes the row lock for its own length). The picture endpoints call it: a picture added,
+     * removed or moved changes what the editor shows, so a save that read the product before it
+     * is stale.
+     */
+    public static function bumpVersion(int $productId): void
+    {
+        Product::query()->whereKey($productId)->increment('lock_version');
     }
 
     /** The one currency every product is sold in, lower case as the column stores it. */
@@ -154,16 +241,59 @@ final class ProductWriter
     }
 
     /**
-     * @param  list<array<string,mixed>>  $rows
+     * Which unique index a violation names: `label` (a size's live label), `slug` (a product's live
+     * slug) or null. MySQL names the generated-column index (`live_label`, `live_slug`); SQLite names
+     * the columns of its partial index (`product_variants.label`, `products.slug`). The driver's own
+     * message is read as well as the one Laravel builds, which also carries the SQL.
      */
-    private function syncVariants(Product $product, array $rows): void
+    private static function clashingIndex(UniqueConstraintViolationException $e): ?string
     {
-        // A JSON object would reach here with string keys; the position is the row's place in the list.
-        $rows = array_values($rows);
+        $message = $e->getMessage() . ' ' . ($e->getPrevious()?->getMessage() ?? '');
 
-        /** @var Collection<int,ProductVariant> $existing  this product's live sizes, by id, locked */
-        $existing = $product->variants()->lockForUpdate()->get()->keyBy('id');
+        if (preg_match('/live_label|product_variants\.label/', $message) === 1) {
+            return 'label';
+        }
 
+        if (preg_match('/live_slug|products\.slug/', $message) === 1) {
+            return 'slug';
+        }
+
+        return null;
+    }
+
+    private static function twoSizesClash(): ValidationException
+    {
+        return ValidationException::withMessages(['variants' => ['Two sizes of one product cannot share a name.']]);
+    }
+
+    /**
+     * The ids the rows of a list name, ascending and without repeats.
+     *
+     * @param  list<array<string,mixed>>  $rows
+     * @return list<int>
+     */
+    private static function namedIds(array $rows): array
+    {
+        $ids = [];
+
+        foreach ($rows as $row) {
+            if (isset($row['id'])) {
+                $ids[(int) $row['id']] = true;
+            }
+        }
+
+        $ids = array_keys($ids);
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * @param  list<array<string,mixed>>  $rows
+     * @param  Collection<int,ProductVariant>  $existing  this product's live sizes, by id (empty for a new product)
+     */
+    private function syncVariants(Product $product, array $rows, Collection $existing): void
+    {
         $kept = [];
 
         foreach ($rows as $row) {
@@ -201,7 +331,8 @@ final class ProductWriter
             }
         }
 
-        // 3. Write the rows: existing sizes get what the row says, new ones are created.
+        // 3. Write the rows: existing sizes get what the row says, new ones are created. Only the
+        //    columns a row may set are ever written: `sold_count` is never among them.
         foreach ($rows as $position => $row) {
             $id = isset($row['id']) ? (int) $row['id'] : null;
 

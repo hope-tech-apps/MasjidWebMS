@@ -70,6 +70,8 @@ final class ProductPayload
             'currency' => (string) $product->currency,
             'active' => (bool) $product->active,
             'sort' => (int) $product->sort,
+            // The version an editor must name when it saves (UpdateProductRequest): every answer carries it.
+            'lock_version' => (int) $product->lock_version,
             'variants' => $product->variants
                 ->map(static fn (ProductVariant $variant): array => self::variant($product, $variant, $held[(int) $variant->id] ?? 0))
                 ->values()
