@@ -26,6 +26,11 @@ class OrderItem extends Model
     public const RECORD_FORM_RESPONSE = 'form_response';
     public const RECORD_MEAL_ORDER = 'meal_order';
     public const RECORD_DONATION = 'donation';
+    /**
+     * A shop line's record: a ProductSale. Not listed in the member portal (MemberPurchases has no
+     * source for it: the sale reaches a member only as a line of the cart order that holds it).
+     */
+    public const RECORD_PRODUCT_SALE = 'product_sale';
 
     protected $fillable = [
         'order_id',

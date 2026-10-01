@@ -32,6 +32,7 @@ class CartColumnWidthsTest extends TestCase
     private const MIGRATIONS = [
         '2026_09_27_090000_create_carts_table.php',
         '2026_09_28_090000_create_orders_table.php',
+        '2026_10_06_100000_create_shop_tables.php',
     ];
 
     protected function setUp(): void
@@ -91,8 +92,8 @@ class CartColumnWidthsTest extends TestCase
     private function written(): array
     {
         $currency = strlen((string) config('services.stripe.currency', 'usd'));
-        $recordedAs = [CartItem::RECORDED_AS_DONATION, CartItem::RECORDED_AS_REGISTRATION, CartItem::RECORDED_AS_ORDER_ONLY];
-        $recordTypes = [OrderItem::RECORD_FORM_RESPONSE, OrderItem::RECORD_MEAL_ORDER, OrderItem::RECORD_DONATION];
+        $recordedAs = [CartItem::RECORDED_AS_DONATION, CartItem::RECORDED_AS_REGISTRATION, CartItem::RECORDED_AS_ORDER_ONLY, CartItem::RECORDED_AS_SALE];
+        $recordTypes = [OrderItem::RECORD_FORM_RESPONSE, OrderItem::RECORD_MEAL_ORDER, OrderItem::RECORD_DONATION, OrderItem::RECORD_PRODUCT_SALE];
         $charged = [Order::CHARGE_FLAG_REFUNDED, Order::CHARGE_FLAG_PARTIALLY_REFUNDED, Order::CHARGE_FLAG_DISPUTED];
 
         return [
@@ -127,7 +128,17 @@ class CartColumnWidthsTest extends TestCase
             'orders.buyer_name' => 120,                    // usableText(..., BUYER_NAME_MAX)
             'orders.buyer_phone' => 32,                    // usableText(..., BUYER_PHONE_MAX)
             'cart_items.label' => 255,                     // mb_substr(..., 0, 255) in CartLineAdder
-            'order_items.label' => 255,                    // a form, fund or dish name: each a string(255)
+            'order_items.label' => 255,                    // a form, fund or dish name (each a string(255)) or a product and size (120 + 3 + 40 at most)
+
+            // The shop (slice B1). Nothing in B1 writes the catalogue (the admin API is B2's, which
+            // validates to these same widths); settlement copies a name and a size into a sale.
+            'products.name' => 120,
+            'products.slug' => 140,
+            'products.category' => 60,
+            'products.currency' => $currency,              // 'usd', the config currency (ProductLineSource refuses any other)
+            'product_variants.label' => 40,
+            'product_sales.product_name' => 120,           // copied from products.name, the same width
+            'product_sales.variant_label' => 40,           // copied from product_variants.label, the same width
 
             // Stripe ids. 255 is the width of the columns they are copied from
             // (masjids.stripe_account_id) and of the ids Stripe documents.

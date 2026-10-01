@@ -49,8 +49,14 @@ use Throwable;
  */
 final class CartTables
 {
-    /** The tables migrate creates for the cart, in the order they are dropped. */
-    public const NAMES = ['cart_items', 'order_items', 'orders', 'carts'];
+    /**
+     * The tables migrate creates for the cart, in the order they are dropped. `product_sales` (the
+     * shop's record of a paid line) sits before `order_items` because it is a foreign-key child of
+     * both it and `orders`, so a drop in this order never meets a table that is still referenced.
+     * It is a cart table for the deploy window's purposes: code that touches the cart's tables
+     * waits for ALL of them, so `cart:prune` skips a night until the shop's migration has run.
+     */
+    public const NAMES = ['cart_items', 'product_sales', 'order_items', 'orders', 'carts'];
 
     private const RECHECK_SECONDS = 30;
 

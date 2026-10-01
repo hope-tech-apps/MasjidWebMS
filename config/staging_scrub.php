@@ -79,6 +79,8 @@ return [
         'masjids.active_owner_user_id' => 'VIRTUAL generated from (user_id, deleted_at); backs masjids_active_owner_unique. Scrub `user_id` — we do not, it is kept.',
         'masjids.active_stripe_account_id' => 'VIRTUAL generated from (stripe_account_id, deleted_at); backs masjids_active_stripe_account_unique. Nulling `stripe_account_id` (below) empties it, and NULL is excluded from the predicate so every row nulling to NULL is safe.',
         'masjid_user.default_key' => 'Generated from (user_id, is_default); enforces one default masjid per user. Both sources are kept.',
+        'products.live_slug' => 'VIRTUAL generated from (slug, deleted_at); backs products_live_slug_unique (a slug is unique per organisation among live products). `slug` is catalogue text and is kept, so nothing here needs writing.',
+        'product_variants.live_label' => 'VIRTUAL generated from (label, deleted_at); backs product_variants_live_label_unique (a size label is unique per product among live variants). `label` is catalogue text and is kept, so nothing here needs writing.',
     ],
 
     /*
@@ -653,6 +655,13 @@ return [
         'meal_menu_items.name_ar' => 'The same dish in Arabic.',
         'order_items.price_snapshot' => 'What settlement records the line from: amounts and tier labels (form), a menu item name and its frozen price (meal), the intended gift (donation). The answers themselves live in `payload`, which is nulled beside it.',
         'meal_order_items.item_name' => 'A snapshot of the menu item at order time — what was bought, not who bought it. The buyer\'s name, phone and email on meal_orders are all anonymised.',
+        // --- The shop (slice B1). A catalogue, and a record of what was bought; nothing in these
+        // tables says who bought it (the buyer is on the order, whose columns ARE scrubbed).
+        'products.name' => 'A product on the shop page ("School polo"), typed by the organisation for publication. Catalogue text, not personal data.',
+        'products.description' => 'The blurb under a product on the shop page, typed for publication. Catalogue text, not personal data.',
+        'product_variants.label' => 'A size or option of a product ("YS", "Adult L"). Catalogue text, not personal data.',
+        'product_sales.product_name' => 'A snapshot of products.name at the time of sale: what was bought, not who bought it. The buyer\'s name, email and phone are on the order (orders.buyer_*), and those ARE anonymised.',
+        'product_sales.variant_label' => 'A snapshot of the size bought, as product_sales.product_name is the product. Not about the buyer.',
         'meal_menus.notes' => 'Operational notes on a public menu ("collect at the side door"). Kept because the pickup flow reads it; if a tenant is ever found using it for customer names, move it to `anonymise` with `free_text`.',
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',
         'sections.content' => 'JSON page content an admin composed for the public website. Kept so staging renders real pages; the inventory flags it for a spot-check rather than a blanket scrub because it is publication copy.',

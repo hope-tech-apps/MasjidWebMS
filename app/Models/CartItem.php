@@ -28,7 +28,14 @@ class CartItem extends Model
     /** A gift to a Fund. The amount is the donor's: unit_amount_shown_minor, quantity 1. */
     public const TYPE_DONATION = 'donation';
 
-    public const TYPES = [self::TYPE_FORM, self::TYPE_MEAL, self::TYPE_DONATION];
+    /**
+     * A size of a product in the online shop: `buyable_id` is a ProductVariant (the size, which
+     * carries the price override and the stock), never the Product. Payload = {product_id}. Behind
+     * the `shop` capability (ProductLineSource).
+     */
+    public const TYPE_PRODUCT = 'product_variant';
+
+    public const TYPES = [self::TYPE_FORM, self::TYPE_MEAL, self::TYPE_DONATION, self::TYPE_PRODUCT];
 
     /**
      * The vocabulary historical_orders.lines already established, so a receipt can
@@ -37,6 +44,8 @@ class CartItem extends Model
     public const RECORDED_AS_DONATION = 'donation';
     public const RECORDED_AS_REGISTRATION = 'registration';
     public const RECORDED_AS_ORDER_ONLY = 'order_only';
+    /** A product sold from the shop (`recorded_as` is string(16)). */
+    public const RECORDED_AS_SALE = 'sale';
 
     protected $fillable = [
         'cart_id',

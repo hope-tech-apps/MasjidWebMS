@@ -89,8 +89,11 @@ class PruneCarts extends Command
 
     public function handle(): int
     {
-        // The sweep reads and deletes across all four tables (the cascades take cart_items and
-        // order_items), so any one of them missing means migrate has not finished.
+        // The sweep reads and deletes across the cart's tables (the cascades take cart_items and
+        // order_items), so any one of them missing means migrate has not finished. product_sales
+        // (the shop's record of a paid line) is among them though nothing here reads it: its
+        // RESTRICT keys on orders and order_items are what make a PAID order impossible to delete,
+        // and a database that has not got them yet is one the sweep should not run on.
         $missing = array_values(array_filter(CartTables::NAMES, static fn (string $table): bool => ! CartTables::has($table)));
 
         if ($missing !== []) {
