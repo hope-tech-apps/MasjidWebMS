@@ -7106,3 +7106,45 @@ group screen. No migration and no new route; the number is delivered on payloads
   assignment); the My Classes screen does not refresh on focus.
 Alternatives: seed a bookmark per thread at deploy (rejected: false receipts); a per-class query (rejected: cost grows with
 classes); an env-var floor (rejected: production `.env` edits); moving Messages into "More" (rejected: hides it further).
+
+## 2026-10-01 — Edit a class story after it is sent, with an "Edited" marker and no re-notification (W7-2a, teacher feedback; branch feat/school-w7-edit-stories)
+Decision: a class story that is OUT can be edited in place by the people who could already change it, and the edit is
+visible: staff and families see "Edited", with the time as a tooltip. Nobody is notified.
+- **Who: unchanged.** The class's teachers and the office (`manage contacts`) edit a story that is out, not only its
+  author (pinned by `ScheduledClassStoryTest` and `GroupFeedTest`); a scheduled story stays author-only. The marker
+  now makes an edit visible where it used to be silent. Narrowing it to the author is a deliberate server change at
+  `authorizeScheduledWrite()` that reverses two tests, and nobody asked for it.
+- **`group_posts.edited_at`** (nullable datetime, migration `2026_10_08_100000`, no backfill: every existing story
+  reads as never edited, which is true). Stamped by `update()` only when a story that is already out has its title or
+  body actually changed, or a file added. Not stamped for a scheduled story's edits, a move or "Send now", a save that
+  changes nothing, or a retention-only change. The decision is made on the row under its lock, so a story the sweep
+  announced a moment ago counts as out. `updated_at` cannot serve: the sweep's claim and a retention change bump it.
+- **The write hole, closed.** `update()` never asked the feed read gate and returned the story with media allowed
+  hard-coded. An office administrator off the class roster gets 403 on `GET /posts`, yet could `PUT` a sent story and
+  read its words and attachment list back; the same call let her change words she was not allowed to read. A story
+  that is out is now edited under the feed read gate (403 otherwise, before anything is written) and the response is
+  media-gated like the feed. A story that is not out keeps its author-only rule with no roster standing (it is the
+  author's own text). `GroupFeedTest::a_post_can_be_edited` now seats its administrator on the roster, as any reader
+  of the feed is. `destroy()` has the same shape (it answers no content, only an id) and is left as it was.
+- **`can_edit`** (staff payload) is true exactly when this caller's PUT would be allowed for a story that is out: the
+  realm's write gate (teacher realm: leads the class; admin realm: `manage contacts`), the tenant check, then the feed
+  read gate. The SPA draws Edit from it and from nothing else. False for a story that is not out; absent from the
+  office's metadata-only view of a scheduled story. The family payload gets `edited_at` only (no `can_edit`, no
+  editor).
+- **No re-notification.** An edit dispatches nothing (no email, no push, no job) and does not touch read receipts or
+  reactions: a parent who read the first version stays "seen". "Seen" means opened at some time, not opened this
+  version.
+- **Translations.** The server cache is keyed by a hash of the text, so an edited story is a miss and is translated
+  again with nothing to invalidate. The portal's in-page map is keyed by id, so the key now includes `edited_at`
+  (`postTranslationKey`) and a re-fetched edited story translates again without a reload.
+- **Attachments are not edited in this slice.** The form changes the title and the text. A file added through the API
+  still counts as an edit and is held to the media limits; removing one has no route.
+- **The deploy window.** For the seconds between the new code and the migration the row has no `edited_at`: reads are
+  null-safe, and an edit that would have to stamp it is refused with a 503 and a plain sentence before anything is
+  written, so the text stays in the teacher's form. Ship it after school hours with the migration (up, down, up on
+  staging MySQL first).
+- **The "Edited" strings** (`story_edited`, six tables) are machine-drafted in the four newest languages and Arabic,
+  and wait for the human review the rest of the portal's strings are waiting for.
+Alternatives: author-only editing of a sent story (a deliberate narrowing, see above); an `edited_by_user_id` shown to
+staff (answers "who changed my words", more than was asked); re-notifying families on an edit (rejected: a typo fix
+should not email a class); deriving "edited" from `updated_at` (wrong, see above).

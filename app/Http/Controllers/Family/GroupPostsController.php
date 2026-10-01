@@ -385,6 +385,9 @@ class GroupPostsController extends FamilyController
             // When it went OUT to families: the date the portal shows. It is not
             // `created_at`, which is when the teacher typed a story she scheduled.
             'published_at' => optional($post->published_at ?? $post->created_at)->toIso8601String(),
+            // When the story's words or files last changed after it went out; null = never.
+            // The portal shows "Edited" and re-translates on it. Nothing about WHO edited.
+            'edited_at' => optional($post->edited_at)->toIso8601String(),
             'attachments' => $attachments,
             // Stated rather than inferred from an empty array, so a parent with
             // no photos this week is not confused with one who is not allowed to

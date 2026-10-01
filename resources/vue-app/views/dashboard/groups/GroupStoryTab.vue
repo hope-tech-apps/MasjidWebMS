@@ -91,17 +91,28 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
-                            <div v-if="post.title" class="fw-semibold">{{ post.title }}</div>
+                            <div v-if="post.title && editingStoryId !== post.id" class="fw-semibold">{{ post.title }}</div>
                             <div class="small text-muted">
                                 {{ post.author?.name || 'Unknown' }} &middot; {{ formatDateTime(post.published_at ?? post.created_at) }}
+                                <span v-if="editedMarker(post.edited_at, formatDateTime)" class="fst-italic" data-test="story-edited"
+                                      :title="editedMarker(post.edited_at, formatDateTime)?.title">&middot; Edited</span>
                             </div>
                         </div>
-                        <button class="btn btn-sm btn-outline-danger" @click="confirmDelete(post)" title="Remove">
-                            <i class="bi bi-trash"></i>
-                        </button>
+                        <div class="d-flex gap-2">
+                            <!-- After it is sent: title and text only, from the server's own `can_edit`. -->
+                            <button v-if="canEditStory(post) && editingStoryId !== post.id" class="btn btn-sm btn-outline-secondary"
+                                    aria-label="Edit this story" title="Edit" data-test="story-edit" @click="startStoryEdit(post)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" aria-label="Remove this story" @click="confirmDelete(post)" title="Remove">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
                     </div>
 
-                    <p class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
+                    <StoryEditForm v-if="editingStoryId === post.id" :post="post" :busy="storyEditBusy" :error="storyEditError"
+                                   class="mb-2" @save="(draft) => submitStoryEdit(post, draft)" @cancel="cancelStoryEdit" />
+                    <p v-else class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
 
                     <!--
                         Images are fetched through the AUTHENTICATED attachment
@@ -179,6 +190,10 @@ import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 // two surfaces cannot drift.
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import StorySeenLine from '@/components/common/StorySeenLine.vue';
+// Edit a story after it is sent (title and text), shared with the teacher screen.
+import StoryEditForm from '@/components/common/StoryEditForm.vue';
+import { useStoryEdit } from '@/composables/useStoryEdit';
+import { canEditStory, editedMarker } from '@/core/helpers/storyEdit';
 // "Send later" and the Scheduled list (T-002.4), shared with the teacher screen.
 import SendLaterField from '@/components/common/SendLaterField.vue';
 import ScheduledItems from '@/components/common/ScheduledItems.vue';
@@ -383,6 +398,21 @@ const saveScheduled = (row: ScheduledRow, fields: { heading: string; body: strin
         body: fields.body,
         ...(fields.sendAt ? { send_at: fields.sendAt } : {}),
     }), 'That story could not be saved.');
+
+// Edit a story AFTER it is sent (W7-2a): PUT title and text only. The server stamps "Edited"
+// and tells nobody; its answer is the story, which replaces the row. A failure stays beside
+// the form with what was typed.
+const {
+    editingId: editingStoryId, busy: storyEditBusy, error: storyEditError,
+    start: startStoryEdit, cancel: cancelStoryEdit, submit: submitStoryEdit,
+} = useStoryEdit<GroupPost>(
+    (post, fields) => feedStore.updatePost(props.groupId, post.id, { title: fields.title, body: fields.body }),
+    (updated) => {
+        const row = posts.value.find((p) => p.id === updated.id);
+
+        if (row) Object.assign(row, updated);
+    },
+);
 
 /** 🤲 👍 💯 ❓ — refused (403) for an admin who may not read this class's feed. */
 const reactTo = async (post: GroupPost, key: string, on: boolean) => {

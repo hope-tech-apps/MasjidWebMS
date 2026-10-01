@@ -155,6 +155,9 @@
                             <h2 v-if="post.title" class="h6 mb-1" dir="auto">{{ txPost(post, 'title') }}</h2>
                             <p class="text-muted small mb-2">
                                 {{ post.author?.name || t('the_school') }} · {{ when(post.published_at ?? post.created_at) }}
+                                <!-- The story's words changed after it went out; the time is the tooltip. -->
+                                <span v-if="post.edited_at" class="fst-italic" data-test="story-edited"
+                                      :title="`${t('story_edited')} · ${whenAt(post.edited_at)}`">· {{ t('story_edited') }}</span>
                             </p>
                             <p class="mb-2" style="white-space: pre-wrap;" dir="auto">{{ txPost(post, 'body') }}</p>
 
@@ -1051,6 +1054,7 @@ import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, watchStoriesSeen } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
+import { postTranslationKey } from '@/core/helpers/storyEdit';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -1352,6 +1356,12 @@ const ayah = (ref: any) => {
 const when = (iso: string | null) => {
     if (!iso) return '';
     return new Date(iso).toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+/** A moment, in the reader's language: the "Edited" marker's tooltip. */
+const whenAt = (iso: string | null) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString(locale.value, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
 /**
@@ -1914,7 +1924,9 @@ const subjectFigures = (b: any, showWeighted: boolean): string => {
  */
 const KEY = {
     groupDescription: () => `group:${groupId.value}:description`,
-    post: (post: any, field: 'title' | 'body') => `post:${post.id}:${field}`,
+    // `edited_at` is in the key: a story re-fetched after an edit is a NEW key and is
+    // translated again, instead of keeping the old translation over the new words.
+    post: (post: any, field: 'title' | 'body') => postTranslationKey(post, field),
     threadSubject: (thread: any) => `thread:${thread.id}:subject`,
     messageBody: (message: any) => `message:${message.id}:body`,
     handout: (handout: any, field: 'title' | 'description') => `resource:${handout.id}:${field}`,

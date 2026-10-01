@@ -112,6 +112,17 @@ export type GroupPost = {
     can_change_schedule?: boolean;
     /** The author and the office (`manage contacts`) may cancel a story that has not gone out; a co-teacher may not. */
     can_cancel?: boolean;
+    /**
+     * When the title, text or files of a story that was ALREADY OUT last changed; null
+     * (or absent on an older server) = never edited. Staff and families see "Edited".
+     */
+    edited_at?: string | null;
+    /**
+     * True exactly when this caller's PUT would be allowed for a story that is out (the
+     * class's teachers and the office who may read its feed). The Edit control is drawn
+     * from this and from nothing else; false for a story that is not out yet.
+     */
+    can_edit?: boolean;
 };
 
 /** Shape submitted by the compose box. Images travel as files, not in this object. */

@@ -357,6 +357,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // read. It says PARENTS and WHEN because that is what staff see: each
         // guardian by name (not the household), with the time of their first look.
         story_seen_notice: "Your school can see which parents have opened each class story, and when. Other parents cannot.",
+        story_edited: "Edited",
         choose_avatar: "Choose an avatar",
         handover_starting: "Starting…",
         handover_let: "Let {x} choose",
@@ -679,6 +680,8 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts
         // are switched on (the language's `reviewed` flag does not cover it).
         story_seen_notice: "تستطيع المدرسة أن ترى أولياء الأمور الذين فتحوا كل خبر من يوميات الصف، ومتى فتحوه، ولا يستطيع أولياء الأمور الآخرون رؤية ذلك.",
+        // MACHINE-DRAFTED 2026-10-01: needs a human review with the rest.
+        story_edited: "معدَّل",
         choose_avatar: "اختر صورة رمزية",
         handover_starting: "جارٍ البدء…",
         handover_let: "دع {x} يختار",

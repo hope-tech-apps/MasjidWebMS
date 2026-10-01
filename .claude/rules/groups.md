@@ -770,6 +770,30 @@ OFF BY DEFAULT behind `groups.story_reads.enabled` (`GROUP_STORY_READS_ENABLED`)
   and their guardian edge already keeps the contact). Neither table holds free text, so the
   staging scrub needed no new entry (the coverage test passes unchanged).
 
+**Editing a story after it is sent — "Edited", and nothing re-sent** (2026-10-01). Proven by
+`EditSentClassStoryTest`.
+
+- **Who** is unchanged: the class's teachers and the office (`manage contacts`) edit a story that is out; a
+  scheduled one is the author's alone (below). **A story that is out is edited under the FEED READ gate**
+  (`authorizeDisclosure(DISCLOSURE_FEED)` in `update()`, before anything is written), because the response hands the
+  story back: an office administrator off the roster is 403 on `GET /posts` and is therefore 403 on this PUT, and the
+  response is media-gated by `mayReceive(DISCLOSURE_MEDIA)`, not allowed by default. A story that is not out keeps the
+  author-only rule with no roster standing. `destroy()` is not read-gated (it returns an id only).
+- **`group_posts.edited_at`** is the one marker. It is stamped only by a REAL change (title, body, or a file added) to a
+  story that is out, decided on the row under its lock; never by a scheduled story's edits, a move or "Send now", a
+  no-op save or a `retained_until`-only change. `updated_at` is not usable (the sweep and retention bump it). It is not
+  an audit trail: it does not say who or what. Staff payloads carry `edited_at` and `can_edit`; the family payload
+  carries `edited_at` only.
+- **`can_edit`** is true exactly when this caller's PUT would be allowed for a story that is out (realm write gate,
+  tenant check, feed read gate); the SPA draws Edit from it alone. False for a story not yet out; absent in
+  `metadataOnly()`.
+- **No re-notification.** An edit dispatches no email and no push, and leaves read receipts (`seen` means opened at some
+  time) and reactions as they are.
+- **Translations** need no server step: the cache key is a hash of the text. The portal's in-page map is keyed by id, so
+  its key includes `edited_at` (`postTranslationKey`).
+- **Deploy window:** with the column missing, reads are null-safe and an edit that must stamp it is a 503 before any
+  write, so the teacher's text survives. Attachments are not edited in the SPA form.
+
 ## Scheduled class stories and new conversations — "Send later" (T-002.4, 2026-09-29)
 
 A teacher or the office writes a class story, or opens a NEW conversation, to go out later. Proven
@@ -825,7 +849,8 @@ column); the model stamps the rest, so an ordinary post is out the moment it is 
 - **Edit / Send now / Cancel** are the existing PUT and DELETE. `send_at`/`send_now` on a story that has
   gone out is a 422; ONLY THE AUTHOR edits, moves or sends a scheduled story now (403 for anyone else,
   SuperAdmin included), the author and the office (`manage contacts`) cancel it, and a co-teacher only sees it
-  (`authorizeScheduledWrite`; an already-published story is as editable as it always was).
+  (`authorizeScheduledWrite`; an already-published story is edited by the class's teachers and the office, under the
+  feed read gate and with an "Edited" marker: see "Editing a story after it is sent" above).
   `retained_until` counts from the day it goes OUT; a window the system stamped follows a new time.
 - The family payload gains `published_at` (the date it shows); the staff payload gains
   `published_at_local`, `status`, `publish_failure`, `can_change_schedule` and `meta.scheduling`.

@@ -39,6 +39,9 @@ class GroupPost extends Model
         'author_user_id',
         'title',
         'body',
+        // When the words or files of a story that was already out last changed (null = never).
+        // Stamped by GroupPostsController::update(); see the add_edited_at migration.
+        'edited_at',
         'retained_until',
         // Scheduling (T-002.4). See the add_scheduling_to_group_posts migration.
         'published_at',
@@ -51,6 +54,7 @@ class GroupPost extends Model
     {
         return [
             'retained_until' => 'date',
+            'edited_at' => 'datetime',
             'published_at' => 'datetime',
             'announced_at' => 'datetime',
             'publish_failed_at' => 'datetime',

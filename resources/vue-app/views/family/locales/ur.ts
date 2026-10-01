@@ -285,6 +285,8 @@ export const UR: Record<string, string> = {
     reaction_failed: "یہ ردِعمل محفوظ نہیں ہو سکا۔",
     // MACHINE-DRAFTED 2026-09-29 — needs a human review before read receipts are switched on.
     story_seen_notice: "اسکول دیکھ سکتا ہے کہ کن والدین نے کلاس کی ہر خبر کھولی ہے، اور کب کھولی۔ دوسرے والدین یہ نہیں دیکھ سکتے۔",
+    // MACHINE-DRAFTED 2026-10-01: needs a human review with the rest.
+    story_edited: "ترمیم شدہ",
     // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
     marks_section_simple: "بہترین / اچھا / مزید محنت درکار",
     simple_mark_3: "بہترین",
