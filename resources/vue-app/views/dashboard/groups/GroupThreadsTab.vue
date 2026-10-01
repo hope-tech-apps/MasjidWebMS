@@ -49,7 +49,7 @@
                             <div class="me-2">
                                 <div class="fw-semibold">
                                     {{ thread.subject }}
-                                    <span v-if="thread.unread" class="badge bg-primary ms-1">New</span>
+                                    <span v-if="threadNewLabel(thread)" class="badge bg-primary ms-1">{{ threadNewLabel(thread) }}</span>
                                 </div>
                                 <!--
                                     The scope IS the disclosure shape, so it is
@@ -291,6 +291,7 @@ import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { GroupMessage, GroupThread, GroupThreadPayload } from '@/core/types/data/masjid-related/GroupThread';
 import { useGroupThreadsStore } from '@/stores/masjid/groupThreadsStore';
 import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
+import { threadNewLabel, unreadNumber } from '@/core/helpers/threadUnread';
 import Swal from 'sweetalert2';
 
 /**
@@ -304,6 +305,14 @@ import Swal from 'sweetalert2';
 const props = defineProps<{
     groupId: number;
     memberships: GroupMembership[];
+}>();
+
+// The class's unread number lives on the screen that owns the tab bar.
+const emit = defineEmits<{
+    /** The whole class's unread messages, as the server counted them with the list. */
+    (e: 'unread-total', total: number): void;
+    /** A conversation was opened, which cleared this many unread messages. */
+    (e: 'opened', cleared: number): void;
 }>();
 
 // Stores
@@ -407,6 +416,9 @@ const loadThreads = async (page: number) => {
     forbidden.value = false;
     try {
         await threadsStore.fetchThreads(props.groupId, page);
+        if (threadsStore.threadsMeta?.unread_total !== undefined) {
+            emit('unread-total', unreadNumber(threadsStore.threadsMeta.unread_total));
+        }
         await loadScheduled();
     } catch (error) {
         if (isForbidden(error)) {
@@ -467,7 +479,12 @@ const pageChange = async (data: PageChangeData) => {
 
 const selectThread = async (thread: GroupThread) => {
     try {
+        const cleared = unreadNumber(thread.unread_count);
         await threadsStore.fetchThread(props.groupId, thread.id);
+        // Opening it IS reading it: the row stops saying "new" and the tab's number drops.
+        thread.unread_count = 0;
+        thread.unread = false;
+        if (cleared > 0) emit('opened', cleared);
         messageBody.value = '';
         // Switching conversations clears the staged attachments with the draft
         // text, for the same reason: a photo chosen for one family's thread must

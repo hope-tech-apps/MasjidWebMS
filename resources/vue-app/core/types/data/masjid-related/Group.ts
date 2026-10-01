@@ -115,6 +115,12 @@ export type Group = {
      * on the index endpoint, absent from show/store/update.
      */
     participants_count?: number;
+    /**
+     * Messages from other people this user has not seen in the class's
+     * conversations they may read (0 when they may read none). Present on
+     * show only.
+     */
+    unread_messages?: number;
 };
 
 /** Shape submitted by the create/edit form (server stamps masjid_id + timestamps). */

@@ -53,6 +53,10 @@
                             >
                                 <i :class="`bi ${tab.icon} me-1`"></i>
                                 {{ tab.label }}
+                                <template v-if="tab.key === 'threads' && unreadNumber(group.unread_messages) > 0">
+                                    <span class="badge rounded-pill bg-danger ms-1" aria-hidden="true">{{ unreadPill(group.unread_messages) }}</span>
+                                    <span class="visually-hidden">{{ unreadSpoken(group.unread_messages) }}</span>
+                                </template>
                             </button>
                         </li>
                     </ul>
@@ -121,6 +125,8 @@
                         v-else-if="activeTab === 'threads'"
                         :groupId="groupId"
                         :memberships="groupsStore.memberships"
+                        @unread-total="setUnread"
+                        @opened="onThreadOpened"
                     />
 
                     <!-- Read only, and the only tab here whose rows are files
@@ -157,6 +163,7 @@ import { Group } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { afterOpening, unreadNumber, unreadPill, unreadSpoken } from '@/core/helpers/threadUnread';
 
 /**
  * One group, with everything that hangs off it: the roster, the class story, the
@@ -255,6 +262,16 @@ const bootstrap = async () => {
     } finally {
         bootstrapping.value = false;
     }
+};
+
+// The Messages tab's number is the server's (`unread_messages` on the group, and
+// `meta.unread_total` each time the tab lists conversations). Opening one takes its
+// count off at once; the next list corrects the guess.
+const setUnread = (total: number) => {
+    if (group.value) group.value.unread_messages = unreadNumber(total);
+};
+const onThreadOpened = (count: number) => {
+    if (group.value) group.value.unread_messages = afterOpening(group.value.unread_messages, count);
 };
 
 const loadRoster = async () => {

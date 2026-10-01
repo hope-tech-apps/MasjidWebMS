@@ -31,6 +31,10 @@
                         <div class="flex-grow-1">
                             <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                                 <h2 class="h6 mb-0">{{ group.name }}</h2>
+                                <span v-if="unreadNumber(group.unread_messages) > 0"
+                                      class="badge rounded-pill bg-danger" aria-hidden="true">{{ newChip(group.unread_messages) }}</span>
+                                <span v-if="unreadNumber(group.unread_messages) > 0"
+                                      class="visually-hidden">{{ unreadSpoken(group.unread_messages) }}</span>
                                 <span v-if="group.kind" class="badge bg-light text-dark border text-capitalize">
                                     {{ group.kind }}
                                 </span>
@@ -65,6 +69,7 @@
 <script setup lang="ts">
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import { newChip, unreadNumber, unreadSpoken } from '@/core/helpers/threadUnread';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, onMounted, ref } from 'vue';
 
@@ -79,6 +84,8 @@ interface TeacherClass {
     description?: string;
     is_active?: boolean;
     arabic_stage?: string | null;
+    /** Messages from other people this teacher has not seen in the class. */
+    unread_messages?: number;
     students?: TeacherStudent[];
 }
 

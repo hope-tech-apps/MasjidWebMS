@@ -5,6 +5,7 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
+import { MESSAGE_PAGE_SIZE, openWholeThread } from "@/core/helpers/threadUnread";
 import {
     GroupMessage,
     GroupMessageReaction,
@@ -93,13 +94,24 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
     async function fetchThread(groupId: number | string, threadId: number | string): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
-        const res: AxiosResponse = await ApiService.get(
-            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/threads/${threadId}` as BackendApiRoute
-        );
-        if (res.data?.status === 'success' && res.data?.data) {
-            openThread.value = res.data.data.thread;
-            messagesPaginated.value = res.data.data.messages;
-            threadsMeta.value = res.data.meta;
+        // Every page of it, oldest first. The server moves the bookmark to the newest
+        // message it SERVED, so a conversation longer than one page is only read, and
+        // only stops counting as unread, once its last page has been fetched.
+        let lastPage: PaginatedData<GroupMessage> | undefined;
+        let lastMeta: GroupThreadsMeta | undefined;
+        const opened = await openWholeThread<GroupMessage, GroupThread>(async (page) => {
+            const res: AxiosResponse = await ApiService.get(
+                `/api/admin/masjids/${masjidStore.masjid!.id}/groups/${groupId}/threads/${threadId}?per_page=${MESSAGE_PAGE_SIZE}&page=${page}` as BackendApiRoute
+            );
+            if (res.data?.status !== 'success' || !res.data?.data) return null;
+            lastPage = res.data.data.messages;
+            lastMeta = res.data.meta;
+            return res.data.data;
+        });
+        if (opened.thread && lastPage) {
+            openThread.value = opened.thread;
+            messagesPaginated.value = { ...lastPage, data: opened.messages } as PaginatedData<GroupMessage>;
+            threadsMeta.value = lastMeta;
         }
     }
 

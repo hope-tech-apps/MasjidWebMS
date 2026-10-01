@@ -37,6 +37,8 @@ export type GroupThread = {
     last_read_at: string | null;
     /** A bookmark comparison, never an authorization record. */
     unread: boolean;
+    /** How many messages from other people this reader has not seen; `unread` is this above zero. */
+    unread_count: number;
     created_at: string | null;
     updated_at: string | null;
 };
@@ -135,6 +137,8 @@ export type GroupThreadsMeta = {
     video_retention_days?: number;
     /** "Send later": the SCHOOL's zone the field is read in, and how far ahead it may go. */
     scheduling?: { timezone: string; max_days_ahead: number };
+    /** On the thread LIST only: the whole class's unread messages, exact even when the list is paginated. */
+    unread_total?: number;
 };
 
 /**

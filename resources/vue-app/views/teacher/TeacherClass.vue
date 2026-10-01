@@ -16,6 +16,11 @@
                 <h1 class="h4 mb-0">{{ group.name }}</h1>
                 <span v-if="group.kind" class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>
                 <span v-if="group.is_active === false" class="badge bg-secondary-subtle text-secondary">Inactive</span>
+                <!-- Messages is the seventh tab, which a phone scrolls out of sight, so the
+                     count is ALSO here, where the class name is, and it goes to the tab. -->
+                <button v-if="unreadMessages > 0" type="button" class="badge rounded-pill bg-danger border-0 tc-new-chip"
+                        :aria-label="`${unreadSpoken(unreadMessages)}. Open Messages.`"
+                        @click="activeTab = 'messages'">{{ newChip(unreadMessages) }}</button>
             </div>
             <p v-if="group.description" class="text-muted small mb-3">{{ group.description }}</p>
 
@@ -36,6 +41,10 @@
                         <button type="button" class="nav-link text-nowrap"
                                 :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
                             <i :class="`bi ${t.icon} me-1`"></i>{{ t.label }}
+                            <template v-if="t.key === 'messages' && unreadMessages > 0">
+                                <span class="badge rounded-pill bg-danger ms-1" aria-hidden="true">{{ unreadPill(unreadMessages) }}</span>
+                                <span class="visually-hidden">{{ unreadSpoken(unreadMessages) }}</span>
+                            </template>
                         </button>
                     </li>
                 </ul>
@@ -1108,7 +1117,7 @@
                                 <div>
                                     <div class="fw-semibold small">
                                         {{ thread.subject || 'Message' }}
-                                        <span v-if="thread.unread" class="badge bg-success ms-1">New</span>
+                                        <span v-if="threadNewLabel(thread)" class="badge bg-success ms-1">{{ threadNewLabel(thread) }}</span>
                                     </div>
                                     <div class="text-muted small">
                                         <span v-if="thread.about">About {{ thread.about.name || name(thread.about.contact ?? thread.about) }} · </span>
@@ -2499,6 +2508,10 @@ import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
     planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
+import {
+    FOCUS_REFRESH_GAP_MS, MESSAGE_PAGE_SIZE, afterOpening, focusRefreshDue, newChip, openWholeThread,
+    threadNewLabel, unreadNumber, unreadPill, unreadSpoken,
+} from '@/core/helpers/threadUnread';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -4261,6 +4274,37 @@ const loadGroup = async () => {
 
 onMounted(loadGroup);
 
+// ---------- the unread-messages number ----------
+// Messages from other people this teacher has not seen, counted by the server
+// (`unread_messages` on the class, `meta.unread_total` on the thread list).
+const unreadMessages = computed(() => unreadNumber(group.value?.unread_messages));
+
+let lastUnreadRefresh: number | null = null;
+
+// Coming back to this window: a parent may have written while it was behind another
+// one. Only the NUMBER is refreshed (never the whole class, which would blank the
+// screen and lose a half-written reply), and not more than once in a few seconds.
+const refreshUnread = async () => {
+    if (document.visibilityState === 'hidden' || !group.value) return;
+    if (!focusRefreshDue(lastUnreadRefresh, Date.now(), FOCUS_REFRESH_GAP_MS)) return;
+    lastUnreadRefresh = Date.now();
+    try {
+        const res = await TeacherApiService.get(base.value);
+        if (group.value && res.data?.data) group.value.unread_messages = res.data.data.unread_messages ?? 0;
+    } catch {
+        // The number is a convenience: a failed refresh leaves the last one standing.
+    }
+};
+
+onMounted(() => {
+    window.addEventListener('focus', refreshUnread);
+    document.addEventListener('visibilitychange', refreshUnread);
+});
+onBeforeUnmount(() => {
+    window.removeEventListener('focus', refreshUnread);
+    document.removeEventListener('visibilitychange', refreshUnread);
+});
+
 // ============================================================ LETTERS
 const selected = ref<any>(null);
 const tracker = ref<any>(null);
@@ -5382,6 +5426,11 @@ const loadThreads = async () => {
     try {
         const res = await TeacherApiService.get(`${base.value}/threads`);
         threads.value = rowsOf(res.data?.data);
+        // The class's whole number, exact even when the list is paginated: trust it
+        // over any local subtraction.
+        if (group.value && res.data?.meta?.unread_total !== undefined) {
+            group.value.unread_messages = unreadNumber(res.data.meta.unread_total);
+        }
         messageScheduling.value = res.data?.meta?.scheduling ?? null;
         messageMedia.value = pickerLimits(res.data?.meta, 'max_images_per_message', 'max_videos_per_message');
         await loadScheduledMessages();
@@ -5432,12 +5481,25 @@ const saveMessage = (row: ScheduledRow, fields: { heading: string; body: string;
 
 const openThread = async (thread: any) => {
     try {
-        const res = await TeacherApiService.get(`${base.value}/threads/${thread.id}`);
-        openedThread.value = res.data?.data?.thread ?? thread;
+        // Every page, oldest first: the server moves the bookmark to the newest message
+        // it served, so a conversation longer than one page is only read (and only
+        // cleared) once its last page has been fetched.
+        const opened = await openWholeThread<any, any>(async (page) => {
+            const res = await TeacherApiService.get(
+                `${base.value}/threads/${thread.id}?per_page=${MESSAGE_PAGE_SIZE}&page=${page}`,
+            );
+            return res.data?.data;
+        });
+        openedThread.value = opened.thread ?? thread;
         replyBody.value = '';
         replyPhotos.value = [];
         replyError.value = '';
-        openedMessages.value = rowsOf(res.data?.data?.messages);
+        openedMessages.value = opened.messages;
+        // Opening it IS reading it: take its count off the class number now, and let
+        // the next list correct the guess.
+        if (group.value) group.value.unread_messages = afterOpening(group.value.unread_messages, thread.unread_count);
+        thread.unread_count = 0;
+        thread.unread = false;
     } catch {
         replyError.value = 'That conversation could not be opened.';
     }
@@ -5929,6 +5991,9 @@ watch(activeTab, (tab) => {
 <style scoped>
 .nav-tabs .nav-link { color: #6c757d; }
 .nav-tabs .nav-link.active { color: #198754; font-weight: 600; }
+/* The "N new" chip beside the class name: a real button, so it needs a pointer and a focus ring. */
+.tc-new-chip { cursor: pointer; font-size: .75rem; padding: .4em .7em; }
+.tc-new-chip:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
 
 .letter-tile {
     width: 66px; height: 66px; border: none; border-radius: 12px;
