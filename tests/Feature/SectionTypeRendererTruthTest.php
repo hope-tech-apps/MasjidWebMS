@@ -130,6 +130,10 @@ class SectionTypeRendererTruthTest extends TestCase
     #[Test]
     public function the_admin_section_types_payload_carries_the_flag_and_the_sentence(): void
     {
+        // The shop is offered only with its grant (ShopSectionTypeTest), so this organisation
+        // has it: the loop below covers every type.
+        $this->masjid->forceFill(['capability_overrides' => ['web_pages' => true, 'shop' => true]])->save();
+
         Sanctum::actingAs($this->admin);
 
         $types = collect(
