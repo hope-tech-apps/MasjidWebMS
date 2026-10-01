@@ -78,6 +78,7 @@ use App\Http\Controllers\AdminDashboard\TeamController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\ShopProductImagesController;
 use App\Http\Controllers\AdminDashboard\ShopProductsController;
+use App\Http\Controllers\AdminDashboard\ShopSalesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
@@ -442,6 +443,17 @@ Route::prefix('admin')->group(function () {
                     Route::post('/', 'store')->middleware('permission:manage donations')->whereNumber('product_id');
                     Route::put('/order', 'reorder')->middleware('permission:manage donations')->whereNumber('product_id');
                     Route::delete('/{media_id}', 'destroy')->middleware('permission:manage donations')->whereNumber(['product_id', 'media_id']);
+                });
+
+                // The pickup list: who bought what, and has it been handed over. The CSV is the same
+                // list with the same filters. It is registered ahead of the `sales` group so its
+                // literal path can never be read as a sale. `collect` is stamped by the first press
+                // only and refused on a refunded or disputed order; the DELETE is its undo.
+                Route::get('sales.csv', [ShopSalesController::class, 'export'])->middleware('permission:view donations');
+                Route::prefix('sales')->controller(ShopSalesController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::post('/{sale_id}/collect', 'collect')->middleware('permission:manage donations')->whereNumber('sale_id');
+                    Route::delete('/{sale_id}/collect', 'uncollect')->middleware('permission:manage donations')->whereNumber('sale_id');
                 });
             });
 
