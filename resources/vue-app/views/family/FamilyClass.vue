@@ -287,7 +287,7 @@
                         <div v-for="m in openedMessages" :key="m.id"
                              :class="m.is_mine ? 'align-self-end align-end' : ''" style="max-width: 85%;">
                             <div class="text-muted small">
-                                {{ m.is_mine ? t('msg_you') : (m.author?.name || t('the_school')) }} · {{ when(m.created_at) }}
+                                {{ m.is_mine ? t('msg_you') : (m.author?.name || t('the_school')) }} · {{ when(m.created_at) }}<template v-if="m.edited_at"> · <span :title="when(m.edited_at)">{{ t('msg_edited') }}</span></template>
                             </div>
                             <div v-if="m.body" class="rounded px-3 py-2 d-inline-block align-start"
                                  :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
@@ -1928,7 +1928,10 @@ const KEY = {
     // translated again, instead of keeping the old translation over the new words.
     post: (post: any, field: 'title' | 'body') => postTranslationKey(post, field),
     threadSubject: (thread: any) => `thread:${thread.id}:subject`,
-    messageBody: (message: any) => `message:${message.id}:body`,
+    // Versioned by `edited_at`: a staff author may change the words of a sent message
+    // (W7), and a key on the id alone would keep showing the translation of the OLD text
+    // to a parent for as long as the page lives.
+    messageBody: (message: any) => `message:${message.id}:${message.edited_at ?? 0}:body`,
     handout: (handout: any, field: 'title' | 'description') => `resource:${handout.id}:${field}`,
     awardSkill: (award: any) => `award:${award.id}:skill`,
     awardNote: (award: any) => `award:${award.id}:note`,

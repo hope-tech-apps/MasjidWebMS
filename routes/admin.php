@@ -1424,6 +1424,13 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::get('/{thread_id}', 'show')->middleware('permission:view contacts');
                         Route::post('/{thread_id}/messages', 'storeMessage')->middleware('permission:manage contacts');
+                        // Change the WORDS of a message you sent (W7, 2026-10-01).
+                        // Author only, in an open conversation you can read; the
+                        // controller decides all three. The GET is the office's
+                        // audit of what it said before: admin realm only, behind
+                        // the same thread read gate.
+                        Route::put('/{thread_id}/messages/{message_id}', 'updateMessage')->middleware('permission:manage contacts');
+                        Route::get('/{thread_id}/messages/{message_id}/edits', 'edits')->middleware('permission:manage contacts');
                         // 🤲 👍 💯 ❓ on a message (2026-09-21). Replying's
                         // gate exactly: `manage contacts` here, and read
                         // entitlement + "not closed" in the controller.

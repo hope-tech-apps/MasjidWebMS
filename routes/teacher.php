@@ -54,7 +54,8 @@ use Illuminate\Support\Facades\Route;
 | The ONLY writes this realm exposes: class-story create/update/delete (which
 | also schedules and reschedules: `send_at`), scheduled NEW conversations
 | (create/edit/cancel; T-002.4), thread
-| REPLY (storeMessage only — never store/close/reopen/destroy), arabic mark +
+| REPLY (storeMessage, and updateMessage on a message the teacher wrote — never
+| store/close/reopen/destroy), arabic mark +
 | stage, behaviour award store/destroy, hifz store/destroy, and a student avatar
 | override. Roster mutation, contacts, donations, funds, properties and the
 | thread lifecycle are all absent by construction.
@@ -352,6 +353,11 @@ Route::prefix('teacher')
                         // story. The download is a GET, so the counted write list
                         // does not change.
                         Route::post('/threads/{thread_id}/messages', [GroupThreadsController::class, 'storeMessage']);
+                        // Change the WORDS of a message YOU sent (W7, 2026-10-01): the
+                        // same controller method as the admin realm, `teacher.leads`
+                        // then the read gate, the author gate and "not closed". One new
+                        // write verb. The office's `edits` history has no teacher twin.
+                        Route::put('/threads/{thread_id}/messages/{message_id}', [GroupThreadsController::class, 'updateMessage']);
                         // 🤲 👍 💯 ❓ (2026-09-21) — the same controller and the
                         // same gate as the reply above: `teacher.leads`, then
                         // mayReceiveThread() and "not closed". Add and remove are

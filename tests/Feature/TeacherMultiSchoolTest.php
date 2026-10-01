@@ -782,6 +782,7 @@ class TeacherMultiSchoolTest extends TestCase
                 'refuse' => $bodyRefusal,
             ],
             'POST /groups/{group_id}/threads/{thread_id}/messages' => ['body' => fn () => ['body' => 'Sweep reply.']],
+            'PUT /groups/{group_id}/threads/{thread_id}/messages/{message_id}' => ['body' => fn () => ['body' => 'Sweep edit.']],
             'PUT /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
             'DELETE /groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}' => [],
             'POST /groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback' => [],

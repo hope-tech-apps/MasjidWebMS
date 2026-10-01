@@ -105,9 +105,17 @@
                         </div>
                         <div v-for="message in messages" :key="message.id" class="mb-3">
                             <div class="small text-muted">
-                                {{ message.author?.name || 'Unknown' }} &middot; {{ formatDateTime(message.created_at) }}
+                                {{ message.author?.name || 'Unknown' }} &middot; {{ formatDateTime(message.created_at) }}<template v-if="message.edited_at"> &middot; <span :title="formatDateTime(message.edited_at)">Edited</span></template>
                             </div>
-                            <div v-if="message.body" class="message-body">{{ message.body }}</div>
+                            <EditableMessageBody :body="message.body" :can-edit="!!message.can_edit"
+                                                 :has-media="messageHasMedia(message)"
+                                                 :max-length="threadsStore.threadsMeta?.max_message_length || 0"
+                                                 :save="(body: string) => editMessage(message, body)">
+                                <div v-if="message.body" class="message-body">{{ message.body }}</div>
+                            </EditableMessageBody>
+                            <!-- The office's audit of an edited message: what it said before. -->
+                            <MessageEditHistory v-if="message.edited_at" :edited-at="message.edited_at"
+                                                :load="() => threadsStore.fetchMessageEdits(groupId, openThread?.id ?? 0, message.id)" />
                             <div v-if="message.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
                                 <GroupMessagePhoto v-for="a in message.attachments" :key="a.id"
                                                    :src="a.download_path" :name="a.file_name"
@@ -281,6 +289,10 @@ import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
+// Editing the words of a message you sent, and the office's earlier-versions disclosure (W7).
+import EditableMessageBody from '@/components/common/EditableMessageBody.vue';
+import MessageEditHistory from '@/components/common/MessageEditHistory.vue';
+import { applyEdited, messageHasMedia } from '@/core/helpers/messageEdit';
 // "Send later" and the Scheduled list (T-002.4), shared with the teacher screen.
 import SendLaterField from '@/components/common/SendLaterField.vue';
 import ScheduledItems from '@/components/common/ScheduledItems.vue';
@@ -552,6 +564,20 @@ const submitMessage = async () => {
     } finally {
         sending.value = false;
     }
+};
+
+/**
+ * Save the author's edit. The store throws on a refusal (403 not yours / cannot
+ * read, 422 closed or empty, 503 mid-deploy) and the editor shows the server's
+ * sentence in place with the draft kept. On success the bubble takes the server's
+ * answer in place: no reload, because an edit does not move the conversation in
+ * the list.
+ */
+const editMessage = async (message: GroupMessage, body: string) => {
+    const thread = openThread.value;
+    if (!thread) throw new Error('No conversation is open.');
+    const updated = await threadsStore.editMessage(props.groupId, thread.id, message.id, body);
+    applyEdited(message, updated);
 };
 
 /** 🤲 👍 💯 ❓ — refused (403) for an admin who may not read the thread, 422 once it is closed. */

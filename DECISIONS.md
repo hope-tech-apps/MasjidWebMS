@@ -7148,3 +7148,44 @@ visible: staff and families see "Edited", with the time as a tooltip. Nobody is 
 Alternatives: author-only editing of a sent story (a deliberate narrowing, see above); an `edited_by_user_id` shown to
 staff (answers "who changed my words", more than was asked); re-notifying families on an edit (rejected: a typo fix
 should not email a class); deriving "edited" from `updated_at` (wrong, see above).
+
+## 2026-10-01 — Editing a message after it is sent (W7-2b, teacher feedback; branch feat/school-w7-edit-messages)
+Decision: the AUTHOR of a conversation message, a staff account, may change its words after sending, in the office
+and on the teacher screen. Nobody else may, and families do not edit in this slice. Every real edit is audited.
+- **Who.** `PUT .../groups/{group_id}/threads/{thread_id}/messages/{message_id}` in BOTH staff realms (admin under
+  `manage contacts`, teacher under `teacher.leads`), one controller method (`GroupThreadsController::updateMessage`).
+  The thread must still be readable by the caller (`authorizeThread`, so a teacher taken off the class or an office
+  admin who may not read a participant thread is refused) and `author_user_id` must equal the signed-in user. That one
+  comparison refuses a parent's message, a colleague's, and one whose author account was deleted (the column is
+  nulled). The office and a SuperAdmin get no exemption: an edit puts words in someone's mouth, so only the speaker may.
+- **What.** The body only, at the ceiling sending has (`groups.messaging.max_message_length`). Photos, videos, subject,
+  scope and authorship are refused by name (422), not ignored, so no client believes it changed them. An empty body
+  is allowed only for a message that carries an attachment. An unchanged body (compared trimmed) is a 200 that writes
+  and stamps nothing.
+- **When.** No time window. A closed conversation refuses (422, the sentence reply and reactions use). A scheduled
+  conversation that has not gone out is not a `group_messages` row, so the route is a 404 for it; its own rules stand.
+- **Trace.** `GroupMessage` has always promised there is no per-message eraser that quietly rewrites what a parent was
+  told. So a real edit writes the OLD text to a new append-only table `group_message_edits` (`GroupMessageEdit`,
+  tenant-scoped, `previous_body`, `editor_user_id`, `created_at`) and stamps `group_messages.edited_at`, in one
+  transaction under a row lock on the message. The new text is not stored twice: the earlier texts plus the current
+  body are every version. The office reads them at `GET .../messages/{message_id}/edits` (admin realm only, `manage
+  contacts` plus the same thread read gate). No teacher or family route, and no message payload carries an earlier text.
+- **Quiet.** An edit sends no email or push (the nudge for the original went out already, and a nudge is content-free),
+  does not touch the thread's `updated_at` (`GroupMessage::$touches` would float an old conversation to the top, so
+  the save runs inside `withoutTouching`), moves nobody's read marker, and leaves reactions and "seen by" as they
+  were: they now refer to the earlier wording, and the "Edited" label tells the reader so.
+- **Payloads.** Staff and family message payloads gain `edited_at` (null when never edited); the staff payload gains
+  `can_edit` (author, conversation open). Family sees the fact only, never who edited or what it said before. The
+  family SPA's translation cache key now includes `edited_at`, so a parent who has Translate on is not shown the
+  translation of the old wording.
+- **Erasure.** Edit rows go with their message: the DB cascade (thread purge, deleted group or organisation) and an
+  explicit query delete in `GroupMessage`'s `deleting` hook for a message deleted through the model. Deleting a staff
+  account or erasing a parent only nulls the author on the message, so those leave the history with its attribution
+  softened. `previous_body` is in `config/staging_scrub.php`.
+- **Deploy.** Both schema changes are additive and nullable (migrations `2026_10_08_110000`, `110001`), with no
+  backfill. The new PHP runs for a few seconds before `migrate`: reads of `edited_at` are null on a missing column, and
+  an edit in that window answers 503 with a plain sentence (the author's text stays in the box) instead of a 500.
+Alternatives: let the office edit anyone's message (rejected: rewrites a colleague's words); a time window (the label
+and the audit answer the same worry without taking away fixing an old typo); clear reactions on an edit (a one-line
+follow-up if wanted); let families edit their own replies (needs a contact-side audit column, an erasure entry and a
+decision on whether the teacher is told).

@@ -170,6 +170,7 @@ export const ES: Record<string, string> = {
     msgs_few: "{x} mensajes",
     msgs_many: "{x} mensajes",
     msg_you: "Usted",
+    msg_edited: "Editado",
     thread_closed: "La escuela cerró esta conversación.",
     reply_ph: "Escriba una respuesta…",
     reply_failed: "No se pudo enviar su respuesta. Inténtelo de nuevo.",
