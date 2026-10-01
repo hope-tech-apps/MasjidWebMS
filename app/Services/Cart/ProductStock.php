@@ -5,10 +5,10 @@ namespace App\Services\Cart;
 use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Order;
-use App\Models\OrderItem;
 use App\Models\ProductVariant;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * What can still be bought of a product size, and the locks that keep that true (shop slice B1;
@@ -84,8 +84,10 @@ final class ProductStock
 
         // Both tables carry the organisation, and both are asked: an id from the browser, or a
         // line of another organisation, can never be counted here. The join reads only; see the
-        // class docblock for why it is not a locking read.
-        $query = OrderItem::withoutMasjidScope()
+        // class docblock for why it is not a locking read. The base query builder, not the models:
+        // no global tenant scope can be woven into the nested group below by whatever tenant the
+        // caller happens to have bound, and the organisation is the one argument that names it.
+        $query = DB::table('order_items')
             ->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->where('order_items.masjid_id', $masjidId)
             ->where('orders.masjid_id', $masjidId)
@@ -101,7 +103,7 @@ final class ProductStock
         if ($exceptCartId !== null) {
             // An order whose basket was pruned has a NULL cart_id, and `cart_id != x` is not true for
             // NULL: it is somebody's order and must still count.
-            $query->where(fn ($q) => $q->whereNull('orders.cart_id')->orWhere('orders.cart_id', '!=', $exceptCartId));
+            $query->where(static fn ($q) => $q->whereNull('orders.cart_id')->orWhere('orders.cart_id', '!=', $exceptCartId));
         }
 
         return $query
