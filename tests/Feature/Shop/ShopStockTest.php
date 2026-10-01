@@ -400,6 +400,17 @@ class ShopStockTest extends TestCase
 
     // ----------------------------------------------------------- the statement order
 
+    /**
+     * The statements without any savepoint bookkeeping a nested transaction may log.
+     *
+     * @param  list<string>  $statements
+     * @return list<string>
+     */
+    private function withoutSavepoints(array $statements): array
+    {
+        return array_values(array_filter($statements, static fn (string $sql): bool => stripos($sql, 'savepoint') === false));
+    }
+
     /** Whether a statement is a plain `select ... from "$table"`. */
     private function selectsFrom(string $sql, string $table): bool
     {
@@ -433,7 +444,7 @@ class ShopStockTest extends TestCase
 
         $begin = array_search('BEGIN', $log, true);
         $this->assertNotFalse($begin, 'premise: the checkout opened its own transaction');
-        $inside = array_values(array_slice($log, $begin + 1));
+        $inside = $this->withoutSavepoints(array_slice($log, $begin + 1));
 
         $firstSizes = null;
 
@@ -516,7 +527,7 @@ class ShopStockTest extends TestCase
 
         $begin = array_search('BEGIN', $log, true);
         $this->assertNotFalse($begin);
-        $inside = array_values(array_slice($log, $begin + 1));
+        $inside = $this->withoutSavepoints(array_slice($log, $begin + 1));
 
         $firstOrder = null;
         $firstSizes = null;
