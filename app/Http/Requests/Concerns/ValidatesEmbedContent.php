@@ -90,6 +90,17 @@ trait ValidatesEmbedContent
             return SectionType::tryFrom($input);
         }
 
+        return $this->storedSectionType();
+    }
+
+    /**
+     * The type the section this request targets already has, or null when the request
+     * targets no section (a store) or one that is not this tenant's. The lookup is the
+     * tenant-scoped one described on resolvedSectionType(); ValidatesShopSection reads
+     * it directly, to tell a section that is already a shop from one being changed to it.
+     */
+    private function storedSectionType(): ?SectionType
+    {
         $sectionId = $this->route('section_id');
         $masjidId = app(TenantContext::class)->get() ?? $this->route('masjid_id');
 

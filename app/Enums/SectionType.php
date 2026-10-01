@@ -20,6 +20,10 @@ namespace App\Enums;
  * offering is ever wanted, add it in ONE place (PageSectionsController@sectionTypes)
  * keyed off `config/verticals.php`, and keep validation ungated so existing rows
  * never stop loading.
+ *
+ * The one exception is a type that requiresGrant(): it is offered only to an
+ * organisation that HAS that grant, and created or switched to only by one. Reading
+ * and deleting an existing row is never gated.
  */
 enum SectionType: string
 {
@@ -105,6 +109,11 @@ enum SectionType: string
     // other type draws a <video>. The upload rule that lets an MP4 in is per field
     // (App\Http\Requests\Concerns\ValidatesVideoSection): only `video_url`.
     case VIDEO = 'video';
+    // A grid of products from this organisation's online shop. It stores no product: the
+    // renderer fetches them from the public shop API, which answers the dark 404 for an
+    // organisation without the `shop` grant. So the type is offered, created and switched
+    // to only WITH that grant (requiresGrant), never gated on reading or deleting a row.
+    case SHOP = 'shop';
 
     /**
      * Get all section type values
@@ -148,6 +157,7 @@ enum SectionType: string
             self::IMPACT_STATS => 'Impact Numbers',
             self::OFFERING => 'Registration & Payment',
             self::VIDEO => 'Video',
+            self::SHOP => 'Shop',
         };
     }
 
@@ -194,6 +204,7 @@ enum SectionType: string
             // every type in withoutRenderer().
             self::OFFERING => 'A reference to one program, class, event or admission round, so its sign-ups and payment can be published on a page. Create it first under Programs.',
             self::VIDEO => 'A video file uploaded to this site, played in the page or as a silent looping banner',
+            self::SHOP => 'Products from this organisation\'s online shop',
         };
 
         return $this->hasRenderer()
@@ -315,6 +326,10 @@ enum SectionType: string
             // The file is ours, but its URL is IN the content: the renderer plays
             // what the section holds and calls no other endpoint.
             self::VIDEO => false,
+            // TRUE: the section stores no product, price or size. The renderer fetches
+            // them from the public shop API (and so shows nothing when that answers the
+            // dark 404), which is exactly what this flag means.
+            self::SHOP => true,
         };
     }
 
@@ -380,6 +395,64 @@ enum SectionType: string
             self::PROVIDERS_DIRECTORY,
             self::IMPACT_STATS => null,
             // An uploaded file; no switch governs it.
+            self::VIDEO => null,
+            // Governed by a GRANT, not a module: see requiresGrant().
+            self::SHOP => null,
+        };
+    }
+
+    /**
+     * The organisation GRANT (config/capabilities.php, kind => grant) this type is
+     * offered under, or null when every organisation is offered it.
+     *
+     * Exhaustive `match` with NO default arm, like requiresModule(): a new case must
+     * be classified here or the first call is a fatal error.
+     *
+     * A grant is the other way round from a module. A module is on until a SuperAdmin
+     * switches it off, so a type that shows one stays offered and only says so
+     * (moduleOffNote). A grant is off until a SuperAdmin gives it, so a type under one
+     * is NOT offered without it, and creating one, or changing a section to one, is a
+     * 422. Read through Masjid::hasCapability(), which FAILS CLOSED (a key the loaded
+     * config does not know is never granted), and always from the ORGANISATION in the
+     * URL, never from the viewer: a SuperAdmin building a page for an organisation
+     * without the grant is offered what that organisation's own admin would be.
+     *
+     * Only the offering and the creation are gated. A section already of this type
+     * stays readable, editable and deletable after the grant is switched off, and the
+     * public page payload still lists it (.claude/rules/section-types.md).
+     */
+    public function requiresGrant(): ?string
+    {
+        return match ($this) {
+            self::SHOP => 'shop',
+
+            self::PAGE_TITLE,
+            self::PRAYER_TIMES,
+            self::TEXT,
+            self::ABOUT_US,
+            self::IMAGE_TEXT_GRID,
+            self::GRID_CARDS,
+            self::DONATION,
+            self::CONTACT_FORM,
+            self::SERVICES_LIST,
+            self::ANNOUNCEMENTS_LIST,
+            self::GALLERY,
+            self::EVENTS,
+            self::STATS,
+            self::MISSION_VISION,
+            self::CTA,
+            self::FORM,
+            self::IMAGE,
+            self::LINK_LIST,
+            self::CAROUSEL,
+            self::EMBED,
+            self::STAFF_DIRECTORY,
+            self::PROGRAMS,
+            self::ADMISSIONS_TUITION,
+            self::SERVICES_ELIGIBILITY,
+            self::PROVIDERS_DIRECTORY,
+            self::IMPACT_STATS,
+            self::OFFERING,
             self::VIDEO => null,
         };
     }
@@ -804,6 +877,18 @@ enum SectionType: string
                 'layout' => 'player', // player | banner
                 'max_width' => 'container', // full | container | narrow (player only)
                 'background_color' => '#ffffff',
+            ],
+            // Products from the organisation's online shop. NO product, price, size or
+            // image is stored (never copy a price into section JSON: the page would
+            // advertise one number while the basket charged another). The renderer
+            // fetches the products and keeps those whose `category` equals this
+            // `category`, null or empty meaning every category, then shows the first
+            // `max_items` (1 to 24). `show_view_all` adds a link to /shop.
+            self::SHOP => [
+                'heading' => null,
+                'category' => null,
+                'max_items' => 8,
+                'show_view_all' => true,
             ],
         };
     }
