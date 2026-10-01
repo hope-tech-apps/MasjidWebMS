@@ -15,6 +15,8 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\ProductSale;
+use App\Models\ProductVariant;
 use App\Services\Crm\DonorContactService;
 use App\Services\Forms\FormResponseWriter;
 use App\Services\Lunch\LunchOrderMailer;
@@ -42,7 +44,8 @@ use Throwable;
  * payment has landed, and no ticket can be paid for twice. So this is where each line's
  * record is BORN, already paid, by the three writers that exist for exactly this
  * (FormResponseWriter, MealOrderCreator, DonationService::createPendingDonation), which
- * are called unchanged and re-check no gate. The money has been taken, so:
+ * are called unchanged and re-check no gate, and, for a shop line, by settleProduct() below
+ * (a ProductSale, and the size's `sold_count`, under its row lock). The money has been taken, so:
  *
  *   A payment that lands after a form closed, a form filled, a menu closed or a fund
  *   was deactivated is STILL recorded. Refusing would turn taken money into a
@@ -323,6 +326,11 @@ class CartSettlementService
 
         $steps = [];
 
+        // The sizes of this order's shop lines, locked in ASCENDING id order before any is settled,
+        // so two orders that share two sizes (and a checkout, which locks in the same order) can
+        // never wait for each other's second lock. The order is still cart, then order, then size.
+        $this->lockProductVariants($order, $items);
+
         foreach ($items as $item) {
             if ($item->record_id !== null) {
                 continue;
@@ -332,6 +340,7 @@ class CartSettlementService
                 'form' => $this->settleForm($order, $item, $paymentIntentId, $masjid, $quiet, $steps),
                 'meal_item' => $this->settleMeal($order, $item, $paymentIntentId, $customerDetails, $quiet, $steps),
                 'donation' => $this->settleDonation($order, $item, $paymentIntentId, $sessionId, $customerDetails, $masjid, $steps),
+                'product_variant' => $this->settleProduct($order, $item, $steps),
                 default => throw new LogicException("Order {$order->id} line {$item->id} is a '{$item->buyable_type}', which nothing can record."),
             };
         }
@@ -842,6 +851,145 @@ class CartSettlementService
 
         if ($settled) {
             $steps[] = $this->donorAndReceiptStep((int) $item->id, (int) $locked->id, $this->detailsWithBuyer($order, $customerDetails), true);
+        }
+    }
+
+    /**
+     * Lock the sizes of this order's still-unrecorded shop lines FOR UPDATE, ascending id order.
+     * Nothing is locked for an order with no shop line.
+     *
+     * @param  Collection<int, OrderItem>  $items
+     */
+    private function lockProductVariants(Order $order, Collection $items): void
+    {
+        $ids = $items
+            ->filter(static fn (OrderItem $item): bool => $item->record_id === null && $item->buyable_type === CartItem::TYPE_PRODUCT)
+            ->map(static fn (OrderItem $item): int => (int) $item->buyable_id)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        ProductStock::lock((int) $order->masjid_id, $ids);
+    }
+
+    /**
+     * A shop line (shop slice B1): one ProductSale written from the line's FROZEN snapshot (the
+     * product's name, the size's label, the unit and the total the buyer paid), and the size's
+     * `sold_count` raised by the quantity, under the size's row lock. Then the line is linked
+     * (`record_type` product_sale), which is what makes a replay skip it.
+     *
+     *  - THE SIZE IS LOCKED (`FOR UPDATE`, trashed rows included) and `sold_count` is read from
+     *    that locking read, so two settlements of the last unit take turns and the second sees
+     *    the first's count. The lock order stays cart, order, size.
+     *  - A size or product that was disabled, trashed or removed since checkout is still settled:
+     *    the snapshot is the truth and the money was taken. A size removed outright leaves no
+     *    stock to move, so the sale is recorded alone and a warning says so.
+     *  - OVERSOLD. If `sold_count` now exceeds `stock` (only a webhook later than the hold's grace
+     *    can do it: ProductStock), the sale is STILL recorded, flagged `oversold`, and an ERROR on
+     *    the `monitors` channel (so OPS_ALERT_EMAIL fires) names the order number and the size,
+     *    with no buyer detail. It is raised AFTER the commit, as the emails are: an alert for a
+     *    rollback would be an alert for nothing. Settlement NEVER refuses a payment and NEVER
+     *    refunds one; the refund or the substitution is a person's call.
+     *  - IDEMPOTENT. The loop skips a line that has a record; and a sale that already names this
+     *    line (its `order_item_id` is unique) is linked and counts nothing a second time.
+     *
+     * @param  list<Closure(): ?array>  $steps
+     */
+    private function settleProduct(Order $order, OrderItem $item, array &$steps): void
+    {
+        $snapshot = $item->price_snapshot;
+
+        if (! is_array($snapshot) || ! isset($snapshot['product_id'], $snapshot['variant_id'], $snapshot['product_name'], $snapshot['variant_label'], $snapshot['unit_minor'], $snapshot['quantity'], $snapshot['total_minor'])) {
+            throw new LogicException("Order {$order->id} line {$item->id} has no price snapshot to record the sale from.");
+        }
+
+        $quantity = (int) $snapshot['quantity'];
+
+        if ($quantity < 1
+            || $quantity !== (int) $item->quantity
+            || (int) $snapshot['total_minor'] !== (int) $item->total_minor
+            || (int) $snapshot['unit_minor'] * $quantity !== (int) $item->total_minor) {
+            throw new LogicException("Order {$order->id} line {$item->id}: the sale's snapshot is not what the line charged.");
+        }
+
+        $earlier = ProductSale::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->where('order_item_id', $item->id)
+            ->first();
+
+        if ($earlier !== null) {
+            $this->link($item, OrderItem::RECORD_PRODUCT_SALE, (int) $earlier->id);
+
+            return;
+        }
+
+        // The line's own size, by the line's own id (the snapshot's agrees), under its lock.
+        $variant = ProductVariant::withoutMasjidScope()
+            ->withTrashed()
+            ->where('masjid_id', $order->masjid_id)
+            ->whereKey((int) $item->buyable_id)
+            ->lockForUpdate()
+            ->first();
+
+        $oversold = false;
+        $sold = null;
+
+        if ($variant === null) {
+            Log::warning(
+                'A cart payment is being recorded for a product size that no longer exists; '
+                . 'the money was taken, so the sale is recorded from its snapshot and no stock moves.',
+                $this->context($order) + ['variant_id' => (int) $item->buyable_id]
+            );
+        } else {
+            if ($variant->trashed() || ! $variant->enabled) {
+                Log::warning(
+                    'A cart payment is being recorded for a product size that was withdrawn since checkout (removed or switched off); '
+                    . 'the money was taken, so the sale is recorded.',
+                    $this->context($order) + ['variant_id' => (int) $variant->id]
+                );
+            }
+
+            $sold = (int) $variant->sold_count + $quantity;
+            $variant->forceFill(['sold_count' => $sold])->save();
+            $oversold = $variant->stock !== null && $sold > (int) $variant->stock;
+        }
+
+        $sale = ProductSale::withoutMasjidScope()->create([
+            'masjid_id' => $order->masjid_id,
+            'order_id' => $order->id,
+            'order_item_id' => $item->id,
+            'product_id' => (int) $snapshot['product_id'],
+            'variant_id' => (int) $snapshot['variant_id'],
+            'product_name' => mb_substr((string) $snapshot['product_name'], 0, 120),
+            'variant_label' => mb_substr((string) $snapshot['variant_label'], 0, 40),
+            'quantity' => $quantity,
+            'unit_minor' => (int) $snapshot['unit_minor'],
+            'total_minor' => (int) $snapshot['total_minor'],
+            'oversold' => $oversold,
+        ]);
+
+        $this->link($item, OrderItem::RECORD_PRODUCT_SALE, (int) $sale->id);
+
+        if ($oversold) {
+            // Ids, the order's number and what the shop sells: never a name, an address or a phone.
+            $context = $this->context($order) + [
+                'variant_id' => (int) $snapshot['variant_id'],
+                'item' => (string) $snapshot['product_name'] . ' (' . (string) $snapshot['variant_label'] . ')',
+                'quantity' => $quantity,
+                'stock' => (int) $variant->stock,
+                'sold_count' => $sold,
+            ];
+
+            $steps[] = static function () use ($context): ?array {
+                Log::channel('monitors')->error(
+                    'A paid shop order took a size past its stock. The sale is recorded and flagged oversold; '
+                    . 'nothing was refunded. Refund it or substitute the item by hand.',
+                    $context
+                );
+
+                return null;
+            };
         }
     }
 

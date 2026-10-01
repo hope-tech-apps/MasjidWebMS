@@ -9,6 +9,8 @@ use App\Models\Masjid;
 use App\Models\MealMenuItem;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Services\Stripe\FormChargeAccount;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\FormPayment;
@@ -62,6 +64,15 @@ use Throwable;
  * order item (`payload`, `price_snapshot` — see snapshotFor()): the webhook never
  * re-quotes, because a quote depends on the date and on the card switch, and one that
  * came back null would throw AFTER the money was taken.
+ *
+ * A product line's stock is decided HERE, not at pricing (shop slice B1, ProductStock): the checkout
+ * locks every size in the basket FOR UPDATE, in ascending id order, as its first statements after
+ * the cart's own lock (before any plain read, so the held-quantity sum is read after the locks are
+ * won), and after it has made the order and its lines it counts what other pending orders hold
+ * EXCLUDING the order it just made. A shortfall refuses the whole checkout with a sentence naming
+ * the line, the transaction rolls the order back, and no Stripe page is opened. An open page that is
+ * handed back instead of replaced is not counted a second time: it made no new order, and its own
+ * units were held when it was opened.
  *
  * A basket that has been PAID is closed (`Cart::STATUS_CHECKED_OUT`, by the settlement
  * transaction) and checkout and acknowledge() refuse it; checkout also refuses a basket
@@ -123,6 +134,12 @@ class CartCheckoutService
             $locked = Cart::withoutMasjidScope()->whereKey($cart->id)->lockForUpdate()->firstOrFail();
 
             self::assertOpen($locked);
+
+            // The sizes of any product line, locked BEFORE the first plain read of this transaction:
+            // a locking read sees the latest committed rows and fixes no snapshot, so everything the
+            // pricer and the stock check read after this is read after the locks are won, and a
+            // checkout that waited behind another sees the units it took (ProductStock's docblock).
+            ProductStock::lockBasket($locked);
 
             $priced = $this->pricer->price($locked);
 
@@ -430,6 +447,16 @@ class CartCheckoutService
             ]);
         }
 
+        // Stock, decided now: inside the cart lock and this transaction, after the order and its
+        // lines exist and before a page is opened. It counts what OTHER pending orders hold (this
+        // order is left out, or it would hold units against itself), and a shortfall rolls the order
+        // back with everything else and opens no page.
+        $shortfall = ProductStock::refusal((int) $cart->masjid_id, $priced, (int) $order->id);
+
+        if ($shortfall !== null) {
+            throw new CartCheckoutRefused($shortfall);
+        }
+
         return $order;
     }
 
@@ -451,6 +478,11 @@ class CartCheckoutService
      *  - donation: `price_snapshot` is {intended_minor}; `payload` carries the giver's
      *    zakat answer only when they gave one (ZakatDesignation stays the one place
      *    that is decided).
+     *  - product: `payload` is null and `price_snapshot` is {product_id, variant_id,
+     *    product_name, variant_label, unit_minor, quantity, total_minor}: everything
+     *    settlement writes the sale from (CartSettlementService::settleProduct), so a
+     *    renamed or removed product, a new price or a trashed size cannot change what was
+     *    paid for. Nothing in it is personal data.
      *
      * @return array{payload: ?array<string,mixed>, price_snapshot: ?array<string,mixed>}
      *
@@ -515,6 +547,29 @@ class CartCheckoutService
                 return [
                     'payload' => is_bool($answers['zakat'] ?? null) ? ['zakat' => $answers['zakat']] : null,
                     'price_snapshot' => ['intended_minor' => $outcome->totalMinor()],
+                ];
+
+            case CartItem::TYPE_PRODUCT:
+                $variant = ProductVariant::withoutMasjidScope()->where('masjid_id', $cart->masjid_id)->find($item->buyable_id);
+                $product = $variant === null
+                    ? null
+                    : Product::withoutMasjidScope()->where('masjid_id', $cart->masjid_id)->find($variant->product_id);
+
+                if ($variant === null || $product === null) {
+                    throw new CartCheckoutRefused('This basket could not be priced just now. Please try again.');
+                }
+
+                return [
+                    'payload' => null,
+                    'price_snapshot' => [
+                        'product_id' => (int) $product->id,
+                        'variant_id' => (int) $variant->id,
+                        'product_name' => (string) $product->name,
+                        'variant_label' => (string) $variant->label,
+                        'unit_minor' => $outcome->unitAmountMinor,
+                        'quantity' => $outcome->quantity,
+                        'total_minor' => $outcome->totalMinor(),
+                    ],
                 ];
         }
 
