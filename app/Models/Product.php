@@ -19,6 +19,10 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * false` or soft-deleted, never removed, because a paid line names it (the sale itself keeps a
  * snapshot, so the pricing and settlement code never trusts this row after the fact).
  *
+ * `lock_version` is the editor's guard (migration 2026_10_06_100200): it goes up by one, under the
+ * product's row lock, with every save and every picture change, and a save that names another
+ * version is refused (ProductWriter). It is never mass-assigned.
+ *
  * `slug` is unique per organisation among LIVE rows: a generated column on MySQL (`live_slug`,
  * which does not exist on SQLite, where the same rule is a partial index), hidden here so a
  * serialised product reads the same on both drivers.
@@ -62,6 +66,7 @@ class Product extends Model implements HasMedia
             'base_price_minor' => 'integer',
             'active' => 'boolean',
             'sort' => 'integer',
+            'lock_version' => 'integer',
         ];
     }
 
