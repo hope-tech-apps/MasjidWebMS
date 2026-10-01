@@ -163,7 +163,7 @@
                             </div>
                             <!--
                                 The same control the teacher screens use, not a
-                                second copy of it: photos and one video through
+                                second copy of it: photos and videos through
                                 one picker. Limits come from the server's own
                                 `meta`, so the office is never offered something
                                 the request would refuse.
@@ -176,6 +176,8 @@
                                 :video-accept="acceptVideos"
                                 :max="maxImages"
                                 :max-videos="maxVideos"
+                                :max-video-kb="maxVideoKb"
+                                :max-videos-total-kb="maxVideosTotalKb"
                             />
                         </form>
                         <div v-else class="small text-muted text-center">
@@ -240,6 +242,8 @@
                                         :video-accept="acceptVideos"
                                         :max="maxImages"
                                         :max-videos="maxVideos"
+                                        :max-video-kb="maxVideoKb"
+                                        :max-videos-total-kb="maxVideosTotalKb"
                                     />
                                     <div v-else class="form-text">
                                         A conversation scheduled for later is text only. Photos and video can be sent in
@@ -353,12 +357,15 @@ const maxMessageLength = computed<number>(() => threadsStore.threadsMeta?.max_me
  * Upload limits, from the server's own `meta` rather than literals — the office
  * must never be offered a file the request would then refuse. The two sets are
  * separate because the server holds them to separate rules: a different
- * allowlist, a 100MB ceiling instead of 8MB, and one file instead of eight.
+ * allowlist, a 100MB ceiling instead of 8MB, three files instead of eight, and a
+ * ceiling on the videos of one message together.
  */
 const acceptImages = computed<string>(() => (threadsStore.threadsMeta?.accepted_image_types ?? []).join(','));
 const acceptVideos = computed<string>(() => (threadsStore.threadsMeta?.accepted_video_types ?? []).join(','));
 const maxImages = computed<number>(() => threadsStore.threadsMeta?.max_images_per_message ?? 8);
 const maxVideos = computed<number>(() => threadsStore.threadsMeta?.max_videos_per_message ?? 0);
+const maxVideoKb = computed<number>(() => threadsStore.threadsMeta?.max_video_size_kb ?? 0);
+const maxVideosTotalKb = computed<number>(() => threadsStore.threadsMeta?.max_videos_total_kb ?? 0);
 
 /** Text OR an attachment is enough; the server refuses a message that is neither. */
 const canSend = computed<boolean>(() => !!messageBody.value || replyMedia.value.length > 0);

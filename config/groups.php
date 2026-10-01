@@ -527,15 +527,29 @@ return [
             'max_size_kb' => (int) env('GROUP_MEDIA_VIDEO_MAX_SIZE_KB', 102400),
 
             /*
-             * How many videos one post — or one message — may carry. ONE.
+             * How many videos one post — or one message — may carry. THREE, the
+             * owner's decision (2026-10-01, teacher feedback); it was one.
              *
-             * Not timidity: the bound multiplies straight into the request body
-             * PHP and nginx must accept, and the images allowance (8 × 8MB)
-             * already rides in the same request. At one video the worst legal
-             * body is ~164MB; at two it is ~264MB, which is a different
-             * conversation with the droplet than the one this feature is worth.
+             * The count alone would multiply straight into the request body PHP
+             * and nginx must accept (three 100MB clips and eight photos is
+             * ~364MB against a 192MB ceiling), so it is bounded by
+             * `max_total_kb` below rather than by raising the ceiling.
              */
-            'max_per_post' => (int) env('GROUP_MEDIA_VIDEO_MAX_PER_POST', 1),
+            'max_per_post' => (int) env('GROUP_MEDIA_VIDEO_MAX_PER_POST', 3),
+
+            /*
+             * What the videos of ONE post or message may add up to, in kilobytes.
+             * 120MB: with the photos allowance (8 × 8MB) the worst legal body is
+             * ~184MB, inside the 192MB that `public/.user.ini`, php.ini and nginx
+             * accept today, so three clips needed no server change. One clip may
+             * still be the full `max_size_kb`.
+             *
+             * Raising this means raising post_max_size and client_max_body_size
+             * first (tests/Feature/UploadCeilingTest fails the build otherwise),
+             * and it multiplies what one post can put on a disk no backup covers.
+             * 0 switches the total off (the count and the per-file size remain).
+             */
+            'max_total_kb' => (int) env('GROUP_MEDIA_VIDEO_MAX_TOTAL_KB', 122880),
 
             /*
              * Retention window, in days, stamped on the ATTACHMENT itself when

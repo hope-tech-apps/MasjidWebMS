@@ -29,12 +29,13 @@
 </template>
 
 <script setup lang="ts">
+import { isVideoFile, planMediaPick } from '@/core/helpers/mediaPick';
 import { preparePhoto } from '@/core/helpers/preparePhoto';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 /**
- * Choose photos — and, since 2026-09-24, one video — to send with a
- * class-story post or a message.
+ * Choose photos and videos (up to three since 2026-10-01; one from 2026-09-24)
+ * to send with a class-story post or a message.
  *
  * SHARED, and it lives in components/partials for that reason: the teacher
  * screens and the office conversations tab need the same control, and the second
@@ -54,12 +55,19 @@ const props = withDefaults(defineProps<{
     /** Video allowlist and count, from the server's own `meta` (accepted_video_types / max_videos_per_*). */
     videoAccept?: string;
     maxVideos?: number;
+    /** One video's ceiling and the videos' combined ceiling, in KB, from the same `meta`. 0 = not told. */
+    maxVideoKb?: number;
+    maxVideosTotalKb?: number;
 }>(), {
     max: 8,
     disabled: false,
     accept: 'image/jpeg,image/png,image/webp',
     videoAccept: 'video/mp4,video/quicktime,video/webm',
+    // What a caller that passes nothing gets. The server's `meta` is the truth and
+    // every caller passes it; these only cover the moment before it has loaded.
     maxVideos: 1,
+    maxVideoKb: 0,
+    maxVideosTotalKb: 0,
 });
 
 const emit = defineEmits<{ (e: 'update:modelValue', files: File[]): void }>();
@@ -75,8 +83,6 @@ const previews = ref<string[]>([]);
  * teacher choosing "three photos and the recital" should not have to find two
  * buttons to do it.
  */
-const isVideoFile = (file: File): boolean => (file.type || '').startsWith('video/');
-
 const acceptAll = computed(() => [props.accept, props.videoAccept].filter(Boolean).join(','));
 
 const counts = computed(() => {
@@ -85,11 +91,13 @@ const counts = computed(() => {
 });
 
 // Full when NEITHER kind has room left; the per-kind ceilings are applied when
-// files are chosen, so a teacher with their one video can still add photos.
+// files are chosen, so a teacher with all their videos can still add photos.
 const full = computed(() =>
     counts.value.images >= props.max && counts.value.videos >= props.maxVideos);
 
-const addLabel = computed(() => (props.maxVideos > 0 ? 'Add photos or video' : 'Add photos'));
+const addLabel = computed(() => (props.maxVideos > 1
+    ? 'Add photos or videos'
+    : props.maxVideos === 1 ? 'Add photos or video' : 'Add photos'));
 
 const release = () => {
     previews.value.forEach((url) => url && URL.revokeObjectURL(url));
@@ -110,34 +118,15 @@ const onChosen = async (event: Event) => {
     input.value = '';
     if (!chosen.length) return;
 
-    note.value = '';
-
-    // Per-KIND room, not one shared count: the ceilings differ by two orders of
-    // magnitude (8 × 8MB against 1 × 100MB) and a shared count would let eight
-    // videos through the client and be refused by the server after the upload.
-    let imageRoom = Math.max(0, props.max - counts.value.images);
-    let videoRoom = Math.max(0, props.maxVideos - counts.value.videos);
-
-    const accepted: File[] = [];
-    let droppedImages = 0;
-    let droppedVideos = 0;
-
-    for (const file of chosen) {
-        if (isVideoFile(file)) {
-            if (videoRoom > 0) { accepted.push(file); videoRoom--; } else { droppedVideos++; }
-        } else if (imageRoom > 0) {
-            accepted.push(file); imageRoom--;
-        } else {
-            droppedImages++;
-        }
-    }
-
-    if (droppedImages) {
-        note.value = `Up to ${props.max} photos at a time — the extra ${droppedImages} were not added.`;
-    }
-    if (droppedVideos) {
-        note.value = [note.value, `Up to ${props.maxVideos} video at a time.`].filter(Boolean).join(' ');
-    }
+    // Per-KIND room, not one shared count, and the videos' sizes too: see
+    // planMediaPick, which the office's story box shares.
+    const { accepted, note: why } = planMediaPick(props.modelValue, chosen, {
+        maxImages: props.max,
+        maxVideos: props.maxVideos,
+        maxVideoKb: props.maxVideoKb,
+        maxVideosTotalKb: props.maxVideosTotalKb,
+    });
+    note.value = why;
 
     preparing.value = true;
     try {

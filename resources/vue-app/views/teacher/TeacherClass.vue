@@ -964,7 +964,7 @@
                                v-model.trim="composeTitle">
                         <textarea class="form-control mb-2" rows="3" placeholder="Share what happened today…"
                                   v-model.trim="composeBody"></textarea>
-                        <GroupMediaPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
+                        <GroupMediaPicker v-model="storyPhotos" :disabled="posting" class="mb-2" v-bind="storyMedia" />
                         <p v-if="storyPhotos.length" class="text-muted small mb-2">
                             Photos are shown only to families who have given photo consent.
                         </p>
@@ -1054,7 +1054,7 @@
                             <textarea v-model="composeForm.body" rows="3" maxlength="5000"
                                       class="form-control form-control-sm mt-2"
                                       placeholder="Your first message…"></textarea>
-                            <GroupMediaPicker v-if="!messageLater.enabled.value" v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
+                            <GroupMediaPicker v-if="!messageLater.enabled.value" v-model="composePhotos" :disabled="sendingCompose" class="mt-2" v-bind="messageMedia" />
                             <!-- "Send later", on the SCHOOL's clock. Text only: a photo cannot wait. -->
                             <SendLaterField v-if="messageScheduling" class="mt-2"
                                             v-model:enabled="messageLater.enabled.value" v-model="messageLater.value.value"
@@ -1164,7 +1164,7 @@
                                     <span v-else>Send</span>
                                 </button>
                             </div>
-                            <GroupMediaPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
+                            <GroupMediaPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" v-bind="messageMedia" />
                             <p v-if="replyPhotos.length && openedThread.scope === 'group'" class="text-muted small mb-0 mt-1">
                                 This conversation is with the whole class. Photos are shown only to families who have given photo consent.
                             </p>
@@ -2483,6 +2483,7 @@ import ScheduledItems from '@/components/common/ScheduledItems.vue';
 import { useSendLater } from '@/composables/useSendLater';
 import { messageRow, storyRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
+import { pickerLimits } from '@/core/helpers/mediaPick';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -5244,6 +5245,13 @@ const postsLoading = ref(false);
 const composeTitle = ref('');
 const composeBody = ref('');
 const storyPhotos = ref<File[]>([]);
+
+// What the pickers may take, from the SERVER's own `meta` (the posts and threads
+// lists carry it). The pickers ran on their built-in defaults before, so a limit
+// changed on the server (three videos, since 2026-10-01) never reached this screen.
+// Empty until a list has loaded: the picker's defaults cover that moment.
+const storyMedia = ref<Record<string, number | string>>({});
+const messageMedia = ref<Record<string, number | string>>({});
 const posting = ref(false);
 const postError = ref('');
 const removingPost = ref<string | number | null>(null);
@@ -5265,6 +5273,7 @@ const loadPosts = async () => {
         posts.value = rowsOf(res.data?.data);
         storyReads.value = res.data?.meta?.story_reads ?? { enabled: false };
         storyScheduling.value = res.data?.meta?.scheduling ?? null;
+        storyMedia.value = pickerLimits(res.data?.meta, 'max_images_per_post', 'max_videos_per_post');
         await loadScheduledStories();
     } catch {
         posts.value = [];
@@ -5374,6 +5383,7 @@ const loadThreads = async () => {
         const res = await TeacherApiService.get(`${base.value}/threads`);
         threads.value = rowsOf(res.data?.data);
         messageScheduling.value = res.data?.meta?.scheduling ?? null;
+        messageMedia.value = pickerLimits(res.data?.meta, 'max_images_per_message', 'max_videos_per_message');
         await loadScheduledMessages();
     } catch {
         threads.value = [];

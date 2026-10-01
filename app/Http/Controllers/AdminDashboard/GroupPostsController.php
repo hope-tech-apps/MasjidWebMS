@@ -292,6 +292,13 @@ class GroupPostsController extends Controller
             return $this->cannotBeMoved("{$why} It cannot be put back in the queue: cancel it and write it again.");
         }
 
+        // What an edit ADDS rides on top of what the story already carries: the request's
+        // own rules count only the request, so without this an edit could take a story
+        // past the limits a new one is held to.
+        if (($overflow = $this->mediaOverflow($post, $request)) !== null) {
+            return response()->json(['status' => 'failed', 'data' => $overflow], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $fields = $request->safe()->only(['title', 'body', 'retained_until']);
         $goesOutAt = null;
 
@@ -991,6 +998,47 @@ class GroupPostsController extends Controller
      *
      * @return array<int,\Illuminate\Http\UploadedFile>
      */
+    /**
+     * Why the uploads of an edit cannot be added to this story, keyed like a validation
+     * failure, or null. A story with its attachments counted as they are now: photos
+     * against `max_per_post`, videos against their count and their combined size.
+     *
+     * @return array<string, array<int, string>>|null
+     */
+    private function mediaOverflow(GroupPost $post, Request $request): ?array
+    {
+        $images = $this->bag($request, GroupPostFormRequest::UPLOAD_KEY);
+        $videos = $this->bag($request, GroupPostFormRequest::VIDEO_UPLOAD_KEY);
+
+        if ($images === [] && $videos === []) {
+            return null;
+        }
+
+        $held = $post->attachments()->get(['mime_type', 'size_bytes']);
+        $heldVideos = $held->filter(fn ($a) => GroupMedia::isVideo($a->mime_type));
+        $errors = [];
+
+        $maxImages = (int) config('groups.media.max_per_post', 8);
+
+        if ($images !== [] && $maxImages > 0 && ($held->count() - $heldVideos->count()) + count($images) > $maxImages) {
+            $errors[GroupPostFormRequest::UPLOAD_KEY] = ['A post may carry at most ' . $maxImages . ' images.'];
+        }
+
+        if ($videos !== []) {
+            $maxVideos = (int) config('groups.media.video.max_per_post', 0);
+
+            if ($heldVideos->count() + count($videos) > $maxVideos) {
+                $errors[GroupPostFormRequest::VIDEO_UPLOAD_KEY] = [GroupPostFormRequest::videoCountRefusal($maxVideos)];
+            } elseif (($why = GroupPostFormRequest::videoTotalRefusal(
+                (int) $heldVideos->sum('size_bytes') + GroupPostFormRequest::videoBytes($videos)
+            )) !== null) {
+                $errors[GroupPostFormRequest::VIDEO_UPLOAD_KEY] = [$why];
+            }
+        }
+
+        return $errors === [] ? null : $errors;
+    }
+
     private function bag(Request $request, string $key): array
     {
         $files = $request->file($key);

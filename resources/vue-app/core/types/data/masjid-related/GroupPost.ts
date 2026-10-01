@@ -139,6 +139,8 @@ export type GroupFeedMeta = {
     accepted_video_types?: string[];
     max_video_size_kb?: number;
     max_videos_per_post?: number;
+    /** The videos of one post or message together, in KB. 0 = no total. */
+    max_videos_total_kb?: number;
     video_retention_days?: number;
     /** Read receipts: are they being collected, and how many parents cannot be counted. */
     story_reads?: { enabled: boolean; unreachable_count?: number };

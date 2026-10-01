@@ -6732,3 +6732,32 @@ this slice has been run: there is no PHP on the machine it was written on** (ASS
     and SQLite's do not. B2's clash checks must compare the same way.
   - Renaming a size that baskets or sales hold would change what a paid line names. B2 decides whether a held size's label is
     frozen.
+
+## 2026-10-01 — Three videos in a class story or a message, bounded by their combined size (W7-1, teacher feedback; branch feat/school-w7-video-count)
+Decision: `groups.media.video.max_per_post` goes from 1 to 3 (code default, no production `.env` edit), for a class
+story and for a conversation message alike. A new `groups.media.video.max_total_kb` (120MB) bounds what the videos of
+ONE post or message add up to; one clip may still be the full 100MB.
+- **Why a total and not just the count.** The count multiplies straight into the request body: three 100MB clips and
+  eight photos is ~364MB, and `public/.user.ini`, php.ini and nginx all refuse a body over 192MB as a bare 413, before
+  any validation message exists. With the total the worst legal body is ~184MB, so the change needed no server
+  configuration change and ships like any other. `UploadCeilingTest` now computes the worst case from the smaller of
+  count × size and the total, keeps 4MB of room for fields and multipart boundaries, and fails the build if a later
+  change breaks either.
+- **Storage.** The private disk holds the clips for 90 days and no backup covers it. Three full-size clips per post
+  would triple the worst case per post; the total keeps it at 120MB (was 100MB).
+- **Raising it later** (three full-size clips in one post) means raising `post_max_size` (`public/.user.ini` and
+  php.ini) and nginx `client_max_body_size` to about 400MB first, then `max_total_kb`: a production server change
+  that waits for the owner's yes.
+- **Refusals name the limit.** "A post may carry at most 3 videos." (plural-correct; "1 video" when the limit is one)
+  and "The videos in one post may add up to 120MB. Send the others in another post." The pickers apply the same rule
+  while files are being chosen (`core/helpers/mediaPick.ts`, one definition for the shared picker and the office's
+  story box), so the refusal comes before the upload, not after it.
+- **An edit is held to the same limits.** `GroupPostsController::update` appended whatever arrived, counting only the
+  request, so an edit could take a story past the limits a new one is held to. It now counts what the story already
+  carries: photos by count, videos by count and by combined size.
+- **The teacher screen reads the server's limits.** Its three pickers passed nothing and ran on the component's
+  built-in default (one video), so a server limit never reached the people who asked for this. They now bind
+  `pickerLimits(meta, …)` from the posts and threads lists.
+Alternatives: raise the server ceilings to ~400MB now (a production server change, and three times the disk exposure);
+lower the per-video size so three fit (takes away the 100MB single clip teachers have today); upload each video in its
+own request (the right long-term shape, a larger change to the upload path).

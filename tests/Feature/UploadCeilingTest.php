@@ -40,11 +40,31 @@ class UploadCeilingTest extends TestCase
             'upload_max_filesize is below the image size the app offers');
 
         // The worst legal body is every slot filled at once, plus room for the
-        // fields and multipart boundaries.
-        $worstCaseKb = ($videoKb * $videos) + ($imageKb * $images);
+        // fields and multipart boundaries. The videos of one post are bounded
+        // by their COUNT and by their combined size (`max_total_kb`, 0 = off);
+        // whichever is smaller is what a legal request can carry.
+        $totalKb = (int) config('groups.media.video.max_total_kb');
+        $videosKb = $totalKb > 0 ? min($videoKb * $videos, $totalKb) : $videoKb * $videos;
+        $worstCaseKb = $videosKb + ($imageKb * $images);
 
         $this->assertGreaterThanOrEqual($worstCaseKb, $postKb,
-            'post_max_size cannot carry one full post (video + images); a teacher attaching both gets a 413');
+            'post_max_size cannot carry one full post (videos + images); a teacher attaching both gets a 413');
+
+        // Fields and multipart boundaries need room too: a body that is exactly
+        // post_max_size is refused. 4MB is far more than a post's text.
+        $this->assertGreaterThanOrEqual($worstCaseKb + 4096, $postKb,
+            'post_max_size leaves no room beside a full post for its fields and multipart boundaries');
+    }
+
+    #[Test]
+    public function one_full_size_video_still_fits_inside_the_combined_total(): void
+    {
+        $totalKb = (int) config('groups.media.video.max_total_kb');
+
+        if ($totalKb > 0) {
+            $this->assertGreaterThanOrEqual((int) config('groups.media.video.max_size_kb'), $totalKb,
+                'max_total_kb is below max_size_kb: one clip of the advertised size would be refused by the total');
+        }
     }
 
     /** Accept the ini shorthand (K/M/G) PHP itself accepts. */

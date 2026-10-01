@@ -167,6 +167,8 @@ class GroupMedia
             'accepted_video_types' => (array) config('groups.media.video.mime_types', []),
             'max_video_size_kb' => (int) config('groups.media.video.max_size_kb', 0),
             $perKey => (int) config('groups.media.video.max_per_post', 0),
+            // What the videos of one post or message may add up to (0 = no total).
+            'max_videos_total_kb' => (int) config('groups.media.video.max_total_kb', 0),
             'video_retention_days' => (int) config('groups.media.video.retention_days', 0),
         ];
     }

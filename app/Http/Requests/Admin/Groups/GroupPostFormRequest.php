@@ -3,6 +3,8 @@
 namespace App\Http\Requests\Admin\Groups;
 
 use App\Http\Requests\BaseFormRequest;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\Validator;
 
 /**
  * Shared boundary rules for the group-feed write requests.
@@ -132,6 +134,77 @@ abstract class GroupPostFormRequest extends BaseFormRequest
     }
 
     /**
+     * The videos of one post or message together, against `max_total_kb`.
+     *
+     * The count (three) and the per-file size (100MB) alone would allow a ~364MB
+     * body, which PHP and nginx refuse as a bare 413 before any of this runs; the
+     * total is what keeps three clips inside the ceiling the servers have. It is
+     * checked here, after the per-file rules, so a refusal names the reason
+     * instead of leaving a teacher with "upload failed". See config/groups.php.
+     *
+     * `after()` rather than `withValidator()`: subclasses already own the latter
+     * (UpdateGroupPostRequest), and Laravel runs both.
+     *
+     * @return array<int, callable>
+     */
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            if ($validator->errors()->has(self::VIDEO_UPLOAD_KEY)
+                || $validator->errors()->has(self::VIDEO_UPLOAD_KEY . '.*')) {
+                return;
+            }
+
+            $sentence = self::videoTotalRefusal(self::videoBytes((array) $this->file(self::VIDEO_UPLOAD_KEY, [])), $this->uploadNoun());
+
+            if ($sentence !== null) {
+                $validator->errors()->add(self::VIDEO_UPLOAD_KEY, $sentence);
+            }
+        }];
+    }
+
+    /**
+     * The bytes of a bag of uploads. Public and static because the edit door
+     * (GroupPostsController::update) adds what the story already carries to what
+     * the request brings, and must count both the same way.
+     *
+     * @param  array<int, mixed>  $files
+     */
+    public static function videoBytes(array $files): int
+    {
+        $bytes = 0;
+
+        foreach ($files as $file) {
+            if ($file instanceof UploadedFile) {
+                $bytes += (int) $file->getSize();
+            }
+        }
+
+        return $bytes;
+    }
+
+    /** Why this many bytes of video cannot ride in one post or message, or null. */
+    public static function videoTotalRefusal(int $bytes, string $noun = 'post'): ?string
+    {
+        $maxTotalKb = (int) config('groups.media.video.max_total_kb', 0);
+
+        if ($maxTotalKb <= 0 || $bytes <= $maxTotalKb * 1024) {
+            return null;
+        }
+
+        return 'The videos in one ' . $noun . ' may add up to ' . round($maxTotalKb / 1024)
+            . 'MB. Send the others in another ' . $noun . '.';
+    }
+
+    /** "1 video" / "3 videos": the count sentence, stated once for every door. */
+    public static function videoCountRefusal(int $maxPerPost, string $noun = 'post'): string
+    {
+        return $maxPerPost > 0
+            ? 'A ' . $noun . ' may carry at most ' . $maxPerPost . ' ' . ($maxPerPost === 1 ? 'video' : 'videos') . '.'
+            : 'A ' . $noun . ' cannot carry a video.';
+    }
+
+    /**
      * What the images are attached to, for the error text. Conversation
      * messages reuse these rules (StoreGroupMessageRequest,
      * StoreGroupThreadRequest) because a photo of a child is the same file
@@ -160,9 +233,7 @@ abstract class GroupPostFormRequest extends BaseFormRequest
             // rather than the rule's KB: the ceiling is 102400KB, and a teacher
             // reading "larger than the 102400KB limit" has to do arithmetic
             // while holding a phone.
-            self::VIDEO_UPLOAD_KEY . '.max' => $videoMaxPerPost > 0
-                ? 'A ' . $noun . ' may carry at most ' . $videoMaxPerPost . ' video.'
-                : 'A ' . $noun . ' cannot carry a video.',
+            self::VIDEO_UPLOAD_KEY . '.max' => self::videoCountRefusal($videoMaxPerPost, $noun),
             self::VIDEO_UPLOAD_KEY . '.*.file' => 'The upload could not be read as a file.',
             self::VIDEO_UPLOAD_KEY . '.*.mimetypes' =>
                 'That video format is not accepted; send an MP4, a MOV or a WebM.',

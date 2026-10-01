@@ -36,6 +36,7 @@
                             <button type="button" class="btn btn-link btn-sm p-0 ms-1" @click="clearChosenFiles">clear</button>
                         </span>
                         <span v-if="uploadHint" class="small text-muted ms-auto">{{ uploadHint }}</span>
+                        <span v-if="pickNote" class="small text-muted w-100" role="status">{{ pickNote }}</span>
                         <button type="submit" class="btn btn-sm btn-success ms-auto"
                                 :disabled="posting || preparingPhotos || !composeBody || !later.ready.value">
                             <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>
@@ -191,6 +192,7 @@ import { GroupPost } from '@/core/types/data/masjid-related/GroupPost';
 import { useGroupFeedStore } from '@/stores/masjid/groupFeedStore';
 import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
 import { preparePhoto } from '@/core/helpers/preparePhoto';
+import { planMediaPick, videoLimitHint, type MediaLimits } from '@/core/helpers/mediaPick';
 import Swal from 'sweetalert2';
 
 /**
@@ -220,6 +222,8 @@ const loadError = ref('');
 const composeTitle = ref('');
 const composeBody = ref('');
 const chosenFiles = ref<File[]>([]);
+/** Why part of the last pick was left out (too many, too large), or ''. */
+const pickNote = ref('');
 const preparingPhotos = ref(false);
 /** Bumped on every pick and every clear; see onFilesChosen. */
 let pickCount = 0;
@@ -261,8 +265,18 @@ const acceptAttribute = computed<string>(() => [
     ...(feedStore.feedMeta?.accepted_video_types ?? []),
 ].join(','));
 
-const addMediaLabel = computed<string>(() =>
-    (feedStore.feedMeta?.max_videos_per_post ?? 0) > 0 ? 'Add photos or video' : 'Add photos');
+const addMediaLabel = computed<string>(() => {
+    const videos = feedStore.feedMeta?.max_videos_per_post ?? 0;
+    return videos > 1 ? 'Add photos or videos' : videos === 1 ? 'Add photos or video' : 'Add photos';
+});
+
+/** The server's limits, as the shared pick rule reads them (mediaPick.ts). */
+const mediaLimits = computed<MediaLimits>(() => ({
+    maxImages: feedStore.feedMeta?.max_images_per_post ?? 8,
+    maxVideos: feedStore.feedMeta?.max_videos_per_post ?? 0,
+    maxVideoKb: feedStore.feedMeta?.max_video_size_kb ?? 0,
+    maxVideosTotalKb: feedStore.feedMeta?.max_videos_total_kb ?? 0,
+}));
 
 const uploadHint = computed<string>(() => {
     const meta = feedStore.feedMeta;
@@ -276,7 +290,7 @@ const uploadHint = computed<string>(() => {
         // real difference a teacher should know before posting — a clip is kept
         // for a shorter time than the photos beside it.
         parts.push(
-            `${meta.max_videos_per_post} video up to ${Math.round((meta.max_video_size_kb ?? 0) / 1024)}MB`
+            videoLimitHint(mediaLimits.value)
             + (meta.video_retention_days ? `, kept ${meta.video_retention_days} days` : '')
         );
     }
@@ -419,10 +433,15 @@ const onFilesChosen = async (event: Event) => {
     // Reset so re-picking the same file still fires a change event.
     input.value = '';
 
+    // A pick REPLACES the selection here (this box has "clear", not "add more"), so
+    // the limits are applied to the pick alone. Same rule as the shared picker.
+    const { accepted, note } = planMediaPick<File>([], picked, mediaLimits.value);
+    pickNote.value = note;
+
     const pick = ++pickCount;
     preparingPhotos.value = true;
     try {
-        const prepared = await Promise.all(picked.map(preparePhoto));
+        const prepared = await Promise.all(accepted.map(preparePhoto));
         if (pick === pickCount) chosenFiles.value = prepared;
     } finally {
         if (pick === pickCount) preparingPhotos.value = false;
@@ -430,6 +449,7 @@ const onFilesChosen = async (event: Event) => {
 };
 
 const clearChosenFiles = () => {
+    pickNote.value = '';
     pickCount++;
     preparingPhotos.value = false;
     chosenFiles.value = [];
@@ -448,6 +468,7 @@ const submitPost = async () => {
         composeTitle.value = '';
         composeBody.value = '';
         chosenFiles.value = [];
+        pickNote.value = '';
         later.reset();
         await loadPosts(1);
         Swal.fire({ icon: 'success', title: scheduled ? 'Scheduled' : 'Posted', timer: 1600, showConfirmButton: false });

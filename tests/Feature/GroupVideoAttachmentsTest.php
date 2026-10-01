@@ -243,17 +243,188 @@ class GroupVideoAttachmentsTest extends TestCase
     }
 
     #[Test]
-    public function more_videos_than_the_limit_are_refused(): void
+    public function three_videos_ride_in_one_post(): void
     {
         $this->asTeacher()
             ->post($this->teacherUrl('/posts'), [
-                'body' => 'Two clips',
-                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+                'body' => 'Three clips from the recital',
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4'), $this->video('c.mp4')],
+            ])
+            ->assertCreated();
+
+        $post = GroupPost::withoutMasjidScope()->sole();
+        $this->assertSame(3, $post->attachments()->count());
+        $this->assertCount(3, Storage::disk($this->disk())->allFiles());
+    }
+
+    #[Test]
+    public function more_videos_than_the_limit_are_refused(): void
+    {
+        $response = $this->asTeacher()
+            ->post($this->teacherUrl('/posts'), [
+                'body' => 'Four clips',
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4'), $this->video('c.mp4'), $this->video('d.mp4')],
             ])
             ->assertStatus(422)
             ->assertJsonStructure(['data' => ['videos']]);
 
+        // The sentence a teacher reads, with its plural.
+        $this->assertSame('A post may carry at most 3 videos.', $response->json('data.videos.0'));
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
         $this->assertSame([], Storage::disk($this->disk())->allFiles());
+    }
+
+    #[Test]
+    public function a_limit_of_one_still_reads_as_one_video(): void
+    {
+        config(['groups.media.video.max_per_post' => 1]);
+
+        $response = $this->asTeacher()
+            ->post($this->teacherUrl('/posts'), [
+                'body' => 'Two clips',
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame('A post may carry at most 1 video.', $response->json('data.videos.0'));
+    }
+
+    #[Test]
+    public function videos_that_together_pass_the_total_are_refused_and_nothing_is_kept(): void
+    {
+        // The fixture is ~1.6KB: each clip passes the per-file ceiling and the
+        // count, and two of them together pass a 3KB total.
+        config(['groups.media.video.max_total_kb' => 3]);
+
+        $response = $this->asTeacher()
+            ->post($this->teacherUrl('/posts'), [
+                'body' => 'Two clips, too big together',
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame(
+            'The videos in one post may add up to 0MB. Send the others in another post.',
+            $response->json('data.videos.0')
+        );
+        $this->assertSame(0, GroupPost::withoutMasjidScope()->count());
+        $this->assertSame([], Storage::disk($this->disk())->allFiles());
+
+        // One clip is inside the same total.
+        $this->asTeacher()
+            ->post($this->teacherUrl('/posts'), ['body' => 'One clip', 'videos' => [$this->video()]])
+            ->assertCreated();
+    }
+
+    #[Test]
+    public function the_total_names_megabytes_and_can_be_switched_off(): void
+    {
+        config(['groups.media.video.max_total_kb' => 122880]);
+        $this->assertSame(
+            'The videos in one message may add up to 120MB. Send the others in another message.',
+            \App\Http\Requests\Admin\Groups\GroupPostFormRequest::videoTotalRefusal(122880 * 1024 + 1, 'message')
+        );
+        $this->assertNull(\App\Http\Requests\Admin\Groups\GroupPostFormRequest::videoTotalRefusal(122880 * 1024));
+
+        config(['groups.media.video.max_total_kb' => 0]);
+        $this->assertNull(\App\Http\Requests\Admin\Groups\GroupPostFormRequest::videoTotalRefusal(PHP_INT_MAX));
+    }
+
+    #[Test]
+    public function a_message_is_held_to_the_same_count_and_total(): void
+    {
+        $thread = $this->privateThread();
+
+        $response = $this->asTeacher()
+            ->post($this->teacherUrl("/threads/{$thread->id}/messages"), [
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4'), $this->video('c.mp4'), $this->video('d.mp4')],
+            ])
+            ->assertStatus(422);
+        $this->assertSame('A message may carry at most 3 videos.', $response->json('data.videos.0'));
+
+        config(['groups.media.video.max_total_kb' => 3]);
+        $response = $this->asTeacher()
+            ->post($this->teacherUrl("/threads/{$thread->id}/messages"), [
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+            ])
+            ->assertStatus(422);
+        $this->assertStringContainsString('The videos in one message may add up to', (string) $response->json('data.videos.0'));
+
+        $this->assertSame([], Storage::disk($this->disk())->allFiles());
+    }
+
+    #[Test]
+    public function an_edit_cannot_take_a_story_past_the_video_count_or_the_total(): void
+    {
+        $post = $this->seedVideoPost();           // one video already
+        $before = Storage::disk($this->disk())->allFiles();
+
+        // Count: the story holds one, the limit is three, an edit bringing three is one too many.
+        $response = $this->asTeacher()
+            ->put($this->teacherUrl("/posts/{$post->id}"), [
+                'body' => 'Recital, with more',
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4'), $this->video('c.mp4')],
+            ])
+            ->assertStatus(422);
+        $this->assertSame('A post may carry at most 3 videos.', $response->json('data.videos.0'));
+
+        // Total: one more clip is inside the count, and past a 3KB total with the clip already there.
+        config(['groups.media.video.max_total_kb' => 3]);
+        $response = $this->asTeacher()
+            ->put($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Recital, with one more', 'videos' => [$this->video('a.mp4')]])
+            ->assertStatus(422);
+        $this->assertStringContainsString('The videos in one post may add up to', (string) $response->json('data.videos.0'));
+
+        // Nothing was written by either refusal: same files, same words.
+        $this->assertSame($before, Storage::disk($this->disk())->allFiles());
+        $this->assertSame('Recital', $post->fresh()->body);
+        $this->assertSame(1, $post->attachments()->count());
+
+        // Inside both limits, the edit adds its clip.
+        config(['groups.media.video.max_total_kb' => 122880]);
+        $this->asTeacher()
+            ->put($this->teacherUrl("/posts/{$post->id}"), ['body' => 'Recital, with one more', 'videos' => [$this->video('a.mp4')]])
+            ->assertOk();
+        $this->assertSame(2, $post->attachments()->count());
+    }
+
+    #[Test]
+    public function an_edit_cannot_take_a_story_past_the_photo_count(): void
+    {
+        config(['groups.media.max_per_post' => 2]);
+        $post = GroupPost::create([
+            'masjid_id' => $this->school->id,
+            'group_id' => $this->class->id,
+            'author_user_id' => $this->teacher->id,
+            'body' => 'Garden',
+        ]);
+        GroupPostAttachments::store($post, [
+            UploadedFile::fake()->create('one.jpg', 5, 'image/jpeg'),
+            UploadedFile::fake()->create('two.jpg', 5, 'image/jpeg'),
+        ]);
+
+        $response = $this->asTeacher()
+            ->put($this->teacherUrl("/posts/{$post->id}"), [
+                'body' => 'Garden, with one more',
+                'images' => [UploadedFile::fake()->create('three.jpg', 5, 'image/jpeg')],
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame('A post may carry at most 2 images.', $response->json('data.images.0'));
+        $this->assertSame(2, $post->attachments()->count());
+        $this->assertSame('Garden', $post->fresh()->body);
+    }
+
+    #[Test]
+    public function the_screens_are_told_the_count_and_the_total(): void
+    {
+        $meta = $this->asTeacher()->get($this->teacherUrl('/posts'))->assertOk()->json('meta');
+        $this->assertSame(3, $meta['max_videos_per_post']);
+        $this->assertSame(122880, $meta['max_videos_total_kb']);
+
+        $meta = $this->asTeacher()->get($this->teacherUrl('/threads'))->assertOk()->json('meta');
+        $this->assertSame(3, $meta['max_videos_per_message']);
+        $this->assertSame(122880, $meta['max_videos_total_kb']);
     }
 
     #[Test]
@@ -715,16 +886,19 @@ class GroupVideoAttachmentsTest extends TestCase
     {
         $thread = $this->privateThread();
 
-        // A video in the image bag, from the office: still refused. The rules
-        // live on the shared FormRequest, so there is one answer per file type
-        // and not one per realm.
-        $this->asOffice()
+        // The rules live on the shared FormRequest, so there is one answer per
+        // file type and not one per realm.
+        // One more video than a message may carry, from the office: refused in
+        // the sentence a teacher gets.
+        $response = $this->asOffice()
             ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
-                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4'), $this->video('c.mp4'), $this->video('d.mp4')],
             ])
             ->assertStatus(422)
             ->assertJsonStructure(['data' => ['videos']]);
+        $this->assertSame('A message may carry at most 3 videos.', $response->json('data.videos.0'));
 
+        // A video in the image bag, from the office: still refused.
         $this->asOffice()
             ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
                 'images' => [$this->video()],

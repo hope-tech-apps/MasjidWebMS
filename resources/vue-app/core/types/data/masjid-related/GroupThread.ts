@@ -130,6 +130,8 @@ export type GroupThreadsMeta = {
     accepted_video_types?: string[];
     max_video_size_kb?: number;
     max_videos_per_message?: number;
+    /** The videos of one post or message together, in KB. 0 = no total. */
+    max_videos_total_kb?: number;
     video_retention_days?: number;
     /** "Send later": the SCHOOL's zone the field is read in, and how far ahead it may go. */
     scheduling?: { timezone: string; max_days_ahead: number };
