@@ -132,8 +132,10 @@ class CartColumnWidthsTest extends TestCase
             'cart_items.label' => 255,                     // mb_substr(..., 0, 255) in CartLineAdder
             'order_items.label' => 255,                    // a form, fund or dish name (each a string(255)) or a product and size (120 + 3 + 40 at most)
 
-            // The shop (slice B1). Nothing in B1 writes the catalogue (the admin API is B2's, which
-            // validates to these same widths); settlement copies a name and a size into a sale.
+            // The shop (slices B1 and B2). The catalogue is written by the admin API (B2), whose request
+            // widths (ProductFormRequest::NAME_MAX, CATEGORY_MAX, LABEL_MAX, ProductSlug::MAX_LENGTH) are
+            // read against the migration by ShopProductValidationTest; settlement copies a name and a size
+            // into a sale.
             'products.name' => 120,
             'products.slug' => 140,
             'products.category' => 60,
