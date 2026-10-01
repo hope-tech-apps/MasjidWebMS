@@ -203,6 +203,7 @@ const MENU_ICONS: Record<string, string> = {
     '/masjid/impact-report': 'bi-bar-chart-line',
     '/masjid/funds': 'bi-piggy-bank',
     '/masjid/jummah-lunch': 'bi-cup-hot',
+    '/masjid/shop': 'bi-bag',
     '/masjid/donations': 'bi-cash-coin',
     '/masjid/recurring-donations': 'bi-arrow-repeat',
     '/masjid/annual-statements': 'bi-file-earmark-text',

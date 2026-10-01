@@ -126,10 +126,11 @@ export const useShopStore = defineStore('shopStore', () => {
     }
 
     /**
-     * Save a product. The payload is the WHOLE list of sizes and the `lock_version` the editor loaded;
-     * a 409 means somebody else changed the product, and is never retried here.
+     * Save a product. The editor sends the WHOLE list of sizes with the `lock_version` it loaded; the
+     * list's on/off switch sends only `active` and its `lock_version` (a key left out is left alone).
+     * A 409 means somebody else changed the product, and is never retried here.
      */
-    async function updateProduct(productId: number | string, payload: ProductBody): Promise<{ product: ShopProduct; meta: ShopMeta | null }> {
+    async function updateProduct(productId: number | string, payload: Partial<ProductBody>): Promise<{ product: ShopProduct; meta: ShopMeta | null }> {
         const id = requireMasjidId();
 
         const res: AxiosResponse = await ApiService.VueApp.axios.put(`${shopBase(id)}/products/${productId}`, payload, JSON_BODY);

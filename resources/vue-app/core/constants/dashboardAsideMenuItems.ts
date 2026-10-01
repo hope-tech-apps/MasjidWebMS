@@ -591,6 +591,24 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'jummah_lunch'
     },
     {
+        // The online shop (shop slice B3): products with sizes and stock, and the pickup list. Shown once
+        // the organisation HAS `shop` (OFF for every organisation until a SuperAdmin grants it; for a
+        // SuperAdmin it is listed under "Switched off for {org}" until then). The server's `capability:shop`
+        // gate is the boundary. `allowed_types` is how the SPA says "may view donations": SuperAdmin and
+        // MasjidAdmin both hold it, and the SPA carries no per-person permission list. No `requiresCrm`:
+        // the shop's routes sit outside the member directory. One entry whose screens (Products, Pickup
+        // list) carry their own tabs, because the sidebar has no sub-items. Plain title, no terminology key.
+        title: "Shop",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5 8H19L18 20H6L5 8Z" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                <path d="M9 10V7C9 5.34 10.34 4 12 4C13.66 4 15 5.34 15 7V10" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/shop',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCapability: 'shop'
+    },
+    {
         // The tenant's word for gifts: "Donations" for a masjid or a community
         // organisation, "Giving" for a school that a SuperAdmin switched Giving on for.
         title: "Donations",

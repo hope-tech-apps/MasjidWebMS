@@ -9,6 +9,7 @@ import broadcastsManagementRoutes from "@/router/routes/broadcastsManagementRout
 import appointmentsManagementRoutes from "@/router/routes/appointmentsManagementRoutes"
 import offeringsManagementRoutes from "@/router/routes/offeringsManagementRoutes"
 import zakatRoutes from "@/router/routes/zakatRoutes"
+import shopManagementRoutes from "@/router/routes/shopManagementRoutes"
 
 const dashboardRoutes: RouteRecordRaw[] = [
     {
@@ -326,6 +327,9 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/JummahLunchView.vue")
             },
+            // The online shop: products, their sizes and pictures, and the pickup list. Beside the
+            // other things an organisation sells (the Friday lunch above). See shopManagementRoutes.ts.
+            ...shopManagementRoutes,
             {
                 // Accepted payment methods and how to pay with each (PaymentMethodsController).
                 // No capability: every organisation that takes money has payment methods.
