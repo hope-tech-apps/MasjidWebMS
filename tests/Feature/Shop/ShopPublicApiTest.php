@@ -7,6 +7,7 @@ use App\Models\Masjid;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Service;
+use App\Services\Shop\PublicCatalogue;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -490,6 +491,30 @@ class ShopPublicApiTest extends TestCase
         $this->assertSame(1, $held($smallQueries), 'one grouped sum for one size');
         $this->assertSame(1, $held($bigQueries), 'one grouped sum for twenty sizes, not one per size');
         $this->assertSame(count($smallQueries), count($bigQueries), 'twenty sizes cost the same number of queries as one');
+    }
+
+    #[Test]
+    public function the_listing_is_capped_at_two_hundred_products_in_the_order_the_office_set(): void
+    {
+        $org = $this->shopOrg();
+
+        $this->assertSame(200, PublicCatalogue::LISTING_LIMIT);
+
+        for ($i = 1; $i <= 201; $i++) {
+            $product = $this->product($org, ['name' => sprintf('Product %03d', $i), 'slug' => sprintf('product-%03d', $i), 'sort' => $i]);
+            $this->variant($product, ['label' => 'M']);
+        }
+
+        $data = $this->listing($org);
+
+        $this->assertCount(200, $data, 'a hard ceiling on one read');
+        $this->assertSame('product-001', $data[0]['slug']);
+        $this->assertSame('product-200', $data[199]['slug'], 'the first 200 in the office\'s order');
+        $this->assertNotContains('product-201', array_column($data, 'slug'), 'the 201st is not returned');
+        $this->assertSame(self::PRODUCT_KEYS, array_keys($data[0]), 'the shape is the same');
+
+        // Not listed is not unreachable: its own page still answers.
+        $this->getJson('/api/v1/shop/products/product-201', $this->headers($org))->assertOk()->assertJsonPath('data.slug', 'product-201');
     }
 
     #[Test]

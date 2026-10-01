@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Shop\ProductSlug;
 use App\Support\FormPayment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -257,6 +258,88 @@ class ShopProductValidationTest extends TestCase
         $this->postJson($this->products(), $this->polo(['variants' => [['label' => 'M'], ['label' => 'N'], ['label' => 'كبير'], ['label' => 'صغير']]]))
             ->assertCreated()
             ->assertJsonCount(4, 'data.variants');
+    }
+
+    #[Test]
+    public function labels_are_the_same_label_in_every_script_and_around_invisible_characters_and_spaces(): void
+    {
+        if (! class_exists(\Normalizer::class)) {
+            $this->markTestSkipped('NFKD needs the intl extension (CI loads it); LiveTextTest covers the fallback.');
+        }
+
+        $pairs = [
+            'Cyrillic E and E with a diaeresis' => ["\u{0415}", "\u{0401}"],
+            'Arabic alef with hamza and plain alef' => ["\u{0623}\u{0637}\u{0641}\u{0627}\u{0644}", "\u{0627}\u{0637}\u{0641}\u{0627}\u{0644}"],
+            'Arabic alef with madda and plain alef' => ["\u{0622}", "\u{0627}"],
+            'XL and XL with a soft hyphen' => ['XL', "X\u{00AD}L"],
+            'XL and XL with a zero width space' => ['XL', "X\u{200B}L"],
+            'M and M with a trailing space' => ['M', 'M '],
+            'M and M with a leading space' => [' M', 'M'],
+        ];
+
+        foreach ($pairs as $why => [$first, $second]) {
+            $this->assertStoreRefused($this->polo(['variants' => [['label' => $first], ['label' => $second]]]), 'variants.1.label', $why);
+        }
+
+        // Kept: Medium and Medium with an accent are one label, and two different words are two.
+        $this->assertStoreRefused($this->polo(['variants' => [['label' => 'Medium'], ['label' => "M\u{00E9}dium"]]]), 'variants.1.label', 'Medium and Medium with an accent');
+        $this->postJson($this->products(), $this->polo(['variants' => [['label' => "\u{0643}\u{0628}\u{064A}\u{0631}"], ['label' => "\u{0635}\u{063A}\u{064A}\u{0631}"], ['label' => "\u{0415}"], ['label' => 'E']]]))
+            ->assertCreated()
+            ->assertJsonCount(4, 'data.variants');
+    }
+
+    // ------------------------------------------------------------ the backstop: a violation nobody checked for
+
+    #[Test]
+    public function a_label_clash_nothing_checked_for_is_a_clean_422_on_a_save_and_on_a_create(): void
+    {
+        // A competing save commits the same live label between our reads and our write: a trigger plays it by
+        // inserting the winner just before the real insert, which the unique index then refuses.
+        DB::unprepared(<<<'SQL'
+            CREATE TRIGGER raced_label BEFORE INSERT ON product_variants
+            WHEN NEW.label = 'Raced' AND NOT EXISTS (SELECT 1 FROM product_variants WHERE product_id = NEW.product_id AND label = 'Raced' AND deleted_at IS NULL)
+            BEGIN
+                INSERT INTO product_variants (masjid_id, product_id, label, enabled, sold_count, sort) VALUES (NEW.masjid_id, NEW.product_id, 'Raced', 1, 0, 0);
+            END
+        SQL);
+
+        $polo = $this->product($this->org);
+
+        $update = $this->putProduct($this->org, $polo->id, ['name' => 'Not saved', 'variants' => [['label' => 'Raced']]])->assertStatus(422);
+
+        $this->assertSame('failed', $update->json('status'));
+        $this->assertSame(['Two sizes of one product cannot share a name.'], $update->json('data')['variants']);
+        $this->assertSame(0, ProductVariant::withoutMasjidScope()->withTrashed()->where('product_id', $polo->id)->count(), 'nothing of the refused save stayed');
+        $this->assertSame('School Polo', Product::query()->findOrFail($polo->id)->name);
+        $this->assertSame(0, (int) Product::query()->findOrFail($polo->id)->lock_version, 'and the version did not move');
+
+        $products = Product::withoutMasjidScope()->count();
+        $create = $this->postJson($this->products(), $this->polo(['name' => 'Raced Polo', 'variants' => [['label' => 'Raced']]]))->assertStatus(422);
+
+        $this->assertSame(['Two sizes of one product cannot share a name.'], $create->json('data')['variants']);
+        $this->assertSame($products, Product::withoutMasjidScope()->count(), 'the product made in the same transaction was rolled back');
+    }
+
+    #[Test]
+    public function a_slug_taken_five_times_over_is_a_sentence_on_the_name_after_five_tries_not_a_500(): void
+    {
+        // Every attempt meets a winner that took the slug a moment before: the writer retries, and gives up politely.
+        DB::unprepared(<<<'SQL'
+            CREATE TRIGGER raced_slug BEFORE INSERT ON products
+            WHEN NEW.slug = 'race-slug'
+            BEGIN
+                INSERT INTO products (masjid_id, name, slug, base_price_minor, currency, active, sort) VALUES (NEW.masjid_id, 'Race winner', 'race-slug', 100, 'usd', 1, 0);
+            END
+        SQL);
+
+        DB::enableQueryLog();
+        $response = $this->postJson($this->products(), $this->polo(['name' => 'Race Slug']))->assertStatus(422);
+        $attempts = count(array_filter(array_column(DB::getQueryLog(), 'query'), static fn (string $q): bool => str_starts_with($q, 'insert into "products"')));
+        DB::disableQueryLog();
+
+        $this->assertSame(5, $attempts, 'five tries, no more');
+        $this->assertSame(['Another product took that name just now. Try saving again.'], $response->json('data')['name']);
+        $this->assertSame(0, Product::withoutMasjidScope()->where('slug', 'race-slug')->count());
     }
 
     #[Test]

@@ -93,6 +93,7 @@ class ShopProductsAdminTest extends TestCase
 
         $this->assertSame('usd', $response->json('meta.currency'));
         $this->assertSame(8, $response->json('meta.max_images'));
+        $this->assertSame(10, $response->json('meta.max_image_mb'), 'the SPA reads the picture limit from the meta');
     }
 
     #[Test]
