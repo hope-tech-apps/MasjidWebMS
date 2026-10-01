@@ -42,6 +42,19 @@ final class ProductPayload
     }
 
     /**
+     * One product, re-read with its sizes and pictures as the screen shows them: what the picture
+     * endpoints answer with, so the editor refreshes from one response.
+     *
+     * @return array<string,mixed>
+     */
+    public static function read(int $productId): array
+    {
+        $product = Product::query()->with(self::relations())->findOrFail($productId);
+
+        return self::product($product, self::heldFor((int) $product->masjid_id, [$product]));
+    }
+
+    /**
      * @param  array<int,int>  $held  from heldFor()
      * @return array<string,mixed>
      */

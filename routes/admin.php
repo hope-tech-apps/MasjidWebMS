@@ -76,6 +76,7 @@ use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
 use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\TeamController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
+use App\Http\Controllers\AdminDashboard\ShopProductImagesController;
 use App\Http\Controllers\AdminDashboard\ShopProductsController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
@@ -432,6 +433,15 @@ Route::prefix('admin')->group(function () {
                     // The product's fields and, when `variants` is sent, its sizes as a list.
                     Route::put('/{product_id}', 'update')->middleware('permission:manage donations')->whereNumber('product_id');
                     Route::delete('/{product_id}', 'destroy')->middleware('permission:manage donations')->whereNumber('product_id');
+                });
+
+                // A product's pictures (Spatie media, `product_images`, at most eight). `order` is a
+                // literal path and is registered BEFORE the `{media_id}` wildcard, as the file keeps
+                // its literal paths ahead of its wildcards everywhere else.
+                Route::prefix('products/{product_id}/images')->controller(ShopProductImagesController::class)->group(function () {
+                    Route::post('/', 'store')->middleware('permission:manage donations')->whereNumber('product_id');
+                    Route::put('/order', 'reorder')->middleware('permission:manage donations')->whereNumber('product_id');
+                    Route::delete('/{media_id}', 'destroy')->middleware('permission:manage donations')->whereNumber(['product_id', 'media_id']);
                 });
             });
 
