@@ -38,7 +38,7 @@ class ShopCapabilityTest extends TestCase
         $this->assertSame('registration_money', config('capabilities.shop.group'));
         $this->assertSame('Online shop', config('capabilities.shop.label'));
         $this->assertSame(['masjid' => false, 'school' => false, 'community' => false], config('capabilities.shop.defaults'));
-        $this->assertTrue(config('capabilities.shop.listed_when_off'));
+        $this->assertFalse(config('capabilities.shop.listed_when_off'), 'dark: no "Online shop (off)" chip on Team & Access until granted');
         $this->assertArrayHasKey(config('capabilities.shop.group'), config('capability_groups'));
     }
 

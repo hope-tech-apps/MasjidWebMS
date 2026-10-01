@@ -250,7 +250,7 @@ return [
         'label' => 'Online shop',
         'description' => 'Sell products such as school uniforms online, in sizes with their own stock, through the basket. Off: no product can be added to a basket or paid for.',
         'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
-        'listed_when_off' => true,
+        'listed_when_off' => false,
     ],
 
     // ------------------------------------------------------------------
