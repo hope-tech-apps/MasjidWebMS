@@ -276,10 +276,12 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * That is the point of it: ordering closes so the kitchen can count plates,
      * and the changes people ask for arrive after that.
      *
-     * ADMIN ONLY. The route sits under the admin prefix and deliberately not in
-     * the lunch realm — editing an order somebody has already paid for is not a
-     * volunteer's call — so a LunchStaff is refused here rather than shown a
-     * button that 403s.
+     * ADMINISTRATORS AND LUNCH STAFF. Both realms serve this route
+     * (routes/admin.php and routes/lunch.php, the same controller), and `base()`
+     * picks the caller's own prefix. The volunteers at the lunch table are the
+     * people a customer asks to fix a plate count. This function used to refuse a
+     * LunchStaff itself, before any request, which left them a button that could
+     * never save (owner, 2026-10-02): who may edit is the server's decision.
      *
      * `items` is the FULL set of lines after the edit; a line left out is
      * removed. NO PRICE IS SENT and no payment field is: the server re-prices
@@ -298,9 +300,6 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         items: { meal_menu_item_id: number; quantity: number }[]
     ): Promise<{ order: any; changed: boolean; message: string; checkoutUrl: string }> {
         ensureMasjid();
-        if (isLunchStaff()) {
-            throw new Error("Only a masjid administrator can change what is on an order.");
-        }
         const body = new URLSearchParams();
         items.forEach((it, i) => {
             body.append(`items[${i}][meal_menu_item_id]`, String(it.meal_menu_item_id));

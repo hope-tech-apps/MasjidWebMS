@@ -7250,3 +7250,21 @@ decision on whether the teacher is told).
   window answers 500 where 503 was meant; keyboard focus is dropped on Edit, Save and Cancel; Esc discards a message
   draft unasked; the edit TIME is only a title tooltip (no touch or screen-reader path); `can_edit` on a message does
   not ask the admin realm's write permission; the closed-conversation check sits outside the lock.
+
+## 2026-10-02 — Lunch staff can save an order edit: the board's store no longer refuses them (owner: "it is not just a masjid admin power")
+- **What was wrong.** A lunch volunteer saw "Edit items", changed the plates, pressed Save and was told "Only a masjid
+  administrator can change what is on an order." No request was sent: `jummahLunchStore.updateOrderItems` threw for a
+  `LunchStaff` before calling the server. The guard dates from the editor's first version (3d19e285), when the route
+  was admin-only. The 2026-09-24 fix (018d82e6) added the route to `routes/lunch.php` and showed the button, and left
+  this guard in place, so volunteers have had a button that could not save since then. Production's access log agrees:
+  lunch staff read the board and took orders all morning on 2026-10-02 and sent no PATCH.
+- **The fix.** The guard is removed. Who may edit an order is the server's decision (the `lunch` realm's own gate, the
+  tenant binding, `staffMayEdit`), and the store sends the edit to the caller's own realm through `base()`.
+- **Why the suite did not see it.** `LunchStaffRealmTest` proves the server serves a volunteer's edit; nothing ran the
+  store. `tests/lunch-staff-realm-parity.test.ts` now reads `routes/lunch.php` and the store together: a call the lunch
+  realm serves may not be refused in the store for a LunchStaff, and what the realm does not serve is a short decided
+  list (menu delete, the staff logins). Red on the old store.
+- **Three comments said the opposite of the code** (admin.php, the store's docblock, the board's template) and are
+  corrected: they still read "administrators only".
+- **The earlier "live-verified" was the server, not the screen.** A fix to what a volunteer can do is verified by a
+  volunteer login pressing the button.

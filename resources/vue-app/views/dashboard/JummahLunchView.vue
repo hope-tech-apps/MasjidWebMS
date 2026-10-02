@@ -217,8 +217,8 @@
                                     </td>
                                     <td class="text-end text-nowrap">
                                         <!-- After the cutoff, and on a paid order: the changes staff
-                                             actually get asked for. Administrators only — the server
-                                             does not serve this to a lunch volunteer. -->
+                                             actually get asked for. Administrators and lunch staff
+                                             alike: both realms serve the edit. -->
                                         <!-- The office's "yes, we can make this" (owner: "office confirms"). The
                                              customer is emailed once; the server records who confirmed. -->
                                         <button v-if="awaitsConfirmation(o, currentMenu)" class="btn btn-sm btn-primary me-1" @click="setOrderStatus(o, 'confirmed')">Confirm</button>
