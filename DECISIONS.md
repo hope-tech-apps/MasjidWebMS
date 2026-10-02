@@ -7256,15 +7256,26 @@ decision on whether the teacher is told).
   administrator can change what is on an order." No request was sent: `jummahLunchStore.updateOrderItems` threw for a
   `LunchStaff` before calling the server. The guard dates from the editor's first version (3d19e285), when the route
   was admin-only. The 2026-09-24 fix (018d82e6) added the route to `routes/lunch.php` and showed the button, and left
-  this guard in place, so volunteers have had a button that could not save since then. Production's access log agrees:
-  lunch staff read the board and took orders all morning on 2026-10-02 and sent no PATCH.
+  this guard in place, so volunteers have had a button that could not save since then. Production's nginx access log
+  (read on the box 2026-10-02 14:38 UTC, today's and yesterday's files) agrees: in the lunch realm, 98 reads of the
+  orders list, 5 orders taken and 1 payment link, and no PATCH at all.
 - **The fix.** The guard is removed. Who may edit an order is the server's decision (the `lunch` realm's own gate, the
   tenant binding, `staffMayEdit`), and the store sends the edit to the caller's own realm through `base()`.
 - **Why the suite did not see it.** `LunchStaffRealmTest` proves the server serves a volunteer's edit; nothing ran the
   store. `tests/lunch-staff-realm-parity.test.ts` now reads `routes/lunch.php` and the store together: a call the lunch
   realm serves may not be refused in the store for a LunchStaff, and what the realm does not serve is a short decided
   list (menu delete, the staff logins). Red on the old store.
-- **Three comments said the opposite of the code** (admin.php, the store's docblock, the board's template) and are
-  corrected: they still read "administrators only".
+- **Comments said the opposite of the code** and are corrected; until this change they read "administrators only":
+  admin.php's route comment, the store's docblocks, two in the board, and the audit model's actor note. One of them
+  is the likely reason the guard survived the September fix.
+- **The public order address on the board had no organisation number for a volunteer** ("/jummah-lunch/"): the board
+  read it from masjidStore, which a lunch volunteer's shell never loads. It now comes from the store
+  (`organisationId()`), beside `base()`. Found by the review of this fix; same root cause.
+- **An independent review ran on the fix** (four readers, each serious finding re-checked by a skeptic): server path
+  and screen path clean for a LunchStaff. What it showed and is NOT changed here: through this route a volunteer can
+  edit a PAID order exactly as an administrator can (the total moves, the payment does not, and the difference is
+  shown as owed or owed back for somebody to settle by hand), which is what the owner asked for today; a save that
+  changes nothing still closes a customer's pending top-up page; a 422 from the request rules shows a generic message;
+  the lunch-prefix server test covers an unpaid pickup order only. Next slice.
 - **The earlier "live-verified" was the server, not the screen.** A fix to what a volunteer can do is verified by a
   volunteer login pressing the button.

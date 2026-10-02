@@ -679,10 +679,8 @@ import { computed, nextTick, onBeforeMount, onBeforeUnmount, reactive, ref, watc
 import Swal from "sweetalert2";
 import { MENU_KIND_CATALOGUE, MENU_KIND_DATED, PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
 import { awaitsConfirmation, cardNotPaid, catalogueSummary, isCatalogue, pickupWords, staffMethodUnavailable, unpaidHow } from "@/views/lunch/kitchenBoard";
-import { useMasjidStore } from "@/stores/masjidStore";
 
 const store = useJummahLunchStore();
-const masjidStore = useMasjidStore();
 
 const loading = ref(false);
 const savingMenu = ref(false);
@@ -690,7 +688,8 @@ const savingItem = ref(false);
 const uploadingFlyer = ref(false);
 const tab = ref<"items" | "received" | "cancelled">("items");
 
-const masjidId = computed(() => masjidStore.masjid?.id);
+// From the store, which knows both realms: a lunch volunteer's shell never loads the masjid store.
+const masjidId = computed(() => store.organisationId());
 const menus = computed(() => store.menus);
 // Every menu row carries the masjid's timezone; a masjid with no menus yet has
 // nothing to read it from, so the label stays generic until the first save.
@@ -1101,8 +1100,8 @@ async function saveOrder() {
 // and the difference between the new total and what settled comes back as
 // `balance_minor`, shown on the row until somebody settles it by hand.
 //
-// Admin-only, matching the route: a LunchStaff is never offered the button, and
-// the store refuses it if they somehow reach it.
+// Administrators and lunch staff alike: both realms serve the route
+// (routes/admin.php, routes/lunch.php) and the store sends it through base().
 const editModal = reactive<{ show: boolean; order: any; qty: Record<number, number> }>({ show: false, order: null, qty: {} });
 const editSaving = ref(false);
 const editError = ref("");

@@ -34,9 +34,12 @@ const lunchRoutes = readFileSync(path.join(repoRoot, 'routes/lunch.php'), 'utf8'
 const shape = (verb: string, p: string): string =>
     `${verb.toUpperCase()} ${p.replace(/\$\{[^}]+\}|\{[^}]+\}/g, '{}').replace(/\/$/, '') || '/'}`;
 
+/** Comments out: a commented-out route is not served, and a guard named in a comment is not a guard. */
+const withoutComments = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|^\s*(\/\/|#).*$/gm, '');
+
 /** Every route the lunch realm serves under .../jummah-lunch. */
 const served = new Set(
-    [...lunchRoutes.matchAll(/Route::(get|post|put|patch|delete)\('(\/[^']*)',\s*'\w+'\)/g)]
+    [...withoutComments(lunchRoutes).matchAll(/Route::(get|post|put|patch|delete)\('(\/[^']*)',\s*'\w+'\)/g)]
         .map((m) => shape(m[1], m[2])),
 );
 
@@ -47,8 +50,12 @@ const functions = store.split(/\n {4}async function /).slice(1);
 for (const body of functions) {
     const fn = body.slice(0, body.indexOf('('));
     // Up to the function's own closing brace (four spaces of indent), so a neighbour's guard is not counted.
-    const own = body.slice(0, body.search(/\n {4}\}\n/) + 1);
-    const refusesLunchStaff = /if \(isLunchStaff\(\)\) \{\s*throw|if \(adminOnly\(\)\)/.test(own);
+    const own = withoutComments(body.slice(0, body.search(/\n {4}\}\n/) + 1));
+    // DENY BY DEFAULT. Not one spelling of the refusal: a function that so much as names who
+    // the caller is, or the admin-only masjid store, is treated as turning a LunchStaff away.
+    // (`if (isLunchStaff()) return`, a brace-less throw, `authStore.user?.type === ...` and
+    // `if (!masjidStore.masjid?.id) throw` all passed an earlier, narrower version of this.)
+    const refusesLunchStaff = /isLunchStaff|adminOnly|LunchStaff|user\??\.type|masjidStore/.test(own);
     for (const m of own.matchAll(/ApiService\.(get|post|put|patch|delete)\(\s*`\$\{base\(\)\}([^`]*)`/g)) {
         calls.push({ fn, shape: shape(m[1], m[2]), refusesLunchStaff });
     }
@@ -84,10 +91,32 @@ test('a LunchStaff can save an edit to what is on an order: the store sends it t
     // The prefix is the caller's own realm, never a hard-coded admin one.
     assert.match(store, /return isLunchStaff\(\)\s*\?\s*`\/api\/lunch\/masjids\/\$\{authStore\.user\?\.masjid\?\.id\}\/jummah-lunch`/);
     // And the board offers the button to them: only a cancelled or refunded order hides it.
-    const gate = view.slice(view.indexOf('function canEditItems'), view.indexOf('function canEditItems') + 200);
-    assert.doesNotMatch(gate, /isLunchStaff/);
     assert.match(view, /<button v-if="canEditItems\(o\)"[^>]*@click="openEditItems\(o\)">Edit items<\/button>/);
     assert.match(view, /saved = await store\.updateOrderItems\(currentMenu\.value\.id, o\.id, items\);/);
+});
+
+test('the two gates every call goes through let a LunchStaff past', () => {
+    // Every served function opens with ensureMasjid() or notReady(). A refusal moved into
+    // either would stop every volunteer call at once and no per-function check would see it.
+    assert.match(store, /function ensureMasjid\(\): void \{\s*if \(isLunchStaff\(\)\) \{\s*return;\s*\}/);
+    assert.match(store, /function notReady\(\): boolean \{\s*return !isLunchStaff\(\) && !masjidStore\.masjid\?\.id;\s*\}/);
+});
+
+test('the board\'s own handlers do not turn a LunchStaff away either', () => {
+    for (const name of ['canEditItems', 'openEditItems', 'saveEditItems']) {
+        const at = view.indexOf(`function ${name}(`);
+        assert.ok(at > 0, `${name} is still in the board`);
+        const body = withoutComments(view.slice(at, view.indexOf('\n}\n', at)));
+        assert.doesNotMatch(body, /isLunchStaff|LunchStaff|\.type\b/, `${name} must not ask who the caller is`);
+    }
+});
+
+test('the board names the organisation from the store, which knows a volunteer\'s', () => {
+    // masjidStore is never loaded in a lunch volunteer's shell: read from it, the public order
+    // address on an open menu was "/jummah-lunch/" with no number.
+    assert.match(store, /function organisationId\(\): number \| string \| undefined \{\s*return isLunchStaff\(\) \? authStore\.user\?\.masjid\?\.id : masjidStore\.masjid\?\.id;\s*\}/);
+    assert.match(view, /const masjidId = computed\(\(\) => store\.organisationId\(\)\);/);
+    assert.doesNotMatch(withoutComments(view.slice(view.indexOf('<script'))), /masjidStore/);
 });
 
 test('nothing the lunch realm serves is refused in the store for a LunchStaff', () => {
@@ -111,6 +140,7 @@ test('every route the lunch realm serves is one the board can reach', () => {
     const reachable = new Set(calls.map((c) => c.shape));
     const unreached = [...served].filter((s) => !reachable.has(s)).sort();
 
-    // GET /user and POST /logout are the session's own, called by the auth store.
-    assert.deepEqual(unreached, ['GET /menus/{}/orders/{}', 'GET /user', 'POST /logout'].filter((s) => served.has(s)).sort());
+    // One order on its own is served for other clients; the board reads the list. The realm's
+    // /user and /logout are closure-free controller-array routes, outside this file's pattern.
+    assert.deepEqual(unreached, ['GET /menus/{}/orders/{}']);
 });

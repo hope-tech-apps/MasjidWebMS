@@ -30,10 +30,11 @@ export const MENU_KIND_DATED = "dated";
 export const MENU_KIND_CATALOGUE = "catalogue";
 
 /**
- * Admin Jummah-lunch store — CRUD over
- * /api/admin/masjids/{masjid_id}/jummah-lunch/... .
+ * The Jummah-lunch board's store, for an administrator AND for a lunch volunteer:
+ * CRUD over /api/admin/masjids/{masjid_id}/jummah-lunch/... or, for a LunchStaff,
+ * /api/lunch/masjids/{masjid_id}/jummah-lunch/... (`base()` picks the realm).
  *
- * The active masjid comes from masjidStore; the `tenant` middleware +
+ * An administrator's active masjid comes from masjidStore; the `tenant` middleware +
  * BelongsToMasjid enforce that this admin only ever touches their own masjid's
  * menus/orders (the controllers never hand-filter). POST goes out as FormData
  * and PUT as URLSearchParams (the proven ApiService content-type paths), with
@@ -70,6 +71,15 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         return isLunchStaff()
             ? `/api/lunch/masjids/${authStore.user?.masjid?.id}/jummah-lunch`
             : `/api/admin/masjids/${masjidStore.masjid?.id}/jummah-lunch`;
+    }
+
+    /**
+     * The organisation this board is for, from the same two sources as `base()`.
+     * The board shows it in the public order address; reading masjidStore alone
+     * left a volunteer looking at "/jummah-lunch/" with no number after it.
+     */
+    function organisationId(): number | string | undefined {
+        return isLunchStaff() ? authStore.user?.masjid?.id : masjidStore.masjid?.id;
     }
 
     /**
@@ -437,9 +447,10 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
 
     // ------------------------------------------------------- lunch-only staff
     //
-    // Admin-side only. These live under the ADMIN prefix even when the store is
-    // serving a LunchStaff, and the server refuses them for that principal — so
-    // the UI never renders them for one. See LunchStaffController.
+    // Admin-side only. The lunch realm has NO /staff routes (routes/lunch.php), so
+    // for a LunchStaff these would be a miss in their own realm: the board never
+    // renders them for one, and the list is not even asked for. See
+    // LunchStaffController.
 
     const staff = ref<any[]>([]);
 
@@ -497,7 +508,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     return {
-        menus, currentMenu, orders, orderSummary, orderPaymentMethods, services, fetchServices, isLunchStaff,
+        menus, currentMenu, orders, orderSummary, orderPaymentMethods, services, fetchServices, isLunchStaff, organisationId,
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,

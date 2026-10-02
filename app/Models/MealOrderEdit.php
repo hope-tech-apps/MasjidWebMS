@@ -27,7 +27,7 @@ class MealOrderEdit extends Model
     /** Changed by the customer, on the order link they hold. */
     public const ACTOR_CUSTOMER = 'customer';
 
-    /** Changed by staff on the board (an admin; `user_id` says who). */
+    /** Changed by staff on the board (an admin or a lunch volunteer; `user_id` says who). */
     public const ACTOR_STAFF = 'staff';
 
     public const ACTORS = [
