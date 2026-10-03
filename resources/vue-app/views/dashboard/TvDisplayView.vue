@@ -158,6 +158,8 @@ const loadState = ref<'loading' | 'ready' | 'failed'>('loading');
 const loadError = ref("");
 // Whether the failed load was a refusal (the organisation does not hold the page), not a fault.
 const refused = ref(false);
+// What the server says for a refusal it does not explain, once debugging is off (bootstrap/app.php).
+const UNEXPLAINED_REFUSAL = "Request failed.";
 const saving = ref(false);
 const saveError = ref("");
 const form = ref<TvDisplayForm>({ slides: true, prayerPanel: true, qr: true, title: "", caption: "", seconds: "" });
@@ -257,8 +259,15 @@ async function load() {
         loadState.value = 'ready';
     } catch (e) {
         if (ticket !== loadTicket) return;
-        loadError.value = said(e, "Could not load the TV display settings. Check your connection and try again.");
-        refused.value = isForbidden(e);
+        // A refusal is the application's own 403, and it comes with a sentence. A 403 with none (a
+        // proxy in front of the server answering for it) is a fault like any other and keeps its Retry.
+        const sentence = (e as any)?.response?.data?.message;
+        refused.value = isForbidden(e) && typeof sentence === 'string' && sentence !== '';
+        // The server explains a switch that is off; any other refusal reaches production as its
+        // catch-all words, which tell an administrator nothing, so the page says its own.
+        loadError.value = refused.value && sentence === UNEXPLAINED_REFUSAL
+            ? "You do not have access to the TV display for this organisation."
+            : said(e, "Could not load the TV display settings. Check your connection and try again.");
         loadState.value = 'failed';
     }
 }

@@ -511,7 +511,8 @@ class TvDisplaySettingsTest extends TestCase
 
         $this->assertTrue($org->fresh()->hasCapability('tv_display'));
         $this->forgetTenant();
-        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.settings.header_title', null);
+        // The whole object: a path that is absent also reads as null, so one key would prove nothing.
+        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.settings', array_fill_keys(TvBoard::SETTINGS, null));
         // Giving the grant flushed nothing a board reads and changed nothing it is sent.
         $this->assertSame($before, $this->rawBoard($org), 'cached');
         $this->forgetBoard($org);

@@ -233,6 +233,29 @@ test('a refused load is said calmly in the server\'s words, with no Retry and no
     screen.unmount();
 });
 
+test('a 403 that carries no sentence is not the application refusing: it stays an error with Retry', async () => {
+    // What a proxy in front of the server answers with (an HTML page, no JSON message).
+    const { screen } = await mount(storeDouble(answer(), { load: () => Promise.reject(httpError(403, '<html>Forbidden</html>' as any)) }));
+
+    const notice = screen.all((n) => n.props.role === 'alert');
+    assert.equal(notice.length, 1);
+    assert.match(String(notice[0].props.class), /alert-danger/);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Retry')).length, 1);
+    screen.unmount();
+});
+
+test('a refusal the server does not explain is said in the page\'s own words', async () => {
+    // The tenant gate's 403 as production sends it: the catch-all sentence, which tells an administrator nothing.
+    const { screen } = await mount(storeDouble(answer(), { load: () => Promise.reject(httpError(403, { status: 'error', message: 'Request failed.' })) }));
+
+    assert.match(screen.text(), /You do not have access to the TV display for this organisation\./);
+    assert.doesNotMatch(screen.text(), /Request failed/);
+    const notice = screen.all((n) => n.props.role === 'alert');
+    assert.match(String(notice[0].props.class), /alert-warning/);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Retry')).length, 0);
+    screen.unmount();
+});
+
 test('a load that failed for any other reason is an error, in red, with Retry', async () => {
     const { screen } = await mount(storeDouble(answer(), { load: () => Promise.reject(httpError(500, { status: 'error', message: 'Server Error' })) }));
 

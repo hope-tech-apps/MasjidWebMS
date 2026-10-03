@@ -124,8 +124,10 @@ class WeeklyPointsReportTest extends TestCase
 
     private function staffTeacher(Masjid $masjid, Group $group, string $email): User
     {
+        // A fixed name: the emails greet a teacher by name, and a name drawn by Faker can be one a
+        // test says must not appear ("Amira" is in its list).
         $teacher = User::factory()->create([
-            'type' => 'Teacher', 'email' => $email, 'phone' => '+1'.random_int(1000000000, 9999999999),
+            'type' => 'Teacher', 'name' => 'Class Teacher', 'email' => $email, 'phone' => '+1'.random_int(1000000000, 9999999999),
         ]);
         MasjidUser::create(['masjid_id' => $masjid->id, 'user_id' => $teacher->id, 'role' => 'teacher', 'is_default' => true]);
         $group->staff()->attach($teacher->id, [

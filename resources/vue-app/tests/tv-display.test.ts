@@ -335,8 +335,9 @@ test('the sidebar entry sits directly after Broadcasts, for administrators, behi
 });
 
 test('the real sidebar rules put the entry in the sidebar only where the organisation holds the grant', async () => {
-    // The source checks above say the entry NAMES the grant. This runs the rules the sidebar and the
-    // router guard both use (core/access/orgAccess.ts) against the real entry, so a change to how a
+    // The source checks above say the entry NAMES the grant. This runs the rules the sidebar uses
+    // (core/access/orgAccess.ts; the router guard has its own inline copy of the same condition,
+    // pinned as source by the route test above) against the real entry, so a change to how a
     // grant is read fails here and not only in the lobby.
     const typesOnly = {};
     const menu = await loadTs('core/constants/dashboardAsideMenuItems.ts', { '@/core/types/config/AsideMenuItem': typesOnly });
