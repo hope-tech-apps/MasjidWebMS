@@ -7310,10 +7310,10 @@ where the TV app that is actually installed honours the choice. Six settings, on
   It never trusts the row: a blank caption is the default caption, an interval out of range is the default interval,
   a blank title is null (an empty string would HIDE the header), over-long text is cut. The tvOS decoder is strict and
   fails silently, freezing a board on its old settings while the server logs a 200.
-- **The admin API** is `GET` and `POST /api/admin/masjids/{id}/tv-display`, inside `admin` + `tenant`: a SuperAdmin or
-  the organisation's own MasjidAdmin. No permission is minted (`Permission::count()` stays 8) and no capability gates
-  it, because the public tv-config read never follows a module switch (`ModuleSideDoorsTest`). An absent key is left
-  alone; null puts a setting back to "not chosen". Nonsense for a switch is a 422, never read as off.
+- **The admin API** is `GET` and `POST /api/admin/masjids/{id}/tv-display`, inside `admin` + `tenant` and behind the
+  `tv_display` grant (below): a SuperAdmin always, and the organisation's own MasjidAdmin once the organisation holds
+  the grant. No permission is minted (`Permission::count()` stays 8). An absent key is left alone; null puts a setting
+  back to "not chosen". Nonsense for a switch is a 422, never read as off.
 - **A save reaches the board within one poll** (about three minutes): the save flushes `MobileCache::TV_CONFIG`. The
   donation link save now flushes it too; it did not, so the board's code lagged a link edit by up to five minutes.
 - **The deploy window.** New code is in place seconds before `migrate` runs, and boards poll. A missing table answers
@@ -7325,11 +7325,19 @@ where the TV app that is actually installed honours the choice. Six settings, on
   for picks that expire. A donation URL override: the Donation Link page owns the URL, and on iOS main (`48c8b99`)
   the board draws that link's own title and picture beside the code (the released build draws the code and the
   caption only). The board's language: it follows the website language (S12, parked).
-- **Shown to every organisation.** Only Burlington has a TV app today (the `MasjidTV` target is organisation 1); for
-  the others the page saves settings no screen reads yet, and it says so ("If your organisation has no TV screen set
-  up yet, these settings wait until it does"). `enabled_platforms` is not a signal to gate on: older organisations
-  were backfilled to ios/android/web with no tvos, including the one that has a TV. OWNER DECISION, flagged: keep
-  the page for everyone, or hide it until an organisation has a TV.
+- **Only organisations with a TV see the page (owner, 2026-10-03, asked "every organisation, or only those with a
+  TV?": "Only organisations with a TV").** A new grant, `tv_display` (group Communication, "TV display settings"),
+  OFF for every organisation of every type until a SuperAdmin turns it on in the organisation's switches. It gates the
+  two admin routes (`capability:tv_display`, 403 otherwise) and the page (`requiresCapability` on the route and the
+  menu item, so it is hidden for an organisation without it). On for Burlington at the ship, by the owner's word: it
+  is the one organisation with a TV app (the `MasjidTV` target is organisation 1). `enabled_platforms` was not usable
+  as the signal: older organisations were backfilled to ios/android/web with no tvos, including the one with a TV.
+- **The grant gates the page, never the board.** The public tv-config read does not ask for it (a switch never changes
+  a board, `ModuleSideDoorsTest`; the class-store condition of 2026-09-29): with the grant on or off an organisation
+  that chose nothing is served the same recorded bytes, and an organisation that loses the grant keeps what it chose
+  and only loses the page. A SuperAdmin is never gated by a grant, as everywhere else. The capabilities object every
+  organisation payload carries gains the key (`tv_display: false`), so the four byte-pinned fixtures were re-recorded;
+  the recordings changed by that key and nothing else (checked by stripping it and comparing).
 - **The parked branch `feat/studio-tv-config-locale` will have ONE conflict** in `TvConfigController` when it is
   rebased: the nine lines from `return [` to `show_qr`. Take this side's lines with that side's `$payload = [`. The
   cause is the comment under `return [`, which said "No pause switch exists yet" and had to become true. Its trailing

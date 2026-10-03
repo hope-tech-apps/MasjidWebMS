@@ -12,6 +12,7 @@ import type { TvDisplayContext, TvDisplayEffective, TvDisplayForm, TvDisplaySett
 
 const root = new URL('../', import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, root), 'utf8');
+const readRepo = (rel: string) => readFileSync(new URL(`../../${rel}`, root), 'utf8');
 /** Source with its comments taken out, for a "must not contain" check. */
 const code = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
 
@@ -297,7 +298,7 @@ test('every control has a label, and the page says organisation and uses no em d
 
 // ------------------------------------------------------------------------------- the wiring, as source
 
-test('the route is /masjid/tv-display for administrators, with a page title and no gate', () => {
+test('the route is /masjid/tv-display for administrators, with a page title, behind the tv_display grant', () => {
     const layout = read('router/routes/dashboardLayoutRoutes.ts');
     const at = layout.indexOf("path: 'tv-display'");
     const route = layout.slice(at, layout.indexOf('},', layout.indexOf('component:', at)));
@@ -308,11 +309,15 @@ test('the route is /masjid/tv-display for administrators, with a page title and 
     assert.match(route, /allowedUsers: \['SuperAdmin', 'MasjidAdmin'\]/);
     assert.match(route, /pageTitle: 'TV Display'/);
     assert.match(route, /component: \(\) => import\("@\/views\/dashboard\/TvDisplayView\.vue"\)/);
-    assert.doesNotMatch(route, /requiresModule|requiresCapability|requiresAnyCapability|requiresCrm/);
+    // The grant (off for every organisation until a SuperAdmin gives it), the same key the server route asks for.
+    // requiresCapability, never requiresModule: a module is on by default, and this page is off by default.
+    assert.match(route, /requiresCapability: 'tv_display'/);
+    assert.doesNotMatch(route, /requiresModule|requiresAnyCapability|requiresCrm/);
     assert.equal((layout.match(/path: 'tv-display'/g) ?? []).length, 1);
+    assert.match(readRepo('routes/admin.php'), /Route::prefix\('\{masjid_id\}\/tv-display'\)->middleware\('capability:tv_display'\)/, 'the server route asks for the same grant');
 });
 
-test('the sidebar entry sits directly after Broadcasts, for administrators, with no module and no capability', () => {
+test('the sidebar entry sits directly after Broadcasts, for administrators, behind the tv_display grant', () => {
     const menu = read('core/constants/dashboardAsideMenuItems.ts');
     const at = menu.indexOf("to: '/masjid/tv-display'");
     const item = menu.slice(menu.lastIndexOf('\n    {', at), menu.indexOf('\n    },', at));
@@ -320,7 +325,8 @@ test('the sidebar entry sits directly after Broadcasts, for administrators, with
     assert.match(item, /title: "TV Display"/);
     assert.match(item, /svg_icon: `<svg /);
     assert.match(item, /allowed_types: \['SuperAdmin', 'MasjidAdmin'\]/);
-    assert.doesNotMatch(code(item), /requiresModule|requiresCapability|requiresOrgTypes|requiresCrm|requiresAssistant/);
+    assert.match(code(item), /requiresCapability: 'tv_display'/);
+    assert.doesNotMatch(code(item), /requiresModule|requiresOrgTypes|requiresCrm|requiresAssistant/);
     assert.equal((menu.match(/to: '\/masjid\/tv-display'/g) ?? []).length, 1, 'one entry, and it is not duplicated');
 
     const titles = [...menu.matchAll(/^        title: "([^"]+)"/gm)].map((m) => m[1]);
@@ -331,7 +337,11 @@ test('the sidebar entry has its icon, and both route types name the page', () =>
     assert.match(read('components/dashboard/DashboardAside.vue'), /'\/masjid\/tv-display': 'bi-tv'/);
     assert.ok(read('core/types/config/SystemRoutes.ts').includes("'/masjid/tv-display' |"));
     assert.ok(read('core/types/config/BackendApiRoutes.ts').includes('`/api/admin/masjids/${string}/tv-display` |'));
-    assert.doesNotMatch(read('core/types/data/Capability.ts'), /tv_display|tv-display/, 'no module key and no capability was added');
+    // The grant is in the SPA's catalogue mirror, as a capability and with its label, and is NOT a module.
+    const capability = read('core/types/data/Capability.ts');
+    assert.match(capability, /\| 'tv_display'\n/);
+    assert.match(capability, /tv_display: 'TV display settings',/);
+    assert.doesNotMatch(capability.slice(capability.indexOf('export const MODULE_KEYS'), capability.indexOf(']', capability.indexOf('export const MODULE_KEYS'))), /tv_display/);
 });
 
 test('the store never shows or saves one organisation\'s settings as another\'s', () => {

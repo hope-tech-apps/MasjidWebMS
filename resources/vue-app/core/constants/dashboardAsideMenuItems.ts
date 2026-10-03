@@ -54,8 +54,9 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
     },
     {
         // The lobby TV board's settings: what the screen shows and how fast it turns.
-        // Every org type can run a board, so no `requiresOrgTypes`; no module and no
-        // capability either, because the server route has no gate.
+        // Every org type can run a board, so no `requiresOrgTypes`. Behind the `tv_display`
+        // GRANT, as the server route is: off for every organisation until a SuperAdmin gives
+        // it to one that has a TV screen. `requiresCapability`, not a module: it is off by default.
         title: "TV Display",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="3" y="5" width="18" height="12" rx="2" stroke="white" stroke-width="1.7"/>
@@ -63,7 +64,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 <path d="M12 17V20.5" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
                 </svg>`,
         to: '/masjid/tv-display',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCapability: 'tv_display'
     },
     {
         title: "Events",

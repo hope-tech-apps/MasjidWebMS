@@ -4,7 +4,6 @@
             <div class="container w-100">
                 <p class="text-muted">
                     Settings for the TV screen in your lobby. The screen picks up a change within about four minutes.
-                    If your organisation has no TV screen set up yet, these settings wait until it does.
                 </p>
 
                 <div v-if="loadState === 'loading'" class="text-center py-5">

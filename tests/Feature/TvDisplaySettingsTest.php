@@ -42,6 +42,10 @@ use Tests\TestCase;
  * Also: a save reaches the board inside the cache window, a donation link edit
  * does too, the deploy window answers the defaults without keeping them, and
  * the page's "on the screen now" is the same computation the board is sent.
+ *
+ * The page is behind the `tv_display` grant (owner, 2026-10-03: "only
+ * organisations with a TV"): off for everyone until a SuperAdmin gives it. The
+ * grant gates the page and never the board.
  */
 class TvDisplaySettingsTest extends TestCase
 {
@@ -457,6 +461,70 @@ class TvDisplaySettingsTest extends TestCase
 
         $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->count());
         $this->assertSame(8, Permission::count(), 'the page mints no permission');
+    }
+
+    // ============================================================ the grant
+
+    #[Test]
+    public function without_the_grant_the_page_is_refused_for_the_organisations_own_administrator_and_nothing_is_written(): void
+    {
+        // What every organisation is until a SuperAdmin gives it the grant.
+        $plain = $this->makeOrg('masjid', 'No TV Here', granted: false);
+        Sanctum::actingAs($this->adminFor($plain));
+
+        $this->getJson($this->url($plain))->assertForbidden();
+        $this->postJson($this->url($plain), ['header_title' => 'Not allowed', 'is_enabled' => false])->assertForbidden();
+
+        $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->where('masjid_id', $plain->id)->count());
+        $this->assertTrue($this->board($plain)['is_enabled'], 'a refused save cannot pause a board');
+
+        // A SuperAdmin is never gated by a grant: the platform can still set a board up.
+        Auth::forgetGuards();
+        $this->forgetTenant();
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]));
+        $this->getJson($this->url($plain))->assertOk();
+    }
+
+    #[Test]
+    public function the_grant_gates_the_page_and_never_the_board(): void
+    {
+        $snapshot = $this->snapshot();
+
+        // With the grant OFF, each kind of organisation is served the recorded bytes ...
+        $cases = $this->snapshotCases();
+        foreach ($cases as $name => $org) {
+            $org->forceFill(['capability_overrides' => []])->save();
+            $this->forgetBoard($org);
+            $this->assertSame($snapshot[$name], $this->rawBoard($org), "{$name}: grant off");
+
+            // ... and with it ON, the same bytes: the grant alone changes nothing a board reads.
+            $org->forceFill(['capability_overrides' => ['tv_display' => true]])->save();
+            $this->forgetBoard($org);
+            $this->assertSame($snapshot[$name], $this->rawBoard($org), "{$name}: grant on");
+        }
+
+        // An organisation that chose something and then LOSES the grant keeps what it chose:
+        // the switch hides the page, it does not reset the screen in the lobby.
+        Sanctum::actingAs($this->admin);
+        $this->postJson($this->url(), ['is_enabled' => false, 'header_title' => 'Closed today'])->assertOk();
+
+        $this->masjid->forceFill(['capability_overrides' => ['tv_display' => false]])->save();
+        $this->forgetTenant();
+        $this->getJson($this->url())->assertForbidden();
+
+        $board = $this->board($this->masjid);
+        $this->assertFalse($board['is_enabled']);
+        $this->assertSame('Closed today', $board['header_title']);
+    }
+
+    #[Test]
+    public function the_grant_is_off_for_every_kind_of_organisation_until_it_is_given(): void
+    {
+        foreach (Masjid::ORG_TYPES as $orgType) {
+            $this->assertFalse($this->makeOrg($orgType, "Fresh {$orgType}", granted: false)->hasCapability('tv_display'), $orgType);
+        }
+
+        $this->assertSame('grant', config('capabilities.tv_display.kind'));
     }
 
     // ============================================================ the admin API
@@ -980,9 +1048,13 @@ class TvDisplaySettingsTest extends TestCase
         ];
     }
 
-    private function makeOrg(string $orgType, string $name): Masjid
+    /**
+     * An organisation, holding the `tv_display` grant unless told otherwise: the page is OFF
+     * for every organisation until a SuperAdmin gives it to one that has a TV screen.
+     */
+    private function makeOrg(string $orgType, string $name, bool $granted = true): Masjid
     {
-        return Masjid::create([
+        $org = Masjid::create([
             'name' => $name,
             'org_type' => $orgType,
             'email' => 'tv-' . uniqid() . '@example.test',
@@ -990,6 +1062,12 @@ class TvDisplaySettingsTest extends TestCase
             'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
             'latitude' => 0.0, 'longitude' => 0.0,
         ]);
+
+        if ($granted) {
+            $org->forceFill(['capability_overrides' => ['tv_display' => true]])->save();
+        }
+
+        return $org;
     }
 
     private function giveLink(Masjid $masjid, string $link): void

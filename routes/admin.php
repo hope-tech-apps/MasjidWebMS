@@ -470,12 +470,14 @@ Route::prefix('admin')->group(function () {
             });
 
             // The lobby TV board's settings: the "TV Display" page (owner, 2026-10-03).
-            // OUTSIDE `crm`, no capability and no permission: `admin` + `tenant`
-            // already mean an administrator of this organisation, and the public
-            // tv-config read these settings feed never follows a module switch
-            // (ModuleSideDoorsTest), so the page does not either. POST, not PUT:
-            // the settings-screen convention. See TvDisplaySettingsController.
-            Route::prefix('{masjid_id}/tv-display')->controller(TvDisplaySettingsController::class)->group(function () {
+            // Behind the `tv_display` GRANT: off for every organisation until a
+            // SuperAdmin gives it to one that has a TV screen, so it answers 403
+            // elsewhere exactly as the shop's routes do. OUTSIDE `crm` and with no
+            // permission: `admin` + `tenant` already mean an administrator of this
+            // organisation. The grant gates THIS PAGE only: the public tv-config read
+            // these settings feed never follows a switch (ModuleSideDoorsTest). POST,
+            // not PUT: the settings-screen convention. See TvDisplaySettingsController.
+            Route::prefix('{masjid_id}/tv-display')->middleware('capability:tv_display')->controller(TvDisplaySettingsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             });

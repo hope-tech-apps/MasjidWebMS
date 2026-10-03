@@ -46,7 +46,8 @@
                     "simple_marking": false,
                     "points_weekly_report": false,
                     "class_store": false,
-                    "shop": false
+                    "shop": false,
+                    "tv_display": false
                 },
                 "modules_off": [],
                 "modules_on": [],

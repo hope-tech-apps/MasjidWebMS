@@ -139,7 +139,6 @@ test('an organisation that never saved: Save is off until something changes, and
     const { screen, calls, swal } = await mount();
 
     assert.match(screen.text(), /Settings for the TV screen in your lobby\. The screen picks up a change within about four minutes\./);
-    assert.match(screen.text(), /If your organisation has no TV screen set up yet, these settings wait until it does\./);
     assert.equal((byId(screen, 'tv-slides') as any).checked, true);
     assert.equal((byId(screen, 'tv-prayer') as any).checked, true);
     assert.equal(byId(screen, 'tv-qr').props.checked, true);

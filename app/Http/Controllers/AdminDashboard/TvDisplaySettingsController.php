@@ -21,10 +21,13 @@ use Symfony\Component\HttpFoundation\Response;
  *   GET  /api/admin/masjids/{masjid_id}/tv-display
  *   POST /api/admin/masjids/{masjid_id}/tv-display
  *
- * Inside the `admin` + `tenant` group: a SuperAdmin, or this organisation's
- * own MasjidAdmin. No permission is minted (Permission::count() stays 8) and
- * no capability gates it: the public tv-config read never follows a module
- * switch (ModuleSideDoorsTest), so neither does the page that feeds it.
+ * Inside the `admin` + `tenant` group, behind the `tv_display` grant: a
+ * SuperAdmin always, and this organisation's own MasjidAdmin once a SuperAdmin
+ * has given the organisation the grant (owner, 2026-10-03: "only organisations
+ * with a TV"). No permission is minted (Permission::count() stays 8). The grant
+ * gates this page and nothing else: the public tv-config read never follows a
+ * switch (ModuleSideDoorsTest), so an organisation that loses the grant keeps
+ * what it chose and only loses the page.
  *
  * ## The answer has three parts, on both verbs
  *
