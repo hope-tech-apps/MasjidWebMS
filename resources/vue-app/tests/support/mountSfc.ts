@@ -33,6 +33,18 @@ if (typeof (globalThis as any).document === 'undefined') {
             for (const root of mountedRoots) { const hit = find(root); if (hit) return hit; }
             return null;
         },
+        /** Every mounted element carrying this class: `.name` is the one selector a screen asks the document for. */
+        querySelectorAll(selector: string) {
+            const match = /^\.([\w-]+)$/.exec(selector);
+            if (!match) throw new Error(`mountSfc: document.querySelectorAll supports .class only, not ${selector}`);
+            const found: any[] = [];
+            const walk = (n: any) => {
+                if (n.kind === 'el' && String(n.props.class ?? '').split(/\s+/).includes(match[1])) found.push(n);
+                n.children.forEach(walk);
+            };
+            for (const root of mountedRoots) walk(root);
+            return found;
+        },
     };
 }
 
@@ -214,8 +226,10 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
     // An error inside the component (a render, a handler, a hook) fails the test at the next flush()
     // instead of vanishing into a console the runner does not show.
     app.config.errorHandler = (e: any) => { componentErrors.push(e); };
-    app.mount(root);
+    // Registered BEFORE mounting, as a browser has the elements in the document by the time
+    // onMounted runs: a component that looks its own elements up there finds them.
     mountedRoots.add(root);
+    app.mount(root);
 
     const walk = (n: Node, test: (n: Node) => boolean, acc: Node[]) => {
         if (n.kind === 'el' && n !== root && test(n)) acc.push(n);

@@ -48,7 +48,7 @@
             <nav id="dashboard_aside_menu" aria-label="Sections">
                 <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
                     <router-link v-if="stateOf(menuItem) === 'visible'"
-                        :to="menuItem.to" class="dashboard-aside-menu-item">
+                        :to="menuItem.to" class="dashboard-aside-menu-item" @click="closeAsideOnSmallScreens">
                         <div class="menu-item-icon" aria-hidden="true">
                             <i v-if="iconFor(menuItem)" class="bi" :class="iconFor(menuItem)"></i>
                             <span v-else v-html="menuItem.svg_icon"></span>
@@ -114,19 +114,6 @@ onMounted(() => {
             }
         })
     }
-
-    // add click listner to aside menu items
-    asideMenuItems.value = document.querySelectorAll('.dashboard-aside-menu-item')
-    if (asideMenuItems.value.length) {
-        asideMenuItems.value.forEach(elm => {
-            elm.addEventListener('click', () => {
-                if (dashboardLayout.value) {
-                    dashboardLayout.value.classList.remove('aside-hidden')
-                }
-            })
-        })
-
-    }
 })
 
 // Routing
@@ -160,8 +147,11 @@ const switchedOffItems = computed<AsideMenuItem[]>(() => {
     return dashboardAsideStore.asideMenuItems.filter(menuItem => stateOf(menuItem) === 'switched_off');
 });
 
-// The menu items above get this listener in onMounted; these links can appear
-// after mount (once the organisation loads), so they carry it themselves.
+// On a phone the open drawer covers the screen, so a tap on an entry closes it. Every link
+// carries this itself. The entries used to be given it once, in onMounted, by looking them up
+// in the page: an entry drawn later never got it, and most are drawn later after an in-tab
+// organisation switch (the stores are emptied, then the new organisation's entries arrive), so
+// the drawer stayed open over the screen that had just been chosen.
 const closeAsideOnSmallScreens = () => {
     document.getElementById('dashboard_layout')?.classList.remove('aside-hidden');
 };
@@ -245,7 +235,6 @@ const measureLogo = (event: Event): void => {
 // Html refs
 const dashboardLayout = ref<HTMLElement | null>();
 const asideCloseButton = ref<HTMLElement | null>();
-const asideMenuItems = ref<NodeListOf<Element>>();
 
 </script>
 
