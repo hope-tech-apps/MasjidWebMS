@@ -44,7 +44,7 @@ export const useTvDisplayStore = defineStore("tvDisplayStore", () => {
         loadedFor.value = id;
     }
 
-    async function save(body: TvDisplayBody): Promise<void> {
+    async function save(body: Partial<TvDisplayBody>): Promise<void> {
         const id = masjidStore.masjid?.id ?? null;
         // The form on screen was drawn from `loadedFor`'s settings. base() addresses the
         // CURRENT organisation, so saving after a switch would write one organisation's

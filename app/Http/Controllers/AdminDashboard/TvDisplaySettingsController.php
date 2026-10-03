@@ -10,6 +10,7 @@ use App\Models\MasjidTvSetting;
 use App\Support\Errors;
 use App\Support\MobileCache;
 use App\Support\TvBoard;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -64,26 +65,54 @@ class TvDisplaySettingsController extends Controller
     {
         $masjid = Masjid::with('donationLink')->findOrFail($masjid_id);
 
+        // Only what the request carried AND validated: an absent key is unchanged.
+        $chosen = $this->normalised($request->safe()->only(TvBoard::SETTINGS));
+
         try {
-            $setting = MasjidTvSetting::query()->first() ?? new MasjidTvSetting();
-
-            // Only what the request carried AND validated: an absent key is unchanged.
-            $setting->fill($this->normalised($request->safe()->only(TvBoard::SETTINGS)));
-            $setting->updated_by_user_id = $request->user()?->id;
-            $setting->save();
-
-            MobileCache::flushMasjid((int) $masjid->id, MobileCache::TV_CONFIG);
-
-            return response()->json([
-                'status' => 'success',
-                'data' => $this->payload($masjid, $setting->fresh()),
-            ], Response::HTTP_OK);
+            try {
+                $setting = $this->store($chosen, $request->user()?->id);
+            } catch (UniqueConstraintViolationException) {
+                // Two first saves at the same moment (two administrators, or two tabs): both
+                // found no row and the other one's insert won. Its row exists now, so this
+                // save is applied to it instead of being lost as an error.
+                $setting = $this->store($chosen, $request->user()?->id);
+            }
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+
+        // The row IS saved from here on. If the cache cannot be flushed the board still
+        // gets the change when the entry expires (five minutes), so that is written down
+        // and the save is answered as the success it was: "Not saved" beside a board that
+        // then changes would be the worse answer.
+        try {
+            MobileCache::flushMasjid((int) $masjid->id, MobileCache::TV_CONFIG);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->payload($masjid, $setting->fresh()),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Write the chosen settings to this organisation's row, making the row on a first save.
+     *
+     * @param array<string, mixed> $chosen
+     */
+    private function store(array $chosen, ?int $userId): MasjidTvSetting
+    {
+        $setting = MasjidTvSetting::query()->first() ?? new MasjidTvSetting();
+        $setting->fill($chosen);
+        $setting->updated_by_user_id = $userId;
+        $setting->save();
+
+        return $setting;
     }
 
     /**

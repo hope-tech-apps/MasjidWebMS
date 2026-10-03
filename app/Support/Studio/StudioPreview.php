@@ -131,7 +131,10 @@ final class StudioPreview
             'tvos' => [
                 'theme' => TvConfigController::THEME,
                 // The board falls back to the organisation's name when tv-config
-                // sends no header_title, which is what it will send.
+                // sends no header_title, which is what it sends until the organisation
+                // chooses a title on its TV Display page. This preview does not read
+                // those choices (DECISIONS.md, 2026-10-03): for an existing
+                // organisation it can differ from the board.
                 'header_title' => $org->name,
                 'carousel_interval_seconds' => TvConfigController::CAROUSEL_INTERVAL_SECONDS,
                 'show_prayer_panel' => $org->isMasjid(),

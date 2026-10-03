@@ -77,6 +77,27 @@ final class TvBoard
     /** The three switches. Stored only as `false` or null. */
     public const SWITCHES = ['is_enabled', 'show_prayer_panel', 'show_qr'];
 
+    /**
+     * What may not be in a title or a caption: anything that breaks the one line, or
+     * turns the reading direction of the text around it.
+     *
+     *  - every control character (\p{Cc}: tab, line feed, carriage return, NEL U+0085 ...);
+     *  - the Unicode line and paragraph separators U+2028 and U+2029, which are line
+     *    breaks that are not control characters;
+     *  - the bidirectional embedding, override and isolate controls U+202A to U+202E and
+     *    U+2066 to U+2069. One of those in a title would reverse how the rest of the
+     *    board line reads.
+     *
+     * NOT refused: the zero-width joiner and non-joiner (U+200C, U+200D) and the
+     * left-to-right and right-to-left marks (U+200E, U+200F). Arabic, Persian and Urdu
+     * text uses them, and a title is often written in one of those.
+     *
+     * ONE definition: the request refuses these, the resolver removes them from a row it
+     * does not trust, and resources/vue-app/views/dashboard/tvDisplay.ts says the same to
+     * the administrator before the request is sent.
+     */
+    public const NOT_ONE_LINE = '/[\p{Cc}\x{2028}\x{2029}\x{202A}-\x{202E}\x{2066}-\x{2069}]+/u';
+
     private function __construct(
         public readonly bool $isEnabled,
         public readonly ?string $headerTitle,
@@ -186,7 +207,11 @@ final class TvBoard
             return null;
         }
 
-        $clean = trim((string) preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $value));
+        // Text that is not valid UTF-8 makes preg_replace answer null: nothing is left,
+        // and the caller falls back to its default rather than send bytes no client can read.
+        $clean = trim((string) preg_replace(self::NOT_ONE_LINE, ' ', $value));
+        // Blanks that are not ASCII (a no-break space, an ideographic space) are still blank.
+        $clean = (string) preg_replace('/^[\s\p{Z}]+|[\s\p{Z}]+$/u', '', $clean);
 
         return $clean === '' ? null : rtrim(mb_substr($clean, 0, $max));
     }

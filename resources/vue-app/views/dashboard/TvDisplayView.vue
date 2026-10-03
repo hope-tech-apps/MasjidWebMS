@@ -3,7 +3,8 @@
         <PageDataContainer title="TV Display" :hideButton="true">
             <div class="container w-100">
                 <p class="text-muted">
-                    Settings for the screen in your lobby. The screen picks up a change within about four minutes.
+                    Settings for the TV screen in your lobby. The screen picks up a change within about four minutes.
+                    If your organisation has no TV screen set up yet, these settings wait until it does.
                 </p>
 
                 <div v-if="loadState === 'loading'" class="text-center py-5">
@@ -17,6 +18,9 @@
 
                 <template v-else>
                     <form @submit.prevent="save">
+                        <!-- Nothing can be edited while a save is in flight: the form is redrawn from the
+                             server's answer, and an edit made meanwhile would be thrown away unsaid. -->
+                        <fieldset :disabled="saving" class="border-0 p-0 m-0">
                         <div class="card mb-3">
                             <div class="card-body py-3">
                                 <h2 class="h5">What the screen shows</h2>
@@ -50,6 +54,10 @@
                                     <small id="tv-qr-hint" class="text-muted d-block">{{ qrHint }}</small>
                                     <router-link v-if="!payload.context.has_donation_link && donationReachable" class="small" :to="{ name: 'masjid.donation' }">Open the Donation page</router-link>
                                 </div>
+
+                                <p v-if="emptyRightSide" id="tv-right-side-note" class="small text-warning-emphasis mt-3 mb-0" role="note">
+                                    With no prayer times and no donation code, the right side of the screen is an empty panel.
+                                </p>
                             </div>
                         </div>
 
@@ -60,20 +68,20 @@
                                     <div class="col-md-6">
                                         <label class="form-label" for="tv-title">Title at the top</label>
                                         <input id="tv-title" v-model="form.title" class="form-control" type="text" dir="auto" autocomplete="off"
-                                            :maxlength="payload.context.limits.header_title_max" :placeholder="payload.context.organisation_name"
+                                            :placeholder="payload.context.organisation_name"
                                             :class="{ 'is-invalid': problems.title }" :aria-invalid="problems.title ? 'true' : undefined"
                                             aria-describedby="tv-title-hint tv-title-error" />
                                         <div id="tv-title-hint" class="form-text">Leave blank to show your organisation's name.</div>
-                                        <div v-if="problems.title" id="tv-title-error" class="invalid-feedback d-block">{{ problems.title }}</div>
+                                        <div v-if="problems.title" id="tv-title-error" class="invalid-feedback d-block" role="alert">{{ problems.title }}</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" for="tv-caption">Words under the QR code</label>
                                         <input id="tv-caption" v-model="form.caption" class="form-control" type="text" dir="auto" autocomplete="off"
-                                            :maxlength="payload.context.limits.donate_caption_max" :placeholder="payload.context.defaults.donate_caption"
+                                            :placeholder="payload.context.defaults.donate_caption"
                                             :class="{ 'is-invalid': problems.caption }" :aria-invalid="problems.caption ? 'true' : undefined"
                                             aria-describedby="tv-caption-hint tv-caption-error" />
                                         <div id="tv-caption-hint" class="form-text">Leave blank for “{{ payload.context.defaults.donate_caption }}”.</div>
-                                        <div v-if="problems.caption" id="tv-caption-error" class="invalid-feedback d-block">{{ problems.caption }}</div>
+                                        <div v-if="problems.caption" id="tv-caption-error" class="invalid-feedback d-block" role="alert">{{ problems.caption }}</div>
                                     </div>
                                 </div>
                             </div>
@@ -85,20 +93,23 @@
                                 <div class="row g-3">
                                     <div class="col-sm-6 col-md-4">
                                         <label class="form-label" for="tv-seconds">Seconds per slide</label>
-                                        <input id="tv-seconds" class="form-control" type="number" inputmode="numeric" step="1" autocomplete="off"
-                                            :min="payload.context.limits.carousel_interval_min" :max="payload.context.limits.carousel_interval_max"
-                                            :placeholder="String(payload.context.defaults.carousel_interval_seconds)" :value="form.seconds"
+                                        <!-- A list, not a number box: the board keeps only some speeds evenly (tvDisplay.ts,
+                                             EVEN_SLIDE_SECONDS). Bound by hand so the blank choice stays "automatic". -->
+                                        <select id="tv-seconds" class="form-select" :value="form.seconds"
                                             :class="{ 'is-invalid': problems.seconds }" :aria-invalid="problems.seconds ? 'true' : undefined"
-                                            aria-describedby="tv-seconds-hint tv-seconds-error" @input="typeSeconds" />
+                                            aria-describedby="tv-seconds-hint tv-seconds-error" @change="chooseSeconds">
+                                            <option v-for="choice in secondsOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
+                                        </select>
                                         <div id="tv-seconds-hint" class="form-text">
-                                            Between {{ payload.context.limits.carousel_interval_min }} and {{ payload.context.limits.carousel_interval_max }}.
-                                            Leave blank for {{ payload.context.defaults.carousel_interval_seconds }}.
+                                            How long each slide stays up. These are the speeds the screen keeps evenly.
                                         </div>
-                                        <div v-if="problems.seconds" id="tv-seconds-error" class="invalid-feedback d-block">{{ problems.seconds }}</div>
+                                        <div v-if="problems.seconds" id="tv-seconds-error" class="invalid-feedback d-block" role="alert">{{ problems.seconds }}</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
+
+                        </fieldset>
 
                         <div v-if="saveError" class="alert alert-danger py-2 mt-2" role="alert">Not saved. {{ saveError }}</div>
 
@@ -132,7 +143,7 @@ import { apiErrorText } from "@/core/services/ApiErrors";
 import { useAuthStore } from "@/stores/authStore";
 import { useMasjidStore } from "@/stores/masjidStore";
 import { useTvDisplayStore } from "@/stores/masjid/tvDisplayStore";
-import { SECONDS_NOT_WHOLE, formFrom, formProblems, sameForm, saveBody, screenSummary } from "@/views/dashboard/tvDisplay";
+import { changedBody, formFrom, formProblems, rightSideEmpty, sameForm, screenSummary, secondsChoices } from "@/views/dashboard/tvDisplay";
 import type { TvDisplayForm, TvDisplayProblems } from "@/views/dashboard/tvDisplay";
 
 const authStore = useAuthStore();
@@ -148,24 +159,29 @@ const saveError = ref("");
 const form = ref<TvDisplayForm>({ slides: true, prayerPanel: true, qr: true, title: "", caption: "", seconds: "" });
 // The form as the server last gave it: Save has nothing to send while the two match.
 const loaded = ref<TvDisplayForm>({ ...form.value });
-const secondsUnreadable = ref(false);
 
 const payload = computed(() => store.payload);
 const summary = computed(() => (payload.value ? screenSummary(payload.value.effective, payload.value.context) : []));
 
 const problems = computed<TvDisplayProblems>(() => {
     if (!payload.value) return {};
-    const found = formProblems(form.value, payload.value.context.limits);
-    if (secondsUnreadable.value) found.seconds = SECONDS_NOT_WHOLE;
-    return found;
+    return formProblems(form.value, payload.value.context.limits);
 });
 const canSave = computed(() => loadState.value === 'ready' && !!payload.value && !saving.value
     && Object.keys(problems.value).length === 0 && !sameForm(form.value, loaded.value));
 
+// What the form would put on the right of the board if saved as it stands: said before the save,
+// because the empty panel is easier to avoid than to notice in the lobby.
+const emptyRightSide = computed(() => !!payload.value && rightSideEmpty(
+    form.value.slides,
+    payload.value.context.is_masjid && form.value.prayerPanel,
+    payload.value.context.has_donation_link && form.value.qr,
+));
+
 // A paused board shows the prayer panel alone, or only its title where there is no panel.
 const pausedHint = computed(() => (payload.value?.context.is_masjid && form.value.prayerPanel
     ? "The screen then shows prayer times only."
-    : "The screen then shows only the title at the top."));
+    : "The screen then shows only the title."));
 
 // A link is offered only where the sidebar offers the page (core/access/orgAccess.ts): Announcements can
 // be switched off for an organisation, and a school has no Donation screen to add a link on.
@@ -190,19 +206,17 @@ function setQr(event: Event) {
     form.value.qr = (event.target as HTMLInputElement).checked;
 }
 
-// A number field hands over an empty value for text it cannot read ("abc", a lone "-"). That is kept
-// apart from a blank field, which means "automatic" and would save over the organisation's number.
-function typeSeconds(event: Event) {
-    const field = event.target as HTMLInputElement;
-    form.value.seconds = field.value;
-    secondsUnreadable.value = field.validity?.badInput === true;
+// The speeds on offer, always including the one that was loaded even when it is not an even one.
+const secondsOptions = computed(() => (payload.value ? secondsChoices(loaded.value.seconds, payload.value.context) : []));
+
+function chooseSeconds(event: Event) {
+    form.value.seconds = (event.target as HTMLSelectElement).value;
 }
 
 function seed() {
     if (!store.payload) return;
-    form.value = formFrom(store.payload.settings);
-    loaded.value = formFrom(store.payload.settings);
-    secondsUnreadable.value = false;
+    form.value = formFrom(store.payload.settings, store.payload.context.defaults);
+    loaded.value = formFrom(store.payload.settings, store.payload.context.defaults);
 }
 
 // Each load takes a ticket, and only the newest one may change the page. An administrator who
@@ -210,8 +224,23 @@ function seed() {
 // answer (or late failure) is about the organisation they left.
 let loadTicket = 0;
 
+// What to say when the server gave no answer at all (offline, a dropped connection): the page's own
+// sentence. The shared helper would say axios's "Network Error".
+function said(e: unknown, fallback: string): string {
+    if ((e as any)?.response) return apiErrorText(e, fallback);
+    // The store's own refusals (the organisation changed, an answer without its parts) say what happened.
+    if (e instanceof Error && !(e as any).isAxiosError && e.message) return e.message;
+    return fallback;
+}
+
 async function load() {
-    if (!masjidStore.masjid?.id) return;
+    // No organisation yet (the page opened before it loaded, or an administrator is switching to
+    // another): that is waiting, not a failure. The watcher calls again once there is one.
+    if (!masjidStore.masjid?.id) {
+        ++loadTicket;
+        loadState.value = 'loading';
+        return;
+    }
     const ticket = ++loadTicket;
     loadState.value = 'loading';
     loadError.value = "";
@@ -223,7 +252,7 @@ async function load() {
         loadState.value = 'ready';
     } catch (e) {
         if (ticket !== loadTicket) return;
-        loadError.value = apiErrorText(e, "Could not load the TV display settings.");
+        loadError.value = said(e, "Could not load the TV display settings. Check your connection and try again.");
         loadState.value = 'failed';
     }
 }
@@ -233,13 +262,13 @@ async function save() {
     saving.value = true;
     saveError.value = "";
     try {
-        await store.save(saveBody(form.value));
+        await store.save(changedBody(form.value, loaded.value));
         // Redrawn from what the server stored, never from what was sent.
         seed();
         Swal.fire({ toast: true, position: "top-end", icon: "success", title: "TV display settings saved", showConfirmButton: false, timer: 2500 });
     } catch (e) {
         // Said on the page, and the form keeps what was typed.
-        saveError.value = apiErrorText(e, "Could not save the TV display settings.");
+        saveError.value = said(e, "The server could not be reached. Check your connection and try again.");
     } finally {
         saving.value = false;
     }

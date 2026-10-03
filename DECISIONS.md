@@ -7287,8 +7287,16 @@ where the TV app that is actually installed honours the choice. Six settings, on
 - **The six** (each honoured by the TV build released 2026-08-07, ios `a4a1c04`, and by iOS main): announcement
   slides on or off (`is_enabled`), the title at the top (`header_title`, 60), seconds per slide
   (`carousel_interval_seconds`, 3 to 120), the prayer times panel (`show_prayer_panel`), the donation code
-  (`show_qr`), and the words under the code (`donate_caption`, 40). The two lengths and the 120 are ESTIMATES from
-  the board's layout, not measurements on a television; the board itself has no limit. Floor of 3 is the board's own.
+  (`show_qr`), and the words under the code (`donate_caption`, 40). The board itself has no length limit and no
+  ceiling on the interval; its floor of 3 is its own. The two lengths were checked near their limits on the
+  released build in the tvOS simulator: a 58-character title wraps to two lines and fits, a 39-character caption
+  fits on one line. Not checked on a physical television.
+- **The page offers six slide speeds, not a free number: 5, 10, 20, 40, 80, 120 seconds.** The board redraws itself
+  every 40 seconds (burn-in drift) and restarts the slide clock when it does, so only a speed that divides 40 or is a
+  multiple of it keeps an even rhythm. Timed on the released build in the simulator: at 60 the slides changed after
+  80, 40, 80 seconds (the average is right, the rhythm is not); at 120 they changed 120 seconds apart. The other
+  four follow from the same rule and were not each timed; 10 is what every board has run until now. The server still accepts any whole number from 3 to
+  120; a stored speed that is not one of the six stays selectable on the page and is marked "uneven on the screen".
 - **Storage.** `masjid_tv_settings`, one optional row per organisation, every setting nullable with NO database
   default. Null means "not chosen" and resolves to what the board got before the table existed, so an organisation
   that never opens the page is served byte-identical tv-config (`TvConfigSnapshotTest` passes unedited). The three
@@ -7314,12 +7322,14 @@ where the TV app that is actually installed honours the choice. Six settings, on
 - **NOT settings, and why.** The theme: `light` is white text on a white ground on the released build (the real light
   palette is on iOS main only, `48c8b99`). Which announcements show: `tv_flagged` does nothing on the board, and
   `manual` needs a picker the admin API cannot feed, ownership validation (`Announcement` is hand-scoped) and a rule
-  for picks that expire. A donation URL override: the Donation Link page owns the URL and the board draws that link's
-  own title and picture beside the code. The board's language: it follows the website language (S12, parked).
+  for picks that expire. A donation URL override: the Donation Link page owns the URL, and on iOS main (`48c8b99`)
+  the board draws that link's own title and picture beside the code (the released build draws the code and the
+  caption only). The board's language: it follows the website language (S12, parked).
 - **Shown to every organisation.** Only Burlington has a TV app today (the `MasjidTV` target is organisation 1); for
-  the others the page saves settings no screen reads yet. `enabled_platforms` is null for older organisations, so it
-  is not a signal to gate on. OWNER DECISION, flagged: keep the page for everyone, or hide it until an organisation
-  has a TV.
+  the others the page saves settings no screen reads yet, and it says so ("If your organisation has no TV screen set
+  up yet, these settings wait until it does"). `enabled_platforms` is not a signal to gate on: older organisations
+  were backfilled to ios/android/web with no tvos, including the one that has a TV. OWNER DECISION, flagged: keep
+  the page for everyone, or hide it until an organisation has a TV.
 - **The parked branch `feat/studio-tv-config-locale` will have ONE conflict** in `TvConfigController` when it is
   rebased: the nine lines from `return [` to `show_qr`. Take this side's lines with that side's `$payload = [`. The
   cause is the comment under `return [`, which said "No pause switch exists yet" and had to become true. Its trailing
@@ -7327,4 +7337,28 @@ where the TV app that is actually installed honours the choice. Six settings, on
 - **Found on the way, not changed here:** a broadcast sent to the "Lobby screen" channel alone never reaches the tvOS
   board, which reads `/announcements` and has never called `/signage`; the composer's hint says it does. Studio's
   preview of an existing organisation still draws the constants, so it can differ from that organisation's board.
-- **Verified against the decoder, not only against PHP's idea of it:** see the Swift check in LOG.md for this ship.
+- **One line means one line.** `TvBoard::NOT_ONE_LINE` is the single definition: every control character, the
+  Unicode line and paragraph separators, and the bidirectional embedding, override and isolate controls. The request
+  refuses them, the resolver removes them from a row it does not trust, and the page says so before the request. The
+  joiners and direction marks Arabic, Persian and Urdu text uses (U+200C, U+200D, U+200E, U+200F) are allowed. Text
+  that is not valid UTF-8 has its own rule and is a 422: a `/u` pattern fails on such text and `not_regex` reads a
+  failed match as no match.
+- **A save sends only what changed, and is locked while it is in flight.** The server leaves an absent key alone, so a
+  tab left open since yesterday cannot put five settings back over a colleague's newer choices. Two first saves at
+  the same moment both land (the loser of the insert is applied to the winner's row). A cache flush that fails after
+  the row is stored is logged and the save is still answered as a success.
+- **An answer belongs to the organisation it was asked for.** The store drops a load answered after a switch of
+  organisation and refuses a save unless the settings on screen were loaded for the organisation it would be sent to.
+- **The board has an empty right-hand panel when prayer times and the donation code are both off** and the slides are
+  on (both the released build and main: `SignageView.rightRail` is always drawn). Seen in the simulator. The page says
+  so, before the save and in "On the screen now". This is also what any organisation that is not a masjid and has no
+  donation link gets today. Fixing the board is TV-app work.
+- **Verified against the TV app itself, not only against PHP's idea of it.** (1) The app's own `TVConfig` type, copied
+  unmodified from the released build (`a4a1c04`) and from iOS main (`b97c6b1`), decoded all nine response bodies
+  captured from staging's QA sandbox (never saved, saved unchanged, every setting chosen, an Arabic title, markup in the
+  caption, the limits, paused, back to not chosen); three deliberately wrong bodies (a boolean as 1, the interval as a
+  string, a null caption) each failed to decode. (2) The released app, version 2.8 build 2608070933, was built for the
+  tvOS simulator and shown seven of those bodies through its disk cache, launched with an organisation id that does not
+  exist so that it drew only what it was given and wrote nothing anywhere: the title, the caption, the pause, the
+  hidden prayer panel and the hidden code each appeared as chosen. What was NOT done: a run on a physical Apple TV, and
+  a live change arriving over the network (the app's server address is fixed to production).

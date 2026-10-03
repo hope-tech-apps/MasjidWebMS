@@ -23,7 +23,10 @@ use App\Support\TvBoard;
  * TEXT. The public tv-config endpoint echoes both strings to anyone who asks,
  * and the board draws them at a fixed size with no truncation: a long title
  * shrinks the slides and a long caption shrinks the prayer times. Hence the
- * limits, and one line each (no line breaks or other control characters).
+ * limits, and one line each: TvBoard::NOT_ONE_LINE says exactly what that
+ * excludes. Text that is not valid UTF-8 is refused by its own rule, because a
+ * /u pattern FAILS on such text and `not_regex` reads a failed match as "no
+ * match": without the rule it would pass validation and die in the database.
  *
  * `masjid_id` is not accepted: the organisation is the bound tenant.
  * Extends BaseFormRequest so a refusal is the {status:'failed', data} 422 the
@@ -36,7 +39,14 @@ class SaveTvDisplaySettingsRequest extends BaseFormRequest
         $coerced = [];
 
         foreach (TvBoard::SWITCHES as $key) {
-            if (! $this->has($key) || $this->input($key) === null) {
+            // Null, and a blank from a form field, both mean "not chosen". Said here and not
+            // left to the framework's empty-string middleware alone: filter_var reads '' as
+            // FALSE, and false on `is_enabled` pauses a lobby screen.
+            if (! $this->has($key) || $this->input($key) === null || $this->input($key) === '') {
+                if ($this->has($key)) {
+                    $coerced[$key] = null;
+                }
+
                 continue;
             }
 
@@ -52,14 +62,19 @@ class SaveTvDisplaySettingsRequest extends BaseFormRequest
 
     public function rules(): array
     {
-        $oneLine = 'not_regex:/[\x00-\x1F\x7F]/u';
+        $oneLine = 'not_regex:' . TvBoard::NOT_ONE_LINE;
+        $readable = function (string $attribute, mixed $value, \Closure $fail): void {
+            if (is_string($value) && ! mb_check_encoding($value, 'UTF-8')) {
+                $fail('This text has characters that cannot be read. Type it again.');
+            }
+        };
 
         return [
             'is_enabled' => ['nullable', 'boolean'],
             'show_prayer_panel' => ['nullable', 'boolean'],
             'show_qr' => ['nullable', 'boolean'],
-            'header_title' => ['nullable', 'string', 'max:' . TvBoard::HEADER_TITLE_MAX, $oneLine],
-            'donate_caption' => ['nullable', 'string', 'max:' . TvBoard::DONATE_CAPTION_MAX, $oneLine],
+            'header_title' => ['nullable', 'string', $readable, 'max:' . TvBoard::HEADER_TITLE_MAX, $oneLine],
+            'donate_caption' => ['nullable', 'string', $readable, 'max:' . TvBoard::DONATE_CAPTION_MAX, $oneLine],
             'carousel_interval_seconds' => [
                 'nullable',
                 'integer',

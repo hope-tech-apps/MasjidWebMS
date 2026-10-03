@@ -126,15 +126,20 @@ function flip(el: Node) {
     (el.listeners.change ?? []).forEach((listener) => listener({ target: el }));
 }
 
+/** A choice in the speed list, as a browser reports it. */
+const choose = (el: Node, value: string) => el.props.onChange({ target: { value } });
+const options = (screen: Mounted): Array<[string, string]> => screen.all((n) => n.tag === 'option').map((n) => [String(n.props.value), n.textContent.trim()]);
+
 /** A change event on a switch with its own handler. */
 const change = (el: Node, checked: boolean) => el.props.onChange({ target: { checked } });
 
 // --------------------------------------------------------------------------------------------- tests
 
-test('an organisation that never saved: Save is off until something changes, and a change is sent with the rest as null', async () => {
+test('an organisation that never saved: Save is off until something changes, and only the change is sent', async () => {
     const { screen, calls, swal } = await mount();
 
-    assert.match(screen.text(), /Settings for the screen in your lobby\. The screen picks up a change within about four minutes\./);
+    assert.match(screen.text(), /Settings for the TV screen in your lobby\. The screen picks up a change within about four minutes\./);
+    assert.match(screen.text(), /If your organisation has no TV screen set up yet, these settings wait until it does\./);
     assert.equal((byId(screen, 'tv-slides') as any).checked, true);
     assert.equal((byId(screen, 'tv-prayer') as any).checked, true);
     assert.equal(byId(screen, 'tv-qr').props.checked, true);
@@ -152,7 +157,9 @@ test('an organisation that never saved: Save is off until something changes, and
     submit(form(screen));
     await flush();
 
-    assert.deepEqual(saves(calls), [{ ...allNull, header_title: 'Welcome to Al-Noor' }]);
+    // Only what changed: the server leaves an absent key as it is, so a stale tab cannot put the
+    // other five settings back over a colleague's newer choices.
+    assert.deepEqual(saves(calls), [{ header_title: 'Welcome to Al-Noor' }]);
     assert.equal(swal.dialogs.length, 1);
     assert.equal(swal.dialogs[0].title, 'TV display settings saved');
     // Redrawn from the server's answer: the trimmed title, the list below, and nothing left to save.
@@ -169,7 +176,7 @@ test('every switch turned off is sent as false, and turned back on is sent as nu
     flip(byId(screen, 'tv-prayer'));
     change(byId(screen, 'tv-qr'), false);
     await flush();
-    assert.match(screen.text(), /The screen then shows only the title at the top\./, 'paused with the prayer panel off');
+    assert.match(screen.text(), /The screen then shows only the title\./, 'paused with the prayer panel off');
     submit(form(screen));
     await flush();
 
@@ -181,8 +188,9 @@ test('every switch turned off is sent as false, and turned back on is sent as nu
     await flush();
 
     assert.deepEqual(saves(calls), [
-        { ...allNull, is_enabled: false, show_prayer_panel: false, show_qr: false },
-        allNull,
+        { is_enabled: false, show_prayer_panel: false, show_qr: false },
+        // Back on is null ("not chosen"), never true.
+        { is_enabled: null, show_prayer_panel: null, show_qr: null },
     ]);
     screen.unmount();
 });
@@ -208,7 +216,7 @@ test('a failed load offers Retry and no Save, and Retry brings the form', async 
     screen.unmount();
 });
 
-test('without a donation link the QR switch is drawn off and disabled, and a save still sends show_qr as null', async () => {
+test('without a donation link the QR switch is drawn off and disabled, and a save sends nothing about it', async () => {
     const { screen, calls } = await mount(storeDouble(answer({}, { has_donation_link: false })));
     const qr = byId(screen, 'tv-qr');
 
@@ -216,18 +224,20 @@ test('without a donation link the QR switch is drawn off and disabled, and a sav
     assert.equal(qr.disabled, true);
     assert.match(screen.text(), /Add a donation link first; the code appears once one is set\./);
     assert.ok(links(screen).includes('masjid.donation'));
-    assert.match(screen.text(), /Donation QR code: not shown, no donation link yet/);
+    assert.match(screen.text(), /Donation QR code: not shown, there is no donation link/);
     assert.equal(screen.button('Save').disabled, true, 'the drawing is not a change');
 
     // A change event that reached the handler anyway changes nothing.
     change(qr, true);
     change(qr, false);
-    type(byId(screen, 'tv-seconds'), '20');
+    choose(byId(screen, 'tv-seconds'), '20');
     await flush();
     submit(form(screen));
     await flush();
 
-    assert.deepEqual(saves(calls), [{ ...allNull, carousel_interval_seconds: 20 }]);
+    // The drawn-off switch is not a choice: show_qr is not in the body at all, so the code
+    // appears by itself once a link is set.
+    assert.deepEqual(saves(calls), [{ carousel_interval_seconds: 20 }]);
     screen.unmount();
 });
 
@@ -240,7 +250,7 @@ test('an organisation with no Donation screen is not sent to one', async () => {
     screen.unmount();
 });
 
-test('a school sees no prayer switch, and its save leaves show_prayer_panel as null', async () => {
+test('a school sees no prayer switch, and its save says nothing about the prayer panel', async () => {
     const { screen, calls } = await mount(storeDouble(answer({}, { organisation_name: 'Al-Razi School', is_masjid: false })));
 
     assert.equal(shown(screen, 'tv-prayer'), false);
@@ -249,11 +259,11 @@ test('a school sees no prayer switch, and its save leaves show_prayer_panel as n
 
     flip(byId(screen, 'tv-slides'));
     await flush();
-    assert.match(screen.text(), /The screen then shows only the title at the top\./);
+    assert.match(screen.text(), /The screen then shows only the title\./);
     submit(form(screen));
     await flush();
 
-    assert.deepEqual(saves(calls), [{ ...allNull, is_enabled: false }]);
+    assert.deepEqual(saves(calls), [{ is_enabled: false }]);
     assert.match(screen.text(), /Announcement slides: paused/);
     assert.match(screen.text(), /The screen shows only the title: Al-Razi School/);
     screen.unmount();
@@ -270,57 +280,79 @@ test('a masjid pausing its slides is told the screen then shows prayer times onl
     screen.unmount();
 });
 
-test('the limits and the hints are the server\'s, and a problem is shown beside its field and turns Save off', async () => {
+test('the speeds offered are the ones the screen keeps evenly, and the usual one stores nothing', async () => {
     const { screen, calls } = await mount();
     const seconds = byId(screen, 'tv-seconds');
 
-    assert.equal(seconds.props.min, 3);
-    assert.equal(seconds.props.max, 120);
-    assert.equal(seconds.props.placeholder, '10');
-    assert.equal(byId(screen, 'tv-title').props.maxlength, 60);
-    assert.equal(byId(screen, 'tv-caption').props.maxlength, 40);
-    assert.equal(byId(screen, 'tv-caption').props.placeholder, 'Scan to Donate');
-    assert.match(screen.text(), /Between 3 and 120\. Leave blank for 10\./);
+    assert.equal(seconds.tag, 'select', 'a list, not a number box: the board keeps only some speeds evenly');
+    assert.deepEqual(options(screen), [
+        ['5', '5 seconds'],
+        ['', '10 seconds, the usual speed'],
+        ['20', '20 seconds'],
+        ['40', '40 seconds'],
+        ['80', '80 seconds'],
+        ['120', '120 seconds (2 minutes)'],
+    ]);
+    assert.equal(seconds.props.value, '', 'nothing chosen is drawn as the usual speed');
+    assert.match(screen.text(), /These are the speeds the screen keeps evenly\./);
     assert.match(screen.text(), /Leave blank for “Scan to Donate”\./);
+    assert.equal(byId(screen, 'tv-caption').props.placeholder, 'Scan to Donate');
 
-    type(seconds, '2');
+    choose(seconds, '20');
     await flush();
-    assert.equal(byId(screen, 'tv-seconds-error').textContent, 'Seconds per slide must be between 3 and 120.');
-    assert.equal(byId(screen, 'tv-seconds').props['aria-invalid'], 'true');
+    assert.equal(screen.button('Save').disabled, false);
+    submit(form(screen));
+    await flush();
+    assert.deepEqual(saves(calls), [{ carousel_interval_seconds: 20 }]);
+
+    // Back to the usual speed is "not chosen": null, never the number 10.
+    choose(byId(screen, 'tv-seconds'), '');
+    await flush();
+    submit(form(screen));
+    await flush();
+    assert.deepEqual(saves(calls)[1], { carousel_interval_seconds: null });
+    screen.unmount();
+});
+
+test('the limits come from the server: speeds outside them are not offered, and text over its limit is said beside the field', async () => {
+    const narrow = { header_title_max: 12, donate_caption_max: 40, carousel_interval_min: 10, carousel_interval_max: 40 };
+    const { screen, calls } = await mount(storeDouble(answer({}, { limits: narrow })));
+
+    assert.deepEqual(options(screen).map(([value]) => value), ['', '20', '40']);
+    // No maxlength: a browser counts UTF-16 units and the server counts characters, so the
+    // limit is said in words beside the field instead (formProblems).
+    assert.equal(byId(screen, 'tv-title').props.maxlength, undefined);
+    assert.equal(byId(screen, 'tv-caption').props.maxlength, undefined);
+
+    type(byId(screen, 'tv-title'), 'Thirteen char');
+    await flush();
+    assert.equal(byId(screen, 'tv-title-error').textContent, 'The title can be at most 12 characters. You have 13.');
+    assert.equal(byId(screen, 'tv-title').props['aria-invalid'], 'true');
     assert.equal(screen.button('Save').disabled, true);
     submit(form(screen));
     await flush();
     assert.deepEqual(saves(calls), []);
 
-    type(seconds, '3');
+    type(byId(screen, 'tv-title'), 'Twelve chars');
     await flush();
-    assert.equal(shown(screen, 'tv-seconds-error'), false, 'the lowest allowed value is not a problem');
+    assert.equal(shown(screen, 'tv-title-error'), false, 'at the limit is not a problem');
     assert.equal(screen.button('Save').disabled, false);
     screen.unmount();
 });
 
-test('text a number field cannot read is a problem, never a blank that would save as automatic', async () => {
+test('a stored speed that is not an even one stays selectable, and is marked', async () => {
     const { screen, calls } = await mount(storeDouble(answer({ carousel_interval_seconds: 15 })));
-    const seconds = byId(screen, 'tv-seconds');
 
-    // What a browser hands over for "abc" in a number field: an empty value, flagged as bad input.
-    (seconds as any).validity = { badInput: true };
-    type(seconds, '');
-    await flush();
+    assert.equal(byId(screen, 'tv-seconds').props.value, '15');
+    assert.ok(options(screen).some(([value, label]) => value === '15' && label === '15 seconds (uneven on the screen)'));
+    assert.match(screen.text(), /a new slide about every 15 seconds \(uneven on the screen\)/);
+    assert.equal(screen.button('Save').disabled, true, 'nothing to save: it is what is stored');
 
-    assert.equal(byId(screen, 'tv-seconds-error').textContent, 'Seconds per slide must be a whole number.');
-    assert.equal(screen.button('Save').disabled, true);
-    submit(form(screen));
-    await flush();
-    assert.deepEqual(saves(calls), []);
-
-    // Really blank is automatic, and can be saved.
-    (seconds as any).validity = { badInput: false };
-    type(seconds, '');
+    choose(byId(screen, 'tv-seconds'), '');
     await flush();
     submit(form(screen));
     await flush();
-    assert.deepEqual(saves(calls), [{ ...allNull, carousel_interval_seconds: null }]);
+    assert.deepEqual(saves(calls), [{ carousel_interval_seconds: null }]);
     screen.unmount();
 });
 
@@ -343,15 +375,18 @@ test('a refused save says the server\'s words on the page, keeps what was typed,
     screen.unmount();
 });
 
-test('a save that fails without an answer is said on the page too', async () => {
-    const { screen } = await mount(storeDouble(answer(), { save: () => Promise.reject(new Error('Network Error')) }));
+test('a save that fails without an answer is said in the page\'s own words, not the network library\'s', async () => {
+    // What axios rejects with when the connection drops: an error flagged as its own, with no response.
+    const dropped = Object.assign(new Error('Network Error'), { isAxiosError: true });
+    const { screen } = await mount(storeDouble(answer(), { save: () => Promise.reject(dropped) }));
 
     flip(byId(screen, 'tv-slides'));
     await flush();
     submit(form(screen));
     await flush();
 
-    assert.match(screen.text(), /Not saved\. Network Error/);
+    assert.match(screen.text(), /Not saved\. The server could not be reached\. Check your connection and try again\./);
+    assert.doesNotMatch(screen.text(), /Network Error/);
     assert.equal((byId(screen, 'tv-slides') as any).checked, false);
     screen.unmount();
 });
@@ -407,4 +442,37 @@ test('an administrator who switches organisation mid-load sees the new one, and 
 
     assert.equal(shown(screen, 'tv-slides'), true, 'the form is still there');
     assert.doesNotMatch(screen.text(), /Could not load|Retry/);
+});
+
+test('nothing can be edited while a save is in flight, so no edit is thrown away by the redraw', async () => {
+    const pending = deferred<any>();
+    const { screen } = await mount(storeDouble(answer(), { save: () => pending.promise }));
+
+    type(byId(screen, 'tv-title'), 'Friday');
+    await flush();
+    const fieldset = () => screen.all((n) => n.tag === 'fieldset')[0];
+    assert.equal(!!fieldset().props.disabled, false, 'editable before the save');
+
+    submit(form(screen));
+    await flush();
+    assert.equal(fieldset().props.disabled, true, 'locked while the answer is awaited');
+
+    pending.resolve(answer({ header_title: 'Friday' }));
+    await flush();
+    assert.equal(!!fieldset().props.disabled, false, 'editable again once the answer is drawn');
+    screen.unmount();
+});
+
+test('before the organisation is known the page waits; it does not say the load failed', async () => {
+    const masjidStore = vue.reactive({ masjid: undefined as any, orgType: 'masjid' });
+    const { screen, calls } = await mount(storeDouble(answer()), { masjidStore });
+
+    assert.doesNotMatch(screen.text(), /Could not load|Retry/);
+    assert.equal(calls.length, 0, 'nothing is asked for until there is an organisation to ask about');
+    assert.equal(screen.all((n) => n.tag === 'form').length, 0);
+
+    masjidStore.masjid = { id: 7, name: 'Al-Noor Centre' };
+    await flush();
+    assert.equal(shown(screen, 'tv-slides'), true, 'and it loads as soon as there is one');
+    screen.unmount();
 });

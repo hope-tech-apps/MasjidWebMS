@@ -154,7 +154,9 @@ test('a masjid with a donation link: its name, the slides and their pace, prayer
     ]);
     assert.deepEqual(
         screenSummary(effective({ header_title: 'Welcome', carousel_interval_seconds: 20, show_prayer_panel: false, show_qr: false }), context()),
-        ['Title at the top: Welcome', 'Announcement slides: on, a new slide every 20 seconds', 'Prayer times: hidden', 'Donation QR code: hidden'],
+        // Both hidden: the board's right-hand panel is then an empty box, and the summary says so.
+        ['Title at the top: Welcome', 'Announcement slides: on, a new slide every 20 seconds', 'Prayer times: hidden', 'Donation QR code: hidden',
+            'The right side of the screen is an empty panel: no prayer times and no donation code'],
     );
 });
 
@@ -163,7 +165,7 @@ test('a masjid without a donation link is told there is no link yet, not that th
         'Title at the top: Al-Noor Centre',
         'Announcement slides: on, a new slide every 10 seconds',
         'Prayer times: shown',
-        'Donation QR code: not shown, no donation link yet',
+        'Donation QR code: not shown, there is no donation link',
     ]);
 });
 
@@ -175,7 +177,9 @@ test('a school is told nothing about prayer times', () => {
     assert.deepEqual(lines, [
         'Title at the top: Al-Razi School',
         'Announcement slides: on, a new slide every 10 seconds',
-        'Donation QR code: not shown, no donation link yet',
+        'Donation QR code: not shown, there is no donation link',
+        // A school with no donation link has nothing for the right-hand panel at all.
+        'The right side of the screen is an empty panel: no prayer times and no donation code',
     ]);
 });
 
@@ -245,8 +249,8 @@ test('the prayer switch is rendered only for a masjid', () => {
 });
 
 test('the view builds its body with the helpers, redraws from the server\'s answer, and has no dead header button', () => {
-    assert.match(view, /await store\.save\(saveBody\(form\.value\)\);/);
-    assert.match(view, /form\.value = formFrom\(store\.payload\.settings\);/);
+    assert.match(view, /await store\.save\(changedBody\(form\.value, loaded\.value\)\);/);
+    assert.match(view, /form\.value = formFrom\(store\.payload\.settings, store\.payload\.context\.defaults\);/);
     assert.match(view, /formProblems\(form\.value, payload\.value\.context\.limits\)/);
     assert.match(view, /screenSummary\(payload\.value\.effective, payload\.value\.context\)/);
     assert.match(template, /<PageDataContainer title="TV Display" :hideButton="true">/);
@@ -267,9 +271,14 @@ test('a link to another page is offered only where the sidebar offers that page,
 });
 
 test('the limits, placeholders and hints come from the server\'s answer, not from numbers typed into the page', () => {
-    assert.match(template, /:maxlength="payload\.context\.limits\.header_title_max" :placeholder="payload\.context\.organisation_name"/);
-    assert.match(template, /:maxlength="payload\.context\.limits\.donate_caption_max" :placeholder="payload\.context\.defaults\.donate_caption"/);
-    assert.match(template, /:min="payload\.context\.limits\.carousel_interval_min" :max="payload\.context\.limits\.carousel_interval_max"/);
+    assert.match(template, /id="tv-title"[^>]*:placeholder="payload\.context\.organisation_name"/);
+    // The lengths are checked by formProblems against the server's limits, in characters; a maxlength attribute counts UTF-16 units.
+    assert.doesNotMatch(template, /maxlength/);
+    assert.match(view, /formProblems\(form\.value, payload\.value\.context\.limits\)/);
+    assert.match(template, /id="tv-caption"[^>]*:placeholder="payload\.context\.defaults\.donate_caption"/);
+    // The speeds are a list built from the server's defaults and limits (secondsChoices), not typed into the page.
+    assert.match(view, /secondsChoices\(loaded\.value\.seconds, payload\.value\.context\)/);
+    assert.match(template, /<option v-for="choice in secondsOptions" :key="choice\.value" :value="choice\.value">\{\{ choice\.label \}\}<\/option>/);
     assert.doesNotMatch(code(template), /\b(60|40|120)\b/, 'no limit is hard-coded');
     assert.doesNotMatch(code(template), /Scan to Donate/);
 });
@@ -338,4 +347,59 @@ test('the store never shows or saves one organisation\'s settings as another\'s'
     // And the screen lets only its newest load change the page.
     assert.match(view, /const ticket = \+\+loadTicket;/);
     assert.equal((view.match(/if \(ticket !== loadTicket\) return;/g) ?? []).length, 2, 'after a success and after a failure');
+});
+
+test('an empty right-hand panel is said, on the summary and before the save', async () => {
+    const { rightSideEmpty, RIGHT_SIDE_EMPTY, screenSummary } = await import('../views/dashboard/tvDisplay.ts');
+
+    // Slides on, and neither prayer times nor the donation code: the board draws an empty box there.
+    assert.equal(rightSideEmpty(true, false, false), true);
+    assert.equal(rightSideEmpty(true, true, false), false);
+    assert.equal(rightSideEmpty(true, false, true), false);
+    // A paused board has no right-hand panel at all.
+    assert.equal(rightSideEmpty(false, false, false), false);
+
+    const context = { organisation_name: 'A School', is_masjid: false, has_donation_link: false,
+        defaults: { carousel_interval_seconds: 10, donate_caption: 'Scan to Donate' }, limits, updated_at: null };
+    const school = screenSummary({ is_enabled: true, header_title: null, carousel_interval_seconds: 10, show_prayer_panel: false, show_qr: false, donate_caption: 'Scan to Donate' }, context);
+    assert.equal(school[school.length - 1], RIGHT_SIDE_EMPTY);
+
+    const withCode = screenSummary({ is_enabled: true, header_title: null, carousel_interval_seconds: 10, show_prayer_panel: false, show_qr: true, donate_caption: 'Scan to Donate' }, { ...context, has_donation_link: true });
+    assert.ok(!withCode.includes(RIGHT_SIDE_EMPTY));
+
+    // The page works it out from the form as it stands, with the two derived conditions applied.
+    assert.match(view, /rightSideEmpty\(\s*form\.value\.slides,\s*payload\.value\.context\.is_masjid && form\.value\.prayerPanel,\s*payload\.value\.context\.has_donation_link && form\.value\.qr,\s*\)/);
+    assert.match(view, /<p v-if="emptyRightSide" id="tv-right-side-note"/);
+});
+
+test('the speeds offered are the even ones inside the limits, the usual one is the blank choice, and an odd stored one is kept and marked', async () => {
+    const { EVEN_SLIDE_SECONDS, secondsChoices, formFrom: from, screenSummary: summary } = await import('../views/dashboard/tvDisplay.ts');
+    const ctx = { defaults: { carousel_interval_seconds: 10, donate_caption: 'Scan to Donate' }, limits };
+
+    // Each one divides 40 or is a multiple of it: the board redraws every 40 seconds and restarts the slide clock.
+    for (const seconds of EVEN_SLIDE_SECONDS) assert.ok(40 % seconds === 0 || seconds % 40 === 0, `${seconds}`);
+
+    assert.deepEqual(secondsChoices('', ctx), [
+        { value: '5', label: '5 seconds' },
+        { value: '', label: '10 seconds, the usual speed' },
+        { value: '20', label: '20 seconds' },
+        { value: '40', label: '40 seconds' },
+        { value: '80', label: '80 seconds' },
+        { value: '120', label: '120 seconds (2 minutes)' },
+    ]);
+    // A speed already stored that is not an even one is never dropped from the list.
+    assert.deepEqual(secondsChoices('15', ctx).find((choice) => choice.value === '15'), { value: '15', label: '15 seconds (uneven on the screen)' });
+    assert.equal(secondsChoices('20', ctx).length, 6, 'an even one is not listed twice');
+    // The limits are the server's.
+    assert.deepEqual(secondsChoices('', { ...ctx, limits: { ...limits, carousel_interval_min: 10, carousel_interval_max: 40 } }).map((choice) => choice.value), ['', '20', '40']);
+
+    // A stored speed equal to the usual one is shown as the usual choice, so the list has one entry for it.
+    assert.equal(from({ ...allNull, carousel_interval_seconds: 10 }, ctx.defaults).seconds, '');
+    assert.equal(from({ ...allNull, carousel_interval_seconds: 20 }, ctx.defaults).seconds, '20');
+    assert.equal(from({ ...allNull, carousel_interval_seconds: 10 }).seconds, '10', 'without the defaults nothing is assumed');
+
+    // And the summary does not promise an even rhythm the board will not keep.
+    const lines = summary({ is_enabled: true, header_title: null, carousel_interval_seconds: 60, show_prayer_panel: true, show_qr: true, donate_caption: 'Scan to Donate' },
+        { organisation_name: 'Al-Noor Centre', is_masjid: true, has_donation_link: true, ...ctx, updated_at: null });
+    assert.equal(lines[1], 'Announcement slides: on, a new slide about every 60 seconds (uneven on the screen)');
 });

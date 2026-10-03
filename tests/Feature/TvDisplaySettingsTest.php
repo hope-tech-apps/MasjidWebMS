@@ -408,14 +408,30 @@ class TvDisplaySettingsTest extends TestCase
     }
 
     #[Test]
-    public function a_super_admin_saves_the_organisation_named_in_the_route_and_only_that_one(): void
+    public function a_super_admin_reads_and_saves_the_organisation_named_in_the_route_and_only_that_one(): void
     {
-        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]));
+        // BOTH organisations have a row, so "the first row" and "the route's row" are different things.
+        foreach ([[$this->masjid, 'Ours'], [$this->other, 'Other Org Only']] as [$org, $title]) {
+            $row = new MasjidTvSetting(['header_title' => $title]);
+            $row->masjid_id = $org->id;
+            $row->save();
+        }
 
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]);
+        Sanctum::actingAs($super);
+
+        $this->getJson($this->url($this->other))->assertOk()
+            ->assertJsonPath('data.settings.header_title', 'Other Org Only')
+            ->assertJsonPath('data.context.organisation_name', 'Other Test Masjid');
+
+        $this->forgetTenant();
         $this->postJson($this->url($this->other), ['header_title' => 'Set by the platform'])->assertOk();
 
-        $this->assertDatabaseHas('masjid_tv_settings', ['masjid_id' => $this->other->id, 'header_title' => 'Set by the platform']);
-        $this->assertDatabaseMissing('masjid_tv_settings', ['masjid_id' => $this->masjid->id]);
+        $this->assertDatabaseHas('masjid_tv_settings', [
+            'masjid_id' => $this->other->id, 'header_title' => 'Set by the platform', 'updated_by_user_id' => $super->id,
+        ]);
+        $this->assertDatabaseHas('masjid_tv_settings', ['masjid_id' => $this->masjid->id, 'header_title' => 'Ours']);
+        $this->assertSame(2, MasjidTvSetting::withoutMasjidScope()->count());
     }
 
     #[Test]
@@ -432,8 +448,11 @@ class TvDisplaySettingsTest extends TestCase
             $this->forgetTenant();
             Sanctum::actingAs($staff);
 
-            $this->getJson($this->url())->assertUnauthorized();
-            $this->postJson($this->url(), ['header_title' => "Set by a {$type}"])->assertUnauthorized();
+            // Refused by the ADMIN gate, as a signed-in member of staff: its own body, which an
+            // unauthenticated 401 does not carry. Without this the test could not tell a staff
+            // login that was turned away from a request that never signed in.
+            $this->getJson($this->url())->assertUnauthorized()->assertJsonPath('data', 'Unauthorized.');
+            $this->postJson($this->url(), ['header_title' => "Set by a {$type}"])->assertUnauthorized()->assertJsonPath('data', 'Unauthorized.');
         }
 
         $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->count());
@@ -620,6 +639,105 @@ class TvDisplaySettingsTest extends TestCase
     }
 
     #[Test]
+    public function one_line_means_no_line_break_of_any_kind_and_nothing_that_reverses_the_text(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // Line breaks that are not ASCII controls, and the bidirectional override controls.
+        $refused = [
+            'a next-line character' => "Friday\u{0085}prayer",
+            'a line separator' => "Friday\u{2028}prayer",
+            'a paragraph separator' => "Friday\u{2029}prayer",
+            'a right-to-left override' => "Friday \u{202E}reyarp",
+            'a directional isolate' => "Friday \u{2067}prayer\u{2069}",
+        ];
+
+        foreach ($refused as $what => $text) {
+            foreach (['header_title', 'donate_caption'] as $field) {
+                $this->postJson($this->url(), [$field => $text])
+                    ->assertStatus(422)
+                    ->assertJsonPath("data.{$field}.0", 'Keep this to one line.');
+            }
+        }
+
+        $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->count(), 'nothing was written by a refusal');
+
+        // What Arabic, Persian and Urdu text really uses is NOT refused: the zero-width
+        // non-joiner and the right-to-left mark.
+        foreach (["می\u{200C}خواهم", "Jumu'ah \u{200F}الجمعة"] as $title) {
+            $this->postJson($this->url(), ['header_title' => $title])->assertOk();
+            $this->assertSame($title, $this->board($this->masjid)['header_title']);
+        }
+    }
+
+    #[Test]
+    public function text_that_is_not_valid_utf8_is_refused_in_words_not_with_an_error(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // Form-encoded, because a JSON body cannot carry these bytes at all. A /u pattern
+        // FAILS on them, and a failed match reads as "no match": without its own rule this
+        // text passes validation and the save dies in the database.
+        $this->post($this->url(), ['header_title' => "Friday\xC3\x28prayer"], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonStructure(['data' => ['header_title']]);
+
+        $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_row_holding_text_the_request_would_refuse_is_cleaned_before_the_board_sees_it(): void
+    {
+        DB::table('masjid_tv_settings')->insert([
+            'masjid_id' => $this->masjid->id,
+            'header_title' => "Friday\u{2028}prayer \u{202E}reversed",
+            // Only blanks, none of them ASCII: a no-break space and an ideographic space.
+            'donate_caption' => "\u{00A0}\u{3000}",
+        ]);
+
+        $board = $this->board($this->masjid);
+
+        $this->assertDoesNotMatchRegularExpression(TvBoard::NOT_ONE_LINE, $board['header_title']);
+        $this->assertSame('Friday prayer  reversed', $board['header_title']);
+        // A caption of blanks is no caption: the default, never an empty-looking string.
+        $this->assertSame(TvConfigController::DONATE_CAPTION, $board['donate_caption']);
+    }
+
+    #[Test]
+    public function a_blank_switch_is_not_chosen_even_without_the_frameworks_empty_string_middleware(): void
+    {
+        Sanctum::actingAs($this->admin);
+        // filter_var reads '' as FALSE, and false on is_enabled pauses a lobby screen. The
+        // request must not depend on a global middleware to keep a blank from meaning "off".
+        $this->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class);
+
+        $this->post($this->url(), ['is_enabled' => '', 'show_prayer_panel' => '', 'show_qr' => ''], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.settings.is_enabled', null)
+            ->assertJsonPath('data.settings.show_prayer_panel', null)
+            ->assertJsonPath('data.effective.is_enabled', true);
+
+        $this->assertTrue($this->board($this->masjid)['is_enabled']);
+    }
+
+    #[Test]
+    public function a_save_whose_cache_flush_fails_is_still_a_save(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        Cache::partialMock()->shouldReceive('forget')->andThrow(new \RuntimeException('the cache store is away'));
+
+        // The row is stored. Answering "Not saved" beside a board that then changes would be the worse answer.
+        $this->postJson($this->url(), ['header_title' => 'Stored anyway'])
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.settings.header_title', 'Stored anyway');
+
+        $this->assertDatabaseHas('masjid_tv_settings', ['masjid_id' => $this->masjid->id, 'header_title' => 'Stored anyway']);
+    }
+
+    #[Test]
     public function what_is_not_a_setting_yet_cannot_be_set(): void
     {
         Sanctum::actingAs($this->admin);
@@ -640,6 +758,104 @@ class TvDisplaySettingsTest extends TestCase
         $this->assertSame('all_active', $board['announcement_selection']);
         $this->assertNull($board['announcement_ids']);
         $this->assertSame('Still saved', $board['header_title']);
+    }
+
+    #[Test]
+    public function an_empty_save_changes_nothing_that_was_chosen(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->postJson($this->url(), ['header_title' => 'Friday', 'is_enabled' => false])->assertOk();
+
+        // No key at all: every setting is left as it is, on a row that already exists.
+        $this->postJson($this->url(), [])->assertOk()
+            ->assertJsonPath('data.settings.header_title', 'Friday')
+            ->assertJsonPath('data.settings.is_enabled', false);
+
+        $this->assertFalse($this->board($this->masjid)['is_enabled']);
+    }
+
+    #[Test]
+    public function the_derived_values_follow_a_change_of_organisation_type_under_an_existing_row(): void
+    {
+        $school = $this->makeOrg('school', 'Becoming A Masjid');
+        Sanctum::actingAs($this->adminFor($school));
+        $this->postJson($this->url($school), ['header_title' => 'Welcome'])->assertOk();
+        $this->assertFalse($this->board($school)['show_prayer_panel']);
+
+        // The organisation becomes a masjid: its row chose nothing about the panel, so the panel appears.
+        DB::table('masjids')->where('id', $school->id)->update(['org_type' => 'masjid']);
+        $this->forgetBoard($school);
+        $this->assertTrue($this->board($school)['show_prayer_panel']);
+
+        // And a masjid that turned its panel OFF keeps it off whatever it becomes.
+        $this->forgetTenant();
+        $this->postJson($this->url($school), ['show_prayer_panel' => false])->assertOk();
+        DB::table('masjids')->where('id', $school->id)->update(['org_type' => 'school']);
+        $this->forgetBoard($school);
+        $this->assertFalse($this->board($school)['show_prayer_panel']);
+        DB::table('masjids')->where('id', $school->id)->update(['org_type' => 'masjid']);
+        $this->forgetBoard($school);
+        $this->assertFalse($this->board($school)['show_prayer_panel']);
+    }
+
+    #[Test]
+    public function text_made_only_of_control_characters_is_refused_and_a_bare_line_break_clears_the_field(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->postJson($this->url(), ['header_title' => 'Friday'])->assertOk();
+
+        $this->postJson($this->url(), ['header_title' => "\x01\x02"])
+            ->assertStatus(422)
+            ->assertJsonPath('data.header_title.0', 'Keep this to one line.');
+        $this->assertSame('Friday', $this->board($this->masjid)['header_title']);
+
+        // A lone line break is whitespace: the framework trims it to nothing, and nothing means "not chosen".
+        $this->postJson($this->url(), ['header_title' => "\n"])->assertOk()->assertJsonPath('data.settings.header_title', null);
+        $this->assertNull($this->board($this->masjid)['header_title']);
+    }
+
+    #[Test]
+    public function two_first_saves_at_the_same_moment_both_land(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // Between this request finding no row and inserting one, another request inserts it.
+        $raced = false;
+        MasjidTvSetting::creating(function () use (&$raced): void {
+            if (! $raced) {
+                $raced = true;
+                DB::table('masjid_tv_settings')->insert(['masjid_id' => $this->masjid->id, 'header_title' => 'The other save']);
+            }
+        });
+
+        $this->postJson($this->url(), ['carousel_interval_seconds' => 20])
+            ->assertOk()
+            ->assertJsonPath('data.settings.carousel_interval_seconds', 20)
+            // The other save's choice is kept: this one did not send a title.
+            ->assertJsonPath('data.settings.header_title', 'The other save');
+
+        $this->assertTrue($raced);
+        $this->assertSame(1, MasjidTvSetting::withoutMasjidScope()->where('masjid_id', $this->masjid->id)->count());
+    }
+
+    #[Test]
+    public function a_save_the_database_refuses_is_said_as_a_failure_and_changes_nothing(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $before = $this->rawBoard($this->masjid);
+
+        DB::connection()->beforeExecuting(function (string $query): void {
+            if (str_starts_with($query, 'insert into "masjid_tv_settings"')) {
+                throw new \Illuminate\Database\QueryException('sqlite', $query, [], new \RuntimeException('the database is away'));
+            }
+        });
+
+        $this->postJson($this->url(), ['header_title' => 'Never stored'])
+            ->assertStatus(500)
+            ->assertJsonPath('status', 'failed');
+
+        $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->count());
+        $this->assertSame($before, $this->rawBoard($this->masjid), 'a failed save leaves the board and its cache alone');
     }
 
     // ============================================================ the deploy window
