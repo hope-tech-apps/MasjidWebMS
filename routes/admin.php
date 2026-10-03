@@ -89,6 +89,7 @@ use App\Http\Controllers\AdminDashboard\StudioPreviewController;
 use App\Http\Controllers\AdminDashboard\StudioProvisionController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
+use App\Http\Controllers\AdminDashboard\TvDisplaySettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
 use App\Http\Controllers\AdminDashboard\TwoFactorController;
 use App\Http\Controllers\AdminDashboard\UsersController;
@@ -466,6 +467,17 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/payment-methods')->controller(PaymentMethodsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::put('/', 'update');
+            });
+
+            // The lobby TV board's settings: the "TV Display" page (owner, 2026-10-03).
+            // OUTSIDE `crm`, no capability and no permission: `admin` + `tenant`
+            // already mean an administrator of this organisation, and the public
+            // tv-config read these settings feed never follows a module switch
+            // (ModuleSideDoorsTest), so the page does not either. POST, not PUT:
+            // the settings-screen convention. See TvDisplaySettingsController.
+            Route::prefix('{masjid_id}/tv-display')->controller(TvDisplaySettingsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'save');
             });
 
             // Masjid color theme settings

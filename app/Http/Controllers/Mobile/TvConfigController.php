@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\TvBoard;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -40,10 +41,13 @@ use Illuminate\Support\Facades\Cache;
  *
  * ## Where the values come from
  *
- * There is no `tv_config` table and no admin screen for one yet. Rather than
- * invent storage, this serves the design's documented defaults RESOLVED against
- * data the backend actually holds, which is exactly what the client cannot do
- * for itself:
+ * Six of them are the organisation's own choice since 2026-10-03: the "TV
+ * Display" page (TvDisplaySettingsController) stores them in `masjid_tv_settings`
+ * and App\Support\TvBoard resolves a row into what the board is told. An
+ * organisation that has chosen nothing gets, byte for byte, what this endpoint
+ * served before that table existed: the design's documented defaults RESOLVED
+ * against data the backend actually holds, which is exactly what the client
+ * cannot do for itself:
  *
  *  - `show_prayer_panel` follows the tenant's VERTICAL. A school or community
  *    org has no worship modules at all (config/verticals.php: "a school tenant
@@ -60,8 +64,11 @@ use Illuminate\Support\Facades\Cache;
  *    identically but would misreport an override as configured.
  *
  * Everything else is the documented default (§6.1/§10 of the TV design), stated
- * once, here, instead of only inside the app binary. When an admin surface for
- * this arrives it replaces the constants below and nothing else moves.
+ * once, here, instead of only inside the app binary. The constants below are
+ * what an organisation gets until it chooses otherwise, and Studio's preview
+ * reads them, so they stay public and keep their values. The theme, which
+ * announcements are shown and the donation URL are NOT choices yet: see
+ * TvBoard's header for why.
  *
  * ## Scoping and exposure
  *
@@ -98,29 +105,31 @@ class TvConfigController extends Controller
 
     public function index($masjid_id)
     {
+        $settingsUnreadable = false;
+
         $payload = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::TV_CONFIG),
             // The board re-polls this every ~3 minutes because "admin changes
             // propagate fast" (TVAppConfig.tvConfigRefresh), so the SHORT ttl is
             // the one that matches; a longer one would make the poll pointless.
             MobileCache::TTL_SHORT,
-            function () use ($masjid_id) {
+            function () use ($masjid_id, &$settingsUnreadable) {
                 $masjid = Masjid::with('donationLink')->findOrFail($masjid_id);
 
-                $donateUrl = trim((string) ($masjid->donationLink->link ?? ''));
-                $donateUrl = $donateUrl === '' ? null : $donateUrl;
+                $donateUrl = TvBoard::donateUrl($masjid);
+                $board = TvBoard::resolve($masjid, $donateUrl, TvBoard::storedDuringDeploy((int) $masjid->id, $settingsUnreadable));
 
                 return [
-                    // No pause switch exists yet. `false` here blanks a live
-                    // lobby screen down to the paused board, so it is not
-                    // something to default to on a guess.
-                    'is_enabled' => true,
-                    'header_title' => null,
-                    'carousel_interval_seconds' => self::CAROUSEL_INTERVAL_SECONDS,
-                    'show_prayer_panel' => $masjid->isMasjid(),
-                    'show_qr' => $donateUrl !== null,
+                    // The organisation's own pause switch. `false` blanks a live
+                    // lobby screen down to the paused board, so it is false only
+                    // when the organisation stored exactly that (TvBoard).
+                    'is_enabled' => $board->isEnabled,
+                    'header_title' => $board->headerTitle,
+                    'carousel_interval_seconds' => $board->carouselIntervalSeconds,
+                    'show_prayer_panel' => $board->showPrayerPanel,
+                    'show_qr' => $board->showQr,
                     'donate_url' => $donateUrl,
-                    'donate_caption' => self::DONATE_CAPTION,
+                    'donate_caption' => $board->donateCaption,
                     'announcement_selection' => self::ANNOUNCEMENT_SELECTION,
                     // Only read when `announcement_selection` is "manual".
                     'announcement_ids' => null,
@@ -128,6 +137,12 @@ class TvConfigController extends Controller
                 ];
             }
         );
+
+        // Built during a deploy, before the settings table existed: right for
+        // this answer (nobody can have chosen anything yet), not for five minutes.
+        if ($settingsUnreadable) {
+            Cache::forget(MobileCache::masjidKey((int) $masjid_id, MobileCache::TV_CONFIG));
+        }
 
         return response()->json([
             'status' => 'success',

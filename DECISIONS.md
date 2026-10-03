@@ -7279,3 +7279,52 @@ decision on whether the teacher is told).
   the lunch-prefix server test covers an unpaid pickup order only. Next slice.
 - **The earlier "live-verified" was the server, not the screen.** A fix to what a volunteer can do is verified by a
   volunteer login pressing the button.
+
+## 2026-10-03 — A "TV Display" page: an organisation chooses six things about its lobby TV board (owner: "yes and do that")
+Decision: the board's settings, which were constants in `TvConfigController`, become the organisation's own choice
+where the TV app that is actually installed honours the choice. Six settings, one table, one admin page.
+
+- **The six** (each honoured by the TV build released 2026-08-07, ios `a4a1c04`, and by iOS main): announcement
+  slides on or off (`is_enabled`), the title at the top (`header_title`, 60), seconds per slide
+  (`carousel_interval_seconds`, 3 to 120), the prayer times panel (`show_prayer_panel`), the donation code
+  (`show_qr`), and the words under the code (`donate_caption`, 40). The two lengths and the 120 are ESTIMATES from
+  the board's layout, not measurements on a television; the board itself has no limit. Floor of 3 is the board's own.
+- **Storage.** `masjid_tv_settings`, one optional row per organisation, every setting nullable with NO database
+  default. Null means "not chosen" and resolves to what the board got before the table existed, so an organisation
+  that never opens the page is served byte-identical tv-config (`TvConfigSnapshotTest` passes unedited). The three
+  switches are stored only as `false` or null: a posted `true` is stored as null.
+- **The two derived switches can hide, never force.** The prayer panel is `isMasjid() && not turned off`; the donation
+  code is `a donation link exists && not turned off`. Forced on, a school's board would sit on "Loading prayer times",
+  and a stored `true` would stop the code from following a donation link added later. Hiding the code is this switch
+  and nothing else: the board falls back to the organisation's own link when no URL is sent.
+- **One resolver, two callers.** `App\Support\TvBoard::resolve()` feeds the public payload and the page's "on the
+  screen now", so the page cannot promise what the board does not get (pinned: `effective` equals the public body).
+  It never trusts the row: a blank caption is the default caption, an interval out of range is the default interval,
+  a blank title is null (an empty string would HIDE the header), over-long text is cut. The tvOS decoder is strict and
+  fails silently, freezing a board on its old settings while the server logs a 200.
+- **The admin API** is `GET` and `POST /api/admin/masjids/{id}/tv-display`, inside `admin` + `tenant`: a SuperAdmin or
+  the organisation's own MasjidAdmin. No permission is minted (`Permission::count()` stays 8) and no capability gates
+  it, because the public tv-config read never follows a module switch (`ModuleSideDoorsTest`). An absent key is left
+  alone; null puts a setting back to "not chosen". Nonsense for a switch is a 422, never read as off.
+- **A save reaches the board within one poll** (about three minutes): the save flushes `MobileCache::TV_CONFIG`. The
+  donation link save now flushes it too; it did not, so the board's code lagged a link edit by up to five minutes.
+- **The deploy window.** New code is in place seconds before `migrate` runs, and boards poll. A missing table answers
+  the defaults (nobody can have chosen anything yet) and that answer is NOT kept in the cache. Any other failure to
+  read the settings is a 500: the board keeps its last good settings on a 500, where defaults would un-pause it.
+- **NOT settings, and why.** The theme: `light` is white text on a white ground on the released build (the real light
+  palette is on iOS main only, `48c8b99`). Which announcements show: `tv_flagged` does nothing on the board, and
+  `manual` needs a picker the admin API cannot feed, ownership validation (`Announcement` is hand-scoped) and a rule
+  for picks that expire. A donation URL override: the Donation Link page owns the URL and the board draws that link's
+  own title and picture beside the code. The board's language: it follows the website language (S12, parked).
+- **Shown to every organisation.** Only Burlington has a TV app today (the `MasjidTV` target is organisation 1); for
+  the others the page saves settings no screen reads yet. `enabled_platforms` is null for older organisations, so it
+  is not a signal to gate on. OWNER DECISION, flagged: keep the page for everyone, or hide it until an organisation
+  has a TV.
+- **The parked branch `feat/studio-tv-config-locale` will have ONE conflict** in `TvConfigController` when it is
+  rebased: the nine lines from `return [` to `show_qr`. Take this side's lines with that side's `$payload = [`. The
+  cause is the comment under `return [`, which said "No pause switch exists yet" and had to become true. Its trailing
+  `website_locale` block and `return $payload;` apply untouched. This feature uses that name nowhere.
+- **Found on the way, not changed here:** a broadcast sent to the "Lobby screen" channel alone never reaches the tvOS
+  board, which reads `/announcements` and has never called `/signage`; the composer's hint says it does. Studio's
+  preview of an existing organisation still draws the constants, so it can differ from that organisation's board.
+- **Verified against the decoder, not only against PHP's idea of it:** see the Swift check in LOG.md for this ship.

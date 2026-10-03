@@ -48,6 +48,10 @@ class MasjidDonationLinkController extends Controller
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::DONATION_LINK);
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+            // The TV board's donation code follows this link (tv-config `donate_url`,
+            // `show_qr`), and the TV Display page shows that state. Without this the
+            // board and the page disagree for up to five minutes after a link edit.
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::TV_CONFIG);
 
             return response()->json([
                 'status' => 'success',
