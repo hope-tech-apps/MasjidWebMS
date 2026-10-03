@@ -177,6 +177,7 @@ const MENU_ICONS: Record<string, string> = {
     '/masjid/announcements': 'bi-megaphone',
     '/masjid/splash-announcements': 'bi-window-stack',
     '/masjid/broadcasts': 'bi-broadcast',
+    '/masjid/tv-display': 'bi-tv',
     '/masjid/events': 'bi-calendar-event',
     '/masjid/services': 'bi-grid-1x2',
     '/masjid/donation': 'bi-heart',

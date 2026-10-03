@@ -42,6 +42,19 @@ const dashboardRoutes: RouteRecordRaw[] = [
             ...announcementsManagementRoutes,
             ...splashAnnouncementsManagementRoutes,
             ...broadcastsManagementRoutes,
+            {
+                // The lobby TV board's settings. The tvOS app reads them from
+                // GET /api/mobile/masjids/{id}/tv-config (TvConfigController).
+                // No module or capability: every organisation can run a board, and the server route has no gate.
+                path: 'tv-display',
+                name: 'masjid.tvDisplay',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'TV Display'
+                },
+                component: () => import("@/views/dashboard/TvDisplayView.vue")
+            },
             ...eventsManagementRoutes,
             ...servicesManagementRoutes,
             ...pagesManagementRoutes,

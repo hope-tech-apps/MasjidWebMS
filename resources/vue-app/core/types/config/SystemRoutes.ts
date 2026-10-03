@@ -21,6 +21,8 @@ export type MasjidDashboardRoute =
     // The unified publish composer and its history.
     '/masjid/broadcasts' |
     '/masjid/broadcasts/compose' |
+    // The lobby TV board's settings.
+    '/masjid/tv-display' |
     `/masjid/announcements/${number}` |
     '/masjid/events' |
     `/masjid/events/${number}` |
