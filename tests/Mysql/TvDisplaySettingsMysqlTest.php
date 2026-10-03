@@ -39,6 +39,8 @@ function tvOrganisationWithAdmin(): array
     ]);
     $admin = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]);
     $org->user_id = $admin->id;
+    // The page is behind the `tv_display` grant, which is off for every organisation until it is given.
+    $org->forceFill(['capability_overrides' => ['tv_display' => true]]);
     $org->save();
 
     return [$org, $admin];
