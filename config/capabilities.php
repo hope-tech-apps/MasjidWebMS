@@ -257,14 +257,14 @@ return [
     // with a TV"). A grant, OFF for every organisation until a SuperAdmin gives it to one that
     // has a TV screen: today that is the one organisation with a TV app. It gates the ADMIN PAGE
     // and its two routes (`capability:tv_display`) and nothing else. The public tv-config read
-    // never asks for it (a module or grant switch never changes a board, ModuleSideDoorsTest), so
+    // never asks for it (TvDisplaySettingsTest::the_grant_gates_the_page_and_never_the_board), so
     // an organisation without the grant is served byte for byte what it was, and one that loses
     // the grant keeps what it chose: the switch hides the page, it does not reset the screen.
     'tv_display' => [
         'kind' => 'grant',
         'group' => 'communication',
-        'label' => 'TV display settings',
-        'description' => 'Let this organisation\'s administrators choose what its lobby TV screen shows: the title, the slide speed, and whether the slides, the prayer times and the donation code appear. Off: the page is hidden and the screen keeps what it shows now. Turn it on for an organisation that has a TV screen set up.',
+        'label' => 'TV display',
+        'description' => 'Let this organisation\'s administrators choose what its lobby TV screen shows: the title, the words under the donation code, the slide speed, and whether the slides, the prayer times (a masjid only) and the donation code appear. Off: the page is hidden and the screen keeps what it shows now. Meant for an organisation that has a TV screen.',
         'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
         'listed_when_off' => false,
     ],

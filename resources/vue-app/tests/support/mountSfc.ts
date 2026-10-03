@@ -236,6 +236,29 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
     };
 }
 
+/**
+ * Import one of the app's plain .ts modules (from resources/vue-app/) the same way: each of its
+ * imports is read from `modules`. For a module Node cannot import as it stands because it reaches
+ * its neighbours through the `@/` alias; a module it imports only for a type is supplied as `{}`.
+ */
+export async function loadTs(relPath: string, modules: Record<string, any>): Promise<any> {
+    const source = readFileSync(new URL(`../../${relPath}`, import.meta.url), 'utf8');
+    const dir = mkdtempSync(join(tmpdir(), 'load-ts-'));
+    const out = join(dir, `module${++seq}.ts`);
+    writeFileSync(out, rewriteImports(source));
+
+    (globalThis as any).__sfcModule = (spec: string) => {
+        if (!(spec in modules)) throw new Error(`loadTs: ${relPath} imports '${spec}', which the test did not supply`);
+        return modules[spec];
+    };
+
+    try {
+        return await import(pathToFileURL(out).href);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
 function fakeEvent(target: Node) {
     return { target, currentTarget: target, preventDefault() {}, stopPropagation() {} };
 }

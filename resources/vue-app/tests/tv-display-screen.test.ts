@@ -215,6 +215,35 @@ test('a failed load offers Retry and no Save, and Retry brings the form', async 
     screen.unmount();
 });
 
+test('a refused load is said calmly in the server\'s words, with no Retry and nothing to save', async () => {
+    // What the server answers an administrator whose organisation does not hold the page (a bookmark,
+    // or a tab left open after the switch was turned off). An ordinary answer, not a fault.
+    const refusal = httpError(403, { status: 'error', message: 'TV display is not switched on for this organisation.' });
+    const { screen, calls } = await mount(storeDouble(answer(), { load: () => Promise.reject(refusal) }));
+
+    assert.match(screen.text(), /TV display is not switched on for this organisation\./);
+    const notice = screen.all((n) => n.props.role === 'alert');
+    assert.equal(notice.length, 1);
+    assert.match(String(notice[0].props.class), /alert-warning/);
+    assert.doesNotMatch(String(notice[0].props.class), /alert-danger/);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Retry')).length, 0, 'asking again cannot change the answer');
+    assert.equal(screen.all((n) => n.tag === 'form').length, 0);
+    assert.equal(screen.all((n) => n.tag === 'input').length, 0);
+    assert.deepEqual(calls.map((call) => call.name), ['load']);
+    screen.unmount();
+});
+
+test('a load that failed for any other reason is an error, in red, with Retry', async () => {
+    const { screen } = await mount(storeDouble(answer(), { load: () => Promise.reject(httpError(500, { status: 'error', message: 'Server Error' })) }));
+
+    const notice = screen.all((n) => n.props.role === 'alert');
+    assert.equal(notice.length, 1);
+    assert.match(String(notice[0].props.class), /alert-danger/);
+    assert.doesNotMatch(String(notice[0].props.class), /alert-warning/);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Retry')).length, 1);
+    screen.unmount();
+});
+
 test('without a donation link the QR switch is drawn off and disabled, and a save sends nothing about it', async () => {
     const { screen, calls } = await mount(storeDouble(answer({}, { has_donation_link: false })));
     const qr = byId(screen, 'tv-qr');

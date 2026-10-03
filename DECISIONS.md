@@ -7326,18 +7326,30 @@ where the TV app that is actually installed honours the choice. Six settings, on
   the board draws that link's own title and picture beside the code (the released build draws the code and the
   caption only). The board's language: it follows the website language (S12, parked).
 - **Only organisations with a TV see the page (owner, 2026-10-03, asked "every organisation, or only those with a
-  TV?": "Only organisations with a TV").** A new grant, `tv_display` (group Communication, "TV display settings"),
+  TV?": "Only organisations with a TV").** A new grant, `tv_display` (group Communication, "TV display"),
   OFF for every organisation of every type until a SuperAdmin turns it on in the organisation's switches. It gates the
   two admin routes (`capability:tv_display`, 403 otherwise) and the page (`requiresCapability` on the route and the
   menu item, so it is hidden for an organisation without it). On for Burlington at the ship, by the owner's word: it
   is the one organisation with a TV app (the `MasjidTV` target is organisation 1). `enabled_platforms` was not usable
   as the signal: older organisations were backfilled to ios/android/web with no tvos, including the one with a TV.
 - **The grant gates the page, never the board.** The public tv-config read does not ask for it (a switch never changes
-  a board, `ModuleSideDoorsTest`; the class-store condition of 2026-09-29): with the grant on or off an organisation
+  a board; the class-store condition of 2026-09-29; held by `TvDisplaySettingsTest`,
+  `the_grant_gates_the_page_and_never_the_board`, since `ModuleSideDoorsTest` flips modules only and cannot see a
+  grant): with the grant on or off an organisation
   that chose nothing is served the same recorded bytes, and an organisation that loses the grant keeps what it chose
   and only loses the page. A SuperAdmin is never gated by a grant, as everywhere else. The capabilities object every
   organisation payload carries gains the key (`tv_display: false`), so the four byte-pinned fixtures were re-recorded;
   the recordings changed by that key and nothing else (checked by stripping it and comparing).
+- **The switch reads "TV display", and a refusal is said calmly (review of the grant, 2026-10-03).** The gate builds
+  its sentence from the label ("{label} is not switched on for this organisation."), so a plural label read wrongly;
+  every other grant label is singular. With the grant, a 403 became an ordinary answer for the page (a bookmark, or a
+  tab left open after the switch is turned off: the router guard only knows once the organisation has loaded), so the
+  page shows the server's sentence as a notice with no Retry, the way the shop pages do, and keeps red-with-Retry for
+  a real fault. The description names all six settings and says the prayer times are a masjid's. Left as they are,
+  each matching the other grants: Studio offers the switch to every new organisation unticked (ticking it when tvOS
+  is chosen is one line, `studio_preselect_with`, and is the owner's call); a board paused before its grant is taken
+  away stays paused and only a SuperAdmin can un-pause it, so look at the board before removing a grant; on a phone
+  the sidebar drawer does not close after tapping a grant-gated entry (Shop and Class Store too).
 - **The parked branch `feat/studio-tv-config-locale` will have ONE conflict** in `TvConfigController` when it is
   rebased: the nine lines from `return [` to `show_qr`. Take this side's lines with that side's `$payload = [`. The
   cause is the comment under `return [`, which said "No pause switch exists yet" and had to become true. Its trailing

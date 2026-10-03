@@ -475,8 +475,9 @@ Route::prefix('admin')->group(function () {
             // elsewhere exactly as the shop's routes do. OUTSIDE `crm` and with no
             // permission: `admin` + `tenant` already mean an administrator of this
             // organisation. The grant gates THIS PAGE only: the public tv-config read
-            // these settings feed never follows a switch (ModuleSideDoorsTest). POST,
-            // not PUT: the settings-screen convention. See TvDisplaySettingsController.
+            // these settings feed never follows a switch (TvDisplaySettingsTest,
+            // the_grant_gates_the_page_and_never_the_board). POST, not PUT: the
+            // settings-screen convention. See TvDisplaySettingsController.
             Route::prefix('{masjid_id}/tv-display')->middleware('capability:tv_display')->controller(TvDisplaySettingsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');

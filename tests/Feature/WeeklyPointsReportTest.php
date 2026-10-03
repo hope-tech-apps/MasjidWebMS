@@ -974,8 +974,13 @@ class WeeklyPointsReportTest extends TestCase
         $this->assertSame(rtrim((string) config('app.url'), '/')."/teacher/classes/{$this->group->id}?tab=points&week=2026-10-04", $mail->url);
         $this->assertStringNotContainsString('/family/', $html, 'a teacher is not sent to the family door');
 
+        // As in the family email's test: the school's name carries a random hex suffix here, and
+        // "91" turns up inside one often enough to fail a run by chance (CI, 2026-10-03).
+        $this->assertStringContainsString($mail->orgName, $html);
+        $body = str_replace($mail->orgName, '', $html);
+
         foreach (['Amira', 'Zzyzx', '91'] as $forbidden) {
-            $this->assertStringNotContainsString($forbidden, $html);
+            $this->assertStringNotContainsString($forbidden, $body, "the email carries '{$forbidden}'");
         }
     }
 

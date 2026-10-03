@@ -8,6 +8,7 @@ use App\Models\Masjid;
 use App\Models\MasjidTvSetting;
 use App\Models\MasjidUser;
 use App\Models\User;
+use App\Support\CapabilityWriter;
 use App\Support\MobileCache;
 use App\Support\TenantContext;
 use App\Support\TvBoard;
@@ -52,6 +53,9 @@ class TvDisplaySettingsTest extends TestCase
     use RefreshDatabase;
 
     private const FIXTURE = __DIR__ . '/../fixtures/tv-config-snapshot.json';
+
+    /** What the grant's gate says, built from its label (EnsureOrgCapability). */
+    private const NOT_SWITCHED_ON = 'TV display is not switched on for this organisation.';
 
     /** tv-config's keys, in the order the endpoint has always sent them. */
     private const KEYS = [
@@ -472,17 +476,51 @@ class TvDisplaySettingsTest extends TestCase
         $plain = $this->makeOrg('masjid', 'No TV Here', granted: false);
         Sanctum::actingAs($this->adminFor($plain));
 
-        $this->getJson($this->url($plain))->assertForbidden();
-        $this->postJson($this->url($plain), ['header_title' => 'Not allowed', 'is_enabled' => false])->assertForbidden();
+        // Refused by the GRANT, in its own sentence: the `tenant` gate answers 403 too (another
+        // organisation's administrator), and only the words say which of the two turned this away.
+        $this->getJson($this->url($plain))->assertForbidden()->assertJsonPath('message', self::NOT_SWITCHED_ON);
+        $this->postJson($this->url($plain), ['header_title' => 'Not allowed', 'is_enabled' => false])
+            ->assertForbidden()->assertJsonPath('message', self::NOT_SWITCHED_ON);
 
         $this->assertSame(0, MasjidTvSetting::withoutMasjidScope()->where('masjid_id', $plain->id)->count());
         $this->assertTrue($this->board($plain)['is_enabled'], 'a refused save cannot pause a board');
 
-        // A SuperAdmin is never gated by a grant: the platform can still set a board up.
+        // A SuperAdmin is never gated by a grant: the platform can still set a board up, on both verbs.
         Auth::forgetGuards();
         $this->forgetTenant();
         Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]));
         $this->getJson($this->url($plain))->assertOk();
+        $this->postJson($this->url($plain), ['header_title' => 'Set up by the platform'])->assertOk();
+        $this->assertSame('Set up by the platform', $this->board($plain)['header_title']);
+    }
+
+    #[Test]
+    public function the_switch_a_superadmin_flips_is_what_opens_the_page_and_the_board_does_not_move(): void
+    {
+        // The grant given the way production gives it: the guarded writer behind the switches
+        // panel, not a hand-written override. Every other test here writes the column directly.
+        $org = $this->makeOrg('masjid', 'Newly Given', granted: false);
+        $admin = $this->adminFor($org);
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]);
+        $before = $this->rawBoard($org);
+
+        Sanctum::actingAs($admin);
+        $this->getJson($this->url($org))->assertForbidden();
+
+        CapabilityWriter::apply($org->fresh(), ['tv_display' => true], $super->id);
+
+        $this->assertTrue($org->fresh()->hasCapability('tv_display'));
+        $this->forgetTenant();
+        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.settings.header_title', null);
+        // Giving the grant flushed nothing a board reads and changed nothing it is sent.
+        $this->assertSame($before, $this->rawBoard($org), 'cached');
+        $this->forgetBoard($org);
+        $this->assertSame($before, $this->rawBoard($org), 'rebuilt');
+
+        // Taken away again, the same administrator is refused again.
+        CapabilityWriter::apply($org->fresh(), ['tv_display' => false], $super->id);
+        $this->forgetTenant();
+        $this->getJson($this->url($org))->assertForbidden()->assertJsonPath('message', self::NOT_SWITCHED_ON);
     }
 
     #[Test]
@@ -510,7 +548,7 @@ class TvDisplaySettingsTest extends TestCase
 
         $this->masjid->forceFill(['capability_overrides' => ['tv_display' => false]])->save();
         $this->forgetTenant();
-        $this->getJson($this->url())->assertForbidden();
+        $this->getJson($this->url())->assertForbidden()->assertJsonPath('message', self::NOT_SWITCHED_ON);
 
         $board = $this->board($this->masjid);
         $this->assertFalse($board['is_enabled']);

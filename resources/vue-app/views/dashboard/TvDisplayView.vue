@@ -10,9 +10,12 @@
                     <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
                 </div>
 
-                <div v-else-if="loadState === 'failed' || !payload" class="alert alert-danger" role="alert">
+                <!-- Refused (403) is an ordinary answer, not a fault: the page is a switch a SuperAdmin gives
+                     an organisation, and a bookmark or an open tab can outlive it. Said calmly, as the shop
+                     pages say it, and with no Retry: asking again cannot change the answer. -->
+                <div v-else-if="loadState === 'failed' || !payload" class="alert" :class="refused ? 'alert-warning' : 'alert-danger'" role="alert">
                     {{ loadError || 'Could not load the TV display settings.' }}
-                    <button class="btn btn-sm btn-outline-danger ms-3" @click="load">Retry</button>
+                    <button v-if="!refused" class="btn btn-sm btn-outline-danger ms-3" @click="load">Retry</button>
                 </div>
 
                 <template v-else>
@@ -138,7 +141,7 @@ import Swal from "sweetalert2";
 import PageDataContainer from "@/components/PageDataContainer.vue";
 import { menuItemState } from "@/core/access/orgAccess";
 import { MASJID_DASHBOARD_ASIDE_MENU } from "@/core/constants/dashboardAsideMenuItems";
-import { apiErrorText } from "@/core/services/ApiErrors";
+import { apiErrorText, isForbidden } from "@/core/services/ApiErrors";
 import { useAuthStore } from "@/stores/authStore";
 import { useMasjidStore } from "@/stores/masjidStore";
 import { useTvDisplayStore } from "@/stores/masjid/tvDisplayStore";
@@ -153,6 +156,8 @@ const store = useTvDisplayStore();
 // saved unless it is 'ready', so automatic values are never saved over settings this screen never saw.
 const loadState = ref<'loading' | 'ready' | 'failed'>('loading');
 const loadError = ref("");
+// Whether the failed load was a refusal (the organisation does not hold the page), not a fault.
+const refused = ref(false);
 const saving = ref(false);
 const saveError = ref("");
 const form = ref<TvDisplayForm>({ slides: true, prayerPanel: true, qr: true, title: "", caption: "", seconds: "" });
@@ -243,6 +248,7 @@ async function load() {
     const ticket = ++loadTicket;
     loadState.value = 'loading';
     loadError.value = "";
+    refused.value = false;
     saveError.value = "";
     try {
         await store.load();
@@ -252,6 +258,7 @@ async function load() {
     } catch (e) {
         if (ticket !== loadTicket) return;
         loadError.value = said(e, "Could not load the TV display settings. Check your connection and try again.");
+        refused.value = isForbidden(e);
         loadState.value = 'failed';
     }
 }

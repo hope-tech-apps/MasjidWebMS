@@ -26,8 +26,9 @@ use Symfony\Component\HttpFoundation\Response;
  * has given the organisation the grant (owner, 2026-10-03: "only organisations
  * with a TV"). No permission is minted (Permission::count() stays 8). The grant
  * gates this page and nothing else: the public tv-config read never follows a
- * switch (ModuleSideDoorsTest), so an organisation that loses the grant keeps
- * what it chose and only loses the page.
+ * switch (TvDisplaySettingsTest, the_grant_gates_the_page_and_never_the_board),
+ * so an organisation that loses the grant keeps what it chose and only loses
+ * the page.
  *
  * ## The answer has three parts, on both verbs
  *

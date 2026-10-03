@@ -178,7 +178,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     points_weekly_report: 'Weekly points report',
     class_store: 'Class store (Manara Bucks)',
     shop: 'Online shop',
-    tv_display: 'TV display settings',
+    tv_display: 'TV display',
 };
 
 /** One organisation a login belongs to, as the SuperAdmin's user screens see it. */

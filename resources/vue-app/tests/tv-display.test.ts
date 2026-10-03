@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { loadTs } from './support/mountSfc.ts';
 import { formFrom, formProblems, sameForm, saveBody, screenSummary } from '../views/dashboard/tvDisplay.ts';
 import type { TvDisplayContext, TvDisplayEffective, TvDisplayForm, TvDisplaySettings } from '../views/dashboard/tvDisplay.ts';
 
@@ -333,6 +334,46 @@ test('the sidebar entry sits directly after Broadcasts, for administrators, behi
     assert.equal(titles[titles.indexOf('Broadcasts') + 1], 'TV Display');
 });
 
+test('the real sidebar rules put the entry in the sidebar only where the organisation holds the grant', async () => {
+    // The source checks above say the entry NAMES the grant. This runs the rules the sidebar and the
+    // router guard both use (core/access/orgAccess.ts) against the real entry, so a change to how a
+    // grant is read fails here and not only in the lobby.
+    const typesOnly = {};
+    const menu = await loadTs('core/constants/dashboardAsideMenuItems.ts', { '@/core/types/config/AsideMenuItem': typesOnly });
+    const access = await loadTs('core/access/orgAccess.ts', {
+        '@/core/constants/dashboardAsideMenuItems': menu,
+        '@/core/types/config/AsideMenuItem': typesOnly,
+        '@/core/types/data/Capability': typesOnly,
+        '@/core/types/data/Masjid': typesOnly,
+        '@/core/types/data/User': typesOnly,
+        '@/core/types/data/Vertical': typesOnly,
+    });
+    const entry = menu.MASJID_DASHBOARD_ASIDE_MENU.find((item: any) => item.to === '/masjid/tv-display');
+    const state = (user: string | undefined, capabilities: Record<string, boolean> | null, orgType = 'masjid') => access.menuItemState(
+        entry,
+        user,
+        capabilities === null ? null : { id: 7, org_type: orgType, capabilities },
+        orgType,
+    );
+
+    for (const orgType of ['masjid', 'school', 'community']) {
+        assert.equal(state('MasjidAdmin', { tv_display: true }, orgType), 'visible', orgType);
+        assert.equal(state('MasjidAdmin', { tv_display: false }, orgType), 'hidden', orgType);
+        // A payload without the key (a server still on the old catalogue during a deploy) is OFF.
+        assert.equal(state('MasjidAdmin', {}, orgType), 'hidden', orgType);
+        assert.equal(state('SuperAdmin', { tv_display: true }, orgType), 'visible', orgType);
+        // A SuperAdmin reaches it from the "Switched off for {org}" list, and the server lets them in.
+        assert.equal(state('SuperAdmin', { tv_display: false }, orgType), 'switched_off', orgType);
+    }
+
+    // Before the organisation has loaded, an administrator's sidebar does not offer it.
+    assert.equal(state('MasjidAdmin', null), 'hidden');
+    // Nobody else is offered it, whatever the organisation holds.
+    for (const user of ['Teacher', 'LunchStaff', 'Family', undefined]) {
+        assert.equal(state(user, { tv_display: true }), 'hidden', String(user));
+    }
+});
+
 test('the sidebar entry has its icon, and both route types name the page', () => {
     assert.match(read('components/dashboard/DashboardAside.vue'), /'\/masjid\/tv-display': 'bi-tv'/);
     assert.ok(read('core/types/config/SystemRoutes.ts').includes("'/masjid/tv-display' |"));
@@ -340,7 +381,9 @@ test('the sidebar entry has its icon, and both route types name the page', () =>
     // The grant is in the SPA's catalogue mirror, as a capability and with its label, and is NOT a module.
     const capability = read('core/types/data/Capability.ts');
     assert.match(capability, /\| 'tv_display'\n/);
-    assert.match(capability, /tv_display: 'TV display settings',/);
+    assert.match(capability, /tv_display: 'TV display',/);
+    // The server builds its refusal from the same label: "TV display is not switched on for this organisation."
+    assert.match(readRepo('config/capabilities.php'), /'tv_display' => \[\s+'kind' => 'grant',\s+'group' => 'communication',\s+'label' => 'TV display',/);
     assert.doesNotMatch(capability.slice(capability.indexOf('export const MODULE_KEYS'), capability.indexOf(']', capability.indexOf('export const MODULE_KEYS'))), /tv_display/);
 });
 
