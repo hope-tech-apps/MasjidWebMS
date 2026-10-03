@@ -336,8 +336,9 @@ test('the sidebar entry sits directly after Broadcasts, for administrators, behi
 
 test('the real sidebar rules put the entry in the sidebar only where the organisation holds the grant', async () => {
     // The source checks above say the entry NAMES the grant. This runs the rules the sidebar uses
-    // (core/access/orgAccess.ts; the router guard has its own inline copy of the same condition,
-    // pinned as source by the route test above) against the real entry, so a change to how a
+    // (core/access/orgAccess.ts) against the real entry. The router guard has its own inline copy of
+    // the same condition, which no test runs: it is pinned as source at the end of this test, so a
+    // change to how a
     // grant is read fails here and not only in the lobby.
     const typesOnly = {};
     const menu = await loadTs('core/constants/dashboardAsideMenuItems.ts', { '@/core/types/config/AsideMenuItem': typesOnly });
@@ -373,6 +374,10 @@ test('the real sidebar rules put the entry in the sidebar only where the organis
     for (const user of ['Teacher', 'LunchStaff', 'Family', undefined]) {
         assert.equal(state(user, { tv_display: true }), 'hidden', String(user));
     }
+
+    // The guard's copy: it turns an administrator away only once the payload says the grant is not held.
+    const guard = code(read('router/router.ts'));
+    assert.match(guard, /to\.meta\.requiresCapability && authStore\.user\.type !== 'SuperAdmin'\s+&& masjidStore\.masjid\?\.capabilities\s+&& masjidStore\.masjid\.capabilities\[to\.meta\.requiresCapability\] !== true/);
 });
 
 test('the sidebar entry has its icon, and both route types name the page', () => {

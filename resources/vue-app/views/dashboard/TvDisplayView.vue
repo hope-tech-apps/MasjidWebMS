@@ -233,7 +233,10 @@ let loadTicket = 0;
 // What to say when the server gave no answer at all (offline, a dropped connection): the page's own
 // sentence. The shared helper would say axios's "Network Error".
 function said(e: unknown, fallback: string): string {
-    if ((e as any)?.response) return apiErrorText(e, fallback);
+    // Only an answer in the application's own JSON has words worth repeating. A proxy's page (a 403
+    // or a 502 in HTML) would otherwise be read out as axios's "Request failed with status code 403".
+    const body = (e as any)?.response?.data;
+    if (body && typeof body === 'object') return apiErrorText(e, fallback);
     // The store's own refusals (the organisation changed, an answer without its parts) say what happened.
     if (e instanceof Error && !(e as any).isAxiosError && e.message) return e.message;
     return fallback;

@@ -241,6 +241,9 @@ test('a 403 that carries no sentence is not the application refusing: it stays a
     assert.equal(notice.length, 1);
     assert.match(String(notice[0].props.class), /alert-danger/);
     assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Retry')).length, 1);
+    // Said in the page's words, never the network library's.
+    assert.match(screen.text(), /Could not load the TV display settings\. Check your connection and try again\./);
+    assert.doesNotMatch(screen.text(), /status code/);
     screen.unmount();
 });
 

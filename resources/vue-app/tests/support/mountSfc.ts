@@ -229,7 +229,14 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
     // Registered BEFORE mounting, as a browser has the elements in the document by the time
     // onMounted runs: a component that looks its own elements up there finds them.
     mountedRoots.add(root);
-    app.mount(root);
+    try {
+        app.mount(root);
+    } catch (e) {
+        // Never returned to the test, so nothing could unmount it: a root left here would answer
+        // the next screen's lookups in the page.
+        mountedRoots.delete(root);
+        throw e;
+    }
 
     const walk = (n: Node, test: (n: Node) => boolean, acc: Node[]) => {
         if (n.kind === 'el' && n !== root && test(n)) acc.push(n);

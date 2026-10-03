@@ -9,6 +9,11 @@
  * switch (the stores are emptied, then filled with the new organisation), a first paint before the
  * organisation has arrived, and a SuperAdmin's sidebar going from the platform's menu to an
  * organisation's.
+ *
+ * What this cannot say: <router-link> is a stand-in element here (the test supplies no vue-router
+ * component), so these tests prove the template puts the handler on every link. That RouterLink
+ * hands a listener on to its <a>, beside its own, is vue-router's (the switched-off links have
+ * always relied on it), and was driven in a browser at phone width when this was fixed.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
@@ -59,14 +64,14 @@ const orgAccess = await loadTs('core/access/orgAccess.ts', {
 
 /** A school that holds the grants and CRM: most of its entries exist only once the payload is in. */
 const school = () => ({
-    id: 14, name: 'Al-Noor Academy', org_type: 'school', crm_enabled: true, assistant_enabled: true,
+    id: 14, name: 'Al-Noor Academy', org_type: 'school', vertical: { org_type: 'school' }, crm_enabled: true, assistant_enabled: true,
     capabilities: { tv_display: true, shop: true, class_store: true, school_calendar: true, web_pages: true, jummah_lunch: true, form_editing: true },
     modules_off: [], modules_on: [],
 });
 
 /** A masjid with nothing extra switched on: the grant entries go to a SuperAdmin's "Switched off" list. */
 const plainMasjid = () => ({
-    id: 7, name: 'Al-Noor Centre', org_type: 'masjid', crm_enabled: false, assistant_enabled: false,
+    id: 7, name: 'Al-Noor Centre', org_type: 'masjid', vertical: { org_type: 'masjid' }, crm_enabled: false, assistant_enabled: false,
     capabilities: { tv_display: false, shop: false }, modules_off: [], modules_on: [],
 });
 
@@ -75,8 +80,8 @@ async function mountAside(t: TestContext, start: { userType: string; masjid: any
         masjid: start.masjid,
         organizationLabel: 'Organisation',
         term: (key: string) => key,
-        // As stores/masjidStore.ts: a masjid until the payload says otherwise.
-        get orgType() { return this.masjid?.org_type ?? 'masjid'; },
+        // As stores/masjidStore.ts reads it: the payload's vertical, and a masjid until there is one.
+        get orgType() { return this.masjid?.vertical?.org_type ?? 'masjid'; },
     });
     const asideStore: any = vue.reactive({ asideMenuItems: start.items ?? menu.MASJID_DASHBOARD_ASIDE_MENU });
     const route: any = vue.reactive({ meta: { dashboardType: start.dashboardType ?? 'masjid' } });
