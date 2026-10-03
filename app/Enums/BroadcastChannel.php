@@ -33,7 +33,10 @@ enum BroadcastChannel: string
     /** Push via OneSignal — creates a real `notifications` row + the existing job. */
     case PUSH = 'push';
 
-    /** The tvOS signage board — a PULL channel, served from `broadcasts`. */
+    /**
+     * The signage board — a PULL channel, served from `broadcasts`. No TV app
+     * reads it, so the composer does not offer it (SignageChannel).
+     */
     case SIGNAGE = 'signage';
 
     /** Email to the CRM contact audience, through the existing mail path. */

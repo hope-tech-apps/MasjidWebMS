@@ -4,7 +4,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { broadcastFields, pushAudienceWarning, type BroadcastForm } from '../views/dashboard/broadcasts/broadcastPayload.ts';
+import { readFileSync } from 'node:fs';
+import { broadcastFields, composerChannels, pushAudienceWarning, type BroadcastForm } from '../views/dashboard/broadcasts/broadcastPayload.ts';
+
+const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
+/** Source with its comments taken out, for a "must not contain" check. */
+const code = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
 
 const form = (o: Partial<BroadcastForm> = {}): BroadcastForm => ({
     title: 'Fall festival', body: 'Saturday', link: '', channels: ['email'], audience: 'everyone',
@@ -35,4 +40,25 @@ test('push to a tag or to chosen contacts is refused with a sentence; push to ev
     assert.equal(pushAudienceWarning('tag', ['email']), '');
     assert.equal(pushAudienceWarning('everyone', ['push']), '');
     assert.equal(pushAudienceWarning('service', ['push']), '');
+});
+
+test('no lobby-screen channel is offered; the feed hint names the TV only for an organisation that has one', () => {
+    for (const hasTv of [false, true]) {
+        assert.deepEqual(composerChannels(hasTv).map(c => c.value), ['announcement', 'push', 'email', 'sms']);
+    }
+    const feedHint = (hasTv: boolean) => composerChannels(hasTv).find(c => c.value === 'announcement')!.hint;
+    assert.match(feedHint(true), /Your lobby TV shows it too/);
+    assert.doesNotMatch(feedHint(false), /TV|screen/i);
+    assert.match(feedHint(false), /Needs a picture and a date range/);
+    assert.match(feedHint(true), /Needs a picture and a date range/);
+});
+
+test('the composer page draws that list by the tv_display grant, and neither broadcast page promises a screen', () => {
+    const composer = code(read('views/dashboard/broadcasts/BroadcastComposerView.vue'));
+    assert.match(composer, /composerChannels\(hasGrant\(masjidStore\.masjid, 'tv_display'\)\)/);
+    assert.doesNotMatch(composer, /signage|lobby screen|TV board/i);
+    // The list keeps its "Screen" label for a signage delivery that already exists.
+    const list = code(read('views/dashboard/broadcasts/BroadcastsView.vue'));
+    assert.match(list, /signage: 'Screen'/);
+    assert.doesNotMatch(list, /lobby screen|TV board/i);
 });

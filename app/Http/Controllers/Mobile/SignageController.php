@@ -11,13 +11,14 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * The signage board payload the tvOS app fetches (T-008).
+ * The signage board payload (T-008), in the shape the rest of the mobile API
+ * uses: unauthenticated, masjid_id in the URL, the legacy `{status, data}`
+ * envelope, and a short cache like every other read here.
  *
- * docs/recon-2026-08-11.md records `MasjidTV/Data/SignageStore.swift` asking for
- * a board endpoint that had never been built, and silently keeping
- * `TVConfig.defaults` on every failed fetch. This is that endpoint, in the shape
- * the rest of the mobile API uses: unauthenticated, masjid_id in the URL, the
- * legacy `{status, data}` envelope, and a short cache like every other read here.
+ * NO CLIENT READS THIS (found 2026-10-03). It was written for the tvOS app on
+ * the belief that the app asked for it; the endpoint the app was missing was
+ * `/tv-config`, and its slides come from `/announcements`. See SignageChannel.
+ * The lobby board the comments below describe draws the announcements feed.
  *
  * ## Scoping
  *

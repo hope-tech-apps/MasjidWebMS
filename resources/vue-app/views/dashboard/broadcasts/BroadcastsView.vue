@@ -6,8 +6,8 @@
         <div class="container w-100">
 
             <div v-if="broadcasts.length === 0" class="text-center text-muted py-5">
-                Nothing sent yet. Compose one to reach the announcements feed, phones, the lobby screen,
-                email and text — all from a single message.
+                Nothing sent yet. Compose one to reach the announcements feed, phones, email and text — all
+                from a single message.
             </div>
 
             <div v-for="b in broadcasts" :key="b.id" class="card border-0 shadow-sm mb-3">

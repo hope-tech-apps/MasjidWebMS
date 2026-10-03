@@ -24,7 +24,7 @@
 
             <ColumnInputContainer label="Link (optional)" name="link" :show_error="true" class="w-100">
                 <Field name="link" type="url" v-model="form.link" class="dashboard-input" placeholder="https://..." />
-                <small class="text-muted">Added to the announcement, email and signage. Push carries the message only.</small>
+                <small class="text-muted">Added to the announcement and the email. Push carries the message only.</small>
             </ColumnInputContainer>
 
             <!-- Channels -->
@@ -194,9 +194,8 @@ import { ContactTag } from '@/core/types/data/masjid-related/ContactTag'
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput'
 import { useMasjidStore } from '@/stores/masjidStore'
 import { useBroadcastsStore } from '@/stores/masjid/broadcastsStore'
-import { broadcastFields, pushAudienceWarning } from './broadcastPayload'
-import { moduleIsOff } from '@/core/access/orgAccess'
-import { ModuleKey } from '@/core/types/data/Capability'
+import { broadcastFields, composerChannels, pushAudienceWarning } from './broadcastPayload'
+import { hasGrant, moduleIsOff } from '@/core/access/orgAccess'
 import { AxiosError, AxiosResponse } from 'axios'
 import { SweetAlertOptions } from 'sweetalert2'
 import { Form, Field } from 'vee-validate'
@@ -208,13 +207,7 @@ const router = useRouter()
 const masjidStore = useMasjidStore()
 const store = useBroadcastsStore()
 
-const CHANNELS: { value: string; label: string; hint: string; module?: ModuleKey }[] = [
-    { value: 'announcement', label: 'Announcements feed', hint: 'Adds a post to the app and website feed. Needs a picture and a date range.', module: 'announcements' },
-    { value: 'push', label: 'Push notification', hint: 'A notification on people\'s phones.', module: 'push_notifications' },
-    { value: 'signage', label: 'Lobby screen', hint: 'Puts it on the TV board while it is running.' },
-    { value: 'email', label: 'Email', hint: 'Emails contacts. Needs the CRM.' },
-    { value: 'sms', label: 'Text message', hint: 'Only reaches contacts who gave written consent, from your registered number.' },
-]
+const channels = computed(() => composerChannels(hasGrant(masjidStore.masjid, 'tv_display')))
 
 /**
  * A channel whose module the organisation has switched off is not offered — to
@@ -222,7 +215,7 @@ const CHANNELS: { value: string; label: string; hint: string; module?: ModuleKey
  * compose AND at delivery (BroadcastChannel::requiresModule). A payload with no
  * `modules_off` offers every channel, exactly as before.
  */
-const availableChannels = computed(() => CHANNELS.filter(c => !c.module || !moduleIsOff(masjidStore.masjid, c.module)))
+const availableChannels = computed(() => channels.value.filter(c => !c.module || !moduleIsOff(masjidStore.masjid, c.module)))
 
 const isLoading = ref(false)
 const imageFile = ref<File | undefined>(undefined)
@@ -362,7 +355,7 @@ async function onSubmit() {
 
     // Naming the channels back to the admin before anything leaves: a push
     // cannot be recalled, and "Send now" is the last reversible moment.
-    const names = CHANNELS.filter(c => form.value.channels.includes(c.value)).map(c => c.label).join(', ')
+    const names = channels.value.filter(c => form.value.channels.includes(c.value)).map(c => c.label).join(', ')
     const who = form.value.audience === 'service'
         ? `people interested in ${services.value.find(s => String(s.id) === String(form.value.service_id))?.title ?? 'that service'}`
         : form.value.audience === 'tag'

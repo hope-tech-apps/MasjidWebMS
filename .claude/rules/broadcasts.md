@@ -10,8 +10,9 @@ paths:
 ---
 # The unified publish composer (T-008)
 
-One compose action → the announcements feed, push, the tvOS signage board and
-email. Fragmented communication is the loudest complaint in this market
+One compose action → the announcements feed, push and email (and, on the server
+only, a signage address no TV app reads: see "Signage reaches no screen" below).
+Fragmented communication is the loudest complaint in this market
 (`docs/recon-2026-08-11.md`): admins retype the same paragraph into four places
 and congregants still hear about the event afterwards. Manara already owned all
 four channels separately; this is the one action that reaches them. T-009 added a
@@ -26,7 +27,7 @@ Every channel keeps its own endpoint, its own model and its own behaviour.
 |---|---|
 | `announcement` | Creates an ordinary `announcements` row + flushes `MobileCache::ANNOUNCEMENTS` — same table, same media collection, same public feed |
 | `push` | Creates an ordinary `notifications` row and dispatches the existing `SendMasjidNotificationJob` (which owns OneSignal, its retries and its backoff) |
-| `signage` | Publishes to the board, which is a PULL surface served by `GET /api/mobile/masjids/{id}/signage` |
+| `signage` | Publishes at `GET /api/mobile/masjids/{id}/signage`, a PULL address **no TV app asks for**. Not offered by the composer since 2026-10-03 |
 | `email` | Sends `BroadcastMail` through the app's existing mail path to CRM contacts. The greeting prints a contact's first name only through `MailGreeting` |
 | `sms` | Texts the CONSENTING part of the CRM contact audience, from the tenant's own registered A2P 10DLC sender, through a provider adapter (T-009) |
 
@@ -223,6 +224,37 @@ image_row, spacer) that only the EMAIL renders — `App\Services\Broadcast\Newsl
   migration while a layout is stored (its `down()` refuses). A newsletter
   SCHEDULED under the new code would be sent by the old code as the plain email
   without its blocks, so hold or cancel those first (`deploy/README.md`).
+
+## Signage reaches no screen (found 2026-10-03)
+
+The tvOS board builds its slides from `GET /api/mobile/masjids/{id}/announcements`
+and has never called `/signage` (ios MasjidKit `MasjidEndpoint`: five cases, none
+of them signage; true of the released build and of iOS main). The channel was
+written on the belief that the app was asking for a board endpoint; the one it
+was missing was `/tv-config`. So a broadcast sent to signage alone was reported
+`sent` and appeared nowhere. What reaches the lobby TV is the **announcement**
+channel, because it creates an `announcements` row.
+
+What follows from that:
+
+- **The composer does not offer signage.** `composerChannels()`
+  (`views/dashboard/broadcasts/broadcastPayload.ts`) is the list; the
+  announcements feed's hint names the lobby TV for an organisation holding the
+  `tv_display` grant. Pinned by `broadcast-payload.test.ts` and the mounted
+  `broadcast-composer-screen.test.ts`.
+- **The API still accepts it**, for a browser holding the older page, and
+  `SignageChannel` answers `sent` with a note saying the TV app does not read the
+  channel. `sent` there means "published at that address", nothing more.
+  `/signage`, `Broadcast::scopeLiveOnSignage` and their tests are unchanged.
+- **Do not put the tick box back until a TV build reads it.** `/announcements` is
+  one address and one cache for the iPhone app, the Android app and the TV, and
+  nothing in a request tells them apart (the server reads no app key), so a
+  lobby-only notice cannot be served through it. It needs a TV app release, and
+  three things `/signage` does not have today: a merge with the announcements
+  (it answers broadcasts OR announcements, so one notice would replace every
+  announcement on the board), a way to take a notice down (broadcasts have no
+  delete and the end date is optional), and a rule for a broadcast sent to both
+  channels (it would show twice). DECISIONS.md 2026-10-03.
 
 ## Adding a channel
 

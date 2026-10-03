@@ -39,9 +39,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
     {
         // Deliberately NOT gated on a vertical or on the CRM. Reaching your
         // people is every tenant's job, and the composer works without the CRM
-        // for the feed, push and the lobby screen — the channels and audiences
-        // that DO read contacts are refused server-side, up front, with a
-        // sentence saying why.
+        // for the feed and push — the channels and audiences that DO read
+        // contacts are refused server-side, up front, with a sentence saying why.
         title: "Broadcasts",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 11V13C3 14.1 3.9 15 5 15H6.5L12 19V5L6.5 9H5C3.9 9 3 9.9 3 11Z" stroke="white" stroke-width="1.5" stroke-linejoin="round" fill="none"/>

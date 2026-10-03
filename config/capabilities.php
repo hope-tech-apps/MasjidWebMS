@@ -350,7 +350,7 @@ return [
         'kind' => 'module',
         'group' => 'communication',
         'label' => 'Broadcasts',
-        'description' => 'Compose one message and send it to announcements, push, the TV board and email at once.',
+        'description' => 'Compose one message and send it to announcements, push and email at once.',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
     ],
 

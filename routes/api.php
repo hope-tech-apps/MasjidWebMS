@@ -100,11 +100,11 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // Web (Nuxt) reads this; mobile apps get the same content via OneSignal IAM.
         Route::get('/{masjid_id}/splash', [SplashAnnouncementsController::class, 'current']);
 
-        // tvOS signage board. The tvOS client has always asked for a board
-        // endpoint that did not exist (docs/recon-2026-08-11.md); this is it.
-        // Serves the broadcasts whose signage channel was selected and whose
-        // display window is open — see App\Services\Broadcast\Channels\SignageChannel.
-        // Additive: no existing endpoint changes shape or behaviour.
+        // Signage board. Serves the broadcasts whose signage channel was
+        // selected and whose display window is open — see
+        // App\Services\Broadcast\Channels\SignageChannel. No client reads it:
+        // the tvOS board draws /announcements (found 2026-10-03), and the
+        // composer no longer offers the channel.
         Route::get('/{masjid_id}/signage', [SignageController::class, 'index']);
 
         // tvOS display CONFIG — how the board renders, as opposed to /signage

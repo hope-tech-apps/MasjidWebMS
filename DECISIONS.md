@@ -7411,6 +7411,44 @@ where the TV app that is actually installed honours the choice. Six settings, on
   hidden prayer panel and the hidden code each appeared as chosen. What was NOT done: a run on a physical Apple TV, and
   a live change arriving over the network (the app's server address is fixed to production).
 
+## 2026-10-03 — The composer stops offering "Lobby screen": no TV app reads that channel (owner: "Hide it, stop there")
+Decision: the broadcast composer no longer offers the signage channel, and says on the announcements feed that the
+lobby TV shows it too. Nothing else about the channel changes.
+
+- **What was wrong.** The composer offered "Lobby screen: Puts it on the TV board while it is running." The tvOS app
+  has never asked for `/signage`: its endpoint list has five entries (announcements, prayer settings, masjid,
+  tv-config, events) on iOS main (`b97c6b1`) and in the released build (2.8, `a4a1c04`), and its slides are the
+  announcements feed. `SignageChannel` answered `sent` with "Live on the signage board …; the board pulls it on its next
+  fetch." An admin who ticked only that box saw "Sent" and nothing appeared on any screen.
+- **Nobody had used it.** A read-only count on production at 2026-10-03 19:20 UTC (`1ccafe0b`): one broadcast in
+  total, no signage delivery of any status, none scheduled. So there is nothing to migrate and nobody to tell.
+- **Options put to the owner, and the choice.** (C) hide the channel and say what is true; (A1) make signage also
+  create a feed post, which then shows in the phone apps and on the website as well; (A2) a TV-only flag on
+  announcements with the server telling the TV from a phone by its User-Agent; (B) a TV app release that reads a board
+  feed. The owner chose C alone. A2 was not recommended: `/announcements` is one address and one cache for the iPhone
+  app, the Android app and the TV, the server reads no app key, and the User-Agent of the released build is inferred,
+  not verified.
+- **What changed.** `composerChannels()` is the composer's list, without signage. Its announcements hint adds "Your
+  lobby TV shows it too." for an organisation holding the `tv_display` grant, the sign the TV Display page already goes
+  by, so an organisation with no screen is not told about one. The link hint, the empty list's sentence and the
+  Broadcasts switch description no longer name the screen. `SignageChannel`'s note now reads "Stored for the lobby
+  screen until …, but the TV app does not read this channel, so it is not on the screen. Post it to the announcements
+  feed to show it there."
+- **What did not change, on purpose.** The API still accepts `signage`, and its delivery is still `sent`: a browser
+  holding the older page can tick the box until it reloads, and the note is what tells that admin the truth (it is the
+  chip's tooltip, so it is easy to miss; with no use in seven weeks the exposure is small). Turning the delivery into
+  `skipped` would empty `/signage` (`scopeLiveOnSignage` needs `sent`) and rewrite the tests that pin it, which is the
+  server half option B would reuse. `/signage`, the scope, the list's "Screen" label for an old delivery and
+  `BroadcastChannel::SIGNAGE` are untouched.
+- **If lobby-only notices are wanted later (option B).** It is TV-app work plus an API change, not a tick box:
+  `/signage` answers broadcasts OR the announcements, so one notice would replace every announcement on the board;
+  broadcasts have no delete and the end date is optional, so a notice could not be taken down; a broadcast sent to both
+  channels would show twice. And the tick box may come back only for an organisation whose TV runs the new build.
+- **Verified.** The mounted composer draws four tick boxes and no lobby screen, names the TV only with the grant,
+  still hides a switched-off module's channel, and names the ticked channels in its question
+  (`broadcast-composer-screen.test.ts`); the new note test fails on the old sentence. Not done here: the page in a
+  browser against a server (the staging walk at ship time), and a physical Apple TV.
+
 ## 2026-10-04 — Form Responses search reads the answers from their own column, never from the JSON as text (review fold on efb2416c; branch fix/form-responses-search-answers)
 - **What was wrong.** efb2416c made the search look inside the answers by matching the whole JSON document as text
   (`LOWER(CAST(data AS CHAR)) LIKE`). That text also holds every question's KEY and whatever is stored beside the

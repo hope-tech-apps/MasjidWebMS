@@ -15,24 +15,29 @@ use App\Support\MobileCache;
  * ## Why this one is different
  *
  * The other three channels write into a table that already had an owner. Signage
- * did not: `MasjidTV/Data/SignageStore.swift` fetches a board payload from an
- * endpoint that **has never existed** — docs/recon-2026-08-11.md records the
- * client falling back to `TVConfig.defaults` on every fetch failure. So there is
- * no legacy signage write path for this driver to call into, and inventing a
- * fifth content table for the board would have been the wrong answer: the
- * broadcast row already IS the notice.
+ * did not, and inventing a fifth content table for the board would have been
+ * the wrong answer: the broadcast row already IS the notice.
  *
- * Signage is therefore a PULL channel. The board asks
- * `GET /api/mobile/masjids/{id}/signage` what to show, and that endpoint selects
- * broadcasts whose signage delivery succeeded and whose display window is open
- * (Broadcast::scopeLiveOnSignage). Marking this delivery `sent` is literally the
- * act of publishing to the board — there is no push, no device list, and
- * therefore no target count. Zero here is correct, not a failure.
+ * Signage is therefore a PULL channel. `GET /api/mobile/masjids/{id}/signage`
+ * selects broadcasts whose signage delivery succeeded and whose display window
+ * is open (Broadcast::scopeLiveOnSignage). There is no push, no device list,
+ * and therefore no target count. Zero here is correct, not a failure.
  *
- * Consequently this driver almost cannot fail, and that is honest rather than
- * lazy: publishing to a pull surface is a local state change. What CAN fail is
- * the board's own fetch, which is a client-side and network concern that this
- * record must not pretend to know about.
+ * ## No TV app reads that address (found 2026-10-03)
+ *
+ * This channel was built on a misreading. The endpoint the tvOS app asked for
+ * and never got was `/tv-config`; it has never asked for `/signage`. Its slides
+ * come from `/announcements` (ios MasjidKit `MasjidEndpoint`, five cases, none
+ * of them signage; `MasjidTV/Data/SignageStore.swift`), in the released build
+ * and on iOS main alike. So a notice sent here alone was on no screen while the
+ * composer said "Sent".
+ *
+ * The composer no longer offers the channel. The API still accepts it, for a
+ * browser holding the older page, and the note below says what happened in
+ * words that are true. `sent` still means only "published at that address".
+ * Before offering the channel again, a TV build has to read it, and a notice
+ * needs a way to come down: broadcasts have no delete, and the end date is
+ * optional (DECISIONS.md 2026-10-03).
  */
 class SignageChannel implements BroadcastChannelDriver
 {
@@ -43,9 +48,9 @@ class SignageChannel implements BroadcastChannelDriver
 
     public function deliver(Broadcast $broadcast, Masjid $masjid): ChannelResult
     {
-        // The public board endpoint caches its payload the way every other
-        // mobile read does; a newly published notice must appear on the next
-        // fetch, not in five minutes.
+        // The public endpoint caches its payload the way every other mobile
+        // read does; a newly published notice must be in the next answer, not
+        // in five minutes.
         MobileCache::flushMasjid((int) $masjid->id, MobileCache::SIGNAGE);
 
         $window = $broadcast->ends_on
@@ -55,7 +60,7 @@ class SignageChannel implements BroadcastChannelDriver
         return ChannelResult::sent(
             targetCount: 0,
             referenceId: $broadcast->id,
-            note: 'Live on the signage board ' . $window . '; the board pulls it on its next fetch.',
+            note: 'Stored for the lobby screen ' . $window . ', but the TV app does not read this channel, so it is not on the screen. Post it to the announcements feed to show it there.',
         );
     }
 }

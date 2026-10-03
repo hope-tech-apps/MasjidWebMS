@@ -538,6 +538,28 @@ class BroadcastComposerTest extends TestCase
     }
 
     #[Test]
+    public function a_signage_delivery_does_not_say_a_screen_is_showing_it(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->submit($this->payload([
+            'title' => 'Lobby only',
+            'channels' => ['signage'],
+            'image' => null,
+        ]))->assertStatus(202);
+
+        $delivery = BroadcastDelivery::where('channel', 'signage')->sole();
+
+        // Still `sent`: the notice is published at /signage. No TV app asks for
+        // that address (the board draws the announcements feed), so the note an
+        // admin reads must say so and name the channel that does reach the screen.
+        $this->assertSame(BroadcastDelivery::STATUS_SENT, $delivery->status);
+        $this->assertStringContainsString('the TV app does not read this channel', $delivery->note);
+        $this->assertStringContainsString('announcements feed', $delivery->note);
+        $this->assertStringNotContainsString('Live on', $delivery->note);
+    }
+
+    #[Test]
     public function the_signage_board_hides_a_notice_whose_window_has_closed(): void
     {
         Sanctum::actingAs($this->admin);

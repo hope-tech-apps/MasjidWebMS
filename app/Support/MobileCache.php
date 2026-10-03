@@ -66,8 +66,9 @@ class MobileCache
     public const MENU = 'menu';
 
     public const APP_CONFIG = 'app.config';   // per-masjid emergency app-version gate
-    // Signage board payload (tvOS). Written by the unified composer's signage
-    // channel, read by GET /mobile/masjids/{id}/signage. See T-008.
+    // Signage board payload. Written by the unified composer's signage
+    // channel, read by GET /mobile/masjids/{id}/signage, which no TV app asks
+    // for (SignageChannel). See T-008.
     public const SIGNAGE = 'signage';
     // tvOS display configuration — GET /mobile/masjids/{id}/tv-config. A
     // SEPARATE key from SIGNAGE on purpose: the two endpoints answer different
