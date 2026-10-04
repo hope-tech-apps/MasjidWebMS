@@ -94,6 +94,22 @@ export type RosterClaim = {
     origin: ClaimOrigin;
 };
 
+/**
+ * One teacher of a class, as the office's class list serves it: the staff login
+ * on `group_staff`, by name only (email and phone stay on the Teachers screen).
+ *
+ * `subjects` is what they teach IN THAT CLASS, already in the product's order
+ * and words (`GroupStaff::SUBJECTS` / `SUBJECT_LABELS`), so no screen carries a
+ * copy of the labels. Null is a teacher of the whole class. Note the shape:
+ * `{value, label}` pairs here, where the Teachers endpoint's `classes[].subjects`
+ * is the bare values beside a `meta.subjects` list for its form.
+ */
+export type GroupTeacher = {
+    id: number;
+    name: string;
+    subjects: { value: string; label: string }[] | null;
+};
+
 export type Group = {
     id: number;
     masjid_id: number;
@@ -115,6 +131,12 @@ export type Group = {
      * on the index endpoint, absent from show/store/update.
      */
     participants_count?: number;
+    /**
+     * Who teaches this class, by name, each with their subjects there. Present
+     * on the index endpoint ONLY (an empty list for a class nobody teaches):
+     * absent from show/store/update, and from every other realm's payload.
+     */
+    teachers?: GroupTeacher[];
     /**
      * Messages from other people this user has not seen in the class's
      * conversations they may read (0 when they may read none). Present on
