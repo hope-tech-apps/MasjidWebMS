@@ -4,7 +4,8 @@ import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
-import { Teacher, TeacherDetail, TeacherPayload, TeacherUpdatePayload } from "@/core/types/data/masjid-related/Teacher";
+import { Teacher, TeacherClass, TeacherDetail, TeacherPayload, TeacherUpdatePayload } from "@/core/types/data/masjid-related/Teacher";
+import { classOptionsFrom, hasClassList } from "@/core/helpers/teacherForm";
 
 /**
  * Teachers store — the ADMIN provisioning surface over
@@ -16,20 +17,45 @@ import { Teacher, TeacherDetail, TeacherPayload, TeacherUpdatePayload } from "@/
  *
  * The index answers a PLAIN ARRAY (not a paginator), so there is no pagination
  * state here — a masjid's teaching staff is a short list, unlike the member
- * directory. The class multiselect that the create form needs is NOT loaded
- * here: the view reuses `useGroupsStore().fetchGroups()` (the existing
- * Classrooms endpoint) so there is one source of truth for "the tenant's
- * classes".
+ * directory.
+ *
+ * The class multiselect the form needs IS loaded here, from the same reply
+ * (`meta.classes`: every live class of the school, id and name, in display
+ * order). It used to reuse `useGroupsStore().fetchGroups()`, but that is the
+ * Classes screen's PAGINATED list: one page of 15, so a class past the first
+ * page could be neither ticked nor unticked. This store never reads or writes
+ * that paginated state.
  */
 export const useTeachersStore = defineStore('teachersStore', () => {
 
     // State
     const teachers = ref<Teacher[]>([]);
+    /** Every live class of the school, for the form's picker (`meta.classes`). */
+    const classOptions = ref<TeacherClass[]>([]);
+    /**
+     * Whether the LAST read of the classes was answered: true only when the reply
+     * carried `meta.classes`. False before the first read, after a failed one, and
+     * after a reply without the key. The form needs it to tell "this school has no
+     * classes" (an answered, empty list) from "the classes could not be read".
+     */
+    const classOptionsKnown = ref(false);
 
     // Stores
     const masjidStore = useMasjidStore();
 
-    /** Fetch the masjid's teachers. */
+    /**
+     * Take the picker's classes from a teachers list reply. A reply that does not
+     * say (no `meta.classes`) leaves the classes already in hand alone rather than
+     * emptying them; it only marks them as not known.
+     */
+    function takeClassOptions(meta: unknown): boolean {
+        classOptionsKnown.value = hasClassList(meta);
+        if (classOptionsKnown.value) classOptions.value = classOptionsFrom(meta);
+
+        return classOptionsKnown.value;
+    }
+
+    /** Fetch the masjid's teachers, and with them the classes the picker offers. */
     async function fetchTeachers(): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
@@ -39,12 +65,46 @@ export const useTeachersStore = defineStore('teachersStore', () => {
             .then((res: AxiosResponse) => {
                 if (res.data?.status === 'success' && Array.isArray(res.data?.data)) {
                     teachers.value = res.data.data;
+                    takeClassOptions(res.data?.meta);
+                } else {
+                    classOptionsKnown.value = false;
                 }
             })
             .catch((e: Error) => {
+                // The one request carries the list AND the picker, so a failed one
+                // leaves the picker's classes unread too.
+                classOptionsKnown.value = false;
                 console.error('Fetch teachers error: ', e);
                 throw e;
             });
+    }
+
+    /**
+     * Refresh ONLY the picker's classes (a class added since the page loaded),
+     * leaving the list on screen as it is. The same read as fetchTeachers: the
+     * classes ride on the list reply, whole, never a page of them.
+     *
+     * Rejects when the classes were not read: the request failed, or the reply did
+     * not carry them. The form then says so and offers Retry, instead of telling
+     * a school that has classes that none exist.
+     */
+    async function fetchClassOptions(): Promise<void> {
+        if (!masjidStore.masjid?.id) return;
+
+        let res: AxiosResponse;
+        try {
+            res = await ApiService.get(
+                `/api/admin/masjids/${masjidStore.masjid.id}/teachers` as BackendApiRoute
+            );
+        } catch (e) {
+            classOptionsKnown.value = false;
+            throw e;
+        }
+
+        if (res.data?.status !== 'success' || !takeClassOptions(res.data?.meta)) {
+            classOptionsKnown.value = false;
+            throw new Error('Failed to load the classes.');
+        }
     }
 
     /**
@@ -182,7 +242,10 @@ export const useTeachersStore = defineStore('teachersStore', () => {
 
     return {
         teachers,
+        classOptions,
+        classOptionsKnown,
         fetchTeachers,
+        fetchClassOptions,
         createTeacher,
         fetchTeacher,
         updateTeacher,

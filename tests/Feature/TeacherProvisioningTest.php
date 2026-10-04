@@ -225,6 +225,118 @@ class TeacherProvisioningTest extends TestCase
     }
 
     #[Test]
+    public function a_teacher_whose_class_was_deleted_can_still_be_saved_and_the_deleted_class_keeps_its_row(): void
+    {
+        // Deleting a class is a soft delete that keeps its staff rows. The form
+        // lists live classes only, so the deleted class has no checkbox: GET used
+        // to hand its id to the screen, the screen sent it back, and every save of
+        // that teacher was refused.
+        $classThree = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+            'name' => 'Grade 3', 'slug' => 'g3',
+        ]);
+        $teacher = $this->makeTeacher([$this->classOne->id, $this->classTwo->id]);
+        GroupStaff::withoutMasjidScope()->where('user_id', $teacher->id)
+            ->where('group_id', $this->classOne->id)->update(['subjects' => json_encode(['quran'])]);
+
+        $this->deleteJson($this->base()."/groups/{$this->classOne->id}")->assertOk();
+        $this->assertSoftDeleted('groups', ['id' => $this->classOne->id]);
+
+        // The read: the live class only, in the ids and in the subjects.
+        $detail = $this->getJson($this->base()."/teachers/{$teacher->id}")->assertOk();
+        $this->assertSame([$this->classTwo->id], $detail->json('data.class_ids'));
+        $this->assertSame([(string) $this->classTwo->id], array_map('strval', array_keys($detail->json('data.class_subjects'))));
+
+        // The round trip the screen makes: what GET gave, plus a newly ticked class.
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => 'Renamed',
+            'class_ids' => [...$detail->json('data.class_ids'), $classThree->id],
+            'class_subjects' => $detail->json('data.class_subjects'),
+        ])->assertOk();
+
+        $this->assertSame('Renamed', $teacher->fresh()->name);
+        // Read straight from the table: the deleted class's row is still there.
+        $this->assertEqualsCanonicalizing(
+            [$this->classOne->id, $this->classTwo->id, $classThree->id],
+            $this->ledClassIds($teacher)
+        );
+
+        // Dropping a live class is still a sync, and still leaves the deleted one alone.
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => 'Renamed', 'class_ids' => [$classThree->id],
+        ])->assertOk();
+
+        $this->assertEqualsCanonicalizing([$this->classOne->id, $classThree->id], $this->ledClassIds($teacher));
+        $this->assertSame(['quran'], $this->subjectsOf($teacher, $this->classOne));
+
+        // A deleted class is not one a teacher can be newly given.
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => 'Renamed', 'class_ids' => [$classThree->id, $this->classOne->id],
+        ])->assertStatus(422)->assertJsonValidationErrors(['class_ids'], 'data');
+
+        // Restored, the class is the teacher's again, with what they taught in it.
+        Group::withoutMasjidScope()->withTrashed()->findOrFail($this->classOne->id)->restore();
+
+        $restored = $this->getJson($this->base()."/teachers/{$teacher->id}")->assertOk();
+        $this->assertEqualsCanonicalizing([$this->classOne->id, $classThree->id], $restored->json('data.class_ids'));
+        $this->assertSame(['quran'], $restored->json('data.class_subjects.'.$this->classOne->id));
+    }
+
+    #[Test]
+    public function a_teacher_whose_only_class_was_deleted_can_be_moved_to_another(): void
+    {
+        $teacher = $this->makeTeacher([$this->classOne->id]);
+        $this->classOne->delete();
+
+        $this->assertSame([], $this->getJson($this->base()."/teachers/{$teacher->id}")->assertOk()->json('data.class_ids'));
+
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => $teacher->name, 'class_ids' => [$this->classTwo->id], 'class_subjects' => [],
+        ])->assertOk();
+
+        $this->assertEqualsCanonicalizing([$this->classOne->id, $this->classTwo->id], $this->ledClassIds($teacher));
+    }
+
+    #[Test]
+    public function the_list_carries_every_live_class_of_the_school_for_the_picker_in_display_order(): void
+    {
+        // The picker read the Classes screen's paginated list: one page of 15.
+        // More classes than a page, an office-chosen order, a deleted class and
+        // another school's class tell the whole set from a page of it.
+        foreach (range(3, 18) as $n) {
+            Group::factory()->create([
+                'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+                'name' => sprintf('Grade %02d', $n), 'slug' => 'g'.$n,
+            ]);
+        }
+        $placedFirst = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+            'name' => 'Zaytuna', 'slug' => 'zaytuna', 'position' => 1,
+        ]);
+        $deleted = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS, 'name' => 'Closed', 'slug' => 'closed',
+        ]);
+        $deleted->delete();
+        [$otherSchool] = $this->makeSchoolWithAdmin();
+        $foreign = Group::factory()->create([
+            'masjid_id' => $otherSchool->id, 'kind' => Group::KIND_CLASS, 'name' => 'Elsewhere', 'slug' => 'elsewhere',
+        ]);
+
+        $classes = $this->getJson($this->base().'/teachers')->assertOk()->json('meta.classes');
+
+        $this->assertCount(19, $classes);
+        $this->assertSame(
+            Group::query()->where('masjid_id', $this->school->id)->inDisplayOrder()->pluck('id')->all(),
+            array_column($classes, 'id')
+        );
+        $this->assertSame(['id' => $placedFirst->id, 'name' => 'Zaytuna'], $classes[0]);
+        $this->assertNotContains($deleted->id, array_column($classes, 'id'));
+        $this->assertNotContains($foreign->id, array_column($classes, 'id'));
+        // The Classes screen's own list is still a page of 15.
+        $this->assertCount(15, $this->getJson($this->base().'/groups')->assertOk()->json('data.data'));
+    }
+
+    #[Test]
     public function removing_a_teacher_strips_access_and_retires_an_orphaned_login(): void
     {
         $teacher = $this->makeTeacher([$this->classOne->id]);

@@ -164,7 +164,8 @@
                                     {{ classesTerm.toLowerCase() }} they lead at this school.
                                 </div>
 
-                                <!-- A refusal that is not tied to one field (e.g. email already a teacher). -->
+                                <!-- A refusal with no field of its own on this form: a network drop, a 500,
+                                     or a 422 under a key the form does not render (class_subjects.*). -->
                                 <div v-if="formError" class="alert alert-danger py-2" role="alert">
                                     {{ formError }}
                                 </div>
@@ -222,12 +223,20 @@
                                             {{ classesTerm }} <span class="text-danger">*</span>
                                         </label>
 
-                                        <div v-if="classesLoading" class="text-muted small py-2">
+                                        <div v-if="pickerState === 'loading'" class="text-muted small py-2">
                                             <span class="spinner-border spinner-border-sm me-1" role="status"></span>
                                             Loading {{ classesTerm.toLowerCase() }}...
                                         </div>
 
-                                        <div v-else-if="classOptions.length === 0" class="alert alert-warning py-2 mb-0">
+                                        <!-- The classes were not read (the request failed, or the reply did not
+                                             carry them). Not the same as a school with none, and not said as one. -->
+                                        <div v-else-if="pickerState === 'failed'" class="alert alert-danger py-2 mb-0" role="alert">
+                                            Could not load the {{ classesTerm.toLowerCase() }}.
+                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2" @click="loadClasses">Retry</button>
+                                        </div>
+
+                                        <!-- Only when the server answered and its list was empty. -->
+                                        <div v-else-if="pickerState === 'empty'" class="alert alert-warning py-2 mb-0">
                                             No {{ classesTerm.toLowerCase() }} exist yet. Create one first, then assign it here.
                                         </div>
 
@@ -332,11 +341,11 @@
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { Teacher, TeacherClass, TeacherPayload, TeacherSubject, TeacherUpdatePayload } from '@/core/types/data/masjid-related/Teacher';
-import { Group } from '@/core/types/data/masjid-related/Group';
 import { useTeachersStore } from '@/stores/masjid/teachersStore';
-import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { sortTeacherFormErrors, teacherPickerState } from '@/core/helpers/teacherForm';
+import type { TeacherPickerState } from '@/core/helpers/teacherForm';
 import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import Swal from 'sweetalert2';
 
@@ -348,13 +357,13 @@ import Swal from 'sweetalert2';
  * What a "class" is CALLED comes from the terminology pack, so a school reads
  * "Classrooms", a masjid reads "Halaqat" and a community org reads "Teams" off
  * the same screen — nothing here hardcodes any of the three. The class options
- * are loaded from the existing Groups/Classrooms endpoint via `groupsStore`, so
- * there is a single source of truth for the tenant's classes.
+ * are EVERY live class of the school, served whole with the teachers list
+ * (`teachersStore.classOptions`). They are not read from `groupsStore`: its list
+ * is the Classes screen's paginated one, a page of 15.
  */
 
 // Stores
 const teachersStore = useTeachersStore();
-const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
 
 // State
@@ -363,9 +372,9 @@ const loadError = ref('');
 const classesLoading = ref(false);
 const showFormModal = ref(false);
 const saving = ref(false);
-/** A refusal not tied to one field (network drop, "already a teacher", 500). */
+/** A refusal with no field of its own on the form (network drop, 500, a 422 under a key the form does not render). */
 const formError = ref('');
-/** field name -> first message, from the 422 validation bag. */
+/** field name -> first message, from the 422 validation bag; only the fields the form renders. */
 const fieldErrors = ref<Record<string, string>>({});
 
 /**
@@ -422,9 +431,19 @@ const classesTerm = computed<string>(() => masjidStore.term('groups'));
 /** Create vs edit: the one modal renders both, keyed off `editingId`. */
 const isEditing = computed<boolean>(() => editingId.value !== null);
 
-/** The assignable class options, narrowed to what the multiselect needs. */
-const classOptions = computed<TeacherClass[]>(() =>
-    ((groupsStore.groupsPaginated?.data as Group[]) || []).map((g) => ({ id: g.id, name: g.name }))
+/** The assignable class options: every live class of the school, in display order. */
+const classOptions = computed<TeacherClass[]>(() => teachersStore.classOptions);
+
+/**
+ * What the picker shows: a spinner, the classes, "none exist yet", or "could not
+ * load" with Retry. "None exist" needs an answered read (`classOptionsKnown`).
+ */
+const pickerState = computed<TeacherPickerState>(() =>
+    teacherPickerState({
+        loading: classesLoading.value,
+        known: teachersStore.classOptionsKnown,
+        count: classOptions.value.length
+    })
 );
 
 const canSubmit = computed<boolean>(() =>
@@ -434,7 +453,13 @@ const canSubmit = computed<boolean>(() =>
 
 // Lifecycle
 onBeforeMount(async () => {
-    await Promise.all([loadData(), loadClasses()]);
+    // One read: the list reply carries the picker's classes too.
+    classesLoading.value = true;
+    try {
+        await loadData();
+    } finally {
+        classesLoading.value = false;
+    }
 });
 
 // Methods
@@ -453,10 +478,11 @@ const loadData = async () => {
 const loadClasses = async () => {
     classesLoading.value = true;
     try {
-        // Reuse the existing Classrooms/Groups endpoint — one source of truth.
-        await groupsStore.fetchGroups();
+        // Every class of the school, not a page of them (see teachersStore).
+        await teachersStore.fetchClassOptions();
     } catch (error) {
-        // Non-fatal for the list screen; the modal surfaces the empty state.
+        // Non-fatal for the list screen. The store has marked the classes as not
+        // read, so the picker says "Could not load" with Retry, not "none exist".
         console.error('Failed to load classes for the multiselect: ', error);
     } finally {
         classesLoading.value = false;
@@ -527,21 +553,19 @@ const closeFormModal = () => {
     loadingTeacher.value = false;
 };
 
-/** Map a Laravel 422 validation bag to one message per field. */
+/**
+ * Show a Laravel 422 validation bag: one message under each field the form
+ * renders, and every other message in the banner. Returns whether anything was
+ * shown, so a refusal can never end with the spinner stopping and nothing said.
+ */
 const applyFieldErrors = (error: any): boolean => {
-    const bag = error?.response?.data?.data;
-    if (error?.response?.status === 422 && bag && typeof bag === 'object' && !Array.isArray(bag)) {
-        const mapped: Record<string, string> = {};
-        for (const [field, messages] of Object.entries(bag)) {
-            const first = Array.isArray(messages) ? messages[0] : messages;
-            // `class_ids.0`, `class_ids.*` etc. all belong to the one control.
-            const key = field.split('.')[0];
-            if (!mapped[key]) mapped[key] = String(first);
-        }
-        fieldErrors.value = mapped;
-        return Object.keys(mapped).length > 0;
-    }
-    return false;
+    if (error?.response?.status !== 422) return false;
+
+    const sorted = sortTeacherFormErrors(error?.response?.data?.data);
+    fieldErrors.value = sorted.fields;
+    formError.value = sorted.banner;
+
+    return Object.keys(sorted.fields).length > 0 || sorted.banner !== '';
 };
 
 const submitForm = async () => {
@@ -587,7 +611,8 @@ const submitForm = async () => {
             });
         }
     } catch (error: any) {
-        // Field-level 422s render inline; anything else shows as a form-wide banner.
+        // A 422 renders inline where the form has the field and in the banner where
+        // it does not; anything else shows as a form-wide banner.
         if (!applyFieldErrors(error)) {
             formError.value = apiErrorText(error, isEditing.value ? 'Failed to save the teacher.' : 'Failed to add the teacher.');
         }

@@ -123,6 +123,15 @@ class TeachersController extends Controller
                 'subjects' => collect(GroupStaff::SUBJECTS)
                     ->map(fn (string $s) => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s]])
                     ->values(),
+                // EVERY live class of this school, for the form's picker: id and
+                // name, in the order every other screen lists them. The picker
+                // used to read the Classes screen's paginated list, which is one
+                // page of 15, so a class past the first page could be neither
+                // ticked nor unticked. A picker needs the whole set, so it is
+                // served here, whole, and the paginated list is left to its screen.
+                'classes' => Group::query()->inDisplayOrder()->get(['id', 'name'])
+                    ->map(fn (Group $g) => ['id' => (int) $g->id, 'name' => $g->name])
+                    ->values(),
             ],
         ], Response::HTTP_OK);
     }
@@ -408,6 +417,8 @@ class TeachersController extends Controller
         // are read-only (see update()). The phone itself is shown: the owner decided
         // (2026-09-29) that every school that has the teacher may see it.
         $shared = $user->belongsOutside((int) $this->tenant->get());
+        // Live classes only, and the SAME set update() syncs against.
+        $assignments = $this->liveAssignments($user);
 
         return response()->json([
             'status' => 'success',
@@ -420,13 +431,11 @@ class TeachersController extends Controller
                 'last_seen_at' => MembershipSeen::iso(
                     MembershipSeen::forOrganisation((int) $this->tenant->get(), [(int) $user->id])->get($user->id)
                 ),
-                'class_ids' => $this->ledClassIds($user),
+                'class_ids' => $assignments->map(fn (GroupStaff $r): int => (int) $r->group_id)->values()->all(),
                 // Per class, as stored: null for "teaches everything". The edit
                 // form round-trips this, so an admin editing a name cannot
                 // silently widen a Sunday School teacher back to every subject.
-                'class_subjects' => GroupStaff::query()
-                    ->where('user_id', $user->id)
-                    ->get(['group_id', 'subjects'])
+                'class_subjects' => $assignments
                     ->mapWithKeys(fn (GroupStaff $r) => [(int) $r->group_id => $r->subjects ?: null]),
             ],
             'meta' => [
@@ -441,7 +450,9 @@ class TeachersController extends Controller
      * Edit a teacher: their name/phone, and the set of classes they lead. The
      * email is immutable here (changing it is a re-invite, not an edit). Class
      * assignments are SYNCED — rows for dropped classes are removed, new ones
-     * added — all within the bound school.
+     * added — all within the bound school, and among its LIVE classes only: the
+     * row for a class that has been deleted is not part of the set (see
+     * liveAssignments()), so a save neither asks for it nor removes it.
      *
      * A teacher who also belongs to another school is SHARED, and the `users` row
      * is global: renaming or re-phoning them here rewrites every other school's
@@ -488,7 +499,9 @@ class TeachersController extends Controller
             }
 
             // Sync group_staff for THIS school. group_staff is tenant-scoped, so
-            // these reads/writes only ever touch the bound masjid's rows.
+            // these reads/writes only ever touch the bound masjid's rows. $current
+            // is the live classes only, so the row of a deleted class is never in
+            // $toRemove: it stays, and is the teacher's again if the class is restored.
             $current = $this->ledClassIds($user);
             $toRemove = array_diff($current, $classIds);
             $toAdd = array_diff($classIds, $current);
@@ -682,13 +695,31 @@ class TeachersController extends Controller
         return $user;
     }
 
-    /** The ids of the classes this teacher leads in the bound school. */
-    private function ledClassIds(User $user): array
+    /**
+     * This teacher's staff rows for the LIVE classes of the bound school.
+     *
+     * Deleting a class is a soft delete that keeps its staff rows on purpose
+     * (the group_staff migration says so), and the form lists live classes only.
+     * Reading a deleted class's row out to the form made the screen send back an
+     * id it had no checkbox for, and update() refused it: the teacher could not be
+     * saved at all. So what the form is given and what a save syncs against are
+     * this ONE set. Group is tenant-scoped and soft-deleting, so the subquery is
+     * "live, in this school".
+     */
+    private function liveAssignments(User $user)
     {
         return GroupStaff::query()
             ->where('user_id', $user->id)
-            ->pluck('group_id')
-            ->map(fn ($id): int => (int) $id)
+            ->whereIn('group_id', Group::query()->select('id'))
+            ->get(['group_id', 'subjects']);
+    }
+
+    /** The ids of the LIVE classes this teacher leads in the bound school. */
+    private function ledClassIds(User $user): array
+    {
+        return $this->liveAssignments($user)
+            ->map(fn (GroupStaff $r): int => (int) $r->group_id)
+            ->values()
             ->all();
     }
 
