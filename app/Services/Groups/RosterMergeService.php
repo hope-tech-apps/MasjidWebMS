@@ -794,6 +794,11 @@ class RosterMergeService
      * thread's `about_membership_id` nulls, which is a conversation about one
      * child degraded to leaders-only. Any of the three is worth a duplicate line
      * on a roster screen.
+     *
+     * NARROWER THAN `App\Support\AcademicRecordsHeld::KEYS`, which is the one
+     * list of every foreign key into a roster row (2026-10-04) and what the two
+     * roster deleters and a move read. This is merge's own, older question and
+     * was left as it is: making merge read the one list is a change to merge.
      */
     private function carriesRecordsAboutAChild(GroupMembership $membership): bool
     {

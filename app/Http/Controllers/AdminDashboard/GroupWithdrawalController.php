@@ -110,6 +110,18 @@ class GroupWithdrawalController extends Controller
      * Deliberately NOT gated on anything: a wrong leaving date locks a child out
      * of their own class's register, and an undo that can be refused is the one
      * direction this surface must never have.
+     *
+     * STILL UNGATED FOR A ROW THAT WAS MOVED (2026-10-04), and the guard is on
+     * the screen instead. Putting a student back re-opens EVERY guardian entry
+     * beside them in this class (the model's hook), and after a move those are
+     * the entries the move left behind: one of them can belong to an adult the
+     * office has since removed where the student is now. The roster list says
+     * so per row (`moved_to_state.guardians_not_vouched`, the move's own
+     * guardian rule read from the other side), and the roster screen does not
+     * offer "Put back" while that list names anybody. This verb does not read
+     * it, for the reason above. What that leaves open is written down in
+     * .claude/rules/groups.md ("Put back on a row that was moved"): a hand-made
+     * request, and a change made between the screen's read and the tap.
      */
     public function destroy(Request $request, $masjid_id, $group_id, $membership_id)
     {

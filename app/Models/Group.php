@@ -115,6 +115,21 @@ class Group extends Model
     }
 
     /**
+     * Is this a CLASS: a group whose members are students a school keeps
+     * records about?
+     *
+     * The one answer to that question for the features that are about students
+     * and nobody else: moving a student to another class (App\Support\RosterMove)
+     * and, with it, what the office roster offers. Read through `kind()`, so an
+     * unrecognised stored kind is not a class. Widening this to another kind is
+     * a one-line change made here and nowhere else.
+     */
+    public function teachesStudents(): bool
+    {
+        return $this->kind() === self::KIND_CLASS;
+    }
+
+    /**
      * Force-deleting a group must reach the disk (T-005b).
      *
      * `group_posts`, `group_post_attachments`, `group_threads` and the photos

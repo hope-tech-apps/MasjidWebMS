@@ -40,6 +40,7 @@ use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
 use App\Http\Controllers\AdminDashboard\GroupMessageSchedulesController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\GroupMoveController;
 use App\Http\Controllers\AdminDashboard\GroupWithdrawalController;
 use App\Http\Controllers\AdminDashboard\TeachersController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
@@ -1357,6 +1358,19 @@ Route::prefix('admin')->group(function () {
                     ->group(function () {
                         Route::put('/', 'update')->middleware('permission:manage contacts');
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // A student MOVED to another class. The GET says what the move
+                // would do and writes nothing; the POST makes it. A roster row
+                // never changes class: the old place gets a leaving day, a new
+                // one opens (App\Support\RosterMove). The office says who
+                // belongs in a class, so both take `manage contacts`, and there
+                // is no teacher or family route.
+                Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/move')
+                    ->controller(GroupMoveController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:manage contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
                     });
 
                 // The group's PRIVATE activity feed — the "class story". Two
