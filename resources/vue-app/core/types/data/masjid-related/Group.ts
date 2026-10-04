@@ -157,6 +157,16 @@ export type GroupMembership = {
      * volunteer team — so never render it unconditionally.
      */
     grade_label: string | null;
+    /**
+     * Whole years old, worked out by the server on the school's clock, for a
+     * STUDENT IN A CLASS whose contact holds a date of birth. Null on every other
+     * row (a guardian entry, a leader, any group that is not a class) and for a
+     * student with no date on file. The date itself is never in this payload:
+     * the office reads it through StudentBirthDateForm. Words for it are in
+     * core/helpers/studentAge.ts. The server always sends the key; it is
+     * optional here so code that builds a row by hand need not name it.
+     */
+    age?: number | null;
     guardian_of_contact_id: number | null;
     joined_at: string | null;
     /**
