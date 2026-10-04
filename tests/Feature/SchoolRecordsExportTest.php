@@ -176,6 +176,24 @@ class SchoolRecordsExportTest extends TestCase
         }
     }
 
+    /**
+     * The whole header, so a column cannot join this file without an edit here.
+     * `Date of birth` (2026-10-04) is deliberate: a student's date, typed by the
+     * office, is part of what a school takes with it, and this file is the one
+     * place besides the roster's own birth-date routes where it leaves the
+     * database. StudentBirthDateTest pins what the cell holds.
+     */
+    #[Test]
+    public function the_contacts_file_has_exactly_these_columns(): void
+    {
+        $header = str_getcsv(preg_replace('/^\xEF\xBB\xBF/', '', (string) strtok($this->body('contacts'), "\n")));
+
+        $this->assertSame(
+            ['Contact id', 'First name', 'Last name', 'Email', 'Phone', 'Created at', 'Date of birth'],
+            array_map('trim', $header),
+        );
+    }
+
     // ------------------------------------------------------------- 3. who may run it
 
     #[Test]

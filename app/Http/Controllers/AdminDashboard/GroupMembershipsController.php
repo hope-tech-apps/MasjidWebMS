@@ -11,6 +11,7 @@ use App\Models\GroupMembership;
 use App\Models\User;
 use App\Support\AcademicRecordsHeld;
 use App\Support\RosterClaimIdentity;
+use App\Support\StudentAge;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -101,6 +102,11 @@ class GroupMembershipsController extends Controller
      * is what the screen's banner counts, and it comes from the same query the
      * confirm verb below acts on rather than from a count computed in the SPA.
      *
+     * `age` is on every row: a whole number for a STUDENT IN A CLASS whose
+     * contact holds a date of birth, and null for everybody else (a guardian
+     * entry, a leader, any row of a group that is not a class, a student with no
+     * date on file). The date itself is never in this payload.
+     *
      * ## `claim` — WHY EVERY ROW NOW CARRIES ONE
      *
      * A roster row used to serialise as its own columns plus three related
@@ -149,12 +155,19 @@ class GroupMembershipsController extends Controller
 
         $contested = RosterClaimIdentity::contestedClaimIds($memberships);
 
+        // A whole-number age for each STUDENT IN A CLASS, and null on every other
+        // row. The date behind it is read in StudentAge's own query and never
+        // joins this payload; the office reads it one student at a time through
+        // GroupBirthDateController.
+        $ages = StudentAge::forRoster($group, $memberships);
+
         return response()->json([
             'status' => 'success',
-            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested): array {
+            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $ages): array {
                 $isContested = in_array((int) $membership->getKey(), $contested, true);
 
                 return array_merge($membership->toArray(), [
+                    'age' => $ages[(int) $membership->getKey()] ?? null,
                     'claim' => [
                         'fingerprint' => $membership->isConfirmed()
                             ? null
@@ -621,9 +634,12 @@ class GroupMembershipsController extends Controller
         $removed = $cascadingEdges->count();
         $confirmedRemoved = $confirmedEdges->count();
 
+        // The date of birth is on the CONTACT, so it stays when the row goes.
+        $birthDate = $this->birthDateLeftBehind($membership);
+
         return response()->json([
             'status' => 'success',
-            'message' => $removed === 0
+            'message' => ($removed === 0
                 ? 'Removed from the roster.'
                 : sprintf(
                     'Removed from the roster, and with it %d guardian %s%s.%s',
@@ -640,7 +656,7 @@ class GroupMembershipsController extends Controller
                             $strandedLogins === 1 ? 'it' : 'them',
                         )
                         : '',
-                ),
+                )) . ($birthDate ? ' ' . $birthDate['message'] : ''),
             'data' => [
                 'membership' => $membership,
                 'cascade' => [
@@ -648,8 +664,45 @@ class GroupMembershipsController extends Controller
                     'confirmed_guardian_edges_removed' => $confirmedRemoved,
                     'family_logins_left_without_a_ward' => $strandedLogins,
                 ],
-            ],
+            ] + ($birthDate ? ['birth_date' => ['held' => true, 'contact_id' => $birthDate['contact_id']]] : []),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * What to say when a removed participant's contact still holds a date of
+     * birth, or null when it holds none.
+     *
+     * The date is typed and read through a class roster row
+     * (GroupBirthDateController), but it is stored on the contact. Removing the
+     * row therefore leaves it behind, encrypted, and when this was the child's
+     * last class row no screen reads it any more. The office is told, and
+     * `data.birth_date` names the contact so the screen can offer the clear
+     * (`DELETE .../contacts/{contact_id}/birth-date`, which is never refused).
+     *
+     * Only whether a date is HELD is looked at, on the raw column: nothing is
+     * decrypted and no date is printed. A guardian edge is not asked about: the
+     * date belongs to the child the row was for, and the child is still there.
+     *
+     * @return array{message: string, contact_id: int}|null
+     */
+    private function birthDateLeftBehind(GroupMembership $membership): ?array
+    {
+        if (! in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true) || ! StudentAge::columnExists()) {
+            return null;
+        }
+
+        $contact = Contact::withTrashed()
+            ->whereKey($membership->contact_id)
+            ->first(['id', 'masjid_id', StudentAge::COLUMN]);
+
+        if (! $contact || ! $contact->holdsDateOfBirth()) {
+            return null;
+        }
+
+        return [
+            'message' => 'Their date of birth is still on their record.',
+            'contact_id' => (int) $contact->id,
+        ];
     }
 
     // ------------------------------------------------------------- internals

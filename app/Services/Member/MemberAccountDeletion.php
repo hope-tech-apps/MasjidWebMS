@@ -254,6 +254,11 @@ class MemberAccountDeletion
         'staff_avatar_character',
         'staff_avatar_tone',
         'staff_avatar_color',
+        // A student's date of birth (2026-10-04). Only the office writes it, for
+        // a child on a class roster, so a value here means the office holds
+        // something about this person and the contact is kept. Classified from
+        // the raw column: reasonsToKeep() never decrypts it.
+        'date_of_birth',
     ];
 
     public function __construct(private TenantContext $tenant)

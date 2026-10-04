@@ -115,6 +115,19 @@ class Group extends Model
     }
 
     /**
+     * Whether this group's members are STUDENTS: today, kind `class` only.
+     *
+     * The one answer to "is this a class of students", for the features that
+     * exist only for students: a date of birth and the age on a roster. Asked
+     * here so that widening it (to a ḥalaqa, say) is one line and not a search
+     * for every place that compared a kind.
+     */
+    public function teachesStudents(): bool
+    {
+        return $this->kind() === self::KIND_CLASS;
+    }
+
+    /**
      * Force-deleting a group must reach the disk (T-005b).
      *
      * `group_posts`, `group_post_attachments`, `group_threads` and the photos

@@ -7489,3 +7489,61 @@ where the TV app that is actually installed honours the choice. Six settings, on
   where it was written (no MySQL server). After the word-start change every body but the column-type one was run
   once on SQLite through a temporary copy, to check the fixtures: 7 passed. That proves the fixtures, not MySQL.
   See ASSUMPTIONS.md F-1 to F-7.
+
+## 2026-10-04 — Ages on class rosters: an optional, encrypted date of birth on the contact, and a whole-number age on two payloads (owner: "We need to show ages on the Classroom Student Rosters please"; Q1 yes)
+
+Decision: a student's date of birth is stored, optional, as ciphertext in
+`contacts.date_of_birth` (TEXT), hidden, not fillable, with one writer
+(`Contact::recordDateOfBirth`) and one reader (`Contact::dateOfBirthOrNull`). The
+age is never stored: `App\Support\StudentAge` works out whole years on read, on
+the school's clock, and `age: int|null` is on exactly two payloads, the office
+roster list and the teacher's class payload, for students in classes only (role
+`member`, group kind `class`). The date itself appears only on the office's
+birth-date routes and in the contacts file of the school records export, both
+behind `manage contacts`. A teacher who taps a student on the Roster tab gets a
+sheet with the avatar, name, grade and age and nothing about a parent (owner, Q3:
+parents' names and phone numbers are for the office only).
+
+Alternatives: a stored age (wrong within a year); an `age` accessor on Contact
+(it would publish an age wherever a contact is serialised); a plain date column
+(reaches logs on a query error and every whole-model answer); "N at enrolment"
+from form answers (no stored link from a roster child to an answer, so it would
+be name matching on minors' data); the date on the Member Directory edit form
+(filled from a list row that cannot carry a hidden column, so an untouched field
+would wipe it); age inside the teacher's `student()` (thirty decrypts on every
+gradebook, register and report-card read, and six pinned payloads changed).
+
+Rationale and what the review of the design changed:
+- The CLEAR is keyed by contact and never refused. Reading and setting go by
+  roster row, which is how the server knows the child is a student in a class;
+  but the date is on the contact and outlives that row (Remove, an import undo,
+  an archived class, a changed kind, a merge), and a parent who asks for it to be
+  deleted must not meet an office with no button for it.
+- One reader that survives a value it cannot decrypt (null plus one ERROR line
+  with the id and no value), used by the age, the GET, the merge and the streamed
+  export. The export had sent its 200 before the first row, so a throw there
+  would have left a file that stops at one child and looks complete.
+- Who set, changed or removed a date is logged at `warning` (production keeps
+  nothing below it), with ids and the verb only.
+- "Not in the future" is judged on the school's today, the day the age uses.
+- `bin/deploy` serves new code before it migrates, so every read of the column
+  is behind `StudentAge::columnExists()`; between checkout and migrate the
+  rosters show no ages instead of failing.
+- The teacher's sheet is the screen's own modal (a bottom sheet at phone width),
+  not a new offcanvas pattern, and it holds the avatar picker that used to be a
+  button on the row. It is drawn from a four-key model so nothing a later
+  payload carries can appear in it; the dormant `guardianNames` hook is deleted.
+
+Measured (2026-10-04, the dev Mac, PHP 8.3, SQLite in memory, in-process
+requests, median of 40 after 2 warm-ups, run twice): a class of thirty students.
+Office roster list 7.4 ms with no dates, 8.0 to 8.2 ms with thirty; teacher class
+payload 4.8 ms with none, 5.2 to 5.3 ms with thirty. So thirty decrypts cost
+about 0.5 to 0.7 ms. What this did NOT isolate: both figures already include the
+three fixed reads the age adds whether or not a date is held (does the column
+exist; the school's calendar, two statements; the students' dates, one
+statement), and SQLite in memory has no network. On production's managed MySQL
+each is a round trip; their cost there is Unknown, needs measuring on staging.
+Rules: `.claude/rules/groups.md`, "A student's date of birth, and the age on a
+roster". Tests: `StudentBirthDateTest`, `StudentBirthDateLeakTest`,
+`tests/Mysql/ContactDateOfBirthMysqlTest` (the column type; CI only),
+`resources/vue-app/tests/student-age.test.ts`.

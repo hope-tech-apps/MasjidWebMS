@@ -238,6 +238,14 @@ class Contact extends Model implements AuthenticatableContract
      */
     protected $hidden = [
         'password',
+        // A student's date of birth (2026-10-04). The date is for the office,
+        // in one panel and one export file, and every other payload carries at
+        // most a whole-number age. The staff contact endpoints serialize this
+        // model whole (index, show, store, update, destroy, restore), so this
+        // line is what keeps the value out of every one of them. It is the
+        // backstop, not the rule: the rule is the one reader and the one
+        // writer below (dateOfBirthOrNull(), recordDateOfBirth()).
+        'date_of_birth',
     ];
 
     protected function casts(): array
@@ -263,7 +271,153 @@ class Contact extends Model implements AuthenticatableContract
             // so no importer or admin payload can set it and imply an opt-out
             // that does not exist.
             'email_opted_out_at' => 'datetime',
+            // Ciphertext at rest: a plain date would reach a log on any query
+            // error that prints its bindings. Not in $fillable. Written only by
+            // recordDateOfBirth() and read only by dateOfBirthOrNull(), which
+            // survives a value that cannot be decrypted; never as a property.
+            'date_of_birth' => 'encrypted',
         ];
+    }
+
+    /**
+     * THE ONE READER of `date_of_birth`: the day as 'Y-m-d', or null.
+     *
+     * FOR THE OFFICE ONLY when the date itself is what leaves: the birth-date
+     * routes and the contacts file of the school records export. Everything
+     * else that needs it (the age on a roster, a merge) goes through
+     * App\Support\StudentAge or reads it here and lets nothing but a whole
+     * number out. No other code reads the attribute.
+     *
+     * ONE BAD ROW NEVER BREAKS A SCREEN, AND IS NEVER SILENT. The column is
+     * encrypted, so a value written under another key (a database restored
+     * without its APP_KEY, a staging copy that was not scrubbed) throws when it
+     * is read as a property: a class of thirty would answer 500, the streamed
+     * records export would stop at the first such child and still look
+     * complete, and a merge would roll back. Here it reads as "no date on
+     * file" and one ERROR line names the contact, without the value.
+     *
+     * Null also for a column that was not selected and for a column that does
+     * not exist yet (bin/deploy serves new code before it migrates): the raw
+     * attribute is looked at first, so neither touches the cipher.
+     */
+    public function dateOfBirthOrNull(): ?string
+    {
+        $stored = $this->attributes['date_of_birth'] ?? null;
+
+        if ($stored === null || $stored === '') {
+            return null;
+        }
+
+        try {
+            $value = $this->getAttribute('date_of_birth');
+        } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+            $this->reportUnreadableDateOfBirth('it could not be decrypted (was it written under another APP_KEY?)');
+
+            return null;
+        }
+
+        if (! is_string($value) || ! self::isRealDay($value)) {
+            $this->reportUnreadableDateOfBirth('it is not a real day written YYYY-MM-DD');
+
+            return null;
+        }
+
+        return $value;
+    }
+
+    /**
+     * Whether the column holds ANYTHING, readable or not. Looks at the raw
+     * value and never decrypts, so it cannot throw and logs nothing.
+     *
+     * "Holds something" and "can be read" are different questions: a value
+     * written under another key is still a child's date of birth sitting on the
+     * record, and Remove has to be able to say so and clear it.
+     */
+    public function holdsDateOfBirth(): bool
+    {
+        return filled($this->attributes['date_of_birth'] ?? null);
+    }
+
+    /**
+     * THE ONE WRITER of `date_of_birth`. Sets it (or clears it with null),
+     * SAVES, and records who did it. Returns what happened: `set`, `changed`,
+     * `removed`, or `unchanged` when there was nothing to write.
+     *
+     * Not in $fillable, so no request body, import row or merge payload can set
+     * a child's date of birth as a side effect of editing something else. The
+     * callers are GroupBirthDateController (the office: set for a student in a
+     * class, clear for anyone) and ContactsController::merge (carrying it onto
+     * the kept record). StudentBirthDateTest pins that list.
+     *
+     * Only a real calendar day written exactly 'Y-m-d' is accepted, so what is
+     * encrypted is canonical and nothing downstream has to guess a format. The
+     * exception's message never repeats the value: it would end up in a log.
+     *
+     * WHO DID IT IS RECORDED, the value never. One line, with the contact, the
+     * organisation, the acting user and the verb. At `warning`, because
+     * production runs LOG_LEVEL=warning and an `info` line would be dropped
+     * there: a date that changes the age every teacher of the class sees has to
+     * be attributable afterwards. This is the same level the office's other
+     * settings changes are logged at (ClassStoreSettingsController).
+     *
+     * `$through` says which door was used: `roster`, `contact` or `merge`.
+     */
+    public function recordDateOfBirth(?string $ymd, ?User $actor, string $through): string
+    {
+        if ($ymd !== null && ! self::isRealDay($ymd)) {
+            throw new \InvalidArgumentException('A date of birth must be a real day written as YYYY-MM-DD.');
+        }
+
+        $held = $this->holdsDateOfBirth();
+        $before = $held ? $this->dateOfBirthOrNull() : null;
+
+        if (($ymd === null && ! $held) || ($ymd !== null && $before === $ymd)) {
+            return 'unchanged';
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($ymd, $held, $before): void {
+            // A stored value that cannot be read cannot be compared either:
+            // Eloquent decrypts the old value to decide whether the column
+            // changed, and would throw. Clearing it first (a null is never
+            // decrypted) keeps "type the date again" working as the way out.
+            if ($held && $before === null && $ymd !== null) {
+                $this->date_of_birth = null;
+                $this->save();
+            }
+
+            $this->date_of_birth = $ymd;
+            $this->save();
+        });
+
+        $verb = $ymd === null ? 'removed' : ($held ? 'changed' : 'set');
+
+        \Illuminate\Support\Facades\Log::warning('A date of birth was '.$verb.' on a contact.', [
+            'contact_id' => $this->getKey(),
+            'masjid_id' => $this->attributes['masjid_id'] ?? null,
+            'actor_user_id' => $actor?->getKey(),
+            'verb' => $verb,
+            'through' => $through,
+        ]);
+
+        return $verb;
+    }
+
+    /** A real calendar day written exactly 'Y-m-d' (2026-02-30 is not one). */
+    private static function isRealDay(string $ymd): bool
+    {
+        return preg_match('/\A(\d{4})-(\d{2})-(\d{2})\z/', $ymd, $m) === 1
+            && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+    }
+
+    private function reportUnreadableDateOfBirth(string $why): void
+    {
+        \Illuminate\Support\Facades\Log::error(
+            'A stored date of birth could not be read, so it is treated as not on file: '.$why.'.',
+            [
+                'contact_id' => $this->getKey(),
+                'masjid_id' => $this->attributes['masjid_id'] ?? null,
+            ]
+        );
     }
 
     /**
