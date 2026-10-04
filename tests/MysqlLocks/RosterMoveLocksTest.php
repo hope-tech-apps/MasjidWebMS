@@ -78,7 +78,7 @@ afterEach(function () {
         DB::table($table)->where('masjid_id', $school)->delete();
     }
 
-    foreach (['class_assignments', 'group_resources', 'group_memberships', 'groups', 'contacts', 'masjid_users'] as $table) {
+    foreach (['class_assignments', 'group_resources', 'group_memberships', 'groups', 'contacts', 'masjid_user'] as $table) {
         DB::table($table)->where('masjid_id', $school)->delete();
     }
 
@@ -125,8 +125,13 @@ it('holds exactly the primary-key locks it names, and everything about the child
     $test = $this;
     $seen = (object) ['locks' => null, 'blocked' => []];
 
-    $mover = new class($test, $seen) extends RosterMove {
-        public function __construct(private $test, private object $seen)
+    // The school and plantRecord() are protected members of the test's traits. A closure made
+    // here runs in the test's scope and can reach them; the class below cannot.
+    $schoolId = $this->school->id;
+    $plant = fn (string $table) => $this->plantRecord($table, $this->student);
+
+    $mover = new class($test, $seen, $schoolId, $plant) extends RosterMove {
+        public function __construct(private $test, private object $seen, private int $schoolId, private Closure $plant)
         {
         }
 
@@ -136,7 +141,8 @@ it('holds exactly the primary-key locks it names, and everything about the child
 
             $t = $this->test;
             $other = $t->other;
-            $base = ['masjid_id' => $t->school->id, 'provenance' => 'confirmed'];
+            $plant = $this->plant;
+            $base = ['masjid_id' => $this->schoolId, 'provenance' => 'confirmed'];
 
             // (ii) A roster row naming the child, as the person or as a guardian entry's child.
             $this->seen->blocked['a place for the child'] = rosterMoveIsBlocked(fn () => $other->table('group_memberships')->insert($base + [
@@ -149,12 +155,12 @@ it('holds exactly the primary-key locks it names, and everything about the child
 
             // (ii) A record on each of the eleven keys naming the roster row.
             foreach (array_keys(AcademicRecordsHeld::KEYS) as $table) {
-                $this->seen->blocked[$table] = rosterMoveIsBlocked(function () use ($t, $table, $other) {
+                $this->seen->blocked[$table] = rosterMoveIsBlocked(function () use ($plant, $table) {
                     $default = DB::getDefaultConnection();
                     DB::setDefaultConnection('mysql_other');
 
                     try {
-                        $t->plantRecord($table, $t->student);
+                        $plant($table);
                     } finally {
                         DB::setDefaultConnection($default);
                     }

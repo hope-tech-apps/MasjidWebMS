@@ -44,10 +44,17 @@ beforeEach(function () {
 
 afterEach(fn () => Carbon::setTestNow());
 
-/** Move through the service itself: what is under test is the engine, not the route. */
+/**
+ * Move through the service itself: what is under test is the engine, not the route.
+ *
+ * `admin` is a protected property of BuildsSchoolRosters, so it is read from inside the test
+ * (Closure::call binds the test's own scope); a plain function cannot read it.
+ */
 function rosterMoveOnMysql($test, GroupMembership $row, $to, string $on, array $options = []): RosterMovePlan
 {
-    return app(RosterMove::class)->move($test->first->is($row->group) ? $test->first : $row->group, $row, $to->id, $on, $options, $test->admin);
+    $admin = (fn () => $this->admin)->call($test);
+
+    return app(RosterMove::class)->move($test->first->is($row->group) ? $test->first : $row->group, $row, $to->id, $on, $options, $admin);
 }
 
 it('lists every foreign key into a roster row, with the rule the database really has', function () {
