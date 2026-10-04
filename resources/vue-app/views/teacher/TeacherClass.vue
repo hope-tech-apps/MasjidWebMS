@@ -74,13 +74,24 @@
             <!-- ============================================ ROSTER (read only) -->
             <section v-if="activeTab === 'roster'">
                 <p class="text-muted small">
-                    Enrolment is managed by the school office. You can update a student's avatar,
-                    but not add or remove students.
+                    Enrolment is managed by the school office. Tap a student to see their details
+                    or change their avatar. You cannot add or remove students here.
                 </p>
                 <div v-if="!students.length" class="text-muted small">No students on this roster yet.</div>
+                <!-- THE WHOLE ROW IS THE BUTTON, with a chevron: the same shape
+                     as the Letters rows below, which is how this screen says
+                     "this row opens something". One target a thumb cannot miss,
+                     rather than a name with a small button beside it.
+                     The row shows the name, the grade and the age, and NOTHING
+                     ABOUT A PARENT: parents' details are for the school office
+                     (the owner's decision, 2026-10-04). The Attendance rows are
+                     deliberately not like this: a name there sits beside four
+                     mark buttons tapped quickly, and a slip must not open a
+                     sheet over the register. -->
                 <div v-else class="list-group">
-                    <div v-for="s in students" :key="s.membership_id"
-                         class="list-group-item d-flex align-items-center gap-3">
+                    <button v-for="s in students" :key="s.membership_id" type="button"
+                            class="list-group-item list-group-item-action d-flex align-items-center gap-3 tc-roster-row"
+                            @click="sheetFor = s">
                         <PersonAvatar :avatar="s.contact?.avatar"
                                       :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="40" />
                         <div class="flex-grow-1">
@@ -91,15 +102,13 @@
                                       class="badge bg-primary-subtle text-primary-emphasis fw-normal">
                                     {{ s.grade_label }}
                                 </span>
-                            </div>
-                            <div v-if="guardianNames(s)" class="text-muted small">
-                                Guardians: {{ guardianNames(s) }}
+                                <!-- A whole number from the server, for a student
+                                     in a class. Nothing at all when it is unknown. -->
+                                <span v-if="ageLabel(s.age)" class="text-muted small">{{ ageLabel(s.age) }}</span>
                             </div>
                         </div>
-                        <button class="btn btn-sm btn-outline-secondary" @click="avatarFor = s">
-                            <i class="bi bi-person-badge me-1"></i>Avatar
-                        </button>
-                    </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </button>
                 </div>
             </section>
 
@@ -2466,28 +2475,11 @@
             </section>
         </template>
 
-        <!-- Avatar picker modal (Roster tab) -->
-        <div v-if="avatarFor" class="modal fade show d-block" tabindex="-1"
-             style="background:rgba(0,0,0,.5)" @click.self="avatarFor = null">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Choose an avatar</h5>
-                        <button type="button" class="btn-close" @click="avatarFor = null"></button>
-                    </div>
-                    <div class="modal-body">
-                        <AvatarPicker
-                            :masjid-id="masjidId"
-                            :avatar="avatarFor.contact?.avatar"
-                            :first-name="avatarFor.contact?.first_name"
-                            :last-name="avatarFor.contact?.last_name"
-                            :catalogue-endpoint="`/api/teacher/masjids/${masjidId}/avatars`"
-                            :family-endpoint="`${base}/members/${avatarFor.membership_id}/avatar`"
-                            @saved="onAvatarSaved" />
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- The student's sheet (Roster tab): name, grade, age, and the avatar
+             picker, which used to be a button on the row. -->
+        <TeacherStudentSheet v-if="sheetFor" :student="sheetFor" :masjid-id="masjidId" :base="base"
+                             :is-class="group?.kind === 'class'"
+                             @close="sheetFor = null" @avatar-saved="onAvatarSaved" />
     </div>
 </template>
 
@@ -2511,7 +2503,8 @@ import { useSendLater } from '@/composables/useSendLater';
 import { messageRow, storyRow, type ScheduledRow } from '@/core/helpers/scheduledSend';
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import { isVideoFile, pickerLimits } from '@/core/helpers/mediaPick';
-import AvatarPicker from '@/components/common/AvatarPicker.vue';
+import TeacherStudentSheet from '@/views/teacher/TeacherStudentSheet.vue';
+import { ageLabel } from '@/core/helpers/studentAge';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
@@ -2643,7 +2636,8 @@ onBeforeUnmount(() => {
 });
 
 const students = computed<any[]>(() => group.value?.students ?? []);
-const avatarFor = ref<any>(null);
+// The student whose sheet is open (Roster tab), or null.
+const sheetFor = ref<any>(null);
 
 // ---------- attendance ----------
 // Four marks, in the order a teacher reaches for them. `off`/`on` are the
@@ -4255,17 +4249,6 @@ const deleteResource = async (r: any) => {
 // ---------- helpers ----------
 const name = (c: any) => [c?.first_name, c?.last_name].filter(Boolean).join(' ') || 'Student';
 
-const guardianNames = (s: any): string => {
-    // NAMES ONLY — never email/phone. The frozen Student shape carries no
-    // guardians, so this renders only when the backend chooses to include them.
-    const list = s?.guardians ?? s?.contact?.guardians ?? [];
-    if (!Array.isArray(list) || !list.length) return '';
-    return list
-        .map((g: any) => g?.name || [g?.first_name, g?.last_name].filter(Boolean).join(' '))
-        .filter(Boolean)
-        .join(', ');
-};
-
 const when = (iso: string | null) => {
     if (!iso) return '';
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -5650,11 +5633,11 @@ const reactToPost = async (post: any, key: string, on: boolean) => {
 };
 
 // ---------- avatar save ----------
+// The sheet stays open on the student, now showing the avatar just chosen.
 const onAvatarSaved = (student: any) => {
-    if (avatarFor.value && student?.contact) {
-        avatarFor.value.contact.avatar = student.contact.avatar ?? null;
+    if (sheetFor.value?.contact && student?.contact) {
+        sheetFor.value.contact.avatar = student.contact.avatar ?? null;
     }
-    avatarFor.value = null;
 };
 
 // ---------- lazy per-tab loading ----------
@@ -6090,6 +6073,8 @@ watch(activeTab, (tab) => {
 /* The "N new" chip beside the class name: a real button, so it needs a pointer and a focus ring. */
 .tc-new-chip { cursor: pointer; font-size: .75rem; padding: .4em .7em; }
 .tc-new-chip:focus-visible { outline: 2px solid #0d6efd; outline-offset: 2px; }
+/* A Roster row is one button: tall enough for a thumb on any screen, not only a phone. */
+.tc-roster-row { min-height: 56px; }
 
 .letter-tile {
     width: 66px; height: 66px; border: none; border-radius: 12px;

@@ -2294,13 +2294,19 @@ const doMerge = async () => {
         // so a merge that re-opened a guardian claim for confirmation said
         // nothing. A guardianship that stops working is not a detail.
         const rosterOutcome = res.data?.roster;
+        // A sentence when the absorbed record's date of birth could NOT be
+        // carried onto the kept one (the two differed, or it could not be
+        // read). The merge destroys the absorbed record, so this is the only
+        // time the office is told. No date is in it.
+        const birthDateNote: string = res.data?.birth_date?.message ?? '';
+        const withBirthDate = (text?: string) => [text, birthDateNote].filter(Boolean).join(' ');
         const verb = wasPlaceholderMerge ? 'Attached' : 'Merged';
 
         if (familyLoginOutcome?.access_ended) {
             Swal.fire({
                 icon: 'warning',
                 title: `${verb} — portal access ended`,
-                text: [familyLoginOutcome.message, rosterOutcome?.message].filter(Boolean).join(' '),
+                text: [familyLoginOutcome.message, rosterOutcome?.message, birthDateNote].filter(Boolean).join(' '),
             });
         } else if (rosterOutcome?.guardian_claims_reissued > 0 || rosterOutcome?.confirmed_guardian_edges_dropped > 0) {
             // A guardian PAIR changed, or a confirmed one went with the absorbed
@@ -2308,18 +2314,18 @@ const doMerge = async () => {
             // and the entry the operator may already have drawn is not the entry
             // that is there now — so this is the loud branch even when no
             // credential was revoked by the merge itself.
-            Swal.fire({ icon: 'warning', title: `${verb} — a guardian entry needs confirming`, text: rosterOutcome.message });
+            Swal.fire({ icon: 'warning', title: `${verb} — a guardian entry needs confirming`, text: withBirthDate(rosterOutcome.message) });
         } else if (rosterOutcome?.unconfirmed > 0) {
-            Swal.fire({ icon: 'warning', title: `${verb} — a roster entry needs confirming`, text: rosterOutcome.message });
+            Swal.fire({ icon: 'warning', title: `${verb} — a roster entry needs confirming`, text: withBirthDate(rosterOutcome.message) });
         } else if (rosterOutcome?.message) {
-            Swal.fire({ icon: 'success', title: verb, text: rosterOutcome.message });
+            Swal.fire({ icon: birthDateNote ? 'warning' : 'success', title: verb, text: withBirthDate(rosterOutcome.message) });
         } else {
             Swal.fire({
-                icon: 'success',
+                icon: birthDateNote ? 'warning' : 'success',
                 title: verb,
-                text: wasPlaceholderMerge
+                text: withBirthDate(wasPlaceholderMerge
                     ? 'The card and its giving were moved to the member.'
-                    : 'The record and its giving were moved to the surviving member.',
+                    : 'The record and its giving were moved to the surviving member.'),
             });
         }
     } catch (e) {

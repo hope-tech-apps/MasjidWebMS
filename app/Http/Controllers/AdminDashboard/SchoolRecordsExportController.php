@@ -232,16 +232,30 @@ class SchoolRecordsExportController extends Controller
         ];
     }
 
-    /** @param resource $out */
+    /**
+     * `Date of birth` is the one place outside the roster's own birth-date
+     * routes where a student's date leaves the database: a school that takes its
+     * records elsewhere takes this too. Like every column here it is written for
+     * soft-deleted contacts as well.
+     *
+     * It is read through Contact::dateOfBirthOrNull(), never as a property. This
+     * runs inside a STREAMED response: the 200 and the filename have already
+     * gone out, so a value that could not be decrypted would throw mid-file and
+     * the office would download a contacts file that stops at that child and
+     * looks complete. An unreadable date is an empty cell and one ERROR line.
+     *
+     * @param resource $out
+     */
     private function writeContacts($out): void
     {
-        Csv::row($out, ['Contact id', 'First name', 'Last name', 'Email', 'Phone', 'Created at']);
+        Csv::row($out, ['Contact id', 'First name', 'Last name', 'Email', 'Phone', 'Created at', 'Date of birth']);
 
         Csv::each(
             Contact::withTrashed()->whereKey($this->schoolContactIds()),
             fn (Contact $c) => Csv::row($out, [
                 Csv::num($c->id), Csv::text($c->first_name), Csv::text($c->last_name),
                 Csv::text($c->email), Csv::text($c->phone), Csv::num($c->created_at),
+                Csv::num($c->dateOfBirthOrNull()),
             ])
         );
     }

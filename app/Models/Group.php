@@ -116,13 +116,14 @@ class Group extends Model
 
     /**
      * Is this a CLASS: a group whose members are students a school keeps
-     * records about?
+     * records about? Today, kind `class` only.
      *
      * The one answer to that question for the features that are about students
-     * and nobody else: moving a student to another class (App\Support\RosterMove)
-     * and, with it, what the office roster offers. Read through `kind()`, so an
-     * unrecognised stored kind is not a class. Widening this to another kind is
-     * a one-line change made here and nowhere else.
+     * and nobody else: moving a student to another class (App\Support\RosterMove),
+     * a date of birth and the age on a roster (App\Support\StudentAge), and,
+     * with them, what the office roster offers. Read through `kind()`, so an
+     * unrecognised stored kind is not a class. Widening this to another kind
+     * (a ḥalaqa, say) is a one-line change made here and nowhere else.
      */
     public function teachesStudents(): bool
     {

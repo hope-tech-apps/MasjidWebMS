@@ -7,7 +7,9 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
+use App\Support\SchoolCalendar;
 use App\Support\SchoolSettings;
+use App\Support\StudentAge;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 
@@ -26,6 +28,9 @@ use Illuminate\Support\Facades\Auth;
  */
 abstract class TeacherController extends Controller
 {
+    /** @var array<int, string> the school's today, by organisation, for this request */
+    private array $todayByOrganisation = [];
+
     public function __construct(protected GroupAudience $audience)
     {
     }
@@ -81,6 +86,13 @@ abstract class TeacherController extends Controller
      * `$unreadMessages` is how many messages from other people this teacher has not
      * seen in the class (GroupThreadUnread), computed by the CALLER so My Classes
      * can do one query for every class; null leaves the key out.
+     *
+     * `age` is the second non-name field a student carries, and only HERE, on the
+     * roster: a whole number computed on read, for students in classes only. The
+     * date of birth itself never travels to a teacher, and no guardian field ever
+     * does. It is added beside student(), not inside it, so the register, the
+     * gradebook, report cards, the class store and the avatar answers keep the
+     * exact shape they had.
      */
     protected function classPayload(Group $group, ?int $unreadMessages = null): array
     {
@@ -88,6 +100,13 @@ abstract class TeacherController extends Controller
             ->participants()->current()
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
             ->get();
+
+        // Students in a class only. This payload serves every kind of group a
+        // teacher leads and its roster includes a legacy `leader` row, so the
+        // condition lives in StudentAge::forRoster(), which reads the dates in
+        // its own query and hands back numbers. For a ḥalaqa, a team or a
+        // general group it reads nothing and every `age` below is null.
+        $ages = StudentAge::forRoster($group, $students, $this->schoolToday($group));
 
         return [
             'id' => (int) $group->id,
@@ -105,7 +124,9 @@ abstract class TeacherController extends Controller
             // boundary.
             'my_subjects' => $this->mySubjects($group),
             'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
-            'students' => $students->map(fn (GroupMembership $m): array => $this->student($m))->values(),
+            'students' => $students->map(fn (GroupMembership $m): array => $this->student($m) + [
+                'age' => $ages[(int) $m->id] ?? null,
+            ])->values(),
         ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
           + $this->classStoreFlag($group);
     }
@@ -120,6 +141,21 @@ abstract class TeacherController extends Controller
     private function classStoreFlag(Group $group): array
     {
         return SchoolSettings::classStore(SchoolSettings::org($group->masjid_id)) ? ['class_store' => true] : [];
+    }
+
+    /**
+     * Today on the school's clock, read once per request however many classes the
+     * payload lists (My Classes builds one classPayload per class), and not at all
+     * for a group whose students carry no age.
+     */
+    private function schoolToday(Group $group): ?string
+    {
+        if (! $group->teachesStudents()) {
+            return null;
+        }
+
+        return $this->todayByOrganisation[(int) $group->masjid_id]
+            ??= SchoolCalendar::for((int) $group->masjid_id)->today();
     }
 
     /** @return list<string>|null */

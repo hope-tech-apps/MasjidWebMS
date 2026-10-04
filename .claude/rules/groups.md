@@ -1071,6 +1071,120 @@ carries the list as `resource_ids`.
 - Proven by `tests/Feature/LessonPlanAttachmentsTest.php` and
   `resources/vue-app/tests/lesson-plans.test.ts`.
 
+## A student's date of birth, and the age on a roster (2026-10-04)
+
+The owner asked for ages on the class rosters and said yes to keeping an optional
+date of birth for a student. The date is the only fact about a child's person
+this product stores beyond a name, so where it may go is written down here and
+pinned by `StudentBirthDateTest` and `StudentBirthDateLeakTest`.
+
+**What is stored.** `contacts.date_of_birth`: TEXT, nullable, the ciphertext of a
+'Y-m-d' day (the `encrypted` cast). It is on the CONTACT, not the roster row: a
+child in two classes has one birthday. It is in `Contact::$hidden`, not in
+`$fillable`, and there is no `age` accessor and nothing in `$appends`. **The age
+is never stored**; it is whole years worked out on read, on the SCHOOL's clock
+(`App\Support\StudentAge`, `SchoolCalendar::for($masjidId)->today()`).
+
+**One writer, one reader, and nobody reads the property.**
+
+- `Contact::recordDateOfBirth(?string $ymd, ?User $actor, string $through)` is
+  the only writer. It accepts a real day written exactly 'Y-m-d' or null, saves,
+  and writes one `warning` line: contact id, organisation id, acting user id, the
+  verb (`set` / `changed` / `removed`) and the door (`roster` / `contact` /
+  `merge`). NEVER the date. `warning` because production runs
+  `LOG_LEVEL=warning`; an `info` line would not be kept.
+- `Contact::dateOfBirthOrNull()` is the only reader. A value that cannot be
+  decrypted (a database restored without its `APP_KEY`) reads as null and writes
+  one ERROR line with the contact id and no value. So one bad row never breaks a
+  roster, never truncates the streamed records export, never turns a merge into
+  a 500, and is never silent. `holdsDateOfBirth()` answers "is anything there"
+  from the raw column without decrypting.
+- `$contact->date_of_birth` as a property is forbidden outside the model: it
+  decrypts outside the reader and throws on an unreadable value. A source pin
+  lists every file that may call the writer, the reader and `StudentAge`.
+
+**Where the DATE appears: two places, both behind `manage contacts`.**
+
+1. The office's birth-date routes (`GroupBirthDateController`):
+   `GET` and `PUT …/groups/{group}/members/{membership}/birth-date` read and set
+   it by roster row, for **a student in a class only**: role `member` in a group
+   that `Group::teachesStudents()` (kind `class`). Anything else (a guardian
+   entry, a legacy `leader` row, a member of a ḥalaqa, a team or a general
+   group) is 422 "A date of birth is kept only for students in a class."
+   `DELETE …/contacts/{contact}/birth-date` clears it, **by contact, for any
+   contact (deleted ones included), and is never refused**: the date outlives
+   the roster row that let the office type it (Remove, an import undo, an
+   archived class, a class whose kind changed, a merge), and it must still be
+   removable then. It answers the same whether or not a date was held. Remove on
+   the roster says "Their date of birth is still on their record." when one is.
+2. The `contacts` file of the school records export, `Date of birth` column,
+   including soft-deleted contacts like every column there.
+
+"The office" in permission terms is every MasjidAdmin of the organisation and the
+platform's SuperAdmins. The admin SPA holds no permission list, so the date form
+(`StudentBirthDateForm.vue`) is drawn from the GET's answer and not drawn on a
+403. "Not in the future" is judged on the school's today, as the age is.
+
+**Where the AGE appears: two payloads, as `age: int|null`.**
+
+- The office roster list (`GroupMembershipsController::index`), on every row;
+  a number only for a student in a class.
+- The teacher's class payload (`TeacherController::classPayload`), on each
+  student; a number only when the group `teachesStudents()` AND the row's role is
+  `member`. `classPayload` serves every kind of group a teacher leads and its
+  roster includes a legacy `leader` row, and a contact can carry a date from a
+  class onto one of those. `student()` itself is NOT changed, so the register,
+  the gradebook, report cards, the class store and the avatar answers keep their
+  shape.
+
+Both go through `StudentAge::forRoster()`, which reads the dates in a query of
+its own that names only the students, so the contacts a roster payload serialises
+never hold the value.
+
+**Nowhere else.** No other office answer, no family payload, no member (mobile)
+payload, no public page carries the date or an age; the teacher never receives
+the date. `StudentBirthDateLeakTest` walks every GET route of the teacher, family
+and member realms out of the router, so a route added later is walked without
+being listed.
+
+**A teacher still sees nothing about a parent on the roster or the student
+sheet.** The sheet a teacher opens by tapping a Roster row
+(`TeacherStudentSheet.vue`) shows the avatar, the name, the grade and the age,
+built from a four-key model, and says to contact the office in an emergency. The
+dormant `guardianNames` hook on the row was deleted. A parent's NAME does reach a
+teacher in five places, by the owner's decision of 2026-09-21 that staff see
+every name: a message's author, beside a reaction on a message, "read by", beside
+a reaction on a class story, and "seen by". **A test that pins "no parent name
+reaches a teacher" must exclude the conversation AND class story endpoints**
+(`threads`, `posts`, `scheduled-messages`), or it fails on correct behaviour.
+
+**Deploy order.** `bin/deploy` serves new code BEFORE it migrates. Every read of
+the column is behind `StudentAge::columnExists()` (`Schema::hasColumn`, as
+`GroupThreadsController` does for its own column), so between checkout and
+migrate the rosters answer with no ages rather than a 500. SQLite does not fail
+on a missing double-quoted column, so the test for this asserts that no statement
+NAMES the column, not that nothing threw.
+
+**The other places a new contacts column has to be classified**, each done here:
+`MemberAccountDeletion::OFFICE_COLUMNS` (a held date keeps the contact),
+`config/staging_scrub.php` `encrypted_null` (nulled on staging, so staging shows
+no ages), `ContactsController::merge` (carried onto the kept record when it has
+none; the kept record's stays when the two differ, and the office is told, with
+no date printed; an unreadable one is not carried, and the office is told), and
+`artifacts/t040-pii-inventory.md`. A staff delete is a soft delete and keeps the
+date, like every other column.
+
+**Rolling back.** By code only. `migrate:rollback` deletes every date the office
+typed. The `$hidden` line must be the last thing to go: without it every
+whole-model contact answer would carry the ciphertext.
+
+**Not built, on purpose:** an `age` accessor; a stored age; the date on the
+Member Directory edit form (that form is filled from a list row, which cannot
+carry a hidden column, so an untouched field would wipe the date); age in
+`student()`; age on the teacher's Attendance row; anything for parents or the
+native apps; a date-of-birth column in the roster CSV; proposing dates from
+enrolment form answers.
+
 ## Behaviour / recognition — the Classroom module (T-013)
 
 `behavior_skills` (per-tenant vocabulary) + `behavior_awards` (one skill given

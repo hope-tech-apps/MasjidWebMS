@@ -32,6 +32,7 @@ use App\Http\Controllers\AdminDashboard\RosterImportController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
+use App\Http\Controllers\AdminDashboard\GroupBirthDateController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupGradeWeightsController;
 use App\Http\Controllers\AdminDashboard\AdministratorsController;
@@ -1372,6 +1373,25 @@ Route::prefix('admin')->group(function () {
                         Route::get('/', 'show')->middleware('permission:manage contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                     });
+
+                // A student's DATE OF BIRTH, so the class roster can show an age.
+                // The roster row itself carries only the whole-number age; the
+                // date is read and set here, by roster row, for a student in a
+                // class and for nobody else (422 otherwise). Both take
+                // `manage contacts`, the GET included: the date is for the
+                // people who keep the roster, and a read-only login gets the age.
+                Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/birth-date')
+                    ->controller(GroupBirthDateController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:manage contacts');
+                        Route::put('/', 'update')->middleware('permission:manage contacts');
+                    });
+                // CLEARING it names the contact, not a roster row, and is never
+                // refused: the date sits on the contact, so it outlives the row
+                // that let the office type it (Remove, an import undo, an
+                // archived class), and it must still be removable then.
+                Route::delete('{masjid_id}/contacts/{contact_id}/birth-date', [GroupBirthDateController::class, 'destroy'])
+                    ->middleware('permission:manage contacts');
 
                 // The group's PRIVATE activity feed — the "class story". Two
                 // different questions, two different gates:

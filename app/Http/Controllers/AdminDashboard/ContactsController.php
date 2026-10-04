@@ -280,8 +280,9 @@ class ContactsController extends Controller
         $actor = $request->user() instanceof \App\Models\User ? $request->user() : null;
         $familyLogin = null;
         $roster = null;
+        $birthDate = null;
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target, $actor, $request, &$familyLogin, &$roster) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target, $actor, $request, &$familyLogin, &$roster, &$birthDate) {
             // Before anything is destroyed: the survivor takes the more
             // restrictive SMS consent state (T-009).
             app(\App\Services\Sms\SmsConsentService::class)->reconcileOnMerge($source, $target);
@@ -373,6 +374,11 @@ class ContactsController extends Controller
             // would otherwise cascade them away in silence.
             $target->tags()->syncWithoutDetaching($source->tags()->pluck('contact_tags.id')->all());
 
+            // A date of birth belongs to the person, so it follows them onto
+            // the kept record. Before the force-delete, which is the only place
+            // an office can destroy one without meaning to.
+            $birthDate = $this->carryDateOfBirth($source, $target, $actor);
+
             $source->forceDelete();   // the placeholder is fully absorbed
         });
 
@@ -381,7 +387,62 @@ class ContactsController extends Controller
             'data' => $target->fresh(['cards']),
             'family_login' => $this->familyLoginReport($familyLogin, $target->fresh()),
             'roster' => $this->rosterReport($roster),
+            // Named `birth_date`, not after the column: the walk in
+            // StudentBirthDateLeakTest searches every answer but two for the
+            // column's name, and a sentence about a date is not the date.
+            'birth_date' => $birthDate,
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Carry the absorbed record's date of birth onto the kept record, and say
+     * what could not be carried. Null when there is nothing to say.
+     *
+     *  - The kept record has none (or one that cannot be read) and the absorbed
+     *    one can be read: it is copied, THROUGH THE MODEL's one writer, so it is
+     *    encrypted again under the current key and the copy is recorded.
+     *  - Both can be read and they differ: the kept record's stays, and the
+     *    office is told the two disagreed. Neither date is printed.
+     *  - The absorbed one cannot be read: it is treated as none, and said so,
+     *    because the force-delete below is the last anybody sees of it.
+     *
+     * Both are read through Contact::dateOfBirthOrNull(), never as a property:
+     * a value written under another key would throw here and turn every merge
+     * of that contact into a 500.
+     *
+     * bin/deploy serves this code before `migrate` adds the column. With no
+     * column there is no date to carry. The question is asked FRESH: a stale
+     * "not there yet" would skip the copy and the force-delete would destroy
+     * the date unread.
+     *
+     * @return array{message: string}|null
+     */
+    private function carryDateOfBirth(Contact $source, Contact $target, ?\App\Models\User $actor): ?array
+    {
+        if (! \App\Support\StudentAge::columnExists(fresh: true) || ! $source->holdsDateOfBirth()) {
+            return null;
+        }
+
+        $absorbed = $source->dateOfBirthOrNull();
+
+        if ($absorbed === null) {
+            return ['message' => 'The absorbed record held a date of birth that could not be read, so it was not carried over.'];
+        }
+
+        // Re-read with every column: a record created by this merge, or one
+        // loaded before the column existed, does not carry the attribute.
+        $target->refresh();
+        $kept = $target->dateOfBirthOrNull();
+
+        if ($kept === null) {
+            $target->recordDateOfBirth($absorbed, $actor, 'merge');
+
+            return null;
+        }
+
+        return $kept === $absorbed
+            ? null
+            : ['message' => 'The two records had different dates of birth; the one on the kept record was kept.'];
     }
 
     /**

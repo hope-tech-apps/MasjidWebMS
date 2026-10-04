@@ -177,20 +177,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | encrypted_null — the ten `encrypted` cast columns
+    | encrypted_null — the eleven `encrypted` cast columns
     |--------------------------------------------------------------------------
     |
     | These hold ciphertext produced with production's APP_KEY. SQL cannot
     | re-encrypt, and writing plaintext into them makes every subsequent read
     | throw DecryptException. NULL is the only safe value.
     |
-    | Three of the ten sit on tables that `drop_rows` empties. They are listed
-    | anyway so this file is a complete answer to "where did each of the ten
+    | Three of the eleven sit on tables that `drop_rows` empties. They are listed
+    | anyway so this file is a complete answer to "where did each of the eleven
     | go?"; the command reports them as covered-by-drop rather than running a
     | pointless UPDATE against an emptied table.
+    |
+    | `contacts.date_of_birth` (2026-10-04) is the eleventh: a student's date of
+    | birth, kept so a class roster can show an age. A staging roster therefore
+    | shows no ages until somebody types a date there. A row that kept its
+    | production ciphertext would not break a roster either (App\Support\StudentAge
+    | reads an undecryptable value as "no date" and logs it), but it would still
+    | be a child's real date of birth sitting on staging, so it is nulled.
     */
     'encrypted_null' => [
         'users' => ['two_factor_secret'],
+        'contacts' => ['date_of_birth'],
         'appointment_requests' => ['date_of_birth', 'reason'],
         'appointment_request_notes' => ['body'],
         'contact_credentials' => ['identifier'],

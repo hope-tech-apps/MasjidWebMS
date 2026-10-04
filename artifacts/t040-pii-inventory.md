@@ -70,6 +70,7 @@ throw a `DecryptException`. The only safe SQL action is `SET … = NULL`.
 | `appointment_requests` | `reason` | `app/Models/AppointmentRequest.php:80` |
 | `appointment_request_notes` | `body` | `app/Models/AppointmentRequestNote.php:37` |
 | `contact_credentials` | `identifier` (licence number) | `app/Models/ContactCredential.php:122` |
+| `contacts` | `date_of_birth` (a student's, added 2026-10-04) | `app/Models/Contact.php`, `casts()` (also in `$hidden`) |
 | `masjid_app_publishing` | `asc_key_p8` | `app/Models/MasjidAppPublishing.php:60` |
 | `masjid_app_publishing` | `asc_key_id` | `:61` |
 | `masjid_app_publishing` | `asc_issuer_id` | `:62` |
@@ -77,7 +78,8 @@ throw a `DecryptException`. The only safe SQL action is `SET … = NULL`.
 | `masjid_app_publishing` | `onesignal_rest_api_key` | `:64` |
 
 `appointment_requests.date_of_birth` and `.reason` are declared `text` in the migration
-precisely because they carry ciphertext — do not be fooled by the type.
+precisely because they carry ciphertext — do not be fooled by the type. The same is true of
+`contacts.date_of_birth`.
 
 ### (c) JSON / payload columns that can embed PII inside
 
@@ -280,6 +282,7 @@ regenerated:
 | contacts | is_placeholder, import_batch, signup_source, verified_at | keep | provenance flags |
 | contacts | avatar_character / avatar_tone / avatar_color | keep | one of forty shipped drawings, never an upload |
 | contacts | staff_avatar_character / staff_avatar_tone / staff_avatar_color | keep | staff override of the same |
+| contacts | date_of_birth | null | **encrypted cast** (declared `text`): a student's date of birth, set by the office for a child in a class so the roster can show an age. Null only; staging rosters then show no ages |
 
 ### contact_cards · contact_credentials · contact_service_interests
 
