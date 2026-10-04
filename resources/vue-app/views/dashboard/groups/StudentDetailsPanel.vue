@@ -55,13 +55,20 @@
                         <div class="row g-2 align-items-center mb-1">
                             <label class="col-4 col-form-label col-form-label-sm" :for="gradeId">Grade</label>
                             <div class="col-8">
-                                <!-- The same field as the roster row, saved the same way, on change. -->
+                                <!--
+                                    The same field as the roster row, saved the same way, on
+                                    change. READ-ONLY while it saves, never disabled: a disabled
+                                    field drops the keyboard's focus onto the page behind the
+                                    panel, and Escape and Tab then stop working inside it.
+                                -->
                                 <input
                                     :id="gradeId"
                                     type="text"
                                     class="form-control form-control-sm"
+                                    :class="{ 'opacity-75': savingGrade }"
                                     :value="student.grade_label ?? ''"
-                                    :disabled="savingGrade"
+                                    :readonly="savingGrade"
+                                    :aria-busy="savingGrade ? 'true' : undefined"
                                     placeholder="—"
                                     maxlength="32"
                                     @change="emit('save-grade', student, ($event.target as HTMLInputElement).value)"
@@ -228,7 +235,7 @@ const props = defineProps<{
     student: GroupMembership | null;
     /** The whole roster the row came from: the guardian entries are read off it. */
     memberships: GroupMembership[];
-    /** The grade is being saved, so its field is off. */
+    /** The grade is being saved, so its field cannot be typed in. */
     savingGrade?: boolean;
 }>();
 
@@ -304,6 +311,13 @@ const onKeydown = (event: KeyboardEvent) => {
 
 /* A tap-to-call link is used on a phone, in a hurry: a full 44px target. */
 .guardian-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+}
+
+/* The same for the buttons along the bottom, a slotted one (Move) included. */
+.modal-footer :deep(.btn) {
     display: inline-flex;
     align-items: center;
     min-height: 44px;

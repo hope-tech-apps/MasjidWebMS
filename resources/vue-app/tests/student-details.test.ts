@@ -467,6 +467,24 @@ test('panel: shut draws nothing; Escape and the close button ask to close; the b
     screen.unmount();
 });
 
+test('panel: while the grade saves its field is read-only, never disabled, so the keyboard stays in the panel', async () => {
+    const r = roster();
+    const screen = await mountPanel(r.student, r.rows, { savingGrade: true });
+    const grade = screen.all((n: Node) => n.tag === 'input')[0];
+
+    // A disabled field loses focus to the page behind the dialog, and Escape stops closing it.
+    assert.equal(grade.disabled, false);
+    assert.equal(grade.props.readonly, true);
+    assert.equal(grade.props['aria-busy'], 'true');
+    screen.unmount();
+
+    const idle = await mountPanel(r.student, r.rows);
+    const field = idle.all((n: Node) => n.tag === 'input')[0];
+    assert.notEqual(field.props.readonly, true);
+    assert.equal(field.props['aria-busy'], undefined);
+    idle.unmount();
+});
+
 test('panel: the mount points for Move and for the date of birth are named slots, each handed the student', () => {
     const panel = read('../views/dashboard/groups/StudentDetailsPanel.vue');
 
