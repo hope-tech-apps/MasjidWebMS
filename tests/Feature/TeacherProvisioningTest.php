@@ -146,6 +146,51 @@ class TeacherProvisioningTest extends TestCase
     }
 
     #[Test]
+    public function a_teacher_who_teaches_everything_in_a_class_can_be_saved_and_moved(): void
+    {
+        // "Every subject" reads back from GET as null for that class, and the screen sends
+        // back what it was given. A null was refused ("must be an array"), so a teacher
+        // with one all-subjects class could not be saved at all: not renamed, not moved.
+        $teacher = $this->makeTeacher([$this->classOne->id]);
+        $shown = $this->getJson($this->base()."/teachers/{$teacher->id}")->assertOk()->json('data');
+        $this->assertArrayHasKey((string) $this->classOne->id, $shown['class_subjects']);
+        $this->assertNull($shown['class_subjects'][$this->classOne->id]);
+
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => $teacher->name, 'class_ids' => [$this->classOne->id],
+            'class_subjects' => $shown['class_subjects'],
+        ])->assertOk();
+        $this->assertNull($this->subjectsOf($teacher, $this->classOne));
+
+        // Moved to the other class, the old class's null still in the payload beside it.
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => $teacher->name, 'class_ids' => [$this->classTwo->id],
+            'class_subjects' => [$this->classOne->id => null, $this->classTwo->id => ['quran']],
+        ])->assertOk();
+        $this->assertSame([$this->classTwo->id], $this->ledClassIds($teacher));
+        $this->assertSame(['quran'], $this->subjectsOf($teacher, $this->classTwo));
+
+        // Unticking every box sends null, which widens the class back to every subject.
+        $this->putJson($this->base()."/teachers/{$teacher->id}", [
+            'name' => $teacher->name, 'class_ids' => [$this->classTwo->id],
+            'class_subjects' => [$this->classTwo->id => null],
+        ])->assertOk();
+        $this->assertNull($this->subjectsOf($teacher, $this->classTwo));
+    }
+
+    #[Test]
+    public function a_new_teacher_can_be_added_with_every_subject_sent_as_null(): void
+    {
+        Mail::fake();
+        $id = $this->postJson($this->base().'/teachers', [
+            'name' => 'Ustadh Idris', 'email' => 'idris@school.test',
+            'class_ids' => [$this->classOne->id],
+            'class_subjects' => [$this->classOne->id => null],
+        ])->assertCreated()->json('data.id');
+        $this->assertNull($this->subjectsOf(User::findOrFail($id), $this->classOne));
+    }
+
+    #[Test]
     public function a_subject_that_does_not_exist_is_refused(): void
     {
         $this->postJson($this->base().'/teachers', [
