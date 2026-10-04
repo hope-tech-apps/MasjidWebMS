@@ -84,6 +84,14 @@
         </div>
 
         <div v-else>
+            <!-- Moving a student between classes: the server's line when this
+                 group is not a class, and who still has no consent here after
+                 a move in. Both are absent on a roster nobody was moved on. -->
+            <p v-if="moveNote" class="small text-muted mb-2">{{ moveNote }}</p>
+            <p v-if="consentBanner" class="small text-warning-emphasis mb-2">
+                <i class="bi bi-info-circle me-1"></i>{{ consentBanner }}
+            </p>
+
             <!-- PARTICIPANTS: the people who are in the group in their own right. -->
             <div class="table-responsive mb-4">
                 <table class="table table-hover align-middle">
@@ -137,9 +145,13 @@
                                     see who left, when, and undo it. Every other
                                     screen in the school stopped counting them.
                                 -->
-                                <span v-if="membership.left_on" class="badge bg-secondary-subtle text-secondary ms-1">
-                                    Left {{ formatStoredDay(membership.left_on) }}
+                                <span v-if="movedLabels(membership).badge" class="badge bg-secondary-subtle text-secondary ms-1">
+                                    {{ movedLabels(membership).badge }}
                                 </span>
+                                <!-- Moved to another class, or moved in from one. -->
+                                <div v-if="movedLabels(membership).note" class="small fw-normal text-muted">
+                                    {{ movedLabels(membership).note }}
+                                </div>
                                 <!--
                                     WHICH Fatima Ahmed. A name is not an identity
                                     on a roster a public form can write to, and
@@ -184,6 +196,16 @@
                                     @click="confirmOne(membership)"
                                 >
                                     <i class="bi bi-patch-check"></i>
+                                </button>
+                                <!-- A word as well as an icon: a tablet shows
+                                     no tooltip. Students of a class only. -->
+                                <button
+                                    v-if="canBeMoved(membership)"
+                                    class="btn btn-sm btn-outline-primary me-1"
+                                    title="Move this student to another class"
+                                    @click="moveFor = membership"
+                                >
+                                    <i class="bi bi-arrow-right-circle me-1"></i>Move
                                 </button>
                                 <button
                                     v-if="!membership.left_on"
@@ -455,6 +477,31 @@
         </Teleport>
     </div>
 
+        <!-- A student moved to another class, and a student put back. Each
+             is its own component: this file only opens them. -->
+        <Teleport to="body">
+            <MoveStudentModal
+                v-if="moveFor"
+                :group-id="groupId"
+                :group-name="rosterMeta?.group_name ?? 'this class'"
+                :membership="moveFor"
+                :school-today="rosterMeta?.school_today ?? todayLocal()"
+                @close="moveFor = null"
+                @moved="afterMoveDialog"
+                @reload="afterMoveDialog"
+                @open-class="openClass"
+            />
+            <PutBackDialog
+                v-if="putBackFor"
+                :group-id="groupId"
+                :membership="putBackFor"
+                @close="putBackFor = null"
+                @done="afterPutBack"
+                @reload="afterMoveDialog"
+                @open-class="openClass"
+            />
+        </Teleport>
+
         <!-- A student leaving the class -->
         <Teleport to="body">
             <div v-if="withdrawFor" class="modal fade show d-block" tabindex="-1"
@@ -645,6 +692,10 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { isStudentRow, studentRowFor } from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
+import { useRouter } from 'vue-router';
+import MoveStudentModal from './MoveStudentModal.vue';
+import PutBackDialog from './PutBackDialog.vue';
+import { consentBannerCount, consentBannerText, movedLabels } from '@/core/helpers/rosterMove';
 
 /**
  * The roster — who is in this group, and how.
@@ -854,32 +905,61 @@ const saveWithdrawal = async () => {
     }
 };
 
-const undoWithdrawal = async (membership: GroupMembership) => {
-    const result = await Swal.fire({
-        title: 'Put them back on the roster?',
-        text: `${fullName(membership.contact)} will be back on the register and every class list, and their guardians `
-            + 'will be back in the class with them.',
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonText: 'Yes, put them back',
-    });
+// PUT BACK IS A DIALOG OF ITS OWN (PutBackDialog.vue), for every row that has
+// left. It reads the roster again before it offers anything, and on a row that
+// was moved it withholds the action while that would bring back an adult who is
+// no longer a confirmed guardian where the student is now. This file sends no
+// undo itself: the dialog is the only place that does.
+const putBackFor = ref<GroupMembership | null>(null);
 
-    if (!result.isConfirmed) return;
+const undoWithdrawal = (membership: GroupMembership) => {
+    putBackFor.value = membership;
+};
 
-    savingWithdrawal.value = true;
+const afterPutBack = async () => {
+    putBackFor.value = null;
+    await reloadQuietly();
+    Swal.fire({ icon: 'success', title: 'Back on the roster', timer: 1600, showConfirmButton: false });
+};
+
+// ---------------------------------------------------- moving to another class
+
+/** The student whose move is being decided, or null when the dialog is shut. */
+const moveFor = ref<GroupMembership | null>(null);
+const router = useRouter();
+
+const rosterMeta = computed(() => groupsStore.rosterMeta);
+
+/** Only a current student of a CLASS moves. The server says which groups are classes. */
+const canBeMoved = (membership: GroupMembership): boolean =>
+    rosterMeta.value?.teaches_students === true && membership.role === 'member' && !membership.left_on;
+
+const moveNote = computed<string>(() => rosterMeta.value?.move_note ?? '');
+const consentBanner = computed<string>(() => consentBannerText(consentBannerCount(props.memberships)));
+
+/**
+ * The roster again, WITHOUT the spinner: `emit('changed')` makes the page swap
+ * the whole table for one and empty the list, which loses the office's place
+ * on a roster it is working down. If the quiet read fails, the ordinary one
+ * says so.
+ */
+const reloadQuietly = async () => {
     try {
-        await ApiService.delete(withdrawalUrl(membership));
+        await groupsStore.refreshMemberships(props.groupId);
+    } catch {
         emit('changed');
-        Swal.fire({ icon: 'success', title: 'Back on the roster', timer: 1600, showConfirmButton: false });
-    } catch (error) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Could not undo that',
-            text: apiErrorText(error, 'That change could not be undone.'),
-        });
-    } finally {
-        savingWithdrawal.value = false;
     }
+};
+
+const afterMoveDialog = async () => {
+    moveFor.value = null;
+    putBackFor.value = null;
+    await reloadQuietly();
+};
+
+/** Another class's page. A full load: the class page reads its id once. */
+const openClass = (groupId: number) => {
+    window.location.assign(router.resolve({ name: 'masjid.groupDetail', params: { groupId } }).href);
 };
 
 const consentFor = ref<GroupMembership | null>(null);
@@ -1458,9 +1538,17 @@ const confirmRemove = async (membership: GroupMembership) => {
     if (!result.isConfirmed) return;
 
     try {
-        await groupsStore.removeMembership(props.groupId, membership.id);
+        const said = await groupsStore.removeMembership(props.groupId, membership.id);
         emit('changed');
-        Swal.fire({ icon: 'success', title: 'Removed', timer: 1600, showConfirmButton: false });
+        // THE SERVER'S SENTENCE, when it said more than "removed": what went
+        // with the row, and where else this guardian is still listed for the
+        // same child. That is something to act on, so it waits for an OK.
+        const more = (said ?? '').replace(/^Removed from the roster\.?\s*/, '');
+        if (more) {
+            Swal.fire({ icon: 'success', title: 'Removed', text: said ?? undefined });
+        } else {
+            Swal.fire({ icon: 'success', title: 'Removed', timer: 1600, showConfirmButton: false });
+        }
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to remove the member.') });
     }
@@ -1469,8 +1557,8 @@ const confirmRemove = async (membership: GroupMembership) => {
 // Lock body scroll while either dialog is open. One watcher for both: two of them
 // writing the same style property would have the first to close clear the lock
 // while the other was still up.
-watch([showAddModal, consentFor, withdrawFor, studentFor], ([adding, consenting, leaving, reading]) => {
-    document.body.style.overflow = (adding || consenting || leaving || reading) ? 'hidden' : '';
+watch([showAddModal, consentFor, withdrawFor, studentFor, moveFor, putBackFor], (open) => {
+    document.body.style.overflow = open.some(Boolean) ? 'hidden' : '';
 });
 
 // "Open full record" leaves this page from inside a dialog. The lock is a style on

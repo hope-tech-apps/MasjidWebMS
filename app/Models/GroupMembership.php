@@ -164,6 +164,7 @@ class GroupMembership extends Model
         return [
             'joined_at' => 'date',
             'left_on' => 'date',
+            'moved_on' => 'date',
             'consent_granted_at' => 'datetime',
             'confirmed_at' => 'datetime',
         ];
@@ -305,6 +306,22 @@ class GroupMembership extends Model
         return $this->belongsTo(Registration::class, 'source_registration_id');
     }
 
+    /**
+     * On the row a student LEFT BEHIND when they were moved: the class they went
+     * to. `withTrashed` because a class deleted since must still be nameable as
+     * "a class that was removed" instead of reading as "never moved".
+     */
+    public function movedTo(): BelongsTo
+    {
+        return $this->belongsTo(Group::class, 'moved_to_group_id')->withTrashed();
+    }
+
+    /** On the row a student holds NOW: the class they were moved from. */
+    public function movedFrom(): BelongsTo
+    {
+        return $this->belongsTo(Group::class, 'moved_from_group_id')->withTrashed();
+    }
+
     // ------------------------------------------------------------- provenance
 
     /**
@@ -330,10 +347,29 @@ class GroupMembership extends Model
      * Stamp this row as established by an authenticated staff act.
      *
      * THE ONE PLACE A ROW BECOMES A GRANT, so "who may confirm" is answerable by
-     * finding the callers of this method: `GroupMembershipsController::store`
-     * (staff typing a roster row) and `::confirm` (staff working the pending
-     * queue). It is deliberately NOT reachable from a request body — see
-     * `$fillable` above.
+     * finding the callers of this method. There are three, and a test counts
+     * them (`RosterMoveTest`), so a fourth cannot be added without this list
+     * being read:
+     *
+     *   - `GroupMembershipsController::store`   staff typing a roster row;
+     *   - `GroupMembershipsController::confirm` staff working the pending queue;
+     *   - `RosterImportService::apply`          the office's own roster file,
+     *                                           committed by a signed-in
+     *                                           administrator.
+     *
+     * It is deliberately NOT reachable from a request body: see `$fillable`
+     * above.
+     *
+     * ONE MORE NAME STANDS BESIDE THIS ONE since a student can be moved to
+     * another class (2026-10-04): `carriedFrom()`. It does not CREATE a
+     * confirmation. It takes one this method already wrote and COPIES it,
+     * unchanged, for the SAME (adult, child) pair onto a new row in another
+     * class of the same organisation. Its one caller is `RosterMove::carry()`,
+     * reached only by an authenticated `manage contacts` act, and only while
+     * the entry has no leaving date and its student is moving in the same
+     * transaction. It is the ONLY new door for a confirmation: a roster row
+     * never changes class (there is no re-point), so "who may confirm" is
+     * answered by two names, this one and `carriedFrom`.
      *
      * `$actor` is nullable rather than required because a console/seeder path
      * has no `users` row to name, and a confirmation with no recorded actor is
@@ -394,6 +430,121 @@ class GroupMembership extends Model
         $this->forceFill([
             'left_on' => null,
             'left_recorded_by_user_id' => null,
+        ]);
+
+        return $this;
+    }
+
+    // ------------------------------------------------------- moving class
+
+    /**
+     * Stamp the row a student now holds in the class they were moved INTO.
+     *
+     * Not fillable and stamped, like `markLeftByStaff`: it is a decision with a
+     * date and an author. `moved_to_group_id` goes back to null because a row
+     * that is open again in this class is no longer "moved to" anywhere.
+     */
+    public function markMovedIn(?User $actor, int $fromGroupId, CarbonInterface|string $on): static
+    {
+        $this->forceFill([
+            'moved_from_group_id' => $fromGroupId,
+            'moved_to_group_id' => null,
+            'moved_on' => $on,
+            'moved_by_user_id' => $actor?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Stamp the row a student LEFT BEHIND: where they went, on which day, by whom.
+     *
+     * `moved_from_group_id` goes back to null. `moved_on` and `moved_by_user_id`
+     * are one pair of columns and now describe the move OUT, so a "moved from"
+     * left beside them would be printed with the wrong day and the wrong
+     * author. The `roster.move` log line keeps the earlier move.
+     */
+    public function markMovedOut(?User $actor, int $toGroupId, CarbonInterface|string $on): static
+    {
+        $this->forceFill([
+            'moved_from_group_id' => null,
+            'moved_to_group_id' => $toGroupId,
+            'moved_on' => $on,
+            'moved_by_user_id' => $actor?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * COPY what stands behind `$old` onto this NEW row, for the same person in
+     * another class.
+     *
+     * THE ONE GUARDED PLACE A ROSTER ROW IS COPIED, and the only way besides
+     * `confirmedByStaff` that a row comes to hold a confirmation. A new row
+     * defaults to `confirmed` (`$attributes`), so a copy that carries a
+     * confirmation is a second door onto the grant `confirmedByStaff` writes.
+     * It is built to fail closed: its one caller (`RosterMove::carry`) stamps
+     * the new row `selfAssertedFrom(null)` FIRST and calls this second, so a row
+     * that never reaches this method is an unconfirmed claim with no consent.
+     *
+     * It throws unless ALL of: this row is not saved yet; `contact_id`, `role`,
+     * `guardian_of_contact_id` and `masjid_id` equal the old row's; `group_id`
+     * differs; the old row has no leaving date (an entry that has left never
+     * travels).
+     *
+     * The `masjid_id` compared here is whatever the caller typed onto the
+     * unsaved row, and the `creating` hook overwrites it from the bound tenant
+     * at save. So it is a check on the caller, not the guard: the guard is that
+     * `RosterMove::carry` compares the TARGET CLASS's organisation with the old
+     * row's, and that the target class was found through the tenant scope.
+     *
+     * It copies `provenance` and `source_registration_id`, and `confirmed_at` /
+     * `confirmed_by_user_id` ONLY when the old provenance is exactly
+     * `confirmed`. NOTHING else: never consent (consent belongs to one
+     * guardian, one child and ONE class, and is asked again), never a leaving
+     * date. The confirmer and the time stay the original ones: the person who
+     * moves a student has confirmed nothing. A stored provenance nobody can
+     * interpret is copied as `self_asserted`, with no confirmer and no time,
+     * which is the state `selfAssertedFrom` writes.
+     */
+    public function carriedFrom(self $old): static
+    {
+        if ($this->exists) {
+            throw new \LogicException('Only a new roster row can carry another row\'s standing.');
+        }
+
+        if ($old->left_on !== null) {
+            throw new \LogicException('A roster row that has left is not carried into another class.');
+        }
+
+        $samePerson = (int) $this->contact_id === (int) $old->contact_id
+            && $this->role === $old->role
+            && $this->guardian_of_contact_id == $old->guardian_of_contact_id
+            && (int) $this->masjid_id === (int) $old->masjid_id;
+
+        if (! $samePerson) {
+            throw new \LogicException('A roster row carries standing only for the same person, role, child and organisation.');
+        }
+
+        if ((int) $this->group_id === (int) $old->group_id) {
+            throw new \LogicException('A roster row is carried into another class, not into its own.');
+        }
+
+        if (! $old->isConfirmed()) {
+            // Covers `self_asserted`, NULL and any value this build does not
+            // know. No confirmer and no time travel with it, whatever the old
+            // row's columns say.
+            return $this->selfAssertedFrom(null)->forceFill([
+                'source_registration_id' => $old->source_registration_id,
+            ]);
+        }
+
+        $this->forceFill([
+            'provenance' => self::PROVENANCE_CONFIRMED,
+            'confirmed_at' => $old->confirmed_at,
+            'confirmed_by_user_id' => $old->confirmed_by_user_id,
+            'source_registration_id' => $old->source_registration_id,
         ]);
 
         return $this;
@@ -576,12 +727,18 @@ class GroupMembership extends Model
      * it deliberately ignores provenance, so it answers `true` for exactly the
      * corrupt state `hasConsent()` exists to refuse.
      *
-     * It has one caller and is expected to keep having one:
-     * `RosterMergeService::describe()`, which reports to the operator what a
-     * merge is about to ERASE from a row. That report is about the record, not
-     * about what the record granted, and telling an office "consent withdrawn:
-     * false" while deleting a `consent_scope` column would be a different lie
-     * from the one this round is fixing.
+     * It has two callers, and both ask about the record, never about what the
+     * record granted:
+     *
+     *   - `RosterMergeService::describe()`, which reports to the operator what a
+     *     merge is about to ERASE from a row. Telling an office "consent
+     *     withdrawn: false" while deleting a `consent_scope` column would be a
+     *     different lie from the one that round was fixing.
+     *   - `App\Support\RosterMove` (2026-10-04), which says whether the place a
+     *     moved student leaves behind may be removed afterwards. Removing it
+     *     takes the guardian entries beside it and whatever consent they carry,
+     *     so ANY byte in these columns, on a confirmed entry or not, means "do
+     *     not offer Remove". The safe direction for this method's answer.
      */
     public function consentColumnsAreSet(): bool
     {

@@ -1641,6 +1641,119 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherRoutesRegisteredOnceTest`, `TeacherSubjectAccessTest`
   (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
 
+## Moving a student to another class (2026-10-04)
+
+`App\Support\RosterMove`, behind `GET` / `POST …/members/{id}/move` (`GroupMoveController`, both
+`permission:manage contacts`). The office says who belongs in a class; there is no teacher or
+family route. Design and the review that changed it: the roster features folder of 2026-10-04.
+
+**A roster row NEVER changes class.** There is one path, "left and started": the old place gets a
+leaving day and stays where it is with everything recorded on it, and a new place opens in the
+new class (`left_and_started`), or the place the student held there before opens again
+(`returned`). There is no re-point, even for a row that holds nothing. The reason is every other
+writer: each office roster action and each record writer loads a roster row through its class and
+then writes by primary key with no lock, so a row that changed class would be written to by
+requests that loaded it under the old one. When the old place holds nothing the answer says so,
+and Remove (which refuses if something landed meanwhile) takes it.
+
+Four rules:
+
+- **R1. Records never change class.** Ten of the eleven tables that point at a roster row carry
+  their own `group_id` and the eleventh names its class through its file; a record whose class
+  disagreed with its roster row could be opened from neither.
+- **R2. A move never widens anybody's access.** A closed entry in the class being LEFT never
+  travels. A confirmed entry in the class being ENTERED is re-opened only when the same adult
+  holds a confirmed, current entry for the student in the class being left; otherwise the move is
+  refused. An unconfirmed entry may be re-opened and stays unconfirmed. On a return, consent
+  already recorded on a re-opened entry is in force again, and the screen names each guardian
+  with the scope and the date.
+- **R3. A move destroys nothing.** No row is deleted and no consent column is cleared, on any
+  path. Every successful-move test ends with that invariant.
+- **R4. Locks first.** One transaction: the student's CONTACT row by primary key (the mutex for
+  every roster row about that child: an insert naming the contact, as the person or as a guardian
+  entry's child, needs a shared lock on it), then the roster row by primary key, then the first
+  ordinary read, then every roster row about the student in the two classes by primary key,
+  ascending, then a SHARED lock on the two class rows, which are checked again (still a class,
+  still running, not deleted). Never a range lock. A short lock wait is set for the move; a
+  deadlock, a lock wait timeout and a unique violation are answered 409 "this roster changed",
+  never a 500. The move is logged after the commit.
+
+**The guardian rule, and its refusal.** `RosterMove::notVouched()` is one pure function with two
+callers: the move (may the target's confirmed entries be open again?) and the roster list's
+`moved_to_state` (may "Put back" re-open this class's?). It returns a REASON per entry,
+`no_entry` or `only_unconfirmed`, each with its own sentence. One refusal names EVERY unvouched
+guardian and carries the class to open, so it can always be cleared from the screen it appears
+on: confirm or add the adult on this roster, or remove their entry in the other class.
+
+**Who may confirm: two names.** `confirmedByStaff` (three callers: `GroupMembershipsController`
+`store` and `confirm`, and `RosterImportService::apply`) creates a confirmation. `carriedFrom`
+COPIES one, unchanged, for the SAME (adult, child) pair onto a new row in another class of the
+same organisation. Its one caller is `RosterMove::carry()`, which stamps the new row
+`selfAssertedFrom(null)` first, so a row that misses the copy is an unconfirmed claim with no
+consent. It copies provenance and `source_registration_id`, and the confirmer and time only when
+the old provenance is exactly `confirmed`; never consent, never a leaving date. It throws on a
+saved row, on another person, role, child or organisation, on the same class, and on an old row
+that has left. Both caller lists are counted by `RosterMoveTest`. Consent is one guardian, one
+child and ONE class: it does not move and is asked again.
+
+**"Holds records": one list, two questions.** `AcademicRecordsHeld::KEYS` is every foreign key
+into `group_memberships.id` (eleven; a schema walk fails on a twelfth). All eleven say what STAYS
+with the old class after a move. Eight of them, the seven RESTRICT kinds and Arabic daily notes,
+are what a delete would DESTROY, and the two roster deleters (Remove, and the undo of a roster
+import) refuse on those and on nothing else. They do not refuse on a conversation, a scheduled
+message or an addressed file: the paragraphs above ("the record survives, the audience shrinks";
+a recipient row cascades) stand. The counts are raw, so a record deleted on its own screen still
+refuses; the sentence says so and names "Left the class" as the way out. A contact MERGE has its
+own narrower list (`RosterMergeService::carriesRecordsAboutAChild`) and is a third deleter: see
+the known gaps below.
+
+**The move day is OWED to one register.** `moved_on` is the day the office chose, on both rows.
+The first day in the new class is that day, unless the old class holds a register mark for the
+student on or after it: then it is the day after the LAST such mark, and those days stay with the
+old class. The old row's `left_on` is the day before the first day, with no clamp (a student
+placed and moved on one day gets a leaving day before their joining day, so the old register
+expects them on no day instead of on a day both would owe). A return keeps its first `joined_at`
+unless the class took a register while the student was away; then it counts from the first day
+back, and the old value goes into the log line. Both attendance reads are half-open ranges on the
+raw column, as `AttendanceLogController::marksIn`. The request carries what the dialog showed
+(`expected_path`, `expected_first_day`, `expected_joined_on`); a difference is 409 "changed while
+you were looking". NOT covered: the teacher's register and the office's today band never read
+`joined_at`, so the new class's register still lists the student on a day the old class kept.
+
+**"Put back" on a row that was moved.** `DELETE …/withdrawal` stays ungated: its docblock rules
+out an undo that can be refused. The guard is on the screen (`PutBackDialog.vue`, the only place
+in the SPA that sends the undo): it reads the roster again, and offers nothing while
+`moved_to_state.guardians_not_vouched` names anybody. That list is computed against the student's
+CURRENT rows anywhere in the organisation, and against the class they were moved to only when
+they are current nowhere. What a screen guard leaves open: a hand-made request; a change between
+the read and the tap; and a student with no row left in the other class, where there is nothing
+to compare and the dialog names every guardian instead.
+
+**"Add to roster" takes the same contact lock.** `GroupMembershipsController::store` locks the
+student's contact row as the FIRST statement of its transaction; every lookup runs before the
+transaction and the duplicate check after the lock, as an ordinary read (a locking read over the
+roster's index would take next-key locks on the class's range). The unique index cannot dedupe a
+student's row: its ward is NULL.
+
+**Class store.** No figure about one child reaches the office: `bucks_staying` is a boolean, said
+only for a school that holds `class_store`. The balance stays on the old row (W6-C1 is still the
+owner's); the seam for a later transfer is `RosterMove::classStoreBucksStaying`.
+
+**History.** Four nullable columns on the student rows (`moved_from_group_id`,
+`moved_to_group_id`, `moved_on`, `moved_by_user_id`; no foreign key, no index, the
+`left_recorded_by_user_id` precedent) keep the LATEST move of a row; `markMovedOut` clears
+"moved from". Each move also writes `roster.move` at WARNING (production drops info), ids only,
+with every guardian entry carried, re-used or re-opened.
+
+**Known gaps, for whoever owns them.** A contact merge after a move re-opens the old class's
+closed guardian entries as open pending claims (`RosterMergeService::reissue()` drops `left_on`),
+and merge's drop path deletes Arabic daily notes and addressed files silently. Registration's
+adder does not take the contact lock yet. A whole class is moved one student at a time.
+
+Proven by `RosterMoveTest`, `RosterMoveRosterTest`, `resources/vue-app/tests/roster-move*.test.ts`,
+and on MySQL by `tests/Mysql/RosterMoveMysqlTest.php` and `tests/MysqlLocks/RosterMoveLocksTest.php`
+(CI only).
+
 ## Tenant isolation
 
 Both models use `BelongsToMasjid`; `group_memberships.masjid_id` is

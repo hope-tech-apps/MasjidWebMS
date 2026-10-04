@@ -569,7 +569,11 @@ class RosterImportService
         $refused = [];
 
         foreach ($rows as $row) {
-            $held = AcademicRecordsHeld::counts($row);
+            // The same question Remove asks, from the same list: what would a
+            // delete of this row DESTROY (AcademicRecordsHeld::blocking). A
+            // conversation, a scheduled message or an addressed file does not
+            // refuse an undo; the rules say those survive or lapse with the row.
+            $held = AcademicRecordsHeld::blocking(AcademicRecordsHeld::counts($row));
 
             if (! AcademicRecordsHeld::any($held)) {
                 continue;
@@ -586,8 +590,9 @@ class RosterImportService
 
             $refused[] = "{$who} has school records from this class ("
                 . AcademicRecordsHeld::describe($held)
-                . '), so this batch cannot be undone — removing the row would delete them. '
-                . 'Take the wrongly-imported people off the roster by hand instead.';
+                . '), so this batch cannot be undone. '
+                . AcademicRecordsHeld::refusalAdvice($row)
+                . ' Remove the other wrongly-imported people from the roster one by one.';
         }
 
         if ($refused !== []) {

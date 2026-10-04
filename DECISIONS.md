@@ -7489,3 +7489,42 @@ where the TV app that is actually installed honours the choice. Six settings, on
   where it was written (no MySQL server). After the word-start change every body but the column-type one was run
   once on SQLite through a temporary copy, to check the fixtures: 7 passed. That proves the fixtures, not MySQL.
   See ASSUMPTIONS.md F-1 to F-7.
+
+## 2026-10-04 — A student can be moved to another class, and a roster row never changes class (owner: "should have a way to move students up to a different class"; branch feat/roster-s1-move)
+
+- **One path: left here, started there.** The old place gets a leaving day and keeps everything recorded on it;
+  a new place opens in the new class, or the place the student held there before opens again. The design's
+  "simple change of class" for a row holding nothing was DROPPED after the review by the session that owns the
+  school features: every office roster action and every record writer loads a row through its class and then
+  writes by primary key with no lock, so a row that changed class would be written to by requests that loaded it
+  under the old one. The price is one extra "moved" row in the old class, which holds nothing and which Remove takes.
+- **Owner's defaults, shipped as written and said on screen**: consent does not follow a move (it is asked
+  again); marks, register, report cards, ḥifẓ and letter progress stay with the class they were earned in; the old
+  class's teachers keep reading what they recorded. A whole class is moved one student at a time; a "move
+  several" control waits for the owner's answer on consent (25 students with two guardians each is 50 consents).
+- **The guardian rule is new.** A move is refused while the class being entered holds a confirmed guardian entry
+  for the student whose adult is not a confirmed, current guardian in the class being left. Narrowing or
+  un-confirming the entry instead was rejected: a closed confirmed entry still reads the child's records, and an
+  unconfirmed one is one tap from a grant. The refusal names every such guardian and can be cleared from the
+  screen it appears on.
+- **A confirmation now has two doors**: `confirmedByStaff` creates one, `carriedFrom` copies one for the same
+  (adult, child) pair into another class. One caller each side of the copy, both counted in a test. Consent is
+  never copied.
+- **One list of what a roster row holds** (`AcademicRecordsHeld::KEYS`, eleven keys). The two roster deleters
+  refuse on the eight kinds a delete would destroy. That adds Arabic daily notes, which a removal used to delete
+  without a word, and soft-deleted awards and ḥifẓ entries, which the counts used to miss. It does NOT add
+  conversations, scheduled messages or addressed files: the written rules say those survive or lapse with the row.
+- **"Put back" on a moved row is guarded on the screen, not on the server.** The undo verb stays ungated because
+  its own rule is that an undo is never refused. The dialog reads the roster again and offers nothing while it
+  would bring back an adult who is no longer a confirmed guardian where the student is now.
+- **The move day is owed to one register**, decided from the old class's last mark on or after the chosen day; a
+  return keeps its first joining day unless the class took a register meanwhile.
+- **The class-store balance stays on the old row** and the office is shown no figure, only that Bucks stay
+  (W6-C1 is still open). **"Add to roster" now takes the student's contact lock** before its duplicate check.
+- **Not built, and whose it is**: registration's adder taking the same lock (the owning session hands over one
+  commit); a contact merge after a move (it re-opens closed guardian entries as pending claims); keeping a left
+  student with marks on the teacher's report-card list; the family portal's notices on the old class.
+- **Tests.** `RosterMoveTest`, `RosterMoveRosterTest`, `roster-move.test.ts`, `roster-move-mounted.test.ts` (run).
+  `tests/Mysql/RosterMoveMysqlTest.php` and `tests/MysqlLocks/RosterMoveLocksTest.php` were NOT run where they
+  were written (no MySQL server); they run in CI's MySQL job. See ASSUMPTIONS.md M-1 to M-8 and
+  `.claude/rules/groups.md`, "Moving a student to another class".

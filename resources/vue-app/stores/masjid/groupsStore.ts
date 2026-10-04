@@ -10,7 +10,9 @@ import {
     GroupMembership,
     GroupMembershipPayload,
     GroupPayload,
-    GroupsMeta
+    GroupsMeta,
+    MovePreview,
+    RosterMeta
 } from "@/core/types/data/masjid-related/Group";
 
 /**
@@ -85,6 +87,14 @@ export const useGroupsStore = defineStore('groupsStore', () => {
      * that agrees today.
      */
     const contestedClaims = ref<number>(0);
+    /**
+     * What the roster list says about the class itself: whether it is a class
+     * (the Move button hangs on it), today on the school's clock, the class's
+     * name. Served, never worked out here.
+     */
+    const rosterMeta = ref<RosterMeta | null>(null);
+    /** The class and day last chosen in the Move dialog, kept for this visit so a roster is two taps per student. */
+    const lastMoveChoice = ref<{ toGroupId: number | null; movedOn: string }>({ toGroupId: null, movedOn: '' });
     const groupsMeta = ref<GroupsMeta>();
 
     // Stores
@@ -221,14 +231,115 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         pendingClaims.value = 0;
         contestedClaims.value = 0;
 
+        await refreshMemberships(groupId);
+    }
+
+    /**
+     * The same read, QUIETLY: nothing is emptied first, so the table stays on
+     * screen and the office keeps its place. For the reload after a move, where
+     * a spinner over thirty rows would lose the row being worked on.
+     */
+    async function refreshMemberships(groupId: number | string): Promise<void> {
+        const roster = await readRoster(groupId);
+        if (!roster) return;
+
+        memberships.value = roster.rows;
+        pendingClaims.value = Number(roster.meta?.pending_claims ?? 0);
+        contestedClaims.value = Number(roster.meta?.contested_claims ?? 0);
+        rosterMeta.value = roster.meta && typeof roster.meta.teaches_students === 'boolean' ? roster.meta : null;
+    }
+
+    /**
+     * The roster as it is NOW, handed to the caller and written to no state.
+     * The "Put back" dialog reads it when it opens, so what it decides from is
+     * seconds old, not as old as the page.
+     */
+    async function readRoster(groupId: number | string): Promise<{ rows: GroupMembership[]; meta: any } | null> {
+        if (!masjidStore.masjid?.id) return null;
+
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members` as BackendApiRoute
         );
         if (res.data?.status === 'success' && Array.isArray(res.data?.data)) {
-            memberships.value = res.data.data;
-            pendingClaims.value = Number(res.data?.meta?.pending_claims ?? 0);
-            contestedClaims.value = Number(res.data?.meta?.contested_claims ?? 0);
+            return { rows: res.data.data, meta: res.data?.meta ?? null };
         }
+        return null;
+    }
+
+    // ---------------------------------------------- moving a student to another class
+
+    /**
+     * Every class of this school, for the Move dialog's "Move to" list.
+     *
+     * Its OWN request and its own result, never `groupsPaginated`: that is the
+     * Classes page's state, and a dialog must not turn that page's list into
+     * page 3 of something else. Asks until the last page.
+     */
+    async function fetchClassesForMove(): Promise<Group[]> {
+        if (!masjidStore.masjid?.id) return [];
+
+        const classes: Group[] = [];
+        let page = 1;
+        let last = 1;
+
+        do {
+            const res: AxiosResponse = await ApiService.get(
+                `/api/admin/masjids/${masjidStore.masjid.id}/groups?kind=class&active_only=1&per_page=100&page=${page}` as BackendApiRoute
+            );
+            const paginated = res.data?.data;
+            if (res.data?.status !== 'success' || !Array.isArray(paginated?.data)) {
+                throw new Error('Could not load the classes.');
+            }
+            classes.push(...paginated.data);
+            last = Number(paginated.last_page ?? 1);
+            page += 1;
+        } while (page <= last);
+
+        return classes;
+    }
+
+    /** What moving this student there would do. Reads only; the sentences are the server's. */
+    async function previewMove(
+        groupId: number | string,
+        membershipId: number | string,
+        toGroupId: number,
+        movedOn: string
+    ): Promise<MovePreview> {
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid?.id}/groups/${groupId}/members/${membershipId}/move`
+                + `?to_group_id=${toGroupId}&moved_on=${encodeURIComponent(movedOn)}` as BackendApiRoute
+        );
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Could not check this move.');
+    }
+
+    /** Move the student. Returns the server's lines: what happened and what is left to do. */
+    async function moveMembership(
+        groupId: number | string,
+        membershipId: number | string,
+        fields: Record<string, string>
+    ): Promise<string[]> {
+        const body = new FormData();
+        Object.entries(fields).forEach(([key, value]) => body.append(key, value));
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid?.id}/groups/${groupId}/members/${membershipId}/move` as BackendApiRoute,
+            body
+        );
+        if (res.data?.status === 'success') {
+            const lines = res.data?.data?.lines;
+            return Array.isArray(lines) && lines.length ? lines : [res.data?.message ?? 'Moved.'];
+        }
+        throw new Error('The move could not be saved.');
+    }
+
+    /** Put a student who left back on the roster (the withdrawal's own undo). */
+    async function putBack(groupId: number | string, membershipId: number | string): Promise<void> {
+        await ApiService.delete(
+            `/api/admin/masjids/${masjidStore.masjid?.id}/groups/${groupId}/members/${membershipId}/withdrawal` as BackendApiRoute
+        );
     }
 
     /**
@@ -340,13 +451,17 @@ export const useGroupsStore = defineStore('groupsStore', () => {
     async function removeMembership(
         groupId: number | string,
         membershipId: number | string
-    ): Promise<boolean> {
-        if (!masjidStore.masjid?.id) return false;
+    ): Promise<string | null> {
+        if (!masjidStore.masjid?.id) return null;
 
         const res: AxiosResponse = await ApiService.delete(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/${membershipId}` as BackendApiRoute
         );
-        return res.data?.status === 'success';
+        // THE SERVER'S OWN SENTENCE, not a boolean. It says what went with the
+        // row (guardian entries, a sign-in left opening nothing) and, for a
+        // guardian entry, where else this adult is still listed for the same
+        // child. The screen used to print a fixed "Removed" over all of it.
+        return res.data?.status === 'success' ? String(res.data?.message ?? 'Removed from the roster.') : null;
     }
 
     return {
@@ -360,7 +475,15 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         createGroup,
         updateGroup,
         deleteGroup,
+        rosterMeta,
+        lastMoveChoice,
         fetchMemberships,
+        refreshMemberships,
+        readRoster,
+        fetchClassesForMove,
+        previewMove,
+        moveMembership,
+        putBack,
         addMembership,
         confirmClaims,
         removeMembership

@@ -8,10 +8,14 @@ use App\Http\Requests\Admin\Groups\StoreGroupMembershipRequest;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\Masjid;
 use App\Models\User;
 use App\Support\AcademicRecordsHeld;
 use App\Support\RosterClaimIdentity;
+use App\Support\RosterMove;
+use App\Support\SchoolCalendar;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -131,6 +135,25 @@ class GroupMembershipsController extends Controller
      * 400 times over, and the credential columns in particular are the ones
      * .claude/rules/credentials.md keeps out of request bodies; there is no
      * reason for a roster listing to be where they leak out instead.
+     *
+     * ## A STUDENT WHO WAS MOVED (2026-10-04)
+     *
+     * The four `moved_*` columns ride on `toArray()` as every roster column
+     * does, with the two class names beside them (`moved_to`, `moved_from`,
+     * loaded with trashed classes and their `deleted_at`, so a deleted class
+     * reads as "a class that was removed" and not as a live one). Three more
+     * things are computed here so the browser never guesses:
+     *
+     *   - `meta.teaches_students`: is this a class (`Group::teachesStudents`).
+     *     The Move button hangs on it. `meta.move_note` is the one line a
+     *     SCHOOL reads on a group that is not a class, in the organisation's
+     *     own word for the page, so a wrong kind is visible instead of silent.
+     *   - `meta.school_today`: today on the school's clock, for the date field.
+     *   - `moved_to_state` on each student row that carries "moved to" (null on
+     *     every other row): whether the student is still where they were moved
+     *     to, and which guardian entries here "Put back" must not re-open. It
+     *     is the move's own guardian rule (`RosterMove::notVouched`) read from
+     *     the other side, not a second copy.
      */
     public function index($masjid_id, $group_id)
     {
@@ -142,19 +165,23 @@ class GroupMembershipsController extends Controller
                 // The claim's EVIDENCE, which only the listing renders.
                 'sourceRegistration:id,offering_id,contact_id',
                 'sourceRegistration.contact:id,first_name,last_name,email,'.Contact::AVATAR_COLUMNS,
+                'movedTo:id,name,deleted_at',
+                'movedFrom:id,name,deleted_at',
             ])
             ->orderBy('role')
             ->orderBy('id')
             ->get();
 
         $contested = RosterClaimIdentity::contestedClaimIds($memberships);
+        $movedToStates = RosterMove::movedToStates($group, $memberships);
 
         return response()->json([
             'status' => 'success',
-            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested): array {
+            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $movedToStates): array {
                 $isContested = in_array((int) $membership->getKey(), $contested, true);
 
                 return array_merge($membership->toArray(), [
+                    'moved_to_state' => $movedToStates[(int) $membership->getKey()] ?? null,
                     'claim' => [
                         'fingerprint' => $membership->isConfirmed()
                             ? null
@@ -174,6 +201,10 @@ class GroupMembershipsController extends Controller
                 // Counted for the banner, so "6 waiting" never reads as "6 the
                 // button will take care of".
                 'contested_claims' => count($contested),
+                'group_name' => $group->name,
+                'teaches_students' => $group->teachesStudents(),
+                'school_today' => SchoolCalendar::for((int) $group->masjid_id)->today(),
+                'move_note' => $this->moveNote($group, $memberships),
             ],
         ], Response::HTTP_OK);
     }
@@ -211,19 +242,49 @@ class GroupMembershipsController extends Controller
         $contact = Contact::findOrFail($request->integer('contact_id'));
 
         $role = $request->input('role');
-        $wardId = null;
+        $wardId = $role === GroupMembership::ROLE_GUARDIAN
+            ? Contact::findOrFail($request->integer('guardian_of_contact_id'))->id
+            : null;
 
-        if ($role === GroupMembership::ROLE_GUARDIAN) {
-            $ward = Contact::findOrFail($request->integer('guardian_of_contact_id'));
-            $wardId = $ward->id;
+        // THE STUDENT'S CONTACT ROW IS THE MUTEX FOR EVERY ROSTER ROW ABOUT
+        // THEM (the child a guardian entry names, or the person being added).
+        // A move of that student to another class holds the same lock
+        // (App\Support\RosterMove), so this add either runs before the move
+        // or waits and then sees what it committed. The unique index cannot do
+        // this: a student's row has a NULL ward, which both engines treat as
+        // distinct.
+        //
+        // THE LOCK IS THE FIRST STATEMENT OF ITS TRANSACTION, and that is the
+        // whole point. At REPEATABLE READ the first ORDINARY read fixes what
+        // the transaction sees, so a check made before the lock would not see
+        // a row a move had just committed. Every lookup above this line ran
+        // before the transaction began; nothing below reads until the lock is
+        // held. The duplicate check stays an ordinary read on purpose: a
+        // locking read over the roster's index would take next-key locks on
+        // the class's range, and two adds into one class could deadlock.
+        return DB::transaction(function () use ($request, $group, $contact, $role, $wardId) {
+            Contact::query()->whereKey($wardId ?? $contact->id)->lockForUpdate()->first();
 
+            return $this->storeUnderTheContactLock($request, $group, $contact, $role, $wardId);
+        });
+    }
+
+    /** `store()`, from its first read on. Runs inside the transaction that holds the contact lock. */
+    private function storeUnderTheContactLock(
+        StoreGroupMembershipRequest $request,
+        Group $group,
+        Contact $contact,
+        string $role,
+        ?int $wardId,
+    ) {
+        if ($wardId !== null) {
             // A PENDING participant row still counts here. The child IS on the
             // roster — that is what the row says — and refusing to record their
             // guardian until the enrolment is confirmed would make the office
             // confirm in an order nothing on the screen asks for.
             $wardIsInGroup = $group->memberships()
                 ->participants()->current()
-                ->where('contact_id', $ward->id)
+                ->where('contact_id', $wardId)
                 ->exists();
 
             if (! $wardIsInGroup) {
@@ -602,7 +663,17 @@ class GroupMembershipsController extends Controller
         // any caller. That makes the check below an explanation rather than the
         // protection: the database refuses regardless, and a bare constraint
         // violation is not something an office can act on.
-        $held = AcademicRecordsHeld::counts($membership);
+        //
+        // ONE LIST, AND THE PART OF IT A DELETE WOULD DESTROY (2026-10-04).
+        // `AcademicRecordsHeld::KEYS` is every foreign key into a roster row;
+        // this verb refuses on the eight kinds a delete destroys (the seven
+        // RESTRICT ones and Arabic daily notes, which cascade and used to go
+        // without a word). It does NOT refuse on a conversation, a scheduled
+        // message or an addressed file: the rules say those survive or lapse
+        // with the row. The counts are raw, so a record that was deleted on
+        // its own screen still refuses; the sentence says so, and names "Left
+        // the class" as the way out.
+        $held = AcademicRecordsHeld::blocking(AcademicRecordsHeld::counts($membership));
 
         if (AcademicRecordsHeld::any($held)) {
             return response()->json([
@@ -610,11 +681,19 @@ class GroupMembershipsController extends Controller
                 'data' => ['membership' => [
                     'This child has school records in this class ('
                     . AcademicRecordsHeld::describe($held)
-                    . '), so they cannot be removed from the roster — removing the row would '
-                    . 'delete those records. Leave them on the roster to keep the history.',
+                    . '), so they cannot be removed from the roster. '
+                    . AcademicRecordsHeld::refusalAdvice($membership),
                 ]],
             ], Response::HTTP_CONFLICT);
         }
+
+        // A GUARDIAN ENTRY IS ONE CLASS'S. After a student is moved each
+        // guardian holds an entry in both classes, and removing one of them
+        // leaves the other standing: marked as left it still opens the child's
+        // old records there. So the office is told where else this adult is
+        // listed for this child. Tenant-scoped through the model, so it never
+        // names another organisation's class.
+        $elsewhere = $membership->isGuardian() ? $this->sameGuardianElsewhere($membership) : [];
 
         $membership->delete();
 
@@ -624,7 +703,7 @@ class GroupMembershipsController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => $removed === 0
-                ? 'Removed from the roster.'
+                ? 'Removed from the roster.' . $this->elsewhereSentence($membership, $elsewhere)
                 : sprintf(
                     'Removed from the roster, and with it %d guardian %s%s.%s',
                     $removed,
@@ -647,12 +726,89 @@ class GroupMembershipsController extends Controller
                     'guardian_edges_removed' => $removed,
                     'confirmed_guardian_edges_removed' => $confirmedRemoved,
                     'family_logins_left_without_a_ward' => $strandedLogins,
+                    'same_guardian_elsewhere' => $elsewhere,
                 ],
             ],
         ], Response::HTTP_OK);
     }
 
     // ------------------------------------------------------------- internals
+
+    /**
+     * Every OTHER entry of this adult for this child in the organisation, open
+     * or marked as left, in a class that still exists.
+     *
+     * @return list<array{group_id: int, name: string, left: bool}>
+     */
+    private function sameGuardianElsewhere(GroupMembership $entry): array
+    {
+        return GroupMembership::query()
+            ->where('contact_id', $entry->contact_id)
+            ->where('guardian_of_contact_id', $entry->guardian_of_contact_id)
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->whereKeyNot($entry->getKey())
+            ->with('group:id,name')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (GroupMembership $other): bool => $other->group !== null)
+            ->map(fn (GroupMembership $other): array => [
+                'group_id' => (int) $other->group_id,
+                'name' => (string) $other->group->name,
+                'left' => $other->left_on !== null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  list<array{group_id: int, name: string, left: bool}>  $elsewhere
+     */
+    private function elsewhereSentence(GroupMembership $entry, array $elsewhere): string
+    {
+        if ($elsewhere === []) {
+            return '';
+        }
+
+        $name = fn (?Contact $c): string => trim(($c?->first_name ?? '').' '.($c?->last_name ?? '')) ?: 'This person';
+        $classes = array_values(array_unique(array_column($elsewhere, 'name')));
+
+        return sprintf(
+            ' %s is still listed as a guardian of %s in %d other %s: %s. Remove those entries too if this person '
+                . 'should no longer have access.',
+            $name($entry->contact),
+            $name($entry->guardianOf),
+            count($classes),
+            count($classes) === 1 ? 'class' : 'classes',
+            implode(', ', $classes),
+        );
+    }
+
+    /**
+     * The one line a SCHOOL reads on a group that is not a class and holds a
+     * student: Move (and what else hangs on `teachesStudents`) is absent here,
+     * and why. Null for a masjid's ḥalaqa or a community team, where nothing is
+     * missing, and null on a class.
+     */
+    private function moveNote(Group $group, $memberships): ?string
+    {
+        if ($group->teachesStudents()
+            || ! $memberships->contains(fn (GroupMembership $m): bool => $m->role === GroupMembership::ROLE_MEMBER)) {
+            return null;
+        }
+
+        $masjid = Masjid::find($group->masjid_id);
+
+        if (! $masjid?->isSchool()) {
+            return null;
+        }
+
+        return sprintf(
+            'Move, ages and dates of birth are for classes. This group is set up as "%s". '
+                . 'Change its kind on the %s page if it is a class.',
+            ucfirst($group->kind()),
+            $masjid->term('groups'),
+        );
+    }
 
     /**
      * How many OTHER roster rows claim to be a guardian of the same person

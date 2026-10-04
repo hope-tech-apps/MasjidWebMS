@@ -17,6 +17,12 @@
         <testsuite name="Mysql">
             <directory>tests/Mysql</directory>
         </testsuite>
+        <!-- The same group, for lock tests that need committed rows and a
+             second connection, so they cannot run under RefreshDatabase
+             (tests/Pest.php). Excluded below with the rest of "mysql". -->
+        <testsuite name="MysqlLocks">
+            <directory>tests/MysqlLocks</directory>
+        </testsuite>
     </testsuites>
     <groups>
         <exclude>
