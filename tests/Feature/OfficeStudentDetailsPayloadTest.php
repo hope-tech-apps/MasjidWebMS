@@ -49,6 +49,17 @@ class OfficeStudentDetailsPayloadTest extends TestCase
      * One roster row on the office listing: the model's own columns, the three
      * narrowed people, the evidence of a claim, and `claim`.
      *
+     * Classified when the three roster features were put together, each a
+     * thing the office is meant to read on this list:
+     *
+     *   - the four `moved_*` columns, the two classes they name (`moved_to`,
+     *     `moved_from`: id, name, deleted_at) and `moved_to_state`: where a
+     *     student was moved to or from, by whom, and whether "Put back" may be
+     *     offered (RosterMoveRosterTest pins what is inside them);
+     *   - `age`: a whole number of years or null. NEVER a date: the date of
+     *     birth is read one student at a time from its own endpoint
+     *     (StudentBirthDateLeakTest pins that it rides on no list).
+     *
      * @var list<string>
      */
     private const ROW = [
@@ -57,8 +68,11 @@ class OfficeStudentDetailsPayloadTest extends TestCase
         'consent_granted_at', 'consent_scope',
         'provenance', 'confirmed_at', 'confirmed_by_user_id', 'source_registration_id',
         'left_recorded_by_user_id',
+        'moved_from_group_id', 'moved_to_group_id', 'moved_on', 'moved_by_user_id',
         'created_at', 'updated_at',
         'contact', 'guardian_of', 'confirmed_by', 'source_registration',
+        'moved_to', 'moved_from', 'moved_to_state',
+        'age',
         'claim',
     ];
 
@@ -135,6 +149,13 @@ class OfficeStudentDetailsPayloadTest extends TestCase
         // signup stands behind a row the office typed.
         $this->assertNull($row['guardian_of']);
         $this->assertNull($row['source_registration']);
+
+        // Nobody moved this student and no date of birth is on file: each of
+        // the new keys is present and null, never absent.
+        foreach (['moved_from_group_id', 'moved_to_group_id', 'moved_on', 'moved_by_user_id',
+            'moved_to', 'moved_from', 'moved_to_state', 'age'] as $key) {
+            $this->assertNull($row[$key], $key);
+        }
     }
 
     #[Test]

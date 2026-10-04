@@ -250,6 +250,53 @@ class StudentBirthDateLeakTest extends TestCase
     }
 
     /**
+     * Moving the child to another class: the two answers that feature added to
+     * the office's surface, and the two rosters afterwards.
+     *
+     * The move carries the child's place and their guardian's entry to the new
+     * class. Both people hold a date here. Neither the "what will happen"
+     * answer nor the answer of the move itself may say it, and the new class's
+     * roster shows the same whole-number age the old one did, because the date
+     * is on the contact and not on the roster row that was left behind.
+     */
+    #[Test]
+    public function moving_the_child_to_another_class_carries_the_age_and_never_the_date(): void
+    {
+        Sanctum::actingAs($this->admin, ['*']);
+
+        $next = $this->makeGroup(Group::KIND_CLASS, 'Grade Three');
+        $base = "/api/admin/masjids/{$this->school->id}";
+        $move = "{$base}/groups/{$this->class->id}/members/{$this->student->id}/move";
+
+        $answers = [
+            'move preview' => $this->getJson("{$move}?to_group_id={$next->id}&moved_on=2026-10-06")->assertOk(),
+            'move' => $this->postJson($move, ['to_group_id' => $next->id, 'moved_on' => '2026-10-06'])->assertOk(),
+            'old roster' => $this->getJson("{$base}/groups/{$this->class->id}/members")->assertOk(),
+            'new roster' => $this->getJson("{$base}/groups/{$next->id}/members")->assertOk(),
+        ];
+
+        foreach ($answers as $what => $response) {
+            $this->assertClean($this->bodyOf($response), $what);
+            $this->assertStringNotContainsString('date_of_birth', $this->bodyOf($response), "{$what} names the column");
+        }
+
+        // The move happened, and took the guardian's entry with it.
+        $arrived = collect($answers['new roster']->json('data'));
+        $place = $arrived->first(fn (array $r): bool => $r['contact_id'] === $this->child->id && $r['role'] === GroupMembership::ROLE_MEMBER);
+        $this->assertNotNull($place, 'the child holds a place in the new class');
+        $this->assertSame($this->class->id, $place['moved_from_group_id']);
+        $this->assertNotNull($arrived->first(fn (array $r): bool => $r['contact_id'] === $this->parent->id), 'the guardian has an entry there');
+
+        // The age is the contact's: the same number in the class they joined
+        // today as in the one they left. A guardian's row never carries one.
+        $this->assertSame(9, $place['age']);
+        $left = collect($answers['old roster']->json('data'))->firstWhere('id', $this->student->id);
+        $this->assertSame($next->id, $left['moved_to_group_id']);
+        $this->assertSame(9, $left['age']);
+        $this->assertNull($arrived->first(fn (array $r): bool => $r['contact_id'] === $this->parent->id)['age']);
+    }
+
+    /**
      * Every GET the office can make under contacts, groups and registrations,
      * read out of the router: a route added to one of them later is walked
      * here without anybody listing it.
