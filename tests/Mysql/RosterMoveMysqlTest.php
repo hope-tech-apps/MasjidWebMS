@@ -21,7 +21,9 @@
 | and a second connection can see nothing.
 */
 
+use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\User;
 use App\Support\AcademicRecordsHeld;
 use App\Support\RosterMove;
 use App\Support\RosterMovePlan;
@@ -44,10 +46,17 @@ beforeEach(function () {
 
 afterEach(fn () => Carbon::setTestNow());
 
-/** Move through the service itself: what is under test is the engine, not the route. */
-function rosterMoveOnMysql($test, GroupMembership $row, $to, string $on, array $options = []): RosterMovePlan
+/**
+ * Move through the service itself: what is under test is the engine, not the route.
+ *
+ * The administrator is handed in. This is a plain function, outside the test's own scope, and
+ * `$admin` is a protected property of the trait: reading it off the test from here is an Error
+ * ("Cannot access protected property"), which is what this file's first run on MySQL answered
+ * for every test that moved a student.
+ */
+function rosterMoveOnMysql(User $admin, GroupMembership $row, Group $to, string $on, array $options = []): RosterMovePlan
 {
-    return app(RosterMove::class)->move($test->first->is($row->group) ? $test->first : $row->group, $row, $to->id, $on, $options, $test->admin);
+    return app(RosterMove::class)->move($row->group, $row, $to->id, $on, $options, $admin);
 }
 
 it('lists every foreign key into a roster row, with the rule the database really has', function () {
@@ -75,7 +84,7 @@ it('leaves a record on each of the eleven keys with the old roster row and the o
     $record = $this->plantRecord($table, $student);
     $before = $this->rosterSnapshot();
 
-    $plan = rosterMoveOnMysql($this, $student, $this->second, '2026-10-04');
+    $plan = rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04');
 
     [$column] = AcademicRecordsHeld::KEYS[$table];
 
@@ -96,7 +105,7 @@ it('gives the days the old class marked to the old class, read from a DATE colum
     // The new class took its register on what will be the first day.
     $this->plantRecord('attendance_records', $classmate, ['session_date' => '2026-10-05']);
 
-    $plan = rosterMoveOnMysql($this, $student, $this->second, '2026-09-27');
+    $plan = rosterMoveOnMysql($this->admin, $student, $this->second, '2026-09-27');
 
     expect($plan->oldClassKeepsMoveDay)->toBeTrue()
         ->and($plan->oldClassMarkedUpTo)->toBe('2026-10-04')
@@ -110,7 +119,7 @@ it('does not keep the move day for a mark dated the day before it', function () 
     $student = $this->enrol($this->first, 'Maryam', joined: '2026-09-01');
     $this->plantRecord('attendance_records', $student, ['session_date' => '2026-10-03']);
 
-    $plan = rosterMoveOnMysql($this, $student, $this->second, '2026-10-04');
+    $plan = rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04');
 
     expect($plan->oldClassKeepsMoveDay)->toBeFalse()
         ->and($plan->firstDay)->toBe('2026-10-04')
@@ -120,7 +129,7 @@ it('does not keep the move day for a mark dated the day before it', function () 
 it('keeps the first joining day on a return unless the class took a register strictly after the leaving day', function () {
     $student = $this->enrol($this->first, 'Maryam', joined: '2026-09-01');
     $classmate = $this->enrol($this->first, 'Classmate');
-    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this, $student, $this->second, '2026-09-10')->membershipId);
+    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this->admin, $student, $this->second, '2026-09-10')->membershipId);
 
     // A register on the LEAVING day itself (9 September) is not "while they were away".
     $this->plantRecord('attendance_records', $classmate, ['session_date' => '2026-09-09']);
@@ -149,7 +158,7 @@ it('goes back onto a place and entries that have left without a duplicate key', 
     $claim = $this->guardian($student, 'Stranger', confirmed: false);
     $this->plantRecord('attendance_records', $student, ['session_date' => '2026-09-06']);
 
-    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this, $student, $this->second, '2026-10-04')->membershipId);
+    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04')->membershipId);
     $before = $this->rosterSnapshot();
 
     $plan = app(RosterMove::class)->move($this->second, $there, $this->first->id, '2026-10-04', [], $this->admin);

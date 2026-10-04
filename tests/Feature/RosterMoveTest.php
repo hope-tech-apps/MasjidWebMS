@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use App\Exceptions\RosterMoveRefused;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupStaff;
 use App\Models\Masjid;
+use App\Models\MasjidUser;
 use App\Models\User;
 use App\Support\AcademicRecordsHeld;
 use App\Support\RosterMove;
@@ -17,6 +19,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -686,6 +689,85 @@ class RosterMoveTest extends TestCase
         );
     }
 
+    /**
+     * The Sunday afternoon, undone. The first class marks the student, the
+     * office moves them and moves them straight back. The place being re-opened
+     * is the row that HOLDS that day's mark, so "will show as not marked there"
+     * would send the office after a teacher for a mark that exists.
+     */
+    #[Test]
+    public function a_return_onto_a_place_that_holds_the_days_mark_is_not_told_the_student_is_unmarked(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $this->plantRecord('attendance_records', $student, ['session_date' => self::TODAY]);
+
+        $there = GroupMembership::findOrFail(
+            $this->move($student, $this->second, self::TODAY)->assertOk()->json('data.membership_id'),
+        );
+
+        $preview = $this->previewMove($there, $this->first, self::TODAY)->assertOk()
+            ->assertJsonPath('data.path', RosterMovePlan::RETURNED)
+            ->assertJsonPath('data.first_day_in_new_class', self::TODAY)
+            ->assertJsonPath('data.new_class_took_register_on_first_day', false);
+        $this->assertStringNotContainsString('not marked', implode(' ', $preview->json('data.lines')));
+
+        $moved = $this->move($there, $this->first, self::TODAY)->assertOk();
+        $this->assertStringNotContainsString('not marked', implode(' ', $moved->json('data.lines')));
+        $this->assertSame($student->id, $moved->json('data.membership_id'));
+    }
+
+    /** The other half: the class met that day and the returning place has NO mark, so it is said. */
+    #[Test]
+    public function a_return_onto_a_place_the_class_did_not_mark_that_day_is_still_told(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $classmate = $this->enrol($this->first, 'Classmate');
+
+        $there = GroupMembership::findOrFail(
+            $this->move($student, $this->second, self::TODAY)->assertOk()->json('data.membership_id'),
+        );
+
+        // The first class takes its register after the student has gone: everyone but them.
+        $this->plantRecord('attendance_records', $classmate, ['session_date' => self::TODAY]);
+
+        $preview = $this->previewMove($there, $this->first, self::TODAY)->assertOk()
+            ->assertJsonPath('data.path', RosterMovePlan::RETURNED)
+            ->assertJsonPath('data.new_class_took_register_on_first_day', true);
+
+        $this->assertStringContainsString(
+            '1st Grade has already taken the register for 4 Oct 2026. Maryam Student will show as not marked there until its teacher marks them.',
+            implode(' ', $preview->json('data.lines')),
+        );
+    }
+
+    /**
+     * The Member Directory's delete is a soft one and leaves the roster row, so
+     * the roster still lists it. The preview never loads the contact; the move
+     * locks it. A lock that skipped a deleted contact answered 409 "this roster
+     * changed" to a move the preview had just allowed, on every retry.
+     */
+    #[Test]
+    public function a_student_whose_contact_was_deleted_gets_the_same_answer_from_the_preview_and_the_move(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $before = $this->rosterSnapshot();
+
+        Contact::findOrFail($student->contact_id)->delete();
+
+        $this->previewMove($student, $this->second, self::TODAY)->assertOk()
+            ->assertJsonPath('data.can_move', true);
+
+        $moved = $this->move($student, $this->second, self::TODAY)->assertOk();
+
+        $this->assertNotNull($student->fresh()->left_on, 'the old place was not closed');
+        $this->assertSame(
+            (int) $this->second->id,
+            (int) GroupMembership::findOrFail($moved->json('data.membership_id'))->group_id,
+        );
+        $this->assertNotNull(DB::table('contacts')->where('id', $student->contact_id)->value('deleted_at'), 'the move did not restore the contact');
+        $this->assertNothingWasDestroyed($before);
+    }
+
     // ----------------------------------------------------- what the office is told
 
     #[Test]
@@ -1013,6 +1095,33 @@ class RosterMoveTest extends TestCase
 
     // --------------------------------------------------- locks, and failing closed
 
+    /**
+     * tests/MysqlLocks commits its fixtures and deletes them by hand, and it
+     * runs only on the MySQL job. Its first run there named a table that does
+     * not exist (`masjid_users`; the pivot is `masjid_user`), the cleanup threw,
+     * and every test in the file was reported as an error whatever its body
+     * proved. The names are checked here, where the suite always runs.
+     */
+    #[Test]
+    public function the_lock_suites_cleanup_names_only_tables_that_exist_and_carry_the_organisation(): void
+    {
+        $source = file_get_contents(base_path('tests/MysqlLocks/RosterMoveLocksTest.php'));
+
+        // The hand-written list: the loop that is not over AcademicRecordsHeld::KEYS.
+        $this->assertSame(
+            1,
+            preg_match('/foreach \(\[([^\]]+)\] as \$table\) \{\s+DB::table\(\$table\)->where\("?\x27?masjid_id/', $source, $m),
+            'the cleanup loop was not found',
+        );
+        preg_match_all("/'([a-z_]+)'/", $m[1], $names);
+
+        $this->assertContains((new MasjidUser())->getTable(), $names[1], 'the administrator\'s pivot row is deleted');
+
+        foreach ([...$names[1], ...array_keys(AcademicRecordsHeld::KEYS)] as $table) {
+            $this->assertTrue(Schema::hasColumn($table, 'masjid_id'), "{$table} is deleted by organisation in the lock suite's cleanup");
+        }
+    }
+
     #[Test]
     public function every_lock_is_taken_by_primary_key_before_the_first_ordinary_read(): void
     {
@@ -1026,7 +1135,8 @@ class RosterMoveTest extends TestCase
         $this->assertSame(3, substr_count($code, 'whereKey(') + substr_count($code, "whereIn('id', \$ids)"), 'every exclusive lock is by primary key');
 
         $transaction = substr($code, strpos($code, 'DB::transaction('));
-        $firstLock = strpos($transaction, '$contact = Contact::query()->whereKey($contactId)->lockForUpdate()');
+        // withTrashed: the lock is a mutex, taken whether or not the office deleted the person.
+        $firstLock = strpos($transaction, '$contact = Contact::withTrashed()->whereKey($contactId)->lockForUpdate()');
         $secondLock = strpos($transaction, 'GroupMembership::query()->whereKey($rowId)->lockForUpdate()');
         $thirdLock = strpos($transaction, "whereIn('id', \$ids)->orderBy('id')->lockForUpdate()");
         $shared = strpos($transaction, '->sharedLock()');

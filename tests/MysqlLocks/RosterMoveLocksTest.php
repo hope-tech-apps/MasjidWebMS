@@ -78,7 +78,10 @@ afterEach(function () {
         DB::table($table)->where('masjid_id', $school)->delete();
     }
 
-    foreach (['class_assignments', 'group_resources', 'group_memberships', 'groups', 'contacts', 'masjid_users'] as $table) {
+    // `masjid_user`, singular: the pivot's own name (App\Models\MasjidUser). The plural does not
+    // exist, and a cleanup that throws marks every test in this file as an error whatever its
+    // body proved, and leaves the rows after it behind. RosterMoveTest pins every name here.
+    foreach (['class_assignments', 'group_resources', 'group_memberships', 'groups', 'contacts', 'masjid_user'] as $table) {
         DB::table($table)->where('masjid_id', $school)->delete();
     }
 
@@ -122,11 +125,27 @@ it('rests on two foreign keys to contacts and on REPEATABLE READ', function () {
 });
 
 it('holds exactly the primary-key locks it names, and everything about the child waits for them', function () {
-    $test = $this;
     $seen = (object) ['locks' => null, 'blocked' => []];
 
-    $mover = new class($test, $seen) extends RosterMove {
-        public function __construct(private $test, private object $seen)
+    // An adult with no entry anywhere, for the guardian insert below.
+    $adult = $this->makePerson('Other', 'Adult')->id;
+
+    // WHAT THE MOVER BELOW NEEDS, HANDED TO IT. It is another class, so it cannot read the
+    // test's protected members (`$school` and `plantRecord()` come from the traits): on this
+    // file's first run on MySQL that was "Cannot access protected property". Plain values, and
+    // one closure made here, where `$this` is the test.
+    $with = (object) [
+        'other' => $this->other,
+        'school' => $this->school->id,
+        'first' => $this->first->id,
+        'second' => $this->second->id,
+        'child' => $this->student->contact_id,
+        'adult' => $adult,
+        'plant' => fn (string $table) => $this->plantRecord($table, $this->student),
+    ];
+
+    $mover = new class($with, $seen) extends RosterMove {
+        public function __construct(private object $with, private object $seen)
         {
         }
 
@@ -134,27 +153,27 @@ it('holds exactly the primary-key locks it names, and everything about the child
         {
             $this->seen->locks = rosterMoveRecordLocks();
 
-            $t = $this->test;
-            $other = $t->other;
-            $base = ['masjid_id' => $t->school->id, 'provenance' => 'confirmed'];
+            $w = $this->with;
+            $other = $w->other;
+            $base = ['masjid_id' => $w->school, 'provenance' => 'confirmed'];
 
             // (ii) A roster row naming the child, as the person or as a guardian entry's child.
             $this->seen->blocked['a place for the child'] = rosterMoveIsBlocked(fn () => $other->table('group_memberships')->insert($base + [
-                'group_id' => $t->second->id, 'contact_id' => $t->student->contact_id, 'role' => 'leader',
+                'group_id' => $w->second, 'contact_id' => $w->child, 'role' => 'leader',
             ]));
             $this->seen->blocked['a guardian entry naming the child'] = rosterMoveIsBlocked(fn () => $other->table('group_memberships')->insert($base + [
-                'group_id' => $t->first->id, 'contact_id' => $t->admin_contact_id, 'role' => 'guardian',
-                'guardian_of_contact_id' => $t->student->contact_id,
+                'group_id' => $w->first, 'contact_id' => $w->adult, 'role' => 'guardian',
+                'guardian_of_contact_id' => $w->child,
             ]));
 
             // (ii) A record on each of the eleven keys naming the roster row.
             foreach (array_keys(AcademicRecordsHeld::KEYS) as $table) {
-                $this->seen->blocked[$table] = rosterMoveIsBlocked(function () use ($t, $table, $other) {
+                $this->seen->blocked[$table] = rosterMoveIsBlocked(function () use ($w, $table) {
                     $default = DB::getDefaultConnection();
                     DB::setDefaultConnection('mysql_other');
 
                     try {
-                        $t->plantRecord($table, $t->student);
+                        ($w->plant)($table);
                     } finally {
                         DB::setDefaultConnection($default);
                     }
@@ -162,9 +181,6 @@ it('holds exactly the primary-key locks it names, and everything about the child
             }
         }
     };
-
-    // An adult with no entry anywhere, for the guardian insert above.
-    $this->admin_contact_id = $this->makePerson('Other', 'Adult')->id;
 
     $plan = $mover->move($this->first, $this->student, $this->second->id, '2026-10-04', [], $this->admin);
 
@@ -190,7 +206,7 @@ it('holds exactly the primary-key locks it names, and everything about the child
 
     // Nothing the second connection tried is there.
     expect(AcademicRecordsHeld::any(AcademicRecordsHeld::counts($this->student->fresh())))->toBeFalse()
-        ->and(GroupMembership::where('contact_id', $this->admin_contact_id)->count())->toBe(0);
+        ->and(GroupMembership::where('contact_id', $adult)->count())->toBe(0);
 });
 
 it('sees, after its locks, what was committed before them', function () {

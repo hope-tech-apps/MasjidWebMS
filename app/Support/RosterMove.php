@@ -118,7 +118,13 @@ class RosterMove
                     //    about this child. On MySQL an insert of any roster row
                     //    naming this contact, as the person or as the child of
                     //    a guardian entry, needs a shared lock on it.
-                    $contact = Contact::query()->whereKey($contactId)->lockForUpdate()->first();
+                    //    DELETED OR NOT: this is a lock, not a read of the
+                    //    person. The Member Directory's delete is a soft one
+                    //    that leaves the roster row, and the preview does not
+                    //    load the contact at all, so a lock that skipped a
+                    //    deleted contact would answer "this roster changed"
+                    //    to a move the preview had just allowed, every time.
+                    $contact = Contact::withTrashed()->whereKey($contactId)->lockForUpdate()->first();
 
                     // 2. The student's roster row. From here every insert on
                     //    the eleven keys that names it waits.
@@ -556,11 +562,18 @@ class RosterMove
             $plan->firstDay = $on;
         }
 
-        $plan->newClassTookRegisterOnFirstDay = DB::table('attendance_records')
-            ->where('group_id', $to->getKey())
+        // "NOT MARKED THERE" IS SAID ONLY WHEN IT WILL BE TRUE. The class took
+        // the register that day; on a return the student's own place there may
+        // be among the rows it marked (moved out and back on one day: the old
+        // class kept that day, and its mark). Then they ARE marked, and telling
+        // the office to chase the teacher would be wrong. A new place can hold
+        // no mark, so the other path needs no second look.
+        $onFirstDay = fn () => DB::table('attendance_records')
             ->where('session_date', '>=', $plan->firstDay)
-            ->where('session_date', '<', self::shift($plan->firstDay, 1))
-            ->exists();
+            ->where('session_date', '<', self::shift($plan->firstDay, 1));
+
+        $plan->newClassTookRegisterOnFirstDay = $onFirstDay()->where('group_id', $to->getKey())->exists()
+            && ! ($back !== null && $onFirstDay()->where('group_membership_id', $back->getKey())->exists());
 
         if ($back !== null) {
             // A RETURN KEEPS ITS FIRST JOINING DAY unless the class took a
