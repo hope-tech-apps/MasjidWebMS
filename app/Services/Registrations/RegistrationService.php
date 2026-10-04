@@ -1039,6 +1039,9 @@ class RegistrationService
             ->pluck('contact_id')
             ->all();
 
+        // Before either "is it already there?" check below: see the method.
+        $this->lockRosterSubjects($wardIds);
+
         // Participants first — the guardian-edge invariant requires the ward
         // to already hold a participant membership in the group.
         foreach ($wardIds as $contactId) {
@@ -1092,6 +1095,61 @@ class RegistrationService
                 $edge->selfAssertedFrom($registration)->save();
             }
         }
+    }
+
+    /**
+     * Hold each child's CONTACT row while this registration is put on a roster.
+     *
+     * Moving a student to another class locks that student's contact row
+     * `FOR UPDATE` before it reads or writes any roster row about them: for one
+     * child, the contact row is the mutex for "who is on which roster". The two
+     * loops in `writeRosterMemberships()` check and then insert with nothing in
+     * between. Taking the same lock first means a move of one of these children
+     * has either finished or cannot begin until this transaction ends, so the
+     * check and the insert are no longer split by one.
+     *
+     * ## What this does NOT close, said so that nobody leans on it
+     *
+     * At REPEATABLE READ this transaction's read view was fixed by its FIRST
+     * ordinary read, and this method runs last in `register()`, `confirm()` and
+     * the settle path. A move that COMMITTED after that first read and before
+     * this lock is invisible to the `exists()` checks, so they can still write a
+     * second place for the child. The window is the few milliseconds this
+     * transaction took to get here. The result is a duplicate the office can see
+     * and remove (an unconfirmed row that holds nothing), never a lost payment.
+     *
+     * The checks are deliberately NOT locking reads, which would see such a
+     * row: `group_memberships_edge_unique` is not unique for a participant row
+     * (`guardian_of_contact_id` is NULL there), so `FOR SHARE` or `FOR UPDATE`
+     * on it takes next-key locks on the class's range of the index, and two
+     * families registering different children into the same class would
+     * deadlock each other at the moment registration opens. Only a key that
+     * covers a student's place closes this for every writer at once.
+     *
+     * Primary-key locks only, ascending, in one statement: two registrations
+     * that name the same children queue behind each other; they do not cross.
+     * A registration with no children on it locks nothing.
+     *
+     * @param  array<int, int|string|null>  $contactIds
+     */
+    private function lockRosterSubjects(array $contactIds): void
+    {
+        $ids = array_values(array_unique(array_map('intval', array_filter($contactIds))));
+
+        if ($ids === []) {
+            return;
+        }
+
+        sort($ids);
+
+        // The raw table: no tenant scope (this runs unbound from a webhook) and
+        // no model events, and a soft-deleted contact's row is locked like any
+        // other because a roster row can still name it.
+        DB::table('contacts')
+            ->whereIn('id', $ids)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
     }
 
     // -------------------------------------------------------------------- misc

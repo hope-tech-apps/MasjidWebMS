@@ -16,6 +16,7 @@ use App\Services\Registrations\RegistrationException;
 use App\Services\Registrations\RegistrationService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -184,6 +185,97 @@ class RegistrationServiceTest extends TestCase
         // Idempotent confirmation seam: re-confirming duplicates nothing.
         $this->service->confirm($registration->fresh());
         $this->assertSame(4, GroupMembership::where('group_id', $group->id)->count());
+    }
+
+    // ------------------------------------------------ the roster lock
+
+    /**
+     * The statement `lockRosterSubjects()` runs, as this engine prints it. SQLite prints no
+     * lock clause, so the clause itself is pinned in the source test below and on MySQL in
+     * tests/Mysql/RegistrationRosterLockMysqlTest.php.
+     */
+    private const CONTACT_LOCK = '/^select "id" from "contacts" where "id" in \\([?, ]+\\) order by "id" asc$/';
+
+    /** @return array<int, array{sql: string, bindings: array<int, mixed>}> */
+    private function statementsOf(callable $act): array
+    {
+        $seen = [];
+        DB::listen(function ($query) use (&$seen): void {
+            $seen[] = ['sql' => $query->sql, 'bindings' => $query->bindings];
+        });
+
+        $act();
+
+        return $seen;
+    }
+
+    #[Test]
+    public function the_childrens_contact_rows_are_locked_in_id_order_before_the_roster_is_checked(): void
+    {
+        $group = Group::factory()->create(['masjid_id' => $this->masjid->id]);
+        $offering = Offering::factory()->forMasjid($this->masjid)->withRoster($group)->withCapacity(10)->create();
+        $plan = FeePlan::factory()->free()->create(['masjid_id' => $this->masjid->id, 'offering_id' => $offering->id]);
+
+        $guardian = $this->contact();
+        $childA = $this->contact();
+        $childB = $this->contact();
+        $this->assertLessThan($childB->id, $childA->id);
+
+        // Named in DESCENDING id order: the lock is ascending whatever order the form listed them in,
+        // so two registrations naming the same children queue; they cannot cross.
+        $seen = $this->statementsOf(fn () => $this->service->register(
+            $offering, $plan, $guardian, ['full_name' => 'Amal Yusuf'], [$childB, $childA]
+        ));
+
+        $locks = array_keys(array_filter($seen, fn ($q) => preg_match(self::CONTACT_LOCK, $q['sql']) === 1));
+        $this->assertCount(1, $locks, 'one statement locks every child');
+        $this->assertSame([$childA->id, $childB->id], array_map('intval', $seen[$locks[0]]['bindings']));
+
+        // The lock comes before the first "is this child already on the roster?" read, and no
+        // roster row is written before it.
+        $rosterTouches = array_keys(array_filter($seen, fn ($q) => str_contains($q['sql'], '"group_memberships"')));
+        $this->assertNotEmpty($rosterTouches);
+        $this->assertLessThan(min($rosterTouches), $locks[0]);
+
+        // And what it protects still happens: both children and both guardian entries are written.
+        $this->assertSame(4, GroupMembership::where('group_id', $group->id)->count());
+    }
+
+    #[Test]
+    public function a_registration_that_writes_no_roster_locks_no_contact(): void
+    {
+        // No roster on the offering: nothing to protect, so nothing is held.
+        [$offering] = $this->makeOffering();
+        $plan = FeePlan::factory()->free()->create(['masjid_id' => $this->masjid->id, 'offering_id' => $offering->id]);
+
+        $seen = $this->statementsOf(fn () => $this->service->register(
+            $offering, $plan, $this->contact(), ['full_name' => 'Amal Yusuf'], [$this->contact()]
+        ));
+
+        $this->assertSame([], array_filter($seen, fn ($q) => preg_match(self::CONTACT_LOCK, $q['sql']) === 1));
+    }
+
+    #[Test]
+    public function the_lock_is_a_row_lock_on_contacts_and_the_roster_checks_are_ordinary_reads(): void
+    {
+        $source = (string) file_get_contents(app_path('Services/Registrations/RegistrationService.php'));
+
+        $lock = substr($source, (int) strpos($source, 'private function lockRosterSubjects('));
+        $lock = substr($lock, 0, (int) strpos($lock, "\n    }\n"));
+        $this->assertStringContainsString("DB::table('contacts')", $lock);
+        $this->assertStringContainsString('->lockForUpdate()', $lock);
+        $this->assertStringContainsString("->orderBy('id')", $lock);
+
+        // The two duplicate checks must stay ORDINARY reads. A locking read on the roster's index
+        // is a range lock (the index is not unique for a student's row), and two families
+        // registering different children into one class would deadlock each other.
+        $writer = substr($source, (int) strpos($source, 'private function writeRosterMemberships('));
+        $writer = substr($writer, 0, (int) strpos($writer, 'private function lockRosterSubjects('));
+        $code = (string) preg_replace('#^\\s*(//|\\*|/\\*).*$#m', '', $writer);
+        $this->assertStringNotContainsString('lockForUpdate', $code);
+        $this->assertStringNotContainsString('sharedLock', $code);
+        $this->assertSame(1, substr_count($code, '$this->lockRosterSubjects('));
+        $this->assertLessThan(strpos($code, '->exists()'), strpos($code, '$this->lockRosterSubjects('));
     }
 
     #[Test]
