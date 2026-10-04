@@ -563,6 +563,26 @@ class StudentBirthDateTest extends TestCase
         $response->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
     }
 
+    /** A deleted contact's rows read no date anywhere (no age, and the form answers 404), so a second class row withholds nothing. */
+    #[Test]
+    public function a_deleted_contact_with_another_class_row_is_still_offered_the_clear(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        $next = $this->makeGroup(Group::KIND_CLASS, 'Grade Three');
+        $there = $this->enrol($next, $this->child, GroupMembership::ROLE_MEMBER);
+        $this->child->delete();
+
+        // What the sentence would have promised is not there: the other roster cannot open the date.
+        $this->getJson($this->birthDateUrl($next, $there))->assertNotFound();
+
+        $response = $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk();
+
+        $this->assertStringEndsWith('Their date of birth is still on their record.', $response->json('message'));
+        $this->assertStringNotContainsString('still listed in', $response->json('message'));
+        $response->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
     /** The office deleted the person in the Member Directory first: the roster row is still there, and so is the date. */
     #[Test]
     public function removing_the_row_of_a_contact_the_office_deleted_still_says_a_date_is_held(): void

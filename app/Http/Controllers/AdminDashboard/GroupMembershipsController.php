@@ -788,13 +788,17 @@ class GroupMembershipsController extends Controller
 
         $contact = Contact::withTrashed()
             ->whereKey($membership->contact_id)
-            ->first(['id', 'masjid_id', StudentAge::COLUMN]);
+            ->first(['id', 'masjid_id', 'deleted_at', StudentAge::COLUMN]);
 
         if (! $contact || ! $contact->holdsDateOfBirth()) {
             return null;
         }
 
-        $stillIn = $this->classesStillListing($membership);
+        // A contact deleted in the Member Directory keeps its roster rows, but
+        // no roster reads its date: the row shows no age and the date form
+        // answers 404. So no class "still uses" it, whatever rows remain, and
+        // the clear is offered.
+        $stillIn = $contact->trashed() ? [] : $this->classesStillListing($membership);
 
         return [
             'message' => $stillIn === []
