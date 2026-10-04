@@ -459,7 +459,10 @@ export const useGroupsStore = defineStore('groupsStore', () => {
      * The same removal, with what else the server said about it. Today that is
      * one thing: the removed student's contact still holds a date of birth
      * (it is kept on the contact, so it outlives the roster row), named by
-     * contact so the screen can offer to remove it too.
+     * contact so the screen can offer to remove it too. The server names the
+     * contact ONLY when no class lists the student any more; while another
+     * class still shows their age from that date its sentence says which, and
+     * `birthDateContactId` is null, so nothing is offered.
      */
     async function removeMembershipAnswer(
         groupId: number | string,

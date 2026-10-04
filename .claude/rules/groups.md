@@ -402,10 +402,18 @@ panel itself still makes no request and holds none of their logic:
 | `#birth-date` | `StudentBirthDateForm.vue` (which asks the server, and draws nothing for a login that may not see the date) | a class; also for a student who has left, so a date can still be removed |
 | `#move` | the Move button | a class, role `member`, no leaving date |
 
-"Is this a class" is the server's `meta.teaches_students` in all three, never a
-kind compared in the browser. Move and "Left the class" from the panel shut it
-first: one dialog at a time. A saved or removed date patches `age` on the row
-in place from the server's answer; the roster is not re-read.
+"Is this a class" is the server's `meta.teaches_students` for the panel's slots
+and the roster's columns, never a kind compared in the browser. (Three other
+places in the browser DO compare kind `class` and are listed on
+`Group::teachesStudents()`: the Move dialog's class list, its `kind=class`
+query, and the teacher's student sheet. Widening "what is a class" means
+changing those too.) Move and "Left the class" from the panel shut it first:
+one dialog at a time. A saved or removed date patches `age` on the row in place
+from the server's answer; the roster is not re-read. The form is handed a
+FUNCTION (`:after-change`), not listened to with an event, and the row is found
+by its id: the panel can be closed while a save is on its way, which unmounts
+the form, and Vue drops an emit from a component that is gone, so the date was
+saved and the row went on showing a dash.
 
 A slotted form CAN take the focused control away (the date form turns its Save
 button off while it saves), which is the same fault as the disabled Grade

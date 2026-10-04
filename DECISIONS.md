@@ -7635,3 +7635,46 @@ Verified: the SPA suite, the PHP suites of the three slices and their neighbours
 (SQLite), a build, and a walk in a browser on a throwaway local instance with
 invented people (desktop and 375px). NOT run here: `tests/Mysql`, `tests/MysqlLocks`
 (CI only), and nothing on staging or production.
+
+## 2026-10-04 — The roster features, review fold: Remove offers the date clear only when no class is left, and the dialogs take the keyboard (branch feat/roster-features)
+
+Decisions the findings forced, each with the alternative that was not taken:
+
+- **Remove offers to clear a date of birth only when no class lists the student any
+  more.** "Lists" is any `member` row of theirs in a class that still exists, current
+  or marked as left: that roster shows the age and holds the date form, so the date is
+  one tap away there. In that case the server's sentence names the class and sends no
+  `data.birth_date`, and the screen shows the sentence with a plain OK. This is the
+  ordinary case after a move, whose own answer invites the office to remove the empty
+  old entry; the offer there wiped the age of a current student. Not taken: keeping the
+  key and adding a flag (a screen that ignored the flag would offer the clear again),
+  and counting only current rows (a row marked as left still shows the age).
+- **A failed clear is offered again** ("Try again" / "Leave it"), because it is offered
+  only when no roster is left to remove the date from. NOT built: a date-of-birth
+  control in the Member Directory for a person who is in no class. The clear route
+  works for any contact id, but once the offer is dismissed no screen sends it. Said in
+  the rules as a known gap; it needs a decision on whether the directory may say that a
+  date is held.
+- **A student whose contact was deleted in the Member Directory can still be moved**,
+  as the preview already said. The move's contact lock is a mutex and is now taken on
+  the row whether or not it is deleted. Not taken: refusing the move in `decide()` with
+  its own sentence. The smaller change, and the roster row is real either way.
+- **The date form tells the roster through a function prop (`afterChange`), by roster
+  row id**, not through an emit: Vue drops an emit from an unmounted component, so a
+  date saved just before the panel was closed never reached its row.
+- **Put back and Move take the keyboard**: focus goes into the dialog on mount, Escape
+  and Tab are heard on the document, the result's OK is focused after a move, and the
+  button that opened the dialog gets focus back. Written in each dialog, as
+  `TeacherStudentSheet.vue` does, not as a shared helper.
+- **"What is a class" in the browser**: the office roster follows the server's
+  `meta.teaches_students`, but the Move dialog's class list and the teacher's student
+  sheet compare kind `class` themselves. Not changed; the docblock on
+  `Group::teachesStudents()` and the rules now name the three places instead of
+  promising a one-line change.
+
+Found by the first MySQL run of this branch (CI run 37233553614), beyond the reviews:
+every test in `tests/Mysql/RosterMoveMysqlTest.php` that moved a student, and one in
+`tests/MysqlLocks`, read a protected property of the test from outside it ("Cannot
+access protected property"). Both files now hand the values in. Checked by running a
+copy of the first file on SQLite, where its fifteen move tests pass; the two files
+themselves still run only on the MySQL job.

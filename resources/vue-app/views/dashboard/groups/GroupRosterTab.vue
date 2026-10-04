@@ -716,7 +716,7 @@
                     :group-id="groupId"
                     :membership-id="student.id"
                     :contact-id="student.contact_id"
-                    @changed="onBirthDateChanged(student, $event)"
+                    :after-change="onBirthDateChanged"
                 />
             </template>
             <template #move="{ student }">
@@ -877,9 +877,14 @@ const moveFromPanel = (membership: GroupMembership) => {
  * A date of birth was saved or removed in the panel. The server's answer carries
  * the new age, so the row is patched in place, as the grade is: a re-read of the
  * whole roster would cost the office its place for the sake of one number.
+ *
+ * Handed to the form as a FUNCTION, and the row is found by its id: the answer
+ * can arrive after the panel was closed or moved on to another student, and the
+ * age it carries still belongs on the row it was saved for.
  */
-const onBirthDateChanged = (membership: GroupMembership, change: { age: number | null }) => {
-    membership.age = change.age ?? null;
+const onBirthDateChanged = (change: { membershipId: number | string; age: number | null }) => {
+    const row = props.memberships.find((m) => m.id === Number(change.membershipId));
+    if (row) row.age = change.age ?? null;
 };
 
 /**
@@ -1596,24 +1601,37 @@ const runConfirm = async (rows: { id: number; fingerprint: string }[], contested
 /**
  * Remove the date of birth a removed student's record still holds. By contact:
  * the server never refuses this, whether or not a roster row is left.
+ *
+ * A FAILURE OFFERS THE SAME THING AGAIN. This is offered only when no class
+ * lists the student any more, so there is no roster left to remove the date
+ * from: an error with a lone OK would leave it on the record with no screen
+ * that reaches it. "Try again" repeats the request until it succeeds or the
+ * office chooses to leave it.
  */
 const clearBirthDate = async (contactId: number) => {
-    try {
-        const res: AxiosResponse = await ApiService.delete(
-            `/api/admin/masjids/${masjidId.value}/contacts/${contactId}/birth-date` as BackendApiRoute
-        );
-        Swal.fire({
-            icon: 'success',
-            title: res.data?.message ?? 'Date of birth removed.',
-            timer: 1800,
-            showConfirmButton: false,
-        });
-    } catch (error) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Could not remove the date of birth',
-            text: apiErrorText(error, 'The date of birth could not be removed.'),
-        });
+    for (;;) {
+        try {
+            const res: AxiosResponse = await ApiService.delete(
+                `/api/admin/masjids/${masjidId.value}/contacts/${contactId}/birth-date` as BackendApiRoute
+            );
+            Swal.fire({
+                icon: 'success',
+                title: res.data?.message ?? 'Date of birth removed.',
+                timer: 1800,
+                showConfirmButton: false,
+            });
+            return;
+        } catch (error) {
+            const again = await Swal.fire({
+                icon: 'error',
+                title: 'Could not remove the date of birth',
+                text: `${apiErrorText(error, 'The date of birth could not be removed.')} It is still on their record.`,
+                confirmButtonText: 'Try again',
+                showCancelButton: true,
+                cancelButtonText: 'Leave it',
+            });
+            if (!again?.isConfirmed) return;
+        }
     }
 };
 
@@ -1647,9 +1665,13 @@ const confirmRemove = async (membership: GroupMembership) => {
         const more = (said ?? '').replace(/^Removed from the roster\.?\s*/, '');
         if (answer?.birthDateContactId) {
             // A DATE OF BIRTH OUTLIVES THE ROW. It is kept on the student's
-            // record, not on this class, so the server says it is still there
-            // and the clear is offered here: after this row is gone no roster
-            // may be left to remove it from.
+            // record, not on this class, so the server says it is still there.
+            // The server names the contact ONLY when no class lists the student
+            // any more: then no roster is left to remove the date from, and the
+            // clear is offered here. While another class still shows their age
+            // from it (the ordinary case after a move) the server's sentence
+            // says which class, no contact is named, and the branch below shows
+            // the sentence with a plain OK.
             const choice = await Swal.fire({
                 icon: 'success',
                 title: 'Removed',

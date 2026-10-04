@@ -3,10 +3,18 @@
 
     SELF-CONTAINED on purpose. It talks to its own three endpoints and keeps no
     state in any store, so the Student details panel mounts it with four ids and
-    listens for `changed`:
+    one function:
 
         <StudentBirthDateForm :masjid-id="…" :group-id="…" :membership-id="…" :contact-id="…"
-                              @changed="reloadRoster" />
+                              :after-change="patchTheRow" />
+
+    `afterChange` is A FUNCTION, NOT AN EVENT, on purpose. The panel can be
+    closed (or moved to another student) while a save is still on its way, which
+    unmounts this form, and Vue drops an emit from a component that is gone: the
+    server had saved the date and the roster row went on showing a dash until
+    the page was reloaded. A function handed in as a prop still runs. It is told
+    which roster row the answer is about, and the parent patches that row's age
+    in place; the roster is not read again.
 
     The roster list carries only the whole-number age. The date itself is read
     HERE, one student at a time, from `GET …/members/{id}/birth-date`, and this
@@ -30,7 +38,7 @@
 
         <div v-else-if="state === 'failed'" class="small" role="alert">
             <span class="text-danger">{{ loadError }}</span>
-            <button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline" @click="load">Try again</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-2" @click="load">Try again</button>
         </div>
 
         <template v-else>
@@ -43,11 +51,11 @@
                 <span v-else class="small text-muted">Not on file</span>
 
                 <template v-if="!confirmingRemove">
-                    <button type="button" class="btn btn-sm btn-outline-primary" :disabled="busy" @click="startEditing">
+                    <button ref="editButton" type="button" class="btn btn-sm btn-outline-primary" :disabled="busy" @click="startEditing">
                         {{ date ? 'Change' : 'Add date of birth' }}
                     </button>
                     <button v-if="date || unreadable" type="button" class="btn btn-sm btn-outline-danger"
-                            :disabled="busy" @click="confirmingRemove = true">
+                            :disabled="busy" @click="askToRemove">
                         Remove
                     </button>
                 </template>
@@ -59,7 +67,7 @@
                 <button type="button" class="btn btn-sm btn-danger" :disabled="busy" @click="remove">
                     {{ removing ? 'Removing…' : 'Yes, remove it' }}
                 </button>
-                <button type="button" class="btn btn-sm btn-light" :disabled="busy" @click="confirmingRemove = false">
+                <button ref="keepButton" type="button" class="btn btn-sm btn-light" :disabled="busy" @click="keepIt">
                     Keep it
                 </button>
             </div>
@@ -67,7 +75,7 @@
             <form v-if="editing" class="d-flex flex-wrap align-items-end gap-2" @submit.prevent="save">
                 <div>
                     <label class="visually-hidden" :for="inputId">Date of birth</label>
-                    <input :id="inputId" v-model="draft" type="date" class="form-control form-control-sm"
+                    <input :id="inputId" ref="dateInput" v-model="draft" type="date" class="form-control form-control-sm"
                            style="width: 11rem" :min="BIRTH_DATE_MIN" :max="max" :disabled="saving" required />
                 </div>
                 <button type="submit" class="btn btn-sm btn-primary" :disabled="saving">
@@ -90,10 +98,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { BIRTH_DATE_MIN, birthDateMax, birthDateProblem, birthDateWords } from '@/core/helpers/studentAge';
+
+/** What `afterChange` is told: the roster row the answer is about, and its new age. */
+interface BirthDateChange {
+    membershipId: number | string;
+    age: number | null;
+    held: boolean;
+}
 
 const props = defineProps<{
     masjidId: number | string;
@@ -102,15 +117,14 @@ const props = defineProps<{
     membershipId: number | string;
     /** The student's contact: what Remove names, because the date is kept on the contact. */
     contactId: number | string;
-}>();
-
-const emit = defineEmits<{
     /**
-     * A date was saved or removed. The roster's `age` for this student is now
-     * out of date, so the parent re-reads the list; `age` is the new number
-     * (or null) for a parent that wants to patch its own row meanwhile.
+     * A date was saved or removed, so the roster's `age` for this student is
+     * out of date. Called with the roster row the answer is about and the new
+     * number (or null), and the parent patches that row. A function and not an
+     * event: it must still run when this form was unmounted while the request
+     * was on its way (see the note at the top of this file).
      */
-    (e: 'changed', payload: { age: number | null; held: boolean }): void;
+    afterChange?: (change: BirthDateChange) => void;
 }>();
 
 type State = 'loading' | 'ready' | 'failed' | 'hidden';
@@ -184,16 +198,43 @@ const load = async () => {
     }
 };
 
+// WHERE THE KEYBOARD IS AFTER EACH STEP. Every step here takes away the button
+// that was just pressed ("Add date of birth" gives way to the field, "Remove" to
+// its question), and a browser then drops focus onto the page: the next Tab
+// would land on the panel's Close button instead of the thing just opened. So
+// each step says where focus goes next.
+const editButton = ref<HTMLButtonElement | null>(null);
+const keepButton = ref<HTMLButtonElement | null>(null);
+const dateInput = ref<HTMLInputElement | null>(null);
+
+const focusNext = async (target: () => HTMLElement | null) => {
+    await nextTick();
+    target()?.focus?.();
+};
+
 const startEditing = () => {
     draft.value = date.value ?? '';
     error.value = '';
     notice.value = '';
     editing.value = true;
+    focusNext(() => dateInput.value);
 };
 
 const cancelEditing = () => {
     editing.value = false;
     error.value = '';
+    focusNext(() => editButton.value);
+};
+
+const askToRemove = () => {
+    confirmingRemove.value = true;
+    // The safe answer, so Enter straight after a slip onto Remove keeps the date.
+    focusNext(() => keepButton.value);
+};
+
+const keepIt = () => {
+    confirmingRemove.value = false;
+    focusNext(() => editButton.value);
 };
 
 const save = async () => {
@@ -207,6 +248,10 @@ const save = async () => {
     }
 
     const mine = asked;
+    // Read now: by the time the answer arrives the panel may show another
+    // student, or be shut.
+    const tell = props.afterChange;
+    const membershipId = props.membershipId;
 
     saving.value = true;
     error.value = '';
@@ -214,12 +259,16 @@ const save = async () => {
 
     try {
         const res = await ApiService.put(rowUrl(), { date_of_birth: draft.value });
+
+        // THE ROSTER IS TOLD FIRST, whatever became of this form meanwhile:
+        // the server saved the date for that row.
+        tell?.({ membershipId, age: res.data?.data?.age ?? null, held: true });
         if (mine !== asked) return;
 
         show(res.data?.data);
         editing.value = false;
         notice.value = res.data?.message ?? 'Date of birth saved.';
-        emit('changed', { age: res.data?.data?.age ?? null, held: true });
+        focusNext(() => editButton.value);
     } catch (e) {
         if (mine !== asked) return;
 
@@ -234,6 +283,8 @@ const remove = async () => {
     if (busy.value) return;
 
     const mine = asked;
+    const tell = props.afterChange;
+    const membershipId = props.membershipId;
 
     removing.value = true;
     error.value = '';
@@ -241,13 +292,15 @@ const remove = async () => {
 
     try {
         const res = await ApiService.delete(contactUrl());
+
+        tell?.({ membershipId, age: null, held: false });
         if (mine !== asked) return;
 
         date.value = null;
         unreadable.value = false;
         confirmingRemove.value = false;
         notice.value = res.data?.message ?? 'Date of birth removed.';
-        emit('changed', { age: null, held: false });
+        focusNext(() => editButton.value);
     } catch (e) {
         if (mine !== asked) return;
 
@@ -260,3 +313,20 @@ const remove = async () => {
 onMounted(load);
 watch(() => [props.masjidId, props.groupId, props.membershipId, props.contactId], load);
 </script>
+
+<style scoped>
+/* The panel this sits in is full screen on a phone, and its other controls are
+   44px targets. These are the small button class for a mouse, and full height
+   for a finger. */
+@media (max-width: 575.98px), (pointer: coarse) {
+    .student-birth-date .btn,
+    .student-birth-date .form-control {
+        min-height: 44px;
+    }
+
+    .student-birth-date .btn {
+        display: inline-flex;
+        align-items: center;
+    }
+}
+</style>

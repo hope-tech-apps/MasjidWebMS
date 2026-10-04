@@ -37,7 +37,7 @@ import {
     withoutContactQuery,
     type RosterRow,
 } from '../core/helpers/studentDetails.ts';
-import { Node, click, deferred, flush, mountSfc } from './support/mountSfc.ts';
+import { Node, click, deferred, flush, loadTs, mountSfc } from './support/mountSfc.ts';
 
 const vue = createRequire(import.meta.url)('vue');
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8');
@@ -343,6 +343,9 @@ test('the Member Directory opens a linked record through the fetch-first path, n
     // The id comes from the address through the one parser, and is read once.
     assert.match(view, /let linkedContactId = contactIdFromQuery\(route\.query\[CONTACT_QUERY_KEY\]\);/);
     assert.match(view, /const id = linkedContactId;\s*linkedContactId = null;\s*openContactById\(id\);/);
+    // And it WAITS FOR THE ORGANISATION. On a reload this screen is drawn before the organisation is
+    // known, and a fetch sent with none reports a record that exists as one that could not be opened.
+    assert.match(view, /watch\(\(\) => masjidStore\.masjid\?\.id, \(masjidId\) => \{\s*if \(!masjidId \|\| linkedContactId === null\) return;/);
 });
 
 // =================================================================== the panel, mounted
@@ -528,7 +531,7 @@ test('panel: the mount points for Move and for the date of birth are named slots
 /** What the roster's server answer says about the group: a class, or not. */
 const CLASS_META = { teaches_students: true, move_note: null, school_today: '2026-10-04', group_name: 'Third Grade' };
 
-async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o: any) => Promise<any>; api?: any; store?: any } = {}) {
+async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o: any) => Promise<any>; api?: any; store?: any; onChanged?: () => void } = {}) {
     const panel: { student: any; memberships: any[]; emit: any } = { student: null, memberships: [], emit: null };
     // The panel, standing in: it records what it was given and draws the five mount points the
     // real one has, each handed the student, so what the roster puts in them is on the screen.
@@ -548,27 +551,56 @@ async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o:
         },
     };
     // The move dialog and the date form, standing in: each records the props it was mounted with.
-    const moveDialog: { membership: any } = { membership: null };
+    const moveDialog: { membership: any; emit: any } = { membership: null, emit: null };
     const moveStub = {
         props: ['groupId', 'groupName', 'membership', 'schoolToday'],
-        setup(props: any) {
+        emits: ['close', 'moved', 'reload', 'open-class'],
+        setup(props: any, { emit }: any) {
+            moveDialog.emit = emit;
             vue.onUnmounted(() => { moveDialog.membership = null; });
             return () => { moveDialog.membership = props.membership; return vue.h('div', { 'data-move-dialog': props.membership.id }); };
         },
     };
-    const birthForm: { props: any; emit: any } = { props: null, emit: null };
-    const birthStub = {
-        props: ['masjidId', 'groupId', 'membershipId', 'contactId'],
-        emits: ['changed'],
+    // The Put back dialog, standing in the same way: the row it was opened for, and its events.
+    const putBackDialog: { membership: any; groupId: any; emit: any } = { membership: null, groupId: null, emit: null };
+    const putBackStub = {
+        props: ['groupId', 'membership'],
+        emits: ['close', 'done', 'reload', 'open-class'],
         setup(props: any, { emit }: any) {
-            birthForm.emit = emit;
-            return () => { birthForm.props = { ...props }; return vue.h('div', { 'data-birth-form': props.membershipId }); };
+            putBackDialog.emit = emit;
+            vue.onUnmounted(() => { putBackDialog.membership = null; });
+            return () => {
+                putBackDialog.membership = props.membership;
+                putBackDialog.groupId = props.groupId;
+                return vue.h('div', { 'data-put-back-dialog': props.membership.id });
+            };
         },
     };
-    const store = { groupsMeta: null, pendingClaims: 0, contestedClaims: 0, rosterMeta: options.meta ?? null, ...(options.store ?? {}) };
+    // `afterChange` is the function the roster hands the form: kept apart, so a test can call it
+    // after the form is gone, as a slow save does.
+    const birthForm: { props: any; afterChange: any } = { props: null, afterChange: null };
+    const birthStub = {
+        props: ['masjidId', 'groupId', 'membershipId', 'contactId', 'afterChange'],
+        setup(props: any) {
+            return () => {
+                const { afterChange, ...ids } = props;
+                birthForm.props = { ...ids };
+                birthForm.afterChange = afterChange;
+                return vue.h('div', { 'data-birth-form': props.membershipId });
+            };
+        },
+    };
+    const rereads: any[] = [];
+    const store = {
+        groupsMeta: null, pendingClaims: 0, contestedClaims: 0, rosterMeta: options.meta ?? null,
+        refreshMemberships: async (groupId: any) => { rereads.push(groupId); },
+        ...(options.store ?? {}),
+    };
     const api = { put: async () => ({ data: { status: 'success' } }), get: async () => ({ data: { data: [] } }), ...(options.api ?? {}) };
 
-    const screen = await mountSfc('views/dashboard/groups/GroupRosterTab.vue', { groupId: CLASS, memberships, loading: false, loadError: '' }, {
+    const screen = await mountSfc('views/dashboard/groups/GroupRosterTab.vue', {
+        groupId: CLASS, memberships, loading: false, loadError: '', ...(options.onChanged ? { onChanged: options.onChanged } : {}),
+    }, {
         vue: vueInPlace,
         axios: {},
         'vue-router': { useRouter: () => ({ resolve: () => ({ href: '' }) }) },
@@ -577,7 +609,7 @@ async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o:
         '@/components/common/AvatarPicker.vue': { default: avatarStub },
         './StudentDetailsPanel.vue': { default: panelStub },
         './MoveStudentModal.vue': { default: moveStub },
-        './PutBackDialog.vue': { default: avatarStub },
+        './PutBackDialog.vue': { default: putBackStub },
         './StudentBirthDateForm.vue': { default: birthStub },
         '@/core/types/config/BackendApiRoutes': {},
         '@/core/types/data/masjid-related/Contact': {},
@@ -595,7 +627,7 @@ async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o:
     const nameButtons = () => screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Open student details');
     const slot = (name: string): Node | null => screen.all((n: Node) => n.props['data-slot'] === name)[0] ?? null;
 
-    return { screen, panel, nameButtons, slot, moveDialog, birthForm };
+    return { screen, panel, nameButtons, slot, moveDialog, putBackDialog, birthForm, rereads };
 }
 
 test('roster: a student\'s name is a button that opens their details; a teacher row\'s name is not', async () => {
@@ -733,13 +765,13 @@ test('roster: in a class the panel carries the age, the date-of-birth form for t
     assert.deepEqual(birthForm.props, { masjidId: 1, groupId: CLASS, membershipId: r.student.id, contactId: maryam.id });
 
     // A date was saved: the answer's age lands on the row, with no re-read of the roster.
-    birthForm.emit('changed', { age: 9, held: true });
+    birthForm.afterChange({ membershipId: r.student.id, age: 9, held: true });
     await flush();
     assert.equal(memberships[0].age, 9);
     assert.equal(slot('age')?.textContent, 'Age 9');
 
     // A date was removed: the age goes, and the line above the table counts the student again.
-    birthForm.emit('changed', { age: null, held: false });
+    birthForm.afterChange({ membershipId: r.student.id, age: null, held: false });
     await flush();
     assert.equal(memberships[0].age, null);
     assert.equal(slot('age')?.textContent, '');
@@ -754,6 +786,47 @@ test('roster: in a class the panel carries the age, the date-of-birth form for t
     await flush();
     assert.equal(panel.student, null);
     assert.equal(moveDialog.membership?.id, r.student.id);
+    screen.unmount();
+});
+
+test('roster: a date saved just before the panel was closed still lands on its row, and the missing-dates line drops the student', async () => {
+    const r = roster();
+    r.student.age = null;
+    r.sibling.age = 6;
+    const memberships = vue.reactive([...r.rows]);
+    const { screen, panel, nameButtons, birthForm } = await mountRoster(memberships, { meta: CLASS_META });
+    const ageCell = () => screen.all((n: Node) => n.tag === 'tr')[1].children.filter((c: Node) => c.tag === 'td')[3].textContent;
+
+    click(nameButtons()[0]);
+    await flush();
+    assert.equal(ageCell(), '—');
+    assert.match(screen.text(), /1 student has no date of birth on file/);
+
+    // Save, then Close (or Escape) before the answer: the form is unmounted with the panel...
+    const whenTheAnswerArrives = birthForm.afterChange;
+    panel.emit('close');
+    await flush();
+    assert.equal(panel.student, null);
+    assert.equal(screen.all((n: Node) => n.props['data-birth-form'] !== undefined).length, 0, 'the form is gone');
+
+    // ...and a quiet re-read replaced every row object meanwhile. The answer is for a roster ROW, by id.
+    const reloaded = roster();
+    reloaded.rows.forEach((fresh, i) => { fresh.id = r.rows[i].id; });
+    reloaded.student.age = null;
+    reloaded.sibling.age = 6;
+    memberships.splice(0, memberships.length, ...reloaded.rows);
+    await flush();
+
+    whenTheAnswerArrives({ membershipId: r.student.id, age: 9, held: true });
+    await flush();
+
+    assert.equal(ageCell(), '9', 'the row kept its dash after the date was saved');
+    assert.doesNotMatch(screen.text(), /no date of birth on file/);
+
+    // An answer about a row that is no longer on the roster changes nothing and throws nothing.
+    whenTheAnswerArrives({ membershipId: 999999, age: 4, held: true });
+    await flush();
+    assert.equal(ageCell(), '9');
     screen.unmount();
 });
 
@@ -880,6 +953,290 @@ test('roster: Remove with no date left behind offers nothing to clear', async ()
     assert.equal(asked[1].showDenyButton, undefined);
     assert.equal(asked[1].title, 'Removed');
     screen.unmount();
+});
+
+test('roster: Remove on a student who is still in another class shows the server\'s sentence and offers no clear', async () => {
+    // The ordinary case after a move: the empty old entry is tidied away, and the date of birth is
+    // what gives the age in the class the student is in now. The server names no contact then.
+    const sentence = 'Removed from the roster. Their date of birth is still on their record: they are still listed in '
+        + 'Fourth Grade, where it gives their age. It can be changed or removed from their details there.';
+    const r = roster();
+    const boxes: any[] = [];
+    const { screen } = await mountRoster(vue.reactive([r.sibling]), {
+        meta: CLASS_META,
+        store: { removeMembershipAnswer: async () => ({ message: sentence, birthDateContactId: null }) },
+        api: { delete: async () => { throw new Error('no DELETE is sent'); } },
+        swal: async (o: any) => { boxes.push(o); return o.title === 'Remove from roster?' ? { isConfirmed: true } : {}; },
+    });
+
+    click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Remove')[0]);
+    await flush();
+    await flush();
+
+    assert.equal(boxes.length, 2);
+    assert.equal(boxes[1].text, sentence);
+    assert.equal(boxes[1].showDenyButton, undefined, '"Remove the date of birth" was offered for a date another class uses');
+    assert.equal(boxes[1].timer, undefined, 'something to read does not close itself');
+    screen.unmount();
+});
+
+test('roster: Remove on a guardian entry shows where else the server says that adult is still listed, and waits for OK', async () => {
+    const sentence = 'Removed from the roster. Samira Testwood is still listed as a guardian of Maryam Testwood in 1 other class: '
+        + 'Fourth Grade. Remove those entries too if this person should no longer have access.';
+    const r = roster();
+    const boxes: any[] = [];
+    let changed = 0;
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), {
+        meta: CLASS_META,
+        onChanged: () => { changed += 1; },
+        store: { removeMembershipAnswer: async () => ({ message: sentence, birthDateContactId: null }) },
+        swal: async (o: any) => { boxes.push(o); return o.title === 'Remove from roster?' ? { isConfirmed: true } : {}; },
+    });
+
+    click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Remove').at(-1)!);
+    await flush();
+    await flush();
+
+    assert.equal(changed, 1, 'the roster is read again after a removal');
+    assert.equal(boxes.length, 2);
+    assert.deepEqual([boxes[1].title, boxes[1].text], ['Removed', sentence]);
+    assert.equal(boxes[1].timer, undefined, 'something to act on does not close itself');
+    assert.equal(boxes[1].showDenyButton, undefined);
+    screen.unmount();
+});
+
+test('roster: a clear that fails is offered again, until it works or the office leaves it', async () => {
+    // Offered only when no class lists the student any more, so no other screen reaches the date:
+    // an error with a lone OK would strand it on the record.
+    for (const second of ['works', 'left'] as const) {
+        const r = roster();
+        const boxes: any[] = [];
+        let deletes = 0;
+        const { screen } = await mountRoster(vue.reactive([r.sibling]), {
+            meta: CLASS_META,
+            store: { removeMembershipAnswer: async () => ({ message: 'Removed from the roster. Their date of birth is still on their record.', birthDateContactId: yahya.id }) },
+            api: {
+                delete: async () => {
+                    deletes += 1;
+                    if (deletes === 1) throw new Error('Network Error');
+                    return { data: { status: 'success', message: 'Date of birth removed.' } };
+                },
+            },
+            swal: async (o: any) => {
+                boxes.push(o);
+                if (o.title === 'Remove from roster?') return { isConfirmed: true };
+                if (o.denyButtonText) return { isDenied: true };
+                if (o.title === 'Could not remove the date of birth') return { isConfirmed: second === 'works' };
+                return {};
+            },
+        });
+
+        click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Remove')[0]);
+        await flush();
+        await flush();
+
+        const failure = boxes.find((o) => o.title === 'Could not remove the date of birth');
+        assert.equal(failure.confirmButtonText, 'Try again');
+        assert.equal(failure.showCancelButton, true);
+        assert.match(failure.text, /It is still on their record\.$/);
+        assert.equal(deletes, second === 'works' ? 2 : 1);
+        assert.equal(boxes.at(-1).title, second === 'works' ? 'Date of birth removed.' : 'Could not remove the date of birth');
+        screen.unmount();
+    }
+});
+
+// =================================================================== the roster: the rows of a move, and Put back
+//
+// The dialogs are tested mounted on their own (roster-move-mounted.test.ts). What is proved here is
+// that the roster screen opens them for the right row, and what it does when they finish.
+
+const movedOut = () => {
+    const r = roster();
+    Object.assign(r.student, {
+        left_on: '2026-10-01T00:00:00.000000Z', moved_on: '2026-10-02', moved_to_group_id: 9, moved_from_group_id: null,
+        moved_to: { id: 9, name: 'Fourth Grade', deleted_at: null },
+        moved_to_state: { student_there: 'current', guardians_not_vouched: [], open_group: { id: 9, name: 'Fourth Grade' } },
+    });
+
+    return r;
+};
+
+test('roster: Put back opens its dialog for that row, and when the dialog is done the roster is read again without a spinner', async () => {
+    const r = movedOut();
+    const boxes: any[] = [];
+    let changed = 0;
+    const { screen, putBackDialog, rereads } = await mountRoster(vue.reactive([...r.rows]), {
+        meta: CLASS_META,
+        onChanged: () => { changed += 1; },
+        swal: async (o: any) => { boxes.push(o); return {}; },
+    });
+    const dialogs = () => screen.all((n: Node) => n.props['data-put-back-dialog'] !== undefined).length;
+    const putBack = screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Put this student back on the roster');
+
+    assert.equal(putBack.length, 1, 'only the row that has left offers it');
+    assert.equal(dialogs(), 0);
+
+    click(putBack[0]);
+    await flush();
+    assert.equal(dialogs(), 1);
+    assert.deepEqual([putBackDialog.membership?.id, putBackDialog.groupId], [r.student.id, CLASS]);
+    assert.equal((globalThis as any).document.body.style.overflow, 'hidden', 'the page scrolls behind the dialog');
+    assert.deepEqual([rereads.length, boxes.length], [0, 0], 'opening the dialog sent or said something');
+
+    // Cancel: shut, and nothing else.
+    putBackDialog.emit('close');
+    await flush();
+    assert.equal(dialogs(), 0);
+    assert.equal((globalThis as any).document.body.style.overflow, '');
+    assert.equal(rereads.length, 0);
+
+    // Done: shut, the roster read again QUIETLY (the table is never swapped for a spinner), and said.
+    click(putBack[0]);
+    await flush();
+    putBackDialog.emit('done');
+    await flush();
+    assert.equal(dialogs(), 0);
+    assert.deepEqual(rereads, [CLASS]);
+    assert.equal(changed, 0, 'the page was asked for the reload that empties the table');
+    assert.deepEqual(boxes.map((o) => o.title), ['Back on the roster']);
+    screen.unmount();
+});
+
+test('roster: when the quiet re-read fails the ordinary reload is asked for, which says so', async () => {
+    const r = movedOut();
+    let changed = 0;
+    const { screen, putBackDialog } = await mountRoster(vue.reactive([...r.rows]), {
+        meta: CLASS_META,
+        onChanged: () => { changed += 1; },
+        store: { refreshMemberships: async () => { throw new Error('Network Error'); } },
+    });
+
+    click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Put this student back on the roster')[0]);
+    await flush();
+    putBackDialog.emit('reload');
+    await flush();
+
+    assert.equal(changed, 1);
+    assert.equal(screen.all((n: Node) => n.props['data-put-back-dialog'] !== undefined).length, 0);
+    screen.unmount();
+});
+
+test('roster: the row\'s Move button opens the move dialog for that student, and a finished move re-reads the roster quietly', async () => {
+    const r = roster();
+    const leader = row({ contact: person(30, 'Teacher', 'Row'), role: 'leader' });
+    const gone = row({ contact: person(31, 'Left', 'Already'), left_on: '2026-09-28T00:00:00.000000Z' });
+    let changed = 0;
+    const { screen, moveDialog, rereads } = await mountRoster(vue.reactive([...r.rows, leader, gone]), {
+        meta: CLASS_META, onChanged: () => { changed += 1; },
+    });
+    const moveButtons = () => screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Move this student to another class');
+
+    // The two current students. Not the teacher row, not the student who left.
+    assert.equal(moveButtons().length, 2);
+    assert.equal(moveButtons()[0].textContent, 'Move', 'a word as well as an icon: a tablet shows no tooltip');
+    assert.equal(moveDialog.membership, null);
+
+    click(moveButtons()[1]);
+    await flush();
+    assert.equal(moveDialog.membership?.id, r.sibling.id);
+    assert.equal((globalThis as any).document.body.style.overflow, 'hidden');
+
+    for (const event of ['moved', 'reload'] as const) {
+        if (!moveDialog.membership) { click(moveButtons()[1]); await flush(); }
+        moveDialog.emit(event);
+        await flush();
+        assert.equal(moveDialog.membership, null, `the dialog stayed up after "${event}"`);
+    }
+    assert.deepEqual(rereads, [CLASS, CLASS]);
+    assert.equal(changed, 0, 'the page was asked for the reload that empties the table');
+    assert.equal((globalThis as any).document.body.style.overflow, '');
+    screen.unmount();
+
+    // Outside a class nobody is moved.
+    const outside = await mountRoster(vue.reactive([...roster().rows]), { meta: { ...CLASS_META, teaches_students: false } });
+    assert.equal(outside.screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Move this student to another class').length, 0);
+    outside.screen.unmount();
+});
+
+test('roster: a row that was moved says so in the list, and guardians who came in with a student and have no consent are counted', async () => {
+    // Moved OUT and still there: the badge beside the name.
+    const away = movedOut();
+    const a = await mountRoster(vue.reactive([...away.rows]), { meta: CLASS_META });
+    const firstRow = (screen: any) => screen.all((n: Node) => n.tag === 'tr')[1].children.filter((c: Node) => c.tag === 'td')[0].textContent;
+    assert.match(firstRow(a.screen), /Moved to Fourth Grade 2 Oct 2026/);
+    assert.doesNotMatch(a.screen.text(), /no consent recorded here/);
+    a.screen.unmount();
+
+    // Moved IN: the note under the name, and the line above the table for its guardians without consent.
+    const arrived = roster();
+    Object.assign(arrived.student, {
+        moved_on: '2026-10-02', moved_from_group_id: 8, moved_to_group_id: null,
+        moved_from: { id: 8, name: 'Second Grade', deleted_at: null },
+    });
+    const without = arrived.rows.filter((m: any) => m.role === 'guardian' && m.guardian_of_contact_id === maryam.id
+        && m.provenance === 'confirmed' && !m.left_on && !m.consent_granted_at).length;
+    assert.ok(without > 0, 'the fixture has a confirmed, current guardian of the student with no consent');
+
+    const b = await mountRoster(vue.reactive([...arrived.rows]), { meta: CLASS_META });
+    assert.match(firstRow(b.screen), /Moved from Second Grade 2 Oct 2026/);
+    assert.match(b.screen.text(), new RegExp(`${without} guardians? of students who moved into this class ha(s|ve) no consent recorded here\\. `
+        + 'They receive nothing from the class story until it is recorded\\.'));
+    b.screen.unmount();
+});
+
+test('roster: a school is told, in the server\'s words, when a group holding students is not a class', async () => {
+    const note = 'Move, ages and dates of birth are for classes. This group is set up as "Halaqa". Change its kind on the Classes page if it is a class.';
+    const { screen } = await mountRoster(vue.reactive([...roster().rows]), {
+        meta: { ...CLASS_META, teaches_students: false, move_note: note },
+    });
+    assert.match(screen.text(), new RegExp(note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    screen.unmount();
+
+    const none = await mountRoster(vue.reactive([...roster().rows]), { meta: CLASS_META });
+    assert.doesNotMatch(none.screen.text(), /are for classes/);
+    none.screen.unmount();
+});
+
+// =================================================================== the store: what a roster read keeps
+
+test('store: a roster read keeps what the server said about the group, and the removal answer names a contact only when the server did', async () => {
+    const answers: any[] = [];
+    const api = {
+        get: async () => answers.shift(),
+        delete: async () => answers.shift(),
+    };
+    const { useGroupsStore } = await loadTs('stores/masjid/groupsStore.ts', {
+        vue,
+        pinia: { defineStore: (_id: string, setup: () => any) => { let store: any; return () => (store ??= vue.reactive(setup())); } },
+        '../masjidStore': { useMasjidStore: () => ({ masjid: { id: 1 } }) },
+        '@/core/services/ApiService': { default: api },
+        axios: {},
+        '@/core/types/config/BackendApiRoutes': {},
+        '@/core/types/data/interfaces/PaginatedData': {},
+        '@/core/types/data/masjid-related/Group': {},
+    });
+    const store = useGroupsStore();
+    const meta = { ...CLASS_META, pending_claims: 2, contested_claims: 1 };
+
+    // This one assignment switches Move, the Age column and the date form on for the whole screen.
+    answers.push({ data: { status: 'success', data: [{ id: 5 }], meta } });
+    await store.refreshMemberships(CLASS);
+    assert.deepEqual(vue.toRaw(store.rosterMeta), meta);
+    assert.deepEqual([store.memberships.length, store.pendingClaims, store.contestedClaims], [1, 2, 1]);
+
+    // An answer with no `teaches_students` (an older server) is "not known", never a guess.
+    answers.push({ data: { status: 'success', data: [], meta: { pending_claims: 0 } } });
+    await store.refreshMemberships(CLASS);
+    assert.equal(store.rosterMeta, null);
+
+    // Remove: the clear is offered only for a contact the server named.
+    answers.push({ data: { status: 'success', message: 'Removed from the roster. Their date of birth is still on their record.',
+        data: { birth_date: { held: true, contact_id: 44 } } } });
+    assert.deepEqual(await store.removeMembershipAnswer(CLASS, 5), {
+        message: 'Removed from the roster. Their date of birth is still on their record.', birthDateContactId: 44,
+    });
+    answers.push({ data: { status: 'success', message: 'Removed from the roster. Their date of birth is still on their record: they are still listed in Fourth Grade, where it gives their age.', data: {} } });
+    assert.equal((await store.removeMembershipAnswer(CLASS, 5))?.birthDateContactId, null);
 });
 
 test('panel: a key pressed after focus fell out of the panel still closes it, and Tab comes back in', () => {

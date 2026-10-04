@@ -122,8 +122,17 @@ class Group extends Model
      * and nobody else: moving a student to another class (App\Support\RosterMove),
      * a date of birth and the age on a roster (App\Support\StudentAge), and,
      * with them, what the office roster offers. Read through `kind()`, so an
-     * unrecognised stored kind is not a class. Widening this to another kind
-     * (a ḥalaqa, say) is a one-line change made here and nowhere else.
+     * unrecognised stored kind is not a class.
+     *
+     * WIDENING THIS to another kind (a ḥalaqa, say) is this line ON THE SERVER,
+     * and the office roster follows by itself: it reads `meta.teaches_students`.
+     * Three places in the browser still compare the kind `class` themselves and
+     * must change with it, or the server would allow what the screens do not
+     * offer: the Move dialog's list of classes (`classOptions` in
+     * core/helpers/rosterMove.ts, and the `kind=class` query in
+     * groupsStore.fetchClassesForMove), and the teacher's student sheet
+     * (`:is-class` in TeacherClass.vue), which would show no age line beside a
+     * row that shows an age.
      */
     public function teachesStudents(): bool
     {

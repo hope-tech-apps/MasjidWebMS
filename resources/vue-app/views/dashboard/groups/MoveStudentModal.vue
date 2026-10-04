@@ -1,14 +1,14 @@
 <template>
-    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
+    <div ref="root" class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
          role="dialog" aria-modal="true" aria-labelledby="move-student-title"
-         @click.self="cancel" @keydown.esc="cancel">
+         @click.self="cancel">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 id="move-student-title" class="modal-title">
                         <i class="bi bi-arrow-right-circle me-2"></i> Move to another class
                     </h5>
-                    <button type="button" class="btn-close" aria-label="Close" :disabled="saving" @click="cancel"></button>
+                    <button ref="closeButton" type="button" class="btn-close" aria-label="Close" :disabled="saving" @click="cancel"></button>
                 </div>
 
                 <!-- AFTER THE MOVE: the server's own lines, and they stay until
@@ -21,7 +21,7 @@
                         </ul>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-primary" @click="finish">OK</button>
+                        <button ref="okButton" type="button" class="btn btn-primary" @click="finish">OK</button>
                     </div>
                 </template>
 
@@ -71,7 +71,14 @@
                         <div v-if="form.toGroupId" class="border rounded p-3 bg-light" aria-live="polite">
                             <div class="fw-semibold mb-2">What will happen</div>
 
-                            <div v-if="previewState === 'checking'" class="text-muted">Checking…</div>
+                            <!-- A class is chosen and the day was cleared: say what
+                                 is missing, or the box is a heading over nothing
+                                 beside a Move button that is off for no stated reason. -->
+                            <div v-if="previewState === 'idle'" class="text-muted">
+                                Choose the first day in the new class.
+                            </div>
+
+                            <div v-else-if="previewState === 'checking'" class="text-muted">Checking…</div>
 
                             <div v-else-if="previewState === 'failed'" class="text-danger" role="alert">
                                 <i class="bi bi-exclamation-triangle me-1"></i> {{ previewError }}
@@ -136,10 +143,11 @@
  * No Teleport in here. The roster tab wraps this in one; mounted on its own it can be driven by
  * the suite (tests/roster-move-mounted.test.ts).
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { GroupMembership, MovePreview } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { trapTab } from '@/core/helpers/focusTrap';
 import { classOptions, fullName, moveBody } from '@/core/helpers/rosterMove';
 
 const props = defineProps<{
@@ -242,7 +250,15 @@ const check = async () => {
     }
 };
 
-watch([() => form.value.toGroupId, () => form.value.movedOn], () => check());
+watch([() => form.value.toGroupId, () => form.value.movedOn], () => {
+    // A refusal from the save was about the class and the day chosen THEN. Left
+    // on screen under the lines for a new choice, the dialog would say the move
+    // can happen and that it was refused, at once. (Cleared here and not in
+    // check(): save() calls check() straight after it sets the refusal.)
+    saveError.value = '';
+    saveOpenGroup.value = null;
+    check();
+});
 
 // A class that has ended by the chosen day drops off the list; so does the choice.
 watch(options, (list) => {
@@ -301,8 +317,51 @@ const finish = () => emit('moved');
 const reloadRoster = () => emit('reload');
 const openClass = (groupId: number) => emit('open-class', groupId);
 
+// THE KEYBOARD COMES INTO THE DIALOG AND STAYS IN IT, as in PutBackDialog: the
+// dialog is teleported to <body>, so Escape and Tab are heard on the DOCUMENT,
+// and focus is put on something inside at every point where the focused control
+// goes away (there is no class picker when the list failed or is empty; the
+// Move button is replaced by the result and its OK).
+const root = ref<HTMLElement | null>(null);
+const closeButton = ref<HTMLButtonElement | null>(null);
+const okButton = ref<HTMLButtonElement | null>(null);
+let opener: HTMLElement | null = null;
+let open = true;
+
+const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+        cancel();   // Cancel before the move, OK after it; neither while it saves
+        return;
+    }
+
+    trapTab(event, root.value);
+};
+
+// The result has replaced the form: the office reads it and presses OK.
+watch(done, async (lines) => {
+    if (!lines) return;
+
+    await nextTick();
+    okButton.value?.focus();
+});
+
 onMounted(async () => {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.addEventListener('keydown', onKeydown);
+    // Inside from the first frame, while the classes load.
+    closeButton.value?.focus();
+
     await loadClasses();
-    document.getElementById('move-to-class')?.focus();
+    await nextTick();
+    // The class picker when there is one; otherwise focus stays on Close.
+    if (open) document.getElementById('move-to-class')?.focus();
+});
+
+onBeforeUnmount(() => {
+    open = false;
+    document.removeEventListener('keydown', onKeydown);
+    // After a move the row is redrawn without its Move button; then there is
+    // nothing to go back to.
+    if (opener && document.contains(opener)) opener.focus();
 });
 </script>

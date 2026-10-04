@@ -10,7 +10,37 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as ApiErrors from '../core/services/ApiErrors.ts';
 import * as rosterMove from '../core/helpers/rosterMove.ts';
-import { click, deferred, flush, httpError, mountSfc, press, submit, type } from './support/mountSfc.ts';
+import { click, deferred, flush, httpError, mountSfc, Node, press, submit, type } from './support/mountSfc.ts';
+
+// BOTH DIALOGS LISTEN FOR KEYS ON THE DOCUMENT and hand focus back to whatever opened them.
+// mountSfc's document has no events and no tree to ask "is this still on the page", so this file
+// gives it both: the keydown listeners a dialog adds are kept here and a test presses a key by
+// calling them; `onPage` is what `document.contains` answers from.
+(globalThis as any).HTMLElement ??= Node;
+const documentKeydown = new Set<(e: any) => void>();
+const onPage = new Set<any>();
+const doc = (globalThis as any).document;
+doc.addEventListener = (name: string, fn: (e: any) => void) => { if (name === 'keydown') documentKeydown.add(fn); };
+doc.removeEventListener = (name: string, fn: (e: any) => void) => { if (name === 'keydown') documentKeydown.delete(fn); };
+doc.contains = (node: any) => onPage.has(node);
+const pressKey = (key: string) => [...documentKeydown].forEach((fn) => fn({ key, shiftKey: false, preventDefault() {} }));
+
+/** What has focus, by what it is (the harness hands a ref a wrapped node, so not by identity). */
+const focused = (): string => {
+    const el = doc.activeElement;
+    if (!el) return 'nothing';
+
+    return el.props?.id ? `#${el.props.id}` : el.props?.['aria-label'] ? `[${el.props['aria-label']}]` : `${el.tag} ${el.textContent.trim()}`;
+};
+
+/** A button on the page behind the dialog, holding focus: what the office pressed to open it. */
+const openerButton = () => {
+    const opener = new Node('el', 'button');
+    onPage.add(opener);
+    opener.focus();
+
+    return opener;
+};
 
 const child = { id: 10, role: 'member', contact_id: 100, guardian_of_contact_id: null, left_on: null, grade_label: '1st',
     provenance: 'confirmed', contact: { first_name: 'Maryam', last_name: 'Student' } };
@@ -43,6 +73,7 @@ function fakeStore(over: Record<string, any> = {}) {
 const modules = (store: any) => ({
     '@/stores/masjid/groupsStore': { useGroupsStore: () => store },
     '@/core/services/ApiErrors': ApiErrors,
+    '@/core/helpers/focusTrap': { trapTab: () => {} },
     '@/core/helpers/rosterMove': rosterMove,
 });
 
@@ -203,6 +234,104 @@ test('move: a check that cannot be made says which kind, and never turns the but
     third.unmount();
 });
 
+test('move: the keyboard comes into the dialog, Escape closes it from wherever focus is, and the opener gets focus back', async () => {
+    const opener = openerButton();
+    let closed = 0;
+    const { store } = fakeStore();
+    const screen = await mountMove(store, { onClose: () => { closed += 1; } });
+
+    // Focus was on a row button behind the backdrop; it is on the class picker now.
+    assert.equal(focused(), '#move-to-class');
+
+    // Escape is heard on the document: it works although no key ever reached the dialog's own element.
+    assert.equal(documentKeydown.size, 1);
+    pressKey('Escape');
+    assert.equal(closed, 1);
+
+    screen.unmount();
+    assert.equal(documentKeydown.size, 0, 'the dialog left its key listener on the document');
+    assert.equal(doc.activeElement, opener, 'focus did not go back to the button that opened the dialog');
+    onPage.clear();
+});
+
+test('move: with no class picker to focus (the list failed, or there is no other class) focus is still inside, on Close', async () => {
+    for (const classesAnswer of [() => Promise.reject(new Error('offline')), async () => [classes[0]]]) {
+        openerButton();
+        let closed = 0;
+        const { store } = fakeStore({ classes: classesAnswer });
+        const screen = await mountMove(store, { onClose: () => { closed += 1; } });
+
+        assert.equal(focused(), '[Close]');
+        pressKey('Escape');
+        assert.equal(closed, 1);
+        screen.unmount();
+        onPage.clear();
+    }
+});
+
+test('move: Escape does nothing while the move saves; afterwards OK has the focus and Escape is OK', async () => {
+    const answer = deferred<string[]>();
+    let closed = 0;
+    let moved = 0;
+    const { store } = fakeStore({ move: () => answer.promise });
+    const screen = await mountMove(store, { onClose: () => { closed += 1; }, onMoved: () => { moved += 1; } });
+
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+    pressKey('Escape');
+    assert.deepEqual([closed, moved], [0, 0], 'Escape left the dialog while the move was being saved');
+
+    // The form, and the Move button that had focus, are replaced by the result.
+    answer.resolve(['Maryam Student is now in 2nd Grade.']);
+    await flush();
+    assert.equal(focused(), 'button OK');
+
+    pressKey('Escape');
+    assert.deepEqual([closed, moved], [0, 1]);
+    screen.unmount();
+});
+
+test('move: with the first day cleared the box says a day is needed, and nothing is asked of the server', async () => {
+    const { store, count } = fakeStore();
+    const screen = await mountMove(store);
+    assert.equal(count('preview'), 1);
+
+    // The date picker's Clear, or Backspace: the field is empty.
+    type(screen.all((n) => n.tag === 'input' && n.props.id === 'move-first-day')[0], '');
+    await flush();
+
+    assert.match(screen.text(), /What will happen Choose the first day in the new class\./);
+    assert.doesNotMatch(screen.text(), /They start fresh in 2nd Grade\./);
+    assert.equal(screen.button('Move to 2nd Grade').disabled, true);
+    assert.equal(count('preview'), 1);
+    screen.unmount();
+});
+
+test('move: a refusal from the save is taken down when the office makes another choice', async () => {
+    const { store, count } = fakeStore({
+        move: () => Promise.reject(httpError(409, { status: 'error',
+            message: 'Maryam Student is already in 2nd Grade. Nothing was moved.', open_group: { id: 2, name: '2nd Grade' } })),
+    });
+    const screen = await mountMove(store);
+
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+    assert.match(screen.text(), /Maryam Student is already in 2nd Grade\. Nothing was moved\./);
+    assert.ok(screen.button('Open 2nd Grade'));
+
+    // Another day (the same watcher hears another class): the lines below are for the new choice,
+    // and the refusal about the old one is gone, with its button.
+    type(screen.all((n) => n.tag === 'input' && n.props.id === 'move-first-day')[0], '2026-10-03');
+    await flush();
+
+    assert.equal(count('preview'), 3);
+    assert.match(screen.text(), /They start fresh in 2nd Grade\./);
+    assert.doesNotMatch(screen.text(), /already in 2nd Grade/);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.includes('Open 2nd Grade')).length, 0);
+    assert.equal(screen.button('Move to 2nd Grade').disabled, false);
+    screen.unmount();
+});
+
 // ------------------------------------------------------------------ Put back
 
 const gamal = { id: 21, role: 'guardian', contact_id: 201, guardian_of_contact_id: 100, left_on: '2026-10-03', provenance: 'confirmed',
@@ -306,4 +435,32 @@ test('put back: a row that simply left keeps the confirmation it always had', as
     await flush();
     assert.equal(count('putBack'), 1);
     screen.unmount();
+});
+
+test('put back: the keyboard comes into the dialog, Escape is Cancel and waits for a save, and the opener gets focus back', async () => {
+    const opener = openerButton();
+    const answer = deferred();
+    let closed = 0;
+    const left = { ...child, left_on: '2026-09-20' };
+    const { store, count } = fakeStore({ readRoster: async () => ({ rows: [left], meta: {} }), putBack: () => answer.promise });
+    const screen = await mountPutBack(store, left, { onClose: () => { closed += 1; } });
+
+    // The green button in the row had focus, behind the backdrop. Now Close has it.
+    assert.equal(focused(), '[Close]');
+
+    click(screen.button('Yes, put them back'));
+    await flush();
+    pressKey('Escape');
+    assert.equal(closed, 0, 'Escape closed the dialog while the undo was being saved');
+
+    answer.reject(httpError(500, {}));
+    await flush();
+    pressKey('Escape');
+    assert.equal(closed, 1);
+    assert.equal(count('putBack'), 1);
+
+    screen.unmount();
+    assert.equal(documentKeydown.size, 0, 'the dialog left its key listener on the document');
+    assert.equal(doc.activeElement, opener);
+    onPage.clear();
 });

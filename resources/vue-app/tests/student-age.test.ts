@@ -142,7 +142,8 @@ async function mountForm(api: any, props: Record<string, any> = {}) {
     const changed: any[] = [];
     const screen = await mountSfc('views/dashboard/groups/StudentBirthDateForm.vue', {
         masjidId: 4, groupId: 9, membershipId: 12, contactId: 3,
-        onChanged: (payload: any) => changed.push(payload),
+        // A function prop, not a listener: it has to run after the form is gone too.
+        afterChange: (payload: any) => changed.push(payload),
         ...props,
     }, {
         '@/core/services/ApiService': { default: api },
@@ -231,7 +232,7 @@ test('form: saving sends one PUT with the day, says it was saved, and tells the 
     assert.deepEqual(calls.filter((c) => c.verb === 'put'), [{ verb: 'put', url: ROW_URL, body: { date_of_birth: '2017-03-09' } }]);
     assert.match(screen.text(), /March 9, 2017/);
     assert.match(screen.text(), /Date of birth saved\./);
-    assert.deepEqual(changed, [{ age: 9, held: true }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
     assert.equal(screen.all((n: any) => n.tag === 'form').length, 0, 'the form closed');
 });
 
@@ -259,7 +260,103 @@ test('form: a second tap while the first save is on its way sends nothing more',
     pending.resolve(ok(answer({ date_of_birth: '2017-03-09', age: 9 }), 'Date of birth saved.'));
     await flush();
 
-    assert.deepEqual(changed, [{ age: 9, held: true }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
+});
+
+test('form: a date saved after the panel was closed still reaches the roster row it was saved for', async () => {
+    // A slow connection: Save, then the panel is closed (or Escape) straight away. That unmounts
+    // the form, and an emit from an unmounted component is dropped, so the server had the date and
+    // the row kept its dash. The roster is told through a function, which still runs.
+    const pending = deferred();
+    const { api } = officeApi({ put: () => pending.promise });
+    const { screen, changed } = await mountForm(api);
+
+    click(screen.button('Add date of birth'));
+    await flush();
+    type(dateInput(screen), '2017-03-09');
+    await flush();
+    submit(screen.all((n: any) => n.tag === 'form')[0]);
+    await flush();
+
+    screen.unmount();
+    pending.resolve(ok(answer({ date_of_birth: '2017-03-09', age: 9 }), 'Date of birth saved.'));
+    await flush();
+
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
+});
+
+test('form: a date removed after the panel was closed still reaches the roster row', async () => {
+    const pending = deferred();
+    const { api } = officeApi({ get: async () => ok(answer({ date_of_birth: '2017-03-09', age: 9 })), delete: () => pending.promise });
+    const { screen, changed } = await mountForm(api);
+
+    click(screen.button('Remove'));
+    await flush();
+    click(screen.button('Yes, remove it'));
+    await flush();
+
+    screen.unmount();
+    pending.resolve(ok({ date_of_birth: null, age: null, unreadable: false }, 'Date of birth removed.'));
+    await flush();
+
+    assert.deepEqual(changed, [{ membershipId: 12, age: null, held: false }]);
+});
+
+test('form: the keyboard follows each step, because each step takes away the button just pressed', async () => {
+    // What has focus, by what it says (the harness hands a ref a wrapped node, so not by identity).
+    const focused = (): string => {
+        const el = (globalThis as any).document.activeElement;
+
+        return el?.tag === 'input' ? `input ${el.props.type}` : `${el?.tag} ${el?.textContent.trim()}`;
+    };
+    const { api } = officeApi();
+    const { screen } = await mountForm(api);
+
+    // Add: the field. Cancel: back on the button.
+    click(screen.button('Add date of birth'));
+    await flush();
+    assert.equal(focused(), 'input date', 'Add left focus on a button that is gone');
+    click(screen.button('Cancel'));
+    await flush();
+    assert.equal(focused(), 'button Add date of birth');
+
+    // Save: the button again, now "Change".
+    click(screen.button('Add date of birth'));
+    await flush();
+    type(dateInput(screen), '2017-03-09');
+    await flush();
+    submit(screen.all((n: any) => n.tag === 'form')[0]);
+    await flush();
+    assert.equal(focused(), 'button Change');
+
+    // Remove asks, with focus on the answer that keeps the date; keeping it goes back to Change.
+    click(screen.button('Remove'));
+    await flush();
+    assert.equal(focused(), 'button Keep it');
+    click(screen.button('Keep it'));
+    await flush();
+    assert.equal(focused(), 'button Change');
+
+    // Removed: "Add date of birth" is what is left to press.
+    click(screen.button('Remove'));
+    await flush();
+    click(screen.button('Yes, remove it'));
+    await flush();
+    assert.equal(focused(), 'button Add date of birth');
+    screen.unmount();
+});
+
+test('form: every control is a full button for a finger, "Try again" included', async () => {
+    const form = source('views/dashboard/groups/StudentBirthDateForm.vue');
+
+    // The panel is full screen on a phone; the same 44px rule its footer and the teacher's sheet have.
+    assert.match(form, /@media \(max-width: 575\.98px\), \(pointer: coarse\) \{\s+\.student-birth-date \.btn,\s+\.student-birth-date \.form-control \{\s+min-height: 44px;/);
+    assert.doesNotMatch(form, /btn-link/, 'a bare text link is no target for a thumb');
+
+    const { api } = officeApi({ get: () => Promise.reject(httpError(500, {})) });
+    const { screen } = await mountForm(api);
+    assert.match(String(screen.button('Try again').props.class), /\bbtn-outline-secondary\b/);
+    screen.unmount();
 });
 
 test('form: a day in the future is refused in the form and no request is sent', async () => {
@@ -323,7 +420,7 @@ test('form: Remove asks first, then clears by CONTACT with one request', async (
     assert.deepEqual(calls.filter((c) => c.verb === 'delete'), [{ verb: 'delete', url: CONTACT_URL }]);
     assert.match(screen.text(), /Not on file/);
     assert.match(screen.text(), /Date of birth removed\./);
-    assert.deepEqual(changed, [{ age: null, held: false }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: null, held: false }]);
 });
 
 test('form: a refused Remove is said, and the date is still shown', async () => {

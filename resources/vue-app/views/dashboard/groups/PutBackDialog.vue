@@ -1,14 +1,14 @@
 <template>
-    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
+    <div ref="root" class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
          role="dialog" aria-modal="true" aria-labelledby="put-back-title"
-         @click.self="cancel" @keydown.esc="cancel">
+         @click.self="cancel">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 id="put-back-title" class="modal-title">
                         <i class="bi bi-arrow-counterclockwise me-2"></i> {{ title }}
                     </h5>
-                    <button type="button" class="btn-close" aria-label="Close" :disabled="saving" @click="cancel"></button>
+                    <button ref="closeButton" type="button" class="btn-close" aria-label="Close" :disabled="saving" @click="cancel"></button>
                 </div>
 
                 <div class="modal-body" aria-live="polite">
@@ -77,10 +77,11 @@
  * THIS FILE IS THE ONLY PLACE IN THE ADMIN SPA THAT SENDS THE UNDO. The roster tab opens this
  * dialog for every row, moved or not, and sends nothing itself (pinned in roster-move.test.ts).
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { trapTab } from '@/core/helpers/focusTrap';
 import { putBackForm } from '@/core/helpers/rosterMove';
 import type { PutBackForm } from '@/core/helpers/rosterMove';
 
@@ -148,5 +149,37 @@ const cancel = () => {
     if (!saving.value) emit('close');
 };
 
-onMounted(read);
+// THE KEYBOARD COMES INTO THE DIALOG AND STAYS IN IT. The dialog is teleported
+// to <body> and opened from a button in the roster row, so until focus is moved
+// the focused element is that row button, behind the backdrop: a screen reader
+// announces nothing, Tab walks on to the row's Remove, and Escape never reaches
+// a listener on the dialog itself. So focus goes to Close on mount, Escape and
+// Tab are heard on the DOCUMENT (as TeacherStudentSheet hears them), and the
+// button that opened the dialog gets focus back when it shuts.
+const root = ref<HTMLElement | null>(null);
+const closeButton = ref<HTMLButtonElement | null>(null);
+let opener: HTMLElement | null = null;
+
+const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+        cancel();   // Cancel, and like Cancel it waits for a save in flight
+        return;
+    }
+
+    trapTab(event, root.value);
+};
+
+onMounted(() => {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.addEventListener('keydown', onKeydown);
+    closeButton.value?.focus();
+    read();
+});
+
+onBeforeUnmount(() => {
+    document.removeEventListener('keydown', onKeydown);
+    // After a put back the row is redrawn and its green button is gone; then
+    // there is nothing to go back to.
+    if (opener && document.contains(opener)) opener.focus();
+});
 </script>
