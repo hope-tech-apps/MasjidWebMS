@@ -476,6 +476,49 @@ class StudentBirthDateTest extends TestCase
     }
 
     #[Test]
+    public function removing_one_class_row_offers_no_clear_while_the_student_is_on_another_class_roster(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        // As after a move: the old row is still there, and the child is in a second class.
+        $next = $this->makeGroup(Group::KIND_CLASS, 'Grade Three');
+        $there = $this->enrol($next, $this->child, GroupMembership::ROLE_MEMBER);
+        // A group that is not a class reads no date: a row there keeps nothing in use.
+        $circle = $this->makeGroup(Group::KIND_HALAQA, 'Evening circle');
+        $inCircle = $this->enrol($circle, $this->child, GroupMembership::ROLE_MEMBER);
+
+        $first = $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk();
+
+        $this->assertStringNotContainsString('date of birth', $first->json('message'));
+        $first->assertJsonMissingPath('data.birth_date');
+
+        // Out of the circle while still in a class: the same, nothing is offered.
+        $second = $this->deleteJson($this->adminBase()."/groups/{$circle->id}/members/{$inCircle->id}")->assertOk();
+        $second->assertJsonMissingPath('data.birth_date');
+
+        $this->assertSame(self::SENTINEL, Contact::findOrFail($this->child->id)->dateOfBirthOrNull());
+
+        // The last class row: now the date really is left behind, and the office is told.
+        $last = $this->deleteJson($this->adminBase()."/groups/{$next->id}/members/{$there->id}")->assertOk();
+
+        $this->assertStringEndsWith('Their date of birth is still on their record.', $last->json('message'));
+        $last->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
+    #[Test]
+    public function a_row_in_a_group_that_is_not_a_class_does_not_hide_the_date_left_behind(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        $circle = $this->makeGroup(Group::KIND_HALAQA, 'Evening circle');
+        $this->enrol($circle, $this->child, GroupMembership::ROLE_MEMBER);
+
+        $response = $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk();
+
+        $response->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
+    #[Test]
     public function removing_a_student_from_the_roster_says_when_their_date_is_still_on_file(): void
     {
         $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');

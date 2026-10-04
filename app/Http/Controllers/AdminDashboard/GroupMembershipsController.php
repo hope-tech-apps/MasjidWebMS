@@ -763,11 +763,29 @@ class GroupMembershipsController extends Controller
      * decrypted and no date is printed. A guardian edge is not asked about: the
      * date belongs to the child the row was for, and the child is still there.
      *
+     * Null as well while the child is still on ANOTHER class roster (current,
+     * or shown as having left): the date is in use there and its own form is
+     * one tap away, so nothing was left behind. Without this the offer came up
+     * every time the office tidied a moved student's empty old row, and taking
+     * it wiped the age in the class the child is in now. A row in a group that
+     * is not a class does not count: no screen there reads the date.
+     *
      * @return array{message: string, contact_id: int}|null
      */
     private function birthDateLeftBehind(GroupMembership $membership): ?array
     {
         if (! in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true) || ! StudentAge::columnExists()) {
+            return null;
+        }
+
+        $onAnotherClassRoster = GroupMembership::query()
+            ->where('contact_id', $membership->contact_id)
+            ->whereKeyNot($membership->getKey())
+            ->whereIn('role', GroupMembership::PARTICIPANT_ROLES)
+            ->whereHas('group', fn ($group) => $group->where('kind', Group::KIND_CLASS))
+            ->exists();
+
+        if ($onAnotherClassRoster) {
             return null;
         }
 
