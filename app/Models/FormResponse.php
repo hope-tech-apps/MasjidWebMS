@@ -337,10 +337,26 @@ class FormResponse extends Model
     }
 
     /**
-     * Free-text search across the three denormalised identity columns, and the
-     * registration number.
-     * Deliberately not a JSON search: JSON path predicates are not portable between
-     * MySQL (production) and SQLite (tests).
+     * Free-text search: the three denormalised identity columns, the registration
+     * number, and the ANSWERS themselves.
+     *
+     * The answers are in it because the person an office looks for is often not the
+     * one who filled the form in. An enrolment is submitted by a parent and names the
+     * children inside a repeating section, so a search for a child's name used to find
+     * nothing at all: only the parent's name, email and phone were looked at.
+     *
+     * EVERY WORD must be found somewhere in the row, in any order and in any of those
+     * places. A child's first and last name are two separate answers, so the full name
+     * typed as one phrase is never one substring of anything.
+     *
+     * The answers are matched as TEXT, not by JSON path: a path predicate is not
+     * portable between MySQL (production) and SQLite (tests), and no path could name
+     * "any answer" anyway. Two consequences, both accepted:
+     *  - a word that is also part of a question's key (such as "name") matches every
+     *    row of that form;
+     *  - only a word with a letter in it is looked for in the answers. A bare number
+     *    would match every date, age and phone number in the document, and a number
+     *    is what the door types for a registration or a phone.
      *
      * "#123" is the registration number a receipt prints ("Registration no. #123"),
      * which is what a person at the bracelet table holds up. A bare number is
@@ -354,11 +370,30 @@ class FormResponse extends Model
             return $query;
         }
 
-        return $query->where(function ($q) use ($term) {
-            $like = '%' . $term . '%';
-            $q->where('respondent_name', 'like', $like)
-                ->orWhere('respondent_email', 'like', $like)
-                ->orWhere('respondent_phone', 'like', $like);
+        // A handful of words is a name and a surname with room to spare; the cap keeps
+        // a pasted paragraph from becoming a paragraph of predicates.
+        $words = array_slice(preg_split('/\s+/u', $term, -1, PREG_SPLIT_NO_EMPTY) ?: [], 0, 8);
+
+        return $query->where(function ($q) use ($term, $words) {
+            $answers = $q->getGrammar()->wrap($q->qualifyColumn('data'));
+
+            $q->where(function ($all) use ($words, $answers) {
+                foreach ($words as $word) {
+                    $all->where(function ($any) use ($word, $answers) {
+                        $like = '%' . $word . '%';
+                        $any->where('respondent_name', 'like', $like)
+                            ->orWhere('respondent_email', 'like', $like)
+                            ->orWhere('respondent_phone', 'like', $like);
+
+                        if (preg_match('/\p{L}/u', $word) === 1) {
+                            // LOWER on both sides: MySQL's cast is case-insensitive by its
+                            // collation, SQLite's LIKE only for ASCII, and this says so
+                            // for both instead of relying on either.
+                            $any->orWhereRaw("LOWER(CAST({$answers} AS CHAR)) LIKE ?", ['%' . mb_strtolower($word) . '%']);
+                        }
+                    });
+                }
+            });
 
             if (preg_match('/^#?\s*([0-9]{1,18})$/', $term, $number) === 1) {
                 $q->orWhere($q->qualifyColumn('id'), (int) $number[1]);

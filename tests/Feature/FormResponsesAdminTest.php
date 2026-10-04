@@ -168,6 +168,95 @@ class FormResponsesAdminTest extends TestCase
         $this->assertCount(1, $byEmail->json('data.data'));
     }
 
+    #[Test]
+    public function search_finds_a_child_named_in_the_answers_not_only_the_parent_who_filled_the_form_in(): void
+    {
+        $this->actingAsAdmin();
+
+        // An enrolment: the parent is the respondent, the children are answers inside it.
+        FormResponse::create([
+            'form_id' => $this->formA->id,
+            'masjid_id' => $this->formA->masjid_id,
+            'data' => [
+                'registrantName' => 'Maryam Idris',
+                'registrantEmail' => 'maryam@example.com',
+                'children' => [
+                    ['firstName' => 'Tariq', 'lastName' => 'Rahmani', 'age' => 5],
+                    ['firstName' => 'Layla', 'lastName' => 'Rahmani', 'age' => 8],
+                ],
+            ],
+            'respondent_name' => 'Maryam Idris',
+            'respondent_email' => 'maryam@example.com',
+            'entry_count' => 2,
+            'status' => 'new',
+            'submitted_at' => '2026-07-09 12:00:00',
+        ]);
+
+        $find = fn (string $q) => collect(
+            $this->getJson($this->url($this->masjidA, $this->formA, '?q=' . urlencode($q)))->assertOk()->json('data.data')
+        )->pluck('respondent_email')->all();
+
+        // The child's first name, in any letter case.
+        $this->assertSame(['maryam@example.com'], $find('Tariq'));
+        $this->assertSame(['maryam@example.com'], $find('tariq'));
+        $this->assertSame(['maryam@example.com'], $find('TARIQ'));
+        // The full name is two answers, so every word is looked for on its own, in any order.
+        $this->assertSame(['maryam@example.com'], $find('Tariq Rahmani'));
+        $this->assertSame(['maryam@example.com'], $find('rahmani layla'));
+        // A word from the parent and a word from a child.
+        $this->assertSame(['maryam@example.com'], $find('Maryam Tariq'));
+        // Every word must be there: one that is nowhere finds nothing.
+        $this->assertSame([], $find('Tariq Nobody'));
+    }
+
+    #[Test]
+    public function a_number_is_not_looked_for_inside_the_answers(): void
+    {
+        $this->actingAsAdmin();
+
+        // An age of 7 in the answers, and no phone, name or registration number with a 7.
+        $response = FormResponse::create([
+            'form_id' => $this->formA->id,
+            'masjid_id' => $this->formA->masjid_id,
+            'data' => ['registrantName' => 'Hana Odeh', 'registrantEmail' => 'hana@example.com', 'children' => [['firstName' => 'Sami', 'age' => 7]]],
+            'respondent_name' => 'Hana Odeh',
+            'respondent_email' => 'hana@example.com',
+            'entry_count' => 1,
+            'status' => 'new',
+            'submitted_at' => '2026-07-09 12:00:00',
+        ]);
+
+        $emails = fn (string $q) => collect(
+            $this->getJson($this->url($this->masjidA, $this->formA, '?q=' . urlencode($q)))->assertOk()->json('data.data')
+        )->pluck('respondent_email')->all();
+
+        // "7" is a registration number or part of a phone, never "anyone aged 7": only
+        // the row whose own number is 7 could match, and this one's is not.
+        $this->assertNotSame(7, (int) $response->id);
+        $this->assertSame([], $emails('7'));
+        // Its own registration number still finds it, with or without the hash.
+        $this->assertSame(['hana@example.com'], $emails('#' . $response->id));
+    }
+
+    #[Test]
+    public function search_never_reaches_another_organisations_answers(): void
+    {
+        $this->actingAsAdmin();
+
+        FormResponse::create([
+            'form_id' => $this->formB->id,
+            'masjid_id' => $this->formB->masjid_id,
+            'data' => ['registrantName' => 'Other Parent', 'registrantEmail' => 'other@example.com', 'children' => [['firstName' => 'Tariq']]],
+            'respondent_name' => 'Other Parent',
+            'respondent_email' => 'other@example.com',
+            'entry_count' => 1,
+            'status' => 'new',
+            'submitted_at' => '2026-07-09 12:00:00',
+        ]);
+
+        $this->assertCount(0, $this->getJson($this->url($this->masjidA, $this->formA, '?q=Tariq'))->assertOk()->json('data.data'));
+    }
+
     // --------------------------------------------------------------------- filter
 
     #[Test]

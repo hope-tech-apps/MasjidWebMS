@@ -108,7 +108,7 @@
                                     ref="searchInput"
                                     type="search"
                                     class="form-control"
-                                    placeholder="Name, email, phone or #number"
+                                    placeholder="Name, email, phone, #number or an answer"
                                     aria-describedby="responses-search-help"
                                     v-model="searchQuery"
                                 >
@@ -127,6 +127,7 @@
                             </div>
                             <span id="responses-search-help" class="visually-hidden">
                                 Type a hash sign and a number to find a registration by the number on its receipt.
+                                A name typed here is also looked for in the answers, such as a child named in an enrolment.
                             </span>
                         </div>
                         <div class="col-md-6 col-lg-2">
