@@ -136,6 +136,57 @@ export type GroupPayload = {
     ends_on: string;
 };
 
+/** The class named on a row that was moved. `deleted_at` is set when the class was removed since. */
+export type MovedClass = { id: number; name: string; deleted_at: string | null };
+
+/**
+ * What "Put back" would mean on a row that was moved out of this class, decided
+ * on the server by the move's own guardian rule (`RosterMove::notVouched`).
+ *
+ * `student_there` is about the class the row was moved TO. `guardians_not_vouched`
+ * names the guardian entries here that must not be re-opened, each with the
+ * sentence to print: the adult is no longer a confirmed guardian where the
+ * student is now.
+ */
+export type MovedToState = {
+    student_there: 'current' | 'left' | 'none';
+    open_group: { id: number; name: string } | null;
+    guardians_not_vouched: { membership_id: number; reason: 'no_entry' | 'only_unconfirmed'; sentence: string }[];
+};
+
+/** What the roster list says about the class itself (`meta` of the list answer). */
+export type RosterMeta = {
+    group_name: string;
+    /** Is this a class: the Move button hangs on it. */
+    teaches_students: boolean;
+    /** Today on the SCHOOL's clock, for a date field's default and its latest day. */
+    school_today: string;
+    /** The one line a school reads on a group that is not a class; null everywhere else. */
+    move_note: string | null;
+};
+
+/** The answer to "what will happen if this student is moved there". Sentences are the server's. */
+export type MovePreview = {
+    can_move: boolean;
+    refusal: string | null;
+    open_group: { id: number; name: string } | null;
+    path: 'left_and_started' | 'returned' | null;
+    first_day_in_new_class?: string;
+    joined_on?: string | null;
+    grade_label: string | null;
+    lines: string[];
+};
+
+/** What the dialog sends to move a student. Strings only: the admin SPA is form-encoded. */
+export type MoveRequest = {
+    to_group_id: number;
+    moved_on: string;
+    grade_label: string;
+    expected_path: string;
+    expected_first_day: string;
+    expected_joined_on?: string;
+};
+
 /**
  * One roster row.
  *
@@ -166,6 +217,22 @@ export type GroupMembership = {
      * this same payload has to exclude them itself.
      */
     left_on: string | null;
+    /**
+     * A student MOVED to another class. A roster row never changes class: the
+     * place they left carries `moved_to_group_id`, the place they hold now
+     * carries `moved_from_group_id`, and `moved_on` is the day the office chose.
+     * Student rows only; null on every row that was never moved. The two class
+     * names come from the server with the row (`moved_to`, `moved_from`), and a
+     * class deleted since still arrives, with `deleted_at` set.
+     */
+    moved_from_group_id?: number | null;
+    moved_to_group_id?: number | null;
+    moved_on?: string | null;
+    moved_by_user_id?: number | null;
+    moved_to?: MovedClass | null;
+    moved_from?: MovedClass | null;
+    /** On a student row that carries "moved to": what "Put back" would mean. Null on every other row. */
+    moved_to_state?: MovedToState | null;
     /**
      * Consent lives on the guardian edge, and its ABSENCE means no consent. It is
      * never meaningful on a participant row — a member IS the person, and nobody
