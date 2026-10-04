@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -449,6 +450,37 @@ class StudentBirthDateLeakTest extends TestCase
         $this->assertSame(9, $class[$this->student->id]['age'], 'the same child, in a class');
         $this->assertArrayHasKey($legacyLeader->id, $class->all(), 'the legacy leader row is on the teacher\'s roster');
         $this->assertNull($class[$legacyLeader->id]['age'], 'a leader row holds a date and shows no age');
+    }
+
+    /**
+     * The teacher's twin of StudentBirthDateTest's office case. The child was
+     * born on 9 March 2017 (SENTINEL). 03:30 UTC on the birthday is still
+     * 8 March in New York, so the child is 8 until the SCHOOL's day begins; an
+     * age worked out on the server's clock would already say 9.
+     *
+     * One request per case: the teacher's controller remembers the school's
+     * today for the request it serves, and a test reuses the controller.
+     */
+    #[Test]
+    #[DataProvider('eitherSideOfTheSchoolsMidnight')]
+    public function a_teacher_sees_the_birthday_turn_over_at_the_schools_midnight(string $utc, int $age): void
+    {
+        $this->travelTo(Carbon::parse($utc, 'UTC'));
+        Sanctum::actingAs($this->teacher, ['staff']);
+
+        $students = collect(
+            $this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}")->assertOk()->json('data.students')
+        )->keyBy('membership_id');
+
+        $this->assertSame($age, $students[$this->student->id]['age']);
+    }
+
+    public static function eitherSideOfTheSchoolsMidnight(): array
+    {
+        return [
+            'still the day before at the school' => ['2026-03-09 03:30:00', 8],
+            'the birthday has begun at the school' => ['2026-03-09 05:30:00', 9],
+        ];
     }
 
     // ------------------------------------------------------------ families

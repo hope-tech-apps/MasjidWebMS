@@ -260,9 +260,53 @@ class RosterMoveRosterTest extends TestCase
         // The last one says nothing more than it always did.
         GroupMembership::where('group_id', $third->id)->where('contact_id', $parent->contact_id)->sole()->delete();
         DB::table('group_memberships')->where('masjid_id', $other->id)->delete();
-        $this->removeFromRoster($inSecond)->assertOk()
+        $last = $this->removeFromRoster($inSecond)->assertOk()
             ->assertJsonPath('message', 'Removed from the roster.')
             ->assertJsonPath('data.cascade.same_guardian_elsewhere', []);
+
+        // NAMING THE TWO PEOPLE DID NOT PUT THEM IN THE ANSWER. The row that
+        // comes back is the same narrow one either way: the roster row's own
+        // columns, and no `contact` or `guardian_of` with a whole contact in it
+        // (sign-in address, notes, consent evidence, for the adult and the child).
+        $row = $removal->json('data.membership');
+
+        $this->assertSame(array_keys($last->json('data.membership')), array_keys($row));
+        $this->assertArrayNotHasKey('contact', $row);
+        $this->assertArrayNotHasKey('guardian_of', $row);
+        $this->assertSame([], array_filter($row, 'is_array'), 'the removed row carries a nested record');
+    }
+
+    // ------------------------------- remove, on the old entry a move left behind
+
+    /**
+     * The flow the move itself invites: "It holds nothing: remove it there if
+     * you do not need it." The date of birth is on the contact and the new
+     * class shows the age from it, so tidying the old entry away must not offer
+     * to delete it.
+     */
+    #[Test]
+    public function removing_the_old_entry_after_a_move_does_not_offer_to_clear_the_date_the_new_class_uses(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $student->contact->recordDateOfBirth('2017-03-09', $this->admin, 'roster');
+
+        $moved = $this->move($student, $this->second, '2026-10-04')->assertOk()
+            ->assertJsonPath('data.old_entry_removable', true);
+        $this->assertStringContainsString('It holds nothing: remove it there if you do not need it.', implode(' ', $moved->json('data.lines')));
+
+        $age = fn (): ?int => collect($this->roster($this->second)->assertOk()->json('data'))
+            ->firstWhere('id', $moved->json('data.membership_id'))['age'];
+        $this->assertSame(9, $age());
+
+        $removal = $this->removeFromRoster($student)->assertOk();
+
+        $this->assertSame(
+            'Removed from the roster. Their date of birth is still on their record: they are still listed in 2nd Grade, '
+                .'where it gives their age. It can be changed or removed from their details there.',
+            $removal->json('message'),
+        );
+        $this->assertArrayNotHasKey('birth_date', $removal->json('data'), 'the clear was offered for a date the new class uses');
+        $this->assertSame(9, $age());
     }
 
     // ------------------------------------------------------- the roster list

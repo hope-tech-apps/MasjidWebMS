@@ -744,7 +744,9 @@ class GroupMembershipsController extends Controller
                     'family_logins_left_without_a_ward' => $strandedLogins,
                     'same_guardian_elsewhere' => $elsewhere,
                 ],
-            ] + ($birthDate ? ['birth_date' => ['held' => true, 'contact_id' => $birthDate['contact_id']]] : []),
+            ] + ($birthDate && $birthDate['offer_clear']
+                ? ['birth_date' => ['held' => true, 'contact_id' => $birthDate['contact_id']]]
+                : []),
         ], Response::HTTP_OK);
     }
 
@@ -754,16 +756,29 @@ class GroupMembershipsController extends Controller
      *
      * The date is typed and read through a class roster row
      * (GroupBirthDateController), but it is stored on the contact. Removing the
-     * row therefore leaves it behind, encrypted, and when this was the child's
-     * last class row no screen reads it any more. The office is told, and
-     * `data.birth_date` names the contact so the screen can offer the clear
-     * (`DELETE .../contacts/{contact_id}/birth-date`, which is never refused).
+     * row therefore leaves it behind, encrypted. Two cases, and they are not
+     * told the same thing:
+     *
+     *  - THE STUDENT IS STILL LISTED IN A CLASS (another `member` row of theirs
+     *    in a class that still exists, current or marked as left). The date is
+     *    in use: that roster shows their age from it, and Student details there
+     *    is where it is changed or removed. This is the ordinary case after a
+     *    move, whose own answer invites the office to remove the empty old
+     *    entry. The sentence names the class and NO clear is offered:
+     *    `data.birth_date` is absent, so "tidy up" cannot wipe the age of a
+     *    current student.
+     *  - NO CLASS LISTS THEM ANY MORE. No screen reads the date now. The office
+     *    is told, and `data.birth_date` names the contact so the screen can
+     *    offer the clear (`DELETE .../contacts/{contact_id}/birth-date`, which
+     *    is never refused).
+     *
+     * So `data.birth_date` present means exactly "offer the clear".
      *
      * Only whether a date is HELD is looked at, on the raw column: nothing is
      * decrypted and no date is printed. A guardian edge is not asked about: the
      * date belongs to the child the row was for, and the child is still there.
      *
-     * @return array{message: string, contact_id: int}|null
+     * @return array{message: string, contact_id: int, offer_clear: bool}|null
      */
     private function birthDateLeftBehind(GroupMembership $membership): ?array
     {
@@ -779,10 +794,57 @@ class GroupMembershipsController extends Controller
             return null;
         }
 
+        $stillIn = $this->classesStillListing($membership);
+
         return [
-            'message' => 'Their date of birth is still on their record.',
+            'message' => $stillIn === []
+                ? 'Their date of birth is still on their record.'
+                : sprintf(
+                    'Their date of birth is still on their record: they are still listed in %s, where it gives '
+                        . 'their age. It can be changed or removed from their details there.',
+                    self::listOf($stillIn),
+                ),
             'contact_id' => (int) $contact->id,
+            'offer_clear' => $stillIn === [],
         ];
+    }
+
+    /**
+     * The names of the classes that still list this person as a student, after
+     * the row just removed: every other `member` row of theirs, current or
+     * marked as left, in a class that still exists. "A class" is
+     * Group::teachesStudents(), the same test the age and the date form use, so
+     * this is exactly the set of rosters the date can still be read and removed
+     * from. Tenant-scoped through the models; a deleted class is not loaded.
+     *
+     * Current places first, so the class the student is IN is the one named
+     * first.
+     *
+     * @return list<string>
+     */
+    private function classesStillListing(GroupMembership $removed): array
+    {
+        return GroupMembership::query()
+            ->where('contact_id', $removed->contact_id)
+            ->where('role', GroupMembership::ROLE_MEMBER)
+            ->whereKeyNot($removed->getKey())
+            ->with('group:id,name,kind')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (GroupMembership $row): bool => $row->group?->teachesStudents() === true)
+            ->sortBy(fn (GroupMembership $row): int => $row->left_on === null ? 0 : 1)
+            ->map(fn (GroupMembership $row): string => (string) $row->group->name)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** "A", "A and B", "A, B and C". */
+    private static function listOf(array $names): string
+    {
+        $last = array_pop($names);
+
+        return $names === [] ? (string) $last : implode(', ', $names).' and '.$last;
     }
 
     // ------------------------------------------------------------- internals
@@ -822,14 +884,23 @@ class GroupMembershipsController extends Controller
             return '';
         }
 
+        // The two names, read on their own. NOT `$entry->contact` and
+        // `$entry->guardianOf`: those would load both people onto the row this
+        // answer then returns as `data.membership`, and with them every contact
+        // column (sign-in address, notes, consent evidence) for the adult and
+        // the child, which a roster answer never carries.
+        $people = Contact::query()
+            ->whereKey(array_filter([$entry->contact_id, $entry->guardian_of_contact_id]))
+            ->get(['id', 'first_name', 'last_name'])
+            ->keyBy('id');
         $name = fn (?Contact $c): string => trim(($c?->first_name ?? '').' '.($c?->last_name ?? '')) ?: 'This person';
         $classes = array_values(array_unique(array_column($elsewhere, 'name')));
 
         return sprintf(
             ' %s is still listed as a guardian of %s in %d other %s: %s. Remove those entries too if this person '
                 . 'should no longer have access.',
-            $name($entry->contact),
-            $name($entry->guardianOf),
+            $name($people->get($entry->contact_id)),
+            $name($people->get($entry->guardian_of_contact_id)),
             count($classes),
             count($classes) === 1 ? 'class' : 'classes',
             implode(', ', $classes),

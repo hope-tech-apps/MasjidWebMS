@@ -490,6 +490,90 @@ class StudentBirthDateTest extends TestCase
         $this->assertSame(self::SENTINEL, Contact::findOrFail($this->child->id)->dateOfBirthOrNull());
     }
 
+    /**
+     * The date is on the contact, and another class still shows the age from
+     * it. This is the ordinary case after a move, whose own answer invites the
+     * office to remove the empty old entry: offering "Remove the date of birth"
+     * there wiped the age of a current student.
+     */
+    #[Test]
+    public function removing_one_of_a_students_two_class_rows_names_the_class_that_still_uses_the_date_and_offers_no_clear(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        $third = $this->makeGroup(Group::KIND_CLASS, 'Grade Three');
+        $there = $this->enrol($third, $this->child, GroupMembership::ROLE_MEMBER);
+        $circle = $this->makeGroup(Group::KIND_HALAQA, 'Evening circle');
+        $inCircle = $this->enrol($circle, $this->child, GroupMembership::ROLE_MEMBER);
+
+        $told = fn (string $classes): string => "Their date of birth is still on their record: they are still listed in {$classes}, "
+            .'where it gives their age. It can be changed or removed from their details there.';
+
+        // From a group that is not a class, then from one of the two classes: each names what is left.
+        foreach ([[$circle, $inCircle, 'Grade Two and Grade Three'], [$this->class, $this->student, 'Grade Three']] as [$group, $row, $classes]) {
+            $response = $this->deleteJson($this->adminBase()."/groups/{$group->id}/members/{$row->id}")->assertOk();
+
+            $this->assertStringEndsWith($told($classes), $response->json('message'));
+            $this->assertArrayNotHasKey('birth_date', $response->json('data'), 'the clear was offered while a class still uses the date');
+            $this->assertStringNotContainsString(self::SENTINEL, $response->getContent());
+        }
+
+        $age = collect($this->getJson($this->rosterUrl($third))->assertOk()->json('data'))->firstWhere('id', $there->id)['age'];
+        $this->assertSame(9, $age, 'the class the student is still in lost their age');
+    }
+
+    /** Marked as left is still listed: that roster shows the age and holds the date form. Current classes are named first. */
+    #[Test]
+    public function a_class_row_marked_as_left_still_counts_and_a_current_class_is_named_first(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        $left = $this->enrol($this->makeGroup(Group::KIND_CLASS, 'Grade One'), $this->child, GroupMembership::ROLE_MEMBER);
+        $left->markLeftByStaff($this->admin, '2026-09-10')->save();
+        $third = $this->makeGroup(Group::KIND_CLASS, 'Grade Three');
+        $current = $this->enrol($third, $this->child, GroupMembership::ROLE_MEMBER);
+
+        $response = $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk();
+        $this->assertStringContainsString('they are still listed in Grade Three and Grade One, where', $response->json('message'));
+        $this->assertArrayNotHasKey('birth_date', $response->json('data'));
+
+        $response = $this->deleteJson($this->adminBase()."/groups/{$third->id}/members/{$current->id}")->assertOk();
+        $this->assertStringContainsString('they are still listed in Grade One, where', $response->json('message'));
+        $this->assertArrayNotHasKey('birth_date', $response->json('data'));
+
+        // The last class row: now no roster is left to remove it from, and the clear is offered.
+        $this->deleteJson($this->adminBase()."/groups/{$left->group_id}/members/{$left->id}")->assertOk()
+            ->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
+    /** A row in a group that is not a class, or in a class that was deleted, is no roster to remove the date from. */
+    #[Test]
+    public function a_row_in_a_group_that_is_not_a_class_or_in_a_deleted_class_does_not_withhold_the_clear(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+
+        $this->enrol($this->makeGroup(Group::KIND_HALAQA, 'Evening circle'), $this->child, GroupMembership::ROLE_MEMBER);
+        $gone = $this->makeGroup(Group::KIND_CLASS, 'Removed class');
+        $this->enrol($gone, $this->child, GroupMembership::ROLE_MEMBER);
+        $gone->delete();
+
+        $response = $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk();
+
+        $this->assertStringEndsWith('Their date of birth is still on their record.', $response->json('message'));
+        $response->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
+    /** The office deleted the person in the Member Directory first: the roster row is still there, and so is the date. */
+    #[Test]
+    public function removing_the_row_of_a_contact_the_office_deleted_still_says_a_date_is_held(): void
+    {
+        $this->child->recordDateOfBirth(self::SENTINEL, $this->admin, 'roster');
+        $this->child->delete();
+
+        $this->deleteJson($this->adminBase()."/groups/{$this->class->id}/members/{$this->student->id}")->assertOk()
+            ->assertJsonPath('data.birth_date', ['held' => true, 'contact_id' => $this->child->id]);
+    }
+
     #[Test]
     public function removing_a_student_with_no_date_says_nothing_about_one(): void
     {

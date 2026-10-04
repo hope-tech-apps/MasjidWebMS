@@ -1145,10 +1145,23 @@ is never stored**; it is whole years worked out on read, on the SCHOOL's clock
    the roster row that let the office type it (Remove, an import undo, an
    archived class, a class whose kind changed, a merge), and it must still be
    removable then. It answers the same whether or not a date was held. Remove on
-   the roster says "Their date of birth is still on their record." when one is.
-   The office roster shows that sentence and offers "Remove the date of birth"
-   beside OK (the answer's `data.birth_date.contact_id` names whose): after the
-   row is gone no roster may be left to remove it from.
+   the roster says when a date is still held, in one of two ways:
+   - **another class still lists the student** (a `member` row of theirs,
+     current or marked as left, in a class that still exists): "Their date of
+     birth is still on their record: they are still listed in {Class}, where it
+     gives their age. It can be changed or removed from their details there."
+     No `data.birth_date`, so NO clear is offered. This is the ordinary case
+     after a move, whose own answer invites the office to remove the empty old
+     entry; offering the clear there wiped the age of a current student.
+   - **no class lists them any more**: "Their date of birth is still on their
+     record." with `data.birth_date = { held, contact_id }`, and the office
+     roster offers "Remove the date of birth" beside OK, because no roster is
+     left to remove it from. A failed clear offers "Try again".
+   So `data.birth_date` present means exactly "offer the clear". KNOWN GAP: once
+   that offer is dismissed there is no screen that removes the date of a person
+   who is in no class (the Member Directory has no date control); the route
+   still works for any contact id, and adding the child to a class brings the
+   form back.
 2. The `contacts` file of the school records export, `Date of birth` column,
    including soft-deleted contacts like every column there.
 
