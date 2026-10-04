@@ -202,6 +202,9 @@ test('one place sends the undo, and one place builds the sentences about a move'
     }
     assert.match(modal, /v-for="\(line, i\) in preview\.lines"/);
 
-    // The Remove message is the server's, not a fixed word.
-    assert.match(store, /return res\.data\?\.status === 'success' \? String\(res\.data\?\.message/);
+    // The Remove message is the server's, not a fixed word, and the roster shows that one.
+    assert.match(store, /if \(res\.data\?\.status !== 'success'\) return null;/);
+    assert.match(store, /message: String\(res\.data\?\.message \?\? 'Removed from the roster\.'\),/);
+    assert.match(tab, /const said = answer\?\.message \?\? null;/);
+    assert.equal((tab.match(/text: said \?\? undefined/g) ?? []).length, 2);
 });

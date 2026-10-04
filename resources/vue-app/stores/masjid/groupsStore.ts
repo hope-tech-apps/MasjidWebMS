@@ -452,16 +452,37 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         groupId: number | string,
         membershipId: number | string
     ): Promise<string | null> {
+        return (await removeMembershipAnswer(groupId, membershipId))?.message ?? null;
+    }
+
+    /**
+     * The same removal, with what else the server said about it. Today that is
+     * one thing: the removed student's contact still holds a date of birth
+     * (it is kept on the contact, so it outlives the roster row), named by
+     * contact so the screen can offer to remove it too.
+     */
+    async function removeMembershipAnswer(
+        groupId: number | string,
+        membershipId: number | string
+    ): Promise<{ message: string; birthDateContactId: number | null } | null> {
         if (!masjidStore.masjid?.id) return null;
 
         const res: AxiosResponse = await ApiService.delete(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/${membershipId}` as BackendApiRoute
         );
-        // THE SERVER'S OWN SENTENCE, not a boolean. It says what went with the
-        // row (guardian entries, a sign-in left opening nothing) and, for a
-        // guardian entry, where else this adult is still listed for the same
-        // child. The screen used to print a fixed "Removed" over all of it.
-        return res.data?.status === 'success' ? String(res.data?.message ?? 'Removed from the roster.') : null;
+        if (res.data?.status !== 'success') return null;
+
+        const held = res.data?.data?.birth_date;
+        const contactId = Number(held?.contact_id);
+
+        return {
+            // THE SERVER'S OWN SENTENCE, not a boolean. It says what went with the
+            // row (guardian entries, a sign-in left opening nothing) and, for a
+            // guardian entry, where else this adult is still listed for the same
+            // child. The screen used to print a fixed "Removed" over all of it.
+            message: String(res.data?.message ?? 'Removed from the roster.'),
+            birthDateContactId: held?.held === true && Number.isInteger(contactId) && contactId > 0 ? contactId : null,
+        };
     }
 
     return {
@@ -486,6 +507,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         putBack,
         addMembership,
         confirmClaims,
-        removeMembership
+        removeMembership,
+        removeMembershipAnswer
     }
 })

@@ -390,6 +390,35 @@ The panel's Grade field is read-only while it saves, never `disabled`: a
 disabled field drops keyboard focus behind the dialog and Escape stops closing
 it (seen in a browser).
 
+**What the other two roster features put in the panel.** The panel has five
+named slots, each handed the student, and `GroupRosterTab.vue` fills them. The
+panel itself still makes no request and holds none of their logic:
+
+| slot | filled with | drawn when |
+|---|---|---|
+| `#moved-badges` | the roster row's own badge (`movedLabels`): "Moved to {Class} {date}" while the student is still there, else "Left {date}" and the line "Was moved to …. No longer there." | always (it replaces the plain "Left" badge) |
+| `#moved-from` | "Moved from {Class} {date}" | the row was moved in |
+| `#age` | "Age {n}" | a class, and an age is known |
+| `#birth-date` | `StudentBirthDateForm.vue` (which asks the server, and draws nothing for a login that may not see the date) | a class; also for a student who has left, so a date can still be removed |
+| `#move` | the Move button | a class, role `member`, no leaving date |
+
+"Is this a class" is the server's `meta.teaches_students` in all three, never a
+kind compared in the browser. Move and "Left the class" from the panel shut it
+first: one dialog at a time. A saved or removed date patches `age` on the row
+in place from the server's answer; the roster is not re-read.
+
+A slotted form CAN take the focused control away (the date form turns its Save
+button off while it saves), which is the same fault as the disabled Grade
+field. So while it is open the panel also listens on the document: with focus
+outside the panel, Escape closes it and Tab comes back to its close button. A
+key pressed inside the panel, or under a message box, is left alone.
+
+**Joined is a calendar day.** `joined_at` is a date column served as midnight
+UTC. The roster row and the panel read the day off the string
+(`formatStoredDay`, `storedDayLabel`), as consent and leaving dates already
+were: drawn as an instant it showed the day before to everyone west of UTC,
+which a move made visible ("Moved from … 4 Oct" beside "Joined Oct 3").
+
 ## Minors' data — what every FOLLOW-ON slice must honour
 
 These rosters hold children. The schema was shaped so the next slices are
@@ -1117,6 +1146,9 @@ is never stored**; it is whole years worked out on read, on the SCHOOL's clock
    archived class, a class whose kind changed, a merge), and it must still be
    removable then. It answers the same whether or not a date was held. Remove on
    the roster says "Their date of birth is still on their record." when one is.
+   The office roster shows that sentence and offers "Remove the date of birth"
+   beside OK (the answer's `data.birth_date.contact_id` names whose): after the
+   row is gone no roster may be left to remove it from.
 2. The `contacts` file of the school records export, `Date of birth` column,
    including soft-deleted contacts like every column there.
 
@@ -1128,7 +1160,12 @@ platform's SuperAdmins. The admin SPA holds no permission list, so the date form
 **Where the AGE appears: two payloads, as `age: int|null`.**
 
 - The office roster list (`GroupMembershipsController::index`), on every row;
-  a number only for a student in a class.
+  a number only for a student in a class. The screen draws it as an **Age**
+  column between Grade and Joined ("—" when there is none), only on a class
+  (`meta.teaches_students`), with one line above the table when a CURRENT
+  student has none: "{n} students have no date of birth on file, so no age is
+  shown for them. Tap a name to add it." A moved student's age is the same
+  number in both classes: it is the contact's, not the roster row's.
 - The teacher's class payload (`TeacherController::classPayload`), on each
   student; a number only when the group `teachesStudents()` AND the row's role is
   `member`. `classPayload` serves every kind of group a teacher leads and its
@@ -1861,8 +1898,16 @@ with every guardian entry carried, re-used or re-opened.
 
 **Known gaps, for whoever owns them.** A contact merge after a move re-opens the old class's
 closed guardian entries as open pending claims (`RosterMergeService::reissue()` drops `left_on`),
-and merge's drop path deletes Arabic daily notes and addressed files silently. Registration's
-adder does not take the contact lock yet. A whole class is moved one student at a time.
+and merge's drop path deletes Arabic daily notes and addressed files silently. A whole class is
+moved one student at a time.
+
+**Registration, narrowed.** `RegistrationService::writeRosterMemberships()` now holds each
+child's contact row before its "already there?" checks (`lockRosterSubjects`), so a move and a
+registration of the same child queue behind each other. What is left: a move that COMMITTED
+during the registration's own transaction, after its first read fixed the read view and before
+it took the lock, is invisible to those checks. The visible result is a second, unconfirmed
+place for the child that holds nothing, which Remove takes away. Only a key that covers a
+student's place closes it for every writer.
 
 Proven by `RosterMoveTest`, `RosterMoveRosterTest`, `resources/vue-app/tests/roster-move*.test.ts`,
 and on MySQL by `tests/Mysql/RosterMoveMysqlTest.php` and `tests/MysqlLocks/RosterMoveLocksTest.php`

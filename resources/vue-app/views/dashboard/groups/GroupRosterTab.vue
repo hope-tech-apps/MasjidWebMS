@@ -91,6 +91,9 @@
             <p v-if="consentBanner" class="small text-warning-emphasis mb-2">
                 <i class="bi bi-info-circle me-1"></i>{{ consentBanner }}
             </p>
+            <!-- Ages: which current students of this class have no date of
+                 birth on file. Absent on a group that is not a class. -->
+            <p v-if="missingBirthDates" class="small text-muted mb-2">{{ missingBirthDates }}</p>
 
             <!-- PARTICIPANTS: the people who are in the group in their own right. -->
             <div class="table-responsive mb-4">
@@ -100,6 +103,7 @@
                             <th>Member</th>
                             <th>Role</th>
                             <th>Grade</th>
+                            <th v-if="isClass">Age</th>
                             <th>Joined</th>
                             <th class="text-end">Actions</th>
                         </tr>
@@ -186,7 +190,14 @@
                                     @change="saveGrade(membership, ($event.target as HTMLInputElement).value)"
                                 />
                             </td>
-                            <td class="text-muted small">{{ formatDate(membership.joined_at) }}</td>
+                            <!-- A whole number of years, worked out by the
+                                 server on the school's clock. The date behind
+                                 it is never on this list. -->
+                            <td v-if="isClass">{{ ageCell(membership.age) }}</td>
+                            <!-- A calendar day, read off the string: drawn as an
+                                 instant it shows the day before to everyone west of
+                                 UTC, beside a "Moved from" line that names the real one. -->
+                            <td class="text-muted small">{{ formatStoredDay(membership.joined_at) }}</td>
                             <td class="text-end">
                                 <button
                                     v-if="isPending(membership)"
@@ -230,7 +241,7 @@
                             </td>
                         </tr>
                         <tr v-if="participants.length === 0">
-                            <td colspan="5" class="text-center text-muted py-3">No members yet</td>
+                            <td :colspan="isClass ? 6 : 5" class="text-center text-muted py-3">No members yet</td>
                         </tr>
                     </tbody>
                 </table>
@@ -674,7 +685,51 @@
             @close="closeStudent"
             @save-grade="saveGrade"
             @withdraw="withdrawFromPanel"
-        />
+        >
+            <!-- The roster row's own badge, by the roster row's own rule:
+                 "Moved to …" while the student is still there, else "Left …". -->
+            <template #moved-badges="{ student }">
+                <span v-if="movedLabels(student).badge" class="badge bg-secondary-subtle text-secondary">
+                    {{ movedLabels(student).badge }}
+                </span>
+                <div v-if="student.moved_to_group_id && movedLabels(student).note" class="small text-muted">
+                    {{ movedLabels(student).note }}
+                </div>
+            </template>
+            <template #moved-from="{ student }">
+                <div v-if="!student.moved_to_group_id && movedLabels(student).note" class="small text-muted mb-1">
+                    {{ movedLabels(student).note }}
+                </div>
+            </template>
+            <!-- The age is for anyone who can read the roster. The date is the
+                 form's own business: it asks the server, and draws nothing for
+                 a login that may not see it. Students of a class only. -->
+            <template #age="{ student }">
+                <div v-if="isClass && ageLabel(student.age)" class="small text-muted mb-1">{{ ageLabel(student.age) }}</div>
+            </template>
+            <template #birth-date="{ student }">
+                <StudentBirthDateForm
+                    v-if="isClass"
+                    :key="student.id"
+                    class="mt-3"
+                    :masjid-id="masjidId"
+                    :group-id="groupId"
+                    :membership-id="student.id"
+                    :contact-id="student.contact_id"
+                    @changed="onBirthDateChanged(student, $event)"
+                />
+            </template>
+            <template #move="{ student }">
+                <button
+                    v-if="canBeMoved(student)"
+                    type="button"
+                    class="btn btn-outline-primary"
+                    @click="moveFromPanel(student)"
+                >
+                    <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i>Move
+                </button>
+            </template>
+        </StudentDetailsPanel>
     </template>
 
 <script setup lang="ts">
@@ -696,6 +751,8 @@ import { useRouter } from 'vue-router';
 import MoveStudentModal from './MoveStudentModal.vue';
 import PutBackDialog from './PutBackDialog.vue';
 import { consentBannerCount, consentBannerText, movedLabels } from '@/core/helpers/rosterMove';
+import StudentBirthDateForm from './StudentBirthDateForm.vue';
+import { ageCell, ageLabel, missingBirthDatesLine } from '@/core/helpers/studentAge';
 
 /**
  * The roster — who is in this group, and how.
@@ -808,6 +865,21 @@ const closeStudent = () => { studentId.value = null; };
 const withdrawFromPanel = (membership: GroupMembership) => {
     closeStudent();
     openWithdraw(membership);
+};
+
+/** "Move" from the panel: the same dialog as the row's button, one at a time. */
+const moveFromPanel = (membership: GroupMembership) => {
+    closeStudent();
+    moveFor.value = membership;
+};
+
+/**
+ * A date of birth was saved or removed in the panel. The server's answer carries
+ * the new age, so the row is patched in place, as the grade is: a re-read of the
+ * whole roster would cost the office its place for the sake of one number.
+ */
+const onBirthDateChanged = (membership: GroupMembership, change: { age: number | null }) => {
+    membership.age = change.age ?? null;
 };
 
 /**
@@ -932,9 +1004,13 @@ const rosterMeta = computed(() => groupsStore.rosterMeta);
 
 /** Only a current student of a CLASS moves. The server says which groups are classes. */
 const canBeMoved = (membership: GroupMembership): boolean =>
-    rosterMeta.value?.teaches_students === true && membership.role === 'member' && !membership.left_on;
+    isClass.value && membership.role === 'member' && !membership.left_on;
 
 const moveNote = computed<string>(() => rosterMeta.value?.move_note ?? '');
+
+/** Is this group a class? Move, the Age column and the date of birth all hang on it. */
+const isClass = computed<boolean>(() => rosterMeta.value?.teaches_students === true);
+const missingBirthDates = computed<string>(() => missingBirthDatesLine(props.memberships, isClass.value));
 const consentBanner = computed<string>(() => consentBannerText(consentBannerCount(props.memberships)));
 
 /**
@@ -1517,6 +1593,30 @@ const runConfirm = async (rows: { id: number; fingerprint: string }[], contested
     }
 };
 
+/**
+ * Remove the date of birth a removed student's record still holds. By contact:
+ * the server never refuses this, whether or not a roster row is left.
+ */
+const clearBirthDate = async (contactId: number) => {
+    try {
+        const res: AxiosResponse = await ApiService.delete(
+            `/api/admin/masjids/${masjidId.value}/contacts/${contactId}/birth-date` as BackendApiRoute
+        );
+        Swal.fire({
+            icon: 'success',
+            title: res.data?.message ?? 'Date of birth removed.',
+            timer: 1800,
+            showConfirmButton: false,
+        });
+    } catch (error) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Could not remove the date of birth',
+            text: apiErrorText(error, 'The date of birth could not be removed.'),
+        });
+    }
+};
+
 const confirmRemove = async (membership: GroupMembership) => {
     // Removing a PARTICIPANT also removes the guardian edges pointing at them —
     // say so, because the admin is authorising more than the row they clicked.
@@ -1538,13 +1638,28 @@ const confirmRemove = async (membership: GroupMembership) => {
     if (!result.isConfirmed) return;
 
     try {
-        const said = await groupsStore.removeMembership(props.groupId, membership.id);
+        const answer = await groupsStore.removeMembershipAnswer(props.groupId, membership.id);
+        const said = answer?.message ?? null;
         emit('changed');
         // THE SERVER'S SENTENCE, when it said more than "removed": what went
         // with the row, and where else this guardian is still listed for the
         // same child. That is something to act on, so it waits for an OK.
         const more = (said ?? '').replace(/^Removed from the roster\.?\s*/, '');
-        if (more) {
+        if (answer?.birthDateContactId) {
+            // A DATE OF BIRTH OUTLIVES THE ROW. It is kept on the student's
+            // record, not on this class, so the server says it is still there
+            // and the clear is offered here: after this row is gone no roster
+            // may be left to remove it from.
+            const choice = await Swal.fire({
+                icon: 'success',
+                title: 'Removed',
+                text: said ?? undefined,
+                confirmButtonText: 'OK',
+                showDenyButton: true,
+                denyButtonText: 'Remove the date of birth',
+            });
+            if (choice.isDenied) await clearBirthDate(answer.birthDateContactId);
+        } else if (more) {
             Swal.fire({ icon: 'success', title: 'Removed', text: said ?? undefined });
         } else {
             Swal.fire({ icon: 'success', title: 'Removed', timer: 1600, showConfirmButton: false });

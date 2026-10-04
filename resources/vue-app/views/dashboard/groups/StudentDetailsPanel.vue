@@ -195,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { trapTab } from '@/core/helpers/focusTrap';
@@ -260,13 +260,12 @@ const ownAddress = computed<string>(() => [props.student?.contact?.email, props.
     .filter(Boolean)
     .join(' · '));
 
-/** `joined_at` is an instant, drawn in the reader's own day as the roster row draws it. */
-const joinedLabel = computed<string>(() => {
-    const iso = props.student?.joined_at;
-    if (!iso) return '—';
-    const date = new Date(iso);
-    return isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-});
+/**
+ * `joined_at` is a calendar DAY (a date column, served as midnight UTC), so it is read
+ * off the string as the roster row reads it. Drawn as an instant it would show the day
+ * before to everyone west of UTC.
+ */
+const joinedLabel = computed<string>(() => storedDayLabel(props.student?.joined_at));
 
 // Whatever had focus before the panel opened (the student's name) gets it back.
 let returnFocusTo: HTMLElement | null = null;
@@ -274,15 +273,42 @@ let returnFocusTo: HTMLElement | null = null;
 watch(() => props.student?.id ?? null, async (id, before) => {
     if (id !== null && (before === null || before === undefined)) {
         returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        document.addEventListener?.('keydown', onStrayKeydown);
         await nextTick();
         closeButton.value?.focus();
-    } else if (id === null && returnFocusTo) {
-        if (document.contains(returnFocusTo)) returnFocusTo.focus();
+    } else if (id === null) {
+        document.removeEventListener?.('keydown', onStrayKeydown);
+        if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus();
         returnFocusTo = null;
     }
 }, { immediate: true });
 
+onBeforeUnmount(() => document.removeEventListener?.('keydown', onStrayKeydown));
+
 const close = () => emit('close');
+
+/**
+ * A KEY PRESSED WHILE THE KEYBOARD'S FOCUS IS NOT IN THE PANEL. A part mounted
+ * into a slot can take the focused control away (the date-of-birth form turns
+ * its Save button off while it saves, and swaps one set of buttons for
+ * another), and the browser then drops focus onto the page behind the dialog.
+ * Without this, Escape would stop closing the panel and Tab would walk the page
+ * behind it. A key pressed inside the panel is `onKeydown`'s, below, and is left
+ * alone here; so is every key while a message box is up over the panel.
+ */
+function onStrayKeydown(event: KeyboardEvent) {
+    if (!props.student || document.querySelector?.('.swal2-container')) return;
+
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && root.value?.contains(active)) return;
+
+    if (event.key === 'Escape') {
+        close();
+    } else if (event.key === 'Tab') {
+        event.preventDefault();
+        closeButton.value?.focus();
+    }
+}
 
 /** Escape closes; Tab and Shift+Tab stay inside the panel. */
 const onKeydown = (event: KeyboardEvent) => {
