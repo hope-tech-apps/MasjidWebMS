@@ -350,6 +350,46 @@ pin (`assertSame(8, Permission::count())`), which the additive Groups slice must
 not do. Splitting them out is a deliberate later step — do it as its own task,
 with the seeder, a re-run migration, and that test updated together.
 
+## Student details on the office roster (2026-10-04)
+
+On the office roster a student's name is a button (so is the child's name in a
+guardian row's "Guardian of" cell). It opens **Student details**
+(`StudentDetailsPanel.vue`), which makes **no request**: it is drawn from the
+roster listing the page already holds, by `core/helpers/studentDetails.ts`.
+
+**Only a guardian entry that is `confirmed` AND has no `left_on` is offered as
+someone to call.** The helper sorts every guardian entry naming the student into
+exactly one list, and only the first carries a `tel:` / `mailto:` link:
+
+| the entry | shown as |
+|---|---|
+| confirmed, still in the class | name, tap-to-call, email link, consent state |
+| not confirmed (a registration-form claim) | name and address as PLAIN TEXT, with a warning |
+| has a leaving date | name and "Left {day}" |
+| the STUDENT's own row has left | names only, for every entry, and no link at all |
+
+A form claim is somebody who was not signed in saying they are the child's
+parent, so it must never be the number the office taps in a hurry. Anything that
+is not exactly `confirmed` is read as a claim. A new list or a new link goes
+through the helper, never into the template.
+
+The panel is the OFFICE's. A teacher's screen never mounts it and no teacher
+payload carries a parent's phone or email (owner, 2026-10-04: office only).
+
+Because the panel is drawn from `GET …/groups/{group}/members`, that listing's
+exact key set is pinned (`OfficeStudentDetailsPayloadTest`): a key added to the
+row or to its narrowed person fails there and has to be classified.
+
+"Open full record" is a link to the Member Directory with `?contact={id}`. The
+id in an address is whatever somebody typed, so `ContactsView` goes through
+`openLinkedRecord`: FETCH FIRST, open the dialog only with what the server
+returned, say "That record could not be opened." otherwise, and take the id out
+of the address either way. It does not reuse `viewContact`, which opens first.
+
+The panel's Grade field is read-only while it saves, never `disabled`: a
+disabled field drops keyboard focus behind the dialog and Escape stops closing
+it (seen in a browser).
+
 ## Minors' data — what every FOLLOW-ON slice must honour
 
 These rosters hold children. The schema was shaped so the next slices are

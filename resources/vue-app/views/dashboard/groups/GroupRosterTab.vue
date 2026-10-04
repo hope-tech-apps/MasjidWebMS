@@ -112,7 +112,21 @@
                                         :last-name="membership.contact?.last_name"
                                         :size="34" />
                                 </button>
-                                {{ fullName(membership.contact) }}
+                                <!--
+                                    THE STUDENT'S NAME OPENS THEIR DETAILS. A real
+                                    button, drawn as a link and a full 44px tall,
+                                    because the office works this list on a tablet.
+                                    Only a student's: a legacy leader row is a
+                                    teacher, and has no guardians to show.
+                                -->
+                                <button v-if="isStudentRow(membership)"
+                                        type="button"
+                                        class="btn btn-link p-0 student-name-button"
+                                        title="Open student details"
+                                        @click="openStudent(membership)">
+                                    {{ fullName(membership.contact) }}
+                                </button>
+                                <template v-else>{{ fullName(membership.contact) }}</template>
                                 <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
                                     Unconfirmed
                                 </span>
@@ -264,7 +278,15 @@
                             </td>
                             <td>
                                 <i class="bi bi-arrow-return-right text-muted me-1"></i>
-                                {{ fullName(membership.guardian_of) }}
+                                <!-- The same panel, from the child's name on a guardian's row. -->
+                                <button v-if="studentRowFor(memberships, membership.guardian_of_contact_id)"
+                                        type="button"
+                                        class="btn btn-link p-0 student-name-button"
+                                        title="Open student details"
+                                        @click="openStudent(studentRowFor(memberships, membership.guardian_of_contact_id))">
+                                    {{ fullName(membership.guardian_of) }}
+                                </button>
+                                <template v-else>{{ fullName(membership.guardian_of) }}</template>
                                 <div class="small text-muted">{{ addressLabel(membership.guardian_of) }}</div>
                             </td>
                             <!--
@@ -587,20 +609,41 @@
                 </div>
             </div>
         </Teleport>
+
+        <!--
+            One student's details, from the roster this page already holds.
+
+            MOUNT POINTS for the two features that share this panel. Each is a
+            named slot of StudentDetailsPanel, filled from here so the panel
+            itself stays the same file:
+              #moved-badges, #moved-from, #move ... moving a student to another class
+              #age, #birth-date ..................... ages and the date of birth
+            An empty slot draws nothing.
+        -->
+        <StudentDetailsPanel
+            :student="studentFor"
+            :memberships="memberships"
+            :saving-grade="studentFor !== null && savingGrade === studentFor.id"
+            @close="closeStudent"
+            @save-grade="saveGrade"
+            @withdraw="withdrawFromPanel"
+        />
     </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { AxiosResponse } from 'axios';
 import ApiService from '@/core/services/ApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
+import StudentDetailsPanel from './StudentDetailsPanel.vue';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Contact } from '@/core/types/data/masjid-related/Contact';
 import { ConsentScope, GroupContact, GroupMembership, GroupMembershipPayload, GroupRole } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { isStudentRow, studentRowFor } from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
 
 /**
@@ -685,6 +728,36 @@ const saveGrade = async (membership: GroupMembership, raw: string) => {
 };
 
 const openAvatarPicker = (membership: any) => { avatarFor.value = membership; };
+
+/**
+ * ---------------------------------------------------------------------------
+ * STUDENT DETAILS — opened by the student's name
+ * ---------------------------------------------------------------------------
+ *
+ * The panel is given the roster ROW, looked up by id each time, never a copy held
+ * here: a roster reload replaces every row, and a panel still pointing at the old
+ * object would show a grade or a guardian list that the reload had already
+ * changed. A row that is gone after a reload (the student was removed) shuts it.
+ */
+const studentId = ref<number | null>(null);
+
+const studentFor = computed<GroupMembership | null>(() => {
+    if (studentId.value === null) return null;
+    const row = props.memberships.find((m) => m.id === studentId.value) ?? null;
+    return isStudentRow(row) ? row : null;
+});
+
+const openStudent = (membership: GroupMembership | null) => {
+    if (isStudentRow(membership)) studentId.value = membership!.id;
+};
+
+const closeStudent = () => { studentId.value = null; };
+
+/** "Left the class" from the panel: the same dialog as the row's button, one at a time. */
+const withdrawFromPanel = (membership: GroupMembership) => {
+    closeStudent();
+    openWithdraw(membership);
+};
 
 /**
  * Write the saved avatar back onto the row in place. Re-fetching the whole
@@ -1396,9 +1469,13 @@ const confirmRemove = async (membership: GroupMembership) => {
 // Lock body scroll while either dialog is open. One watcher for both: two of them
 // writing the same style property would have the first to close clear the lock
 // while the other was still up.
-watch([showAddModal, consentFor, withdrawFor], ([adding, consenting, leaving]) => {
-    document.body.style.overflow = (adding || consenting || leaving) ? 'hidden' : '';
+watch([showAddModal, consentFor, withdrawFor, studentFor], ([adding, consenting, leaving, reading]) => {
+    document.body.style.overflow = (adding || consenting || leaving || reading) ? 'hidden' : '';
 });
+
+// "Open full record" leaves this page from inside a dialog. The lock is a style on
+// <body>, which outlives this component, so it is lifted here as well.
+onBeforeUnmount(() => { document.body.style.overflow = ''; });
 </script>
 
 <style scoped>
@@ -1409,5 +1486,16 @@ watch([showAddModal, consentFor, withdrawFor], ([adding, consenting, leaving]) =
 
 .modal-dialog {
     margin: 1.75rem auto;
+}
+
+/* A name that opens something: link colour, underlined, and a full touch target. */
+.student-name-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-weight: inherit;
+    text-align: start;
+    text-decoration: underline;
+    vertical-align: middle;
 }
 </style>
