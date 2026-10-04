@@ -7586,3 +7586,52 @@ Rules: `.claude/rules/groups.md`, "A student's date of birth, and the age on a
 roster". Tests: `StudentBirthDateTest`, `StudentBirthDateLeakTest`,
 `tests/Mysql/ContactDateOfBirthMysqlTest` (the column type; CI only),
 `resources/vue-app/tests/student-age.test.ts`.
+
+## 2026-10-04 — The three roster features on one screen: what the integration decided (branch feat/roster-features)
+
+Moving a student, Student details and ages were built on three branches and meet on
+the office roster (`GroupRosterTab.vue`) and its panel (`StudentDetailsPanel.vue`).
+Joining them took a few decisions no single slice could make:
+
+- **One question, one answer: "is this a class".** The Move button (row and panel),
+  the Age column, the "dates missing" line, "Age {n}" and the date-of-birth form all
+  read the server's `meta.teaches_students`. A group that is not a class shows none
+  of them, and an answer with no meta (the minutes between checkout and migrate, or
+  an older server) shows none either, rather than guessing.
+- **The panel stays request-free.** Everything the other two features add is put
+  into its five named slots from the roster tab. The date form asks the server
+  itself and draws nothing for a login that may not see the date.
+- **A saved date patches the row, it does not re-read the roster.** The PUT answers
+  the new age; re-reading would cost the office its place for one number.
+- **Remove offers the clear.** When the server says a removed student's date of
+  birth is still on their record, the message waits and offers "Remove the date of
+  birth" beside OK. Considered and rejected: clearing it automatically (the student
+  may still be in another class, where the age would vanish), and saying nothing
+  (after the last row is gone no screen reaches the date).
+- **The panel hears keys after focus falls out of it.** Mounting the date form in
+  the panel brought back the fault the Grade field had: the form turns its Save
+  button off while saving, the browser drops focus to the page, Escape stops
+  closing the dialog. Seen in a browser, fixed in the panel (a document listener
+  while it is open) rather than in each slotted part.
+- **"Joined" is read as the day it is.** `joined_at` is a date column; the roster
+  drew it as an instant, so readers west of UTC saw the day before. That was already
+  so on main; a move puts "Moved from {Class} 4 Oct" beside it, so it is fixed here
+  on the row and in the panel.
+- **The roster row's exact key set** (`OfficeStudentDetailsPayloadTest`) now lists
+  the four `moved_*` columns, `moved_to`, `moved_from`, `moved_to_state` and `age`,
+  each classified as something the office reads on that list. The date itself is on
+  no list: `StudentBirthDateLeakTest` now also walks the move preview, the move and
+  both rosters after it.
+- **Registration's adder** takes the contact lock as of the merged commit 9859b8cf;
+  the residual is narrowed in ASSUMPTIONS.md M-8 and in the rules.
+
+Left as built, and said to the lead: the badge "Moved to {Class} {date}" follows the
+design's label exactly, and reads awkwardly for a class named with a number ("Moved
+to Grade 4 4 Oct 2026"); the student "Left" badge prints its day as "28 Sep 2026"
+(the move's own format) while a guardian's prints "Sep 28, 2026". Neither was
+changed without the designer.
+
+Verified: the SPA suite, the PHP suites of the three slices and their neighbours
+(SQLite), a build, and a walk in a browser on a throwaway local instance with
+invented people (desktop and 375px). NOT run here: `tests/Mysql`, `tests/MysqlLocks`
+(CI only), and nothing on staging or production.
