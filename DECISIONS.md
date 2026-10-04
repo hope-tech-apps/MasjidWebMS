@@ -7635,3 +7635,39 @@ Verified: the SPA suite, the PHP suites of the three slices and their neighbours
 (SQLite), a build, and a walk in a browser on a throwaway local instance with
 invented people (desktop and 375px). NOT run here: `tests/Mysql`, `tests/MysqlLocks`
 (CI only), and nothing on staging or production.
+
+## 2026-10-04 — The office's class list names each class's teachers, with their subjects beside the name (owner: "see the teacher/s names on the class room list"; branch feat/classes-list-teachers)
+- **The request.** "It would be nice if I can see the teacher/s names on the class room list. You can multi line for
+  classes will multiple teachers and put the subject next to it."
+- **What the list gains.** A "Teachers" column on the Classes screen, after the name: one line per teacher, in order
+  of name, and beside each name the subjects that teacher teaches in THAT class in the product's own words
+  ("Qur'an", "Arabic", "Islamic Studies"), or "All subjects" for a teacher of the whole class. A class nobody
+  teaches shows a muted dash. On a phone the subjects drop under the name. The cell is words: no link, no control.
+- **Where the names come from.** `GET admin/.../groups` gains `teachers` on each row,
+  `[{id, name, subjects: [{value, label}] | null}]`: the live staff logins on `group_staff` with the teacher role,
+  read in one query for the page. Set on the page's rows in the controller, not on the model, so no other payload
+  carries it. The gate is the one the Teachers screen already reads under (`view contacts`), so nobody sees a
+  teacher's name here who could not see it there.
+- **Decided here, the owner did not say:**
+  - **Order.** By name without regard to case, sorted in PHP so SQLite and MySQL agree whatever the column's
+    collation; two teachers of one name keep one order (by id). Subjects are in the product's order, not the order
+    they were ticked.
+  - **Who counts.** The teacher role only. An archived login is left out though its assignment rows remain. A
+    teacher who has been invited and has not signed in yet IS listed: they are assigned, and the Teachers screen
+    lists them too.
+  - **"All subjects"** for NULL and for an empty list (`GroupStaff::teaches()` reads both that way). A stored value
+    this build does not know is shown as written rather than dropped, so a limited teacher can never read as
+    teaching everything.
+  - **Names only.** No email, phone or invited/active badge in the cell; those stay on the Teachers screen.
+  - **The heading is plain "Teachers".** The terminology pack has no word for teachers (the Teachers screen and
+    the sidebar say the same); the screen's own title still reads the organisation's word for classes.
+  - **Labels travel with each subject** (`{value, label}`), so the screen holds no copy of them. The Teachers
+    endpoint sends bare values beside a `meta.subjects` list because its form needs every option; this list
+    needs only the ones taught, and adding to `meta()` would have changed show/store/update as well.
+- **Not built.** The search box still looks in a class's name, slug and description, not in its teachers' names.
+  The names are not links to the Teachers screen. The class's own page (`show`) does not list them.
+- **Tests.** `GroupIndexTeachersTest` (12; each guard was removed once and a test went red: the live-login join,
+  the role, the tenant scope, the order) and `resources/vue-app/tests/class-teachers.test.ts` (10; the Classes
+  screen mounted from its .vue file). Not run on MySQL (no server where this was written); the query uses nothing
+  SQLite-specific. The column was looked at in a browser only as a static page built from the compiled
+  stylesheets (375 px and 1280 px wide), not in the running app behind a sign-in.

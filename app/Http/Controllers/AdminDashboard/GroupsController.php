@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\Groups\StoreGroupRequest;
 use App\Http\Requests\Admin\Groups\UpdateGroupRequest;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupStaff;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Support\Errors;
@@ -36,6 +37,9 @@ class GroupsController extends Controller
     /**
      * Paginated list of this organization's groups, optionally narrowed by
      * ?search= (name/slug/description), ?kind= and ?active_only=.
+     *
+     * Each row also says who teaches it (`teachers`, owner 2026-10-04): the
+     * office's list is the one place that does. See teachersByGroup().
      */
     public function index(Request $request, $masjid_id)
     {
@@ -59,11 +63,77 @@ class GroupsController extends Controller
             ->inDisplayOrder()
             ->paginate($request->query('per_page', 15));
 
+        // Set on THIS page's rows and nowhere else: not an append on the model,
+        // which would put teacher names on show/store/update and on every other
+        // payload that serializes a Group.
+        $teachers = $this->teachersByGroup($groups->getCollection()->modelKeys());
+        $groups->getCollection()->each(
+            fn (Group $group) => $group->setAttribute('teachers', $teachers[(int) $group->id] ?? [])
+        );
+
         return response()->json([
             'status' => 'success',
             'data' => $groups,
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Who teaches each of these classes, keyed by class id: the staff logins on
+     * `group_staff` with the teacher role (the rows the Teachers screen reads),
+     * each with what they teach IN THAT CLASS.
+     *
+     * ONE query for the whole page, never one per class. It starts from
+     * GroupStaff so the tenant scope constrains it: another organisation's
+     * assignment is not read even if it named one of these ids. The join keeps
+     * live logins only, because archiving a login (a soft delete) leaves its
+     * `group_staff` rows in place and an archived staff member is nobody
+     * (.claude/rules/groups.md).
+     *
+     * `subjects` is null for a teacher of the whole class (NULL on the row, or
+     * an empty list: GroupStaff::teaches()), else the subjects in the product's
+     * order and words (GroupStaff::SUBJECTS, SUBJECT_LABELS), so the screen
+     * carries no copy of either. A stored value this build does not know is kept
+     * as written, after the known ones, rather than dropped: dropping it could
+     * turn a limited teacher into one who reads as teaching everything.
+     *
+     * Names only. A teacher's email and phone stay on the Teachers screen.
+     *
+     * Sorted here rather than in SQL, so the order is by name whatever the case
+     * and whatever the column's collation, and the same on SQLite and MySQL;
+     * two teachers of one name keep one order (by id).
+     *
+     * @param  array<int,int|string>  $groupIds
+     * @return array<int,list<array{id:int,name:string,subjects:list<array{value:string,label:string}>|null}>>
+     */
+    private function teachersByGroup(array $groupIds): array
+    {
+        if ($groupIds === []) {
+            return [];
+        }
+
+        return GroupStaff::query()
+            ->join('users', 'users.id', '=', 'group_staff.user_id')
+            ->whereNull('users.deleted_at')
+            ->where('group_staff.role', GroupStaff::ROLE_TEACHER)
+            ->whereIn('group_staff.group_id', $groupIds)
+            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'users.name'])
+            ->sort(fn (GroupStaff $a, GroupStaff $b) => strcmp(mb_strtolower((string) $a->name), mb_strtolower((string) $b->name))
+                ?: (int) $a->user_id <=> (int) $b->user_id)
+            ->groupBy(fn (GroupStaff $row) => (int) $row->group_id)
+            ->map(fn ($rows) => $rows->map(function (GroupStaff $row): array {
+                $subjects = $row->subjects ?: null;
+
+                return [
+                    'id' => (int) $row->user_id,
+                    'name' => (string) $row->name,
+                    'subjects' => $subjects === null ? null : array_map(
+                        fn (string $s): array => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s] ?? $s],
+                        [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
+                    ),
+                ];
+            })->values()->all())
+            ->all();
     }
 
     /**

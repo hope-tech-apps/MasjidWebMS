@@ -111,6 +111,8 @@
                         <thead>
                             <tr>
                                 <th>Name</th>
+                                <!-- Plain "Teachers": the terminology pack has no word for them. -->
+                                <th>Teachers</th>
                                 <th>Kind</th>
                                 <th class="text-center">Members</th>
                                 <th class="text-center">Status</th>
@@ -127,6 +129,20 @@
                                         {{ group.name }}
                                     </router-link>
                                     <div class="text-muted small font-monospace">{{ group.slug }}</div>
+                                </td>
+                                <!-- Who teaches it (owner, 2026-10-04): one line per teacher,
+                                     the subjects they teach in THIS class beside the name and
+                                     under it where the cell is narrow. Words only: changing a
+                                     teacher's classes is the Teachers screen's job. -->
+                                <td class="class-teachers">
+                                    <div v-for="line in teacherLines.get(group.id)" :key="line.id" class="class-teacher">
+                                        <span>{{ line.name }}</span>
+                                        <span class="text-muted small">{{ line.subjects }}</span>
+                                    </div>
+                                    <span v-if="!teacherLines.get(group.id)?.length" class="text-muted" title="No teacher assigned">
+                                        <span aria-hidden="true">—</span>
+                                        <span class="visually-hidden">No teacher assigned</span>
+                                    </span>
                                 </td>
                                 <td>
                                     <span class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>
@@ -244,6 +260,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { classTeacherLines } from '@/core/helpers/classTeachers';
 import Swal from 'sweetalert2';
 
 /**
@@ -352,6 +369,9 @@ const downloadExport = async (): Promise<void> => {
 };
 
 const groups = computed<Group[]>(() => (groupsStore.groupsPaginated?.data as Group[]) || []);
+
+/** Each listed class's teacher lines, by class id: worked out once per page, not once per cell drawn. */
+const teacherLines = computed(() => new Map(groups.value.map((g) => [g.id, classTeacherLines(g.teachers)])));
 
 /** The kind vocabulary as the SERVER states it; the literal list is a fallback for a cold load. */
 const kinds = computed<GroupKind[]>(() => groupsStore.groupsMeta?.kinds ?? ['general', 'class', 'halaqa', 'team']);
@@ -506,6 +526,24 @@ watch(showFormModal, (open) => {
     list-style: none;
 }
 .records-export > summary::-webkit-details-marker { display: none; }
+
+/* Teachers: the names stack, one teacher to a line. The subjects sit beside the
+   name and drop under it when there is no room, never off the edge of a phone.
+   The floor on the width keeps a name from breaking at every word when the
+   table is wider than the screen and scrolls sideways. */
+.class-teachers {
+    min-width: 10rem;
+}
+.class-teacher {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.5rem;
+    line-height: 1.3;
+}
+.class-teacher + .class-teacher {
+    margin-top: 0.3rem;
+}
 
 .stats-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
