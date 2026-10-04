@@ -380,6 +380,13 @@ class StagingScrubTest extends TestCase
             $this->assertNull($row->ip_address);
             $this->assertNull($row->user_agent);
             $this->assertNull($row->admin_notes);
+            // `data` is rewritten without the model, so the copy the search reads would
+            // still hold every name. It is nulled with the row and then written again from
+            // the scrubbed answers, so the search on staging is not left with nothing to
+            // read: the form declares `full_name`, and its answer is now the placeholder,
+            // stored as the search stores every answer (its word, after one space).
+            $this->assertSame('[scrubbed]', ScrubStrategies::JSON_PLACEHOLDER);
+            $this->assertSame(' scrubbed', $row->answers_text);
         }
 
         // forms.settings keeps its configuration and loses only the addresses.
@@ -755,6 +762,8 @@ class StagingScrubTest extends TestCase
                 'guardian' => ['phone' => '+19195551234', 'name' => 'Sara Siddiqui'],
                 'medical' => 'asthma inhaler in her bag',
             ]),
+            // The search's copy of those answers (App\Support\FormAnswersText), as the model writes it.
+            'answers_text' => ' maryam siddiqui sara siddiqui asthma inhaler in her bag',
             'respondent_name' => 'Sara Siddiqui',
             'respondent_email' => 'sara'.$masjid->id.'@realdomain.org',
             'respondent_phone' => '+1919'.random_int(1000000, 9999999),

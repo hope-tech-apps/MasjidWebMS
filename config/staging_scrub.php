@@ -316,6 +316,7 @@ return [
             'charge_account_id', // the Connect account a page was opened on (DECISIONS.md 2026-09-15): a live acct_ id, nulled like masjids.stripe_account_id
             'charge_ref',        // the opaque key a linked charge carries in Stripe metadata; UNIQUE and nullable, so NULL is the only safe scrub
             'external_ref',      // the school website's row id (alrazi:sync-website): the site hands it to the family and it unlocks the site's payment step. UNIQUE per form and nullable, so NULL is the only safe scrub
+            'answers_text',      // the search's lower-cased copy of every answer in `data` (App\Support\FormAnswersText). `data` is rewritten below without the model, so this would keep each real name; NULL is "not written yet", and the command fills it again from the scrubbed answers once this table is done (StagingScrub::rebuildAnswersText())
         ],
 
         'form_staff_codes' => [

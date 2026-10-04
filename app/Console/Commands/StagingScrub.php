@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Support\Environment;
+use App\Support\FormAnswersText;
 use App\Support\ScrubStrategies;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -162,6 +163,8 @@ class StagingScrub extends Command
 
         $deleted = $this->runDrops($drops);
         $updated = $this->runTables($tables);
+
+        $this->rebuildAnswersText();
 
         $this->newLine();
         $this->components->info('Verifying.');
@@ -607,6 +610,36 @@ class StagingScrub extends Command
         }
 
         return $total;
+    }
+
+    /**
+     * Write `form_responses.answers_text` again, from the answers as they are now.
+     *
+     * That column is the Form Responses search's lower-cased copy of the answers in
+     * `data` (App\Support\FormAnswersText). It is nulled with the rest of the row, inside
+     * the table's transaction, so no real name outlives a run that stops there. Left
+     * NULL it would stay NULL: only the model writes it, and nothing here goes through
+     * the model, so on staging the search would find nothing in the answers of any row
+     * until that row was next saved. FormAnswersText::fill() is the migration's own
+     * backfill: plain query-builder writes (no tenant scope, no model event, the rows of
+     * a soft-deleted form included), only over rows still NULL, in chunks by primary key.
+     *
+     * What it writes is the placeholder, once per answer: the names are gone from `data`,
+     * so no search finds a copied row by a child's name, on staging or anywhere. A row
+     * submitted on staging afterwards is searched in full.
+     */
+    private function rebuildAnswersText(): void
+    {
+        $table = FormAnswersText::TABLE;
+        $column = FormAnswersText::COLUMN;
+
+        if ($this->isDropped($table) || ! Schema::hasColumn($table, $column)) {
+            return;
+        }
+
+        $written = $this->guarded($table, $column, fn () => FormAnswersText::fill());
+
+        $this->line(sprintf('  <fg=gray>rebuilt</>  %-31s %s rows', "{$table}.{$column}", number_format($written)));
     }
 
     /**

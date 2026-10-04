@@ -7382,3 +7382,110 @@ where the TV app that is actually installed honours the choice. Six settings, on
   exist so that it drew only what it was given and wrote nothing anywhere: the title, the caption, the pause, the
   hidden prayer panel and the hidden code each appeared as chosen. What was NOT done: a run on a physical Apple TV, and
   a live change arriving over the network (the app's server address is fixed to production).
+
+## 2026-10-04 — Form Responses search reads the answers from their own column, never from the JSON as text (review fold on efb2416c; branch fix/form-responses-search-answers)
+- **What was wrong.** efb2416c made the search look inside the answers by matching the whole JSON document as text
+  (`LOWER(CAST(data AS CHAR)) LIKE`). That text also holds every question's KEY and whatever is stored beside the
+  answers, so an ordinary first name found every row: "Reem" is in `waiverAgreement`, "Sara" in `parent1SpeaksArabic`,
+  "Mai" in `registrantEmail`, and "Ada" in the SHA-256 the website import keeps per document. A parent who used to be
+  found exactly was buried in the whole list, at the door too, and the export, roster, cash totals and Insights
+  widened with it. On SQLite the same text is `\uXXXX`-escaped, so the suite could not find an Arabic or accented
+  name at all, nor a value with a slash. A term that was not valid UTF-8 dropped the filter and returned every row.
+- **The fix.** `form_responses.answers_text` (MEDIUMTEXT, nullable, no index): the WORDS of the answer values,
+  lower-cased in PHP, one space before each, built by one pure function, `App\Support\FormAnswersText::build()`.
+  The search reads that column with `LIKE '% word%' ESCAPE '!'` on words that the same function made
+  (`FormAnswersText::words()`), so the predicate is the same on MySQL and SQLite.
+- **Lower case is the SIMPLE mapping** (`MB_CASE_LOWER_SIMPLE`, one character for one character, as
+  `LessonPlan::subjectKeyFor()` uses), not `mb_strtolower` as first written. The full mapping turns a Turkish
+  capital İ into "i" plus a combining dot, so a child entered as "İbrahim" was not found by "ibrahim", "Ibrahim" or
+  "İBRAHİM", only by the exact spelling; and it lower-cases a Greek capital sigma differently at the end of a word
+  than inside one, so a word alone and the same letters inside the text could differ.
+- **What is in the text.** Only questions the form declares (plain sections, and each row of a repeating one): a
+  text, number, date, email or phone answer; a choose-one answer and the label of its option; each value of a
+  choose-any answer. Never a `file` question (a file name), a `checkbox` (a tick), a key the form does not declare,
+  a value that is one run of 32 or more hex digits, or a value that is one Stripe object id.
+- **The digest rule is there because "declared only" was not enough.** The school-website form DECLARES its
+  `…Ref` fields as text questions (database/forms/alrazi-website-registration.json; `AlRaziSubmissionMapperTest`
+  pins that the mapper emits declared keys only), so on the very form this was written for the digests would
+  still have been searched. A digest is left out wherever it is stored.
+- **A payment id is left out for the same reason.** The same form declares `websiteStripePaymentId` as a text
+  question and the import fills it with the payment's id: `pi_` and 24 random letters and digits, which now and
+  then contain "ali" or "mai", so a short name found an unrelated paid enrolment at random (a reviewer's estimate,
+  not measured on real ids: about 0.07% per paid row per three-letter word). The rule is narrow on purpose: a
+  whole value that is a payment object's prefix (`pi`, `cs`, `ch`, `py`, `in`, `seti`), optionally `live_` or
+  `test_`, then ONE run of 14 or more letters and digits with a digit in it, so a chosen option such as
+  `in_person_attendance` stays an answer. Decided: the office does not find a family by pasting a payment id
+  into this box. If it ever should, drop `FormAnswersText::PROVIDER_ID` and rebuild.
+- **Who writes it.** The model, in a `saving` hook, whenever `data` changes or the column is still NULL, so the
+  public submit, the basket, a registration and the website import cannot forget it. The migration fills existing
+  rows (chunks by primary key, only rows still NULL, re-runnable after an interruption); the hadiths
+  normalised-column migration is the precedent. `staging:scrub` rewrites `data` without the model, so it NULLS the
+  column (`config/staging_scrub.php`), or staging would keep every real name, and then runs the same fill
+  (`StagingScrub::rebuildAnswersText()`), because nothing else would write it back: the policy's comment said
+  the model or the command would, and no step of `deploy/staging/DATA-REFRESH.md` ran either. What the fill
+  writes there is the scrub's placeholder once per answer. A row copied from production cannot be found on staging by a child's
+  name whatever is done, because the name is gone from `data`; walk the search on a row submitted on staging.
+  `forms:rebuild-answers-text [--form=] [--all]` is the same fill by hand.
+- **The search.** Every word, in any order, in the respondent's name, email or phone, or in the answers. A term
+  with no letter in it ("7", "#123", "555 0100") is a registration number or a phone and is not looked for in the
+  answers; beside a word with a letter it is ("Layla 5", "Rahmani 2019"). The registration-number alternative is
+  unchanged. A term that is not valid UTF-8, and a term that leaves no word, match nothing (the first was scrubbed
+  to `?` before the word-start change; scrubbed now, the `?` would be dropped as punctuation and "Maryam" plus a
+  cut character would find Maryam under a filter nobody typed). A typed `%` or `_` is now literal in the three
+  identity columns as well; before, either one alone returned every row.
+- **The deploy window.** `bin/deploy` makes the code live before it migrates. Until the column exists the model
+  does not name it and the search reads the identity columns and the number only, as on main
+  (`FormAnswersText::columnExists()`, memoised as `CartTables` is). Without this a family submitting in those
+  seconds would have lost the registration to "unknown column".
+- **Known limits, decided.** The text follows the form's questions as they were when the row was last saved: after
+  a form's schema changes, run `forms:rebuild-answers-text --form=<id> --all`. The labels of a choose-any answer,
+  and of options that come from the school calendar, are not in the text (their values are, and the values are
+  what the response screen shows). On MySQL the column's collation also ignores accents, so "emile" finds "Émile"
+  there and not on SQLite: more is found, never less.
+- **In the answers a word is matched at the START of a word, never inside one. DECIDED by the lead 2026-10-04**
+  (this replaces the note that left it open for the owner; the first version of this change matched any part of an
+  answer). Matched anywhere, a short name returned the whole form at a registration desk: on the school-website
+  enrolment form "mai" is in a preferred-communication answer of `email`, "ali" in a home language of "Somali",
+  "ian" in `guardian`, "tim" in `full_time`. Now "kar" finds "Kareem", and "rahman" finds "Abdul-Rahman" and
+  "al-Rahman" but NOT "Abdulrahman": a name written as one word is found from its first letters only, and that
+  cost is the decision. The same in Arabic, where the article is written joined: "الرحماني" is found by "الرح",
+  not by "رحماني".
+  - **How, portably.** No word-boundary operator and no marker character: the two engines do not share one, and
+    how MySQL's collation weighs an unusual character is not something this suite can see. The text itself is
+    built as words. `FormAnswersText::normalise()` lower-cases, turns every run of characters that is not a
+    letter, a combining mark or a number character (`[^\p{L}\p{M}\p{N}]+`) into ONE space, and `build()` puts
+    one space in front, so every word, the first too, follows a space: `" samira al nasser samira example test
+    2019 04 02"`. A letter keeps its marks (an accent typed as its own character, Arabic vowel signs).
+  - **What is typed goes through the same function** (`FormAnswersText::words()`), so "al-rahman", "o'neil"
+    (straight or curled) and a whole email address fall into the pieces the stored answer fell into, and EVERY
+    piece must begin a word: `answers_text LIKE '% piece%'` per piece. The pieces are not required to be next
+    to each other or in order, which is the rule the words of the term already had. A typed word with nothing
+    in it for the answers ("&", "-") is left to the identity columns. At most 8 pieces of one typed word are
+    looked for, the cap the words already had.
+  - **The respondent's name, email and phone are still matched in ANY part**, as the lead decided and as they
+    always were ("our@exam", "0199"). So this change does not narrow them: "mai" still finds every row whose
+    `respondent_email` is a gmail address, and "ali" a respondent called "Dalia" or "Khalid". If the desk
+    reports that, the same word rule on those three columns is the next step; it is not done here.
+  - **A number beside a name begins a word too**: "Layla 2019" and "Layla 201" find a date of birth of
+    `2019-04-02` (the words 2019, 04, 02); "Layla 19" and "Layla 4" do not.
+  - **The column has never been migrated anywhere**, so the builder changed in place and the migration's fill is
+    the same idempotent one (rows still NULL, chunks by primary key). A database that had run the first version
+    would need `forms:rebuild-answers-text --all`; none has.
+  - Pinned by `FormResponseSearchTest::a_word_is_matched_at_the_start_of_a_word_in_the_answers_and_never_inside_one`
+    (the email / Somali / guardian cases, a hyphenated and an apostrophe name, Arabic, an email address typed
+    whole, a number beside a name), `...::the_first_word_of_the_answers_is_found_and_the_name_email_and_phone_are_matched_in_any_part`,
+    and `FormAnswersTextTest::a_word_is_a_run_of_letters_marks_and_numbers_and_everything_else_is_one_space`.
+    With the pattern turned back into `%word%`, six tests of those two files fail, these three among them (run
+    once, then restored).
+- **The screen says only what is true**: the placeholder, the help sentence for screen readers and the "At the
+  door" notice name "a word in the answers"; the help sentence states the number rule, that in the answers a word
+  is matched from the start of a word, and that what is not searched is the name of an uploaded file and a single yes/no tick
+  box (the ticked options of a choose-any question ARE searched, so "ticked boxes" was wrong).
+- **Tests.** `FormResponseSearchTest` (SQLite; it also runs the migration's own `up()` and `down()` over rows
+  stored before it, since the backfill in `up()` is the only thing that fills production's existing rows),
+  `FormAnswersTextTest` (the pure function), `StagingScrubTest` (the text after a scrub),
+  `tests/Mysql/FormResponseSearchMysqlTest.php` (the column type, Arabic, accented and Turkish names, the word
+  start, the escape in the respondent's name, the backfill reading MySQL's JSON). The MySQL file was NOT run
+  where it was written (no MySQL server). After the word-start change every body but the column-type one was run
+  once on SQLite through a temporary copy, to check the fixtures: 7 passed. That proves the fixtures, not MySQL.
+  See ASSUMPTIONS.md F-1 to F-7.

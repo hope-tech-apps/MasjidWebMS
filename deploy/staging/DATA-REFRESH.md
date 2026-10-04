@@ -210,7 +210,8 @@ php artisan staging:scrub --i-understand-this-destroys-personal-data
 ```
 
 Expect, in order: a line per emptied table with its row count, a line per
-scrubbed table with its column and write counts, then the verification block:
+scrubbed table with its column and write counts, one `rebuilt` line, then the
+verification block:
 
 ```
   deleted  sessions                         1,284
@@ -219,12 +220,19 @@ scrubbed table with its column and write counts, then the verification block:
   scrubbed contacts                        6 columns, 18,204 writes
   scrubbed users                           6 columns, 84 writes
   …
+  rebuilt  form_responses.answers_text     2,311 rows
 
   Verifying.
   verified 41 column(s): every address ends in .invalid, every phone is +1 555-01xx.
 
   Done. 14,902 rows deleted across 24 tables; 61,338 column writes across 26 tables.
 ```
+
+The `rebuilt` line is the Form Responses search's copy of the answers
+(`form_responses.answers_text`): it is nulled with the rest of the row and
+written again from the scrubbed answers, so it holds the placeholder and no
+name. A response copied from production therefore cannot be found by a child's
+name on staging; to walk that search, submit a response on staging first.
 
 **The verification block is the acceptance criterion, not the exit code.** It
 re-reads every column that was anonymised with the `email` or `phone` strategy,

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\FormAnswersText;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -16,6 +17,8 @@ use LogicException;
  * entries live under that section's id as an array of rows. The respondent_* columns
  * are copies of three values out of `data` so the admin list can search and sort
  * across the whole result set — see the create_form_responses_table migration.
+ * `answers_text` is one more copy, of the words of the answers in lower case, so
+ * the same search can find a person named inside the answers (App\Support\FormAnswersText).
  *
  * A `file` question stores the respondent's ORIGINAL FILENAME in `data` under the
  * field's name, so the admin table and the CSV export have something to show; the
@@ -118,11 +121,16 @@ class FormResponse extends Model
      * family's browser and it unlocks the site's payment step, so it is a bearer
      * value, not a label: it never serialises, and it is not fillable either. The
      * import sets it attribute by attribute, and `uuid` is still minted locally.
+     *
+     * `answers_text` is the search's own copy of the answers (App\Support\FormAnswersText):
+     * every value in it is already in `data`, so it never serialises, and it is written by
+     * the saving hook below, never from input.
      */
     protected $hidden = [
         'client_payload_hash',
         'charge_account_id',
         'external_ref',
+        'answers_text',
     ];
 
     /**
@@ -266,6 +274,11 @@ class FormResponse extends Model
             }
         });
 
+        // The search's copy of the answers follows `data` on every save, whoever is saving.
+        static::saving(function (FormResponse $response) {
+            $response->refreshAnswersText();
+        });
+
         static::created(function (FormResponse $response) {
             Form::whereKey($response->form_id)->increment('response_count');
         });
@@ -337,6 +350,40 @@ class FormResponse extends Model
     }
 
     /**
+     * Write `answers_text` when it no longer matches the answers: `data` changed, or the
+     * column is still empty (a row from before the column that no fill has reached).
+     *
+     * A model loaded without `data` (a partial select) knows nothing about the answers and
+     * is left alone, as is every save in the deploy window before `migrate` has added the
+     * column (FormAnswersText::columnExists()).
+     */
+    private function refreshAnswersText(): void
+    {
+        if (! array_key_exists('data', $this->attributes)) {
+            return;
+        }
+
+        $empty = array_key_exists(FormAnswersText::COLUMN, $this->attributes)
+            ? $this->attributes[FormAnswersText::COLUMN] === null
+            : ! $this->exists;
+
+        if (! $empty && ! $this->isDirty('data')) {
+            return;
+        }
+
+        if (! FormAnswersText::columnExists()) {
+            return;
+        }
+
+        // The relation is read only when a caller already loaded it: loading it here would
+        // put the whole form inside every payload that serialises this row.
+        $form = ($this->relationLoaded('form') ? $this->getRelation('form') : null)
+            ?? Form::withTrashed()->find($this->form_id);
+
+        $this->setAttribute(FormAnswersText::COLUMN, FormAnswersText::for($form, $this->data));
+    }
+
+    /**
      * Free-text search: the three denormalised identity columns, the registration
      * number, and the ANSWERS themselves.
      *
@@ -349,18 +396,46 @@ class FormResponse extends Model
      * places. A child's first and last name are two separate answers, so the full name
      * typed as one phrase is never one substring of anything.
      *
-     * The answers are matched as TEXT, not by JSON path: a path predicate is not
-     * portable between MySQL (production) and SQLite (tests), and no path could name
-     * "any answer" anyway. Two consequences, both accepted:
-     *  - a word that is also part of a question's key (such as "name") matches every
-     *    row of that form;
-     *  - only a word with a letter in it is looked for in the answers. A bare number
-     *    would match every date, age and phone number in the document, and a number
-     *    is what the door types for a registration or a phone.
+     * The answers are read from `answers_text`, the WORDS of the answers to the form's
+     * declared questions, written out in lower case with a space before each
+     * (App\Support\FormAnswersText), never from the JSON document: as text that document
+     * also holds every question's key and whatever an import stored beside the answers, so
+     * "Sara" (in `parent1SpeaksArabic`) found every enrolment.
+     *
+     * IN THE ANSWERS A WORD IS MATCHED FROM ITS START, never inside one: "kar" finds
+     * "Kareem" and "rahman" finds "Abdul-Rahman", and "mai" no longer finds every row
+     * that answered "email", nor "ali" every "Somali" (decided 2026-10-04; see the class).
+     * What was typed is split into words by the function that split the answers
+     * (FormAnswersText::words()), so "al-rahman", "o'neil" or a whole email address is
+     * looked for piece by piece, and EVERY piece must begin a word of the answers. The
+     * predicate is `LIKE '% piece%'` on text both sides built the same way, so it means
+     * the same on MySQL (production) and SQLite (the suite);
+     * tests/Mysql/FormResponseSearchMysqlTest runs it on MySQL.
+     *
+     * The name, email and phone columns are matched in ANY part, as they always were
+     * ("four@" finds an address, "0100" a phone), with a typed `%` or `_` taken literally.
+     * So a typed word finds a row when it is somewhere in one of those three, or when all
+     * its pieces begin words of the answers. A word with nothing in it for the answers
+     * ("&", "-") is left to those three columns.
+     *
+     * NUMBERS. A term with no letter in it ("7", "#123", "555 0100") is what the door
+     * types for a registration or a phone, and looked for in the answers it would match
+     * every date, age and phone number in the form: it is compared with the name, email
+     * and phone only. Beside a word with a letter it narrows instead, so "Layla 5" and
+     * "Rahmani 2019" look for the number in the answers too, at the start of a word like
+     * any other ("2019-04-02" is the words 2019, 04 and 02).
      *
      * "#123" is the registration number a receipt prints ("Registration no. #123"),
      * which is what a person at the bracelet table holds up. A bare number is
      * matched as one too, beside whatever phone number it may also be part of.
+     *
+     * A term that is not valid UTF-8 (a multi-byte character cut by a bad paste), and a
+     * term that leaves no word to look for, match NOTHING. Neither may ever mean "no
+     * search": the export and the cash totals read this scope, and they would be labelled
+     * as filtered and hold every row.
+     *
+     * Before `migrate` has added the column (the deploy window), only the identity
+     * columns and the registration number are searched, as before the column existed.
      */
     public function scopeSearch($query, ?string $term)
     {
@@ -370,26 +445,55 @@ class FormResponse extends Model
             return $query;
         }
 
+        if (! mb_check_encoding($term, 'UTF-8')) {
+            return $query->whereRaw('0 = 1');
+        }
+
         // A handful of words is a name and a surname with room to spare; the cap keeps
         // a pasted paragraph from becoming a paragraph of predicates.
         $words = array_slice(preg_split('/\s+/u', $term, -1, PREG_SPLIT_NO_EMPTY) ?: [], 0, 8);
 
-        return $query->where(function ($q) use ($term, $words) {
-            $answers = $q->getGrammar()->wrap($q->qualifyColumn('data'));
+        if ($words === []) {
+            return $query->whereRaw('0 = 1');
+        }
 
-            $q->where(function ($all) use ($words, $answers) {
+        $inAnswers = preg_match('/\p{L}/u', implode(' ', $words)) === 1 && FormAnswersText::columnExists();
+
+        // While the answers are searched, a typed word made only of punctuation ("&", "-",
+        // "/") is a separator and nothing more: the stored text has none left, so asking
+        // for it would empty the search for "Tariq & Layla" typed exactly as it was answered.
+        if ($inAnswers) {
+            $words = array_values(array_filter($words, fn (string $word): bool => FormAnswersText::words($word) !== []));
+
+            if ($words === []) {
+                return $query->whereRaw('0 = 1');
+            }
+        }
+
+        return $query->where(function ($q) use ($term, $words, $inAnswers) {
+            $wrap = fn (string $column): string => $q->getGrammar()->wrap($q->qualifyColumn($column));
+            $escape = FormAnswersText::LIKE_ESCAPE;
+
+            $q->where(function ($all) use ($words, $inAnswers, $wrap, $escape) {
                 foreach ($words as $word) {
-                    $all->where(function ($any) use ($word, $answers) {
-                        $like = '%' . $word . '%';
-                        $any->where('respondent_name', 'like', $like)
-                            ->orWhere('respondent_email', 'like', $like)
-                            ->orWhere('respondent_phone', 'like', $like);
+                    $all->where(function ($any) use ($word, $inAnswers, $wrap, $escape) {
+                        foreach (['respondent_name', 'respondent_email', 'respondent_phone'] as $column) {
+                            $any->orWhereRaw("{$wrap($column)} LIKE ? ESCAPE '{$escape}'", [FormAnswersText::like($word)]);
+                        }
 
-                        if (preg_match('/\p{L}/u', $word) === 1) {
-                            // LOWER on both sides: MySQL's cast is case-insensitive by its
-                            // collation, SQLite's LIKE only for ASCII, and this says so
-                            // for both instead of relying on either.
-                            $any->orWhereRaw("LOWER(CAST({$answers} AS CHAR)) LIKE ?", ['%' . mb_strtolower($word) . '%']);
+                        // In the answers: each piece of the word at the start of a word. The
+                        // cap is the one on the words above, for one long pasted string.
+                        $pieces = $inAnswers ? array_slice(FormAnswersText::words($word), 0, 8) : [];
+
+                        if ($pieces !== []) {
+                            $any->orWhere(function ($each) use ($pieces, $wrap, $escape) {
+                                foreach ($pieces as $piece) {
+                                    $each->whereRaw(
+                                        "{$wrap(FormAnswersText::COLUMN)} LIKE ? ESCAPE '{$escape}'",
+                                        [FormAnswersText::likeWordStart($piece)]
+                                    );
+                                }
+                            });
                         }
                     });
                 }

@@ -108,7 +108,7 @@
                                     ref="searchInput"
                                     type="search"
                                     class="form-control"
-                                    placeholder="Name, email, phone, #number or an answer"
+                                    placeholder="Name, email, phone, #number or a word in the answers"
                                     aria-describedby="responses-search-help"
                                     v-model="searchQuery"
                                 >
@@ -127,7 +127,14 @@
                             </div>
                             <span id="responses-search-help" class="visually-hidden">
                                 Type a hash sign and a number to find a registration by the number on its receipt.
-                                A name typed here is also looked for in the answers, such as a child named in an enrolment.
+                                Every word typed is looked for in the name, email and phone of the person who filled the
+                                form in, and in the written answers and chosen options, such as a child named in an
+                                enrolment. The words can be in any order. A number typed on its own is looked for only
+                                as a registration number or in the name, email and phone; typed beside a name it is
+                                looked for in the answers too. In the answers a word is matched from the start of a
+                                word, so the first letters of a name are enough, and letters from the middle of a
+                                name find nothing.
+                                Names of uploaded files, and a single tick box that only says yes or no, are not searched.
                             </span>
                         </div>
                         <div class="col-md-6 col-lg-2">
@@ -204,9 +211,10 @@
                     <div v-if="doorMode && paymentEnabled" class="alert alert-success py-2 small mb-3" role="status">
                         <strong>At the door.</strong>
                         With the search box empty, this shows registrations that are paid, or have nothing to pay,
-                        and have not checked in yet. A search (name, email, phone or #number) shows every
-                        registration that matches, including unpaid ones and ones already checked in, so nobody is
-                        registered twice. Cancelled registrations are flagged and cannot be checked in.
+                        and have not checked in yet. A search (name, email, phone, #number, or a word in the answers
+                        such as a child's name) shows every registration that matches, including unpaid ones and ones
+                        already checked in, so nobody is registered twice. Cancelled registrations are flagged and
+                        cannot be checked in.
                     </div>
 
                     <p v-if="dateRangeInvalid" class="text-danger small mb-3">
@@ -740,7 +748,7 @@
                                         :key="col.key"
                                         :class="{ 'cursor-pointer': rosterSortable.includes(col.key) }"
                                         :aria-sort="ariaSort(col.key as any)"
-                                        @click="rosterSortable.includes(col.key) && toggleSort(col.key)"
+                                        @click="rosterSortable.includes(col.key) && toggleSort(col.key as FormResponseSortColumn)"
                                     >
                                         {{ col.label }}
                                         <i v-if="rosterSortable.includes(col.key)" class="bi sort-icon" :class="sortIcon(col.key as any)"></i>
