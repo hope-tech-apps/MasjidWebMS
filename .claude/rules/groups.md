@@ -1601,6 +1601,27 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherRoutesRegisteredOnceTest`, `TeacherSubjectAccessTest`
   (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
 
+## The office's class list names each class's teachers (2026-10-04)
+
+`GET admin/.../groups` (the index, `view contacts`, the gate the Teachers screen reads under) carries
+`teachers` on every row: `[{id, name, subjects}]`, the live staff logins on `group_staff` with the
+teacher role, in order of name. `subjects` is what they teach IN THAT CLASS as `[{value, label}]`, in
+`GroupStaff::SUBJECTS` order with `SUBJECT_LABELS`, or null for a teacher of the whole class (NULL or
+an empty list on the row). A class nobody teaches has `[]`.
+
+- **Set on the page's rows in `GroupsController::index`, never on the model.** No `$appends`, no eager
+  `staff` relation (that would serialize whole `User` rows). So show/store/update do not carry it, and
+  neither does any payload another realm builds by hand (the teacher realm's `classPayload`, the family
+  realm's `serialize`): a teacher's own list of classes names no colleague, and a family's names no
+  teacher. Do not move it onto `Group`.
+- **One query for the page** (`teachersByGroup`), started from `GroupStaff` so the tenant scope
+  constrains it, joined to live users: an archived login keeps its `group_staff` rows and is nobody
+  here, as in the reaction digest above.
+- **Names only.** A teacher's email and phone stay on the Teachers screen.
+- **Proven by** `GroupIndexTeachersTest` (shape, order, archived, another organisation, one query, and
+  the key's absence from every other class payload) and `resources/vue-app/tests/class-teachers.test.ts`
+  (the screen's column, mounted).
+
 ## Tenant isolation
 
 Both models use `BelongsToMasjid`; `group_memberships.masjid_id` is
