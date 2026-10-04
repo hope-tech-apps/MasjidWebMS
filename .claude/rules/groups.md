@@ -1164,7 +1164,10 @@ is never stored**; it is whole years worked out on read, on the SCHOOL's clock
    - **no class lists them any more**: "Their date of birth is still on their
      record." with `data.birth_date = { held, contact_id }`, and the office
      roster offers "Remove the date of birth" beside OK, because no roster is
-     left to remove it from. A failed clear offers "Try again".
+     left to remove it from. A failed clear offers "Try again". **A contact
+     deleted in the Member Directory is always in this second case**, whatever
+     class rows remain: a deleted contact's row shows no age and its date form
+     answers 404, so no roster can read or remove the date.
    So `data.birth_date` present means exactly "offer the clear". KNOWN GAP: once
    that offer is dismissed there is no screen that removes the date of a person
    who is in no class (the Member Directory has no date control); the route
