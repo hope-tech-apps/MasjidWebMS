@@ -1257,7 +1257,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed, watch } from 'vue';
+import { ref, onBeforeMount, onBeforeUnmount, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
 import ContactTagsManager from '@/views/dashboard/contacts/ContactTagsManager.vue';
@@ -1286,11 +1287,20 @@ import {
     wixOrderPaymentLabel,
     type WixOrder,
 } from '@/core/helpers/donationMethod';
+import {
+    CONTACT_QUERY_KEY,
+    RECORD_NOT_OPENED,
+    contactIdFromQuery,
+    openLinkedRecord,
+    withoutContactQuery,
+} from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
 
 // Store
 const contactsStore = useContactsStore();
 const masjidStore = useMasjidStore();
+const route = useRoute();
+const router = useRouter();
 
 // State
 const loading = ref(false);
@@ -1576,6 +1586,49 @@ const viewContact = async (contact: Contact) => {
 
     await loadFamilyLogin(contact.id);
 };
+
+/**
+ * Open one person's record from a link: `?contact={id}`, which the class roster's
+ * "Open full record" sends the office here with.
+ *
+ * NOT `viewContact`, which opens the dialog first with the list row it was handed and
+ * keeps that row when the fetch fails. A link carries only an id, so the record is
+ * FETCHED FIRST and the dialog opens only with what the server returned; the order is
+ * `openLinkedRecord`'s (core/helpers/studentDetails), which the SPA suite drives.
+ */
+let screenOpen = true;
+onBeforeUnmount(() => { screenOpen = false; });
+
+const openContactById = (id: number) => openLinkedRecord<Contact>(id, {
+    fetch: (contactId) => contactsStore.fetchContact(contactId),
+    stillHere: () => screenOpen,
+    dropLink: () => { router.replace({ query: withoutContactQuery(route.query) }).catch(() => {}); },
+    refuse: () => { Swal.fire({ icon: 'error', title: RECORD_NOT_OPENED }); },
+    open: async (full) => {
+        selectedContact.value = full;
+        smsConsentError.value = '';
+        smsOptOutNotDurable.value = '';
+        recordTagId.value = null;
+        showViewModal.value = true;
+
+        await loadFamilyLogin(full.id);
+    },
+});
+
+// Read once, when the screen opens. It waits for the organisation: on a reload this
+// screen is drawn before the organisation is known, and a fetch with none would report
+// a record that exists as one that could not be opened. In a hook rather than at the top
+// level, because the dialog's own state is declared further down this file.
+onBeforeMount(() => {
+    let linkedContactId = contactIdFromQuery(route.query[CONTACT_QUERY_KEY]);
+
+    watch(() => masjidStore.masjid?.id, (masjidId) => {
+        if (!masjidId || linkedContactId === null) return;
+        const id = linkedContactId;
+        linkedContactId = null;
+        openContactById(id);
+    }, { immediate: true });
+});
 
 // --- Parent portal sign-in (T-015d) ---
 //
