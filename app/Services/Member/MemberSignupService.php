@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Laravel\Sanctum\NewAccessToken;
+use LogicException;
 use Throwable;
 
 /**
@@ -560,11 +561,20 @@ class MemberSignupService
      * won every sign-in, so merging the two originals no longer helped. Callers that may CREATE
      * must ask this, not resolveContact().
      *
-     * Runs tenant-bound, like every caller. Public for the callers outside this service that
-     * must tell the three cases apart before they write (a social sign-in that links an identity).
+     * TENANT-BOUND, and it says so itself: unbound, BelongsToMasjid adds no filter and this would
+     * answer across every organisation in the database, so a caller that forgot to bind (a central
+     * route with no `{masjid_id}`) would link or refuse on another organisation's contacts. It
+     * throws instead. Public for the callers outside this service that must tell the three cases
+     * apart before they write (a social sign-in that links an identity).
+     *
+     * @throws LogicException when no organisation is bound
      */
     public function holdersOf(string $email): AddressHolders
     {
+        if ($this->tenant->get() === null) {
+            throw new LogicException('MemberSignupService::holdersOf() needs a bound organisation: unbound, it would search every organisation.');
+        }
+
         // No `limit()` on either query: the candidates are filtered to the exact
         // address before they are counted, and a limit taken first could cut the
         // exact row off behind look-alikes (or leave one exact row standing where

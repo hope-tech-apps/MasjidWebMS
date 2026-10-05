@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Mail\FamilyLoginCodeMail;
 use App\Models\Contact;
 use App\Models\Masjid;
+use App\Services\Member\AddressHolders;
 use App\Services\Member\MemberSignupService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -196,6 +197,84 @@ class MemberSignInSharedAddressTest extends TestCase
         $other = $this->makeMasjid();
         app(TenantContext::class)->set($other->id);
         $this->assertTrue($service->holdersOf(self::SHARED)->isNone());
+    }
+
+    #[Test]
+    public function a_revoked_holder_still_counts_so_a_revoked_and_a_live_contact_are_several(): void
+    {
+        // Revoked is a decision about one person's access, not a reason to hand their address to
+        // the other record: counting only live-access holders would link the live one silently.
+        $revoked = $this->contact(null, self::SHARED);
+        $revoked->forceFill(['login_revoked_at' => now()])->save();
+        $live = $this->contact(null, self::SHARED);
+        $contacts = Contact::withoutMasjidScope()->withTrashed()->count();
+
+        $response = $this->verify(self::SHARED, $this->requestCode(self::SHARED), ['first_name' => 'Amal', 'last_name' => 'Rahman']);
+
+        $response->assertStatus(410);
+        $this->assertSame(self::GONE, $response->getContent());
+        $this->assertSame($contacts, Contact::withoutMasjidScope()->withTrashed()->count(), 'no third contact');
+        $this->assertNull($this->stored($live)['login_email'], 'the live contact was not linked either');
+
+        app(TenantContext::class)->set($this->masjid->id);
+        $holders = app(MemberSignupService::class)->holdersOf(self::SHARED);
+        $this->assertTrue($holders->isSeveral());
+        $this->assertEqualsCanonicalizing([$revoked->id, $live->id], $holders->contactIds);
+    }
+
+    #[Test]
+    public function two_contacts_that_both_sign_in_with_the_address_are_several_at_the_code_door(): void
+    {
+        // The `login_email` arm. The unique index is byte-exact on SQLite, so two spellings of one
+        // address can both be login addresses here, as two case variants could before the index
+        // on production compared them as one.
+        $lower = $this->contact(self::SHARED, self::SHARED);
+        $upper = $this->contact(strtoupper(self::SHARED), null);
+        $contacts = Contact::withoutMasjidScope()->withTrashed()->count();
+        $before = [$this->stored($lower), $this->stored($upper)];
+
+        $this->logged = [];
+        $response = $this->verify(self::SHARED, $this->requestCode(self::SHARED), ['first_name' => 'Amal', 'last_name' => 'Rahman']);
+
+        $response->assertStatus(410);
+        $this->assertSame(self::GONE, $response->getContent());
+        $this->assertSame($contacts, Contact::withoutMasjidScope()->withTrashed()->count());
+        $this->assertSame($before, [$this->stored($lower), $this->stored($upper)], 'neither was signed in or changed');
+
+        $warnings = $this->warnings();
+        $this->assertCount(1, $warnings, 'refused as a shared address, not as a new member or a collision');
+        $this->assertEqualsCanonicalizing([$lower->id, $upper->id], $warnings[0]->context['contact_ids']);
+    }
+
+    #[Test]
+    public function the_resolver_refuses_to_run_without_a_bound_organisation(): void
+    {
+        // Unbound, the tenant scope adds no filter and the answer would span every organisation.
+        $this->contact(null, self::SHARED);
+        $this->asANewRequest();
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('needs a bound organisation');
+
+        app(MemberSignupService::class)->holdersOf(self::SHARED);
+    }
+
+    #[Test]
+    public function several_is_never_fewer_than_two_distinct_contacts(): void
+    {
+        foreach ([[], [7], [7, 7]] as $ids) {
+            try {
+                AddressHolders::several($ids);
+                $this->fail('several(' . json_encode($ids) . ') must be refused: it would be none of nobody, one and several.');
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('at least two distinct contacts', $e->getMessage());
+            }
+        }
+
+        $two = AddressHolders::several([7, 9, 7]);
+        $this->assertTrue($two->isSeveral());
+        $this->assertSame([7, 9], $two->contactIds);
+        $this->assertNull($two->contact);
     }
 
     // ---------------------------------------------------------------- helpers

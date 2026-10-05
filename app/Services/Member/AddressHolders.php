@@ -3,6 +3,7 @@
 namespace App\Services\Member;
 
 use App\Models\Contact;
+use InvalidArgumentException;
 
 /**
  * Who holds an address as a member's sign-in address, in this organisation: nobody, exactly one
@@ -32,10 +33,24 @@ final class AddressHolders
         return new self($contact, [(int) $contact->getKey()]);
     }
 
-    /** @param  list<int>  $contactIds */
+    /**
+     * Two or more, or it is not several. A list of one (or none) with no contact would be none of
+     * isNone(), isOne() and isSeveral(), and a caller that then read `->contact` as null would take
+     * its "nobody holds this" branch and create a member: the very thing this class exists to stop.
+     *
+     * @param  list<int>  $contactIds
+     *
+     * @throws InvalidArgumentException when fewer than two distinct contacts are named
+     */
     public static function several(array $contactIds): self
     {
-        return new self(null, array_values(array_map('intval', $contactIds)));
+        $ids = array_values(array_unique(array_map('intval', $contactIds)));
+
+        if (count($ids) < 2) {
+            throw new InvalidArgumentException('AddressHolders::several() needs at least two distinct contacts; use one() or none().');
+        }
+
+        return new self(null, $ids);
     }
 
     public function isNone(): bool
