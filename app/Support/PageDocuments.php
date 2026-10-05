@@ -336,6 +336,7 @@ final class PageDocuments
     private static function linksADocumentThatIsGone(array $before, array $after): bool
     {
         $had = self::addresses(self::decoded($before));
+        $ours = null;
 
         foreach (self::decoded($after) as $string) {
             if (! preg_match_all(self::ADDRESS, $string, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
@@ -343,7 +344,13 @@ final class PageDocuments
             }
 
             foreach ($matches as [[$path, $at], [$mediaId], [$storedName]]) {
-                if (isset($had[$path]) || ! self::writtenAsOurs(substr($string, 0, $at))) {
+                if (isset($had[$path])) {
+                    continue;
+                }
+
+                $ours ??= self::ourHosts();
+
+                if (! self::writtenAsOurs(self::front($string, $at), $ours)) {
                     continue;
                 }
 
@@ -368,19 +375,64 @@ final class PageDocuments
      *
      * An address on any other host is another site's, whatever number and name it carries. Only ever
      * compared, never stored (`.claude/rules/generated-urls.md` is about what is kept).
+     *
+     * @param  string  $front  what stands straight in front of the path (front())
+     * @param  list<string>  $ours  ourHosts()
      */
-    private static function writtenAsOurs(string $front): bool
+    private static function writtenAsOurs(string $front, array $ours): bool
     {
-        // The address's own `scheme://host` and anything between that and the path, when the text
-        // in front ends with one. A host belonging to a longer address the path is only a parameter
-        // of (`https://viewer.example/view?url=/storage/3/x.pdf`) is not this address's host.
-        if (! preg_match('~(?:[a-z][a-z0-9+.-]*:)?//([^/?\#\s"\'<>=&\\\\]+)((?:/[^?\#\s"\'<>=&]*)?)$~i', $front, $match)) {
+        // The address's own `//host` and anything between that and the path, when the text in front
+        // ends with one. A host belonging to a longer address the path is only a parameter of
+        // (`https://viewer.example/view?url=/storage/3/x.pdf`) is not this address's host.
+        if (! preg_match('~//([^/?\#\s"\'<>=&\\\\]+)((?:/[^?\#\s"\'<>=&]*)?)$~', $front, $match)) {
             return true;
         }
 
         $written = strtolower($match[1]) . rtrim($match[2], '/');
 
-        return in_array($written, self::ourHosts(), true);
+        return in_array($written, $ours, true);
+    }
+
+    /**
+     * How far in front of a path its own `scheme://host` is looked for. A host name is at most 253
+     * characters; with a scheme, a port and whatever path a deployment serves `/storage` under, an
+     * address of ours is a few hundred at the very most. This is several times that.
+     */
+    private const FRONT_MAX = 2048;
+
+    /**
+     * The characters an address's own host and path cannot hold (writtenAsOurs()), so the nearest
+     * of them ends what stands in front of a path: white space, and `? # " ' < > = &`.
+     */
+    private const ENDS_A_FRONT = " \t\n\v\f\r?#\"'<>=&";
+
+    /**
+     * What stands straight in front of the path that starts at `$at`: the text back to the nearest
+     * character an address's host and path cannot hold. Only this can be the address's own host.
+     *
+     * NOT the whole text in front. That was read once for every address a save brought in, so a
+     * text of many addresses cost the SQUARE of their number: 5,000 of them (250 KB) held the save
+     * for fifteen seconds, after the content was written. Each address now costs what stands in
+     * front of it, to a limit. Past the limit this THROWS, and the caller logs that the documents
+     * were not checked and deletes nothing: an address that deep in unbroken text cannot be judged
+     * cheaply, and calling it "not ours" unread would let a deletion through.
+     */
+    private static function front(string $string, int $at): string
+    {
+        // One line feed straight in front of the path is read past, as the pattern this replaced
+        // read past it (its `$` matches before a final one), and as a browser drops it.
+        if ($at > 0 && $string[$at - 1] === "\n") {
+            $at--;
+        }
+
+        $window = substr($string, max(0, $at - self::FRONT_MAX - 1), min($at, self::FRONT_MAX + 1));
+        $length = strcspn(strrev($window), self::ENDS_A_FRONT);
+
+        if ($length > self::FRONT_MAX) {
+            throw new RuntimeException('An address stands after more unbroken text than is read for its host.');
+        }
+
+        return $length === 0 ? '' : substr($window, -$length);
     }
 
     /**

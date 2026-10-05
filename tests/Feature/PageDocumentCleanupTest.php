@@ -830,6 +830,58 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function a_save_that_brings_in_five_thousand_addresses_of_another_site_returns_promptly_and_deletes_what_it_dropped(): void
+    {
+        // The out-of-date check asks of every address a save brings in whether it is written as one
+        // of ours. It used to read the whole text in front of each one, so a text of many addresses
+        // cost the square of their number: 5,000 of them (250 KB) held the save for fifteen seconds.
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveSection('text', ['content' => '<p><a href="' . $document['url'] . '">The calendar</a></p>']);
+
+        $many = '';
+        for ($number = 1; $number <= 5000; $number++) {
+            $many .= "https://elsewhere.example.test/storage/{$number}/annual-report.pdf ";
+        }
+
+        $started = microtime(true);
+        $this->updateSection($section, ['content' => $many]);
+        $took = microtime(true) - $started;
+
+        $this->assertLessThan(self::PROMPTLY, $took, sprintf('a save that brought in 5,000 addresses took %.2f seconds', $took));
+        // None of them is ours, so this is an ordinary replace: the document it dropped is gone.
+        $this->assertDocumentGone($document);
+    }
+
+    #[Test]
+    public function an_address_after_more_unbroken_text_than_is_read_for_its_host_is_not_judged_and_nothing_is_deleted(): void
+    {
+        // The price of reading only what stands straight in front of each address: one that follows
+        // more than 2,048 characters with no space, quote or tag among them is not judged at all.
+        // Calling it "another site's" unread would let the deletion through, so the check gives up
+        // out loud, and a check that gives up deletes nothing.
+        $elsewhere = 'https://elsewhere.example.test/storage/999999/annual-report.pdf';
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        Log::spy();
+        $this->updateLinkList($section, [str_repeat('a', 5000) . $elsewhere]);
+
+        $this->assertDocumentKept($document);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'Page documents were not checked')
+                && $context === ['masjid_id' => $this->masjid->id, 'section_id' => $section, 'exception' => \RuntimeException::class])
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+
+        // Within that length it is judged as it always was: another site's address is an ordinary
+        // replace, and the document it drops is deleted.
+        $other = $this->uploadDocument('Schedule.pdf');
+        $buttons = $this->saveLinkList([$other['url']]);
+        $this->updateLinkList($buttons, [str_repeat('a', 2000) . $elsewhere]);
+        $this->assertDocumentGone($other);
+    }
+
+    #[Test]
     public function an_id_written_with_a_leading_zero_beside_the_real_address_never_deletes_the_file(): void
     {
         $zero = fn (array $document) => self::PUBLIC_DISK_URL . "/0{$document['file']}";
