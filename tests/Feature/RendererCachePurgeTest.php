@@ -299,8 +299,10 @@ class RendererCachePurgeTest extends TestCase
         // Route groups whose every write purges, and the writes inside them that must not.
         $groups = ['pages', 'sections', 'general-settings', 'details', 'about', 'donation-link',
             'contact-reasons', 'forms', 'offerings'];
-        $exempt = ['pages/preview-session', 'forms/{form_id}/responses', 'forms/{form_id}/staff-codes',
-            'offerings/{offering_id}/registrations'];
+        // 'pages/documents': a PDF uploaded for a page is linked from no section until a save, and
+        // that save purges.
+        $exempt = ['pages/preview-session', 'pages/documents', 'forms/{form_id}/responses',
+            'forms/{form_id}/staff-codes', 'offerings/{offering_id}/registrations'];
 
         $purging = [];
         $expected = [];

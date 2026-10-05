@@ -72,6 +72,7 @@ use App\Http\Controllers\AdminDashboard\FormInsightsController;
 use App\Http\Controllers\AdminDashboard\FormResponsesController;
 use App\Http\Controllers\AdminDashboard\FormsController;
 use App\Http\Controllers\AdminDashboard\FormStaffCodesController;
+use App\Http\Controllers\AdminDashboard\PageDocumentsController;
 use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
@@ -574,6 +575,13 @@ Route::prefix('admin')->group(function () {
                 // Live preview of the page builder (docs/live-preview.md): inside this
                 // group, so exactly the people who may save pages may preview them.
                 Route::post('{masjid_id}/pages/preview-session', [LivePreviewController::class, 'pages']);
+
+                // A PDF for a web page (App\Support\PageDocuments): stored at once and answered with
+                // its public address, which the page tool puts into a link field a section already
+                // has. Inside this group, so exactly the people who may save pages may upload one.
+                // Outside the purge groups below: an upload changes nothing a visitor sees, and the
+                // section save that links the document purges.
+                Route::post('{masjid_id}/pages/documents', [PageDocumentsController::class, 'store']);
 
                 // `renderer.purge` on the three write groups below: a saved page,
                 // menu order, section or library section is live at once
