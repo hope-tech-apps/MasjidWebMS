@@ -18,20 +18,23 @@ use Tests\TestCase;
  * `'serve' => true` on a local-driver disk makes the framework register two
  * routes with no login, `GET storage/{path}` and `PUT storage/{path}`, and teach
  * the disk to mint addresses for them (`temporaryUrl`, `temporaryUploadUrl`).
- * Each honours only an address signed with APP_KEY, and the PUT writes the
- * request body to the named path of THAT DISK. On `local`, which is
- * storage/app/private and holds every private upload this application takes,
- * the signature was the only thing between a request and a write there.
- * Nothing in the application ever made such an address, so nothing used either
- * route; the GET was never even reachable, because the admin screen's catch-all
- * is registered before it. The PUT was.
+ * Each honours only an address signed with APP_KEY (or a key still listed in
+ * APP_PREVIOUS_KEYS), and the PUT writes the request body to the named path of
+ * THAT DISK. On `local`, which is storage/app/private and holds every private
+ * upload this application takes, the signature was the only thing between a
+ * request and a write there. Nothing in the application ever made such an
+ * address, so nothing used either route; the GET was never even reachable,
+ * because the admin screen's catch-all is registered before it. The PUT was.
  *
- * Private files leave through the authenticated download routes that
- * re-resolve the ownership chain (.claude/rules/private-uploads.md). A signed
- * address would skip all of that and survive consent being withdrawn, so the
- * door is shut, not just left unused. Three things keep it shut: the flag, the
- * routes, and the disk refusing to make an address (so a future caller fails
- * loudly instead of quietly re-opening it). See DECISIONS.md, 2026-10-05.
+ * Private files leave only through the application's own routes, which
+ * re-resolve the ownership chain on every request: the authenticated downloads
+ * (.claude/rules/private-uploads.md) and the viewer-bound playback ticket for
+ * video (App\Support\GroupMedia). An address the FRAMEWORK signs would skip all
+ * of that and survive consent being withdrawn, so the door is shut, not just
+ * left unused. Three things keep it shut: the flag, the routes, and the real
+ * disk refusing to make an address (so a future caller fails loudly instead of
+ * quietly re-opening it; a test that fakes the disk does not see that refusal,
+ * because the fake makes addresses of its own). See DECISIONS.md, 2026-10-05.
  *
  * Every request below runs against a scratch root, never storage/app/private.
  */

@@ -7957,15 +7957,24 @@ themselves still run only on the MySQL job.
   upload lives), `'serve' => true` is now `false`. It was the only disk with the flag. With it on, the
   framework (`FilesystemServiceProvider::serveFiles()`) registered two routes after the application's own, with
   no login and no middleware: `GET|HEAD storage/{path}` (`storage.local`) and `PUT storage/{path}`
-  (`storage.local.upload`). Each honoured only an address signed with APP_KEY. The PUT wrote the request body to
-  the named path on the private disk. The disk also made such addresses (`temporaryUrl()`,
+  (`storage.local.upload`). Each honoured only an address signed with APP_KEY, or with any key still listed in
+  APP_PREVIOUS_KEYS (the framework's check tries each; confirmed by a run at 9e026457), so rotating APP_KEY alone
+  would not have closed it. The PUT wrote the request body to the named path on the private disk. The disk also made such addresses (`temporaryUrl()`,
   `temporaryUploadUrl()`); with the flag off it throws "This driver does not support creating temporary URLs"
   (and "...upload URLs").
 - **Why.** The signature was the only thing between a request and a write onto the private disk, and the
-  application has no use for either route. Private files leave through authenticated download routes that
-  re-resolve masjid, group, resource and audience (`.claude/rules/private-uploads.md`); a signed address would
-  skip all of that and would outlive consent being withdrawn. The GET was never reachable here, because the
-  admin screen's GET catch-all in `routes/web.php` is registered first. The PUT was: the catch-all is GET only.
+  application has no use for either route. Private files leave only through the application's own routes, which
+  re-resolve masjid, group, resource and audience on every request: the authenticated downloads
+  (`.claude/rules/private-uploads.md`) and, for video, the playback ticket `GroupMedia` signs for one viewer. An
+  address the framework signs would skip all of that and would outlive consent being withdrawn. The GET was never
+  reachable here, because the admin screen's GET catch-all in `routes/web.php` is registered first (run at
+  9e026457: a signed GET for a file that exists on the private disk was answered with the admin shell, not the
+  file). The PUT was: the catch-all is GET only.
+- **Two ways it could come back unnoticed.** Removing or renaming the whole `local` entry in
+  `config/filesystems.php` brings back the framework's own default `local` disk, which has serve on (deleting only
+  the `'serve'` line is safe); the test reads the merged configuration and goes red for it. And the disk's refusal
+  to make an address holds on the real disk only: `Storage::fake('local')` makes addresses of its own, so a
+  feature tested against a faked disk would pass its tests and throw on a server.
 - **The door was real.** At 9e026457, in the test client, the disk minted an upload address for `proof.txt`; a
   PUT of a body to it with no login answered 204 and the body was on the private disk (read back, under the real
   configured root and under a scratch root). The same PUT unsigned, or with a signature that was not one, answered

@@ -20,12 +20,14 @@ use Illuminate\Support\Facades\Storage;
  * See .claude/rules/private-uploads.md.
  *
  * Never add `temporaryUrl()`, `url()` or a signed route here.
- * config/filesystems.php sets 'serve' => false on the local disk, so the
- * framework registers no signed storage route and the disk refuses to make such
- * an address (`temporaryUrl()` throws); NoSignedLocalDiskRoutesTest keeps it so.
- * Were that ever switched back on, one such line would hand out a link that
- * bypasses the tenant scope, the ownership chain, GroupAudience, and consent
- * WITHDRAWAL.
+ * config/filesystems.php keeps 'serve' off on the local disk, so the framework
+ * registers no signed storage route and the disk refuses to make such an address
+ * (`temporaryUrl()` throws); NoSignedLocalDiskRoutesTest keeps it so. Switched
+ * back on, `temporaryUploadUrl()` would mint a signed PUT that writes onto this
+ * disk, and `temporaryUrl()` a signed GET that only the admin catch-all being
+ * registered first keeps from serving the file. A signed route of our own for a
+ * resource, or anything built on `url()`, would bypass the tenant scope, the
+ * ownership chain, GroupAudience, and consent WITHDRAWAL whatever that flag says.
  */
 class GroupResource extends Model
 {
