@@ -572,11 +572,15 @@ final class PageDocuments
      * A string with the spellings a browser resolves before it asks for a file made plain, so that
      * a link written any of these ways is seen to carry `/storage/{id}/{name}.pdf`:
      *
+     *  - a tab or a line break inside the address, which a browser drops wherever it stands;
      *  - backslashes written for slashes (`https:\\host\storage\3\x.pdf`), which a browser reads as
-     *    slashes, and JSON-escaped slashes copied out of a raw API answer (`https:\/\/host\/storage\/3\/x.pdf`);
-     *  - a doubled slash (`/storage//3/x.pdf`), which the web server merges (its default; not seen on
-     *    a server). The two after a scheme's colon are left;
-     *  - `.` and `..` segments (`/storage/./3/x.pdf`, `/storage/old/../3/x.pdf`).
+     *    slashes;
+     *  - a doubled slash (`/storage//3/x.pdf`), and JSON-escaped slashes copied out of a raw API
+     *    answer (`https:\/\/host\/storage\/3\/x.pdf`), which a browser reads as doubled ones. Both
+     *    are working links only where the web server merges slashes (its default; not seen on a
+     *    server, ASSUMPTIONS.md PD-26);
+     *  - `.` and `..` segments (`/storage/./3/x.pdf`, `/storage/old/../3/x.pdf`,
+     *    `/storage/a/b/../../3/x.pdf`).
      *
      * Done to the whole text, which may be a paragraph: it is only ever SEARCHED for a path, never
      * shown or stored, and anything odd it does to prose can only keep a file. (The two slashes
@@ -590,15 +594,26 @@ final class PageDocuments
      * content was written and before the cleanup ended. The text is cut at its slashes once and its
      * segments are walked once, a `..` stepping back over the segment before it.
      *
-     * A `..` steps back over ANY segment, as a browser's does, except one that holds `?` or `#`:
-     * there a browser's path has ended, and what follows is not resolved.
+     * A `..` steps back over ANY segment, as a browser's does (one holding a space, an apostrophe, a
+     * quote or an angle bracket included), except one that holds `?` or `#`: there a browser's path
+     * has ended, and what follows is not resolved.
      *
-     * Not seen, still: an address percent-encoded twice, a path or `.PDF` in upper case (not the same
-     * file on these servers), and slashes written as HTML entities (ASSUMPTIONS.md PD-17).
+     * STILL NOT SEEN, and this is all of it (ASSUMPTIONS.md PD-17). A save that drops the plain
+     * address deletes the file while a link written one of these ways still reaches it:
+     *
+     *  - any character of the address written as an HTML character reference (`&#x2F;`, `&#47;`,
+     *    `&sol;`, `&#46;`), which a browser decodes where the link stands in HTML;
+     *  - the address percent-encoded twice or more (a link only through something that decodes it
+     *    twice);
+     *  - the path or `.PDF` in another letter case (the same file only where the file system
+     *    ignores case, which these servers' does not);
+     *  - a link that does not hold the path at all: a redirect, a short link, an address relative
+     *    to another.
      */
     private static function resolved(string $string): string
     {
-        $segments = explode('/', str_replace('\\', '/', $string));
+        // A tab or a line break is dropped wherever it stands, and a backslash is a slash.
+        $segments = explode('/', str_replace(["\t", "\r", "\n", '\\'], ['', '', '', '/'], $string));
         // What stands before the first slash is no segment of a path, and nothing steps back over it.
         $front = array_shift($segments);
         $path = [];

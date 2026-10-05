@@ -801,6 +801,15 @@ class PageDocumentCleanupTest extends TestCase
             'a dot-dot segment written %2E%2E' => [fn (string $plain) => str_replace('/storage/', '/storage/old/%2E%2E/', $plain)],
             'backslashes written %5C' => [fn (string $plain) => str_replace('/', '%5C', $plain)],
             'a dot segment, percent-encoded inside a viewer\'s link' => [fn (string $plain) => $viewer(str_replace('/storage/', '/storage/./', $plain))],
+            // A dot-dot steps back over ANY segment, whatever it holds.
+            'a dot-dot over a segment holding a space' => [fn (string $plain) => str_replace('/storage/', '/storage/o ld/../', $plain)],
+            'a dot-dot over a segment holding an apostrophe' => [fn (string $plain) => str_replace('/storage/', "/storage/it's/../", $plain)],
+            'a dot-dot over a segment holding a quote' => [fn (string $plain) => str_replace('/storage/', '/storage/the "old" one/../', $plain)],
+            'a dot-dot over a segment holding an angle bracket' => [fn (string $plain) => str_replace('/storage/', '/storage/a<b>c/../', $plain)],
+            // A browser drops a tab and a line break wherever they stand in an address.
+            'a tab inside the address' => [fn (string $plain) => str_replace('/storage/', "/stor\tage/", $plain)],
+            'a carriage return inside the address' => [fn (string $plain) => str_replace('/storage/', "/storage\r/", $plain)],
+            'a line feed inside the address' => [fn (string $plain) => str_replace('.pdf', "\n.pdf", $plain)],
         ];
     }
 
@@ -831,6 +840,21 @@ class PageDocumentCleanupTest extends TestCase
         $this->assertDocumentKept($other);
         $this->updateLinkList($section, ['']);
         $this->assertDocumentKept($same);
+    }
+
+    #[Test]
+    public function a_dot_dot_after_a_segment_where_a_browsers_path_has_ended_does_not_keep_the_file(): void
+    {
+        // `?` and `#` end a path: a browser asks for `/storage/a` and resolves nothing after it. So
+        // this is no link to the file, and a dot-dot does not step back over such a segment.
+        foreach (['a?b', 'a#b'] as $segment) {
+            $document = $this->uploadDocument('Calendar.pdf');
+            $section = $this->saveLinkList([$document['url']]);
+
+            $this->updateLinkList($section, [str_replace('/storage/', "/storage/{$segment}/../", $document['url'])]);
+
+            $this->assertDocumentGone($document);
+        }
     }
 
     /*

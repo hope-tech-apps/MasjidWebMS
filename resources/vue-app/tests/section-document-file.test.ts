@@ -199,18 +199,35 @@ test('a saved document still linked in a spelling a browser resolves to the file
         'backslashes for slashes': 'https:\\\\platform.example.test\\storage\\412\\calendar.pdf',
         'JSON-escaped slashes': 'https:\\/\\/platform.example.test\\/storage\\/412\\/calendar.pdf',
         'a dot segment, percent-encoded in a viewer\'s link': 'https://viewer.example.test/view?url=https%3A%2F%2Fplatform.example.test%2Fstorage%2F.%2F412%2Fcalendar.pdf',
+        'a dot segment written %2e': 'https://platform.example.test/storage/%2e/412/calendar.pdf',
+        'a dot-dot segment written %2E%2E': 'https://platform.example.test/storage/old/%2E%2E/412/calendar.pdf',
+        'backslashes written %5C': 'https:%5C%5Cplatform.example.test%5Cstorage%5C412%5Ccalendar.pdf',
+        // A dot-dot steps back over ANY segment, whatever it holds.
+        'a dot-dot over a segment holding a space': 'https://platform.example.test/storage/o ld/../412/calendar.pdf',
+        'a dot-dot over a segment holding an apostrophe': 'https://platform.example.test/storage/it\'s/../412/calendar.pdf',
+        'a dot-dot over a segment holding a quote': 'https://platform.example.test/storage/the "old" one/../412/calendar.pdf',
+        'a dot-dot over a segment holding an angle bracket': 'https://platform.example.test/storage/a<b>c/../412/calendar.pdf',
+        // A browser drops a tab and a line break wherever they stand in an address.
+        'a tab inside the address': 'https://platform.example.test/stor\tage/412/calendar.pdf',
+        'a carriage return inside the address': 'https://platform.example.test/storage\r/412/calendar.pdf',
+        'a line feed inside the address': 'https://platform.example.test/storage/412/calendar\n.pdf',
     })) {
         assert.deepEqual(leaving(url), [], what);
     }
 
-    // What is still not the same document: another number reached by a dot-dot, another name, and
-    // the spellings the server does not see either (ASSUMPTIONS.md PD-17).
+    // What is still not the same document: another number reached by a dot-dot, another name, a
+    // dot-dot after a segment where a browser's path has ended (`?`, `#`), a space inside the path,
+    // and the spellings the server does not see either (ASSUMPTIONS.md PD-17).
     for (const url of [
         'https://platform.example.test/storage/412/../413/calendar.pdf',
         'https://platform.example.test/storage/412/./calendar-2027.pdf',
+        'https://platform.example.test/storage/a?b/../412/calendar.pdf',
+        'https://platform.example.test/storage/a#b/../412/calendar.pdf',
+        'https://platform.example.test/stor age/412/calendar.pdf',
         'https://platform.example.test/STORAGE/412/calendar.pdf',
         'https://platform.example.test/storage/412/calendar.PDF',
         'https:&#x2F;&#x2F;platform.example.test&#x2F;storage&#x2F;412&#x2F;calendar.pdf',
+        'https://platform.example.test/storage/&#46;/412/calendar.pdf',
         'https://viewer.example.test/view?url=https%253A%252F%252Fplatform.example.test%252Fstorage%252F412%252Fcalendar.pdf',
     ]) {
         assert.deepEqual(leaving(url), [calendar], url);

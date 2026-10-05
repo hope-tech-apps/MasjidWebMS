@@ -126,11 +126,11 @@ function percentDecoded(value: string): string {
 }
 
 /**
- * A text with the spellings a browser resolves before it asks for a file made plain: backslashes and
- * JSON-escaped slashes read as slashes, a doubled slash as one (the two after a scheme's colon are
- * left), and `.` and `..` segments resolved. The server reads a section's content this way when it
- * asks whether the section STILL LINKS a document (PageDocuments::resolved), and keeps the file if
- * so. Only ever searched for a path, never shown or stored.
+ * A text with the spellings a browser resolves before it asks for a file made plain: a tab or a line
+ * break dropped wherever it stands, backslashes and JSON-escaped slashes read as slashes, a doubled
+ * slash as one, and `.` and `..` segments resolved. The server reads a section's content this way
+ * when it asks whether the section STILL LINKS a document (PageDocuments::resolved), and keeps the
+ * file if so. Only ever searched for a path, never shown or stored.
  *
  * IN ONE PASS, as on the server: the text is cut at its slashes once and its segments walked once, a
  * `..` stepping back over the segment before it (any segment but one holding `?` or `#`, where a
@@ -138,7 +138,7 @@ function percentDecoded(value: string): string {
  * over the text made a link of 40,000 steps hold each keystroke for nine seconds.
  */
 function resolved(value: string): string {
-    const [front, ...segments] = value.replace(/\\/g, '/').split('/');
+    const [front, ...segments] = value.replace(/[\t\r\n]/g, '').replace(/\\/g, '/').split('/');
     const path: string[] = [];
 
     for (const segment of segments) {

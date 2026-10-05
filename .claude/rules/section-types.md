@@ -109,19 +109,37 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   or a gallery photo can never match; it never fails the save; and it leaves a
   WARNING line by ids alone for each file it removes or cannot remove. **Any new
   route that writes or deletes a section must call it**, or documents unlinked
-  there are simply left online. Four things it is careful about, each of which
-  was a wrong deletion or a false record before it was written down here:
+  there are simply left online. Five things it is careful about, each of which
+  was a wrong deletion, a false record or a save held for seconds before it was
+  written down here:
   - **Only one spelling STARTS a deletion, and every spelling stops one.** The
     address pattern takes an id with no leading zero (`/storage/03/x.pdf` is
     nobody's document, though read as a number it is document 3). "Still linked"
     is asked of the address as written, of the document's own path, of both
     percent-decoded (a viewer's link that carries the address encoded keeps the
     file), and of each of those in a spelling a browser resolves to the same
-    file: backslashes or JSON-escaped slashes for slashes, a doubled slash, `.`
-    and `..` segments (`PageDocuments::resolved()`). A link that was only ever
-    there encoded or in such a spelling never starts a deletion. Widen the
-    KEEPING side freely; never what starts one. Not seen: encoded twice, an
-    upper-case path or `.PDF`, HTML-entity slashes.
+    file: a tab or a line break inside it, backslashes or JSON-escaped slashes
+    for slashes, a doubled slash, `.` and `..` segments, the `..` stepping back
+    over any segment but one holding `?` or `#` (`PageDocuments::resolved()`).
+    A link that was only ever there encoded or in such a spelling never starts
+    a deletion. Widen the KEEPING side freely; never what starts one. STILL NOT
+    SEEN, and this is all of it (PD-17): any character of the address written
+    as an HTML character reference (`&#x2F;`, `&#47;`, `&sol;`, `&#46;`); the
+    address percent-encoded twice or more; the path or `.PDF` in another letter
+    case; a link that does not hold the path at all (a redirect, a short link,
+    an address relative to another).
+  - **Both readers take ONE pass over a text, and stay that way.** A section's
+    text has no size limit, and the cleanup reads every string of the section on
+    every save, and every other section's when a save drops a document.
+    `resolved()` once took one `..` step per pass over the whole text, and the
+    out-of-date check read the whole text in front of every address: 40,000
+    steps, or 5,000 addresses, held a save for eleven and for nineteen seconds
+    after its content was written. `resolved()` cuts the text at its slashes
+    once; the out-of-date check reads back from each address to the nearest
+    character a host cannot hold, at most 2,048 characters, and past that it
+    THROWS (the caller logs "were not checked" and deletes nothing). A bound
+    that gives up silently is not the safe side here: it would stop keeping a
+    file, or call an address "not ours" unread.
   - **A save from an out-of-date editor deletes nothing, and ONLY such a save.**
     If the content after the save brings in an address the section did not have
     before, that is written as OURS (on the public disk's host, on the host the
