@@ -29,7 +29,20 @@ class StoreSplashAnnouncementRequest extends BaseFormRequest
             'priority' => 'nullable|integer|min:0|max:100',
             'is_active' => 'nullable|boolean',
 
-            'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // Keeping SVG off the `mimes` list is half of it: `mimes` reads the BYTES, and the
+            // media library keeps the client's file NAME on the public disk, where image
+            // bytes named `x.html` would be served as a page. `extensions` pins the name to
+            // the same kinds (Concerns\ValidatesVideoSection::sectionUploadRules). `bail`
+            // stops at the first failure, so a file that is not an image is not also told to
+            // rename it.
+            'image' => 'bail|required|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'image.extensions' => 'The splash image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

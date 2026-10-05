@@ -186,16 +186,36 @@ class MealMenusController extends Controller
      * answers to three hostnames, so an admin who opened the SPA on
      * manara.hopetechapps.com instead of masjid.hopetechapps.com permanently
      * pinned a customer-facing image to the other one. See App\Support\SiteUrl.
+     *
+     * THE FILE'S NAME IS PINNED AS WELL AS ITS BYTES. `image` and `mimes` read the
+     * bytes; `extensions` holds the client's file name to the same list
+     * (Concerns\ValidatesVideoSection::sectionUploadRules says why). Every upload
+     * whose client file name can reach the public disk carries that pair.
+     * UploadFileNameCoverageTest catches the ordinary ways of writing an upload
+     * rule without `extensions` beside it, and lists the ways it cannot see: it
+     * is not a proof that no upload is open. What proves this one is
+     * PublicUploadFileNameTest, which sends real bytes through this route; a new
+     * upload needs a row of its own in PublicUploadFileNameDoorsTest.
+     * `bail` stops at the first failure, so a file that is not an image
+     * is told that once and is not also told to rename it. And the extension the
+     * file is stored under is the one its bytes say, never the one in its name:
+     * the web server serves public/storage from disk and picks the Content-Type
+     * from the extension, so image bytes kept as `<uuid>.html` would be served as
+     * a page on this app's own origin.
      */
     public function uploadFlyer(Request $request, $masjid_id)
     {
         $request->validate([
-            'flyer' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
+            'flyer' => 'bail|required|image|mimes:jpeg,jpg,png,webp|extensions:jpeg,jpg,png,webp|max:5120',
+        ], [
+            'flyer.extensions' => 'The flyer\'s file name must end in .jpg, .jpeg, .png or .webp. Rename the file and upload it again.',
         ]);
 
         try {
             $file = $request->file('flyer');
-            $name = Str::uuid() . '.' . strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            // extension() is guessed from the sniffed type, and `mimes` above has already
+            // held that guess to its own list, so this is jpg, png or webp.
+            $name = Str::uuid() . '.' . ($file->extension() ?: 'jpg');
             $path = $file->storeAs('lunch-flyers', $name, 'public');
 
             return response()->json([

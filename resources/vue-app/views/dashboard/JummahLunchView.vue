@@ -368,6 +368,7 @@
                         </div>
                         <input type="file" accept="image/*" class="form-control" @change="onFlyerFile" :disabled="uploadingFlyer" />
                         <div v-if="uploadingFlyer" class="text-muted small mt-1">Uploading…</div>
+                        <div v-if="flyerError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ flyerError }}</div>
                     </div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_online_payment" id="jlaop" /><label class="form-check-label" for="jlaop">Allow pay online (Stripe)</label></div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_pay_at_pickup" id="jlapp" /><label class="form-check-label" for="jlapp">{{ menuModal.form.kind === MENU_KIND_CATALOGUE ? 'Allow paying the office (cash, check, Zelle… as set under Payment Methods)' : 'Allow pay at pickup' }}</label></div>
@@ -679,6 +680,7 @@ import { computed, nextTick, onBeforeMount, onBeforeUnmount, reactive, ref, watc
 import Swal from "sweetalert2";
 import { MENU_KIND_CATALOGUE, MENU_KIND_DATED, PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
 import { awaitsConfirmation, cardNotPaid, catalogueSummary, isCatalogue, pickupWords, staffMethodUnavailable, unpaidHow } from "@/views/lunch/kitchenBoard";
+import { serverFieldErrors } from "@/core/helpers/serverMessage";
 
 const store = useJummahLunchStore();
 
@@ -686,6 +688,11 @@ const loading = ref(false);
 const savingMenu = ref(false);
 const savingItem = ref(false);
 const uploadingFlyer = ref(false);
+// Why the server refused the last flyer picked, shown under the file input. It is NOT a
+// toast: the dialog's overlay (.jl-modal) is stacked above the toast's container, so a
+// toast raised while the dialog is open sits behind it, and at phone width the dialog
+// covers it completely.
+const flyerError = ref("");
 const tab = ref<"items" | "received" | "cancelled">("items");
 
 // From the store, which knows both realms: a lunch volunteer's shell never loads the masjid store.
@@ -1296,7 +1303,7 @@ async function load() {
 }
 
 function openCreateMenu() {
-    menuModal.isEdit = false; menuModal.id = null; menuModal.form = emptyMenuForm(); menuModal.show = true;
+    menuModal.isEdit = false; menuModal.id = null; menuModal.form = emptyMenuForm(); flyerError.value = ""; menuModal.show = true;
 }
 function openEditMenu(m: any) {
     menuModal.isEdit = true; menuModal.id = m.id;
@@ -1320,6 +1327,7 @@ function openEditMenu(m: any) {
         notify_service_id: m.notify_service_id ?? null,
         allow_sms_optin: m.allow_sms_optin === true,
     };
+    flyerError.value = "";
     menuModal.show = true;
 }
 async function saveMenu() {
@@ -1342,11 +1350,19 @@ async function onFlyerFile(e: Event) {
     const file = input.files?.[0];
     if (!file) return;
     uploadingFlyer.value = true;
+    flyerError.value = "";
     try {
         menuModal.form.flyer_image_url = await store.uploadFlyer(file);
         toast("Flyer uploaded");
     } catch (err) {
-        toastError(err);
+        // A refused file's reason arrives keyed by its field ({ data: { flyer: [...] } }), which
+        // serverReason() does not read: the person was shown axios's "Request failed with
+        // status code 422". It is a sentence saying what to do with the file, so it is put
+        // under the input and stays until another file is picked or the dialog is reopened.
+        // Every other failure is shown exactly as before.
+        const refused = serverFieldErrors(err).flyer;
+        if (refused?.length) flyerError.value = refused.join(" ");
+        else toastError(err);
     } finally {
         uploadingFlyer.value = false;
         input.value = "";

@@ -14,8 +14,13 @@ class StoreMasjidRequest extends BaseFormRequest
             'name' => 'required|string',
             'email' => 'required|email|unique:masjids,email',
             'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-            'logo' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:25600',
-            'footer_logo' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // `extensions` pins each file's NAME to the kinds `mimes` holds its BYTES to: the
+            // media library keeps the client's file name on the public disk, where `x.html`
+            // would be served as a page (Concerns\ValidatesVideoSection::sectionUploadRules).
+            // `bail` stops at the first failure, so a file that is not an image is not also
+            // told to rename it.
+            'logo' => 'bail|required|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+            'footer_logo' => 'bail|required|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'longitude' => 'required|numeric|min:-180|max:180',
             'latitude' => 'required|numeric|min:-90|max:90',
             'address' => 'required|string',
@@ -44,6 +49,14 @@ class StoreMasjidRequest extends BaseFormRequest
                     }
                 },
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'logo.extensions' => 'The logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
+            'footer_logo.extensions' => 'The footer logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

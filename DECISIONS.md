@@ -8033,3 +8033,238 @@ themselves still run only on the MySQL job.
   no write verb matched on a storage path, a local disk refuses a temporary address, a correctly signed PUT
   writes nothing. Green at 9e026457 as controls: an unsigned PUT and a badly signed PUT write nothing (the
   signature was the only barrier).
+
+## 2026-10-05 — Two public image uploads pin the file's name as well as its bytes (owner asked; branch `fix/pin-upload-file-names`)
+
+- **Asked.** Pin the file name on two image uploads to the public disk that checked a file's bytes and not its
+  name: a page's title background (`StorePageRequest`, `UpdatePageRequest`; the media library keeps it under the
+  client's own file name) and the Friday-lunch flyer (`MealMenusController::uploadFlyer`, served to the admin
+  realm and to the lunch realm; stored as `<uuid>.<the client's extension>`).
+- **Reproduced before anything was changed** (`PublicUploadFileNameTest`: real JPEG bytes in a real
+  `UploadedFile`, so the type is what finfo reads from the file). Named `x.html`, a new page answered 201 and the
+  file was on the public disk as `<media id>/x.html` with a media row of that name; a replacement answered 200
+  the same way; the flyer answered 201 and was stored as `lunch-flyers/<uuid>.html`, through either realm. The
+  same for `x.jpg.html`, `x.HTML` (the flyer lower-cased it to `.html`) and `x.svg`. A name with no extension
+  was kept as it came on a page and became `<uuid>.jpg` on the flyer. `x.php` was already refused by both:
+  `image` and `mimes` turn a PHP extension away themselves (`shouldBlockPhpUpload`).
+  Not reproduced here: the web server answering such a file as a page. The suite has no web server; that half
+  is read from how `public/storage` is served (from disk, the Content-Type from the extension).
+- **Decided.**
+  - `extensions:` beside `mimes:`, naming the same kinds, on all three rules: `jpeg,jpg,png,gif,webp` for the
+    title background, `jpeg,jpg,png,webp` for the flyer, which has never taken a GIF. This is the rule of
+    2026-09-25 (above), applied to two uploads it had not reached. They were not the only two: thirteen more
+    had the same gap and were closed the same day (the next entry).
+  - The flyer is stored under `$file->extension()`, which is guessed from the sniffed type and which `mimes` has
+    already held to its own list, never under the client's extension. PNG bytes sent as `photo.jpg` are kept as
+    `.png`, and a `.jpeg` is kept as `.jpg`. Nothing reads that name except the address the upload answers.
+  - A file refused only for its name reads one sentence: "The flyer's file name must end in .jpg, .jpeg, .png or
+    .webp. Rename the file and upload it again." (the title background's also names `.gif`). The other rules keep
+    the framework's sentences, as before.
+  - Capitals. `validateExtensions()` compares `strtolower()` of the client's extension with the list exactly as
+    the rule wrote it (`Illuminate\Validation\Concerns\ValidatesAttributes`). `IMG_0001.JPG` therefore still
+    passes, and a test says so on every door; a list written in capitals would match no name at all, so the
+    lists stay in lower case.
+- **What a person meets that they did not before.** A real image whose name ends in something else (`.jfif`,
+  `.jpe`, or no extension at all) is refused until it is renamed. It used to be accepted on its bytes alone.
+- **Not changed.** No migration. No file already on the disk is renamed, moved or looked for. The size limits,
+  the kinds of image accepted and every other field of the three rules are as they were.
+- **Rejected.** Naming the title background server-side (`usingFileName`). It removes the class without refusing
+  anything, but it changes stored names and addresses, and 2026-09-25 chose a 422 for the same kind of upload.
+- **The screen (the lunch board; its own commit).** A refused flyer was shown as axios's "Request failed with
+  status code 422": `serverReason()` in `JummahLunchView` reads a string `data` or a `message`, and a refused file
+  arrives keyed by its field. The field's sentences are now read with `serverFieldErrors` and put under the flyer
+  input (`flyerError`), cleared by the next pick and by reopening the dialog. Not in a toast: the dialog's overlay
+  (`.jl-modal`, z-index 1080) is stacked above the toast's container, and at phone width the dialog covered the
+  toast completely. Both were seen in a browser against a local server and a scratch database: a JPEG named
+  `x.html` picked in the New menu dialog put the sentence under the input, a reopened dialog did not carry it,
+  and `IMG_0001.JPG` then uploaded and cleared it. Any other failure of the upload goes to the toast as before.
+  Not seen: a desktop-width window, and the lunch realm's own sign-in (it is the same view).
+- **The title background has no screen.** The admin SPA's page form sends no file to the pages endpoints (the
+  page-title editor uploads through the section requests, which already pin the name), so that sentence is read
+  by a caller of the API and by nobody on a screen.
+- **Left as found.** Every other toast raised while a `.jl-modal` dialog is open (a failed menu save, "Flyer
+  uploaded") is still behind the overlay. Moving them is its own change to that screen.
+
+## 2026-10-05 — Every upload kept on the public disk under the client's file name pins that name, and two kinds of test watch it (rounds 2 and 3 of `fix/pin-upload-file-names`)
+
+- **Found.** After the entry above, every upload under `app/` was audited (28, read at 9e026457). Thirteen more
+  image uploads, 26 rule lines in 18 requests, checked a file's bytes and not its name while the media library
+  kept the client's file name on the public disk: announcements, splash announcements, the gallery (one picture
+  or a bag of them), the organisation logo on Details, the header and footer logos on General settings, the
+  logos on organisation create and edit, a user's picture on the Users screen, an admin's own profile picture
+  (no capability gate, so every admin-realm login reaches it), a service's picture and icon, the About picture
+  and its two icons, the donation link's picture, a push notification's picture, and the publish composer's
+  main picture, which is copied under the same name into the announcement and the notification it makes.
+- **Reproduced before any rule changed** (`PublicUploadFileNameDoorsTest`: real bytes through the real routes,
+  29 doors, one or more per rule line). Image bytes named `x.html` and `x.svg` were answered 200, 201 or 202 at
+  every door and kept as `<media id>/x.html` and `<media id>/x.svg`; the composer kept three of each
+  (`broadcasts`, `announcements`, `notifications`). 58 refusal cases, each red first.
+  Not reproduced here, as before: the web server answering such a file as a page (the suite has no web server).
+- **Production, read only, by the lead on 2026-10-05.** No `.html` file is on the public disk, and its 37 `.svg`
+  files carry no script.
+- **Decided.**
+  - `extensions:` on every one, in lower case, naming what a real file of that field can be called:
+    `jpeg,jpg,png,gif,webp` beside `mimes:jpeg,png,jpg,gif,webp`; `png,webp` on an icon, and `png,gif,webp` on
+    the icon of a service edit (shorter than the icon's own `mimes:`, for the reason in the next bullet); the
+    two rules that are a bare `image` (the donation link, a push notification) take
+    `jpeg,jpg,png,gif,bmp,webp`, which is what `image` admits. No size limit and no accepted kind of file
+    changed.
+  - An icon's name list leaves out `ico` and `icns` (round 3). The icon rules' `mimes:` lists name `ico`, and
+    `icns` on a service edit, and round 2 copied them into `extensions:` and into the sentence. But `image`
+    stands beside `mimes:` on each of those rules and refuses a real icon file first: a real `.ico` sent to each
+    of the six icon doors is told one thing, that the field "must be an image", with `app/` as it is on main
+    and as it is here. So the sentence asked for a name no real icon file could pass under, and PNG bytes named
+    `icon.ico` were kept on the public disk under that name. `ico` and `icns` are out of the name list and the
+    sentence of the service icon (create and edit) and of the About page's mission and vision icons. Every
+    `mimes:` list is exactly as it was, so no kind of bytes is newly refused or newly accepted. It narrows one
+    thing a person could do: PNG bytes named `.ico` or `.icns` were accepted at every icon door on main (12 of
+    12 cases, kept under those names) and are refused now until the file is renamed.
+  - `bail` first on each of them and on the three rules of the entry above. A file that is not an image is told
+    that once ("The avatar field must be an image.") and is no longer also told what type it must be and to
+    rename it: a PDF sent as `notice.jpg` is still refused, so "rename the file" was advice that could not work.
+    A file refused for its name alone reads its field's own sentence, for example "The avatar's file name must
+    end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again."
+  - The composer's feed channel borrows the announcement's rules, and its picture rule is the composer's own
+    plus `required`. A picture the composer's rule has refused is no longer reported a second time with
+    "Announcements feed:" in front of it. With no picture at all the feed's `required` still speaks.
+  - `SaveMasjidAboutRequest` writes each field's rule whole. It used to join fragments held in variables, which
+    the coverage test below cannot read together.
+  - **`UploadFileNameCoverageTest`** reads every PHP file under `app/` (tokens, so a comment is not a rule) and
+    fails when an upload rule written in one of the ordinary ways has no `extensions:` beside it. The ordinary
+    ways are a rule string or a rule list with `image`, `file`, `mimes:`, `mimetypes:` or `dimensions:` in it,
+    its names read as Laravel reads them (without regard to capitals, `_` or `-`), and the framework's fluent
+    rules (`Rule::file()`, `Rule::imageFile()`, `Rule::dimensions()`, `File::types()`, `File::image()`,
+    `File::default()`, `new File`, `new ImageFile`), under an import alias too. "Beside" is narrow: in the same
+    string literal with its list written out, or a whole element of the same rule list; a pin in one branch of a
+    ternary, in a concatenation, or with a list taken from a variable is reported as no pin. It is a control for
+    those ways of writing a rule and not a proof that no upload is open: what it cannot see is listed under
+    "Deliberately left", and a new upload still needs its own row in `PublicUploadFileNameDoorsTest`.
+    The way out is `NAME_NEVER_PUBLIC` in that test: an entry says what the upload is and why the
+    client's file name cannot reach a public address, and carries facts the test checks (the disk a config key
+    names is not the public one; a line the storing code must still contain). Twelve entries today: the
+    assistant's chat picture (kept under PHP's temporary name), the newsletter's block pictures (re-encoded,
+    `<uuid>.<ext>`), the Studio draft logo and the flyer photo (private disk, random name), public form
+    attachments and a form's own file question, class feed photos and videos, class handouts, a contact's
+    credential document (all private disk, random name, signed-in download), and the roster spreadsheet at
+    its two steps (never stored). Seen red with the pin removed from an admin's profile picture, from the
+    donation link's picture and from the About mission icon, one at a time, and green again with each put back.
+    In round 3 the scanner was put to each of the 32 lines under `app/` that carry a pin, with that one line's
+    pin taken off: it reported a rule every time (32 of 32).
+- **What a person meets that they did not before.** On these uploads too, a real image whose name ends in
+  something else (`.jfif`, `.jpe`, a trailing dot, or no extension at all) is refused until it is renamed.
+  The second review measured three more against main (34 + 21 + 29 cases). Round 3 measured them again, with
+  the same counts, and a fourth that its own icon change adds, by sending the same real bytes through the same
+  routes with `app/` as it is on main and as it is here:
+  - an icon whose bytes are PNG or WebP but whose name ends `.jpg` or `.jpeg` (and `.gif`, except on the edited
+    service icon, whose list has `gif`) is refused until it is renamed (36 cases kept on main, 34 of them
+    refused here);
+  - PNG bytes named `.bmp` are refused on the photo fields, except the donation link picture and the push
+    notification picture, whose lists have `bmp` (23 kept on main, 21 of them refused here);
+  - a name with a space after its extension (`photo.jpg `) is refused at every one of these uploads (29 kept
+    on main, as `photo.jpg-`; all 29 refused here);
+  - PNG bytes named `.ico` or `.icns` are refused on the icon fields (12 kept on main, all 12 refused here; the
+    icon bullet above).
+
+  A name such as `x.html.jpg` is accepted and kept as written at every photo door: 23 of the 29 doors of
+  round 3, and three times through the composer when the feed and push are both ticked. The six icon doors,
+  whose lists have no `jpg`, refuse that name and take `x.html.png` in the same way (`x.html.png` and
+  `x.html.webp` are kept at every door). Round 4 sent the three names again with the four composer doors it
+  added, by a probe in a private copy and not by a committed test: `x.html.jpg` kept at 27 of 33, the other
+  two at all 33. That such a file is an image and not a page rests on the web server typing a file by its
+  LAST extension, which is one more reason for the server-side backstop recommended under "Deliberately
+  left". Nothing here was run against a web server.
+- **The screens.** Each of the thirteen is sent by one form in the admin SPA, and each form puts what the server
+  answered into its failure dialog (`getMessageFromObj` flattens a refusal's field messages; run on the exact
+  refusal envelope, it returns the sentence). Nobody is left without a reason, so no screen was changed. Read
+  from the views and not driven in a browser. Left as found: most of those dialogs are titled with axios's
+  "Request failed with status code 422" above the server's sentence, and three forms (announcement, service,
+  splash) leave the form after the failure dialog, so what was typed is lost.
+- **Deliberately left.**
+  - Files already stored are not scanned, renamed or moved.
+  - A name the media library itself refuses after validation (`x.php.jpg`, a name over 255 bytes) still answers
+    500 after the record is written, and a page UPDATE then loses its old background. It was so before this
+    branch, and it is its own change.
+  - The web server still serves whatever is on the public disk by its extension. A server-side backstop (nothing
+    page-like under `/storage` is served as a page) is recommended to the owner as a separate, deliberate server
+    change. It is the only thing that would cover a file that reached the disk some other way.
+  - The coverage test reads rules, and only rules written in the ways it knows. Each of these passes it with a
+    door open. Its own table (`whatTheScanCannotSee`, 25 rows after round 4) holds one of each that can be
+    written as a snippet, which is all but the rule outside `app/`, and shows the scanner saying nothing
+    against it; 23 of the rows also put real PNG bytes named `x.html` to Laravel's validator under that shape
+    and see them accepted:
+    - a rule with no file word in it at all (only `max:`, say);
+    - the one word `image` or `file` standing alone as a rule where the scan does not expect rules: in a helper
+      with no `rules` in its name, a constant, a property, or a validator made another way
+      (`app('validator')->make(...)`); and, wherever it is written, in an arm of a `match` or among another
+      call's arguments, alone or as one branch of a ternary there (`Rule::when($new, 'image')`). The scan takes
+      the bare word for a rule only in a list beside a presence word or a rule with a colon, or in a method
+      with `rules` in its name, an array assigned to a variable with `rules` in its name or a validate call.
+      Even there it reads the word only as a list element or as the whole of a value: what a field is given,
+      what is assigned or handed back (`return`, an arrow function), or one branch of a ternary or the
+      right-hand side of `??` in one of those, with or without brackets round it. A method with `rules` in
+      its name is not read through and through (round 4);
+    - a rule that is not one piece of text: joined from two literals or from a constant, read from `config()`,
+      made by `sprintf()`, or changed in a later statement;
+    - the array form of a rule (`['mimes', 'jpg', 'png']`);
+    - a custom rule object or a closure;
+    - a pinned rule the request switches off (`exclude_if:` in front of it);
+    - a rule outside `app/`;
+    - an upload read with no rule at all, and a file that does not arrive as an upload (written from text the
+      client sent, or fetched from an address);
+    - a pinned upload whose stored name comes from another input;
+    - whether a pinned list is a sensible one (`extensions:jpg,html` counts as pinned).
+  - The door tests prove, for each door, that image bytes under a page-like name (`x.html`, `x.HTML`,
+    `x.jpg.html`, `x.htm`, `x.xhtml`, `x.svg`, no extension at all) are refused with nothing stored, and that
+    every kind of file an office may upload there is accepted under a lower-case and an upper-case name. The
+    kinds are written in the test, door by door, and are not read from the rule. They do not prove that a list
+    is not too wide beyond those page-like names (`jfif` added to a list leaves them green).
+  - The scan from the other side that the second review proposed (every call under `app/` that puts an upload
+    on a disk, held to a list that names the rule pinning it) was not built. It is what would cover a rule with
+    no file word in it and an upload with no rule at all.
+  - A real `.ico` or `.icns` file is still refused as "not an image", as it was before this branch: `image`
+    admits neither, whatever `mimes:` beside it names. Taking an icon file would be its own change.
+- **After the second review (round 3, the same day).** Both reviewers found no upload open at the round-2 head.
+  What changed is what the tests can show and what this entry claims.
+  - The scanner. It had one wrong answer (a list with `extensions:` in one branch of a ternary counted as
+    pinned) and blind spots. Of the eight rule shapes the review walked through a real route with `x.html`
+    stored and the test green, it now reports five (capitals; the pin in a ternary; `Rule::dimensions()`; the
+    fluent rule under an import alias; `File::default()`) and still says nothing against three (no file word;
+    the one word from a helper not named for rules; a list that names a page), which are on the list above.
+    It is held by tables of source snippets and not by prose: at the end of round 3, 44 it must report, 16 it
+    must accept as pinned, 10 that are not rules, and the 23 it is known to miss. Under `app/` it reads what
+    it read before: 58 answers, 33 of them pinned.
+  - The door tests. Each of the 29 doors sent one ordinary name; each now sends every kind it takes under a
+    lower-case and an upper-case name (260 cases), and five page-like names where it sent two (145 cases). The
+    four doors of the page and the flyer send every kind they take in the same way (44 cases; two of the four
+    had one such name each). Shown by mutation in a private copy, each put back afterwards: `webp` taken off a
+    new announcement's list turned 4 cases red (the new announcement, and the composer, whose feed borrows that
+    rule); the gallery's `images.*` list cut to `jpeg,jpg` turned 6 red; `png` taken off the edited service
+    icon's list turned 2 red. The first two left every test green before this round, as the review showed.
+  - The icons, as in the icon bullet under "Decided".
+- **After the independent check (round 4, the same day).** The check found no upload open at the round-3 head,
+  and four places where the tests or this entry said more than they showed. Only tests and the record changed
+  in this round; nothing under `app/` did.
+  - The composer's own picture rule had no row in which it was the only guard. The composer door ticks the
+    announcements feed, and the feed's borrowed announcement rule refuses a bad name whatever the composer's
+    own list says: the check showed that a trailing comma in that list (an empty name, so a file with no
+    extension passes) left all three upload test files green. The composer is now five doors: the feed with
+    push, as before, and push, the signage board, email and a text message each alone (the test organisation
+    is given the CRM for the last two, which read the contact directory). A test holds where each keeps the
+    picture and that it is kept nowhere else: `broadcasts` always, `notifications` as well when push is
+    ticked, `announcements` as well when the feed is. Shown by mutation of that one list in a private copy,
+    each put back afterwards: the trailing comma turned 4 cases red (a file named `x` kept by each of the
+    four new doors); `html` added turned 18 red; `webp` taken off turned 10 red.
+  - The scanner read the one word `image` or `file` in a rules method only as a list element, as the whole of
+    a field's rule or of one branch of a ternary that was the field's rule, or after `=` with nothing else.
+    Seven shapes the check found there were not reported: a ternary in brackets, the right-hand side of `??`,
+    a ternary assigned to a variable, `return 'image';`, a returned ternary, and the word handed back by an
+    arrow function, standing as a field's rule or handed to `Rule::forEach()`. The scanner now reads the word
+    as the whole of a value (the list under "Deliberately left" says what that is and what is still unseen)
+    and reports all seven. Six of them were written into a real request in a private copy: each time the
+    coverage test turned red and named the line. Under `app/` its answers are the same, answer for answer:
+    58, 33 of them pinned. Its tables now hold 60 snippets it must report, 16 it must accept as pinned, 16
+    that are not rules and 25 it is known to miss.
+  - `x.htm` and `x.xhtml`, which a web server also types as pages, are sent to every door (231 refusal cases
+    at the 33 doors, beside 300 accepted names; 8 more refusals at the page and the flyer). `htm` added to a
+    new announcement's list turned 1 case red; the check had shown it leaving the door tests green.
+  - The count for `x.html.jpg` under "What a person meets" said all 29 doors. It is corrected there.

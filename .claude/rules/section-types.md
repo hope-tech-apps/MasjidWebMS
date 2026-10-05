@@ -5,6 +5,7 @@ paths:
   - "app/Http/Controllers/AdminDashboard/PageSectionsController.php"
   - "app/Http/Requests/Admin/Sections/**"
   - "app/Http/Requests/Admin/PageSections/**"
+  - "app/Http/Requests/Admin/Pages/**"
   - "app/Support/SectionContentBinder.php"
   - "app/Http/Resources/Api/V1/PageSectionResource.php"
   - "resources/vue-app/components/sections/editors/**"
@@ -49,6 +50,94 @@ rule: an MP4 in a field an `<img>` draws is a blank box on a live page
 bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
 the uploaded file name on the public disk, and the web server serves it by its
 extension, so matching bytes named `.html` would be a page on this app's origin.
+
+**The pair is for every upload whose client file name can reach the public disk,
+not for sections only.** On 2026-10-05 every such upload carried it (found by
+reading every upload under `app/`, not by a test). Two kinds of test watch it,
+and a new upload needs both.
+
+`UploadFileNameCoverageTest` reads the PHP under `app/` and fails when an upload
+rule written in one of the ordinary ways has no `extensions:` beside it, unless
+its `NAME_NEVER_PUBLIC` list says why the name cannot reach a public address (a
+name this application chooses, a private disk behind a signed-in download, a
+file that is never stored) and the facts it gives for that still hold. The
+ordinary ways are a rule string or a rule list with `image`, `file`, `mimes:`,
+`mimetypes:` or `dimensions:` in it, in any capitals, and the framework's own
+fluent rules (`Rule::file()`, `File::image()`, `new ImageFile`,
+`Rule::dimensions()` and their like, under an import alias too). "Beside" is
+narrow: in the same string literal with its list written out, or as a whole
+element of the same rule list. A pin in one branch of a ternary, or one whose
+list comes from a variable, is reported as no pin.
+
+**A green coverage test does not mean every door is closed.** It reads rules,
+and only rules written those ways. Each of these passes it with a door open (its
+own table, `whatTheScanCannotSee`, holds one of each that can be written as a
+snippet, which is all but the rule outside `app/`):
+
+- a rule with no file word in it at all (only `max:`, say);
+- the one word `image` or `file` standing alone as a rule where the scan does
+  not expect rules: in a helper with no `rules` in its name, a constant, a
+  property, or a validator made another way (`app('validator')->make(...)`);
+  and, wherever it is written, in an arm of a `match` or among another call's
+  arguments, alone or as one branch of a ternary there
+  (`Rule::when($new, 'image')`). The scan takes the bare word for a rule only in
+  a list beside a presence word or a rule with a colon, or in a method with
+  `rules` in its name, an array assigned to a variable with `rules` in its name
+  or a validate call. Even there it reads the word only as a list element or as
+  the whole of a value: what a field is given, what is assigned or handed back
+  (`return`, an arrow function), or one branch of a ternary or the right-hand
+  side of `??` in one of those, with or without brackets round it. A method with
+  `rules` in its name is not read through and through;
+- a rule that is not one piece of text: joined from two literals or from a
+  constant, read from `config()`, made by `sprintf()`, or changed in a later
+  statement;
+- the array form of a rule (`['mimes', 'jpg', 'png']`);
+- a custom rule object or a closure;
+- a pinned rule the request switches off (`exclude_if:` in front of it);
+- a rule outside `app/`;
+- an upload read with no rule at all, and a file that does not arrive as an
+  upload (written from text the client sent, or fetched from an address);
+- a pinned upload whose stored name comes from another input;
+- whether a pinned list is a sensible one (`extensions:jpg,html` counts as
+  pinned).
+
+What each such rule carries:
+
+- `extensions:` listing, **in lower case**, what a real file of that field can
+  be called: the rule's own `mimes:` list, or `jpeg,jpg,png,gif,bmp,webp` beside
+  a bare `image`. An icon's list is shorter than its `mimes:`, which names `ico`
+  (and `icns` on the service edit form): `image` beside it refuses those bytes
+  first, so no real icon file can use those names, and the list is `png,webp`
+  (`png,gif,webp` on that form).
+  `extensions` lower-cases the client's name and not its own list, so
+  `IMG_0001.JPG` passes `extensions:jpg` and nothing passes `extensions:JPG`.
+- `bail` first, so a file that is not an image is told that once and is not also
+  told to rename it (a PDF renamed `.jpg` is still refused).
+- a sentence of the field's own for the name: "The …'s file name must end in ….
+  Rename the file and upload it again."
+
+An upload this application names itself (the lunch flyer is `<uuid>.<ext>`)
+takes that extension from the sniffed type (`$file->extension()`), never from
+the client's name.
+
+`PublicUploadFileNameTest` (a page's title background, the flyer) and
+`PublicUploadFileNameDoorsTest` (the thirteen admin uploads found beside them:
+announcements, the gallery, logos, avatars, services, About, the donation link,
+a push, the publish composer) send real bytes through the real route, because
+`UploadedFile::fake()` reports a type from its argument or its name and so
+cannot show bytes named as something else. For each door they prove two things:
+image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.htm`,
+`x.xhtml`, `x.svg`, no extension at all) are refused and nothing is stored; and
+every kind of file an office may upload there is accepted, under a lower-case
+and an upper-case name. The kinds are written in the test, door by door, and are
+not read from the rule, so a list that loses `webp` turns that door red. They do
+not prove that a list is not too wide, beyond those page-like names. A door
+proves a rule only where that rule is the only guard: the composer's picture is
+also held by the announcement's rule when the feed is ticked, so the composer is
+five doors, the feed with push and then each other channel alone (push, the
+board, email, a text message). **A new upload to the public disk needs its own
+row there**, whatever the coverage test says, and every file a controller reads
+needs a rule.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without

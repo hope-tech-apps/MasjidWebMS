@@ -26,7 +26,16 @@ class UpdateSplashAnnouncementRequest extends BaseFormRequest
             'priority' => 'sometimes|nullable|integer|min:0|max:100',
             'is_active' => 'sometimes|nullable|boolean',
 
-            'image' => 'sometimes|image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // The name is pinned as well as the bytes, and `bail` stops at the first failure:
+            // see StoreSplashAnnouncementRequest.
+            'image' => 'bail|sometimes|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'image.extensions' => 'The splash image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }
