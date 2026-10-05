@@ -268,6 +268,21 @@ class GroupsController extends FamilyController
             'may_receive_media' => $this->audience->mayReceive(
                 $contact, $group, GroupAudience::DISCLOSURE_MEDIA
             ),
+
+            // WHY the feed is closed, when it is. `may_receive_feed` is false
+            // for two different families: one that never gave consent, and one
+            // whose child has left this class (a leaving date ends the story
+            // whatever consent still stands on the entry). The portal used to
+            // tell both "You have not given consent", which is false for the
+            // second, so it now draws that notice only while this is not false.
+            //
+            // The same `current` standing `GroupAudience::standingIn()` works
+            // out, from the same rows: true while any entry this parent stands
+            // through has no leaving date. Consent is not consulted. It adds
+            // nothing the list does not already imply, and it is not a move
+            // column: a child who was moved and a child who simply left read
+            // the same here.
+            'in_class_now' => $mine->contains(fn (GroupMembership $m): bool => ! $m->hasLeft()),
         ] + $this->classStoreFlag($group);
     }
 
