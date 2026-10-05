@@ -172,7 +172,13 @@ class RosterMoveRosterTest extends TestCase
 
         $refusal = $this->removeFromRoster($student)->assertStatus(409)->json('data.membership.0');
 
-        $this->assertStringContainsString("1 {$label}", $refusal);
+        // Every kind is counted but the class store's ledger, which is named
+        // and never counted: how many rows a child's ledger holds says whether
+        // Manara Bucks moved with them.
+        $ledger = $label === AcademicRecordsHeld::LEDGER_LABEL;
+        $held = $ledger ? AcademicRecordsHeld::LEDGER_HISTORY : "1 {$label}";
+
+        $this->assertStringContainsString("({$held})", $refusal);
         // What to do instead, in the screen's own words.
         $this->assertStringContainsString('Use "Left the class" instead', $refusal);
         $this->assertStringContainsString('Removing the roster entry would delete those records.', $refusal);
@@ -180,8 +186,13 @@ class RosterMoveRosterTest extends TestCase
         $undo = app(RosterImportService::class)->rollback('roster-test');
 
         $this->assertSame(0, $undo['roster_rows_removed']);
-        $this->assertStringContainsString("Maryam Student has school records from this class (1 {$label})", $undo['refused'][0]);
+        $this->assertStringContainsString("Maryam Student has school records from this class ({$held})", $undo['refused'][0]);
         $this->assertStringContainsString('Use "Left the class" instead', $undo['refused'][0]);
+
+        if ($ledger) {
+            $this->assertDoesNotMatchRegularExpression('/\d/', $refusal, 'Remove printed a figure about a child\'s ledger');
+            $this->assertDoesNotMatchRegularExpression('/\d/', $undo['refused'][0], 'the import undo printed a figure about a child\'s ledger');
+        }
 
         $this->assertNotNull($student->fresh());
         $this->assertSame(1, DB::table($table)->where('id', $record)->count(), 'a refused removal still destroyed the record');

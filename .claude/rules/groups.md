@@ -1427,6 +1427,31 @@ balance is the SUM of their rows, never a stored figure that can drift from its 
 The whole feature is behind the `class_store` capability, a grant, **OFF for every
 organisation** (Al-Razi included) until a SuperAdmin switches it on.
 
+> **2026-10-05: THIS SECTION IS BEHIND THE CODE, on purpose, until the commit that lets a move carry
+> a balance rewrites it.** The ledger has gained, DARK, what that commit needs, and NOTHING CALLS
+> THE WRITER YET (`ClassStore::carryBalance` has no caller; `ClassStoreCarryTest` pins "none, or
+> exactly one in `RosterMove`"). So a moved student's balance still stays on the old row, and the
+> move still says so. What is already in the code and not yet in the paragraphs below:
+> - two kinds, `transfer_out` and `transfer_in` (`PrizeLedgerEntry::TRANSFER_KINDS`; in `KINDS`,
+>   in neither `MINTED_KINDS` nor `REVERSIBLE_KINDS`), a nullable DATE `counts_from` kept on both
+>   rows of a pair, and the writer with its rule on two classes' dates (`carryRule`), each behind
+>   `ClassStore::carryReady()`. The teacher's and the family's screens have words for both kinds
+>   (the family's five translations are machine-drafted, like the rest of that block), and
+>   `LedgerKindsTsMirrorTest` keeps the SPA's list equal to the server's;
+> - **nothing is minted or adjusted on a roster row a student was MOVED away from** (a leaving
+>   date and `moved_to_group_id`, read from the row under its lock, not from the ledger), and a
+>   prize given from such a row can no longer be undone there (`moved_away`); a row put back by
+>   hand earns again. Both act from now on, pair or no pair;
+> - the sentence for a student who has left no longer says their Bucks "stay on their record";
+> - expiry counts both transfer kinds, each with its sign, by `counts_from`, and the grace is never
+>   more than seven days whatever is configured (`BucksExpiry::graceDays()`);
+> - the office's reconciliation shows no figures for a class that holds any transfer row, exactly
+>   as for a class that is too small, and its sentence names both reasons;
+> - Remove names the ledger ("Manara Bucks history") and never counts its rows;
+> - `ClassStore.php` holds FIVE `lockForUpdate(`, not four (the pin counts comments too);
+> - `php artisan bucks:transfer-rows` prints how many transfer rows exist (exit 0 none, 3 some),
+>   for a deploy guard that is not written yet.
+
 - **OFF means untouched.** Every store route is behind `capability:class_store` (403), `bucks:mint`
   and `bucks:expire` skip a school without it, the mobile `/features` and `tv-config` are byte for
   byte the same on or off (test), and the teacher and family CLASS payloads gain a `class_store: true`
