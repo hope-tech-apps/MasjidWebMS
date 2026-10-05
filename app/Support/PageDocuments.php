@@ -381,7 +381,11 @@ final class PageDocuments
      *    http and https are one, since erring here only ever keeps a file);
      *  - the host this request came in on (the deployment answers to more than one, and the web
      *    server serves the same file on each);
-     *  - no host at all (a bare path).
+     *  - no host at all: no `//host` stands in front of the path. A bare path is that, and so is
+     *    `name.example/storage/...` written with no scheme, which a browser reads as a path too.
+     *
+     * A host is compared as a browser would take it (plainHost()): in any letter case, with or
+     * without the port its scheme uses anyway, with or without the dot that may close a full name.
      *
      * An address on any other host is another site's, whatever number and name it carries. Only ever
      * compared, never stored (`.claude/rules/generated-urls.md` is about what is kept).
@@ -394,13 +398,40 @@ final class PageDocuments
         // The address's own `//host` and anything between that and the path, when the text in front
         // ends with one. A host belonging to a longer address the path is only a parameter of
         // (`https://viewer.example/view?url=/storage/3/x.pdf`) is not this address's host.
-        if (! preg_match('~//([^/?\#\s"\'<>=&\\\\]+)((?:/[^?\#\s"\'<>=&]*)?)$~', $front, $match)) {
+        if (! preg_match('~//([^/?\#\s"\'<>=&\\\\]+)((?:/[^?\#\s"\'<>=&]*)?)$~', $front, $match, PREG_OFFSET_CAPTURE)) {
             return true;
         }
 
-        $written = strtolower($match[1]) . rtrim($match[2], '/');
+        [[, $at], [$host], [$path]] = $match;
 
-        return in_array($written, $ours, true);
+        // The scheme, when it is one of the two a page is served by: it says which port is no port.
+        $scheme = preg_match('~(?<![a-z0-9+.-])(https?):$~i', substr($front, max(0, $at - 7), min($at, 7)), $written)
+            ? strtolower($written[1])
+            : '';
+
+        return in_array(self::plainHost($host, $scheme) . rtrim($path, '/'), $ours, true);
+    }
+
+    /**
+     * A host as it is compared: in lower case, without the port its scheme uses anyway (`:443` for
+     * https, `:80` for http; either of them when no scheme is written, which takes the page's), and
+     * without the dot that may close a full name (`host.example.`). Each of those is the same host
+     * to a browser, and an old copy that holds one of our addresses written so is still an old copy.
+     * Any other port is another origin, and is left on.
+     */
+    private static function plainHost(string $host, string $scheme = ''): string
+    {
+        $host = strtolower($host);
+
+        foreach (['https' => [':443'], 'http' => [':80']][$scheme] ?? [':443', ':80'] as $port) {
+            if (str_ends_with($host, $port)) {
+                $host = substr($host, 0, -strlen($port));
+
+                break;
+            }
+        }
+
+        return str_ends_with($host, '.') ? substr($host, 0, -1) : $host;
     }
 
     /**
@@ -456,10 +487,11 @@ final class PageDocuments
         $hosts = [];
 
         try {
-            // `https://host/storage` as configured; what stands in front of `/storage` is the host.
+            // `https://host/storage` as configured; what stands in front of `/storage` is the host
+            // (and, on a deployment served under a path, that path).
             $disk = rtrim(Storage::disk(self::disk())->url(''), '/');
-            if (preg_match('~^https?://(.+)/storage$~i', $disk, $match)) {
-                $hosts[] = strtolower($match[1]);
+            if (preg_match('~^(https?)://([^/]+)(.*)/storage$~i', $disk, $match)) {
+                $hosts[] = self::plainHost($match[2], strtolower($match[1])) . strtolower($match[3]);
             }
         } catch (Throwable) {
             // A disk with no address of its own gives out none.
@@ -467,8 +499,8 @@ final class PageDocuments
 
         try {
             $request = request();
-            $hosts[] = strtolower($request->getHost());
-            $hosts[] = strtolower($request->getHttpHost());
+            $hosts[] = self::plainHost($request->getHost(), $request->getScheme());
+            $hosts[] = self::plainHost($request->getHttpHost(), $request->getScheme());
         } catch (Throwable) {
             // A Host the framework will not read names no host of ours.
         }

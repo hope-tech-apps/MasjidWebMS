@@ -629,6 +629,14 @@ class PageDocumentCleanupTest extends TestCase
             'the host the request came in on' => "https://{$request}/storage/999996/annual-report.pdf",
             'percent-encoded inside a viewer\'s link' => 'https://viewer.example.test/view?url='
                 . rawurlencode(self::PUBLIC_DISK_URL . '/999995/annual-report.pdf') . '&embedded=true',
+            // The same host to a browser: the port its scheme uses anyway, and the dot that may
+            // close a full name.
+            'the public disk\'s host with the port https uses anyway' => 'https://platform.example.test:443/storage/999994/annual-report.pdf',
+            'the same host over http with the port http uses anyway' => 'http://platform.example.test:80/storage/999993/annual-report.pdf',
+            'the public disk\'s host with a trailing dot' => 'https://platform.example.test./storage/999992/annual-report.pdf',
+            'a trailing dot and the port' => 'https://platform.example.test.:443/storage/999991/annual-report.pdf',
+            'no scheme, and either of the two ports' => '//platform.example.test:80/storage/999990/annual-report.pdf',
+            'the host the request came in on, with its port and a trailing dot' => "https://{$request}.:443/storage/999989/annual-report.pdf",
         ];
 
         foreach ($spellings as $what => $dead) {
@@ -661,6 +669,50 @@ class PageDocumentCleanupTest extends TestCase
                     return true;
                 })
                 ->once();
+        }
+    }
+
+    #[Test]
+    public function our_own_hosts_are_compared_the_same_way_however_the_disk_and_the_request_write_them(): void
+    {
+        $dead = fn (string $host, int $number) => "https://{$host}/storage/{$number}/annual-report.pdf";
+
+        // The public disk's address configured with the port https uses anyway, and an old copy
+        // that holds the address without it.
+        Storage::fake('public', ['url' => 'https://platform.example.test:443/storage']);
+        $document = $this->uploadDocument('Calendar.pdf');
+        $this->assertStringStartsWith('https://platform.example.test:443/storage/', $document['url']);
+        $section = $this->saveLinkList([$document['url']]);
+        $this->updateLinkList($section, [$dead('platform.example.test', 999999)]);
+        $this->assertDocumentKept($document);
+
+        // A request that came in on a host written with its closing dot, and an old copy that
+        // holds the address without it.
+        $other = $this->uploadDocument('Schedule.pdf');
+        $buttons = $this->saveLinkList([$other['url']]);
+        $this->post("https://admin-host.example.test.{$this->pageSections()}/{$buttons}", [
+            '_method' => 'PUT',
+            'content' => json_encode($this->linkList([$dead('admin-host.example.test', 999998)])),
+        ])->assertStatus(200);
+        $this->assertDocumentKept($other);
+    }
+
+    #[Test]
+    public function an_address_on_our_host_at_another_port_is_another_sites(): void
+    {
+        // Only the port a scheme uses anyway is the same host. Any other port is another origin,
+        // which serves none of our files: an ordinary replace, and what it drops is deleted.
+        foreach ([
+            'https://platform.example.test:8443/storage/999999/annual-report.pdf',
+            'https://platform.example.test:80/storage/999998/annual-report.pdf',
+            'http://platform.example.test:443/storage/999997/annual-report.pdf',
+        ] as $elsewhere) {
+            $document = $this->uploadDocument('Calendar.pdf');
+            $section = $this->saveLinkList([$document['url']]);
+
+            $this->updateLinkList($section, [$elsewhere]);
+
+            $this->assertDocumentGone($document);
         }
     }
 

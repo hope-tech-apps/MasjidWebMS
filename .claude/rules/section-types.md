@@ -143,9 +143,15 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   - **A save from an out-of-date editor deletes nothing, and ONLY such a save.**
     If the content after the save brings in an address the section did not have
     before, that is written as OURS (on the public disk's host, on the host the
-    request came in on, or with no host) and has NO media row at all with that
-    id and file name, the save is an old copy putting a deleted file's link back
-    (a second tab): the document it would otherwise unlink is the CURRENT one.
+    request came in on, or with no `//host` in front of the path at all) and has
+    NO media row ON THE PUBLIC DISK with that id and file name, the save is an
+    old copy putting a deleted file's link back (a second tab): the document it
+    would otherwise unlink is the CURRENT one. A host is compared as a browser
+    takes it: any letter case, with or without the port its scheme uses anyway,
+    with or without a closing dot. Only the public disk is asked, because the
+    answer shows in what happens to the administrator's own document: asked of
+    every disk, a save told them whether another organisation's PRIVATE file has
+    a given number and name.
     One warning line names what was kept. The save is not refused, so the old
     link stays dead. Do not widen this: a document kept here has left the
     content, so no later save can reach it. The first version fired for any
