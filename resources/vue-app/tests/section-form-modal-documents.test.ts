@@ -661,3 +661,96 @@ test('an upload that outlives its control and answers late does not lower the co
         modal.screen.unmount();
     }
 });
+
+/* ------------------------------------------- a NEW section: its type and its mode wait too */
+
+/** The two types a new section is offered here, with the default content the server gives each. */
+const offeredTypes = () => [
+    {
+        value: 'link_list', label: 'Link Buttons', description: 'Buttons', has_renderer: true,
+        default_content: { heading: '', description: '', links: [], layout: 'stack', background_color: '#ffffff' },
+    },
+    {
+        value: 'cta', label: 'Call to Action', description: 'One button', has_renderer: true,
+        default_content: {
+            heading: '', description: '', button_text: 'Get Started', button_link: '', button_style: 'primary',
+            background_image_url: null, background_color: '#2c5f2d',
+        },
+    },
+];
+
+/** A new Link Buttons section with one button, and a PDF on its way into it. */
+async function newSectionMidUpload() {
+    const upload = deferred<any>();
+    const modal = await mountModal(undefined, () => upload.promise, { sectionTypes: offeredTypes() });
+
+    assert.equal(select(modal.typeSelect(), 'link_list'), true);
+    await flush();
+    click(modal.screen.button('Add Link'));
+    await flush();
+    assert.equal(modal.fileInputs().length, 1);
+
+    // Nothing is held before a file is sent.
+    assert.equal(modal.typeSelect().disabled, false);
+    assert.deepEqual(modal.modeRadios().map((radio) => radio.disabled), [false, false]);
+
+    void modal.choose(0, pdf());
+    await flush();
+    assert.equal(modal.uploads.length, 1);
+
+    return { modal, upload };
+}
+
+test('while a PDF uploads into a new section, its Section Type cannot be changed: the upload\'s answer still has its field', async () => {
+    const { modal, upload } = await newSectionMidUpload();
+
+    // Changing the type takes the editor away, and the control with it, exactly as Cancel does, but
+    // asks nothing: the file would be stored and its address written nowhere. So the list is held,
+    // as Save is, and the line beside Save already says why.
+    assert.equal(modal.typeSelect().disabled, true);
+    assert.equal(modal.notes(), UPLOADING);
+    assert.equal(select(modal.typeSelect(), 'cta'), false);
+    await flush();
+    assert.equal(modal.fileInputs().length, 1, 'the control the upload was started from is gone');
+    assert.equal(modal.linkFields().length, 1);
+
+    upload.resolve({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
+    await flush();
+
+    // The answer landed in the button it was started from, and the list is free again.
+    assert.equal(modal.linkFields()[0].value, ADDRESS);
+    assert.equal(modal.typeSelect().disabled, false);
+    assert.equal(modal.notes(), '');
+
+    click(modal.create());
+    await flush();
+    assert.equal(modal.saves.length, 1);
+    assert.equal(modal.saves[0].content.links[0].url, ADDRESS);
+
+    modal.screen.unmount();
+});
+
+test('while a PDF uploads into a new section, Attach Existing cannot be chosen either', async () => {
+    const { modal, upload } = await newSectionMidUpload();
+    const [createNew, attachExisting] = modal.modeRadios();
+    assert.deepEqual([createNew.props.value, attachExisting.props.value], ['create', 'attach']);
+
+    // Attach Existing takes the whole form away. Both choices are held, as the type and Save are.
+    assert.deepEqual([createNew.disabled, attachExisting.disabled], [true, true]);
+    assert.equal(check(attachExisting), false);
+    await flush();
+    assert.equal(modal.fileInputs().length, 1, 'the form, and the control the upload was started from, are gone');
+    assert.ok(modal.form(), 'the form is gone');
+
+    upload.reject(new Error('The PDF could not be uploaded. Check your connection and try again.'));
+    await flush();
+
+    // A failed upload frees them as an answered one does.
+    assert.deepEqual(modal.modeRadios().map((radio) => radio.disabled), [false, false]);
+    assert.equal(modal.typeSelect().disabled, false);
+    assert.equal(check(modal.modeRadios()[1]), true);
+    await flush();
+    assert.equal(modal.form(), undefined, 'Attach Existing shows no form');
+
+    modal.screen.unmount();
+});

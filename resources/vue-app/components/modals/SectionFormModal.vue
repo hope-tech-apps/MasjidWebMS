@@ -24,7 +24,9 @@
                 <div class="modal-body">
                   <div :class="previewOn ? 'row g-3 h-100' : ''">
                     <div :class="previewOn ? 'col-lg-5 section-editor-column' : ''">
-                    <!-- Mode Selection (only for new sections) -->
+                    <!-- Mode Selection (only for new sections). Held while a PDF uploads, as the
+                         Section Type and Save are: Attach Existing takes the form away, and the
+                         control the upload's answer is for with it. -->
                     <div v-if="!isEdit" class="mb-4">
                         <div class="btn-group w-100" role="group">
                             <input
@@ -35,6 +37,7 @@
                                 value="create"
                                 v-model="mode"
                                 autocomplete="off"
+                                :disabled="documentUploads > 0"
                             >
                             <label class="btn btn-outline-primary" for="modeCreateNew">
                                 <i class="bi bi-plus-circle me-2"></i>
@@ -49,6 +52,7 @@
                                 value="attach"
                                 v-model="mode"
                                 autocomplete="off"
+                                :disabled="documentUploads > 0"
                             >
                             <label class="btn btn-outline-primary" for="modeAttachExisting">
                                 <i class="bi bi-link-45deg me-2"></i>
@@ -157,10 +161,13 @@
                             <label class="form-label">
                                 Section Type <span class="text-danger">*</span>
                             </label>
+                            <!-- Held while a PDF uploads: another type is another editor, and the
+                                 upload's answer would have no field to land in. The footer says why. -->
                             <select
                                 class="form-select"
                                 v-model="formData.section_type"
                                 @change="onSectionTypeChange"
+                                :disabled="documentUploads > 0"
                                 required
                             >
                                 <option value="">-- Select Section Type --</option>
@@ -450,7 +457,9 @@ const ownCopy = <T>(content: T): T => (
 //
 //  - How many of those uploads are in flight. The control raises and lowers this, and Save waits on
 //    it: a section saved mid-upload is saved without the address, the answer then lands in an editor
-//    that is gone, and the file is online, linked from nowhere, its address shown on no screen.
+//    that is gone, and the file is online, linked from nowhere, its address shown on no screen. A new
+//    section's Section Type and its Create New / Attach Existing choice wait on it too: either one
+//    takes the editor away exactly as closing does, and neither asks.
 //  - Which page documents the SAVED section links. The server deletes a document when a save stops
 //    linking it, compared with what was saved; one uploaded since is in nothing saved, and letting go
 //    of it deletes nothing. Read from `props.section.content` itself, the section as the page list
