@@ -173,6 +173,58 @@ an ERROR on both the **monitors** and the default channel (counts only); otherwi
 **monitors**. A conversation left in `sending` counts too. Neither command can report a stopped scheduler: if the cron that runs `schedule:run` is dead, the sweep and this check are both silent, and the signal is the ABSENCE of their info lines on **monitors** (one a minute from the sweep, one every ten minutes from the check). After a rollback that removes the sweep, remove or expect the alert from `groups:sweep-health` too: it
 reads the same tables, and only the waiting items it counts need to be cleared (step 2 above).
 
+## nginx: nothing under `/storage` is a page (`nginx/manara-storage.conf`)
+
+Every file under `/storage` is something an organisation uploaded, answered from the same origin
+as the admin screen. The application refuses an upload whose name is not what it claims
+(`extensions:` on every rule, `.claude/rules/section-types.md`). This snippet is the second lock,
+for the name nobody thought of. Inside `location ^~ /storage/`:
+
+- pictures (`jpg jpeg png gif webp bmp ico avif`), `pdf`, video (`mp4 m4v mov webm`) and audio
+  (`mp3 m4a wav ogg`) are typed and answered as before;
+- `svg` / `svgz` is still an image, with `Content-Security-Policy: sandbox; …`, so opened by itself
+  it runs no script;
+- everything else is `application/octet-stream` with `Content-Disposition: attachment`;
+- a dot file is refused, and nothing under `/storage` reaches PHP (`^~` stops the server block's
+  regex locations, the `\.php$` one among them).
+
+Why it exists: before it, a file named `x.html` under `/storage` was answered `text/html`, and a
+file named `x.php` there was EXECUTED (seen on staging on 2026-10-05 with an inert file). Uploads
+refuse both names; this makes the answer not depend on that.
+
+**A new kind of upload that must OPEN in the browser has to be added to the list in that file, on
+every server.** Otherwise it downloads. `tests/Feature/NginxStorageAllowlistTest.php` fails when an
+upload rule lets in an ending the repository's copy does not list; it cannot see the servers.
+
+### Install (one-time per server, as root; done on staging and production 2026-10-05)
+
+```bash
+install -o root -g root -m 644 deploy/nginx/manara-storage.conf /etc/nginx/snippets/manara-storage.conf
+# In the :443 server block of EVERY vhost that serves this application's public/ directory
+# (masjid.hopetechapps.com and portal.alrazischool.org), on the line above `location / { … }`:
+#     include snippets/manara-storage.conf;
+nginx -t && systemctl reload nginx
+```
+
+Back the vhost files up first, outside `sites-enabled/` (nginx reads every file in it). The
+copies from before the first install are in `/etc/nginx/manara-backups/` on each box.
+
+### Verify
+
+```bash
+sha256sum /etc/nginx/snippets/manara-storage.conf deploy/nginx/manara-storage.conf   # the same
+grep -n "manara-storage" /etc/nginx/sites-enabled/*                                   # one line per vhost
+# With an inert file in a throwaway folder of storage/app/public (remove it afterwards):
+curl -sI https://<host>/storage/<folder>/x.html | grep -iE "content-type|content-disposition"
+#   content-type: application/octet-stream
+#   content-disposition: attachment
+```
+
+### Undo
+
+Remove the `include` line from each vhost (or copy the backups back), delete the snippet,
+`nginx -t && systemctl reload nginx`.
+
 ## Scheduler cron
 
 `routes/console.php` schedules `tokens:prune-expired` daily (keeps the

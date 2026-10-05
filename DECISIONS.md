@@ -8789,3 +8789,33 @@ None found a blocker; five findings were major. What was decided in answering th
      go of more than a thousand addresses at once, has its cleanup given up, out loud (PD-28).
   7. The footer's new line, the Attach question and the longer close question were mounted in the test
      harness and built; they were not seen in a browser (PD-23, PD-15).
+
+## 2026-10-05 — The web server answers a file under `/storage` inline only if it cannot be a page (nginx, both servers)
+
+- **Asked.** The owner, after the upload file-name fix: a web-server backstop so that nothing under `/storage`
+  can ever be served as a web page whatever its name. "Do it", staging first.
+- **What.** `deploy/nginx/manara-storage.conf`, installed as `/etc/nginx/snippets/manara-storage.conf` on staging
+  and production on 2026-10-05 and included by one line in the :443 block of both vhosts. Inside
+  `location ^~ /storage/`: pictures, `pdf`, video and audio are answered as before; `svg` stays an image with a
+  sandbox policy; everything else is `application/octet-stream` with `Content-Disposition: attachment`; a dot
+  file is refused; nothing under `/storage` reaches PHP. A server setting, applied by hand: no deploy carries it
+  (`deploy/README.md` says how to install, verify and undo it).
+- **Why an allowlist and not a list of bad endings.** A browser runs script in more kinds of document than the
+  obvious ones: any XML type can (`.xhtml`, `.xml`, and every `+xml` type the server's own table knows), and the
+  list of them is not ours to keep complete. The kinds an office uploads to be SEEN are few and known.
+- **What it was before, by running it.** With inert files in a throwaway folder of the public disk: `x.html`,
+  `X.HTML` and `x.htm` were answered `text/html`, `x.xhtml` `application/xhtml+xml`, `x.xml` `text/xml`, on
+  staging and on production. On staging, the only place it was tried, a file `x.php` under `/storage` was
+  executed. No upload could store those names (the rules of the entries above, and the media library's own
+  refusal of PHP endings), and the 2026-10-05 read of production's public disk found none.
+- **After.** Each of those is a download, on both servers and both hosts; `x.svg` carries the sandbox policy;
+  `photo.jpg`, `PHOTO.JPG`, `doc.pdf` and `clip.mp4` are answered as before; all 263 files on production's
+  public disk still answer 200 with their own type; an SVG icon and a PNG still load as images in a browser,
+  through Cloudflare, on both servers.
+- **The cost, accepted.** A new kind of upload that must open in the browser downloads until its ending is added
+  to the list on every server. `NginxStorageAllowlistTest` fails when an upload rule's `extensions:` names an
+  ending the repository's copy lacks; it cannot see whether a server carries the file. A name such as
+  `x.html.jpg` is still answered as an image: the server types by the last ending, as before.
+- **Not done.** No change to `/build`, `/fonts` or any other path. No `Content-Security-Policy` on pictures or
+  PDFs (a sandbox policy breaks the browser's own PDF viewer). The renderer's hosts (Cloudflare Pages) serve no
+  uploads and are untouched.

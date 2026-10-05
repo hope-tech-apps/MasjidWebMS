@@ -86,6 +86,8 @@ server {
         try_files $uri =404;
     }
 
+    # Nothing under /storage is a page (deploy/nginx/manara-storage.conf; deploy/README.md).
+    include snippets/manara-storage.conf;
     location / { try_files $uri $uri/ /index.php?$query_string; }
     location = /favicon.ico { access_log off; log_not_found off; }
     # robots.txt goes to PHP on purpose: public/robots.txt is checked in and
@@ -145,6 +147,8 @@ server {
         try_files $uri =404;
     }
 
+    # Nothing under /storage is a page (deploy/nginx/manara-storage.conf; deploy/README.md).
+    include snippets/manara-storage.conf;
     location / { try_files $uri $uri/ /index.php?$query_string; }
     location = /favicon.ico { access_log off; log_not_found off; }
     # robots.txt goes to PHP on purpose: public/robots.txt is checked in and
