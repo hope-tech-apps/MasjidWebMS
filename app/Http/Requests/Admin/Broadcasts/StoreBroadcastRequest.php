@@ -121,7 +121,15 @@ class StoreBroadcastRequest extends BaseFormRequest
             // The announcement channel tightens this (its own rules make an
             // image required and cap it at 25MB); this is the floor that applies
             // to a push/email/signage-only send.
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            //
+            // `extensions` pins the file's NAME to the kinds `mimes` holds its BYTES to.
+            // The composer keeps this picture under the client's file name on the public
+            // disk and copies it, under the same name, into the announcement and the
+            // notification it makes, so image bytes named `x.html` would be a page at three
+            // addresses (Concerns\ValidatesVideoSection::sectionUploadRules). `bail` stops
+            // at the first failure, so a file that is not an image is not also told to
+            // rename it.
+            'image' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
 
             'starts_on' => 'nullable|date_format:Y-m-d',
             'ends_on' => 'nullable|date_format:Y-m-d',
@@ -166,9 +174,19 @@ class StoreBroadcastRequest extends BaseFormRequest
             // NewsletterBlocks, which words each problem against the block the
             // admin can see; only the files are Laravel rules. SVG is not
             // accepted: it is a document that can carry script, not a picture.
+            // No `extensions` here, on purpose: a block's picture is re-encoded and
+            // stored as `<uuid>.<the extension its bytes say>` (NewsletterPicture::prepare),
+            // so nothing of the client's file name reaches the disk.
             'blocks' => 'nullable',
             'block_images' => 'nullable|array|max:' . NewsletterBlocks::MAX_IMAGES,
             'block_images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:' . NewsletterBlocks::MAX_IMAGE_KB,
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'image.extensions' => 'The image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 
@@ -381,6 +399,13 @@ class StoreBroadcastRequest extends BaseFormRequest
 
         foreach ($probe->errors()->messages() as $field => $messages) {
             $target = self::ANNOUNCEMENT_FIELD_MAP[$field] ?? $field;
+
+            // The feed's picture rule is the composer's own plus `required`. A picture
+            // the composer's rule has already refused is refused by the feed's for the
+            // same reason, and saying it a second time tells the admin nothing new.
+            if ($field === 'image' && $validator->errors()->has('image')) {
+                continue;
+            }
 
             foreach ($messages as $message) {
                 $validator->errors()->add(

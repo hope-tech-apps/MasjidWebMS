@@ -31,7 +31,9 @@ use Tests\TestCase;
  * ending in `.html` would be answered as a page on the application's own origin. The
  * section uploads and the shop's pictures already pin the name
  * (ValidatesVideoSection::sectionUploadRules, UploadProductImagesRequest); these two had
- * been left out.
+ * been left out. So had thirteen more, which PublicUploadFileNameDoorsTest holds door by
+ * door, and UploadFileNameCoverageTest fails when a rule that accepts an upload is added
+ * without its name pinned.
  *
  * Every upload here is REAL bytes in a real UploadedFile, so its type is what finfo reads
  * from the file. UploadedFile::fake() answers getMimeType() from its argument or from its
@@ -326,6 +328,46 @@ class PublicUploadFileNameTest extends TestCase
                 'status' => 'failed',
                 'data' => ['flyer' => [self::FLYER_NAME_REFUSAL]],
             ]);
+    }
+
+    #[Test]
+    public function a_file_that_is_not_an_image_is_told_so_once_and_is_not_told_to_rename_it(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $page = $this->pageWithBackground('photo.jpg');
+        $pdf = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n";
+
+        // Under its own name, and under an image's: renaming a PDF does not get it in, so
+        // "rename the file" would be advice that cannot work. Each rule stops at the first
+        // thing wrong (`bail`), which for these bytes is that they are not an image.
+        foreach (['notice.pdf', 'notice.jpg'] as $name) {
+            $answers = [
+                'a new page' => [self::PAGE_FIELD, $this->post($this->pagesUrl(), [
+                    'slug' => 'notice',
+                    'title' => 'Notice',
+                    self::PAGE_FIELD => $this->realUpload($name, $pdf),
+                ], self::JSON)],
+                'a replacement' => [self::PAGE_FIELD, $this->post($this->pagesUrl($page), [
+                    '_method' => 'PUT',
+                    self::PAGE_FIELD => $this->realUpload($name, $pdf),
+                ], self::JSON)],
+                'a flyer' => ['flyer', $this->post($this->flyerUrl(), ['flyer' => $this->realUpload($name, $pdf)], self::JSON)],
+            ];
+
+            foreach ($answers as $door => [$field, $response]) {
+                $this->assertSame(422, $response->status(), "{$door}: a PDF named {$name} was answered {$response->status()}");
+
+                $told = (array) $response->json('data');
+                $this->assertSame([$field], array_keys($told), "{$door}: another field was blamed");
+                $this->assertCount(1, $told[$field], "{$door}: a PDF named {$name} was told " . json_encode($told));
+                $this->assertStringContainsString('must be an image', $told[$field][0]);
+                $this->assertStringNotContainsString('Rename', $told[$field][0]);
+            }
+        }
+
+        $this->assertSame(['photo.jpg'], DB::table('media')->pluck('file_name')->all());
+        $this->assertCount(1, Storage::disk('public')->allFiles());
+        $this->assertSame(1, Page::count());
     }
 
     /* ------------------------------------------------ what did not change */

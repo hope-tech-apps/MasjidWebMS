@@ -41,8 +41,10 @@ class UpdatePageRequest extends BaseFormRequest
             // list. The media library keeps the client's file name on the public disk and the
             // web server picks the Content-Type from the extension, so image bytes uploaded as
             // `x.html` would be served as a page on this app's own origin. The same pair every
-            // section upload has (Concerns\ValidatesVideoSection::sectionUploadRules).
-            'page_title_background_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+            // section upload has (Concerns\ValidatesVideoSection::sectionUploadRules). `bail`
+            // stops at the first failure, so a file that is not an image is not also told to
+            // rename it.
+            'page_title_background_image' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'is_active' => 'nullable|boolean',
             'order' => 'nullable|integer',
             'show_in_menu' => 'nullable|boolean',

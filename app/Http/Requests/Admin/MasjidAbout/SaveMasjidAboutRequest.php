@@ -17,17 +17,32 @@ class SaveMasjidAboutRequest extends BaseFormRequest
         $masjid = Masjid::find($masjidId);
         $aboutExists = $masjid && $masjid->masjidAbout()->exists();
 
-        $imageRule = $aboutExists ? 'image' : 'required|image';
-        $iconMimes = 'mimes:png,ico,webp|max:25600';
-        $imageMimes = 'mimes:jpeg,png,jpg,gif,webp|max:25600';
+        // `bail` stops at the first failure, so a file that is not an image is not also
+        // told to rename it.
+        $presence = $aboutExists ? 'bail' : 'bail|required';
 
+        // Each field's rule is written whole, so `image`, `mimes` and `extensions` can be
+        // read together (UploadFileNameCoverageTest reads them that way). `extensions`
+        // pins the file's NAME to the kinds `mimes` holds its BYTES to, an icon's list
+        // mirroring the icon's own `mimes`: the media library keeps the client's file name
+        // on the public disk, where `x.html` would be served as a page
+        // (Concerns\ValidatesVideoSection::sectionUploadRules).
         return [
             'about' => 'required|string|max:5000',
             'mission' => 'required|string|max:5000',
             'vision' => 'required|string|max:5000',
-            'about_image' => $imageRule . '|' . $imageMimes,
-            'mission_icon' => $imageRule . '|' . $iconMimes,
-            'vision_icon' => $imageRule . '|' . $iconMimes,
+            'about_image' => $presence . '|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+            'mission_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,ico,webp|max:25600',
+            'vision_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,ico,webp|max:25600',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'about_image.extensions' => 'The About Us image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
+            'mission_icon.extensions' => 'The mission icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
+            'vision_icon.extensions' => 'The vision icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
         ];
     }
 }

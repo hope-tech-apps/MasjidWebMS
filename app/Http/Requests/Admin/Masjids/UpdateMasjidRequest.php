@@ -15,8 +15,10 @@ class UpdateMasjidRequest extends BaseFormRequest
             'name' => 'required|string',
             'email' => 'required|email',
             'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-            'logo' => 'image|mimes:jpeg,png,jpg,gif,webp|max:25600',
-            'footer_logo' => 'image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // The name is pinned as well as the bytes, and `bail` stops at the first failure:
+            // see StoreMasjidRequest.
+            'logo' => 'bail|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+            'footer_logo' => 'bail|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'longitude' => 'required|numeric|min:-180|max:180',
             'latitude' => 'required|numeric|min:-90|max:90',
             'address' => 'required|string',
@@ -62,6 +64,14 @@ class UpdateMasjidRequest extends BaseFormRequest
                     }
                 },
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'logo.extensions' => 'The logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
+            'footer_logo.extensions' => 'The footer logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

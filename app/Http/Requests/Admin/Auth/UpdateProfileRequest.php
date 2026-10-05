@@ -52,7 +52,13 @@ class UpdateProfileRequest extends BaseFormRequest
                 },
             ],
             'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-            'avatar' => 'image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // `extensions` pins the file's NAME to the kinds `mimes` holds its BYTES to: the
+            // media library keeps the client's file name on the public disk, where `x.html`
+            // would be served as a page (Concerns\ValidatesVideoSection::sectionUploadRules).
+            // This route has no capability gate, so every admin-realm login reaches it.
+            // `bail` stops at the first failure, so a file that is not an image is not also
+            // told to rename it.
+            'avatar' => 'bail|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'old_password' => ['nullable', 'required_with:password', new MatchOldUserPasswordRule($userId)],
             'password' => [
                 'nullable',
@@ -65,6 +71,13 @@ class UpdateProfileRequest extends BaseFormRequest
                 'regex:/[@$!%*?&#]/',
                 'confirmed',
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'avatar.extensions' => 'The avatar\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

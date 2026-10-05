@@ -19,7 +19,9 @@ class UpdateUserRequest extends BaseFormRequest
             // Lunch staff and teachers keep their type (UsersController::update);
             // their access is changed on the Team screen, not here.
             'type' => $this->targetIsScopedLogin() ? ['nullable'] : ['required', new UserTypeRule()],
-            'avatar' => 'image|mimes:jpeg,png,jpg,gif,webp|max:25600',
+            // The name is pinned as well as the bytes, and `bail` stops at the first failure:
+            // see StoreUserRequest.
+            'avatar' => 'bail|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'old_password' => ['nullable', 'required_with:password', new MatchOldUserPasswordRule($userId)],
             'password' => [
                 'nullable',
@@ -32,6 +34,13 @@ class UpdateUserRequest extends BaseFormRequest
                 'regex:/[@$!%*?&#]/',
                 'confirmed',
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'avatar.extensions' => 'The avatar\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 

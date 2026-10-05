@@ -188,9 +188,13 @@ class MealMenusController extends Controller
      * pinned a customer-facing image to the other one. See App\Support\SiteUrl.
      *
      * THE FILE'S NAME IS PINNED AS WELL AS ITS BYTES. `image` and `mimes` read the
-     * bytes; `extensions` holds the client's file name to the same list, the pair
-     * every image upload to the public disk has
-     * (Concerns\ValidatesVideoSection::sectionUploadRules). And the extension the
+     * bytes; `extensions` holds the client's file name to the same list
+     * (Concerns\ValidatesVideoSection::sectionUploadRules says why). Every upload
+     * whose client file name can reach the public disk carries that pair, and
+     * UploadFileNameCoverageTest fails when a rule that accepts an upload has no
+     * `extensions` beside it and no stated reason its name never reaches a public
+     * address. `bail` stops at the first failure, so a file that is not an image
+     * is told that once and is not also told to rename it. And the extension the
      * file is stored under is the one its bytes say, never the one in its name:
      * the web server serves public/storage from disk and picks the Content-Type
      * from the extension, so image bytes kept as `<uuid>.html` would be served as
@@ -199,7 +203,7 @@ class MealMenusController extends Controller
     public function uploadFlyer(Request $request, $masjid_id)
     {
         $request->validate([
-            'flyer' => 'required|image|mimes:jpeg,jpg,png,webp|extensions:jpeg,jpg,png,webp|max:5120',
+            'flyer' => 'bail|required|image|mimes:jpeg,jpg,png,webp|extensions:jpeg,jpg,png,webp|max:5120',
         ], [
             'flyer.extensions' => 'The flyer\'s file name must end in .jpg, .jpeg, .png or .webp. Rename the file and upload it again.',
         ]);
