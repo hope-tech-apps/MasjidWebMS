@@ -815,6 +815,109 @@ class ClassStoreCarryTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('juneMoves')]
+    public function a_year_end_takes_a_carried_balance_and_the_old_classs_own_end_does_not_follow_it(string $ends, string $movedOn, bool $pair, int $kept, ?string $writtenOffOn): void
+    {
+        $this->freeze('2026-06-08 09:00');
+        $this->credit($this->amira, 9, '2026-05-31');
+
+        if ($ends === 'class') {
+            $this->class->forceFill(['ends_on' => '2026-06-14'])->save();
+        } else {
+            $this->schoolYear('2025-09-07', '2026-06-14');
+        }
+
+        $new = null;
+
+        // Every day from the 8th of June to the 10th of July: the move on its day, then the sweep.
+        for ($day = CarbonImmutable::parse('2026-06-08'); $day->toDateString() <= '2026-07-10'; $day = $day->addDay()) {
+            $this->freeze($day->toDateString().' 09:00');
+
+            if ($day->toDateString() === $movedOn) {
+                $new = $this->move($this->amira, $this->next);
+            }
+
+            $this->sweep();
+        }
+
+        $this->assertSame($pair ? 2 : 0, $this->transferRows());
+        $this->assertSame($kept, $this->balanceOf($new));
+        $this->assertSame(0, $this->balanceOf($this->amira), 'nothing is left on the old row either way');
+
+        $expired = DB::table('prize_ledger_entries')->where('kind', PrizeLedgerEntry::KIND_EXPIRED)->get();
+
+        if ($writtenOffOn === null) {
+            $this->assertCount(0, $expired, 'no cutoff of the new class reaches it');
+
+            return;
+        }
+
+        $row = $writtenOffOn === 'old' ? $this->amira : $new;
+        $this->assertCount(1, $expired, 'written off once, on one row');
+        $this->assertSame((int) $row->id, (int) $expired[0]->group_membership_id);
+        $this->assertSame(-9, (int) $expired[0]->amount);
+        $this->assertSame('expired:'.$row->id.':2026-06-15:1', $expired[0]->dedupe_key);
+        $this->assertSame('2026-06-22', substr((string) $expired[0]->occurred_at, 0, 10), 'on the first sweep after the grace, whenever the move was');
+    }
+
+    #[Test]
+    public function a_move_after_the_years_write_off_carries_only_what_the_new_year_minted(): void
+    {
+        $this->schoolYear('2025-09-07', '2026-06-14');
+        $this->freeze('2026-06-22 09:00');
+        $this->credit($this->amira, 9, '2026-05-31');
+        $this->sweep();
+        $this->assertSame(0, $this->balanceOf($this->amira));
+
+        // The week of 21 June closes on the 28th and is minted for the new year.
+        $this->freeze('2026-07-01 09:00');
+        $this->credit($this->amira, 4, '2026-06-21');
+        $new = $this->move($this->amira, $this->next);
+
+        foreach (range(1, 3) as $run) {
+            $this->sweep();
+            $this->assertSame(4, $this->balanceOf($new), 'the date it carries is on or after the cutoff, so it is the new year\'s');
+        }
+
+        $this->assertSame('2026-06-21', $this->stored($new, PrizeLedgerEntry::KIND_TRANSFER_IN)[0]['counts_from']);
+    }
+
+    #[Test]
+    public function a_mid_year_move_is_not_written_off_by_last_years_cutoff_on_any_run_or_after_the_old_rows_set_is_purged(): void
+    {
+        // The fault being designed out: a transfer_in is not a minted row, so without a date of
+        // its own the whole carried amount reads as "from before" every cutoff ever due, and an
+        // ordinary October move in a school with one finished year on file is written off at
+        // the next 40 past the hour.
+        $this->schoolYear('2025-09-07', '2026-06-14');
+        $this->credit($this->amira, 12, '2026-10-04');
+        $this->assertContains('2026-06-15', BucksExpiry::cutoffs($this->class, SchoolCalendar::for((int) $this->school->id)), "last year's cutoff is on file and due");
+        $this->sweep();
+        $this->assertSame(12, $this->balanceOf($this->amira), 'settled on the old row: this October is after that cutoff');
+
+        $new = $this->move($this->amira, $this->next);
+
+        foreach (range(1, 10) as $run) {
+            $this->sweep();
+
+            if ($run === 1 || $run === 10) {
+                $this->assertSame(12, $this->balanceOf($new), "kept on run {$run}");
+            }
+        }
+
+        // The purge separates the pair: the old row left, sums to zero and is past its retention.
+        $removed = PrizeLedgerEntry::purgeDueSets(now()->addDays(400)->toDateString());
+        $this->assertSame(2, $removed);
+        $this->assertSame([], $this->ledger($this->amira), 'the old row\'s whole set went, its transfer_out included');
+        $this->assertSame(['transfer_in:12'], $this->ledger($new), 'the half that stays carries the protecting date itself');
+
+        $this->sweep();
+        $this->sweep();
+        $this->assertSame(12, $this->balanceOf($new));
+        $this->assertSame(0, DB::table('prize_ledger_entries')->where('kind', PrizeLedgerEntry::KIND_EXPIRED)->count());
+    }
+
+    #[Test]
     public function the_purge_takes_the_old_rows_whole_set_and_leaves_the_half_that_stays(): void
     {
         // The purge consults no kind, and nothing reads one half of a pair to explain the other.
@@ -841,6 +944,292 @@ class ClassStoreCarryTest extends TestCase
         $this->plant($new, PrizeLedgerEntry::KIND_EXPIRED, -5);
         $this->assertSame(2, PrizeLedgerEntry::purgeDueSets(now()->addDays(800)->toDateString()));
         $this->assertSame(0, PrizeLedgerEntry::query()->count());
+    }
+
+    #[Test]
+    public function a_cutoff_typed_after_the_move_and_dated_before_it_takes_the_carried_amount_whole_or_not_at_all(): void
+    {
+        // Amira's old row was last minted for the week of 27 September; Yusuf's for 4 October as well.
+        $this->credit($this->amira, 5, '2026-09-27');
+        $this->credit($this->yusuf, 5, '2026-09-27');
+        $this->credit($this->yusuf, 3, '2026-10-04');
+        $amira = $this->move($this->amira, $this->next);
+        $yusuf = $this->move($this->yusuf, $this->next);
+
+        // Afterwards the office adds a school year that ended on 3 October: cutoff the 4th, already due.
+        $this->schoolYear('2025-09-07', '2026-10-03');
+        $this->sweep();
+
+        $this->assertSame(0, $this->balanceOf($amira), 'nothing on the old row was minted from that cutoff on: taken whole, as it would have been there');
+        // The mixed state again: one date cannot split 5 from before and 3 from after, and it keeps the whole.
+        $this->assertSame(8, $this->balanceOf($yusuf));
+
+        // An end date typed later on the class that was LEFT does not reach what was carried.
+        $this->class->forceFill(['ends_on' => '2026-10-02'])->save();
+        $this->sweep();
+        $this->assertSame(8, $this->balanceOf($yusuf));
+
+        // One typed later on the class ENTERED is that class's own cutoff: it takes the carried
+        // amount unless the date it carries is on or after it.
+        $this->next->forceFill(['ends_on' => '2026-10-03'])->save();
+        $this->sweep();
+        $this->assertSame(8, $this->balanceOf($yusuf), 'cutoff the 4th: the amount counts from the 4th');
+
+        $this->next->forceFill(['ends_on' => '2026-10-04'])->save();
+        $this->sweep();
+        $this->assertSame(0, $this->balanceOf($yusuf), 'cutoff the 5th: after the date it carries');
+    }
+
+    #[Test]
+    public function the_mixed_state_keeps_the_whole_balance_and_a_return_to_that_row_ends_the_leniency(): void
+    {
+        // PINNED AS DESIGNED, AND AN OPEN ITEM (the mixed state, with the class-store rules'
+        // owner): at the instant of the move the old row holds Bucks from BOTH sides of a cutoff
+        // that is already due and not yet settled on it. The exact answer would keep the 3 and
+        // lose the 5; one date keeps or loses the whole, and the rule keeps it. It errs towards a
+        // child keeping Bucks and shows nobody a figure. Whoever makes the grace count from the
+        // day a date was typed lengthens this state from an hour to days and must revisit it.
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 5, '2026-09-27');
+            $this->credit($child, 3, '2026-10-04');
+        }
+
+        // The office types a year that ended on 3 October (cutoff the 4th, due since the 11th)
+        // and moves Amira before the next sweep.
+        $this->schoolYear('2025-09-07', '2026-10-03');
+        $there = $this->move($this->amira, $this->next);
+        $this->sweep();
+
+        $this->assertSame(8, $this->balanceOf($there), 'the whole is kept');
+        $this->assertSame(3, $this->balanceOf($this->yusuf), 'the classmate who stayed loses the old 5');
+
+        // She spends 2 in the new class and is moved back. The transfer_out left the old row's
+        // "later" short by d = 5, the part a sweep at the moment of the move would have taken.
+        $this->redeem($there, 2);
+        $this->move($there, $this->class);
+        $this->assertSame(6, $this->balanceOf($this->amira));
+
+        $this->sweep();
+        $this->assertSame(1, $this->balanceOf($this->amira), 'the sweep takes min(what she holds there, d) = 5');
+        $this->sweep();
+        $this->assertSame(1, $this->balanceOf($this->amira), 'and no more on a later run');
+        $this->assertSame(['earned:5', 'earned:3', 'transfer_out:-8', 'transfer_in:6', 'expired:-5'], $this->ledger($this->amira));
+    }
+
+    #[Test]
+    public function a_return_to_a_row_left_in_the_mixed_state_never_loses_more_than_is_held_there(): void
+    {
+        $this->credit($this->amira, 5, '2026-09-27');
+        $this->credit($this->amira, 3, '2026-10-04');
+        $this->schoolYear('2025-09-07', '2026-10-03');
+        $there = $this->move($this->amira, $this->next);
+
+        // She comes back with 2: less than the 5 a sweep would have taken at the move.
+        $this->redeem($there, 6);
+        $this->move($there, $this->class);
+        $this->sweep();
+        $this->sweep();
+
+        $this->assertSame(0, $this->balanceOf($this->amira), 'min(2, 5): what she holds, and never below zero');
+        $this->assertSame(1, DB::table('prize_ledger_entries')->where('kind', PrizeLedgerEntry::KIND_EXPIRED)->count());
+    }
+
+    #[Test]
+    public function the_grace_is_never_more_than_seven_days_whatever_the_environment_says(): void
+    {
+        foreach ([30 => 7, 8 => 7, 7 => 7, 3 => 3, 0 => 0, -2 => 0] as $configured => $read) {
+            config(['groups.bucks.expiry_grace_days' => $configured]);
+            $this->assertSame($read, BucksExpiry::graceDays(), "configured {$configured}");
+        }
+
+        $this->assertSame(7, BucksExpiry::MAX_GRACE_DAYS);
+        $this->assertStringContainsString('A value above 7 is read as 7', (string) file_get_contents(config_path('groups.php')));
+
+        // And the sweep uses it: with 30 configured, a cutoff eight days old acts.
+        config(['groups.bucks.expiry_grace_days' => 30]);
+        $this->credit($this->amira, 9, '2026-09-27');
+        $this->class->forceFill(['ends_on' => '2026-10-03'])->save();
+        $this->sweep();
+
+        $this->assertSame(0, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function a_week_cannot_be_minted_beyond_a_cutoff_that_is_still_inside_its_grace_so_a_move_in_those_days_rescues_nothing(): void
+    {
+        // The reason for the bound above, with the real mint: the year ends on Saturday 10
+        // October (cutoff the 11th, due from the 18th). On the 17th, the last day of the grace,
+        // the week that starts on the cutoff has not closed, so nothing on the old row can be
+        // dated on or after it, and a balance moved that day is written off with the year.
+        $this->schoolYear('2025-09-07', '2026-10-10');
+        $this->mintingFrom('2026-10-04');
+        $this->awardAt('2026-10-06 10:00', $this->amira, 9);
+        $this->awardAt('2026-10-13 10:00', $this->amira, 4);
+
+        $this->freeze('2026-10-17 23:30');
+        $this->mint();
+        $this->assertSame(['earned:9'], $this->ledger($this->amira), 'the week of the 11th is still in progress');
+
+        $new = $this->move($this->amira, $this->next);
+        $this->assertSame('2026-10-04', $this->stored($new, PrizeLedgerEntry::KIND_TRANSFER_IN)[0]['counts_from']);
+
+        $this->freeze('2026-10-18 00:40');
+        $this->sweep();
+        $this->assertSame(0, $this->balanceOf($new), 'the old year\'s Bucks end with the year, in the class she was moved to');
+    }
+
+    #[Test]
+    public function a_write_off_given_back_after_a_move_is_swept_on_the_old_row_as_a_classmates_is(): void
+    {
+        // The year was typed as ending on Saturday 26 September (cutoff the 27th).
+        $year = $this->schoolYear('2025-09-07', '2026-09-26');
+        $this->freeze('2026-10-05 09:00');
+
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 6, '2026-09-20');
+        }
+
+        $this->sweep();
+        $this->assertSame([0, 0], [$this->balanceOf($this->amira), $this->balanceOf($this->yusuf)]);
+
+        // New Bucks for the week of 4 October, and Amira is moved with hers.
+        $this->freeze('2026-10-12 09:00');
+
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 6, '2026-10-04');
+        }
+
+        $new = $this->move($this->amira, $this->next);
+
+        // A week later the office corrects the last day to 3 October: the cutoff of the 27th no
+        // longer exists, so its write-offs are given back, and the cutoff of the 4th (due) acts.
+        $this->freeze('2026-10-19 09:00');
+        app(TenantContext::class)->runWithout(fn () => $year->forceFill(['last_day' => '2026-10-03'])->save());
+        $this->sweep();
+
+        $this->assertSame(['earned:6', 'expired:-6', 'earned:6', 'reversal:6', 'expired:-6'], $this->ledger($this->yusuf));
+        // Without the transfer_out in "later", the earned 6 that left would still count as held
+        // from the cutoff on, the sweep would take nothing, and she would keep the given-back 6
+        // here on top of the 6 she carried: Bucks every classmate lost.
+        $this->assertSame(['earned:6', 'expired:-6', 'earned:6', 'transfer_out:-6', 'reversal:6', 'expired:-6'], $this->ledger($this->amira));
+
+        $this->assertSame(6, $this->balanceOf($this->yusuf));
+        $this->assertSame(0, $this->balanceOf($this->amira));
+        $this->assertSame(6, $this->balanceOf($new), 'her 6 is on the new row, and the cutoff of the 4th leaves it there');
+
+        $this->sweep();
+        $this->assertSame([6, 0, 6], [$this->balanceOf($this->yusuf), $this->balanceOf($this->amira), $this->balanceOf($new)], 'settled');
+    }
+
+    #[Test]
+    public function a_write_off_given_back_after_a_move_is_exact_where_bucks_were_spent(): void
+    {
+        $year = $this->schoolYear('2025-09-07', '2026-09-26');
+        $this->freeze('2026-10-05 09:00');
+
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 5, '2026-09-20');
+        }
+
+        $this->sweep();
+
+        // Each earns 10 after the cutoff and spends 4. Amira is moved with her 6.
+        $this->freeze('2026-10-12 09:00');
+
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 10, '2026-10-04');
+            $this->redeem($child, 4);
+        }
+
+        $new = $this->move($this->amira, $this->next);
+
+        $this->freeze('2026-10-19 09:00');
+        app(TenantContext::class)->runWithout(fn () => $year->forceFill(['last_day' => '2026-10-03'])->save());
+        $this->sweep();
+
+        // The classmate: 10 - 4 + 5 given back = 11, of which 10 is from the cutoff on: loses 1.
+        $this->assertSame(10, $this->balanceOf($this->yusuf));
+        // Her old row: 5 given back, of which 10 - 6 = 4 counts as from the cutoff on: loses 1 too.
+        $this->assertSame(4, $this->balanceOf($this->amira));
+        $this->assertSame(6, $this->balanceOf($new));
+        $this->assertSame(-1, (int) DB::table('prize_ledger_entries')->where('group_membership_id', $this->amira->id)->where('kind', PrizeLedgerEntry::KIND_EXPIRED)->orderByDesc('id')->value('amount'));
+    }
+
+    #[Test]
+    public function a_write_off_given_back_after_a_move_whose_date_was_removed_stays_on_the_old_row(): void
+    {
+        // THE STATED COST: when the office corrects a typed date, every classmate gets the
+        // write-off back where they can spend it. A moved child gets it on the row they left,
+        // where nothing can be spent. No second transfer is chained after it.
+        $this->freeze('2026-10-05 09:00');
+        $this->class->forceFill(['ends_on' => '2026-09-26'])->save();
+
+        foreach ([$this->amira, $this->yusuf] as $child) {
+            $this->credit($child, 6, '2026-09-20');
+        }
+
+        $this->sweep();
+        $this->assertSame(0, $this->balanceOf($this->amira));
+
+        // The end date was a mistake and is removed. Amira earns again and is moved before the sweep.
+        $this->freeze('2026-10-12 09:00');
+        $this->class->forceFill(['ends_on' => null])->save();
+        $this->credit($this->amira, 2, '2026-10-04');
+        $new = $this->move($this->amira, $this->next);
+        $this->assertSame(2, $this->balanceOf($new));
+
+        $this->sweep();
+        $this->sweep();
+
+        $this->assertSame(['earned:6', 'expired:-6', 'earned:2', 'transfer_out:-2', 'reversal:6'], $this->ledger($this->amira));
+        $this->assertSame(6, $this->balanceOf($this->amira), 'on a row the student has left');
+        $this->assertSame(['transfer_in:2'], $this->ledger($new), 'it is not chased into the new class');
+        $this->assertSame(6, $this->balanceOf($this->yusuf));
+
+        // Nothing can be spent from it, and the sentence no longer says where her Bucks are.
+        $refusal = $this->refusedWith('student_left', fn () => ClassStore::redeem($this->class, $this->amira->fresh(), $this->prize(['cost_bucks' => 1]), $this->teacher));
+        $this->assertSame('That student has left this class, so nothing can be spent for them here.', $refusal->getMessage());
+
+        // And it is not purged: a set is removed only when it is worth nothing.
+        $this->assertSame(0, PrizeLedgerEntry::purgeDueSets(now()->addDays(800)->toDateString()));
+        $this->assertSame(6, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function before_the_column_exists_the_sweep_does_not_name_it(): void
+    {
+        // bin/deploy serves the new code before it migrates. Without the column there can be no
+        // transfer row, and the hourly sweep must go on exactly as it did.
+        $this->credit($this->amira, 9, '2026-09-27');
+        $this->credit($this->amira, 2, '2026-10-04');
+        $this->credit($this->yusuf, 9, '2026-09-27');
+        $this->class->forceFill(['ends_on' => '2026-10-03'])->save();
+        $this->storeOn();
+
+        // SQLite reads a double-quoted name that is no column as a string, so an unknown column
+        // in a comparison is not an error here as it is on MySQL: the statements are read instead.
+        $statements = [];
+        DB::listen(function ($query) use (&$statements): void {
+            $statements[] = $query->sql;
+        });
+        $named = function () use (&$statements): array {
+            return array_values(array_filter($statements, fn (string $sql): bool => str_contains($sql, 'counts_from')));
+        };
+
+        // The control: with the column there, the sum that decides a write-off does name it.
+        $this->assertSame(0, Artisan::call('bucks:expire', ['--dry-run' => true]));
+        $this->assertNotSame([], $named(), 'the premise: the sweep reads counts_from once the column exists');
+
+        Schema::table('prize_ledger_entries', fn ($table) => $table->dropColumn('counts_from'));
+        ClassStore::forgetCarryReady();
+        $this->assertFalse(ClassStore::carryReady());
+        $statements = [];
+
+        $this->assertSame(0, Artisan::call('bucks:expire'));
+        $this->assertStringContainsString('0 failure(s)', Artisan::output());
+        $this->assertSame([], $named(), 'no statement of the sweep names a column that is not there yet');
+        $this->assertSame(['earned:9', 'earned:2', 'expired:-9'], $this->ledger($this->amira));
+        $this->assertSame(0, $this->balanceOf($this->yusuf));
     }
 
     // -------------------------------------- the mint, once a student was moved
