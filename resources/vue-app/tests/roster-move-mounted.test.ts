@@ -406,9 +406,10 @@ test('move: a refusal from the save is taken down when the office makes another 
 
 const gamal = { id: 21, role: 'guardian', contact_id: 201, guardian_of_contact_id: 100, left_on: '2026-10-03', provenance: 'confirmed',
     contact: { first_name: 'Gamal', last_name: 'Guardian' } };
-const movedRow = (notVouched: any[], there = 'current') => ({
+const movedRow = (notVouched: any[], there = 'current', consent: Record<string, any> = {}) => ({
     ...child, left_on: '2026-10-03', moved_to_group_id: 2, moved_on: '2026-10-04', moved_to: { id: 2, name: '2nd Grade', deleted_at: null },
-    moved_to_state: { student_there: there, open_group: { id: 2, name: '2nd Grade' }, guardians_not_vouched: notVouched },
+    moved_to_state: { student_there: there, open_group: { id: 2, name: '2nd Grade' }, guardians_not_vouched: notVouched,
+        consent_blocks: [], consent_lines: [], bucks_line: null, ...consent },
 });
 const blockedBy = [{ membership_id: 21, reason: 'no_entry',
     sentence: 'Putting Maryam Student back would also give Gamal Guardian access to this class again. Gamal Guardian is not a confirmed guardian of Maryam Student in 2nd Grade.' }];
@@ -441,6 +442,83 @@ test('put back: blocked. The guardian is named, there is nothing to tap that put
     assert.equal(count('putBack'), 0, 'the blocked form sent the undo');
     assert.deepEqual(opened, [2]);
     screen.unmount();
+});
+
+// The server's sentences for a consent that "Put back" would bring back (RosterMove::movedToStates):
+// the family withdrew the copy where it had been carried, or withdrew or narrowed the source.
+const putBackRemedy = 'Withdraw it on this roster first (the Consent button on the guardian\'s row), then put Maryam Student back.';
+const consentBlockKinds: Record<string, string> = {
+    'the copy was withdrawn': 'Gamal Guardian withdrew consent in 2nd Grade after it had been carried there from this class. Putting Maryam Student '
+        + 'back would bring the consent recorded here (the class story and photographs, recorded 5 Sep 2026) into force again.',
+    'the source was withdrawn': 'Gamal Guardian\'s consent here (the class story and photographs, recorded 5 Sep 2026) was carried from 2nd Grade, '
+        + 'and consent in 2nd Grade has since been withdrawn. Putting Maryam Student back would bring it into force again.',
+    'the source was narrowed': 'Gamal Guardian\'s consent here (the class story and photographs, recorded 5 Sep 2026) was carried from 2nd Grade, '
+        + 'and consent in 2nd Grade is now for the class story only. Putting Maryam Student back would bring it into force again.',
+};
+const bucksLine = 'Any Manara Bucks that moved with Maryam Student to 2nd Grade stay there. Putting Maryam Student back here does not bring them '
+    + 'back. Bucks Maryam Student earns here from now on are kept here. To bring Maryam Student and their Bucks back together, open 2nd Grade and use Move.';
+const inForceAgain = 'Putting Maryam Student back brings Gamal Guardian\'s consent in this class into force again (the class story, recorded 5 Sep 2026).';
+
+for (const [kind, sentence] of Object.entries(consentBlockKinds)) {
+    test(`put back: blocked by a consent that would come back (${kind}). No button puts the student back, and no undo is sent`, async () => {
+        const opened: number[] = [];
+        // The page drew the row before the family withdrew: the dialog reads again and is told.
+        const { store, count } = fakeStore({ readRoster: async () => ({
+            rows: [movedRow([], 'current', { consent_blocks: [sentence, putBackRemedy], bucks_line: bucksLine }), gamal], meta: {},
+        }) });
+        const screen = await mountPutBack(store, movedRow([]), { 'onOpen-class': (id: number) => opened.push(id) });
+
+        assert.match(screen.text(), /Not yet: check consent first/);
+        assert.ok(screen.text().includes(sentence), 'the server\'s sentence is printed whole');
+        assert.ok(screen.text().includes(putBackRemedy));
+        // The rule for Manara Bucks is said in this form too.
+        assert.ok(screen.text().includes(bucksLine));
+        assert.deepEqual(putBackButtons(screen).map((b: any) => b.textContent), [], 'the blocked form offers a put-back button');
+        // The remedy is on this roster: nothing sends the office to the other class.
+        assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.startsWith('Open ')).length, 0);
+
+        // The sentence that says why not is the red one and carries the sign; what to do, and the Bucks rule, are plain.
+        const paragraphs = screen.all((n) => n.tag === 'p');
+        assert.deepEqual(paragraphs.map((p) => String(p.props.class ?? '').includes('text-danger')), [true, false, false]);
+        assert.deepEqual(paragraphs.map((p) => p.children.some((c) => c.tag === 'i')), [true, false, false]);
+
+        // Every button the form does have is pressed, off or not: none of them sends the undo.
+        screen.all((n) => n.tag === 'button').forEach((b) => press(b));
+        await flush();
+        assert.equal(count('putBack'), 0, 'the blocked form sent the undo');
+        assert.deepEqual(opened, []);
+        screen.unmount();
+    });
+}
+
+test('put back: the consent that comes back and the rule for Manara Bucks are printed above the button, and the button still works', async () => {
+    let done = 0;
+    const { store, count } = fakeStore({ readRoster: async () => ({
+        rows: [movedRow([], 'current', { consent_lines: [inForceAgain], bucks_line: bucksLine }), gamal], meta: {},
+    }) });
+    const screen = await mountPutBack(store, movedRow([]), { onDone: () => { done += 1; } });
+
+    assert.match(screen.text(), /Put them back in this class too\?/);
+    const said = screen.all((n) => n.tag === 'p').map((p) => p.textContent);
+    assert.equal(said.length, 3);
+    assert.match(said[0], /leaves them in both classes, on two registers\./);
+    assert.deepEqual(said.slice(1), [inForceAgain, bucksLine]);
+    // Nothing here is a reason not to: no line is drawn as one.
+    assert.equal(screen.all((n) => n.tag === 'p' && String(n.props.class ?? '').includes('text-danger')).length, 0);
+
+    click(screen.button('Put back here anyway'));
+    await flush();
+    assert.deepEqual([count('putBack'), done], [1, 1]);
+    screen.unmount();
+
+    // A student who is no longer in the other class: the ordinary form, with the same lines.
+    const gone = fakeStore({ readRoster: async () => ({
+        rows: [movedRow([], 'left', { open_group: null, consent_lines: [inForceAgain] }), gamal], meta: {},
+    }) });
+    const ordinary = await mountPutBack(gone.store, movedRow([]));
+    assert.ok(ordinary.text().includes(inForceAgain));
+    assert.ok(ordinary.button('Yes, put them back'));
+    ordinary.unmount();
 });
 
 test('put back: once nobody is blocked the two-classes form is drawn, and only its own button sends the undo, once', async () => {

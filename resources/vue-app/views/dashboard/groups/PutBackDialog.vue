@@ -23,10 +23,14 @@
                         <i class="bi bi-exclamation-triangle me-1"></i> This roster has changed. Reload it.
                     </div>
 
+                    <!-- The lines that say why not are red and each carries the
+                         sign: colour is never the only signal. What to do
+                         about them, and what the server adds about consent
+                         and Manara Bucks, are plain. -->
                     <template v-else-if="decision">
                         <p v-for="(line, i) in decision.lines" :key="i" class="mb-2"
-                           :class="{ 'text-danger': decision.form === 'blocked' && i < decision.lines.length - 1 }">
-                            <i v-if="decision.form === 'blocked' && i === 0" class="bi bi-x-octagon me-1"></i>{{ line }}
+                           :class="{ 'text-danger': decision.stops.includes(i) }">
+                            <i v-if="decision.stops.includes(i)" class="bi bi-x-octagon me-1" aria-hidden="true"></i>{{ line }}
                         </p>
                     </template>
 
@@ -62,17 +66,22 @@
  * "PUT THIS STUDENT BACK ON THE ROSTER", for every row that has left.
  *
  * Putting a student back re-opens EVERY guardian entry beside them in this class. On a row that
- * was MOVED those are the entries the move left behind, and one of them can belong to an adult the
- * office has since removed where the student is now. The server's undo is deliberately ungated
- * (an undo that can be refused is the one direction that verb must never have), so the guard is
- * here, on the only screen that offers the action:
+ * was MOVED those are the entries the move left behind. One of them can belong to an adult the
+ * office has since removed where the student is now, and one of them can hold a consent the
+ * family has since withdrawn or narrowed in the class it was carried to or from, which would be
+ * in force again. The server's undo is deliberately ungated (an undo that can be refused is the
+ * one direction that verb must never have), so the guard is here, on the only screen that offers
+ * the action:
  *
  *   1. when the dialog opens it READS THE ROSTER AGAIN, quietly, into its own state, so what it
  *      decides from is seconds old and not as old as the page;
  *   2. the row is found again by id, and `putBackForm` picks one of four forms from the server's
  *      `moved_to_state`;
- *   3. in the `blocked` form there is no button that puts the student back, and `putBack()`
- *      refuses whatever called it.
+ *   3. in the `blocked` form (a guardian the server names, or a consent it says would come back)
+ *      there is no button that puts the student back, and `putBack()` refuses whatever called it.
+ *
+ * What the server says about consent and Manara Bucks is printed as it came, above the button in
+ * every form that has one.
  *
  * THIS FILE IS THE ONLY PLACE IN THE ADMIN SPA THAT SENDS THE UNDO. The roster tab opens this
  * dialog for every row, moved or not, and sends nothing itself (pinned in roster-move.test.ts).

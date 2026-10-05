@@ -152,6 +152,8 @@ export type PutBackForm = {
     form: 'unchanged' | 'blocked' | 'both_classes' | 'ordinary';
     title: string;
     lines: string[];
+    /** Which of `lines` say why the student cannot be put back yet (the blocked form's red lines). */
+    stops: number[];
     confirmLabel: string | null;
     /** The class to offer as "Open {Class}", when opening it helps. */
     openGroup: { id: number; name: string } | null;
@@ -159,10 +161,18 @@ export type PutBackForm = {
 
 /**
  * WHICH "PUT BACK" A ROW GETS. Putting a student back re-opens EVERY guardian entry beside them in
- * this class. On a row that was moved those are the entries the move left behind, and one of them
- * can belong to an adult the office has since removed where the student is now. The server says so
- * per row (`moved_to_state`, the move's own guardian rule), and while it names anybody the form is
- * `blocked`: it offers no way to put the student back.
+ * this class. On a row that was moved those are the entries the move left behind, and two things
+ * can be wrong with one of them. It can belong to an adult the office has since removed where the
+ * student is now. And it can hold a consent the family has since withdrawn or narrowed on the
+ * other side of a move that carried it, which putting the student back would revive. The server
+ * says both per row (`moved_to_state`: `guardians_not_vouched`, the move's own guardian rule, and
+ * `consent_blocks`), and while either names anything the form is `blocked`: it offers no way to
+ * put the student back.
+ *
+ * Everything the server says about consent and Manara Bucks is printed as it came, after what
+ * this screen says for itself: the blocking sentences, then `consent_lines` (every other consent
+ * here that comes back with the student), then `bucks_line`. No sentence about consent or Bucks
+ * is written here.
  */
 export function putBackForm(row: Row, roster: Row[]): PutBackForm {
     const student = fullName(row.contact);
@@ -176,6 +186,7 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
             title: 'Put them back on the roster?',
             lines: [`${student} will be back on the register and every class list, and their guardians will be back in `
                 + 'the class with them.'],
+            stops: [],
             confirmLabel: 'Yes, put them back',
             openGroup: null,
         };
@@ -184,24 +195,40 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
     const to = className(row.moved_to);
     const on = day(row.moved_on);
     const openGroup = state.open_group;
+    const notVouched = state.guardians_not_vouched ?? [];
+    const consentBlocks = state.consent_blocks ?? [];
+    const alsoSaid = [...(state.consent_lines ?? []), ...(state.bucks_line ? [state.bucks_line] : [])];
 
-    if (state.guardians_not_vouched.length > 0) {
-        const where = openGroup?.name ?? to;
-        const several = state.guardians_not_vouched.length > 1;
+    if (notVouched.length > 0 || consentBlocks.length > 0) {
+        const lines: string[] = [];
+        const stops: number[] = [];
+
+        if (notVouched.length > 0) {
+            const where = openGroup?.name ?? to;
+            const several = notVouched.length > 1;
+
+            notVouched.forEach((g) => { stops.push(lines.length); lines.push(g.sentence); });
+            lines.push(state.student_there === 'current' || openGroup?.id !== row.moved_to_group_id
+                ? `Remove ${several ? 'those entries' : 'that entry'} on this roster first. Or, if they should still be a `
+                    + `guardian, add or confirm them in ${where}.`
+                : `Remove ${several ? 'those entries' : 'that entry'} on this roster first. (If an unconfirmed entry for `
+                    + `them is listed in ${where}, confirming it there also clears this.)`);
+        }
+
+        // One sentence for each entry, then once what to do: the server's list, in the server's order.
+        consentBlocks.forEach((sentence, i) => {
+            if (i < consentBlocks.length - 1 || consentBlocks.length === 1) stops.push(lines.length);
+            lines.push(sentence);
+        });
 
         return {
             form: 'blocked',
-            title: 'Not yet: check the guardians first',
-            lines: [
-                ...state.guardians_not_vouched.map((g) => g.sentence),
-                state.student_there === 'current' || openGroup?.id !== row.moved_to_group_id
-                    ? `Remove ${several ? 'those entries' : 'that entry'} on this roster first. Or, if they should still be a `
-                        + `guardian, add or confirm them in ${where}.`
-                    : `Remove ${several ? 'those entries' : 'that entry'} on this roster first. (If an unconfirmed entry for `
-                        + `them is listed in ${where}, confirming it there also clears this.)`,
-            ],
+            title: notVouched.length > 0 ? 'Not yet: check the guardians first' : 'Not yet: check consent first',
+            lines: [...lines, ...alsoSaid],
+            stops,
             confirmLabel: null,
-            openGroup,
+            // What a consent asks for is done on THIS roster, so only a guardian sends the office elsewhere.
+            openGroup: notVouched.length > 0 ? openGroup : null,
         };
     }
 
@@ -212,7 +239,8 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
             form: 'both_classes',
             title: 'Put them back in this class too?',
             lines: [`${student} was moved to ${to} on ${on}. Putting them back here leaves them in both classes, on two `
-                + `registers.${coming} To move them back instead, open ${to} and use Move there.`],
+                + `registers.${coming} To move them back instead, open ${to} and use Move there.`, ...alsoSaid],
+            stops: [],
             confirmLabel: 'Put back here anyway',
             openGroup,
         };
@@ -223,7 +251,8 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
         title: 'Put them back on the roster?',
         lines: [`${student} was moved to ${to} on ${on} and is no longer there. They will be back on the register and `
             + `every class list here.${names.length === 0 ? '' : ` These guardians come back with them: ${names.join(', ')}. `
-                + 'Remove any who should no longer be a guardian before you continue.'}`],
+                + 'Remove any who should no longer be a guardian before you continue.'}`, ...alsoSaid],
+        stops: [],
         confirmLabel: 'Yes, put them back',
         openGroup: null,
     };

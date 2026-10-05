@@ -169,11 +169,22 @@ export type MovedClass = { id: number; name: string; deleted_at: string | null }
  * names the guardian entries here that must not be re-opened, each with the
  * sentence to print: the adult is no longer a confirmed guardian where the
  * student is now.
+ *
+ * Three more, each the server's own sentences, printed as they come:
+ * `consent_blocks` (a consent the family has since withdrawn or narrowed on the
+ * other side of a carry would come back into force: while it names anything the
+ * dialog offers no way to put the student back; its last sentence is what to do),
+ * `consent_lines` (every other consent here that would be in force again) and
+ * `bucks_line` (the rule for Manara Bucks, for a school that holds the class
+ * store). Optional: a server from before the release sends none of them.
  */
 export type MovedToState = {
     student_there: 'current' | 'left' | 'none';
     open_group: { id: number; name: string } | null;
     guardians_not_vouched: { membership_id: number; reason: 'no_entry' | 'only_unconfirmed'; sentence: string }[];
+    consent_blocks?: string[];
+    consent_lines?: string[];
+    bucks_line?: string | null;
 };
 
 /**

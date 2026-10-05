@@ -184,7 +184,91 @@ test('put back: blocked while a guardian here is no longer a confirmed guardian 
         // "Add them" is advice only while the student is in that class: the server refuses it once they have left.
         assert.equal(/add or confirm them in 2nd Grade/.test(form.lines[1]), there === 'current');
         assert.equal(/confirming it there also clears this/.test(form.lines[1]), there === 'left');
+        // The sentence that names the guardian is the one drawn as the reason; the advice is not.
+        assert.deepEqual(form.stops, [0]);
     }
+});
+
+// What the server says "Put back" would bring back, each as it sends it (RosterMove::movedToStates).
+const copyWithdrawn = 'Huda Guardian withdrew consent in 2nd Grade after it had been carried there from this class. '
+    + 'Putting Maryam Student back would bring the consent recorded here (the class story and photographs, recorded 5 Sep 2026) into force again.';
+const sourceWithdrawn = 'Huda Guardian\'s consent here (the class story and photographs, recorded 5 Sep 2026) was carried from 2nd Grade, '
+    + 'and consent in 2nd Grade has since been withdrawn. Putting Maryam Student back would bring it into force again.';
+const sourceNarrowed = 'Huda Guardian\'s consent here (the class story and photographs, recorded 5 Sep 2026) was carried from 2nd Grade, '
+    + 'and consent in 2nd Grade is now for the class story only. Putting Maryam Student back would bring it into force again.';
+const remedy = 'Withdraw it on this roster first (the Consent button on the guardian\'s row), then put Maryam Student back.';
+const comesBack = 'Putting Maryam Student back brings Nadia Guardian\'s consent in this class into force again (the class story, recorded 5 Sep 2026).';
+const bucks = 'Any Manara Bucks that moved with Maryam Student to 2nd Grade stay there. Putting Maryam Student back here does not bring them back.';
+
+test('put back: blocked while it would bring back a consent the family withdrew or narrowed on the other side of a move', () => {
+    const roster = [guardian(1, 'Huda', { left_on: '2026-10-03' }), guardian(2, 'Nadia', { left_on: '2026-10-03' })];
+
+    for (const [there, block] of [['current', copyWithdrawn], ['left', sourceWithdrawn], ['none', sourceNarrowed]] as const) {
+        const form = putBackForm(movedOut({
+            student_there: there, open_group: there === 'none' ? null : second, guardians_not_vouched: [],
+            consent_blocks: [block, remedy], consent_lines: [comesBack], bucks_line: bucks,
+        }), roster);
+
+        assert.equal(form.form, 'blocked');
+        assert.equal(form.title, 'Not yet: check consent first');
+        assert.equal(form.confirmLabel, null, 'the blocked form offers a way to put the student back');
+        // The server's sentences, whole and in its order: why not, what to do, what else comes back, the Bucks rule.
+        assert.deepEqual(form.lines, [block, remedy, comesBack, bucks]);
+        assert.deepEqual(form.stops, [0], 'only the sentence that names the consent is drawn as the reason');
+        // What it asks for is done on this roster: nothing sends the office to the other class.
+        assert.equal(form.openGroup, null);
+    }
+
+    // Two guardians, one sentence each, then once what to do.
+    const two = putBackForm(movedOut({ student_there: 'current', open_group: second, guardians_not_vouched: [],
+        consent_blocks: [copyWithdrawn, sourceNarrowed, remedy], consent_lines: [], bucks_line: null }), roster);
+    assert.deepEqual(two.lines, [copyWithdrawn, sourceNarrowed, remedy]);
+    assert.deepEqual(two.stops, [0, 1]);
+    assert.equal(two.confirmLabel, null);
+});
+
+test('put back: a guardian who is not vouched for and a consent that would come back are both said, each with what to do', () => {
+    const sentence = 'Putting Maryam Student back would also give Gamal Guardian access to this class again. '
+        + 'Gamal Guardian is not a confirmed guardian of Maryam Student in 2nd Grade.';
+    const form = putBackForm(movedOut({
+        student_there: 'current', open_group: second,
+        guardians_not_vouched: [{ membership_id: 1, reason: 'no_entry', sentence }],
+        consent_blocks: [copyWithdrawn, remedy], consent_lines: [], bucks_line: bucks,
+    }), [guardian(1, 'Gamal'), guardian(2, 'Huda')]);
+
+    assert.equal(form.form, 'blocked');
+    assert.equal(form.title, 'Not yet: check the guardians first');
+    assert.equal(form.confirmLabel, null);
+    assert.equal(form.lines.length, 5);
+    assert.equal(form.lines[0], sentence);
+    assert.match(form.lines[1], /^Remove that entry on this roster first\./);
+    assert.deepEqual(form.lines.slice(2), [copyWithdrawn, remedy, bucks]);
+    assert.deepEqual(form.stops, [0, 2]);
+    assert.deepEqual(form.openGroup, second);
+});
+
+test('put back: with nothing blocked, the consent that comes back and the rule for Manara Bucks are printed above the button', () => {
+    const roster = [guardian(1, 'Nadia', { left_on: '2026-10-03' })];
+
+    const both = putBackForm(movedOut({ student_there: 'current', open_group: second, guardians_not_vouched: [],
+        consent_blocks: [], consent_lines: [comesBack], bucks_line: bucks }), roster);
+    assert.equal(both.form, 'both_classes');
+    assert.equal(both.confirmLabel, 'Put back here anyway');
+    assert.match(both.lines[0], /leaves them in both classes, on two registers\./);
+    assert.deepEqual(both.lines.slice(1), [comesBack, bucks]);
+    assert.deepEqual(both.stops, []);
+
+    const ordinary = putBackForm(movedOut({ student_there: 'left', open_group: null, guardians_not_vouched: [],
+        consent_blocks: [], consent_lines: [comesBack], bucks_line: null }), roster);
+    assert.equal(ordinary.form, 'ordinary');
+    assert.equal(ordinary.confirmLabel, 'Yes, put them back');
+    assert.deepEqual(ordinary.lines.slice(1), [comesBack]);
+
+    // A server from before the release sends none of the three: the form is the one it always was.
+    const old = putBackForm(movedOut({ student_there: 'current', open_group: second, guardians_not_vouched: [] }), roster);
+    assert.equal(old.form, 'both_classes');
+    assert.equal(old.lines.length, 1);
+    assert.equal(old.confirmLabel, 'Put back here anyway');
 });
 
 test('put back: in both classes, or back for good, each says what it means and who comes back', () => {
@@ -247,6 +331,16 @@ test('one place sends the undo, and one place builds the sentences about a move'
         assert.doesNotMatch(file, /carried as it is|Manara Bucks go with|is in force again/);
     }
     assert.match(modal, /v-for="\(line, i\) in preview\.lines"/);
+
+    // Put back: the server's three fields are printed, never rebuilt. The helper reads them and the
+    // dialog draws `decision.lines`; neither writes a sentence about consent or Manara Bucks.
+    const helper = source('core/helpers/rosterMove.ts');
+    assert.match(helper, /state\.consent_blocks \?\? \[\]/);
+    assert.match(helper, /state\.consent_lines \?\? \[\]/);
+    assert.match(helper, /state\.bucks_line \? \[state\.bucks_line\] : \[\]/);
+    assert.match(dialog, /v-for="\(line, i\) in decision\.lines"/);
+    assert.doesNotMatch(dialog, /consent_blocks|consent_lines|bucks_line/);
+    assert.doesNotMatch(helper, /Manara Bucks (that|go|went|stay)|withdrew consent|would bring/);
 
     // The echo of what was shown is the helper's: the dialog hands it the preview as it came.
     assert.match(modal, /moveBody\(\{[\s\S]*?\}, preview\.value\)\)/);
