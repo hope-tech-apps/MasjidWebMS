@@ -55,6 +55,22 @@ class PageDocumentUploadTest extends TestCase
 
     private User $admin;
 
+    /** Every temporary file this test wrote, so a refused one (never moved to a disk) is not left behind. */
+    private array $temporaryFiles = [];
+
+    protected function tearDown(): void
+    {
+        // A stored upload was moved off its temporary path; a refused one is still there, and one of
+        // them is 25 MB.
+        foreach ($this->temporaryFiles as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+
+        parent::tearDown();
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -495,6 +511,7 @@ class PageDocumentUploadTest extends TestCase
     {
         $path = tempnam(sys_get_temp_dir(), 'upload');
         file_put_contents($path, $bytes);
+        $this->temporaryFiles[] = $path;
 
         return new UploadedFile($path, $name, $declared, null, true);
     }

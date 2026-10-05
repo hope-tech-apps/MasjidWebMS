@@ -45,6 +45,20 @@ class PageDocumentCleanupTest extends TestCase
 
     private Page $page;
 
+    /** Every temporary file this test wrote; a stored upload has already been moved off its path. */
+    private array $temporaryFiles = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->temporaryFiles as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+
+        parent::tearDown();
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -475,6 +489,7 @@ class PageDocumentCleanupTest extends TestCase
     {
         $path = tempnam(sys_get_temp_dir(), 'upload');
         file_put_contents($path, self::PDF);
+        $this->temporaryFiles[] = $path;
 
         return new UploadedFile($path, $name, null, null, true);
     }
