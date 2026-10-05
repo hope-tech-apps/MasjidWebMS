@@ -23,6 +23,13 @@ use LogicException;
  *     `purgeDueSets()` when every row of a child's ledger has passed its retention date.
  *     Removing rows one by one would leave a balance the remaining rows do not explain.
  *
+ * A BALANCE FOLLOWS A MOVED STUDENT as one pair of rows, a `transfer_out` on the roster row they
+ * left and a `transfer_in` on the one they hold in the new class, for the old row's whole
+ * balance (App\Support\ClassStore::carryBalance, called by the move and by nothing else). The
+ * two rows are not linked: each explains its own roster row's balance alone, and both carry
+ * `counts_from`, the week the carried amount counts as minted in, which is how expiry tells a
+ * balance moved this year from one a past cutoff should have taken (App\Support\BucksExpiry).
+ *
  * Who may READ a balance is App\Support\GroupAudience (`readablePrizeLedgerQuery()`, the
  * same audience as an award: the class's teachers, the student, that student's own
  * guardians, and nobody else). There is no rank, no class-wide comparison and no prize
@@ -40,6 +47,8 @@ class PrizeLedgerEntry extends Model
     public const KIND_REVERSAL = 'reversal';
     public const KIND_CASHED_OUT = 'cashed_out';
     public const KIND_EXPIRED = 'expired';
+    public const KIND_TRANSFER_OUT = 'transfer_out';
+    public const KIND_TRANSFER_IN = 'transfer_in';
 
     /** PHP constants, never a database enum (.claude/rules/migrations.md). */
     public const KINDS = [
@@ -49,6 +58,8 @@ class PrizeLedgerEntry extends Model
         self::KIND_REVERSAL,
         self::KIND_CASHED_OUT,
         self::KIND_EXPIRED,
+        self::KIND_TRANSFER_OUT,
+        self::KIND_TRANSFER_IN,
     ];
 
     /** The kinds a reversal may undo: something a child spent, never something they earned. */
@@ -56,6 +67,13 @@ class PrizeLedgerEntry extends Model
 
     /** The kinds that put bucks in ("minted from points"). */
     public const MINTED_KINDS = [self::KIND_EARNED, self::KIND_ADJUSTED];
+
+    /**
+     * The pair written when a balance follows a student to another class. Deliberately in
+     * NEITHER list above: a transfer is not minted from points (the minter and the "points vs
+     * Bucks" check never see it) and it is not something a teacher can undo.
+     */
+    public const TRANSFER_KINDS = [self::KIND_TRANSFER_OUT, self::KIND_TRANSFER_IN];
 
     /** Paper notes, largest first: the cash-out breakdown (owner: the 20/10/5/1 set). */
     public const NOTES = [20, 10, 5, 1];
@@ -70,6 +88,9 @@ class PrizeLedgerEntry extends Model
         'kind',
         'amount',
         'week_start',
+        // Not fillable would mean silently dropped by create(): a carried balance would be stored
+        // with no date and written off by the next cutoff on file.
+        'counts_from',
         'week_basis',
         'week_points',
         'week_rate',
@@ -90,7 +111,8 @@ class PrizeLedgerEntry extends Model
      * SQLite and 'Y-m-d' on MySQL, so an exact comparison (`where('week_start', '2026-10-04')`,
      * which the dedupe and the minting window rely on) would match on one engine and silently
      * miss on the other. It is a plain 'Y-m-d' string on both, the same way `behavior_weeks`
-     * keeps its own `week_start`.
+     * keeps its own `week_start`. `counts_from` is left uncast for the same reason: expiry
+     * compares it with a cutoff as text.
      */
     protected function casts(): array
     {
