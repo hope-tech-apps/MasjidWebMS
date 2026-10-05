@@ -280,7 +280,9 @@ const newMember = (): StaffMember => ({
 const normalize = (value?: StaffDirectorySectionContent): StaffDirectorySectionContent => ({
     heading: value?.heading || '',
     description: value?.description || '',
-    members: value?.members ? [...value.members] : [],
+    // Each member is COPIED: the fields below are bound straight onto a member, and one shared
+    // with the caller would be written into the caller's content as it is typed.
+    members: value?.members ? value.members.map((member) => ({ ...member })) : [],
     layout: value?.layout || 'grid',
     columns: value?.columns || 3,
     show_contact: value?.show_contact ?? false,

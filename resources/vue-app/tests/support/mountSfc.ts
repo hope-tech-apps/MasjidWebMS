@@ -324,6 +324,35 @@ export function type(el: Node, value: string): void {
     run(el, 'input');
 }
 
+/** What the element's own `@change` would run, after any v-model on it. */
+function changed(el: Node): void {
+    // v-model first: its listener is added when the element is created, ahead of the element's own
+    // handlers, so a `@change` beside it reads the NEW value, as in a browser. (run() goes the other
+    // way round, which does not matter to a handler that only sends the bound object up.)
+    (el.listeners.change ?? []).forEach((h) => h(fakeEvent(el)));
+    const handler = el.props.onChange;
+    (Array.isArray(handler) ? handler : handler ? [handler] : []).forEach((h: any) => h(fakeEvent(el)));
+}
+
+/**
+ * Choose an option of a `<select>` bound with v-model, as a browser does: nothing at all on a
+ * disabled one. Returns whether it ran.
+ */
+export function select(el: Node, value: any): boolean {
+    if (el.disabled) return false;
+    el.options = [{ value, selected: true }];
+    changed(el);
+    return true;
+}
+
+/** Choose a radio button bound with v-model, as a browser does: nothing at all on a disabled one. */
+export function check(el: Node): boolean {
+    if (el.disabled) return false;
+    (el as any).checked = true;
+    changed(el);
+    return true;
+}
+
 /** Let every settled promise and Vue's scheduler run; throw what the component threw meanwhile. */
 export async function flush(times = 6): Promise<void> {
     for (let i = 0; i < times; i++) {

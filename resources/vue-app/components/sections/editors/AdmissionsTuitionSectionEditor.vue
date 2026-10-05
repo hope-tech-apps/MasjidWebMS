@@ -531,9 +531,11 @@ const normalize = (value?: AdmissionsTuitionSectionContent): AdmissionsTuitionSe
             includes: tier.includes ? [...tier.includes] : [],
         }))
         : [],
-    fees: value?.fees ? [...value.fees] : [],
-    payment_plans: value?.payment_plans ? [...value.payment_plans] : [],
-    steps: value?.steps ? [...value.steps] : [],
+    // Each row is COPIED, as each tier is above: the fields below are bound straight onto a row, and
+    // a row shared with the caller would be written into the caller's content as it is typed.
+    fees: value?.fees ? value.fees.map((fee) => ({ ...fee })) : [],
+    payment_plans: value?.payment_plans ? value.payment_plans.map((plan) => ({ ...plan })) : [],
+    steps: value?.steps ? value.steps.map((step) => ({ ...step })) : [],
     disclaimer: value?.disclaimer || '',
     button_text: value?.button_text || '',
     button_page_id: value?.button_page_id ?? null,

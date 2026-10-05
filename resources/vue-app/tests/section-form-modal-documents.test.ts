@@ -12,6 +12,9 @@
  *  - WHAT SAVE WILL TAKE OFFLINE is said beside Save, whichever editor or row let the file go.
  *  - WHICH FILES ARE SAVED is known here (the section as it was opened), and decides which sentence
  *    the control may truthfully show.
+ *  - AN EDIT THAT IS ABANDONED IS GONE. The modal is opened on the object the page list holds, and
+ *    Cancel does not reload that list. Its form is a copy of its own, so nothing an editor did before
+ *    Cancel is there the next time the section is opened.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
@@ -20,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as documentFile from '../core/helpers/sectionDocumentFile.ts';
 import * as shopSection from '../core/helpers/shopSection.ts';
-import { click, compileSfc, deferred, flush, loadTs, mountSfc, Node, press, submit, type } from './support/mountSfc.ts';
+import { check, click, compileSfc, deferred, flush, loadTs, mountSfc, Node, press, select, submit, type } from './support/mountSfc.ts';
 
 const vue = createRequire(import.meta.url)('vue');
 
@@ -45,15 +48,29 @@ const linkList = (...rows: Array<Record<string, string>>) => section('link_list'
     links: rows.map((row) => ({ label: '', url: '', icon: '', style: 'primary', ...row })),
 });
 
+/** What `mountModal` may be told besides the section and the upload's answers. */
+interface ModalOptions {
+    /** What the office answers when the modal asks before closing. */
+    closeAnyway?: boolean;
+    /**
+     * Stand-ins for editors a test wants to drive itself, by file name (`StatsSectionEditor`), in
+     * place of the empty ones. Handed the real upload control, compiled against the same store.
+     */
+    editors?: (parts: { control: any }) => Record<string, any>;
+    /** The store's section types, for a NEW section. */
+    sectionTypes?: any[];
+}
+
 /**
- * Mount the modal on a saved section. `upload` answers each file the control sends; `closeAnyway` is
- * what the office answers when the modal asks before closing.
+ * Mount the modal on a saved section, or on none (a new section). `upload` answers each file the
+ * control sends; a bare `true` or `false` is `closeAnyway`.
  */
-async function mountModal(saved: any, upload: (file: any) => Promise<any>, closeAnyway = false) {
-    const saves: Array<{ pageId: number; sectionId: number; content: any }> = [];
+async function mountModal(saved: any, upload: (file: any) => Promise<any>, options: boolean | ModalOptions = false) {
+    const { closeAnyway = false, editors: standIns, sectionTypes = [] }: ModalOptions = typeof options === 'boolean' ? { closeAnyway: options } : options;
+    const saves: Array<{ pageId: number; sectionId: number | null; content: any }> = [];
     const uploads: any[] = [];
     const store = {
-        sectionTypes: [],
+        sectionTypes,
         sectionsLibrary: [],
         fetchSectionTypes: async () => {},
         fetchSectionsLibrary: async () => {},
@@ -62,31 +79,41 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, close
         updateSectionWithImages: async (pageId: number, sectionId: number, body: FormData) => {
             saves.push({ pageId, sectionId, content: JSON.parse(String(body.get('content'))) });
         },
+        createSectionWithImages: async (pageId: number, body: FormData) => {
+            saves.push({ pageId, sectionId: null, content: JSON.parse(String(body.get('content'))) });
+        },
     };
 
     const control = await compileSfc('components/form/SectionDocumentUpload.vue', {
         '@/stores/masjid/pagesStore': { usePagesStore: () => store },
         '@/core/helpers/sectionDocumentFile': documentFile,
     });
+    const driven = standIns?.({ control }) ?? {};
 
-    // Every editor the modal imports is an empty stand-in, except the three that carry the control.
+    // Every editor the modal imports is an empty stand-in, except the three that carry the control
+    // and any the test drives itself.
     const source = readFileSync(new URL(`../${MODAL}`, import.meta.url), 'utf8');
     const editors: Record<string, any> = {};
     for (const [, spec, name] of source.matchAll(/from '(@\/components\/sections\/editors\/(\w+)\.vue)'/g)) {
         editors[spec] = {
-            default: WITH_UPLOAD.includes(name)
-                ? await compileSfc(`components/sections/editors/${name}.vue`, {
-                    '@/core/types/data/masjid-related/PageSection': {},
-                    '@/core/types/elements/ImageInput': {},
-                    '@/components/form/ImageDraggableInput.vue': { default: { render: () => null } },
-                    '@/components/form/SectionDocumentUpload.vue': { default: control },
-                    '@/core/helpers/sectionDocumentFile': documentFile,
-                    '@/composables/useSectionImages': {},
-                })
-                : { render: () => null },
+            default: name in driven
+                ? driven[name]
+                : WITH_UPLOAD.includes(name)
+                    ? await compileSfc(`components/sections/editors/${name}.vue`, {
+                        '@/core/types/data/masjid-related/PageSection': {},
+                        '@/core/types/elements/ImageInput': {},
+                        '@/components/form/ImageDraggableInput.vue': { default: { render: () => null } },
+                        '@/components/form/SectionDocumentUpload.vue': { default: control },
+                        '@/core/helpers/sectionDocumentFile': documentFile,
+                        '@/composables/useSectionImages': {},
+                    })
+                    : { render: () => null },
         };
     }
     assert.equal(Object.keys(editors).length >= 29, true, 'the modal\'s editors were not found in its source');
+    for (const name of Object.keys(driven)) {
+        assert.ok(`@/components/sections/editors/${name}.vue` in editors, `the modal imports no editor called ${name}`);
+    }
 
     const asked: any[] = [];
     const emitted = { close: 0, saved: 0 };
@@ -109,6 +136,7 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, close
     await flush();
 
     const fileInputs = () => screen.all((n) => n.tag === 'input' && n.props.type === 'file');
+    const byPlaceholder = (starts: RegExp) => screen.all((n) => n.tag === 'input' && starts.test(String(n.props.placeholder ?? '')));
 
     return {
         screen,
@@ -117,12 +145,19 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, close
         asked,
         emitted,
         save: () => screen.button('Update Section'),
+        create: () => screen.button('Create Section'),
         cancel: () => screen.button('Cancel'),
         closeButton: () => screen.all((n) => n.tag === 'button' && String(n.props.class ?? '').includes('btn-close'))[0],
         form: () => screen.all((n) => n.tag === 'form')[0],
         /** The footer's notes, beside Save. */
         notes: () => screen.all((n) => String(n.props.class ?? '').includes('section-form-notes'))[0].textContent,
-        linkFields: () => screen.all((n) => n.tag === 'input' && /^https:\/\/example\.com/.test(String(n.props.placeholder ?? ''))),
+        linkFields: () => byPlaceholder(/^https:\/\/example\.com/),
+        /** Link Buttons' Label fields, in the order of their rows. */
+        labelFields: () => byPlaceholder(/^e\.g\., Email Us/),
+        /** The Section Type list of a new section, and the two ways of adding one (Create New, Attach Existing). */
+        typeSelect: () => screen.all((n) => n.tag === 'select')[0],
+        modeRadios: () => screen.all((n) => n.tag === 'input' && n.props.name === 'sectionMode'),
+        fileInputs,
         byTitle: (title: string) => screen.all((n) => n.tag === 'button' && n.props.title === title),
         /** Choose a file in the nth upload control, as the file picker does. */
         async choose(nth: number, file: any) {
@@ -135,6 +170,16 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, close
         },
     };
 }
+
+/**
+ * A section as the page list holds it: ONE reactive object (PageSectionsView keeps its sections in a
+ * ref), handed to every modal that is opened on it. Cancel does not reload the list, so whatever a
+ * closed modal wrote into this object is what the next one is opened on.
+ */
+const listed = (saved: any) => vue.reactive(saved);
+
+/** A plain copy of what an object holds now, to compare with later. */
+const copyOf = (value: any) => JSON.parse(JSON.stringify(value));
 
 /* -------------------------------------------------- Save waits for an upload */
 
@@ -289,8 +334,8 @@ test('the modal knows which documents the saved section links, and an upload sin
     assert.equal(count(SAVED), 1);
     assert.equal(count(NOT_SAVED), 0);
 
-    // The editors write into objects they share with the section the modal was opened on, so "what
-    // is saved" has to be what the modal read when it opened, not what that object holds now.
+    // "What is saved" is the section the modal was opened on, which no editor can write into: an
+    // upload made since is in the modal's own copy of the content only.
     await modal.choose(1, pdf());
     assert.equal(count(SAVED), 1, 'the saved document is still told how to take it offline');
     assert.equal(count(NOT_SAVED), 1, 'the new upload is not promised that');
@@ -383,6 +428,165 @@ test('a file uploaded and let go before any save is not said to be taken offline
 
     // Nothing saved linked it, so "taken offline when you save" would be false.
     assert.equal(modal.notes(), '');
+
+    modal.screen.unmount();
+});
+
+/* ------------------------------------------- an edit that is abandoned with Cancel */
+
+test('an upload that is abandoned with Cancel is not in the section the next time it is opened', async () => {
+    const held = listed(linkList({ label: 'Calendar' }, { label: 'Fees', url: 'https://example.org/fees' }));
+    const asSaved = copyOf(held);
+    const upload = async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
+
+    const first = await mountModal(held, upload, true);
+    await first.choose(0, pdf());
+    assert.equal(first.linkFields()[0].value, ADDRESS);
+    click(first.cancel());
+    await flush();
+    assert.equal(first.emitted.close, 1);
+    first.screen.unmount();
+
+    // The page list's own object is as it was: the server never had that file in this section.
+    assert.deepEqual(copyOf(held), asSaved, 'the abandoned upload was written into the section the page list holds');
+
+    // Opened again, the modal shows what is saved, and calls nothing saved that is not.
+    const second = await mountModal(held, upload);
+    assert.equal(second.linkFields()[0].value, '');
+    assert.ok(!second.screen.text().includes('Document: academic-calendar-2026.pdf'));
+    assert.ok(!second.screen.text().includes(SAVED), 'a file no save ever linked was called saved');
+    assert.equal(second.notes(), '');
+
+    // Nothing is promised to be taken offline, and a save sends the saved content.
+    type(second.linkFields()[0], '');
+    await flush();
+    assert.equal(second.notes(), '');
+    click(second.save());
+    await flush();
+    assert.deepEqual(second.saves[0].content, asSaved.content);
+
+    second.screen.unmount();
+});
+
+test('a saved address that is cleared and abandoned with Cancel is still there the next time, and the next save keeps it', async () => {
+    const held = listed(linkList({ label: 'Calendar', url: SAVED_ADDRESS }, { label: 'Fees', url: 'https://example.org/fees' }));
+    const asSaved = copyOf(held);
+    const nothing = async () => ({});
+
+    const first = await mountModal(held, nothing);
+    type(first.linkFields()[0], '');
+    await flush();
+    assert.equal(first.notes(), LEAVING);
+    click(first.cancel());
+    await flush();
+    assert.equal(first.emitted.close, 1);
+    first.screen.unmount();
+
+    assert.deepEqual(copyOf(held), asSaved, 'the abandoned clear was written into the section the page list holds');
+
+    // Opened again: the address is there, and there is nothing to announce.
+    const second = await mountModal(held, nothing);
+    assert.equal(second.linkFields()[0].value, SAVED_ADDRESS);
+    assert.equal(second.notes(), '');
+
+    // Something else is changed and saved. The save must not carry the clear the office abandoned:
+    // the server would delete a document the office believes it kept, with nothing said beside Save.
+    type(second.labelFields()[1], 'Fees 2026');
+    await flush();
+    assert.equal(second.notes(), '');
+    click(second.save());
+    await flush();
+    assert.equal(second.saves.length, 1);
+    assert.equal(second.saves[0].content.links[0].url, SAVED_ADDRESS);
+    assert.equal(second.saves[0].content.links[1].label, 'Fees 2026');
+
+    second.screen.unmount();
+});
+
+test('with no document at all: a label that is edited and abandoned with Cancel is the saved label the next time', async () => {
+    const held = listed(linkList({ label: 'Email Us', url: 'mailto:office@example.test' }));
+    const asSaved = copyOf(held);
+    const nothing = async () => ({});
+
+    const first = await mountModal(held, nothing);
+    type(first.labelFields()[0], 'Write to Us');
+    await flush();
+    click(first.closeButton());
+    await flush();
+    assert.deepEqual(first.asked, []);
+    assert.equal(first.emitted.close, 1);
+    first.screen.unmount();
+
+    assert.deepEqual(copyOf(held), asSaved);
+
+    const second = await mountModal(held, nothing);
+    assert.equal(second.labelFields()[0].value, 'Email Us');
+    click(second.save());
+    await flush();
+    assert.equal(second.saves[0].content.links[0].label, 'Email Us');
+
+    second.screen.unmount();
+});
+
+/**
+ * An editor that does what no editor may: it writes straight into the object it was handed, rows
+ * and all. Whatever one editor or another copies for itself, the section the page list holds must
+ * not be reachable from here.
+ */
+const scribbler = {
+    props: ['modelValue'],
+    setup(props: any) {
+        const scribble = () => {
+            props.modelValue.heading = 'Scribbled';
+            props.modelValue.stats[0].label = 'Scribbled';
+            props.modelValue.stats.push({ label: 'Added', value: '1', icon: '' });
+        };
+
+        return () => vue.h('button', { type: 'button', title: 'Scribble', onClick: scribble });
+    },
+};
+
+const stats = () => ({ heading: 'In numbers', layout: 'horizontal', stats: [{ label: 'Students', value: '240', icon: '' }] });
+
+test('no editor can write into the section the page list holds: the modal hands its editors a copy of its own', async () => {
+    const held = listed(section('stats', stats()));
+    const asSaved = copyOf(held);
+
+    const modal = await mountModal(held, async () => ({}), { editors: () => ({ StatsSectionEditor: scribbler }) });
+    click(modal.byTitle('Scribble')[0]);
+    await flush();
+
+    assert.deepEqual(copyOf(held), asSaved, 'an editor wrote into the section the page list holds');
+
+    // The writes went somewhere: into the modal's own copy, which is what a save sends.
+    click(modal.save());
+    await flush();
+    assert.deepEqual(modal.saves[0].content, {
+        heading: 'Scribbled', layout: 'horizontal',
+        stats: [{ label: 'Scribbled', value: '240', icon: '' }, { label: 'Added', value: '1', icon: '' }],
+    });
+
+    modal.screen.unmount();
+});
+
+test('a new section starts from a copy of its type\'s default content: what is typed into one is not the next one\'s default', async () => {
+    // The types as the store holds them: reactive, and handed to every modal that is opened.
+    const types = vue.reactive([
+        { value: 'stats', label: 'Stats', description: 'Numbers', has_renderer: true, default_content: stats() },
+    ]);
+    const asServed = copyOf(types);
+
+    const modal = await mountModal(undefined, async () => ({}), { sectionTypes: types, editors: () => ({ StatsSectionEditor: scribbler }) });
+    assert.equal(select(modal.typeSelect(), 'stats'), true);
+    await flush();
+    click(modal.byTitle('Scribble')[0]);
+    await flush();
+
+    assert.deepEqual(copyOf(types), asServed, 'an editor wrote into the default content the store holds');
+
+    click(modal.create());
+    await flush();
+    assert.equal(modal.saves[0].content.heading, 'Scribbled');
 
     modal.screen.unmount();
 });

@@ -428,6 +428,23 @@ const sectionImages = useSectionImages();
 // Provide to child components
 provide('sectionImages', sectionImages);
 
+/**
+ * THE MODAL'S FORM IS A COPY OF ITS OWN. `props.section` is the object the page list holds, and Cancel
+ * does not reload that list; a section type's `default_content` is the object the store holds, and it
+ * is handed to every new section of that type. An editor binds its fields straight onto the rows it
+ * is given, so if those rows were the caller's, an edit that was abandoned would still be there the
+ * next time the section was opened: an upload nobody saved would read as saved, and a saved address
+ * that was cleared and cancelled would go out, cleared, with the next save (and the server would
+ * delete a document the office believed it had kept). So nothing below the modal is ever handed the
+ * caller's object: content is copied in, deeply, here.
+ *
+ * Through JSON because the object is reactive (`structuredClone` throws on a proxy), and because
+ * content IS JSON: it came from the API, and goes back as JSON.
+ */
+const ownCopy = <T>(content: T): T => (
+    content && typeof content === 'object' ? JSON.parse(JSON.stringify(content)) : ({} as T)
+);
+
 // A PDF for a link field is not queued with the images above: SectionDocumentUpload sends it at
 // once and writes its address into the content. Two things only this modal can know about that:
 //
@@ -436,8 +453,9 @@ provide('sectionImages', sectionImages);
 //    that is gone, and the file is online, linked from nowhere, its address shown on no screen.
 //  - Which page documents the SAVED section links. The server deletes a document when a save stops
 //    linking it, compared with what was saved; one uploaded since is in nothing saved, and letting go
-//    of it deletes nothing. Read ONCE, here, before any editor is mounted: the editors write into
-//    objects they share with `props.section.content`, so it does not stay the saved content.
+//    of it deletes nothing. Read from `props.section.content` itself, the section as the page list
+//    holds it, which no editor can reach (the form is a copy, above): it is what was saved when the
+//    list was last loaded, however many times the section has been opened and cancelled since.
 const documentUploads = ref(0);
 provide('sectionDocumentUploads', documentUploads);
 
@@ -636,7 +654,7 @@ onMounted(async () => {
         formData.value = {
             section_type: props.section.section_type,
             title: props.section.title || '',
-            content: props.section.content || {},
+            content: ownCopy(props.section.content),
             order: props.section.order,
             // Fall back to both if the placement has no platforms set.
             platforms: Array.isArray(props.section.platforms) && props.section.platforms.length
@@ -658,7 +676,7 @@ onMounted(async () => {
 const onSectionTypeChange = () => {
     const selectedType = sectionTypes.value.find(t => t.value === formData.value.section_type);
     if (selectedType) {
-        formData.value.content = selectedType.default_content;
+        formData.value.content = ownCopy(selectedType.default_content);
         currentEditor.value = editorMap[formData.value.section_type as SectionType];
     }
 };

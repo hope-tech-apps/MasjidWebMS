@@ -98,15 +98,20 @@ const emit = defineEmits<{
     'update:modelValue': [value: MissionVisionSectionContent];
 }>();
 
+// The list AND each item in it are COPIED, here and in the watch below: the fields are bound straight
+// onto an item, and Add and Remove change the list, so either one shared with the caller would be
+// written into the caller's content as the office edits.
+const ownItems = (items?: MissionVisionSectionContent['items']) => (items || []).map((item) => ({ ...item }));
+
 const localContent = ref<MissionVisionSectionContent>({
     heading: props.modelValue?.heading || '',
-    items: props.modelValue?.items || [],
+    items: ownItems(props.modelValue?.items),
     layout: props.modelValue?.layout || 'side_by_side',
 });
 
 watch(() => props.modelValue, (newVal) => {
     if (newVal) {
-        localContent.value = { ...newVal };
+        localContent.value = { ...newVal, items: ownItems(newVal.items) };
     }
 }, { deep: true });
 

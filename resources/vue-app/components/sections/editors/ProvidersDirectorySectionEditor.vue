@@ -256,7 +256,9 @@ const newProvider = (): ProviderItem => ({
 const normalize = (value?: ProvidersDirectorySectionContent): ProvidersDirectorySectionContent => ({
     heading: value?.heading || '',
     description: value?.description || '',
-    providers: value?.providers ? [...value.providers] : [],
+    // Each provider is COPIED: the fields below are bound straight onto a provider, and one shared
+    // with the caller would be written into the caller's content as it is typed.
+    providers: value?.providers ? value.providers.map((provider) => ({ ...provider })) : [],
     layout: value?.layout || 'grid',
     columns: value?.columns || 3,
     background_color: value?.background_color || '#ffffff',

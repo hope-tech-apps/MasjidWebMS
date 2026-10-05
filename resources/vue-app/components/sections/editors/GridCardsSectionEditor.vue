@@ -131,10 +131,12 @@ const emit = defineEmits<{
 // Get the section images composable from parent (if provided)
 const sectionImages = inject<ReturnType<typeof useSectionImages> | null>('sectionImages', null);
 
+// Each card is COPIED, here and in the watch below, not only the list: the fields are bound straight
+// onto a card, and one shared with the caller would be written into the caller's content as it is typed.
 const localContent = ref<GridCardsSectionContent>({
     items_per_row: props.modelValue?.items_per_row || 3,
     items: props.modelValue?.items && props.modelValue.items.length > 0
-        ? [...props.modelValue.items]
+        ? props.modelValue.items.map((item) => ({ ...item }))
         : [
             {
                 title: '',
@@ -148,7 +150,7 @@ watch(() => props.modelValue, (newVal) => {
     if (newVal) {
         localContent.value = {
             items_per_row: newVal.items_per_row || 3,
-            items: newVal.items && newVal.items.length > 0 ? [...newVal.items] : [{
+            items: newVal.items && newVal.items.length > 0 ? newVal.items.map((item) => ({ ...item })) : [{
                 title: '',
                 text: '',
                 image_url: null,

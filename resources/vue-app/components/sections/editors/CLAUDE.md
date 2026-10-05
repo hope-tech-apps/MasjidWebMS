@@ -14,6 +14,17 @@ is the local idiom.
   defaults **every** field, `watch(() => props.modelValue, …, { deep: true })`
   re-normalizes, and every input calls `emitUpdate()`. Content authored before a
   field existed must not blow up a `v-for`; default it in `normalize()`.
+- **Copy every ROW, not only the list.** Fields are bound straight onto a row
+  (`v-model="link.url"`), so a row that is still the caller's object is written
+  into the caller's content as the office types, saved or not.
+  `[...value.links]` copies the list and shares every link;
+  `value.links.map((link) => ({ ...link }))` is the copy, in the initial value
+  AND in the watch, and a list inside a row (`highlights`, `includes`) is copied
+  again. `SectionFormModal` also hands every editor a deep copy of its own, so
+  the section the page list holds cannot be reached from here; this rule is what
+  keeps an editor honest wherever else it is mounted.
+  `tests/section-editors-own-copy.test.ts` mounts every editor that has rows:
+  add a new one to its list.
 - Images go through `ImageDraggableInput` + the injected
   `sectionImages` composable, never a bare `<input type="file">`. (A file that
   is NOT an image has a bare input, because `ImageDraggableInput` decodes
@@ -78,8 +89,14 @@ not.)
 - **What is true to say about taking a file offline depends on whether it is SAVED.** The
   server deletes a document when a save stops linking it, compared with the saved
   section, so a file uploaded since the last save is deleted by nothing. The modal
-  provides `sectionSavedDocuments`, the page documents in the section as it was opened
-  (read once: the editors write into objects they share with `props.section.content`).
+  provides `sectionSavedDocuments`, the page documents in `props.section.content`: the
+  section as the page list holds it, which is what was saved when the list was last
+  loaded. No editor can write into that object (the modal's form is a deep copy of it,
+  made when the modal opens, and so is a new section's default content), so it stays
+  the saved content however often the section is opened and cancelled. It used not to:
+  Link Buttons edited the list's own link objects, Cancel does not reload the list, and
+  the next modal read an abandoned upload as saved, or sent an abandoned clear with the
+  next save.
   The control tells a saved document "clear the address and save", an unsaved one that
   clearing or replacing it now leaves it online, and, when an upload replaces an unsaved
   one, shows the replaced file's address, which is then in no field. The modal's footer

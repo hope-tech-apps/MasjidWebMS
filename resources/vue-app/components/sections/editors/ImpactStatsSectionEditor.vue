@@ -200,7 +200,9 @@ const normalize = (value?: ImpactStatsSectionContent): ImpactStatsSectionContent
     heading: value?.heading || '',
     description: value?.description || '',
     period: value?.period || '',
-    stats: value?.stats ? [...value.stats] : [],
+    // Each figure is COPIED: the fields below are bound straight onto a figure, and one shared
+    // with the caller would be written into the caller's content as it is typed.
+    stats: value?.stats ? value.stats.map((stat) => ({ ...stat })) : [],
     layout: value?.layout || 'row',
     columns: value?.columns || 3,
     background_color: value?.background_color || '#ffffff',

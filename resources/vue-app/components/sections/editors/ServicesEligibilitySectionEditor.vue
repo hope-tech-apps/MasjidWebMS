@@ -443,7 +443,9 @@ const normalizeEligibility = (value?: EligibilityBlock): EligibilityBlock => ({
 const normalize = (value?: ServicesEligibilitySectionContent): ServicesEligibilitySectionContent => ({
     heading: value?.heading || '',
     description: value?.description || '',
-    services: value?.services ? [...value.services] : [],
+    // Each service is COPIED: the fields below are bound straight onto a service, and one shared
+    // with the caller would be written into the caller's content as it is typed.
+    services: value?.services ? value.services.map((service) => ({ ...service })) : [],
     layout: value?.layout || 'cards',
     columns: value?.columns || 3,
     eligibility: normalizeEligibility(value?.eligibility),

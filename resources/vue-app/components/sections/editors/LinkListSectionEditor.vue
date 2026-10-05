@@ -197,10 +197,14 @@ const newLink = (): LinkListItem => ({
     style: 'primary',
 });
 
+// Each link is COPIED, here and in the watch below, not only the list: the fields are bound straight
+// onto a link (`v-model="link.url"`), and a link shared with the caller would be written into the
+// caller's content as it is typed or uploaded, saved or not. That is how an upload, or a cleared
+// address, that was abandoned with Cancel stayed in the section the page list holds.
 const localContent = ref<LinkListSectionContent>({
     heading: props.modelValue?.heading || '',
     description: props.modelValue?.description || '',
-    links: props.modelValue?.links ? [...props.modelValue.links] : [],
+    links: props.modelValue?.links ? props.modelValue.links.map((link) => ({ ...link })) : [],
     layout: props.modelValue?.layout || 'stack',
     background_color: props.modelValue?.background_color || '#ffffff',
 });
@@ -210,7 +214,7 @@ watch(() => props.modelValue, (newVal) => {
         localContent.value = {
             heading: newVal.heading || '',
             description: newVal.description || '',
-            links: newVal.links ? [...newVal.links] : [],
+            links: newVal.links ? newVal.links.map((link) => ({ ...link })) : [],
             layout: newVal.layout || 'stack',
             background_color: newVal.background_color || '#ffffff',
         };
