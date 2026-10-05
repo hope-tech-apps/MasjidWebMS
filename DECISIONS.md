@@ -7929,3 +7929,21 @@ themselves still run only on the MySQL job.
      row was found.
   4. An attachment's bytes are removed before the commit (see "The delete is the last write" above). Removing
      them only after it is a change to the model's hooks, shared by every delete of a registration.
+- **A page that was asked for and never recorded (the lead reviewer's question, 2026-10-05).** The delete treats
+  "no Checkout session id on the row" as "nothing at Stripe could have been paid". Two places decide whether that
+  holds. (1) The id is cleared in one place, `FormResponseCheckoutService::reuseOrReplace()`, and only after
+  Stripe answered for the old page: `complete` throws and keeps it, an open page with an address is handed back
+  and keeps it, an open page with none is closed first (and `complete` there throws), so the id goes only when
+  the page is expired (for a pinned account Stripe no longer lets the platform read, only once the pinned expiry
+  has passed). (2) `create()` saves the idempotency key BEFORE it calls Stripe and `openPage()` saves the
+  session id only AFTER Stripe answers, so an attempt in which Stripe failed, or the request died in between,
+  leaves a card registration with a key and no id. The page's address is returned to the payer only after that
+  save, so such a page should be in nobody's hands (this is what `reopen()` already relies on when it drops the
+  old key), but it may exist at Stripe and nobody here can name it to ask. So a cancelled, never-paid
+  registration that carries an idempotency key and no session id is NOT deleted: 422, "A card payment page was
+  requested for this registration, but its reference was not saved, so we cannot tell whether it was paid. It
+  was not deleted, and it stays cancelled." Only a registration with neither (no page was ever asked for) is
+  deleted without asking Stripe. Production held no registration in that state on 2026-10-05 (counted). A
+  payment that did land on an unnamed page meets the webhook: found by the registration's uuid or charge
+  reference it is recorded as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries
+  the same uuid.

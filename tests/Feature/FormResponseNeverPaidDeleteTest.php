@@ -374,7 +374,7 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     {
         $this->neverBuildsAStripeClient();
 
-        $row = $this->cardRow(['stripe_checkout_session_id' => null], ['status' => 'cancelled']);
+        $row = $this->cardRow(['stripe_checkout_session_id' => null, 'idempotency_key' => null], ['status' => 'cancelled']);
         $kept = $this->cardRow();
 
         $this->deleteJson($this->url("/{$row->id}"))->assertOk();
@@ -382,6 +382,35 @@ class FormResponseNeverPaidDeleteTest extends TestCase
         $this->assertDatabaseMissing('form_responses', ['id' => $row->id]);
         $this->assertDatabaseHas('form_responses', ['id' => $kept->id]);
         $this->assertSame(1, $this->form->fresh()->response_count);
+    }
+
+    #[Test]
+    public function a_cancelled_card_registration_whose_page_was_asked_for_and_never_recorded_is_kept_for_a_person(): void
+    {
+        $this->neverBuildsAStripeClient();
+
+        // The key is saved before Stripe is called and the session id only after it answers:
+        // this is the row an attempt leaves when Stripe failed, or when the request died in
+        // between. A page may exist at Stripe that nobody here can name.
+        $row = $this->cardRow(['stripe_checkout_session_id' => null], ['status' => 'cancelled']);
+        $file = $this->withFile($row);
+        $this->assertNotNull($row->idempotency_key);
+
+        $this->deleteJson($this->url("/{$row->id}"))
+            ->assertStatus(422)
+            ->assertExactJson([
+                'status' => 'failed',
+                'message' => 'A card payment page was requested for this registration, but its reference was not saved, so we cannot tell whether it was paid. It was not deleted, and it stays cancelled.',
+            ]);
+
+        $this->assertStillThereWithItsFile($row, $file, 'a page asked for and never recorded');
+        $this->assertSame([], self::$asked);
+        $this->assertSame(1, $this->form->fresh()->response_count);
+
+        // The same registration when no page was ever asked for is deleted, as above.
+        $never = $this->cardRow(['stripe_checkout_session_id' => null, 'idempotency_key' => null], ['status' => 'cancelled']);
+        $this->deleteJson($this->url("/{$never->id}"))->assertOk();
+        $this->assertDatabaseMissing('form_responses', ['id' => $never->id]);
     }
 
     #[Test]
@@ -752,14 +781,14 @@ class FormResponseNeverPaidDeleteTest extends TestCase
         $this->assertSame('held', $state());
 
         // A form that reserves nothing takes no form lock: its delete is as it was.
-        $plain = $this->cardRow(['stripe_checkout_session_id' => null], ['status' => 'cancelled']);
+        $plain = $this->cardRow(['stripe_checkout_session_id' => null, 'idempotency_key' => null], ['status' => 'cancelled']);
         $this->assertSame(['form_responses'], $this->lockingReadsOf(fn () => $this->deleteJson($this->url("/{$plain->id}"))->assertOk()));
     }
 
     #[Test]
     public function a_registration_that_went_away_while_the_request_waited_for_its_lock_answers_404_not_500(): void
     {
-        $row = $this->cardRow(['stripe_checkout_session_id' => null], ['status' => 'cancelled']);
+        $row = $this->cardRow(['stripe_checkout_session_id' => null, 'idempotency_key' => null], ['status' => 'cancelled']);
 
         // A colleague's delete commits between this request finding the row and locking it.
         FormResponse::retrieved(function (FormResponse $found) use ($row) {
