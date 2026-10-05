@@ -29,7 +29,9 @@ use Tests\TestCase;
  *     (Remove, and the undo of a roster import) refusing on the eight kinds a
  *     delete would destroy and on nothing else.
  *   - THE ROSTER LIST saying, per row that was moved, whether "Put back" may be
- *     offered (`moved_to_state`).
+ *     offered (`moved_to_state`), and since consent is carried, which class a
+ *     guardian's consent was carried from and what "Put back" would bring back
+ *     into force.
  *   - REMOVE naming the same guardian's entries in other classes.
  *   - "ADD TO ROSTER" taking the student's contact lock before it looks.
  *
@@ -327,7 +329,14 @@ class RosterMoveRosterTest extends TestCase
         $this->assertSame($this->second->id, $row['moved_to_group_id']);
         $this->assertSame('2nd Grade', $row['moved_to']['name']);
         $this->assertNull($row['moved_to']['deleted_at']);
-        $this->assertSame(['student_there' => 'current', 'open_group' => ['id' => $this->second->id, 'name' => '2nd Grade'], 'guardians_not_vouched' => []], $row['moved_to_state']);
+        $this->assertSame([
+            'student_there' => 'current',
+            'open_group' => ['id' => $this->second->id, 'name' => '2nd Grade'],
+            'guardians_not_vouched' => [],
+            'consent_blocks' => [],
+            'consent_lines' => [],
+            'bucks_line' => null,
+        ], $row['moved_to_state']);
 
         $new = collect($this->roster($this->second)->assertOk()->json('data'))->firstWhere('id', $moved);
         $this->assertSame('1st Grade', $new['moved_from']['name']);
@@ -450,7 +459,136 @@ class RosterMoveRosterTest extends TestCase
         // and the screen lists every guardian instead.
         $inSecond->delete();
         $state = collect($this->roster($this->first)->json('data'))->firstWhere('id', $student->id)['moved_to_state'];
-        $this->assertSame(['student_there' => 'none', 'open_group' => ['id' => $this->second->id, 'name' => '2nd Grade'], 'guardians_not_vouched' => []], $state);
+        $this->assertSame([
+            'student_there' => 'none',
+            'open_group' => ['id' => $this->second->id, 'name' => '2nd Grade'],
+            'guardians_not_vouched' => [],
+            'consent_blocks' => [],
+            'consent_lines' => [],
+            'bucks_line' => null,
+        ], $state);
+    }
+
+    // ------------------------------------------- a consent that was carried
+
+    #[Test]
+    public function the_list_names_the_class_a_consent_was_carried_from_and_keeps_naming_it_after_a_withdrawal(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $recordedHere = $this->guardian($this->enrol($this->second, 'Yusuf'), 'Gamal', consent: 'feed');
+        $this->move($student, $this->second, self::TODAY)->assertOk();
+
+        $copy = $this->entryIn($this->second, $parent);
+        $row = fn (GroupMembership $entry): array => collect($this->roster($this->second)->assertOk()->json('data'))->firstWhere('id', $entry->id);
+
+        // Carried, untouched since: the marker and the two consent columns.
+        $carried = $row($copy);
+        $this->assertSame($this->first->id, $carried['consent_carried_from_group_id']);
+        $this->assertSame(['id' => $this->first->id, 'name' => '1st Grade', 'deleted_at' => null], $carried['consent_carried_from']);
+        $this->assertSame('media', $carried['consent_scope']);
+
+        // Recorded by the office for this class: no marker, and the key is still there.
+        $recorded = $row($recordedHere);
+        $this->assertNull($recorded['consent_carried_from_group_id']);
+        $this->assertArrayHasKey('consent_carried_from', $recorded);
+        $this->assertNull($recorded['consent_carried_from']);
+
+        // Withdrawn here after it was carried: the marker stays, the columns are blank.
+        $this->withdrawConsent($copy)->assertOk();
+        $withdrawn = $row($copy);
+        $this->assertNull($withdrawn['consent_scope']);
+        $this->assertNull($withdrawn['consent_granted_at']);
+        $this->assertSame('1st Grade', $withdrawn['consent_carried_from']['name']);
+
+        // A class deleted since is still named, and says it was deleted.
+        $this->first->delete();
+        $this->assertNotNull($row($copy)['consent_carried_from']['deleted_at']);
+
+        // The old entry was never a copy.
+        $this->assertNull(collect($this->roster($this->second)->json('data'))->firstWhere('id', $copy->id)['moved_from_group_id'], 'a guardian entry carries no move columns');
+    }
+
+    #[Test]
+    public function put_back_says_whose_consent_it_would_bring_back_and_is_withheld_for_one_the_family_took_back(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $this->guardian($student, 'Gamal');
+
+        $this->move($student, $this->second, self::TODAY)->assertOk();
+        $copy = $this->entryIn($this->second, $parent);
+        $state = fn (Group $class, GroupMembership $row): array => collect($this->roster($class)->assertOk()->json('data'))->firstWhere('id', $row->id)['moved_to_state'];
+
+        // Nothing was withdrawn: "Put back" is offered, and says whose consent
+        // in this class comes back into force with it. A guardian with none is not named.
+        $now = $state($this->first, $student);
+        $this->assertSame([], $now['consent_blocks']);
+        $this->assertSame(
+            ["Putting Maryam Student back brings Huda Guardian's consent in this class into force again (class story and photographs, recorded 4 Sep 2026)."],
+            $now['consent_lines'],
+        );
+        $this->assertNull($now['bucks_line']);
+        $this->assertSame([], $now['guardians_not_vouched']);
+
+        // THE COPY WAS WITHDRAWN where it had been carried. One sentence for
+        // the entry, then once what to do; and the entry is no longer among
+        // those that would simply come back.
+        $this->withdrawConsent($copy)->assertOk();
+        $now = $state($this->first, $student);
+        $this->assertSame([
+            'Huda Guardian withdrew consent in 2nd Grade after it had been carried there from this class. Putting Maryam '
+                .'Student back would bring the consent recorded here (class story and photographs, recorded 4 Sep 2026) '
+                .'into force again.',
+            "Withdraw it on this roster first (the Consent button on the guardian's row), then put Maryam Student back.",
+        ], $now['consent_blocks']);
+        $this->assertSame([], $now['consent_lines']);
+
+        // The remedy, on this roster: the block goes and nothing is left to come back.
+        $this->withdrawConsent($parent)->assertOk();
+        $now = $state($this->first, $student);
+        $this->assertSame([], $now['consent_blocks']);
+        $this->assertSame([], $now['consent_lines']);
+
+        // THE OTHER SIDE, with another family. Carried into the second class,
+        // then the student goes back to the first: the copy in the second
+        // closes with what it holds, beside a row that says "moved to".
+        $second = $this->enrol($this->first, 'Yusuf');
+        $nadia = $this->guardian($second, 'Nadia', consent: 'media');
+        $there = GroupMembership::findOrFail($this->move($second, $this->second, self::TODAY)->assertOk()->json('data.membership_id'));
+        $this->move($there, $this->first, self::TODAY)->assertOk();
+
+        $this->assertSame(
+            ["Putting Yusuf Student back brings Nadia Guardian's consent in this class into force again (class story and photographs, recorded 4 Sep 2026)."],
+            $state($this->second, $there)['consent_lines'],
+        );
+
+        // The family narrows in the first class, where the copy came from...
+        $this->recordConsent($nadia->fresh(), 'feed', '2026-09-04')->assertOk();
+        $this->assertSame([
+            "Nadia Guardian's consent here (class story and photographs, recorded 4 Sep 2026) was carried from 1st Grade, and "
+                .'consent in 1st Grade is now for the class story only. Putting Yusuf Student back would bring it into force again.',
+            "Withdraw it on this roster first (the Consent button on the guardian's row), then put Yusuf Student back.",
+        ], $state($this->second, $there)['consent_blocks']);
+
+        // ...and then withdraws there.
+        $this->withdrawConsent($nadia->fresh())->assertOk();
+        $blocked = $state($this->second, $there);
+        $this->assertSame(
+            "Nadia Guardian's consent here (class story and photographs, recorded 4 Sep 2026) was carried from 1st Grade, and "
+                .'consent in 1st Grade has since been withdrawn. Putting Yusuf Student back would bring it into force again.',
+            $blocked['consent_blocks'][0],
+        );
+        $this->assertCount(2, $blocked['consent_blocks']);
+        $this->assertSame([], $blocked['consent_lines']);
+
+        // THE VERB ITSELF STAYS UNGATED, as it is for the guardian rule: the
+        // guard is the screen's. A row that is current again re-opens nothing more.
+        Sanctum::actingAs($this->admin);
+        $this->deleteJson("/api/admin/masjids/{$this->school->id}/groups/{$this->second->id}/members/{$there->id}/withdrawal")->assertOk();
+        $current = $state($this->second, $there);
+        $this->assertSame([], $current['consent_blocks']);
+        $this->assertSame([], $current['consent_lines']);
     }
 
     // -------------------------------------------------------- "Add to roster"

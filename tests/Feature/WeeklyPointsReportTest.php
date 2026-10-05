@@ -763,7 +763,9 @@ class WeeklyPointsReportTest extends TestCase
     public function a_guardian_consented_in_another_class_but_not_in_this_one_is_not_told(): void
     {
         // Layla is Amira's guardian in Grade 3 WITHOUT consent, and holds a consented edge in the circle.
-        // Consent is per class: the circle's does not carry over.
+        // Consent is read per class: Amira is in both at once, and what is recorded in the circle opens
+        // nothing in Grade 3. (A student who is MOVED is another matter: the move copies a guardian's
+        // consent onto the entry it creates in the new class. See RosterMoveTest.)
         $circle = $this->secondClass();
         $this->participant($this->amira, $circle);
         $layla = $this->guardianOf($this->amira, 'layla@fam.test', ['consented' => false]);

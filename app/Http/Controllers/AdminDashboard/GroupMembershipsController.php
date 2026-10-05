@@ -160,6 +160,21 @@ class GroupMembershipsController extends Controller
      *     to, and which guardian entries here "Put back" must not re-open. It
      *     is the move's own guardian rule (`RosterMove::notVouched`) read from
      *     the other side, not a second copy.
+     *
+     * ## A CONSENT THAT WAS CARRIED (2026-10-05)
+     *
+     * A move copies a guardian's consent onto the entry it creates and marks
+     * it with the class it came from. `consent_carried_from_group_id` rides on
+     * `toArray()` like every roster column, and `consent_carried_from` names
+     * that class (id, name, deleted_at), loaded as `moved_to` and `moved_from`
+     * are. With the two consent columns beside it the screen can say "carried
+     * from …" or "withdrawn here after it was carried from …" without
+     * guessing. `moved_to_state` gains what "Put back" would bring back into
+     * force (`RosterMove::movedToStates`).
+     *
+     * bin/deploy serves this code before it migrates. Until the column exists
+     * the relation is not loaded and the key is absent, which the screen reads
+     * as "not carried".
      */
     public function index($masjid_id, $group_id)
     {
@@ -173,6 +188,7 @@ class GroupMembershipsController extends Controller
                 'sourceRegistration.contact:id,first_name,last_name,email,'.Contact::AVATAR_COLUMNS,
                 'movedTo:id,name,deleted_at',
                 'movedFrom:id,name,deleted_at',
+                ...(GroupMembership::consentCarryReady() ? ['consentCarriedFrom:id,name,deleted_at'] : []),
             ])
             ->orderBy('role')
             ->orderBy('id')

@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Schema;
 use Carbon\CarbonInterface;
+use Throwable;
 
 /**
  * GroupMembership — one person's place in one group.
@@ -127,6 +129,10 @@ class GroupMembership extends Model
      * confirming) and `RegistrationService` (the public form, asserting) — go
      * through `confirmedBy()` / `selfAssertedFrom()` below, which is also what
      * keeps "who may confirm" answerable by reading two call sites.
+     *
+     * `consent_carried_from_group_id` (2026-10-05) is not fillable either: it
+     * says a consent was copied by a move and from which class, and only
+     * `carriedFrom()` sets it. See THE MARKER below.
      */
     protected $fillable = [
         'masjid_id',
@@ -168,6 +174,86 @@ class GroupMembership extends Model
             'consent_granted_at' => 'datetime',
             'confirmed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * THE MARKER: `consent_carried_from_group_id`, the class a consent was
+     * copied from when a student was moved (2026-10-05).
+     *
+     *   marker   consent columns   reads as
+     *   null     set               recorded by the office for this class
+     *   set      set               carried from that class, untouched since
+     *   set      null              withdrawn here after it was carried
+     *   null     null              never asked, or withdrawn where it was recorded
+     *
+     * Every writer that touches it:
+     *
+     *   - `carriedFrom()` with consent SETS it;
+     *   - `GroupConsentController::update` (the office records consent) CLEARS
+     *     it, also on a re-save that changes nothing: the office is now
+     *     asserting the consent for this class;
+     *   - `GroupConsentController::destroy` (a withdrawal) does NOT touch it.
+     *     The kept marker beside two blank columns is the only record that a
+     *     family withdrew a carried consent, and `App\Support\RosterMove`
+     *     refuses a move that would bring the other class's consent back into
+     *     force while that state stands;
+     *   - `unconfirm()` clears it together with a consent it clears, and leaves
+     *     it on an entry that was already blank;
+     *   - leaving, returning and "Put back" never touch it.
+     *
+     * It names the CLASS, not the source entry: a removed place takes its
+     * guardian entries with it and a merge re-issues rows, so an entry id can
+     * dangle. The same adult, child and class is one row by the unique index,
+     * so the source is still found while it exists. No foreign key and no
+     * index, as the four `moved_*` columns.
+     */
+    public const CONSENT_CARRIED_FROM = 'consent_carried_from_group_id';
+
+    private const CARRY_RECHECK_SECONDS = 30;
+
+    /** @var array{0: bool, 1: int}|null [the column exists, when it was asked] */
+    private static ?array $consentCarrySeen = null;
+
+    /**
+     * Whether `migrate` has added the marker column yet.
+     *
+     * bin/deploy makes the new code live BEFORE it runs `php artisan migrate`.
+     * Until the column exists a move is refused with a sentence
+     * (`RosterMove::ready()`), the office's consent record writes its two
+     * columns as it always did, `unconfirm()` leaves the key alone, and the
+     * roster list loads no carried-from class. A withdrawal never asks: it
+     * must not depend on a new column.
+     *
+     * Remembered per process, as the check for the date-of-birth column is
+     * (App\Support\StudentAge): a column that exists is remembered for good,
+     * one that is missing is asked about again after CARRY_RECHECK_SECONDS,
+     * and a question that could not be answered is "not yet" for that call
+     * only.
+     */
+    public static function consentCarryReady(): bool
+    {
+        $now = now()->getTimestamp();
+        $seen = self::$consentCarrySeen;
+
+        if ($seen !== null && ($seen[0] || $now - $seen[1] < self::CARRY_RECHECK_SECONDS)) {
+            return $seen[0];
+        }
+
+        try {
+            $exists = Schema::hasColumn((new self())->getTable(), self::CONSENT_CARRIED_FROM);
+        } catch (Throwable) {
+            return false;
+        }
+
+        self::$consentCarrySeen = [$exists, $now];
+
+        return $exists;
+    }
+
+    /** Forget what was seen: for a test that drops or adds the column, and for nothing else. */
+    public static function forgetConsentCarryReady(): void
+    {
+        self::$consentCarrySeen = null;
     }
 
     /**
@@ -320,6 +406,15 @@ class GroupMembership extends Model
     public function movedFrom(): BelongsTo
     {
         return $this->belongsTo(Group::class, 'moved_from_group_id')->withTrashed();
+    }
+
+    /**
+     * On a guardian entry whose consent a move carried: the class it was
+     * copied from. `withTrashed` for the same reason as the two above.
+     */
+    public function consentCarriedFrom(): BelongsTo
+    {
+        return $this->belongsTo(Group::class, self::CONSENT_CARRIED_FROM)->withTrashed();
     }
 
     // ------------------------------------------------------------- provenance
@@ -501,14 +596,40 @@ class GroupMembership extends Model
      *
      * It copies `provenance` and `source_registration_id`, and `confirmed_at` /
      * `confirmed_by_user_id` ONLY when the old provenance is exactly
-     * `confirmed`. NOTHING else: never consent (consent belongs to one
-     * guardian, one child and ONE class, and is asked again), never a leaving
-     * date. The confirmer and the time stay the original ones: the person who
-     * moves a student has confirmed nothing. A stored provenance nobody can
-     * interpret is copied as `self_asserted`, with no confirmer and no time,
-     * which is the state `selfAssertedFrom` writes.
+     * `confirmed`. Never a leaving date. The confirmer and the time stay the
+     * original ones: the person who moves a student has confirmed nothing. A
+     * stored provenance nobody can interpret is copied as `self_asserted`, with
+     * no confirmer and no time, which is the state `selfAssertedFrom` writes.
+     *
+     * ## CONSENT IS CARRIED AS IT IS, when the caller says so (2026-10-05)
+     *
+     * The owner's words: "Carry each parent's consent as it is", on a single
+     * move and on a whole-class move alike. Until then a copy never held
+     * consent and every family was asked again in the new class.
+     *
+     * `$withConsent` defaults to FALSE: a caller that says nothing copies
+     * nothing. With it, and only inside the confirmed branch:
+     *
+     *   - ONLY ONTO A ROW THE MOVE CREATES. This method throws on a saved row,
+     *     so an entry the new class already holds is never written, whatever
+     *     it holds.
+     *   - ONLY FROM A CONFIRMED, CURRENT ENTRY THAT HAS CONSENT: `hasConsent()`
+     *     (confirmed, dated, a known scope), never `consentColumnsAreSet()`,
+     *     which is true for half a record. A source that has left throws above.
+     *   - ONLY A GUARDIAN ENTRY. The move also copies the student's own place
+     *     through here, and `hasConsent()` does not look at the role.
+     *   - THE TWO COLUMNS UNCHANGED: the scope, and the day the family gave it.
+     *     Not the move day, and never a narrower scope than was recorded.
+     *   - MARKED with the class it came from (THE MARKER, above), so a carried
+     *     consent can be told from a recorded one for as long as the row exists.
+     *
+     * The unconfirmed branch sets both consent columns to null: both are
+     * fillable, so a claim must not keep whatever the caller typed onto the
+     * unsaved row. Whether a consent MAY travel (the adult may already stand in
+     * the new class for another child with less) is the move's decision, made
+     * before it calls this: `App\Support\RosterMove::decide()`.
      */
-    public function carriedFrom(self $old): static
+    public function carriedFrom(self $old, bool $withConsent = false): static
     {
         if ($this->exists) {
             throw new \LogicException('Only a new roster row can carry another row\'s standing.');
@@ -534,9 +655,11 @@ class GroupMembership extends Model
         if (! $old->isConfirmed()) {
             // Covers `self_asserted`, NULL and any value this build does not
             // know. No confirmer and no time travel with it, whatever the old
-            // row's columns say.
+            // row's columns say, and no consent: a claim holds none.
             return $this->selfAssertedFrom(null)->forceFill([
                 'source_registration_id' => $old->source_registration_id,
+                'consent_granted_at' => null,
+                'consent_scope' => null,
             ]);
         }
 
@@ -546,6 +669,14 @@ class GroupMembership extends Model
             'confirmed_by_user_id' => $old->confirmed_by_user_id,
             'source_registration_id' => $old->source_registration_id,
         ]);
+
+        if ($withConsent && $this->isGuardian() && $old->hasConsent()) {
+            $this->forceFill([
+                'consent_scope' => $old->consent_scope,
+                'consent_granted_at' => $old->consent_granted_at,
+                self::CONSENT_CARRIED_FROM => $old->group_id,
+            ]);
+        }
 
         return $this;
     }
@@ -608,9 +739,21 @@ class GroupMembership extends Model
      * WITHDRAWAL IS STILL NOT GATED (`GroupConsentController::destroy`): the one
      * direction this area may never fail in is leaving consent standing on a row
      * somebody was trying to undo, and clearing more here cannot cause that.
+     *
+     * ## THE MARKER GOES WITH A CONSENT THIS CLEARS, AND ONLY THEN
+     *
+     * When the two columns held something, "carried from that class" goes too:
+     * the row is no longer that pair, nobody withdrew, and a marker left on a
+     * blank unconfirmed entry would read "withdrawn after a carry". When they
+     * were ALREADY blank the marker is left alone. That state records a
+     * family's withdrawal, a merge is a de-duplication of the same child, and
+     * forgetting it would let a later return bring the old class's consent
+     * back into force. The key is written only once its column exists.
      */
     public function unconfirm(): static
     {
+        $heldConsent = $this->consentColumnsAreSet();
+
         $this->forceFill([
             'provenance' => self::PROVENANCE_SELF_ASSERTED,
             'confirmed_at' => null,
@@ -618,6 +761,10 @@ class GroupMembership extends Model
             'consent_granted_at' => null,
             'consent_scope' => null,
         ]);
+
+        if ($heldConsent && self::consentCarryReady()) {
+            $this->forceFill([self::CONSENT_CARRIED_FROM => null]);
+        }
 
         return $this;
     }
