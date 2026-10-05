@@ -93,7 +93,7 @@
                                     <i v-if="i === 0" class="bi bi-x-octagon me-1"></i>{{ line }}
                                 </div>
                                 <button v-if="preview.open_group" type="button" class="btn btn-sm btn-outline-secondary mt-1"
-                                        @click="openClass(preview.open_group.id)">
+                                        @click="openClass(preview.open_group)">
                                     Open {{ preview.open_group.name }}
                                 </button>
                             </div>
@@ -109,7 +109,7 @@
                             <i class="bi bi-x-octagon me-1"></i>
                             <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
                             <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
-                                    @click="openClass(saveOpenGroup.id)">
+                                    @click="openClass(saveOpenGroup)">
                                 Open {{ saveOpenGroup.name }}
                             </button>
                         </div>
@@ -133,8 +133,9 @@
  *
  * One read and one write. Choosing a class (or changing the day) asks the server what the move
  * would do, and the dialog prints the server's own lines; the Move button is off until that answer
- * says the move can happen. Saving sends what was shown back with the request, so a move the
- * server would now make differently is refused and the office reads again.
+ * says the move can happen. Saving sends what was shown back with the request (the path, the days,
+ * what was said about consent and the rule for Manara Bucks), so a move the server would now make
+ * differently is refused and the office reads again.
  *
  * THE BUTTON IS OFF, AND THE HANDLER REFUSES TOO: while the check is running, after a refusal, and
  * from the tap until the answer. A second tap that lands before the button is redrawn sends
@@ -144,7 +145,7 @@
  * the suite (tests/roster-move-mounted.test.ts).
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { GroupMembership, MovePreview } from '@/core/types/data/masjid-related/Group';
+import type { GroupMembership, MovePreview, OpenGroup } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { trapTab } from '@/core/helpers/focusTrap';
@@ -164,7 +165,8 @@ const emit = defineEmits<{
     (event: 'moved'): void;
     /** The roster this dialog was opened from is out of date. */
     (event: 'reload'): void;
-    (event: 'open-class', groupId: number): void;
+    /** The class to open, and the roster row there that a refusal's remedy is about, when it names one. */
+    (event: 'open-class', groupId: number, membershipId?: number | null): void;
 }>();
 
 const groupsStore = useGroupsStore();
@@ -271,7 +273,7 @@ watch(options, (list) => {
 
 const saving = ref(false);
 const saveError = ref('');
-const saveOpenGroup = ref<{ id: number; name: string } | null>(null);
+const saveOpenGroup = ref<OpenGroup | null>(null);
 const done = ref<string[] | null>(null);
 
 const canMove = computed(() => !saving.value && previewState.value === 'ready' && preview.value?.can_move === true);
@@ -315,7 +317,7 @@ const cancel = () => {
 
 const finish = () => emit('moved');
 const reloadRoster = () => emit('reload');
-const openClass = (groupId: number) => emit('open-class', groupId);
+const openClass = (group: OpenGroup) => emit('open-class', group.id, group.membership_id ?? null);
 
 // THE KEYBOARD COMES INTO THE DIALOG AND STAYS IN IT, as in PutBackDialog: the
 // dialog is teleported to <body>, so Escape and Tab are heard on the DOCUMENT,

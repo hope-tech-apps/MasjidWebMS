@@ -176,6 +176,13 @@ export type MovedToState = {
     guardians_not_vouched: { membership_id: number; reason: 'no_entry' | 'only_unconfirmed'; sentence: string }[];
 };
 
+/**
+ * The class to open to clear a refusal. `membership_id`, when the server sends
+ * it, is the roster row there that the remedy is about: the class's roster
+ * brings that row into view.
+ */
+export type OpenGroup = { id: number; name: string; membership_id?: number | null };
+
 /** What the roster list says about the class itself (`meta` of the list answer). */
 export type RosterMeta = {
     group_name: string;
@@ -187,15 +194,24 @@ export type RosterMeta = {
     move_note: string | null;
 };
 
-/** The answer to "what will happen if this student is moved there". Sentences are the server's. */
+/**
+ * The answer to "what will happen if this student is moved there". Sentences are the server's.
+ *
+ * `expected_consent` and `expected_bucks_rule` are what the tap must echo beside
+ * the path and the days: what the server decided about consent (a short string
+ * of counts) and which rule applies to Manara Bucks. Either can be null, and a
+ * null one is not sent.
+ */
 export type MovePreview = {
     can_move: boolean;
     refusal: string | null;
-    open_group: { id: number; name: string } | null;
+    open_group: OpenGroup | null;
     path: 'left_and_started' | 'returned' | null;
     first_day_in_new_class?: string;
     joined_on?: string | null;
     grade_label: string | null;
+    expected_consent?: string | null;
+    expected_bucks_rule?: 'move' | 'from_ended' | 'to_ended' | null;
     lines: string[];
 };
 
@@ -207,6 +223,8 @@ export type MoveRequest = {
     expected_path: string;
     expected_first_day: string;
     expected_joined_on?: string;
+    expected_consent?: string;
+    expected_bucks_rule?: string;
 };
 
 /**

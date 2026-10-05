@@ -54,11 +54,13 @@ export function classOptions(groups: ClassRow[], currentGroupId: number, onDay: 
 /**
  * What a move sends. Strings only, no booleans and never the word "null": the body is
  * form-encoded. The `expected_*` keys are what the dialog showed, so the server refuses when what
- * it decides under its locks is something else.
+ * it decides under its locks is something else. That now covers what was shown about consent and
+ * the rule for Manara Bucks; one the preview did not give is left out, and the server does not
+ * check what it was not sent.
  */
 export function moveBody(
     form: { toGroupId: number; movedOn: string; gradeLabel: string },
-    preview: Pick<MovePreview, 'path' | 'first_day_in_new_class' | 'joined_on'>,
+    preview: Pick<MovePreview, 'path' | 'first_day_in_new_class' | 'joined_on' | 'expected_consent' | 'expected_bucks_rule'>,
 ): Record<string, string> {
     const body: Record<string, string> = {
         to_group_id: String(form.toGroupId),
@@ -72,8 +74,26 @@ export function moveBody(
         body.expected_joined_on = preview.joined_on;
     }
 
+    if (preview.expected_consent) body.expected_consent = preview.expected_consent;
+    if (preview.expected_bucks_rule) body.expected_bucks_rule = preview.expected_bucks_rule;
+
     return body;
 }
+
+/** The roster row a link asks for (`?focus=`): a plain positive whole number, or nothing. */
+export function focusIdFromQuery(value: unknown): number | null {
+    if (typeof value !== 'string' || !/^[1-9]\d{0,15}$/.test(value)) return null;
+
+    const id = Number(value);
+    return Number.isSafeInteger(id) ? id : null;
+}
+
+/**
+ * The query that opens a class's roster on one row: "Open {Class}" on a refusal whose remedy is
+ * about a guardian's entry there. No row named, no query.
+ */
+export const focusQuery = (membershipId: number | null | undefined): Record<string, string> =>
+    membershipId ? { focus: String(membershipId) } : {};
 
 /**
  * How a row that was moved is labelled.

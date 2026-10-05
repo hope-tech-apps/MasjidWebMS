@@ -48,8 +48,11 @@ const classes = [
     { id: 1, name: '1st Grade', kind: 'class', is_active: true, ends_on: null, position: 1 },
     { id: 2, name: '2nd Grade', kind: 'class', is_active: true, ends_on: null, position: 2 },
 ];
+// `expected_consent` is what the server decided about consent, as a string of counts; the rule for
+// Manara Bucks is null until a move can carry a balance.
 const canMove = { can_move: true, refusal: null, open_group: null, path: 'left_and_started', first_day_in_new_class: '2026-10-04',
-    joined_on: '2026-10-04', grade_label: '1st', lines: ['Maryam Student has nothing recorded in 1st Grade.', 'They start fresh in 2nd Grade.'] };
+    joined_on: '2026-10-04', grade_label: '1st', expected_consent: 'm1f0s0n0e0', expected_bucks_rule: null,
+    lines: ['Maryam Student has nothing recorded in 1st Grade.', 'They start fresh in 2nd Grade.'] };
 const refused = { can_move: false, refusal: 'Gamal Guardian is a confirmed guardian of Maryam Student in 2nd Grade but not a confirmed guardian here.\nNothing was moved. Then move Maryam Student again.',
     open_group: { id: 2, name: '2nd Grade' }, path: null, grade_label: '1st', lines: [] };
 
@@ -149,21 +152,88 @@ test('move: from the tap to the answer the buttons are off, a second tap sends n
 
     const [groupId, membershipId, body] = calls.find((c) => c.what === 'move')!.args;
     assert.deepEqual([groupId, membershipId], [1, 10]);
+    // What the dialog showed about consent goes back with the tap; a rule the preview did not give is not sent.
     assert.deepEqual(body, {
         to_group_id: '2', moved_on: '2026-10-04', grade_label: '2nd',
-        expected_path: 'left_and_started', expected_first_day: '2026-10-04',
+        expected_path: 'left_and_started', expected_first_day: '2026-10-04', expected_consent: 'm1f0s0n0e0',
     });
 
     // The answer is the server's lines, and it stays until OK.
-    answer.resolve(['Maryam Student is now in 2nd Grade.', 'Record consent again for 1 guardian in 2nd Grade.']);
+    answer.resolve(['Maryam Student is now in 2nd Grade.', 'Consent was carried as it is for 1 guardian, for the class story and photographs.']);
     await flush();
     assert.match(screen.text(), /Maryam Student is now in 2nd Grade\./);
-    assert.match(screen.text(), /Record consent again for 1 guardian in 2nd Grade\./);
+    assert.match(screen.text(), /Consent was carried as it is for 1 guardian, for the class story and photographs\./);
     assert.equal(moved, 0, 'the dialog closed itself before the office read what happened');
 
     click(screen.button('OK'));
     assert.equal(moved, 1);
     assert.deepEqual(store.lastMoveChoice, { toGroupId: 2, movedOn: '2026-10-04' });
+    screen.unmount();
+});
+
+test('move: the rule for Manara Bucks the preview showed is echoed with the tap, beside what it showed about consent', async () => {
+    const { store, calls } = fakeStore({ preview: async () => ({ ...canMove, expected_consent: 'm0f1s0n0e0', expected_bucks_rule: 'from_ended' }) });
+    const screen = await mountMove(store);
+
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+
+    const body = calls.find((c) => c.what === 'move')!.args[2];
+    assert.equal(body.expected_consent, 'm0f1s0n0e0');
+    assert.equal(body.expected_bucks_rule, 'from_ended');
+    Object.values(body).forEach((v) => assert.equal(typeof v, 'string'));
+    screen.unmount();
+});
+
+test('move: a refusal over a consent opens the other class on the row its remedy is about, before the tap and after it', async () => {
+    const consent = 'Huda Guardian withdrew consent in 1st Grade after it had been carried there from 2nd Grade. The consent recorded in 2nd Grade '
+        + '(the class story and photographs, recorded 5 Sep 2026) would come back into force.\nNothing was moved. Open 2nd Grade and withdraw '
+        + 'that consent on its roster first (the Consent button on the guardian\'s row), then move Maryam Student again. If the family still '
+        + 'agrees for 2nd Grade, record it there after the move.';
+    const opened: any[][] = [];
+    const onOpen = { 'onOpen-class': (...args: any[]) => opened.push(args) };
+
+    // Before the tap: the preview's own refusal, printed as it came, with the row.
+    const before = fakeStore({ preview: async () => ({ ...refused, refusal: consent, open_group: { id: 2, name: '2nd Grade', membership_id: 77 } }) });
+    const first = await mountMove(before.store, onOpen);
+    assert.match(first.text(), /Huda Guardian withdrew consent in 1st Grade after it had been carried there from 2nd Grade\./);
+    assert.match(first.text(), /\(the Consent button on the guardian's row\), then move Maryam Student again\./);
+    assert.equal(first.button('Move to 2nd Grade').disabled, true);
+    click(first.button('Open 2nd Grade'));
+    assert.deepEqual(opened, [[2, 77]]);
+    first.unmount();
+
+    // After it: the consent was withdrawn between the read and the tap, and the save says so.
+    const after = fakeStore({
+        move: () => Promise.reject(httpError(409, { status: 'error', message: consent, open_group: { id: 2, name: '2nd Grade', membership_id: 78 } })),
+    });
+    const second = await mountMove(after.store, onOpen);
+    submit(second.all((n) => n.tag === 'form')[0]);
+    await flush();
+    assert.match(second.text(), /would come back into force\./);
+    click(second.button('Open 2nd Grade'));
+    assert.deepEqual(opened.at(-1), [2, 78]);
+    second.unmount();
+
+    // A refusal that names no row (a guardian to confirm, as before): the class alone.
+    const plain = fakeStore({ preview: async () => refused });
+    const third = await mountMove(plain.store, onOpen);
+    click(third.button('Open 2nd Grade'));
+    assert.deepEqual(opened.at(-1), [2, null]);
+    third.unmount();
+});
+
+test('move: while the server is being updated its one sentence is shown, and nothing can be sent', async () => {
+    const updating = 'Manara is being updated. Try this move again in a minute.';
+    const { store, count } = fakeStore({ preview: async () => ({ ...refused, refusal: updating, open_group: null }) });
+    const screen = await mountMove(store);
+
+    assert.match(screen.text(), /Manara is being updated\. Try this move again in a minute\./);
+    assert.equal(screen.button('Move to 2nd Grade').disabled, true);
+    assert.equal(screen.all((n) => n.tag === 'button' && n.textContent.startsWith('Open ')).length, 0);
+    submit(screen.all((n) => n.tag === 'form')[0]);
+    await flush();
+    assert.equal(count('move'), 0);
     screen.unmount();
 });
 

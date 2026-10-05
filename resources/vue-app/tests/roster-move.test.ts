@@ -6,9 +6,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
-    classOptions, className, consentBannerCount, consentBannerText, day, moveBody, movedLabels, putBackForm,
+    classOptions, className, consentBannerCount, consentBannerText, day, focusIdFromQuery, focusQuery, moveBody, movedLabels,
+    putBackForm,
 } from '../core/helpers/rosterMove.ts';
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -68,6 +69,45 @@ test('what a move sends: strings, the keys the server knows, and what the dialog
     assert.equal(back.grade_label, '');
     assert.deepEqual(Object.keys(back).sort(),
         ['expected_first_day', 'expected_joined_on', 'expected_path', 'grade_label', 'moved_on', 'to_group_id']);
+});
+
+test('what a move sends: what the dialog showed about consent and the rule for Manara Bucks, each only when the preview gave one', () => {
+    const form = { toGroupId: 2, movedOn: '2026-10-04', gradeLabel: '2nd' };
+    const shown = { path: 'left_and_started' as const, first_day_in_new_class: '2026-10-05', joined_on: '2026-10-05' };
+
+    const both = moveBody(form, { ...shown, expected_consent: 'm1f0s0n1e0', expected_bucks_rule: 'move' });
+    assert.equal(both.expected_consent, 'm1f0s0n1e0');
+    assert.equal(both.expected_bucks_rule, 'move');
+    assert.deepEqual(Object.keys(both).sort(),
+        ['expected_bucks_rule', 'expected_consent', 'expected_first_day', 'expected_path', 'grade_label', 'moved_on', 'to_group_id']);
+
+    // The rule is null until a move can carry a balance: the key is left out, never sent as a word or a blank.
+    const consentOnly = moveBody(form, { ...shown, expected_consent: 'm0f0s0n0e0', expected_bucks_rule: null });
+    assert.equal(consentOnly.expected_consent, 'm0f0s0n0e0');
+    assert.equal('expected_bucks_rule' in consentOnly, false);
+
+    // A server from before the release sends neither: the body is the one it knows.
+    for (const none of [{}, { expected_consent: null, expected_bucks_rule: null }, { expected_consent: '', expected_bucks_rule: undefined }]) {
+        assert.deepEqual(Object.keys(moveBody(form, { ...shown, ...none })).sort(),
+            ['expected_first_day', 'expected_path', 'grade_label', 'moved_on', 'to_group_id']);
+    }
+
+    Object.values(both).forEach((v) => {
+        assert.equal(typeof v, 'string');
+        assert.ok(!['null', 'undefined', 'true', 'false'].includes(v));
+    });
+});
+
+test('a link to a roster row: only a plain positive whole number is a row, and no row means no query', () => {
+    assert.equal(focusIdFromQuery('77'), 77);
+    for (const not of [undefined, null, '', '0', '-3', '7.5', '07', '7 ', 'abc', '1e3', ['77'], 77, '99999999999999999999']) {
+        assert.equal(focusIdFromQuery(not), null, JSON.stringify(not));
+    }
+
+    assert.deepEqual(focusQuery(77), { focus: '77' });
+    assert.deepEqual(focusQuery(null), {});
+    assert.deepEqual(focusQuery(undefined), {});
+    assert.equal(focusIdFromQuery(focusQuery(77).focus), 77);
 });
 
 test('a moved row is labelled by where the student is now', () => {
@@ -197,10 +237,19 @@ test('one place sends the undo, and one place builds the sentences about a move'
     assert.match(classes, /kind=class&active_only=1&per_page=100&page=\$\{page\}/);
 
     // No sentence about what a move does is written in the browser: the lines are the server's.
-    for (const file of [modal, source('core/helpers/rosterMove.ts')]) {
+    // The whole-class dialog and its helper are held to the same rule from the day they exist
+    // (they are added by their own change, and pin themselves in roster-class-move*.test.ts).
+    const classMove = ['views/dashboard/groups/MoveClassModal.vue', 'core/helpers/rosterClassMove.ts']
+        .filter((path) => existsSync(new URL(`../${path}`, import.meta.url)))
+        .map(source);
+    for (const file of [modal, source('core/helpers/rosterMove.ts'), ...classMove]) {
         assert.doesNotMatch(file, /is now in |start fresh|shown as moved|in force again|Record consent again/);
+        assert.doesNotMatch(file, /carried as it is|Manara Bucks go with|is in force again/);
     }
     assert.match(modal, /v-for="\(line, i\) in preview\.lines"/);
+
+    // The echo of what was shown is the helper's: the dialog hands it the preview as it came.
+    assert.match(modal, /moveBody\(\{[\s\S]*?\}, preview\.value\)\)/);
 
     // The Remove message is the server's, not a fixed word, and the roster shows that one.
     assert.match(store, /if \(res\.data\?\.status !== 'success'\) return null;/);
