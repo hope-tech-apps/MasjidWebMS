@@ -1336,6 +1336,7 @@ class ClassStoreCarryTest extends TestCase
         $this->assertSame((int) $this->next->id, (int) $row->moved_to_group_id, '"Put back" clears the leaving date and nothing else');
 
         $this->awardAt('2026-10-13 10:00', $this->amira, 5);
+        $this->awardAt('2026-10-13 10:00', $this->yusuf, 5);
         $this->freeze('2026-10-19 09:00');
         $this->mint();
 
@@ -1347,11 +1348,59 @@ class ClassStoreCarryTest extends TestCase
         $this->mint();
         $this->assertSame(17, (int) DB::table('prize_ledger_entries')->whereIn('group_membership_id', [$this->amira->id, $there->id])->sum('amount'));
 
-        // Recorded as left again, by hand, it keeps its old "moved to" and reads as carried away.
+        // RECORDED AS LEFT AGAIN, BY HAND. That is a new act and not the move: the row is no
+        // longer "moved to" anywhere (GroupMembership::markLeftByStaff), so it is a row that
+        // simply left, and a late change to a week it was minted for is written on it exactly
+        // as it is for a classmate who left and was never moved.
         $this->amira->fresh()->markLeftByStaff(null)->save();
+        $this->yusuf->fresh()->markLeftByStaff(null)->save();
+        $this->assertNull($this->amira->fresh()->moved_to_group_id, 'a row that left by hand still read as moved away');
+        $this->assertNull($this->amira->fresh()->moved_on);
+
         $this->awardAt('2026-10-14 10:00', $this->amira, 3);
+        $this->awardAt('2026-10-14 10:00', $this->yusuf, 3);
         $this->mint();
-        $this->assertSame(['earned:12', 'transfer_out:-12', 'earned:5'], $this->ledger($this->amira), 'pinned as designed: harmless, and stated');
+        $this->assertSame(['earned:5', 'adjusted:3'], $this->ledger($this->yusuf));
+        $this->assertSame(['earned:12', 'transfer_out:-12', 'earned:5', 'adjusted:3'], $this->ledger($this->amira));
+    }
+
+    #[Test]
+    public function a_student_put_back_after_a_mistaken_move_who_later_simply_leaves_was_not_moved_away(): void
+    {
+        // Moved by mistake, with nothing, and undone the way the roster offers.
+        $there = $this->move($this->amira, $this->next);
+        $there->markLeftByStaff(null)->save();
+        $this->putBack($this->amira);
+        $this->assertSame((int) $this->next->id, (int) $this->amira->fresh()->moved_to_group_id);
+
+        // Later a prize is given by mistake, to her and to a classmate, and both leave the school.
+        $this->credit($this->amira, 5, '2026-10-04');
+        $spent = $this->redeem($this->amira, 5, 3);
+        $this->credit($this->yusuf, 5, '2026-10-04');
+        $yusufSpent = $this->redeem($this->yusuf, 5);
+        $this->amira->fresh()->markLeftByStaff(null)->save();
+        $this->yusuf->fresh()->markLeftByStaff(null)->save();
+
+        // The classmate's can be undone, as it always could for a student who left...
+        ClassStore::reverse($this->class, $yusufSpent, $this->teacher);
+        $this->assertSame(5, $this->balanceOf($this->yusuf));
+
+        // ...and so can hers. "That student was moved to another class after this was recorded"
+        // would be false: the move was before the prize, and it was undone.
+        ClassStore::reverse($this->class, $spent, $this->teacher);
+        $this->assertSame(5, $this->balanceOf($this->amira));
+        $this->assertSame(3, Prize::query()->findOrFail($spent->prize_id)->stock, 'the prize is back on the shelf');
+
+        // A ROW THE MOVE LEFT STAYS MOVED AWAY when the office corrects its leaving date
+        // afterwards: it had already left, and a corrected date does not un-move it.
+        $layla = $this->student('Layla');
+        $this->credit($layla, 5, '2026-10-04');
+        $laylaSpent = $this->redeem($layla, 5);
+        $this->move($layla, $this->next);
+        $layla->fresh()->markLeftByStaff(null, '2026-10-01')->save();
+        $this->assertSame((int) $this->next->id, (int) $layla->fresh()->moved_to_group_id);
+        $refusal = $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $laylaSpent, $this->teacher));
+        $this->assertSame(self::MOVED_AWAY, $refusal->getMessage());
     }
 
     #[Test]

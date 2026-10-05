@@ -503,6 +503,24 @@ class GroupMembership extends Model
      */
     public function markLeftByStaff(?User $actor, CarbonInterface|string|null $on = null): static
     {
+        // A ROW THAT IS CURRENT AND STILL CARRIES "MOVED TO" was put back by
+        // hand after a move (`returnToRoster` keeps the three columns, so the
+        // roster can say "put back after a move to ..."). Leaving now is a new
+        // act and not that move: left as they were, the row would read as
+        // moved away for good. The roster would badge it "Moved to ...", a
+        // move would be told to go and open that class, and the class store
+        // would refuse to undo a prize "because the student was moved" when
+        // they simply left. A move stamps its own three with `markMovedOut`
+        // right after this. A row that has ALREADY left keeps them: correcting
+        // a moved row's leaving date does not un-move it.
+        if ($this->left_on === null && $this->moved_to_group_id !== null) {
+            $this->forceFill([
+                'moved_to_group_id' => null,
+                'moved_on' => null,
+                'moved_by_user_id' => null,
+            ]);
+        }
+
         $this->forceFill([
             'left_on' => $on ?? now()->toDateString(),
             'left_recorded_by_user_id' => $actor?->getKey(),
