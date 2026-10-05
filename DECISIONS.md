@@ -7950,3 +7950,61 @@ themselves still run only on the MySQL job.
   person. Production held no registration in that state on 2026-10-05 (counted). A payment that did land on a
   page nobody can name meets the webhook: found by the registration's uuid or charge reference it is recorded
   as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries the same uuid.
+
+## 2026-10-05 — The private disk's signed storage routes are switched off (`'serve' => false` on `local`; branch `fix/no-signed-local-disk-routes`)
+
+- **What was switched off.** `config/filesystems.php`, disk `local` (`storage/app/private`, where every private
+  upload lives), `'serve' => true` is now `false`. It was the only disk with the flag. With it on, the
+  framework (`FilesystemServiceProvider::serveFiles()`) registered two routes after the application's own, with
+  no login and no middleware: `GET|HEAD storage/{path}` (`storage.local`) and `PUT storage/{path}`
+  (`storage.local.upload`). Each honoured only an address signed with APP_KEY. The PUT wrote the request body to
+  the named path on the private disk. The disk also made such addresses (`temporaryUrl()`,
+  `temporaryUploadUrl()`); with the flag off it throws "This driver does not support creating temporary URLs"
+  (and "...upload URLs").
+- **Why.** The signature was the only thing between a request and a write onto the private disk, and the
+  application has no use for either route. Private files leave through authenticated download routes that
+  re-resolve masjid, group, resource and audience (`.claude/rules/private-uploads.md`); a signed address would
+  skip all of that and would outlive consent being withdrawn. The GET was never reachable here, because the
+  admin screen's GET catch-all in `routes/web.php` is registered first. The PUT was: the catch-all is GET only.
+- **The door was real.** At 9e026457, in the test client, the disk minted an upload address for `proof.txt`; a
+  PUT of a body to it with no login answered 204 and the body was on the private disk (read back, under the real
+  configured root and under a scratch root). The same PUT unsigned, or with a signature that was not one, answered
+  403 and wrote nothing. An address signed by hand (HMAC-SHA256 of the relative URL `/storage/proof.txt?expires=..&upload=1`,
+  keyed with APP_KEY) was byte-for-byte the one the disk made, and wrote the same.
+- **Confirmed unused.** Searched `app/`, `routes/`, `resources/` (views and the Vue app), `config/`,
+  `database/`, `tests/`, `bootstrap/`, `bin/`, `scripts/`, `deploy/`, `docs/`, `.claude/` and every Markdown record
+  for `temporaryUrl`, `temporaryUploadUrl`, `getTemporaryUrl` (and the `getFirst`/`getLast`/`getAvailable`
+  forms), `buildTemporaryUrlsUsing`, `serveUsing`, `storage.local`, `Route::has`, route lookups by name, any read
+  of the `serve` key, and any client that PUTs to `/storage`: nothing. The only mentions were the comment on
+  `GroupResource` and the flag itself. `GroupMedia` signs the application's own named playback routes, not these.
+  Packages: `spatie/laravel-medialibrary` 11.23.3 makes a temporary address only when something calls
+  `getTemporaryUrl()`, `getAvailableTemporaryUrl()` or the first/last forms, and nothing here does (its
+  `getUrl()` is an unsigned address on the media disk, `MEDIA_DISK`, default `public`); the Pro package named in
+  `config/media-library.php` is not installed; `barryvdh/laravel-dompdf` 3.1.2 only does
+  `Storage::disk($disk)->put()` to save a PDF. Laravel and Flysystem define the temporary-address methods; across
+  the rest of `vendor/` Spatie's is the only code that calls one. `mpdf/mpdf` was NOT read: this worktree's `vendor/` lacks it (and four of its
+  dependencies) although `composer.lock` names 8.3.1. It requires no Laravel package, so it cannot ask a Laravel
+  disk for anything, and the one place the application uses it, `ReportCardPdfService::render()`, returns the
+  bytes in memory. Also not read: the production `.env` and server configuration (no server was contacted).
+- **When it takes effect.** On a deploy, not at merge. `bin/deploy` runs `route:clear` then `route:cache`. In a
+  private export, route cache built from 9e026457 held both routes (`route:list --path=storage` showed them, a
+  signed PUT answered 204 and wrote); built from this change it holds none (no route matches `storage`, and a
+  PUT, signed or not, answers 405 and writes nothing). Uncached gave the same. Until the next deploy the
+  production route cache still holds the two routes.
+- **Before anyone switches it back on.** All of these would have to be true, and written here when it happens:
+  1. A feature the owner has asked for needs a signed address to a file, and it cannot be served by an
+     authenticated route that re-resolves the ownership chain the way the attachment downloads and the playback
+     routes do.
+  2. It is a disk of its own that holds nothing private. Never `local`. The flag registers the PUT as well as the
+     GET, so anyone who can sign can write to that disk.
+  3. The addresses are short-lived, and what happens when consent is withdrawn or access is lost while one is
+     still valid has been reasoned through and written down.
+  4. `tests/Feature/NoSignedLocalDiskRoutesTest.php` is changed in the same commit, saying why.
+- **Not done here.** No `/storage/...` route of this change's own. Another branch, not yet on main
+  (`feat/page-documents`), adds a GET that answers 404 on `/storage/{missing}` with a comment about the
+  framework's route; once this change is on main that comment describes a route that no longer exists, and
+  whoever combines the branches should fix the comment.
+- **Tests.** `NoSignedLocalDiskRoutesTest` (7). Red at 9e026457: no disk has serve on, no route named for a disk,
+  no write verb matched on a storage path, a local disk refuses a temporary address, a correctly signed PUT
+  writes nothing. Green at 9e026457 as controls: an unsigned PUT and a badly signed PUT write nothing (the
+  signature was the only barrier).
