@@ -8107,8 +8107,9 @@ themselves still run only on the MySQL job.
     2. Ten editors shared rows with the content they were handed and now copy every row, when they open and in
        their watch: Link Buttons, Admissions & Tuition (fees, payment plans, steps), Carousel, Grid Cards,
        Impact Stats, Mission & Vision, Providers, Services & Eligibility, Staff Directory, Stats. (Mission &
-       Vision and Stats shared the list itself.) Programs already copied each programme. The other twenty-two
-       editors bind only top-level fields of an object they build and hold no rows. This was a defect in every
+       Vision and Stats shared the list itself.) Programs already copied each programme. The other twenty-one
+       editors bind only top-level fields of an object they build and hold no rows (32 editors: ten fixed,
+       Programs already safe, twenty-one with no rows). This was a defect in every
        one of the ten, not only where a PDF can be uploaded: any abandoned row edit stayed in the list until
        the page was reloaded.
   - **A new section's type and mode wait for an upload.** Changing the Section Type, or switching to Attach
@@ -8168,3 +8169,98 @@ themselves still run only on the MySQL job.
      without the question (read from the code, not run). Both leave the file online, linked from nowhere.
   6. Clearing an unsaved file's address by hand and then closing asks nothing: the note under the field said
      beforehand that clearing leaves it online.
+- **Fix round 3, the same day** (after the check of round 2: the server lens said "ship after fixes", the
+  page-tool lens "ship"; nothing major). Additions only; what is above stands unless a line here says it
+  changed. Nothing was run against a server and no browser was driven.
+  - **The cleanup takes one pass over a text, in both of its readers.** A section's text has no size limit,
+    and the cleanup reads every string of the saved section on every save, and every other section's when a
+    save drops a document. Two readers cost the SQUARE of what an administrator can write:
+    1. `resolved()` (round 2's spelling reader) removed one `/name/..` per pass over the whole text. 40,000
+       steps (195 KB) took 11.2 s on the server and 9.1 s in the page tool; they take 0.011 s and 0.008 s.
+       The text is cut at its slashes once and its segments walked once.
+    2. The out-of-date check read ALL the text in front of every address a save brought in. Not in the
+       check's findings: it was found by timing the other readers after the first was fixed. 5,000 addresses
+       of another site in one text (250 KB) took 15 s alone and 19 s through the route; the check takes
+       0.006 s, and the route's whole test 0.07 s. It now reads back from each address to the nearest
+       character a host cannot hold, to a limit of 2,048 characters, and gives the answer the old pattern
+       gave for every text within that (compared on 200,000 generated texts with no difference; the old
+       pattern's `$` read past one line feed before the path, and so does this). PAST THE LIMIT IT THROWS:
+       the caller logs "were not checked" and deletes nothing. Chosen over answering "not ours" unread,
+       which would let a deletion through, and over a larger limit, which would let the cost grow with it.
+       What it gives up is PD-28: an address that follows more than 2,048 characters with no space, quote,
+       tag, `?`, `#`, `=` or `&` among them is not judged, and the document that save drops stays online.
+    Not changed, and linear: one database question for each address a save brings in that is written as
+    ours and has a row.
+  - **Round 2's three unpinned readings are pinned** (the percent-decoded reading of the new content in the
+    out-of-date check; the percent-decoded reading resolved as well as the text as written; more than one
+    `..` step). Tests only; each fails with its reading taken out.
+  - **"Still linked" keeps a file through four more spellings**, for the keeping side only: a `..` that
+    steps back over a segment holding a space, an apostrophe, a quote or an angle bracket, and a tab, a
+    carriage return or a line feed inside the address, which a browser drops. DECIDED HERE: the `..` does
+    not step back over a segment holding `?` or `#`. The brief said "any segment"; a browser's path has
+    ended at either, so such an address is no link to the file, and the check's own suggestion excluded
+    them. Thirty-six spellings were run through the real routes in three arrangements, beside a browser's
+    own parser (Node's): every one a browser resolves to the file was kept, none started a deletion, and
+    the page tool read each as the server did. What is STILL not seen is listed whole in PD-17, the
+    docblock and the rule file: a character written as an HTML character reference, an address encoded
+    twice, another letter case, a link that does not hold the path at all.
+  - **"Is the document gone?" is asked of the public disk only.** The out-of-date check asked whether ANY
+    media row had the number and file name an address carried, and its answer shows in what happens to the
+    administrator's own document. So one upload and two saves told an administrator whether another
+    organisation's PRIVATE file had a given number and name. It asks only of media on the disk page
+    documents live on. A private row of that number and name now reads as "gone": the save is out of
+    date, and the document is kept, exactly as for a number and name no row has.
+  - **A host is compared as a browser takes it.** Our own host written with the port its scheme uses anyway
+    (`:443`, `:80`) or with a closing dot did not match itself, so an old copy holding such an address
+    deleted the current document. Both are taken off before comparing, on the written side and on ours.
+    Any other port is another site. (Compared again with the old pattern plus that rule on 300,000
+    generated texts: two differed, both with a digit or a dash straight in front of `http:`, which is now
+    read as no scheme, so either port is taken off.) PD-16 now says what "no host" means, and that after
+    a staging data refresh or a change of `APP_URL` stored addresses are on a host that is neither the
+    disk's nor the request's, so an old copy holding one is an ordinary replace there.
+  - **A delete that was cancelled is "NOT deleted".** A listener that answers false leaves the row and the
+    file, and the line read "its record is gone". Anything but a plain yes now gets the line of a delete
+    that threw, by ids alone, and the disk is not asked.
+  - **The page tool's reading no longer slows typing.** With a picture chosen and not yet saved the form
+    holds a `data:` URL, and the footer read every megabyte of it on each edit: 12 ms for each MB at the
+    head of round 2 (98 ms for 8 MB), 0.00 ms now. A string that starts `data:` is not read, and a text is
+    copied only when its percent-decoded or resolved reading differs. Measured in Node, not in a browser.
+  - **A PDF uploaded in the editor stays on the screen when the form lets go of it.** ONE mechanism, in
+    the modal: it keeps the list of what was uploaded while it is open (the control adds each file as its
+    upload ends, whether or not the control is still there), and the footer names, beside Save, each one
+    the form no longer holds: its name, that it is online and in no saved section, its address, and how
+    to take it offline. It stays through row moves, Remove, a type change and the Attach form, and goes
+    when the address is put back. The question on Cancel and the close button names these files too, once
+    each, in words true of them (saving would not link them either). Attach Section asks the same question
+    before it closes the modal; its button reads "Attach Anyway", and "Keep Editing" attaches nothing.
+    THIS CHANGES limits 2, 5 and 6 of round 2 above, which no longer hold: the notice about a replaced,
+    never-saved file is the footer's and does not go when rows move; a type change after an upload and
+    Attach Section are no longer silent; and a file whose address was cleared by hand is named in the
+    footer and asked about on closing. "The form" is what a save from here would send: while Attach
+    Existing is chosen that is nothing, so a file in the set-aside Create New form is named until the
+    office switches back.
+  - **Smaller corrections.** The modal tests' mount helper hands the modal a reactive section whenever it
+    is given a plain one (so PD-24 is true as written); the row editors' tests read back what was typed
+    into every field after the rebuilds (PD-25); the upload test that the address comes from configuration
+    and never from the request's host posts to a full address on the other host, where it sent a `Host`
+    header that a test does not turn into the request's host; "twenty-two editors" above is twenty-one;
+    PD-10 names the close question.
+- **Limits that stay after round 3** (this list replaces "Limits that stay after round 2"; 1, 3 and 4 there
+  stand as they are).
+  1. A stalled upload holds Save, the Section Type and the mode, with no way out but Cancel, then Close
+     Anyway, which discards every edit in the modal. No request here has a timeout.
+  2. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+     thousands shows a slightly larger number for the same file.
+  3. Anything that throws after the file is copied and before the row is committed leaves a file with no row
+     (PD-20).
+  4. The modal's list of uploads lives as long as the modal. Once it is closed (Close Anyway, Attach Anyway,
+     or a save made while the footer names a file) nothing lists a file that no saved section links; no
+     screen does (limit 2 of the reviews' list above).
+  5. A PDF's address put in BY HAND, never saved, and then replaced by an upload or taken out is not named
+     afterwards: it was not uploaded here, the page tool cannot know whose file it is (PD-10), and the note
+     under the field said beforehand that letting go of it leaves it online. Round 2's control named it
+     after a replace; the footer does not.
+  6. A save whose content holds an address after more than 2,048 characters of unbroken text has its
+     cleanup given up, out loud (PD-28).
+  7. The footer's new line, the Attach question and the longer close question were mounted in the test
+     harness and built; they were not seen in a browser (PD-23, PD-15).

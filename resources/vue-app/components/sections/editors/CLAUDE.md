@@ -101,6 +101,19 @@ not.)
   question, and its advice is to wait and SAVE (waiting and closing leaves the same
   file online). Nothing is kept for this: it is read from the content when the
   office closes, as the footer's notes are.
+- **A PDF uploaded here stays on the screen when the form lets go of it.** The modal
+  keeps the list of what was uploaded while it is open (`sectionUploadedDocuments`,
+  provided beside `sectionSavedDocuments`); the control adds each file as its upload
+  ENDS, whether or not the control is still there. The footer names, beside Save,
+  each one the form no longer holds and the saved section never held: its name, that
+  it is online and in no saved section, its address, and how to take it offline. It
+  stays through row moves, Remove, a type change and the Attach Existing form, and
+  goes when the address is put back. The same files are named in the question on
+  Cancel and the close button, once each, and Attach Section asks that question
+  before it closes. THE EDITORS AND THE CONTROL DO NOTHING FOR THIS, and must not
+  start to: a control is made anew whenever rows move and is gone with its row, so a
+  notice kept there vanishes (the first version of this did). "The form" is what a
+  save from here would send, which is nothing while Attach Existing is chosen.
 - **What is true to say about taking a file offline depends on whether it is SAVED.** The
   server deletes a document when a save stops linking it, compared with the saved
   section, so a file uploaded since the last save is deleted by nothing. The modal
@@ -112,9 +125,8 @@ not.)
   Link Buttons edited the list's own link objects, Cancel does not reload the list, and
   the next modal read an abandoned upload as saved, or sent an abandoned clear with the
   next save.
-  The control tells a saved document "clear the address and save", an unsaved one that
-  clearing or replacing it now leaves it online, and, when an upload replaces an unsaved
-  one, shows the replaced file's address, which is then in no field. The modal's footer
+  The control tells a saved document "clear the address and save", and an unsaved one
+  that clearing or replacing it now, or closing, leaves it online. The modal's footer
   names each saved document the content no longer links, in any field of any editor:
   "This file is taken offline when you save, unless another saved section still links
   it." Never word either of these so that it is false for the other kind of file.
@@ -126,18 +138,24 @@ not.)
 - **"Taken offline when you save" follows the server's reading of "still linked".**
   The server keeps a file while any section still carries its path, as written,
   percent-encoded inside another address, or in a spelling a browser resolves to the
-  same file (a dot segment, a doubled slash, backslashes or JSON-escaped slashes).
-  `sectionDocumentsLeaving` reads content the same way, so the footer does not
-  promise a deletion the server will not make. Change one and change the other
-  (`App\Support\PageDocuments::spellings`).
+  same file (a tab or a line break inside it, a dot segment, a doubled slash,
+  backslashes or JSON-escaped slashes). `sectionDocumentsLeaving` reads content the
+  same way, so the footer does not promise a deletion the server will not make.
+  Change one and change the other (`App\Support\PageDocuments::spellings`).
+  It runs on EVERY EDIT, so it takes one pass over a text (a reader that rescanned
+  the text for each `..` held a keystroke for nine seconds), does not read a string
+  that starts `data:` (a pending picture, megabytes of it), and copies a text only
+  when its percent-decoded or resolved reading differs
+  (`sectionDocumentReadings`).
 - **Limits that stay, so nobody "fixes" one by accident or promises otherwise.** A
   stalled upload holds Save, the Section Type and the mode, and the only way out is
   Cancel, then Close Anyway, which discards the session (no request here times out).
-  The notice about a replaced, never-saved file lives in the control: it goes when
-  rows move. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024
-  bytes), so a computer that counts in thousands shows a slightly larger number for
-  the same file. In a NEW section, changing the type after an upload has ended
-  replaces the content, the address with it, and asks nothing.
+  The modal's list of uploads lives only as long as the modal: once it is closed, no
+  screen lists a file that no saved section links. An address put in BY HAND, never
+  saved, and then replaced or taken out is not named afterwards: it was not uploaded
+  here, and the page tool cannot know whose file it is. A size is shown in the unit
+  of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+  thousands shows a slightly larger number for the same file.
 - Adding the control to another link field is a template line, an `onDocumentUploaded`
   and, in a list editor, the busy counter, the key and the label. The modal and the
   server need nothing.

@@ -164,6 +164,9 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
     disk does not throw). The disk is asked afterwards; a file it still holds is
     logged as NOT removed and still online, and a disk that cannot be asked at
     all gets a third line: the file could not be checked and may still be online.
+    Nor is "the delete returned" always "the row is gone": a listener can cancel
+    a delete by answering false, with nothing raised. Anything but a plain yes is
+    logged as NOT deleted, like a delete that threw, and the disk is not asked.
   - **It runs whenever the content was written**, not only when the save
     succeeded: both `update` actions call `forgetUnlinkedBySave()` in a
     `finally` that starts after the section's row is updated, and it compares
@@ -198,6 +201,18 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   takes it offline. Closing on a file the saved section does not hold asks
   once, with its name and its address: this form is the last screen that shows
   where it is.
+- **A PDF uploaded in the modal stays on the screen when the form lets go of
+  it.** The modal keeps the list of what was uploaded while it is open
+  (`sectionUploadedDocuments`; the control adds each file as its upload ENDS,
+  whether or not the control is still there), and its footer names each one the
+  form no longer holds: the name, that it is online and in no saved section,
+  the address, how to take it offline. One mechanism for every way an address
+  leaves the form (Remove on its row, a new section's type changed, another PDF
+  put in its place, the field cleared, Attach Existing), because none of those
+  can say it themselves: a control is made anew when rows move and is gone with
+  its row. The question on Cancel and the close button names these files too,
+  once each, and Attach Section asks it before closing. Do not put a notice
+  about a file the form no longer shows back into the control or an editor.
 - **The modal's form is a deep copy of the section's content** (and of a new
   section's default content), and every editor that holds rows copies each row.
   The section the page list holds is what was SAVED, and Cancel does not reload
@@ -207,13 +222,16 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   the rule for every editor, with or without a PDF
   (`components/sections/editors/CLAUDE.md`, "Copy every ROW").
 - **Limits that stay:** a stalled upload holds Save, the type and the mode, and
-  the only way out is Cancel, then Close Anyway; a new section whose type is
-  changed AFTER an upload has ended loses the address with no question; the
-  notice about a replaced, never-saved file lives in the control and goes when
-  rows move; a size is shown in the unit of the limit (1024s), so a computer
-  that counts in thousands shows a slightly larger number for the same file;
-  anything that throws after the file is copied and before the row is committed
-  leaves a file with no row.
+  the only way out is Cancel, then Close Anyway; the modal's list of uploads
+  lives only as long as the modal, and once it is closed no screen lists a file
+  that no saved section links; an address put in BY HAND and then replaced or
+  taken out is not named afterwards (it was not uploaded here, and the page
+  tool cannot know whose file it is); a size is shown in the unit of the limit
+  (1024s), so a computer that counts in thousands shows a slightly larger
+  number for the same file; anything that throws after the file is copied and
+  before the row is committed leaves a file with no row; a save whose content
+  holds an address after more than 2,048 characters of unbroken text has its
+  cleanup given up, out loud.
 - `PageDocumentUploadTest` and `PageDocumentCleanupTest` pin all of it; the SPA's
   `section-document-file.test.ts`, `section-document-upload.test.ts`,
   `section-form-modal-documents.test.ts` and `section-editors-own-copy.test.ts`
