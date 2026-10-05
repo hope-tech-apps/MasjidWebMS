@@ -41,6 +41,7 @@ use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
 use App\Http\Controllers\AdminDashboard\GroupMessageSchedulesController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\GroupClassMoveController;
 use App\Http\Controllers\AdminDashboard\GroupMoveController;
 use App\Http\Controllers\AdminDashboard\GroupWithdrawalController;
 use App\Http\Controllers\AdminDashboard\TeachersController;
@@ -1369,6 +1370,21 @@ Route::prefix('admin')->group(function () {
                 // is no teacher or family route.
                 Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/move')
                     ->controller(GroupMoveController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:manage contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                    });
+
+                // A WHOLE CLASS moved in one go. The GET lists every current
+                // student with what the move above would do for them and
+                // writes nothing; the POST names the students the office
+                // ticked and runs that move once per student, each in its own
+                // transaction (App\Support\RosterClassMove). The same
+                // permission as the single move, and no teacher or family
+                // route. The URI does not end in `/move`: the suite pins that
+                // exactly one URI does.
+                Route::prefix('{masjid_id}/groups/{group_id}/class-move')
+                    ->controller(GroupClassMoveController::class)
                     ->group(function () {
                         Route::get('/', 'show')->middleware('permission:manage contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
