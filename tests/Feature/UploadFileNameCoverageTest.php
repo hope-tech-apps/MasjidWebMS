@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use PhpToken;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -94,27 +95,32 @@ use Tests\TestCase;
  * ## What this test cannot see
  *
  * Green means: every upload rule the scan can READ is pinned or exempt. Each shape below
- * passes this test with a door open. `whatTheScanCannotSee` holds one of each, shows that
- * the scan says nothing against it and, where the shape is a rule, puts real PNG bytes
- * named `x.html` to Laravel's validator under it and sees them accepted.
+ * passes this test with a door open. `whatTheScanCannotSee` holds one of each that can be
+ * written as a snippet (all but the rule outside `app/`), shows that the scan says nothing
+ * against it and, where the shape is a rule, puts real PNG bytes named `x.html` to
+ * Laravel's validator under it and sees them accepted.
  *
  *  - A rule with no file word in it at all (`'photo' => 'nullable|max:25600'`).
  *  - The one word `image` or `file` anywhere but the places listed above: returned by a
  *    helper method with no `rules` in its name, held in a constant or a property, as one
  *    arm of a `match`, handed to another call
- *    (`$validator->sometimes('photo', 'image', ...)`), or in the arguments of a
- *    validator made another way (`app('validator')->make(...)`).
+ *    (`$validator->sometimes('photo', 'image', ...)`, `Rule::when($new, 'image')`), or in
+ *    the arguments of a validator made another way (`app('validator')->make(...)`).
  *  - A rule that is not written as one piece of text: joined from two literals
- *    (`'required|' . 'image'`), read from `config()`, made by `sprintf()`, or a pinned
- *    string lengthened in a later statement.
+ *    (`'required|' . 'image'`) or from a literal and a constant, read from `config()`,
+ *    made by `sprintf()`, or a pinned rule changed in a later statement (its list
+ *    lengthened, or its pin taken out again).
  *  - The array form of a rule (`['mimes', 'jpg', 'png']`).
  *  - A custom rule object or a closure, and so any class that extends the framework's.
- *  - A pinned rule the request switches off (`exclude_if:...` in front of it), where the
- *    controller reads the file from the request and not from what was validated.
+ *  - A pinned rule the request switches off (`exclude_if:...` or `Rule::excludeIf(...)`
+ *    in front of it), where the controller reads the file from the request and not from
+ *    what was validated.
  *  - A rule outside `app/` (`routes/`, `config/`, a package): only `app/` is read
  *    (`the_scan_reads_app_and_nothing_else`).
  *  - An upload that is read with NO rule at all (`$request->file('x')` and nothing
- *    validating `x`).
+ *    validating `x`), and a file that does not arrive as an upload: written from text
+ *    the client sent (`base64_decode(...)`) or fetched from an address, under a name the
+ *    client gave.
  *  - A pinned upload whose STORED name comes from somewhere else
  *    (`->usingFileName($request->input('name'))`).
  *  - Whether a pinned list is a sensible one (`extensions:jpg,html` counts as pinned).
@@ -731,12 +737,17 @@ final class UploadFileNameCoverageTest extends TestCase
                     return $validator->passes();
                 },
             ],
+            'the one word, handed to Rule::when()' => [self::inRules("'photo' => Rule::when(\$new, 'image'),"), $under(Rule::when(true, 'image'))],
             'the one word, in a validator made another way' => [
                 "<?php class C { public function store(\$request) { return app('validator')->make(\$request->all(), ['photo' => 'image'])->validate(); } }",
                 static fn (UploadedFile $page): bool => app('validator')->make(['photo' => $page], ['photo' => 'image'])->passes(),
             ],
 
             'a rule joined from two literals' => [self::inRules("'photo' => 'required|' . 'image',"), $under('required|' . 'image')],
+            'a rule joined from a literal and a constant' => [
+                "<?php class R { private const KIND = 'image'; public function rules(): array { return ['photo' => 'required|' . self::KIND]; } }",
+                $under('required|' . self::ONE_WORD),
+            ],
             'a rule read from config()' => [
                 self::inRules("'photo' => config('uploads.photo'),"),
                 static function (UploadedFile $page): bool {
@@ -749,6 +760,15 @@ final class UploadFileNameCoverageTest extends TestCase
             'a pinned string lengthened in a later statement' => [
                 self::inRules("]; \$photo = 'image|extensions:png'; \$photo .= ',html'; return ['photo' => \$photo,"),
                 $under('image|extensions:png' . ',html'),
+            ],
+            'a pinned list whose pin is taken out in a later statement' => [
+                self::inRules("]; \$photo = ['image', 'extensions:png']; unset(\$photo[1]); return ['photo' => \$photo,"),
+                static function (UploadedFile $page): bool {
+                    $photo = ['image', 'extensions:png'];
+                    unset($photo[1]);
+
+                    return Validator::make(['photo' => $page], ['photo' => $photo])->passes();
+                },
             ],
 
             'the array form of a rule' => [self::inRules("'photo' => [['mimes', 'jpg', 'png']],"), $under([['mimes', 'jpg', 'png']])],
@@ -778,10 +798,20 @@ final class UploadFileNameCoverageTest extends TestCase
                 self::inRules("'photo' => 'exclude_if:keep,1|image|extensions:png',"),
                 $under('exclude_if:keep,1|image|extensions:png', ['keep' => 1]),
             ],
+            'a pinned list switched off by a rule object' => [
+                self::inRules("'photo' => [Rule::excludeIf(\$this->boolean('keep')), 'image', 'extensions:png'],"),
+                $under([Rule::excludeIf(true), 'image', 'extensions:png']),
+            ],
 
             'an upload read with no rule at all' => [
                 "<?php class C { public function store(\$request, \$model) { \$model->addMediaFromRequest('photo')->toMediaCollection('photos'); } }",
                 static fn (UploadedFile $page): bool => Validator::make(['photo' => $page], [])->passes(),
+            ],
+            'a file that does not arrive as an upload' => [
+                "<?php class C { public function store(\$request) { \$request->validate(['name' => 'required|string', 'data' => 'required|string']); "
+                    . "Storage::disk('public')->put('uploads/' . \$request->input('name'), base64_decode(\$request->input('data'))); } }",
+                // Nothing to put to the validator as a file: no file is sent, only text.
+                null,
             ],
             'a pinned upload whose stored name comes from another input' => [
                 "<?php class C { public function store(\$request, \$model) { \$request->validate(['photo' => 'bail|required|image|mimes:png|extensions:png']); "
