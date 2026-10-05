@@ -435,13 +435,18 @@ test('office: a save refused because the count moved says so, and Save is off wh
     screen.unmount();
 });
 
-test('office: a class too small to show is named with no figure, and the totals say they cover the classes shown', async () => {
+test('office: a class that is not shown is named with no figure and one sentence for both reasons, and the totals say they cover the classes shown', async () => {
     const { screen } = await mountOffice(async () => ok({}));
 
+    // The row carries `suppressed: true` and nothing else: no reason comes from the server, so the
+    // sentence is the same for a class that is too small and for one a balance moved into or out of.
     const rows = screen.all((n) => n.tag === 'tr' && n.textContent.startsWith('Grade 3'));
     assert.equal(rows.length, 1);
-    assert.match(rows[0].textContent, /Fewer than 5 students: not shown/);
-    assert.doesNotMatch(rows[0].textContent, /\d{2}/, 'no figure on the small class');
+    assert.equal(
+        rows[0].textContent,
+        'Grade 3 Not shown. A class with fewer than 5 students, or where Manara Bucks moved in or out with a student, shows no figures, so no child\'s balance can be read from it.',
+    );
+    assert.doesNotMatch(rows[0].textContent, /\d{2}/, 'no figure on a class that is not shown');
     assert.match(screen.text(), /Classes shown 50/);
     screen.unmount();
 });

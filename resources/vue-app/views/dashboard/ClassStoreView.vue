@@ -115,11 +115,14 @@
                                 </thead>
                                 <tbody>
                                     <template v-for="c in recon.classes" :key="c.group_id">
-                                    <!-- A class too small to show: in it a total IS a child's balance. -->
+                                    <!-- A class too small to show, or one that Bucks moved into or out of with a student:
+                                         in either a figure can be one child's balance. The payload says only
+                                         `suppressed`, never which of the two, so one sentence names both. -->
                                     <tr v-if="c.suppressed" class="text-muted">
                                         <td dir="auto">{{ c.name }}</td>
                                         <td :colspan="recon.settings.paper_bucks_enabled ? 7 : 6" class="small">
-                                            Fewer than {{ recon.min_class_size }} students: not shown, so no child's balance can be read from it.
+                                            Not shown. A class with fewer than {{ recon.min_class_size }} students, or where Manara Bucks
+                                            moved in or out with a student, shows no figures, so no child's balance can be read from it.
                                         </td>
                                     </tr>
                                     <tr v-else>
