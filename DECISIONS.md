@@ -8181,7 +8181,7 @@ themselves still run only on the MySQL job.
     2. The out-of-date check read ALL the text in front of every address a save brought in. Not in the
        check's findings: it was found by timing the other readers after the first was fixed. 5,000 addresses
        of another site in one text (250 KB) took 15 s alone and 19 s through the route; the check takes
-       0.006 s, and the route's whole test 0.07 s. It now reads back from each address to the nearest
+       under 0.01 s, and the route's whole test 0.07 s. It now reads back from each address to the nearest
        character a host cannot hold, to a limit of 2,048 characters, and gives the answer the old pattern
        gave for every text within that (compared on 200,000 generated texts with no difference; the old
        pattern's `$` read past one line feed before the path, and so does this). PAST THE LIMIT IT THROWS:
