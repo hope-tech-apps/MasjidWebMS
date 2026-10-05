@@ -424,6 +424,41 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function a_deletion_that_is_cancelled_without_throwing_is_not_said_to_have_removed_the_record(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        Log::spy();
+        // Something listening to the delete cancels it. Nothing is raised: the delete answers
+        // "no", and the row and the file are both where they were.
+        Media::deleting(fn () => false);
+
+        $this->updateLinkList($section, ['']);
+
+        $this->assertDocumentKept($document);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context = []) use ($document, $section): bool {
+                if (($context['media_id'] ?? null) !== $document['id']) {
+                    return false;
+                }
+
+                // The line of a delete that threw, with no exception to name: it must not say the
+                // record is gone, nor anything about a disk that was never asked to let go.
+                $this->assertSame('Page document NOT deleted, and no saved section links it any more', $message);
+                $this->assertSame([
+                    'masjid_id' => $this->masjid->id,
+                    'section_id' => $section,
+                    'media_id' => $document['id'],
+                ], $context);
+
+                return true;
+            })
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+    }
+
+    #[Test]
     public function a_cleanup_that_cannot_even_look_never_fails_the_save_and_is_written_down(): void
     {
         $document = $this->uploadDocument('Calendar.pdf');

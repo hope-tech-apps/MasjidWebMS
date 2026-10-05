@@ -238,6 +238,12 @@ final class PageDocuments
      * must say so: it is the only record there will be. A disk that cannot be asked at all gets a
      * line of its own, which claims neither: the file could not be checked and may still be online.
      *
+     * Nor is "the delete returned" always "the row is gone". Something listening to the delete can
+     * cancel it, and then nothing is raised: the delete answers "no" and leaves the row and the
+     * file where they were. Anything but a plain "yes" gets the line of a delete that threw (NOT
+     * deleted), with no exception to name, and the disk is not asked about a file nothing tried to
+     * remove.
+     *
      * One document at a time, each in its own try: a file that cannot be removed must not keep the
      * others online.
      *
@@ -253,11 +259,18 @@ final class PageDocuments
             $file = $media->getPathRelativeToRoot();
 
             // Through the model, so the row and the file go together.
-            $media->delete();
+            $deleted = $media->delete();
         } catch (Throwable $e) {
             Log::warning('Page document NOT deleted, and no saved section links it any more', $ids + [
                 'exception' => $e::class,
             ]);
+
+            return;
+        }
+
+        if ($deleted !== true) {
+            // Cancelled by something listening, with nothing raised. Not "its record is gone".
+            Log::warning('Page document NOT deleted, and no saved section links it any more', $ids);
 
             return;
         }
