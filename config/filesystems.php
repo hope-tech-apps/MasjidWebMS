@@ -33,7 +33,14 @@ return [
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
-            'serve' => true,
+            // OFF on purpose. `true` makes the framework register `GET|PUT storage/{path}`
+            // over this disk with no login, trusting only an address signed with APP_KEY,
+            // and the PUT writes its body to the path it names. This disk holds every
+            // private upload, which leave through the authenticated download routes
+            // alone, and nothing here ever made such an address. With it off the disk
+            // also refuses to make one, so a later caller fails loudly instead of
+            // re-opening the door. Kept off by tests/Feature/NoSignedLocalDiskRoutesTest.php.
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],
