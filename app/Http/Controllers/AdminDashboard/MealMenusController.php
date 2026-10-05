@@ -190,10 +190,13 @@ class MealMenusController extends Controller
      * THE FILE'S NAME IS PINNED AS WELL AS ITS BYTES. `image` and `mimes` read the
      * bytes; `extensions` holds the client's file name to the same list
      * (Concerns\ValidatesVideoSection::sectionUploadRules says why). Every upload
-     * whose client file name can reach the public disk carries that pair, and
-     * UploadFileNameCoverageTest fails when a rule that accepts an upload has no
-     * `extensions` beside it and no stated reason its name never reaches a public
-     * address. `bail` stops at the first failure, so a file that is not an image
+     * whose client file name can reach the public disk carries that pair.
+     * UploadFileNameCoverageTest catches the ordinary ways of writing an upload
+     * rule without `extensions` beside it, and lists the ways it cannot see: it
+     * is not a proof that no upload is open. What proves this one is
+     * PublicUploadFileNameTest, which sends real bytes through this route; a new
+     * upload needs a row of its own in PublicUploadFileNameDoorsTest.
+     * `bail` stops at the first failure, so a file that is not an image
      * is told that once and is not also told to rename it. And the extension the
      * file is stored under is the one its bytes say, never the one in its name:
      * the web server serves public/storage from disk and picks the Content-Type
