@@ -690,8 +690,8 @@ return [
         // --- Spatie media library. This is the logo and app-icon estate on the
         // PUBLIC disk. Emptying it is what wiped the mobile feature drawer on
         // 2026-08-28 — see the incident in root memory.
-        'media.name' => 'Public media-library disk: logos, app icons, announcement images. Wiping this table or its names empties the mobile app\'s feature drawer.',
-        'media.file_name' => 'The on-disk filename of a public logo or icon; the bytes ARE copied to staging.',
+        'media.name' => 'Public media-library disk: logos, app icons, announcement images, and the PDFs an office published on its web pages (collection page_documents), where this is the name the office gave the file. Public by definition: each is served to anyone at its address. Wiping this table or its names empties the mobile app\'s feature drawer.',
+        'media.file_name' => 'The on-disk filename of a public logo, icon or page document (for a page document a slug the server made, always ending .pdf); the bytes ARE copied to staging.',
         'media.collection_name' => 'The Spatie collection a file belongs to ("logo", "gallery"). Structural, not personal.',
 
         // --- JSON explicitly audited as carrying no personal data.

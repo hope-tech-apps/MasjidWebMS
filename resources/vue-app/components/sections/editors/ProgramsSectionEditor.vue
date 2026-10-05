@@ -69,9 +69,14 @@
                         type="button"
                         class="btn btn-sm btn-primary"
                         @click="addProgram"
+                        :disabled="uploadsInFlight > 0"
                     >
                         <i class="bi bi-plus-circle"></i> Add Program
                     </button>
+                </div>
+
+                <div v-if="uploadsInFlight > 0" class="form-text mb-2" role="status">
+                    A PDF is uploading. Programs can be added, moved or removed again when it has finished.
                 </div>
 
                 <div
@@ -87,7 +92,7 @@
                                     type="button"
                                     class="btn btn-sm btn-outline-secondary"
                                     @click="moveProgramUp(index)"
-                                    :disabled="index === 0"
+                                    :disabled="index === 0 || uploadsInFlight > 0"
                                     title="Move Up"
                                 >
                                     <i class="bi bi-arrow-up"></i>
@@ -96,7 +101,7 @@
                                     type="button"
                                     class="btn btn-sm btn-outline-secondary"
                                     @click="moveProgramDown(index)"
-                                    :disabled="index === localContent.programs.length - 1"
+                                    :disabled="index === localContent.programs.length - 1 || uploadsInFlight > 0"
                                     title="Move Down"
                                 >
                                     <i class="bi bi-arrow-down"></i>
@@ -105,6 +110,7 @@
                                     type="button"
                                     class="btn btn-sm btn-danger"
                                     @click="removeProgram(index)"
+                                    :disabled="uploadsInFlight > 0"
                                     title="Remove Program"
                                 >
                                     <i class="bi bi-trash"></i>
@@ -121,6 +127,9 @@
                                     :current-image-src="program.image_url || undefined"
                                     @image-change="(data) => onProgramImageChange(index, data)"
                                 />
+                                <div class="form-text">
+                                    Images only. To attach a PDF, use Upload a PDF under Link URL.
+                                </div>
                             </div>
 
                             <div class="col-md-6 mb-3">
@@ -216,6 +225,13 @@
                                     @input="emitUpdate"
                                     placeholder="https://example.com or /page-slug"
                                 />
+                                <SectionDocumentUpload
+                                    :key="`program-document-${index}-${rowsMoved}`"
+                                    :value="program.link_url"
+                                    :label="(program.name || '').trim() || `Program ${index + 1}`"
+                                    @busy="onDocumentBusy"
+                                    @uploaded="(stored) => onDocumentUploaded(index, stored)"
+                                />
                             </div>
 
                             <div class="col-md-6 mb-3">
@@ -245,6 +261,8 @@
 import { ProgramsSectionContent, ProgramItem } from '@/core/types/data/masjid-related/PageSection';
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
+import SectionDocumentUpload from '@/components/form/SectionDocumentUpload.vue';
+import { sectionDocumentLabel } from '@/core/helpers/sectionDocumentFile';
 import { ref, watch, inject } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
 
@@ -335,13 +353,55 @@ const remapProgramImageFiles = (mapIndex: (oldIndex: number) => number | null) =
     });
 };
 
+// A PDF is uploaded at once by SectionDocumentUpload and comes back as an address for the program
+// it was started from. Unlike a program's image it is never queued (there is nothing to re-key), but
+// rows are keyed by position, so while an upload is in flight the rows must hold still: Add, Move
+// and Remove are off until every upload has answered.
+const uploadsInFlight = ref(0);
+
+// Counts the moves and removals. Part of each upload control's key, so a control never carries a
+// message about one program over to the program that took its place.
+const rowsMoved = ref(0);
+
+const onDocumentBusy = (busy: boolean) => {
+    uploadsInFlight.value = Math.max(0, uploadsInFlight.value + (busy ? 1 : -1));
+};
+
+const onDocumentUploaded = (index: number, stored: { url: string; name: string; filled?: (sentence: string) => void }) => {
+    const program = localContent.value.programs[index];
+    if (!program) {
+        return;
+    }
+
+    program.link_url = stored.url;
+    // Only a BLANK link text is filled, from the file's name, so the link says what it opens; words
+    // the office wrote are theirs, and these can be changed. The office is told it was filled.
+    if (!(program.link_text || '').trim()) {
+        // Empty when the name has nothing to read (`___.pdf`): the words are then this editor's,
+        // and are not said to have come from the file's name.
+        const fromName = sectionDocumentLabel(stored.name);
+        program.link_text = fromName || 'View PDF';
+        stored.filled?.(fromName
+            ? 'Link Text was filled in from the file\'s name. Change it if you like.'
+            : 'Link Text was filled in as "View PDF". Change it if you like.');
+    }
+    emitUpdate();
+};
+
 const addProgram = () => {
+    if (uploadsInFlight.value > 0) {
+        return;
+    }
     localContent.value.programs.push(newProgram());
     emitUpdate();
 };
 
 const removeProgram = (index: number) => {
+    if (uploadsInFlight.value > 0) {
+        return;
+    }
     localContent.value.programs.splice(index, 1);
+    rowsMoved.value++;
     remapProgramImageFiles((oldIndex) => {
         if (oldIndex === index) return null;
         return oldIndex > index ? oldIndex - 1 : oldIndex;
@@ -350,6 +410,10 @@ const removeProgram = (index: number) => {
 };
 
 const swapPrograms = (a: number, b: number) => {
+    if (uploadsInFlight.value > 0) {
+        return;
+    }
+    rowsMoved.value++;
     const programs = [...localContent.value.programs];
     [programs[a], programs[b]] = [programs[b], programs[a]];
     localContent.value.programs = programs;

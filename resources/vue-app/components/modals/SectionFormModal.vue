@@ -19,12 +19,14 @@
                         <i class="bi me-1" :class="showPreview ? 'bi-eye-slash' : 'bi-eye'"></i>
                         {{ showPreview ? 'Hide preview' : 'Show preview' }}
                     </button>
-                    <button type="button" class="btn-close" @click="$emit('close')"></button>
+                    <button type="button" class="btn-close" @click="requestClose"></button>
                 </div>
                 <div class="modal-body">
                   <div :class="previewOn ? 'row g-3 h-100' : ''">
                     <div :class="previewOn ? 'col-lg-5 section-editor-column' : ''">
-                    <!-- Mode Selection (only for new sections) -->
+                    <!-- Mode Selection (only for new sections). Held while a PDF uploads, as the
+                         Section Type and Save are: Attach Existing takes the form away, and the
+                         control the upload's answer is for with it. -->
                     <div v-if="!isEdit" class="mb-4">
                         <div class="btn-group w-100" role="group">
                             <input
@@ -35,6 +37,7 @@
                                 value="create"
                                 v-model="mode"
                                 autocomplete="off"
+                                :disabled="documentUploads > 0"
                             >
                             <label class="btn btn-outline-primary" for="modeCreateNew">
                                 <i class="bi bi-plus-circle me-2"></i>
@@ -49,6 +52,7 @@
                                 value="attach"
                                 v-model="mode"
                                 autocomplete="off"
+                                :disabled="documentUploads > 0"
                             >
                             <label class="btn btn-outline-primary" for="modeAttachExisting">
                                 <i class="bi bi-link-45deg me-2"></i>
@@ -157,10 +161,13 @@
                             <label class="form-label">
                                 Section Type <span class="text-danger">*</span>
                             </label>
+                            <!-- Held while a PDF uploads: another type is another editor, and the
+                                 upload's answer would have no field to land in. The footer says why. -->
                             <select
                                 class="form-select"
                                 v-model="formData.section_type"
                                 @change="onSectionTypeChange"
+                                :disabled="documentUploads > 0"
                                 required
                             >
                                 <option value="">-- Select Section Type --</option>
@@ -314,7 +321,28 @@
                   </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" @click="$emit('close')">
+                    <!-- What Save will do about this section's PDFs, said beside Save: always in
+                         view, whichever editor or row the office was in when it let a file go. -->
+                    <div class="section-form-notes me-auto small text-muted" role="status">
+                        <div v-if="documentUploads > 0">A PDF is still uploading.</div>
+                        <div v-for="file in documentsLeaving" :key="file.path">
+                            <strong>{{ file.name }}</strong>: This file is taken offline when you
+                            save, unless another saved section still links it.
+                        </div>
+                        <!-- A PDF uploaded while this modal was open that the form no longer holds
+                             (its row removed, its section type changed, another PDF put in its
+                             place, the form set aside for Attach Existing). It is online, no save
+                             will delete it, and this is the only screen that knows its address. -->
+                        <div v-for="file in documentsLeftOnline" :key="`left-online:${file.path}`">
+                            <strong>{{ file.name }}</strong>: You uploaded this file here and nothing
+                            in this form links it now. It is online and in no saved section. Its
+                            address: <span class="user-select-all text-break">{{ file.address }}</span>
+                            To take it offline, put the address back in a link, save, then clear it
+                            and save again.
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-secondary" @click="requestClose">
                         Cancel
                     </button>
 
@@ -337,7 +365,7 @@
                         type="button"
                         class="btn btn-primary"
                         @click="handleSubmit"
-                        :disabled="loading || (!isEdit && mode === 'create' && !formData.section_type)"
+                        :disabled="loading || documentUploads > 0 || (!isEdit && mode === 'create' && !formData.section_type)"
                     >
                         <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
                         <i class="bi" :class="isEdit ? 'bi-check-circle me-1' : 'bi-plus-circle me-1'"></i>
@@ -353,6 +381,7 @@
 import { PageSection, SectionType } from '@/core/types/data/masjid-related/PageSection';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { isWebOnlySectionType, webOnlyPlatforms } from '@/core/helpers/shopSection';
+import { sectionDocumentsIn, sectionDocumentsLeaving, sectionDocumentsNotSaved, type SectionDocument } from '@/core/helpers/sectionDocumentFile';
 import { ref, computed, onMounted, shallowRef, provide, watch } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
 import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
@@ -417,6 +446,52 @@ const sectionImages = useSectionImages();
 // Provide to child components
 provide('sectionImages', sectionImages);
 
+/**
+ * THE MODAL'S FORM IS A COPY OF ITS OWN. `props.section` is the object the page list holds, and Cancel
+ * does not reload that list; a section type's `default_content` is the object the store holds, and it
+ * is handed to every new section of that type. An editor binds its fields straight onto the rows it
+ * is given, so if those rows were the caller's, an edit that was abandoned would still be there the
+ * next time the section was opened: an upload nobody saved would read as saved, and a saved address
+ * that was cleared and cancelled would go out, cleared, with the next save (and the server would
+ * delete a document the office believed it had kept). So nothing below the modal is ever handed the
+ * caller's object: content is copied in, deeply, here.
+ *
+ * Through JSON because the object is reactive (`structuredClone` throws on a proxy), and because
+ * content IS JSON: it came from the API, and goes back as JSON.
+ */
+const ownCopy = <T>(content: T): T => (
+    content && typeof content === 'object' ? JSON.parse(JSON.stringify(content)) : ({} as T)
+);
+
+// A PDF for a link field is not queued with the images above: SectionDocumentUpload sends it at
+// once and writes its address into the content. Three things only this modal can know about that:
+//
+//  - How many of those uploads are in flight. The control raises and lowers this, and Save waits on
+//    it: a section saved mid-upload is saved without the address, the answer then lands in an editor
+//    that is gone, and the file is online, linked from nowhere, its address shown on no screen. A new
+//    section's Section Type and its Create New / Attach Existing choice wait on it too: either one
+//    takes the editor away exactly as closing does, and neither asks.
+//  - Which page documents the SAVED section links. The server deletes a document when a save stops
+//    linking it, compared with what was saved; one uploaded since is in nothing saved, and letting go
+//    of it deletes nothing. Read from `props.section.content` itself, the section as the page list
+//    holds it, which no editor can reach (the form is a copy, above): it is what was saved when the
+//    list was last loaded, however many times the section has been opened and cancelled since.
+//  - Which PDFs were uploaded while THIS modal was open. The control adds each one as its upload
+//    ends, whether or not the control is still there. A file is online from that moment, and until
+//    a save links it this modal is the only screen that knows its address: an editor that removes
+//    a row, a new section whose type is changed, an upload put in another's place and the Attach
+//    Existing form all take the address out of the form, and none of them can say so. The list
+//    outlives all of them (it is the modal's, not a control's or a row's), and the footer names
+//    each file on it that the form no longer holds.
+const documentUploads = ref(0);
+provide('sectionDocumentUploads', documentUploads);
+
+const savedDocuments = sectionDocumentsIn(props.section?.content);
+provide('sectionSavedDocuments', savedDocuments);
+
+const uploadedDocuments = ref<SectionDocument[]>([]);
+provide('sectionUploadedDocuments', uploadedDocuments);
+
 // State
 const loading = ref(false);
 const mode = ref<'create' | 'attach'>('create');
@@ -437,6 +512,29 @@ const formData = ref<any>({
 // Computed
 const isEdit = computed(() => !!props.section);
 const sectionTypes = computed(() => pagesStore.sectionTypes);
+
+/**
+ * The saved section's page documents that the content no longer links, in any field of any editor
+ * (an address cleared or replaced, a row removed, a link taken out of a paragraph): the files this
+ * save takes offline. Said in the footer until the save, and gone again if the address is put back.
+ */
+const documentsLeaving = computed(() => sectionDocumentsLeaving(savedDocuments, formData.value.content));
+
+/**
+ * Of the PDFs uploaded while this modal was open, the ones nothing in the form links now: online, in
+ * no saved section, and deleted by no save. Said in the footer, with the address, until the modal
+ * closes or the address is put back.
+ *
+ * "The form" is what a save from here would send. While Attach Existing is chosen that is nothing:
+ * Attach Section saves none of the Create New form, which is only set aside. And never a file the
+ * SAVED section links (no real upload answers with one: each is a new address): the save takes that
+ * one offline, which is the other sentence. "Links" is read as the other sentence reads it, so a file
+ * put back in any spelling the server would keep it by is not called left.
+ */
+const documentsLeftOnline = computed(() => sectionDocumentsLeaving(
+    uploadedDocuments.value.filter((file) => !savedDocuments.some((kept) => kept.path === file.path)),
+    isEdit.value || mode.value === 'create' ? formData.value.content : {},
+));
 
 /**
  * The server's own record for the type being added — including whether the
@@ -602,7 +700,7 @@ onMounted(async () => {
         formData.value = {
             section_type: props.section.section_type,
             title: props.section.title || '',
-            content: props.section.content || {},
+            content: ownCopy(props.section.content),
             order: props.section.order,
             // Fall back to both if the placement has no platforms set.
             platforms: Array.isArray(props.section.platforms) && props.section.platforms.length
@@ -624,13 +722,20 @@ onMounted(async () => {
 const onSectionTypeChange = () => {
     const selectedType = sectionTypes.value.find(t => t.value === formData.value.section_type);
     if (selectedType) {
-        formData.value.content = selectedType.default_content;
+        formData.value.content = ownCopy(selectedType.default_content);
         currentEditor.value = editorMap[formData.value.section_type as SectionType];
     }
 };
 
 const handleAttach = async () => {
     if (!selectedSectionId.value) return;
+
+    // Attaching closes the modal exactly as Cancel does. A PDF uploaded into the Create New form
+    // before the office switched here is in nothing Attach Section saves, so the same question is
+    // asked first, and "Keep Editing" attaches nothing.
+    if (documentsLeftOnline.value.length > 0 && !(await mayLeave('Attach Anyway'))) {
+        return;
+    }
 
     loading.value = true;
 
@@ -695,7 +800,83 @@ const stripBase64Images = (content: any): any => {
     return cleaned;
 };
 
+/**
+ * What leaving this modal would leave behind, and ONE question for all of it. Asked by Cancel and the
+ * close button, and by Attach Section, which closes the modal too. Answers whether to go ahead.
+ *
+ *  - A PDF that is still uploading. Closing discards the editor the answer is for, but not the
+ *    upload: the request is already on its way. The advice is to wait and SAVE; waiting and then
+ *    closing leaves the same file online.
+ *  - A PDF that is in the form and not in the saved section (uploaded, or put in, since it was
+ *    opened). It is online already, no save has linked it, and this form is the last screen that
+ *    shows its address. Read from the content as the footer's notes are, against what was saved.
+ *    "Unless another saved section links it" because the page tool cannot know that of an address
+ *    put in by hand.
+ *  - A PDF uploaded here that the form no longer holds (`documentsLeftOnline`). Saving would not
+ *    link it either, so it is not told "if you close without saving": it is online now and stays
+ *    so. The footer has said so since the form let go of it; this is the last time its address is
+ *    on a screen.
+ *
+ * Each file is named once. Nothing is asked when there is none of the three.
+ */
+const mayLeave = async (goAhead: string): Promise<boolean> => {
+    const uploading = documentUploads.value > 0;
+    const leftOnline = documentsLeftOnline.value;
+    const notSaved = sectionDocumentsNotSaved(savedDocuments, formData.value.content)
+        .filter((file) => !leftOnline.some((left) => left.path === file.path));
+
+    if (!uploading && notSaved.length === 0 && leftOnline.length === 0) {
+        return true;
+    }
+
+    const said: string[] = [];
+    if (uploading) {
+        said.push('If you close now it may still be stored. It would then stay online, linked from nowhere, with its address shown on no screen. Wait for the upload to finish, then save.');
+    }
+    if (notSaved.length === 1) {
+        said.push(`${notSaved[0].name} has not been saved in this section. If you close without saving, it stays online, linked from nowhere unless another saved section links it. Its address: ${notSaved[0].address}`);
+    } else if (notSaved.length > 1) {
+        said.push(`These PDFs have not been saved in this section: ${notSaved.map((file) => `${file.name} (${file.address})`).join('; ')}. If you close without saving, they stay online, linked from nowhere unless another saved section links them.`);
+    }
+    if (leftOnline.length === 1) {
+        said.push(`${leftOnline[0].name} was uploaded here and nothing in this form links it now. It is online, in no saved section, and stays online when you close. Its address: ${leftOnline[0].address}`);
+    } else if (leftOnline.length > 1) {
+        said.push(`These PDFs were uploaded here and nothing in this form links them now: ${leftOnline.map((file) => `${file.name} (${file.address})`).join('; ')}. They are online, in no saved section, and stay online when you close.`);
+    }
+    if (leftOnline.length > 0) {
+        said.push('To take one offline, keep editing: put its address back in a link, save, then clear it and save again.');
+    }
+
+    const unsaved = notSaved.length + leftOnline.length;
+    const answer = await Swal.fire({
+        icon: 'warning',
+        title: uploading
+            ? 'A PDF is still uploading'
+            : unsaved === 1 ? 'A PDF has not been saved' : 'PDFs have not been saved',
+        text: said.join(' '),
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: goAhead,
+        cancelButtonText: 'Keep Editing',
+    });
+
+    return answer.isConfirmed;
+};
+
+const requestClose = async () => {
+    if (await mayLeave('Close Anyway')) {
+        emit('close');
+    }
+};
+
 const handleSubmit = async () => {
+    // The button is off while a PDF is uploading, but the form is also submitted by Enter in any of
+    // its fields, which asks no button.
+    if (documentUploads.value > 0) {
+        return;
+    }
+
     loading.value = true;
 
     try {
@@ -772,6 +953,28 @@ const handleSubmit = async () => {
 .section-editor-column {
     max-height: calc(100vh - 160px);
     overflow-y: auto;
+}
+
+/* The footer's notes take the room the buttons leave and wrap inside it, so a long file name
+   never pushes Cancel and Save off their line on a wide screen; on a narrow one they take a line
+   of their own above the buttons. With nothing to say they take no room at all (the element stays
+   in the page, so a screen reader hears it fill). */
+.section-form-notes {
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.section-form-notes:empty {
+    flex-basis: 0;
+    margin: 0;
+}
+
+@media (max-width: 575.98px) {
+    /* On a phone the notes have the whole line, so Cancel and Save stay side by side under them. */
+    .section-form-notes:not(:empty) {
+        flex-basis: 100%;
+    }
 }
 
 .btn-check:checked + .btn-outline-primary {

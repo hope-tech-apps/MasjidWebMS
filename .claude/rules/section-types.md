@@ -7,6 +7,10 @@ paths:
   - "app/Http/Requests/Admin/PageSections/**"
   - "app/Http/Requests/Admin/Pages/**"
   - "app/Support/SectionContentBinder.php"
+  - "app/Support/PageDocuments.php"
+  - "app/Http/Controllers/AdminDashboard/PageDocumentsController.php"
+  - "app/Http/Requests/Admin/Pages/StorePageDocumentRequest.php"
+  - "resources/vue-app/components/form/SectionDocumentUpload.vue"
   - "app/Http/Resources/Api/V1/PageSectionResource.php"
   - "resources/vue-app/components/sections/editors/**"
   - "resources/vue-app/components/modals/SectionFormModal.vue"
@@ -138,6 +142,193 @@ five doors, the feed with push and then each other channel alone (push, the
 board, email, a text message). **A new upload to the public disk needs its own
 row there**, whatever the coverage test says, and every file a controller reads
 needs a rule.
+
+**A PDF is not a section upload, and takes none of the seven places.** An office
+attaches a document (a curriculum, a calendar, a schedule) by uploading it ON ITS
+OWN: `POST {masjid}/pages/documents` (`PageDocumentsController`,
+`StorePageDocumentRequest`, `App\Support\PageDocuments`), in the group that
+guards saving a page and outside the purge groups. It stores one PDF on the
+ORGANISATION (media collection `page_documents`, read only through
+`Masjid::pageDocuments()`) and answers `{url, name, size}`; the page tool writes
+`url` into a link field a section already has (`links[].url`,
+`programs[].link_url`, `button_link`), where the website already draws a link.
+So: no `SectionType` case, no entry in either upload map, no change to
+`sectionUploadRules()`, no renderer component. A PDF sent WITH a section's save
+is still a 422 (`PageDocumentUploadTest` pins it on both routes).
+
+- **What is let in:** `mimetypes:application/pdf` (the bytes) AND `%PDF-` as the
+  first five bytes AND `extensions:pdf` AND 25 MB. The second is not a belt: the
+  type sniffer calls a web page with a PDF after it `application/pdf` (seen on
+  PHP 8.3). The type a browser declares is never read.
+- **What is written:** a name the SERVER makes, `Str::slug` of the client's name
+  plus `.pdf` (`PageDocuments::storedName`). The client's name never reaches the
+  disk, so the rule above about `extensions` is a refusal a person can act on
+  here, not the guard.
+- **What is answered:** the media row's URL, from the public disk's configured
+  `url`, never from the request (`.claude/rules/generated-urls.md`). It must be
+  absolute, because the website is another host: a disk with no absolute `url`
+  refuses the upload and keeps nothing.
+- **A failed upload leaves no row.** The media library saves the row and then
+  copies the file, and takes its row back only for a write the disk refuses; a
+  copy that THROWS (the file's directory cannot be made) would leave a row with
+  no file. `PageDocuments::store()` runs in a transaction for that reason.
+- **Thirty REQUESTS an hour for each signed-in user in each organisation**
+  (`throttle:page-documents`, `AppServiceProvider`), because each upload is a
+  public file no screen lists. Keyed by the user and the route's `masjid_id`
+  read as a NUMBER, as the tenant gate reads it: the route does not pin its
+  spelling, and a key on the text would give `7`, `07` and `7.0` thirty each.
+  Laravel runs the limiter straight after `auth`, AHEAD of the tenant and
+  capability gates and of the upload's own rule, so every signed-in request to
+  that address is counted: stored, refused by the rule, or refused because the
+  organisation is not theirs. The 429 carries a sentence (`message`), which the
+  page tool shows, and it says "tried to upload" so that it is true of someone
+  whose thirty were all refused.
+- **It is public from the second the upload ends**, before any save. The editor
+  says so. A document that must not be public does not go here
+  (`.claude/rules/private-uploads.md`).
+- **A document stays online while a saved section links to it.**
+  `PageDocuments::forgetUnlinked()` runs after `PageSectionsController::update`,
+  `SectionsController::update` and `SectionsController::destroy`, and DELETES the
+  organisation's own page documents whose address that write removed from the
+  section, unless another section of the organisation (on a page or only in the
+  library, active or not) still carries it. It matches the PATH
+  (`/storage/{id}/{name}.pdf`), so a change of host or scheme cannot make a live
+  file look unlinked; it resolves by media id AND stored name through
+  `Masjid::pageDocuments()`, so another organisation's document, a section image
+  or a gallery photo can never match; it never fails the save; and it leaves a
+  WARNING line by ids alone for each file it removes or cannot remove. **Any new
+  route that writes or deletes a section must call it**, or documents unlinked
+  there are simply left online. Five things it is careful about, each of which
+  was a wrong deletion, a false record or a save held for seconds before it was
+  written down here:
+  - **Only one spelling STARTS a deletion, and every spelling stops one.** The
+    address pattern takes an id with no leading zero (`/storage/03/x.pdf` is
+    nobody's document, though read as a number it is document 3). "Still linked"
+    is asked of the address as written, of the document's own path, of both
+    percent-decoded (a viewer's link that carries the address encoded keeps the
+    file), and of each of those in a spelling a browser resolves to the same
+    file: a tab or a line break inside it, backslashes or JSON-escaped slashes
+    for slashes, a doubled slash, `.` and `..` segments, the `..` stepping back
+    over any segment but one holding `?` or `#` (`PageDocuments::resolved()`).
+    A link that was only ever there encoded or in such a spelling never starts
+    a deletion. Widen the KEEPING side freely; never what starts one. STILL NOT
+    SEEN, and this is all of it (PD-17): any character of the address written
+    as an HTML character reference (`&#x2F;`, `&#47;`, `&sol;`, `&#46;`); the
+    address percent-encoded twice or more; the path or `.PDF` in another letter
+    case; a link that does not hold the path at all (a redirect, a short link,
+    an address relative to another).
+  - **Both readers take ONE pass over a text, and stay that way.** A section's
+    text has no size limit, and the cleanup reads every string of the section on
+    every save, and every other section's when a save drops a document.
+    `resolved()` once took one `..` step per pass over the whole text, and the
+    out-of-date check read the whole text in front of every address: 40,000
+    steps, or 5,000 addresses, held a save for eleven and for nineteen seconds
+    after its content was written. `resolved()` cuts the text at its slashes
+    once; the out-of-date check reads back from each address to the nearest
+    character a host cannot hold, at most 2,048 characters, and past that it
+    THROWS (the caller logs "were not checked" and deletes nothing). One cost
+    is bounded instead: each address a save lets go of is looked for in all the
+    new content and asked of the database, so a save that lets go of more than
+    1,000 at once THROWS the same way (20,000 took six seconds). A bound that
+    gives up silently is not the safe side here: it would stop keeping a file,
+    or call an address "not ours" unread.
+  - **A save from an out-of-date editor deletes nothing, and ONLY such a save.**
+    If the content after the save brings in an address the section did not have
+    before, that is written as OURS (on the public disk's host, on the host the
+    request came in on, or with no `//host` in front of the path at all) and has
+    NO media row ON THE PUBLIC DISK with that id and file name, the save is an
+    old copy putting a deleted file's link back (a second tab): the document it
+    would otherwise unlink is the CURRENT one. A host is compared as a browser
+    takes it: any letter case, with or without the port its scheme uses anyway,
+    with or without a closing dot. Only the public disk is asked, because the
+    answer shows in what happens to the administrator's own document: asked of
+    every disk, a save told them whether another organisation's PRIVATE file has
+    a given number and name.
+    One warning line names what was kept. The save is not refused, so the old
+    link stays dead. Do not widen this: a document kept here has left the
+    content, so no later save can reach it. The first version fired for any
+    address of the shape that was not the organisation's own, and so kept, for
+    good, a document that was replaced by another organisation's, by the
+    organisation's own PDF in another collection, or by another site's address.
+  - **"Deleted" is said only when the disk says the file is gone, and "kept"
+    only when it says the file is there.** The media library deletes the row
+    first, and a disk that will not let a file go raises nothing (the public
+    disk does not throw). The disk is asked afterwards; a file it still holds is
+    logged as NOT removed and still online, and a disk that cannot be asked at
+    all gets a third line: the file could not be checked and may still be online.
+    Nor is "the delete returned" always "the row is gone": a listener can cancel
+    a delete by answering false, with nothing raised. Anything but a plain yes is
+    logged as NOT deleted, like a delete that threw, and the disk is not asked.
+  - **It runs whenever the content was written**, not only when the save
+    succeeded: both `update` actions call `forgetUnlinkedBySave()` in a
+    `finally` that starts after the section's row is updated, and it compares
+    with what is STORED. The row is written before the images, in no
+    transaction, so a failed image step answers 500 with the address already
+    gone, and no later save would find the document.
+- **Kept on purpose:** a document whose section was only taken off a page, or
+  whose page was deleted (the section is still in the library), and a document
+  that was uploaded and never saved. Nothing scheduled deletes one: a sweeper
+  would delete public files by inference, and `media:verify` exists because that
+  went wrong here once. An address pasted somewhere that is NOT a section (a menu
+  link, an announcement) does not keep its file online.
+- **`media:verify`:** the collection is counted like any other. If the platform
+  holds five or more page documents and every one is taken offline between two
+  runs, the vanish floor reports it until an operator accepts the baseline. That
+  is the detector working.
+- **A removed file's address is a 404**, not the admin screen: `routes/web.php`
+  answers `/storage/{missing}` ahead of the SPA catch-all. Keep the parameter's
+  name: a route spelt `storage/{path}` is replaced, in that place, by the
+  framework's signed route to the PRIVATE disk.
+- **The control** is `components/form/SectionDocumentUpload.vue`, under the link
+  field of Link Buttons, Programs & Curriculum and Call to Action only (the local
+  rules are in `components/sections/editors/CLAUDE.md`). The address can be
+  pasted into any other link field by hand.
+- **`SectionFormModal` holds Save while a PDF uploads** and asks before closing
+  (a section saved mid-upload is saved without the address), and says beside
+  Save which saved documents the content no longer links: those are the files
+  the save takes offline. A new section's Section Type and its Create New /
+  Attach Existing choice are held too. What the screen may say about a file
+  depends on whether the SAVED section links it; a file uploaded since is
+  deleted by no save, and must never be told that clearing or replacing it
+  takes it offline. Closing on a file the saved section does not hold asks
+  once, with its name and its address: this form is the last screen that shows
+  where it is.
+- **A PDF uploaded in the modal stays on the screen when the form lets go of
+  it.** The modal keeps the list of what was uploaded while it is open
+  (`sectionUploadedDocuments`; the control adds each file as its upload ENDS,
+  whether or not the control is still there), and its footer names each one the
+  form no longer holds: the name, that it is online and in no saved section,
+  the address, how to take it offline. One mechanism for every way an address
+  leaves the form (Remove on its row, a new section's type changed, another PDF
+  put in its place, the field cleared, Attach Existing), because none of those
+  can say it themselves: a control is made anew when rows move and is gone with
+  its row. The question on Cancel and the close button names these files too,
+  once each, and Attach Section asks it before closing. Do not put a notice
+  about a file the form no longer shows back into the control or an editor.
+- **The modal's form is a deep copy of the section's content** (and of a new
+  section's default content), and every editor that holds rows copies each row.
+  The section the page list holds is what was SAVED, and Cancel does not reload
+  the list: when Link Buttons wrote into the list's own link objects, an upload
+  that was cancelled read as saved the next time, and a cleared address that
+  was cancelled went out with the next save and deleted the document. This is
+  the rule for every editor, with or without a PDF
+  (`components/sections/editors/CLAUDE.md`, "Copy every ROW").
+- **Limits that stay:** a stalled upload holds Save, the type and the mode, and
+  the only way out is Cancel, then Close Anyway; the modal's list of uploads
+  lives only as long as the modal, and once it is closed no screen lists a file
+  that no saved section links; an address put in BY HAND and then replaced or
+  taken out is not named afterwards (it was not uploaded here, and the page
+  tool cannot know whose file it is); a size is shown in the unit of the limit
+  (1024s), so a computer that counts in thousands shows a slightly larger
+  number for the same file; anything that throws after the file is copied and
+  before the row is committed leaves a file with no row; a save whose content
+  holds an address after more than 2,048 characters of unbroken text, or that
+  lets go of more than a thousand addresses at once, has its cleanup given up,
+  out loud.
+- `PageDocumentUploadTest` and `PageDocumentCleanupTest` pin all of it; the SPA's
+  `section-document-file.test.ts`, `section-document-upload.test.ts`,
+  `section-form-modal-documents.test.ts` and `section-editors-own-copy.test.ts`
+  pin the control, the modal and the editors.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without

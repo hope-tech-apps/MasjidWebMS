@@ -14,8 +14,22 @@ is the local idiom.
   defaults **every** field, `watch(() => props.modelValue, …, { deep: true })`
   re-normalizes, and every input calls `emitUpdate()`. Content authored before a
   field existed must not blow up a `v-for`; default it in `normalize()`.
+- **Copy every ROW, not only the list.** Fields are bound straight onto a row
+  (`v-model="link.url"`), so a row that is still the caller's object is written
+  into the caller's content as the office types, saved or not.
+  `[...value.links]` copies the list and shares every link;
+  `value.links.map((link) => ({ ...link }))` is the copy, in the initial value
+  AND in the watch, and a list inside a row (`highlights`, `includes`) is copied
+  again. `SectionFormModal` also hands every editor a deep copy of its own, so
+  the section the page list holds cannot be reached from here; this rule is what
+  keeps an editor honest wherever else it is mounted.
+  `tests/section-editors-own-copy.test.ts` mounts every editor that has rows:
+  add a new one to its list.
 - Images go through `ImageDraggableInput` + the injected
-  `sectionImages` composable, never a bare `<input type="file">`.
+  `sectionImages` composable, never a bare `<input type="file">`. (A file that
+  is NOT an image has a bare input, because `ImageDraggableInput` decodes
+  whatever it is given as a picture: the MP4 in `VideoSectionEditor`, still
+  queued on `sectionImages`, and a PDF, below, which is not queued at all.)
 
 ## Registering a new editor
 
@@ -41,6 +55,110 @@ maps it back through `getImageFieldsForSectionType`. Two consequences:
   `remap*Files` helper to copy: clear
   every pending entry first (so a swap cannot overwrite its own counterpart),
   then re-add at the new index; return `null` from the mapper to drop one.
+
+## A PDF is an address, not a queued file (the one exception to the uploads above)
+
+Link Buttons, Programs & Curriculum and Call to Action carry `SectionDocumentUpload`
+(`components/form/`) under their link field. It is the one upload in an editor's
+subtree that is NOT queued on `sectionImages`: it sends its file through a store
+action at once. (It is not the only bare file input, which Video also has, nor the
+only use of a store here: several editors read pages or forms from one. The rule
+above is that an editor never talks to a store ABOUT THE SECTION, and it still does
+not.)
+
+- **The file is sent at once** (`pagesStore.uploadPageDocument`), not on Save, and what
+  comes back is an absolute address. The editor writes that string into its link field
+  (`links[i].url`, `programs[i].link_url`, `button_link`) and calls `emitUpdate()`, as if
+  the office had pasted it. Nothing is added to `sectionImages`, and a section's content
+  never holds a `File`, a `blob:` or a `data:` value for a document.
+- **So there is nothing to re-key**, but rows are still keyed by position: while an upload
+  is in flight (`@busy`) the editor turns Add, Move and Remove off, or the address lands
+  on the wrong row. Each control's `:key` carries a counter the editor bumps on every move
+  and removal, so a refusal shown under one row does not stay behind under another.
+- **Only blank companions are filled** (a Link Buttons label and icon, a program's Link
+  Text). Words the office chose are theirs. When the editor fills one it says so by
+  calling `stored.filled('…one sentence…')` on the `uploaded` payload, and the control
+  shows that sentence in its "Uploaded." note. "From the file's name" is said only
+  when the name gave the words: a name with nothing to read (`___.pdf`) gets the
+  editor's own word ("Document" in Link Buttons, "View PDF" in Programs), and the
+  sentence then says what it was filled in as.
+- **Save waits for an upload.** `SectionFormModal` provides a count,
+  `sectionDocumentUploads`, beside `sectionImages`; the control raises it when a file
+  goes and lowers it when the answer comes, or when the control is unmounted first.
+  While it is above zero Create/Update Section is off, the footer says "A PDF is still
+  uploading.", `handleSubmit` returns (Enter in a field submits the form and asks no
+  button), and Cancel and the close button ask before closing. A NEW section's Section
+  Type and its Create New / Attach Existing choice are held too: either takes the
+  editor away as closing does, and neither asks. The editors do nothing for this:
+  their own `uploadsInFlight` only holds their rows. The count is lowered ONCE for
+  each upload (the control's `counted`): one whose control went mid-upload has been
+  counted down already, and its late answer must not open Save for another.
+- **Closing asks about a PDF that no save has linked.** When the form holds a page
+  document the saved section does not (`sectionDocumentsNotSaved`: uploaded, or put
+  in by hand, since it was opened), Cancel and the close button ask once, naming the
+  file and giving its address, because the file is online already and this form is
+  the last screen that shows where. With an upload also in flight it is still one
+  question, and its advice is to wait and SAVE (waiting and closing leaves the same
+  file online). Nothing is kept for this: it is read from the content when the
+  office closes, as the footer's notes are.
+- **A PDF uploaded here stays on the screen when the form lets go of it.** The modal
+  keeps the list of what was uploaded while it is open (`sectionUploadedDocuments`,
+  provided beside `sectionSavedDocuments`); the control adds each file as its upload
+  ENDS, whether or not the control is still there. The footer names, beside Save,
+  each one the form no longer holds and the saved section never held: its name, that
+  it is online and in no saved section, its address, and how to take it offline. It
+  stays through row moves, Remove, a type change and the Attach Existing form, and
+  goes when the address is put back. The same files are named in the question on
+  Cancel and the close button, once each, and Attach Section asks that question
+  before it closes. THE EDITORS AND THE CONTROL DO NOTHING FOR THIS, and must not
+  start to: a control is made anew whenever rows move and is gone with its row, so a
+  notice kept there vanishes (the first version of this did). "The form" is what a
+  save from here would send, which is nothing while Attach Existing is chosen.
+- **What is true to say about taking a file offline depends on whether it is SAVED.** The
+  server deletes a document when a save stops linking it, compared with the saved
+  section, so a file uploaded since the last save is deleted by nothing. The modal
+  provides `sectionSavedDocuments`, the page documents in `props.section.content`: the
+  section as the page list holds it, which is what was saved when the list was last
+  loaded. No editor can write into that object (the modal's form is a deep copy of it,
+  made when the modal opens, and so is a new section's default content), so it stays
+  the saved content however often the section is opened and cancelled. It used not to:
+  Link Buttons edited the list's own link objects, Cancel does not reload the list, and
+  the next modal read an abandoned upload as saved, or sent an abandoned clear with the
+  next save.
+  The control tells a saved document "clear the address and save", and an unsaved one
+  that clearing or replacing it now, or closing, leaves it online. The modal's footer
+  names each saved document the content no longer links, in any field of any editor:
+  "This file is taken offline when you save, unless another saved section still links
+  it." Never word either of these so that it is false for the other kind of file.
+- **Rows are named.** Pass the row's label as `:label` (a button's label, a program's
+  name; for a row that has none yet, what its card is headed: "Link 2" in Link
+  Buttons, "Program 2" in Programs): it goes into the accessible names of the button
+  and the Open link. The button is never `disabled` while it uploads (that drops the keyboard's
+  focus to the page); it is `aria-disabled`, and a press does nothing.
+- **"Taken offline when you save" follows the server's reading of "still linked".**
+  The server keeps a file while any section still carries its path, as written,
+  percent-encoded inside another address, or in a spelling a browser resolves to the
+  same file (a tab or a line break inside it, a dot segment, a doubled slash,
+  backslashes or JSON-escaped slashes). `sectionDocumentsLeaving` reads content the
+  same way, so the footer does not promise a deletion the server will not make.
+  Change one and change the other (`App\Support\PageDocuments::spellings`).
+  It runs on EVERY EDIT, so it takes one pass over a text (a reader that rescanned
+  the text for each `..` held a keystroke for nine seconds), does not read a string
+  that starts `data:` (a pending picture, megabytes of it), and copies a text only
+  when its percent-decoded or resolved reading differs
+  (`sectionDocumentReadings`).
+- **Limits that stay, so nobody "fixes" one by accident or promises otherwise.** A
+  stalled upload holds Save, the Section Type and the mode, and the only way out is
+  Cancel, then Close Anyway, which discards the session (no request here times out).
+  The modal's list of uploads lives only as long as the modal: once it is closed, no
+  screen lists a file that no saved section links. An address put in BY HAND, never
+  saved, and then replaced or taken out is not named afterwards: it was not uploaded
+  here, and the page tool cannot know whose file it is. A size is shown in the unit
+  of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+  thousands shows a slightly larger number for the same file.
+- Adding the control to another link field is a template line, an `onDocumentUploaded`
+  and, in a list editor, the busy counter, the key and the label. The modal and the
+  server need nothing.
 
 ## Arrays of plain strings
 

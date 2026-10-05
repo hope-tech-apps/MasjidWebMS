@@ -184,11 +184,12 @@ let seq = 0;
 const componentErrors: any[] = [];
 
 /**
- * Compile and mount `relPath` (from resources/vue-app/) with these props, reading each of its
- * imports from `modules` (keyed by the specifier exactly as the component writes it). 'vue' is
- * supplied here; anything else the component imports and the test did not supply fails loudly.
+ * Compile `relPath` (from resources/vue-app/) into a component WITHOUT mounting it, reading each of
+ * its imports from `modules`. For a parent that is mounted with one of its real children inside it:
+ * compile the child here, then hand it to mountSfc as the module the parent imports
+ * (`{ default: child }`). 'vue' is supplied here.
  */
-export async function mountSfc(relPath: string, props: Record<string, any>, modules: Record<string, any>): Promise<Mounted> {
+export async function compileSfc(relPath: string, modules: Record<string, any>): Promise<any> {
     const file = new URL(`../../${relPath}`, import.meta.url);
     const source = readFileSync(file, 'utf8');
     const { descriptor, errors } = sfc.parse(source, { filename: file.pathname });
@@ -213,12 +214,20 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
         return supplied[spec];
     };
 
-    let component: any;
     try {
-        component = (await import(pathToFileURL(out).href)).default;
+        return (await import(pathToFileURL(out).href)).default;
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
+}
+
+/**
+ * Compile and mount `relPath` (from resources/vue-app/) with these props, reading each of its
+ * imports from `modules` (keyed by the specifier exactly as the component writes it). 'vue' is
+ * supplied here; anything else the component imports and the test did not supply fails loudly.
+ */
+export async function mountSfc(relPath: string, props: Record<string, any>, modules: Record<string, any>): Promise<Mounted> {
+    const component = await compileSfc(relPath, modules);
 
     const root = new Node('el', 'root');
     const app = createApp(component, props);
@@ -313,6 +322,35 @@ export function submit(form: Node): void {
 export function type(el: Node, value: string): void {
     el.value = value;
     run(el, 'input');
+}
+
+/** What the element's own `@change` would run, after any v-model on it. */
+function changed(el: Node): void {
+    // v-model first: its listener is added when the element is created, ahead of the element's own
+    // handlers, so a `@change` beside it reads the NEW value, as in a browser. (run() goes the other
+    // way round, which does not matter to a handler that only sends the bound object up.)
+    (el.listeners.change ?? []).forEach((h) => h(fakeEvent(el)));
+    const handler = el.props.onChange;
+    (Array.isArray(handler) ? handler : handler ? [handler] : []).forEach((h: any) => h(fakeEvent(el)));
+}
+
+/**
+ * Choose an option of a `<select>` bound with v-model, as a browser does: nothing at all on a
+ * disabled one. Returns whether it ran.
+ */
+export function select(el: Node, value: any): boolean {
+    if (el.disabled) return false;
+    el.options = [{ value, selected: true }];
+    changed(el);
+    return true;
+}
+
+/** Choose a radio button bound with v-model, as a browser does: nothing at all on a disabled one. */
+export function check(el: Node): boolean {
+    if (el.disabled) return false;
+    (el as any).checked = true;
+    changed(el);
+    return true;
 }
 
 /** Let every settled promise and Vue's scheduler run; throw what the component threw meanwhile. */

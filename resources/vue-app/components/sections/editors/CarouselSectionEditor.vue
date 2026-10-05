@@ -223,7 +223,9 @@ const newSlide = (): CarouselSlide => ({
 });
 
 const normalize = (value?: CarouselSectionContent): CarouselSectionContent => ({
-    slides: value?.slides ? [...value.slides] : [],
+    // Each slide is COPIED: the fields below are bound straight onto a slide, and one shared with
+    // the caller would be written into the caller's content as it is typed.
+    slides: value?.slides ? value.slides.map((slide) => ({ ...slide })) : [],
     autoplay: value?.autoplay ?? true,
     interval_ms: value?.interval_ms || 6000,
     show_arrows: value?.show_arrows ?? true,

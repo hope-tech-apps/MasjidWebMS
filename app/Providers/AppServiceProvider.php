@@ -163,6 +163,9 @@ class AppServiceProvider extends ServiceProvider
      *                20/min and 120/hour, network ceiling 1200/hour.
      *  - "unsubscribe" — 30 per minute per LINK (plus a coarse per-IP flood
      *                    backstop) on the public unsubscribe landing (T-042c)
+     *  - "page-documents" — 30 requests an hour per signed-in USER and per
+     *                    ORGANISATION in the address, on the upload of a PDF for a
+     *                    web page (each one a public file no screen lists)
      */
     private function configureRateLimiters(): void
     {
@@ -250,6 +253,35 @@ class AppServiceProvider extends ServiceProvider
         // family Contact with the same number would share.
         RateLimiter::for('curriculum-standards', fn (Request $request) => Limit::perMinute(240)
             ->by('curriculum-standards:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
+
+        // A PDF for a web page (POST {masjid}/pages/documents, App\Support\PageDocuments). Each
+        // request may store 25 MB on the public disk, an upload that is never linked is kept, and
+        // no screen lists what was uploaded: without a ceiling one sign-in, or one stolen token,
+        // could fill the disk with files nobody can see. Thirty an hour is far more than an office
+        // putting a term's documents on a page needs.
+        //
+        // Keyed by the signed-in PERSON and the ORGANISATION in the address, not by the network
+        // address: a colleague uploading from the same office is not held up, a token cannot hide
+        // behind a fresh address, and one person setting two organisations up has thirty for each.
+        // The organisation is the route's `masjid_id` read as a NUMBER, exactly as the tenant gate
+        // reads it (ResolveMasjidTenant::routeMasjidId): the route does not pin its spelling, so
+        // `7`, `07` and `7.0` are one organisation there and must be one count here, or each
+        // spelling would be a fresh thirty.
+        //
+        // WHAT IS COUNTED IS REQUESTS, not stored files. Laravel runs `throttle` straight after
+        // `auth`, whatever order the route lists, so there is always a user to key by, and the
+        // limiter is AHEAD of the tenant and capability gates and of the upload's own rule: every
+        // signed-in request to this address is counted, stored or refused (also one aimed at an
+        // organisation the person may not touch, which is refused and stores nothing). So the
+        // sentence says "tried to upload": it has to be true of someone whose thirty were all
+        // refused. (The page tool refuses a wrong or oversize file before it sends one.)
+        // PageDocumentUploadTest pins each of these.
+        RateLimiter::for('page-documents', fn (Request $request) => Limit::perHour(30)
+            ->by('page-documents:' . ($request->user()?->getAuthIdentifier() ?? $request->ip()) . ':' . (int) $request->route('masjid_id'))
+            ->response(fn (Request $request, array $headers) => response()->json([
+                'status' => 'error',
+                'message' => 'You have tried to upload a lot of documents in the last hour. Wait a little, then try again.',
+            ], 429, $headers)));
 
         // Staff account access: /admin/login, /admin/forgot-password and
         // /admin/reset-password all use this one limiter, so they draw on one

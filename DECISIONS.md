@@ -8268,3 +8268,328 @@ themselves still run only on the MySQL job.
     at the 33 doors, beside 300 accepted names; 8 more refusals at the page and the flyer). `htm` added to a
     new announcement's list turned 1 case red; the check had shown it leaving the door tests green.
   - The count for `x.html.jpg` under "What a person meets" said all 29 doors. It is corrected there.
+
+## 2026-10-05 — An office can attach a PDF to a web page: uploaded on its own, linked from a field a section already has (branch `feat/page-documents`)
+
+- **Asked.** An office tried to put three documents on one of its public pages (a curriculum, a calendar, a
+  schedule) by uploading them into a programme's image box. That box takes images, and no section took a
+  document: section uploads are images, and an MP4 for the Video section.
+- **Decided.** Upload first, no new section type. `POST {masjid}/pages/documents` (in the group that guards
+  saving a page) stores ONE PDF on the organisation (media collection `page_documents`, public disk) and answers
+  `{url, name, size}`. "Upload a PDF" under the link field of Link Buttons, Programs & Curriculum and Call to
+  Action sends the file at once and writes the address into that field, as if it had been pasted. The website
+  and the apps are not changed. Rule: `.claude/rules/section-types.md`, "A PDF is not a section upload".
+  - **Let in:** a PDF by its bytes (`mimetypes:application/pdf`), by its first five bytes (`%PDF-`), by its name
+    (`extensions:pdf`), at most 25 MB (the media library's own ceiling). The type a browser declares is not read.
+  - **Written:** under a name the server makes (a slug of the client's name, then `.pdf`). The client's name
+    never reaches the disk; it is kept on the media row for people to read.
+  - **Answered:** an absolute address from the public disk's configured `url`, never from the request.
+  - **Told to the office, where it acts:** the file is public as soon as it is uploaded; it stays online while a
+    saved section links to it; how to take it offline; what to do about a file uploaded by mistake; and each
+    refusal with what to do about it.
+  - **A label is never a raw address:** a blank Link Buttons label and icon, and a blank programme Link Text, are
+    filled from the file's name. Words the office chose are left alone.
+- **A document is deleted when the last saved section that links it lets go.** On a section's save (either
+  route) and on its deletion from the library, `PageDocuments::forgetUnlinked()` deletes the organisation's own
+  page documents whose address that write removed, unless another section of the organisation still carries it.
+  Matched by path (not host), resolved by media id AND stored name through `Masjid::pageDocuments()`, never
+  failing the save, one warning line by ids alone per file. **Kept on purpose:** a document whose section was
+  only taken off a page or whose page was deleted, and one that was uploaded and never saved. Nothing is
+  scheduled: a sweeper would delete public files by inference, which is how media was lost here before.
+- **Rejected.**
+  - A "Documents" section type first. It needs a renderer component in the website's repository before a
+    visitor sees anything, the palette is not gated on the renderer, and it adds no reach: the three link
+    fields already carry an address to every visitor.
+  - Riding the section's save (the Video precedent). The file would have no address until Save, so the live
+    preview could not open it; queued files are keyed by list position and Link Buttons moves rows; and a late
+    refusal is a 500 on a half-saved section.
+  - A scheduled deleter for uploads that were never saved, and a forced download (`Content-Disposition`), which
+    would stop the document opening in the browser.
+- **Decided here, the owner did not say** (the design's four questions, taken at their defaults by the lead):
+  documents are not in the apps (the apps show no pages); a document a save stops linking is deleted then;
+  never-saved uploads are kept; the address is on the platform's own host, as every section image's is.
+- **Found while building, where the code differed from the design.**
+  1. **`%PDF-` at byte 0 is the guard, not a belt.** PHP 8.3's type sniffer reports a web page followed by a
+     PDF as `application/pdf`, so `mimetypes` alone lets that file in. The first-five-bytes check refuses it
+     (`PageDocumentUploadTest`, "a web page with a PDF after it").
+  2. **A path under `/storage` with no file behind it answered the admin screen with a 200**, from the SPA's
+     catch-all route, so a removed document would still "open". `routes/web.php` now answers such a path 404,
+     ahead of the catch-all. The route's parameter is deliberately not `path`: the framework registers
+     `storage/{path}` (signed links to the private disk) after the catch-all, where a GET has never reached it,
+     and a route of the same address is replaced by it in the earlier place. This changes the answer for EVERY
+     missing file under `/storage`, not only documents. Checked with routes cached and uncached.
+  3. **A Teacher is answered 401, not 403:** the `admin` middleware has always answered 401 for a signed-in
+     account that is not an administrator. Pinned as it is.
+  4. **A public disk with no absolute `url` refuses the upload** (500, nothing kept) rather than answering a
+     root-relative address the website would look for on itself. `Storage::fake('public')` drops the `url`, so
+     the tests hand the fake one.
+  5. **The page tool sends a `.pdf` the computer gave no type** (the server reads the bytes); it refuses a
+     file with any other type. One more server sentence than the design listed: a wrong NAME is told apart
+     from wrong bytes.
+- **Open, not built.**
+  1. Save is not held while a PDF uploads (the modal is unchanged). A section saved before the upload ends is
+     saved without the address, and the file stays online, linked from nowhere.
+  2. An address pasted somewhere that is not a section (a menu link, an announcement) does not keep its file
+     online.
+  3. Two saves in the same instant, one removing a document's last link and one adding the address to another
+     section, are not serialised.
+  4. No rate limit on the upload, as on no other admin upload; no list of documents; no report of unlinked ones.
+  5. Not run by this change, and release gates in the design: the response headers of a stored PDF on staging
+     and production, what the edge cache does after a delete, the request-size ceiling of each web server, and
+     the walk through the real screens. See ASSUMPTIONS.md, "A PDF attached to a web page".
+- **Fix round after three reviews, the same day** (the upload, the deletion on save, the editors). All three
+  said "ship after fixes"; none found a way to store or serve anything but a PDF. Of "Open, not built" above,
+  item 1 (Save is not held) and the rate limit of item 4 are now built; the rest stands.
+  - **The deletion on save, four corrections.**
+    1. **A save from an out-of-date editor deletes nothing.** Two tabs hold one section linking X; one replaces
+       X with Y and saves (X is deleted, as designed); the other, still showing X, saves, and Y was deleted
+       too, leaving the page linking a file that was gone. When the content after a save brings in an address
+       of page-document shape that the section did not have before, and none of the organisation's documents
+       is behind it, nothing is deleted on that save and one warning line names what was kept. Chosen over
+       refusing the stale save: no client sends a version today. So the old copy's link is still stored and
+       still dead; what is saved is the current file. Not covered: a stale save that only DROPS a document
+       the other tab added (nothing new comes in, so it reads as an ordinary removal). The guard can only
+       keep: an address of that shape with no document of this organisation behind it (another site's, another
+       organisation's) put in place of an own document also stops that deletion, and no later save reaches it.
+    2. **"Still linked" sees through spellings.** It is asked of the address as written, of the document's
+       own path, and of both percent-decoded once (a viewer's link that carries the address encoded keeps the
+       file). The address pattern refuses an id with a leading zero, so `/storage/03/x.pdf` is nobody's
+       document and can never start a deletion of document 3. What STARTS a deletion was not widened: a link
+       that only ever carried the address encoded keeps a file and, when it goes, leaves it online. An address
+       encoded twice is not found.
+    3. **A file is called deleted only when the disk says it is gone.** The media library deletes the row
+       first and a disk that refuses a removal raises nothing, so the disk is asked afterwards; a file it
+       still holds is logged as NOT removed and still online. Its row is gone by then, so no later save
+       retries it: the line is the record.
+    4. **The cleanup runs whenever the content was written.** Both `update` actions call it in a `finally`
+       that starts after the section's row is updated, compared with what is stored. A save that failed in
+       its image step (answered 500) has already lost the address, and no later save could find the file. So
+       a save the office was told failed can now delete a file: consistent with what is stored, not with the
+       answer.
+  - **The upload.** The store runs in a transaction, so a copy that throws (the file's directory cannot be
+    made) leaves no `page_documents` row; the cost is that anything throwing AFTER the file is written would
+    leave a file with no row. A named limiter, `page-documents`: 30 requests an hour for each signed-in user,
+    with a sentence in the 429 that the screen shows. Laravel runs it straight after authentication, ahead of
+    the tenant and capability gates and of the upload's own rule, so a refused request is counted too.
+  - **The editors.**
+    1. **Save waits for an upload.** `SectionFormModal` provides a count the control raises and lowers
+       (cleared if the control unmounts). While it is above zero Create/Update Section is off, one line says
+       why, Enter in a field submits nothing, and Cancel and the close button ask first.
+    2. **Only true sentences.** What may be said about taking a file offline depends on whether the SAVED
+       section links it, and the modal provides that (read once, when it opens). A saved document is told
+       "clear the address and save"; one uploaded since is told that clearing or replacing it now leaves it
+       online, and how to take it offline. When an upload replaces an unsaved file the control shows that
+       file's address, which is then in no field; that notice lives with the control, so it goes when rows
+       move.
+    3. **Said where the office acts.** Beside Save, for each saved document the content no longer links, in
+       any field of any editor: "This file is taken offline when you save, unless another saved section
+       still links it."
+    4. **Sentences and names.** The page tool's two refusals for a wrong file are now the server's own, word
+       for word, so both say what to do; a file a little over the limit reads "a little over 25 MB"; a label
+       made from a file's name reads dashes and underscores as spaces and keeps a dash between two digits;
+       the "Uploaded." note says which blank fields were filled; each row's button and Open link carry the
+       row's label in their accessible name; the button is `aria-disabled` while it uploads, never
+       `disabled`, so the keyboard's focus stays on it.
+- **Limits that stay, confirmed by the reviews.**
+  1. Only a SECTION of the SAME organisation keeps a file online. A link from an announcement, a menu, a
+     section's settings or another organisation's page does not: when the owning organisation's last section
+     lets go, the file is deleted and that link is dead.
+  2. An upload that was never saved is kept, and no screen lists such files. The hourly limit bounds how fast
+     they can be made, not how many there are.
+  3. There is no ceiling for an organisation beyond the hourly limit for each user.
+  4. `GET /storage/{missing}` answers 404 for EVERY missing file under `/storage`, on every hostname this
+     deployment answers to, not only for page documents. Why: the web server hands any path with no file
+     behind it to the application, and the admin SPA's catch-all answered each of them with a 200 and the
+     sign-in screen, so a removed file still "opened" for a visitor, a link checker and a search engine.
+- **This branch ships with or after `fix/pin-upload-file-names`.** The upload review found, outside this
+  branch's diff, that older public image uploads check a file's bytes and not its name, so image bytes named
+  `.html` can be stored under that name on the origin where the admin screens keep their sign-in token. Page
+  documents neither open nor widen that (they only ever write `.pdf` names), but `StorePageDocumentRequest`
+  says every upload rule beside it pins the name, which is true only once that branch has landed. Both
+  branches edit this file and `.claude/rules/section-types.md`: keep both additions when the second merges.
+- **Fix round 2, the same day** (after the re-review of the first fix round: the server lens said "ship", the
+  editors lens "ship after fixes" with one major). Additions only; what is above stands unless a line here
+  says it changed.
+  - **An edit abandoned with Cancel is gone (the major).** Link Buttons bound its fields onto the very link
+    objects the page list holds (it copied the list, not the links), and Cancel does not reload that list. So
+    an upload that was cancelled read as SAVED the next time the section was opened ("clear the address and
+    save", then "taken offline when you save", both false), and a saved address that was cleared and cancelled
+    went out, cleared, with the next save, and the server deleted a document the office believed it had kept.
+    Fixed in two places, each pinned on its own:
+    1. `SectionFormModal`'s form is a deep copy of the section's content, made when the modal opens (through
+       JSON: the object is reactive, and `structuredClone` throws on a proxy). A new section's default content
+       is copied the same way; it was the store's own object, handed to every new section of that type. No
+       editor can reach the object the list holds, and `sectionSavedDocuments` is read from that untouched
+       original. This replaces "read once, when it opens" above: it is now the list's own object that stays the
+       saved content, however often the section is opened and cancelled.
+    2. Ten editors shared rows with the content they were handed and now copy every row, when they open and in
+       their watch: Link Buttons, Admissions & Tuition (fees, payment plans, steps), Carousel, Grid Cards,
+       Impact Stats, Mission & Vision, Providers, Services & Eligibility, Staff Directory, Stats. (Mission &
+       Vision and Stats shared the list itself.) Programs already copied each programme. The other twenty-one
+       editors bind only top-level fields of an object they build and hold no rows (32 editors: ten fixed,
+       Programs already safe, twenty-one with no rows). This was a defect in every
+       one of the ten, not only where a PDF can be uploaded: any abandoned row edit stayed in the list until
+       the page was reloaded.
+  - **A new section's type and mode wait for an upload.** Changing the Section Type, or switching to Attach
+    Existing, takes the editor away exactly as Cancel does and asked nothing. Both are held (disabled) while
+    the count of uploads is above zero, as Save is.
+  - **What Cancel says, and when it asks.** The question about an upload in flight ended "wait, then close",
+    which leaves the same file online; it says "then save". When the form holds a page document the saved
+    section does not (uploaded, or put in by hand), Cancel and the close button ask once: the file's name,
+    that it stays online if the section is not saved, and its address. It is read from the content when the
+    office closes (`sectionDocumentsNotSaved`); no new state. It says "linked from nowhere UNLESS another
+    saved section links it", because the page tool cannot know that of an address put in by hand (PD-10). The
+    note under an unsaved file names closing as well as clearing and replacing.
+  - **A label is said to come from the file's name only when it did.** A name with nothing to read gets the
+    editor's own word, and the note says what the field was filled in as.
+  - **THE OUT-OF-DATE RULE CHANGED (item 1 of the first fix round).** It was: a save is out of date when it
+    brings in ANY address of the page-document shape with none of the organisation's documents behind it. That
+    is far more than an old copy can hold, and keeping is not free: the kept document has left the section's
+    content, so no later save has it in its "before", and it stays public for good while the page tool said
+    "taken offline when you save". It fired for an ordinary replace by another organisation's document, by
+    the organisation's own PDF in another collection, and by another site's address. It is now: the address is
+    written as OURS (on the public disk's host, on the host the request came in on, or with no host) AND no
+    media row at all has that id and file name (the document it named has been deleted). Anything else is an
+    ordinary replace and what it drops is deleted. The test that pinned the old behaviour for another site's
+    address is rewritten to expect the deletion. Still kept, by this rule: one of our own addresses whose
+    document is gone, however it got there (typed, an id too large to be a row, or carried percent-encoded
+    inside a viewer's link). Still not covered, as before: a stale save that only DROPS a document.
+  - **"Still linked" reads the spellings a browser resolves.** Besides the address as written and
+    percent-decoded once, each string is read with backslashes and JSON-escaped slashes as slashes, a doubled
+    slash as one, and `.` and `..` segments resolved. For the KEEPING side only: what starts a deletion is
+    still the address as written, and the out-of-date check reads the address as it was given. The page
+    tool's "taken offline when you save" follows the same reading (not asked for by the brief; without it the
+    footer would promise a deletion the server no longer makes). Not seen, still: an address encoded twice, a
+    path or `.PDF` in upper case, HTML-entity slashes (PD-17). The doubled slash is a working link only where
+    the web server merges slashes, which is its default and was not checked on a server.
+  - **The upload limit counts REQUESTS, for each person in each organisation.** Thirty an hour, keyed by the
+    signed-in user and the organisation in the address, read as a number as the tenant gate reads it (the
+    route does not pin the spelling, so `7`, `07` and `7.0` are one count). It runs ahead of the tenant and
+    capability gates and of the upload's own rule, so it counts every signed-in request to that address:
+    stored, refused by the rule (422), or refused because the organisation is not the person's (403). The
+    sentence is "You have tried to upload a lot of documents in the last hour", true of all three. What this
+    gives up: a sign-in that may act for every organisation has thirty for EACH, so the ceiling on one stolen
+    token of that kind is thirty times the number of organisations, not thirty.
+  - **A disk that cannot be asked** has its own log line (the file could not be checked and may still be
+    online), in place of "the disk kept the file".
+- **Limits that stay after round 2** (each confirmed, none new behaviour).
+  1. A stalled upload holds Save, the Section Type and the mode, with no way out but Cancel, then Close
+     Anyway, which discards every edit in the modal. No request here has a timeout.
+  2. The notice about a replaced, never-saved file lives in the control: it goes when rows move, and it stays
+     under an empty control if the field is cleared by hand.
+  3. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+     thousands shows a slightly larger number for the same file.
+  4. Anything that throws after the file is copied and before the row is committed leaves a file with no row
+     (PD-20).
+  5. In a NEW section, changing the Section Type after an upload has ENDED replaces the content, the address
+     with it, and asks nothing; Cancel then asks nothing either, since the form no longer holds it. (Driven
+     through the real modal.) And Attach Section, pressed after an upload in the Create New form, closes
+     without the question (read from the code, not run). Both leave the file online, linked from nowhere.
+  6. Clearing an unsaved file's address by hand and then closing asks nothing: the note under the field said
+     beforehand that clearing leaves it online.
+- **Fix round 3, the same day** (after the check of round 2: the server lens said "ship after fixes", the
+  page-tool lens "ship"; nothing major). Additions only; what is above stands unless a line here says it
+  changed. Nothing was run against a server and no browser was driven.
+  - **The cleanup takes one pass over a text, in both of its readers, and bounds the one cost that is left.**
+    A section's text has no size limit, and the cleanup reads every string of the saved section on every
+    save, and every other section's when a save drops a document. Two readers cost the SQUARE of what an
+    administrator can write, and a third thing grew faster than the text:
+    1. `resolved()` (round 2's spelling reader) removed one `/name/..` per pass over the whole text. 40,000
+       steps (195 KB) took 11.2 s on the server and 9.1 s in the page tool; they take 0.011 s and 0.008 s.
+       The text is cut at its slashes once and its segments walked once.
+    2. The out-of-date check read ALL the text in front of every address a save brought in. Not in the
+       check's findings: it was found by timing the other readers after the first was fixed. 5,000 addresses
+       of another site in one text (250 KB) took 15 s alone and 19 s through the route; the check takes
+       under 0.01 s, and the route's whole test 0.07 s. It now reads back from each address to the nearest
+       character a host cannot hold, to a limit of 2,048 characters, and gives the answer the old pattern
+       gave for every text within that (compared on 200,000 generated texts with no difference; the old
+       pattern's `$` read past one line feed before the path, and so does this). PAST THE LIMIT IT THROWS:
+       the caller logs "were not checked" and deletes nothing. Chosen over answering "not ours" unread,
+       which would let a deletion through, and over a larger limit, which would let the cost grow with it.
+       What it gives up is PD-28: an address that follows more than 2,048 characters with no space, quote,
+       tag, `?`, `#`, `=` or `&` among them is not judged, and the document that save drops stays online.
+    3. Every address a save LETS GO OF is looked for in all the section holds now, in every spelling, and
+       then asked of the database. Also found by timing, not in the check's findings: 10,000 addresses let
+       go of for a text as long (615 KB) took 2.0 s, and 20,000 (1.2 MB) 6.4 s. An address that is still
+       there as it was written is now found by one pass over the new content, and only the rest are looked
+       for one by one; A SAVE THAT LETS GO OF MORE THAN 1,000 AT ONCE THROWS, is logged "were not checked",
+       and deletes nothing. At 1,000 the save takes 0.1 to 0.2 s for a text of up to 615 KB (1.2 s for
+       5 MB); past it, 0.04 s. No section links a thousand documents (thirty an hour for each person). The
+       limit is on what one save lets go of, not on what a section holds.
+    Not changed, and linear in the text: one database question for each address a save brings in that is
+    written as ours and has a row, repeated if the address is. One real address written 40,000 times in a
+    save that drops another document (2 MB) is 40,000 questions and took 2.1 s on the test database. Asking
+    once for each distinct address would end that; it is left as found and written down here.
+  - **Round 2's three unpinned readings are pinned** (the percent-decoded reading of the new content in the
+    out-of-date check; the percent-decoded reading resolved as well as the text as written; more than one
+    `..` step). Tests only; each fails with its reading taken out.
+  - **"Still linked" keeps a file through four more spellings**, for the keeping side only: a `..` that
+    steps back over a segment holding a space, an apostrophe, a quote or an angle bracket, and a tab, a
+    carriage return or a line feed inside the address, which a browser drops. DECIDED HERE: the `..` does
+    not step back over a segment holding `?` or `#`. The brief said "any segment"; a browser's path has
+    ended at either, so such an address is no link to the file, and the check's own suggestion excluded
+    them. Thirty-six spellings were run through the real routes in three arrangements, beside a browser's
+    own parser (Node's): every one a browser resolves to the file was kept, none started a deletion, and
+    the page tool read each as the server did. What is STILL not seen is listed whole in PD-17, the
+    docblock and the rule file: a character written as an HTML character reference, an address encoded
+    twice, another letter case, a link that does not hold the path at all.
+  - **"Is the document gone?" is asked of the public disk only.** The out-of-date check asked whether ANY
+    media row had the number and file name an address carried, and its answer shows in what happens to the
+    administrator's own document. So one upload and two saves told an administrator whether another
+    organisation's PRIVATE file had a given number and name. It asks only of media on the disk page
+    documents live on. A private row of that number and name now reads as "gone": the save is out of
+    date, and the document is kept, exactly as for a number and name no row has.
+  - **A host is compared as a browser takes it.** Our own host written with the port its scheme uses anyway
+    (`:443`, `:80`) or with a closing dot did not match itself, so an old copy holding such an address
+    deleted the current document. Both are taken off before comparing, on the written side and on ours.
+    Any other port is another site. (Compared again with the old pattern plus that rule on 300,000
+    generated texts: two differed, both with a digit or a dash straight in front of `http:`, which is now
+    read as no scheme, so either port is taken off.) PD-16 now says what "no host" means, and that after
+    a staging data refresh or a change of `APP_URL` stored addresses are on a host that is neither the
+    disk's nor the request's, so an old copy holding one is an ordinary replace there.
+  - **A delete that was cancelled is "NOT deleted".** A listener that answers false leaves the row and the
+    file, and the line read "its record is gone". Anything but a plain yes now gets the line of a delete
+    that threw, by ids alone, and the disk is not asked.
+  - **The page tool's reading no longer slows typing.** With a picture chosen and not yet saved the form
+    holds a `data:` URL, and the footer read every megabyte of it on each edit: 12 ms for each MB at the
+    head of round 2 (98 ms for 8 MB), 0.00 ms now. A string that starts `data:` is not read, and a text is
+    copied only when its percent-decoded or resolved reading differs. Measured in Node, not in a browser.
+  - **A PDF uploaded in the editor stays on the screen when the form lets go of it.** ONE mechanism, in
+    the modal: it keeps the list of what was uploaded while it is open (the control adds each file as its
+    upload ends, whether or not the control is still there), and the footer names, beside Save, each one
+    the form no longer holds: its name, that it is online and in no saved section, its address, and how
+    to take it offline. It stays through row moves, Remove, a type change and the Attach form, and goes
+    when the address is put back. The question on Cancel and the close button names these files too, once
+    each, in words true of them (saving would not link them either). Attach Section asks the same question
+    before it closes the modal; its button reads "Attach Anyway", and "Keep Editing" attaches nothing.
+    THIS CHANGES limits 2, 5 and 6 of round 2 above, which no longer hold: the notice about a replaced,
+    never-saved file is the footer's and does not go when rows move; a type change after an upload and
+    Attach Section are no longer silent; and a file whose address was cleared by hand is named in the
+    footer and asked about on closing. "The form" is what a save from here would send: while Attach
+    Existing is chosen that is nothing, so a file in the set-aside Create New form is named until the
+    office switches back.
+  - **Smaller corrections.** The modal tests' mount helper hands the modal a reactive section whenever it
+    is given a plain one (so PD-24 is true as written); the row editors' tests read back what was typed
+    into every field after the rebuilds (PD-25); the upload test that the address comes from configuration
+    and never from the request's host posts to a full address on the other host, where it sent a `Host`
+    header that a test does not turn into the request's host; "twenty-two editors" above is twenty-one;
+    PD-10 names the close question.
+- **Limits that stay after round 3** (this list replaces "Limits that stay after round 2"; 1, 3 and 4 there
+  stand as they are).
+  1. A stalled upload holds Save, the Section Type and the mode, with no way out but Cancel, then Close
+     Anyway, which discards every edit in the modal. No request here has a timeout.
+  2. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+     thousands shows a slightly larger number for the same file.
+  3. Anything that throws after the file is copied and before the row is committed leaves a file with no row
+     (PD-20).
+  4. The modal's list of uploads lives as long as the modal. Once it is closed (Close Anyway, Attach Anyway,
+     or a save made while the footer names a file) nothing lists a file that no saved section links; no
+     screen does (limit 2 of the reviews' list above).
+  5. A PDF's address put in BY HAND, never saved, and then replaced by an upload or taken out is not named
+     afterwards: it was not uploaded here, the page tool cannot know whose file it is (PD-10), and the note
+     under the field said beforehand that letting go of it leaves it online. Round 2's control named it
+     after a replace; the footer does not.
+  6. A save whose content holds an address after more than 2,048 characters of unbroken text, or that lets
+     go of more than a thousand addresses at once, has its cleanup given up, out loud (PD-28).
+  7. The footer's new line, the Attach question and the longer close question were mounted in the test
+     harness and built; they were not seen in a browser (PD-23, PD-15).

@@ -721,6 +721,21 @@ class Masjid extends Model implements HasMedia
             ->where('collection_name', 'galleries');
     }
 
+    /**
+     * The PDFs this organisation's office uploaded for its web pages (App\Support\PageDocuments),
+     * written by PageDocumentsController and DELETED through this relation when a saved section stops
+     * linking one (PageDocuments::forgetUnlinked).
+     *
+     * `model_type` is part of the key for the reason gallery() gives: without it another model's
+     * `page_documents` row whose id equalled this organisation's would be this organisation's to
+     * delete.
+     */
+    public function pageDocuments() {
+        return $this->hasMany(Media::class, 'model_id')
+            ->where('model_type', self::class)
+            ->where('collection_name', \App\Support\PageDocuments::COLLECTION);
+    }
+
     public function services() {
         return $this->hasMany(Service::class);
     }

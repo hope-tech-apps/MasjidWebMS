@@ -1280,8 +1280,14 @@ class MediaVerify extends Command
      * `clearMediaCollection(...)` and then `addMedia(...)` in the same request,
      * so an ordinary edit is a delete AND an insert and the census — taken every
      * six hours — sees the NET, which is zero. The paths that delete without
-     * replacing are `MasjidGalleryController` (one gallery item at a time) and
-     * the assistant's `ToolRegistry@364` (one announcement at a time). Nothing
+     * replacing are `MasjidGalleryController` (one gallery item at a time), the
+     * assistant's `ToolRegistry@364` (one announcement at a time) and
+     * `App\Support\PageDocuments::forgetUnlinked` (the `page_documents` a saved
+     * section stopped linking, on that save: one office, a file or a few at a
+     * time). The last is a NEW, small collection, so the clause that can meet it
+     * is the vanish floor: if the platform holds five or more page documents
+     * and every one is taken offline between two runs, that is reported until
+     * an operator accepts the baseline. That is this detector working. Nothing
      * scheduled in this application deletes a media row at all. So the bar is
      * not being set against a hypothesis about admin behaviour: there is no
      * routine process here that removes ten rows from a collection in six hours,

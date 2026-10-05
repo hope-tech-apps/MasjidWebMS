@@ -85,15 +85,20 @@ const emit = defineEmits<{
     'update:modelValue': [value: StatsSectionContent];
 }>();
 
+// The list AND each figure in it are COPIED, here and in the watch below: the fields are bound
+// straight onto a figure, and Add and Remove change the list, so either one shared with the caller
+// would be written into the caller's content as the office edits.
+const ownStats = (stats?: StatsSectionContent['stats']) => (stats || []).map((stat) => ({ ...stat }));
+
 const localContent = ref<StatsSectionContent>({
     heading: props.modelValue?.heading || '',
-    stats: props.modelValue?.stats || [],
+    stats: ownStats(props.modelValue?.stats),
     layout: props.modelValue?.layout || 'horizontal',
 });
 
 watch(() => props.modelValue, (newVal) => {
     if (newVal) {
-        localContent.value = { ...newVal };
+        localContent.value = { ...newVal, stats: ownStats(newVal.stats) };
     }
 }, { deep: true });
 

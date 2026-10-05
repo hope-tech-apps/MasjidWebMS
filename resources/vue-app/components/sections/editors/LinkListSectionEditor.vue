@@ -53,9 +53,14 @@
                         type="button"
                         class="btn btn-sm btn-primary"
                         @click="addLink"
+                        :disabled="uploadsInFlight > 0"
                     >
                         <i class="bi bi-plus-circle"></i> Add Link
                     </button>
+                </div>
+
+                <div v-if="uploadsInFlight > 0" class="form-text mb-2" role="status">
+                    A PDF is uploading. Links can be added, moved or removed again when it has finished.
                 </div>
 
                 <div
@@ -71,7 +76,7 @@
                                     type="button"
                                     class="btn btn-sm btn-outline-secondary"
                                     @click="moveLinkUp(index)"
-                                    :disabled="index === 0"
+                                    :disabled="index === 0 || uploadsInFlight > 0"
                                     title="Move Up"
                                 >
                                     <i class="bi bi-arrow-up"></i>
@@ -80,7 +85,7 @@
                                     type="button"
                                     class="btn btn-sm btn-outline-secondary"
                                     @click="moveLinkDown(index)"
-                                    :disabled="index === localContent.links.length - 1"
+                                    :disabled="index === localContent.links.length - 1 || uploadsInFlight > 0"
                                     title="Move Down"
                                 >
                                     <i class="bi bi-arrow-down"></i>
@@ -89,6 +94,7 @@
                                     type="button"
                                     class="btn btn-sm btn-danger"
                                     @click="removeLink(index)"
+                                    :disabled="uploadsInFlight > 0"
                                     title="Remove Link"
                                 >
                                     <i class="bi bi-trash"></i>
@@ -123,6 +129,13 @@
                                     Use <code>mailto:</code> for email and <code>tel:</code> for phone
                                     numbers; anything else should start with <code>https://</code>.
                                 </div>
+                                <SectionDocumentUpload
+                                    :key="`link-document-${index}-${rowsMoved}`"
+                                    :value="link.url"
+                                    :label="(link.label || '').trim() || `Link ${index + 1}`"
+                                    @busy="onDocumentBusy"
+                                    @uploaded="(stored) => onDocumentUploaded(index, stored)"
+                                />
                             </div>
 
                             <div class="col-md-6 mb-3">
@@ -165,6 +178,8 @@
 
 <script setup lang="ts">
 import { LinkListSectionContent, LinkListItem } from '@/core/types/data/masjid-related/PageSection';
+import SectionDocumentUpload from '@/components/form/SectionDocumentUpload.vue';
+import { SECTION_DOCUMENT_ICON, sectionDocumentLabel } from '@/core/helpers/sectionDocumentFile';
 import { ref, watch } from 'vue';
 
 const props = defineProps<{
@@ -182,10 +197,14 @@ const newLink = (): LinkListItem => ({
     style: 'primary',
 });
 
+// Each link is COPIED, here and in the watch below, not only the list: the fields are bound straight
+// onto a link (`v-model="link.url"`), and a link shared with the caller would be written into the
+// caller's content as it is typed or uploaded, saved or not. That is how an upload, or a cleared
+// address, that was abandoned with Cancel stayed in the section the page list holds.
 const localContent = ref<LinkListSectionContent>({
     heading: props.modelValue?.heading || '',
     description: props.modelValue?.description || '',
-    links: props.modelValue?.links ? [...props.modelValue.links] : [],
+    links: props.modelValue?.links ? props.modelValue.links.map((link) => ({ ...link })) : [],
     layout: props.modelValue?.layout || 'stack',
     background_color: props.modelValue?.background_color || '#ffffff',
 });
@@ -195,7 +214,7 @@ watch(() => props.modelValue, (newVal) => {
         localContent.value = {
             heading: newVal.heading || '',
             description: newVal.description || '',
-            links: newVal.links ? [...newVal.links] : [],
+            links: newVal.links ? newVal.links.map((link) => ({ ...link })) : [],
             layout: newVal.layout || 'stack',
             background_color: newVal.background_color || '#ffffff',
         };
@@ -206,30 +225,88 @@ const emitUpdate = () => {
     emit('update:modelValue', localContent.value);
 };
 
+// A PDF is uploaded at once by SectionDocumentUpload and comes back as an address for the row it
+// was started from. Rows are keyed by position, so while an upload is in flight the rows must hold
+// still, or the calendar's address lands on the curriculum's button: Add, Move and Remove are off
+// until every upload has answered (and each is guarded here too, for a tap the re-render missed).
+const uploadsInFlight = ref(0);
+
+// Counts the moves and removals. Part of each upload control's key, so a control never carries a
+// message about one row over to the row that took its place.
+const rowsMoved = ref(0);
+
+const onDocumentBusy = (busy: boolean) => {
+    uploadsInFlight.value = Math.max(0, uploadsInFlight.value + (busy ? 1 : -1));
+};
+
+const onDocumentUploaded = (index: number, stored: { url: string; name: string; filled?: (sentence: string) => void }) => {
+    const link = localContent.value.links[index];
+    if (!link) {
+        return;
+    }
+
+    link.url = stored.url;
+    // A button is never left reading as a raw address. Only what is BLANK is filled: a label or an
+    // icon the office chose is theirs. What was filled is said under the field (the Icon field's own
+    // help says to leave it blank for a button with no icon, so an icon that appears needs a word).
+    const labelFilled = !(link.label || '').trim();
+    const iconFilled = !(link.icon || '').trim();
+    // Empty when the name has nothing to read (`___.pdf`): the label is then a word of this
+    // editor's, and is not said to have come from the file's name.
+    const fromName = sectionDocumentLabel(stored.name);
+    if (labelFilled) {
+        link.label = fromName || 'Document';
+    }
+    if (iconFilled) {
+        link.icon = SECTION_DOCUMENT_ICON;
+    }
+    if (labelFilled && iconFilled) {
+        stored.filled?.(fromName
+            ? 'The label (from the file\'s name) and a download icon were filled in. Change them if you like.'
+            : 'A label ("Document") and a download icon were filled in. Change them if you like.');
+    } else if (labelFilled) {
+        stored.filled?.(fromName
+            ? 'The label was filled in from the file\'s name. Change it if you like.'
+            : 'The label was filled in as "Document". Change it if you like.');
+    } else if (iconFilled) {
+        stored.filled?.('A download icon was filled in. Change it, or clear it, if you like.');
+    }
+    emitUpdate();
+};
+
 const addLink = () => {
+    if (uploadsInFlight.value > 0) {
+        return;
+    }
     localContent.value.links.push(newLink());
     emitUpdate();
 };
 
 const removeLink = (index: number) => {
+    if (uploadsInFlight.value > 0) {
+        return;
+    }
     localContent.value.links.splice(index, 1);
+    rowsMoved.value++;
     emitUpdate();
 };
 
 const moveLinkUp = (index: number) => {
-    if (index > 0) {
+    if (index > 0 && uploadsInFlight.value === 0) {
         const links = [...localContent.value.links];
         [links[index - 1], links[index]] = [links[index], links[index - 1]];
         localContent.value.links = links;
+        rowsMoved.value++;
         emitUpdate();
     }
 };
 
 const moveLinkDown = (index: number) => {
-    if (index < localContent.value.links.length - 1) {
+    if (index < localContent.value.links.length - 1 && uploadsInFlight.value === 0) {
         const links = [...localContent.value.links];
         [links[index], links[index + 1]] = [links[index + 1], links[index]];
         localContent.value.links = links;
+        rowsMoved.value++;
         emitUpdate();
     }
 };

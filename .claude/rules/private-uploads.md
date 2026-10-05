@@ -82,8 +82,16 @@ every hook) is the reference; `groups:purge-feed` is the purge.
 
 ## Not medialibrary
 
-`spatie/laravel-medialibrary` is the app's mechanism for PUBLIC images (masjid
-logos, section images, gallery). It defaults to the `public` disk, and its `media`
-table carries no `masjid_id`, so a private, tenant-scoped file would be relying on
-configuration rather than on a column. Private uploads use a dedicated table plus
-`Storage` instead — see `form_response_attachments`.
+`spatie/laravel-medialibrary` is the app's mechanism for PUBLIC files (masjid
+logos, section images, gallery, and the PDFs an office publishes on its web pages:
+collection `page_documents`, `App\Support\PageDocuments`). It defaults to the
+`public` disk, and its `media` table carries no `masjid_id`, so a private,
+tenant-scoped file would be relying on configuration rather than on a column.
+Private uploads use a dedicated table plus `Storage` instead — see
+`form_response_attachments`.
+
+A page document is the clearest case of the difference: it is world-readable at
+its address from the second the upload ends, before the page that links it is
+saved, and it is copied to staging with the rest of the public tree. The page tool
+says so beside the button. A document that only some people may read is NOT one of
+these, however convenient the button is; it needs the arrangement above.
