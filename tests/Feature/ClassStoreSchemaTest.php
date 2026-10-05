@@ -362,12 +362,19 @@ class ClassStoreSchemaTest extends TestCase
 
         $held = AcademicRecordsHeld::counts($this->amira);
         $this->assertSame(1, $held['Manara Bucks']);
-        $this->assertSame('1 Manara Bucks', AcademicRecordsHeld::describe(['Manara Bucks' => 1, 'marks' => 0]));
+        // Named, never counted: a count of ledger rows reads as a balance, and on a place a student
+        // was moved into it would say whether they held Bucks at the move. Every other kind keeps its count.
+        $this->assertSame('Manara Bucks history', AcademicRecordsHeld::describe(['Manara Bucks' => 1, 'marks' => 0]));
+        $this->assertSame('3 register marks, Manara Bucks history, 2 Arabic daily notes', AcademicRecordsHeld::describe(['register marks' => 3, 'Manara Bucks' => 41, 'Arabic daily notes' => 2]));
+        $this->assertSame('', AcademicRecordsHeld::describe(['Manara Bucks' => 0]));
+        $this->assertSame('3 register marks', AcademicRecordsHeld::describeForPeople(['register marks' => 3, 'Manara Bucks' => 41]), 'a move still leaves the ledger out altogether');
 
         $this->actAs($this->admin);
-        $this->deleteJson($this->adminUrl('/groups/'.$this->class->id.'/members/'.$this->amira->id))
+        $refusal = $this->deleteJson($this->adminUrl('/groups/'.$this->class->id.'/members/'.$this->amira->id))
             ->assertStatus(409)
-            ->assertJsonPath('status', 'failed');
+            ->assertJsonPath('status', 'failed')
+            ->json('data.membership.0');
+        $this->assertStringStartsWith('This child has school records in this class (Manara Bucks history), so they cannot be removed from the roster.', $refusal);
 
         $this->assertNotNull(GroupMembership::query()->find($this->amira->id));
 

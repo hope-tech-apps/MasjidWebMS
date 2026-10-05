@@ -130,9 +130,19 @@ final class AcademicRecordsHeld
      * The ledger's label. The class store's money is the class's and the
      * family's to read; the office reads class totals only
      * (.claude/rules/groups.md, "Class store"). So the sentences a MOVE prints
-     * leave this kind out, and say only that Bucks stay.
+     * leave this kind out, and what they say about Bucks is never counted from
+     * one child's ledger.
      */
     public const LEDGER_LABEL = 'Manara Bucks';
+
+    /**
+     * What a REFUSAL prints for the ledger, with no number. The count of ledger
+     * rows reads as a balance ("1 Manara Bucks"), and since a move writes one
+     * row on the place a student is moved into, "1" there would say that this
+     * child held Bucks when they were moved. The words say what is in the way
+     * and nothing about how much.
+     */
+    public const LEDGER_HISTORY = 'Manara Bucks history';
 
     /** One of each, for a sentence that counts: "1 register mark". */
     private const SINGULAR = [
@@ -250,14 +260,18 @@ final class AcademicRecordsHeld
         return array_sum($held) > 0;
     }
 
-    /** "42 register marks, 2 report cards" — only the kinds that are non-zero. */
+    /**
+     * "42 register marks, 2 report cards" — only the kinds that are non-zero.
+     * The class store's ledger is named WITHOUT its count ("Manara Bucks
+     * history"): see LEDGER_HISTORY.
+     */
     public static function describe(array $held): string
     {
         $parts = [];
 
         foreach ($held as $label => $n) {
             if ($n > 0) {
-                $parts[] = "{$n} {$label}";
+                $parts[] = $label === self::LEDGER_LABEL ? self::LEDGER_HISTORY : "{$n} {$label}";
             }
         }
 
@@ -268,7 +282,8 @@ final class AcademicRecordsHeld
      * The same phrase for the sentences a MOVE prints: one of a thing is
      * singular ("1 register mark"), and the class store's ledger is left out,
      * because the office is not shown a figure about one child's Bucks.
-     * `describe()` above stays as it is: Remove has always printed it.
+     * `describe()` above is what Remove prints; it names the ledger too, and
+     * gives no number for it either.
      */
     public static function describeForPeople(array $held): string
     {

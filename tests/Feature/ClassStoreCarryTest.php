@@ -1598,6 +1598,34 @@ class ClassStoreCarryTest extends TestCase
     }
 
     #[Test]
+    public function remove_on_the_place_a_student_was_moved_into_is_refused_without_a_count_of_ledger_rows(): void
+    {
+        // The only ledger row on the new place is the transfer_in. "1 Manara Bucks" would be a
+        // count of rows that reads as a balance, and says this child held Bucks when moved.
+        $this->credit($this->amira, 12, '2026-10-04');
+        $new = $this->move($this->amira, $this->next);
+
+        $this->actAs($this->admin);
+        $refusal = $this->deleteJson($this->adminUrl('/groups/'.$this->next->id.'/members/'.$new->id))
+            ->assertStatus(409)
+            ->json('data.membership.0');
+
+        $this->assertStringContainsString('(Manara Bucks history)', $refusal);
+        $this->assertDoesNotMatchRegularExpression('/\d/', $refusal, 'no digit: not a row count, not an amount');
+        $this->assertNotNull(GroupMembership::query()->find($new->id));
+
+        // The database refuses as well, on both rows of the pair: RESTRICT, not a courtesy.
+        foreach ([$new, $this->amira] as $row) {
+            try {
+                DB::table('group_memberships')->where('id', $row->id)->delete();
+                $this->fail('a roster row that holds a ledger row cannot be deleted');
+            } catch (\Illuminate\Database\QueryException) {
+                $this->assertNotNull(GroupMembership::query()->find($row->id));
+            }
+        }
+    }
+
+    #[Test]
     public function the_new_classs_teacher_and_the_family_read_the_balance_and_none_of_the_old_classs_history(): void
     {
         $this->storeOn();
