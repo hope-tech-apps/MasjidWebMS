@@ -24,6 +24,13 @@ test('every ledger kind has a teacher word and an unknown one is shown as it cam
     assert.equal(kindLabel(null), '');
 });
 
+test('the kinds are the ledger\'s eight, and the two lines of a moved student have a word of their own', () => {
+    assert.deepEqual(LEDGER_KINDS, ['earned', 'adjusted', 'redeemed', 'reversal', 'cashed_out', 'expired', 'transfer_out', 'transfer_in']);
+    // Without an entry of their own the fallback would print "transfer out" and "transfer in".
+    assert.equal(kindLabel('transfer_out'), 'Moved out');
+    assert.equal(kindLabel('transfer_in'), 'Brought in');
+});
+
 test('bucks and signed bucks read as words and figures, one Buck being singular', () => {
     assert.equal(bucksLabel(1), '1 Buck');
     assert.equal(bucksLabel(0), '0 Bucks');
@@ -161,7 +168,17 @@ test('a ledger line says what it was for', () => {
     assert.equal(entryText({ kind: 'adjusted', week_start: '2026-10-04' }), 'Adjusted, week of Oct 4');
     assert.equal(entryText({ kind: 'cashed_out', breakdown: { '20': 1, '5': 1 } }), 'Paid out on paper (1 x 20, 1 x 5)');
     assert.equal(entryText({ kind: 'expired' }), 'Expired at the end of the class or year');
+    assert.equal(entryText({ kind: 'transfer_out' }), 'Moved with the student to another class');
+    assert.equal(entryText({ kind: 'transfer_in' }), 'Brought from another class');
     assert.equal(entryText({ kind: 'odd_kind' }), 'odd kind');
+});
+
+test('a line of a moved student says the same whatever else the row holds: no prize, no week, no class is named', () => {
+    // The server writes none of these on such a row; the sentence would not print them if it did.
+    const extra = { prize_title: 'Kite', week_start: '2026-10-04', breakdown: { '5': 1 } };
+
+    assert.equal(entryText({ kind: 'transfer_out', ...extra }), 'Moved with the student to another class');
+    assert.equal(entryText({ kind: 'transfer_in', ...extra }), 'Brought from another class');
 });
 
 test('the helper file has no sort, no rank and no total: there is no leaderboard to build from it', () => {

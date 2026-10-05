@@ -303,6 +303,8 @@ export const ES: Record<string, string> = {
     bucks_kind_reversal: "Devueltos",
     bucks_kind_cashed_out: "Pagados en billetes",
     bucks_kind_expired: "Caducados",
+    bucks_kind_transfer_out: "Trasladados a la nueva clase",
+    bucks_kind_transfer_in: "Traídos de la clase anterior",
     bucks_undone: "Deshecho",
     bucks_week_of: "Semana del {x}",
     bucks_explain: "Los puntos positivos de cada semana se convierten en Manara Bucks, que su hijo o hija puede gastar en la tienda de su clase.",

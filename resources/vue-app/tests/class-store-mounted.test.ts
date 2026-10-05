@@ -28,6 +28,10 @@ const students = [
 ];
 const sticker = { id: 5, scope: 'class', title: 'Sticker', description: null, cost_bucks: 2, stock: 4, in_stock: true, is_active: true, editable: true };
 const line = (id: number, amount = 1) => ({ id, kind: 'earned', amount, week_start: '2026-10-04', occurred_at: '2026-10-12T10:00:00Z', reversible: false, is_reversed: false });
+/** One of the two lines of a student moved to another class, as the server sends it: the amount, the day, and nothing else. */
+const movedLine = (id: number, kind: 'transfer_out' | 'transfer_in', amount: number) => ({
+    id, kind, amount, week_start: null, prize_title: null, note: null, breakdown: null, occurred_at: '2026-10-12T10:00:00Z', reversible: false, is_reversed: false,
+});
 
 /** A teacher API that answers the store's reads, and lets each test decide the writes. */
 function teacherApi(over: { post?: (url: string, body: any) => Promise<any>; put?: (url: string, body: any) => Promise<any>; history?: (url: string) => any } = {}) {
@@ -240,6 +244,22 @@ test('teacher: "Show earlier" pages the history 25 at a time, once per tap, and 
     screen.unmount();
 });
 
+test('teacher: the two lines of a moved student read in words with their amount, and neither can be undone', async () => {
+    const { api } = teacherApi({ history: () => ok(page([movedLine(2, 'transfer_out', -12), movedLine(1, 'transfer_in', 12)], 1, 1), { balance: 0 }) });
+    const screen = await mountTeacher(api);
+
+    click(screen.button('Amira'));
+    await flush();
+
+    const lines = screen.all((n) => n.tag === 'li' && /another class/.test(n.textContent)).map((n) => n.textContent);
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^-12 Moved with the student to another class · /);
+    assert.match(lines[1], /^\+12 Brought from another class · /);
+    assert.doesNotMatch(lines.join(' '), /transfer|Undone|null|undefined/, 'never the raw kind, and nothing of the columns the row leaves empty');
+    assert.throws(() => screen.button('Undo'), /0 buttons/, 'the server marks neither line reversible, so no Undo is drawn');
+    screen.unmount();
+});
+
 test('teacher: an edit sends the stock only when it changed, with the count the form was opened at', async () => {
     const { api, calls } = teacherApi({
         put: (_url, body) => (body.stock === 9
@@ -335,6 +355,20 @@ test('family: "show earlier" never draws a line twice when a line was written be
     await flush();
 
     assert.equal(screen.all((n) => n.tag === 'li').length, 27);
+    screen.unmount();
+});
+
+test('family: the two lines of a moved student ask for their own word, and print the amount and the day beside it and nothing else', async () => {
+    const api = { get: () => Promise.resolve(ok(page([movedLine(2, 'transfer_out', -12), movedLine(1, 'transfer_in', 12)], 1, 1), { balance: 0, points_per_buck: 1 })) };
+    const screen = await mountSfc('views/family/FamilyBucks.vue', { base: '/api/family/masjids/1/groups/2', memberId: 11 }, familyModules(api));
+    await flush();
+
+    const lines = screen.all((n) => n.tag === 'li').map((n) => n.textContent);
+    assert.equal(lines.length, 2);
+    // `t` is stubbed to answer the key, so this is the key the screen asked the word table for.
+    assert.match(lines[0], /^-12 bucks_kind_transfer_out · \S/);
+    assert.match(lines[1], /^\+12 bucks_kind_transfer_in · \S/);
+    assert.doesNotMatch(lines.join(' '), /bucks_week_of|bucks_undone|: |null|undefined/, 'no week, no prize title, no "undone"');
     screen.unmount();
 });
 
