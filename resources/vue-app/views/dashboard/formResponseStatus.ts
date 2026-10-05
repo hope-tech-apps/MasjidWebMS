@@ -131,6 +131,11 @@ export function registrationName(id: number, name: string | null): string {
  * - The last line says it stays listed, and, for a registration that was never paid, that
  *   the cancel is what lets it be deleted: the Delete button says "Cancel it first", so
  *   the cancel question is where the office learns the second step exists.
+ * - Except where that second step is known not to work: the delete asks Stripe about a
+ *   card page before it removes anything, and keeps the registration when it cannot
+ *   (destroy()'s "Stripe no longer lets us check…"). A page already known to be beyond
+ *   checking (`page_unreachable`) is therefore promised neither the delete nor the place
+ *   it would free, and is told what the delete will say.
  */
 export function cancelQuestion(facts: CancelFacts): CancelQuestion {
     const lines: string[] = [];
@@ -165,17 +170,29 @@ export function cancelQuestion(facts: CancelFacts): CancelQuestion {
         lines.push('If it reserved a date, that date is offered to others again. Restoring it later gets the date back only if nobody else has reserved it.');
     }
 
+    // Never paid, with a card page nobody can ask Stripe about: the delete would be refused.
+    // Read from the row's own flag, not from `card`, which a form that has lost its payment
+    // settings turns off while the page is still on the row.
+    const neverPaid = facts.deleteStep === 'cancel-first';
+    const uncheckable = neverPaid && facts.pageUnreachable;
+
     if (facts.capacity !== null) {
         lines.push({
             never: `It still counts towards the form's limit of ${facts.capacity}, and a registration with a payment cannot be deleted, so cancelling does not free a place.`,
             'cancel-first': `It still counts towards the form's limit of ${facts.capacity} while it is cancelled; deleting it after the cancel frees its place.`,
             delete: `It still counts towards the form's limit of ${facts.capacity}; only deleting a registration frees a place.`
-        }[facts.deleteStep]);
+        }[uncheckable ? 'delete' : facts.deleteStep]);
     }
 
-    lines.push(facts.deleteStep === 'cancel-first'
-        ? 'It stays in this list, and choosing another status restores it. It was never paid, so once it is cancelled it can also be deleted.'
-        : 'It stays in this list, and choosing another status restores it.');
+    const stays = 'It stays in this list, and choosing another status restores it.';
+
+    if (uncheckable) {
+        lines.push(`${stays} It was never paid, but it stays cancelled and cannot be deleted unless Stripe can be asked about its card payment page.`);
+    } else if (neverPaid) {
+        lines.push(`${stays} It was never paid, so once it is cancelled it can also be deleted.`);
+    } else {
+        lines.push(stays);
+    }
 
     return {
         title: `Cancel ${registrationName(facts.id, facts.name)}?`,
@@ -293,8 +310,15 @@ export type DeleteRow = { status: string; payment_method?: string | null; paymen
  * allowlist as FormResponse::neverRecordedAPayment(): chosen to be paid by card or at the
  * office, and exactly 'unpaid'. Anything else with a payment method is 'never'.
  *
- * Only the server knows the rest (a payment intent or a refund flag on an unpaid row, an
- * import, what Stripe says about the card page), and it decides on the locked row.
+ * It reads these three columns and no more, by choice. The row also carries `paid_at`,
+ * the payment intent, the charge flag and the other traces of a payment the server's
+ * allowlist requires to be absent, so the screen could mirror it in full. It does not: an
+ * unpaid row carrying one of them is a state nothing writes, the server refuses it on the
+ * locked row with the paid sentence, and the screen shows that sentence. A second copy of
+ * the whole list here would only be a second thing to keep in step.
+ *
+ * What the screen cannot know: that a row was imported from another system, and what
+ * Stripe says about its card page. The server decides both.
  */
 export function deleteStep(row: DeleteRow): DeleteStep {
     if (!row.payment_method) return 'delete';
@@ -316,19 +340,50 @@ export function deleteBlocked(step: DeleteStep): { title: string; text: string }
     return null;
 }
 
+/**
+ * The row Delete's accessible name: that it is deleting, while its request runs (the
+ * button shows a spinner then, and is aria-busy); else why it is not available, in the
+ * server's sentence; else what it deletes.
+ */
+export function deleteButtonLabel(id: number, blocked: { text: string } | null, deleting: boolean): string {
+    if (deleting) return `Deleting registration #${id}`;
+    return blocked ? `Delete is not available: ${blocked.text}` : `Delete registration #${id}`;
+}
+
 /** What the delete question needs to know about one registration and its form. */
 export type DeleteFacts = {
     id: number;
     name: string | null;
     /** The registration's payment method, or null for one with none. */
     paymentMethod: FormPaymentMethod | null;
-    /** A card registration whose Stripe page has been opened (the row's `card_page_opened`). */
+    /**
+     * The row SAYS a card payment page is on record for it (cardPageOnRecord()). False is
+     * not "there is none": the row does not always say.
+     */
     cardPageOpened: boolean;
     /** The form reserves dates from a list (meta.reservations). */
     reservesDates: boolean;
     /** The form's capacity, or null for none. */
     capacity: number | null;
 };
+
+/** What a row says about a card payment page: the two flags cardPageOnRecord() reads. */
+export type CardPageRow = { card_page_opened?: boolean | null; page_unreachable?: boolean | null };
+
+/**
+ * Whether the row says a card payment page is on record for it, from the row's own flags
+ * and never `payment_state`: `card_page_opened`, or `page_unreachable`, which is only ever
+ * true of a page on the row (FormResponsesController::knownUnreachable()).
+ *
+ * False does not mean no page. The server sends `card_page_opened` true only where the
+ * row's `payment_state` reads unpaid, and that reading is null on every row of a form that
+ * has lost its payment settings, while destroy() still asks Stripe about any page such a
+ * row carries. deleteQuestion() therefore never stays silent about the check for a card
+ * registration: where the row does not say, it says the page is checked if there is one.
+ */
+export function cardPageOnRecord(row: CardPageRow): boolean {
+    return row.card_page_opened === true || row.page_unreachable === true;
+}
 
 /**
  * The question before a delete, asked only of a row deleteStep() answers 'delete' for:
@@ -340,8 +395,11 @@ export type DeleteFacts = {
  *   question as deleting a payment.
  * - A family that chose the office: only the office knows whether money changed hands
  *   and was never recorded, so it is told to delete only if none did.
- * - A card page on record: the server asks Stripe about it first, and deletes nothing
- *   unless that page has expired without being paid (cardPageRefusal()).
+ * - A card registration: the server asks Stripe about any card page on the row first, and
+ *   deletes nothing unless that page has expired without being paid (cardPageRefusal()).
+ *   Said outright where the row says a page is on record, and as "if a page was opened"
+ *   where it does not (cardPageOnRecord()), so the check is never left out of the question
+ *   and then met as a refusal.
  * - What goes with it: its answers and uploaded files (FormResponse's deleting hook), its
  *   reserved date (the reservation row cascades), its place on a form with a capacity
  *   (forms.response_count). There is no soft delete: it cannot be undone.
@@ -364,6 +422,8 @@ export function deleteQuestion(facts: DeleteFacts): CancelQuestion {
         lines.push('It was to be paid at the office. Delete it only if the office received no payment for it.');
     } else if (facts.cardPageOpened) {
         lines.push('Its card payment page is checked first; if it was paid, nothing is deleted.');
+    } else if (facts.paymentMethod === 'online') {
+        lines.push('If a card payment page was opened for it, that page is checked first; if it was paid, nothing is deleted.');
     }
 
     lines.push('Its answers and any files uploaded with it are removed.');

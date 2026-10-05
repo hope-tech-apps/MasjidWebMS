@@ -22,8 +22,10 @@ import {
     asksBeforeStatusChange,
     cancelDialogOptions,
     cancelQuestion,
+    cardPageOnRecord,
     decideInlineChange,
     deleteBlocked,
+    deleteButtonLabel,
     deleteDialogOptions,
     deleteFailure,
     deleteQuestion,
@@ -172,6 +174,29 @@ test('cancelling a registration that was never paid ends by saying the cancel is
     }
 });
 
+test('a never-paid registration whose card page is known to be beyond checking is not promised a delete the server will refuse', () => {
+    const last = 'It stays in this list, and choosing another status restores it. '
+        + 'It was never paid, but it stays cancelled and cannot be deleted unless Stripe can be asked about its card payment page.';
+
+    // As the list sends it: the page opened on a holder's account that is no longer checkable.
+    const pinned = cancelQuestion(facts({ cardPageOpened: true, pageUnreachable: true, chargedThrough: 'Holder Organisation', capacity: 200 })).lines;
+    assert.equal(pinned[pinned.length - 1], last);
+    assert.doesNotMatch(pinned.join(' '), /can also be deleted|deleting it after the cancel frees/);
+    // Nor the place a delete would free: only that a delete is what frees one.
+    assert.ok(pinned.includes('It still counts towards the form\'s limit of 200; only deleting a registration frees a place.'));
+
+    // The row's own flag decides, so a form that has lost its payment settings (no card
+    // lines, `cardPageOpened` false) is told the same.
+    const lostSettings = cancelQuestion(facts({ paymentEnabled: false, pageUnreachable: true })).lines;
+    assert.equal(lostSettings[lostSettings.length - 1], last);
+
+    // A page Stripe can still be asked about keeps the promise, and so does a paid row its own line.
+    const checkable = cancelQuestion(facts({ cardPageOpened: true })).lines;
+    assert.match(checkable[checkable.length - 1], /so once it is cancelled it can also be deleted\.$/);
+    const paid = cancelQuestion(facts({ paymentState: 'paid', deleteStep: 'never', pageUnreachable: true })).lines;
+    assert.equal(paid[paid.length - 1], 'It stays in this list, and choosing another status restores it.');
+});
+
 test('the cancel question\'s buttons say what they do, never a bare "Cancel" or "OK"', () => {
     const question = cancelQuestion(facts());
 
@@ -313,10 +338,29 @@ test('the rule reads payment_status, never payment_state: a form that lost its p
     assert.equal(deleteStep(paid), 'never', 'a paid registration is never offered a delete because its badge went blank');
 });
 
+test('the rule reads status, method and payment status alone, by choice: the row carries more, and the server refuses on it', () => {
+    // An unpaid row carrying a trace of a payment is a state nothing writes. The screen
+    // offers its delete; FormResponse::neverRecordedAPayment() refuses it on the locked
+    // row, and the screen shows that sentence.
+    const row = { status: 'cancelled', payment_method: 'online', payment_status: 'unpaid' };
+
+    for (const trace of [{ paid_at: '2027-01-01T00:00:00+00:00' }, { stripe_payment_intent_id: 'pi_test_stray_0001' }, { charge_flag: 'refunded' }]) {
+        assert.equal(deleteStep({ ...row, ...trace }), 'delete', Object.keys(trace)[0]);
+    }
+});
+
 test('a dimmed Delete says why in the server\'s own words, and a live one says nothing', () => {
     assert.deepEqual(deleteBlocked('never'), { title: 'This registration cannot be deleted', text: DELETE_REFUSED });
     assert.deepEqual(deleteBlocked('cancel-first'), { title: 'Cancel it first', text: DELETE_CANCEL_FIRST });
     assert.equal(deleteBlocked('delete'), null);
+});
+
+test('the Delete button is named for what it does, why it will not, or that it is deleting', () => {
+    assert.equal(deleteButtonLabel(121, null, false), 'Delete registration #121');
+    assert.equal(deleteButtonLabel(121, deleteBlocked('cancel-first'), false), `Delete is not available: ${DELETE_CANCEL_FIRST}`);
+    assert.equal(deleteButtonLabel(121, deleteBlocked('never'), false), `Delete is not available: ${DELETE_REFUSED}`);
+    // Only a live Delete ever sends a request, but the name never lags behind the spinner.
+    assert.equal(deleteButtonLabel(121, null, true), 'Deleting registration #121');
 });
 
 const deleteFacts = (over: Partial<DeleteFacts> = {}): DeleteFacts => ({
@@ -335,6 +379,7 @@ test('the delete question for a never-paid registration names it, says it was ne
     assert.equal(question.title, 'Delete registration #121, Test Registrant?');
     assert.deepEqual(question.lines, [
         'It is cancelled and was never paid.',
+        'If a card payment page was opened for it, that page is checked first; if it was paid, nothing is deleted.',
         'Its answers and any files uploaded with it are removed.',
         'This cannot be undone.'
     ]);
@@ -352,9 +397,29 @@ test('deleting an office registration asks that the office received no payment f
 test('deleting a card registration whose page was opened says the page is checked first, and nothing is deleted if it was paid', () => {
     const opened = deleteQuestion(deleteFacts({ cardPageOpened: true })).lines.join(' ');
     assert.match(opened, /Its card payment page is checked first; if it was paid, nothing is deleted\./);
+    assert.doesNotMatch(opened, /If a card payment page was opened/);
+});
 
-    const never = deleteQuestion(deleteFacts({ cardPageOpened: false })).lines.join(' ');
-    assert.doesNotMatch(never, /card payment page/);
+test('a card registration whose row does not say a page was opened is still told the page is checked first, if there is one', () => {
+    // A form that has lost its payment settings sends card_page_opened false on every row,
+    // and the server still asks Stripe about a page such a row carries.
+    const unsaid = deleteQuestion(deleteFacts({ cardPageOpened: false })).lines.join(' ');
+    assert.match(unsaid, /If a card payment page was opened for it, that page is checked first; if it was paid, nothing is deleted\./);
+    assert.doesNotMatch(unsaid, /Its card payment page is checked first/);
+
+    // Never said of a registration that has no card leg at all.
+    for (const paymentMethod of ['office', null] as const) {
+        assert.doesNotMatch(deleteQuestion(deleteFacts({ paymentMethod })).lines.join(' '), /card payment page/);
+    }
+});
+
+test('what the row says about a card page is read from its own two flags', () => {
+    assert.equal(cardPageOnRecord({ card_page_opened: true, page_unreachable: false }), true);
+    // Only ever true of a page on the row, and not computed from the form's payment reading.
+    assert.equal(cardPageOnRecord({ card_page_opened: false, page_unreachable: true }), true);
+    assert.equal(cardPageOnRecord({ card_page_opened: false, page_unreachable: false }), false);
+    // An API older than either flag says nothing.
+    assert.equal(cardPageOnRecord({}), false);
 });
 
 test('the delete question says what goes with the registration: its reserved date and its place, only where the form has them', () => {
@@ -390,7 +455,7 @@ test('the delete dialog sets the title as text and starts on the button that del
 });
 
 test('a refused delete shows the server\'s sentence, and a registration already gone says so instead of "Request failed."', () => {
-    const paidOnStripe = 'This registration was paid by card, so it was not deleted. It will show as paid once Stripe confirms it. Refund it in Stripe if it should not stand.';
+    const paidOnStripe = 'This registration was paid by card, so it was not deleted. If it still shows as unpaid later, check this payment in Stripe. Refund it in Stripe if it should not stand.';
 
     assert.deepEqual(deleteFailure(422, paidOnStripe), { title: 'Not deleted', text: paidOnStripe });
     assert.deepEqual(deleteFailure(503, 'Try again in a moment.'), { title: 'Not deleted', text: 'Try again in a moment.' });
@@ -667,6 +732,7 @@ test('the Delete button is dimmed, named and explained by deleteStep(), and stay
     assert.match(deleteButtonTag, /:class="\{ 'opacity-50': deleteBlockedFor\(response\) !== null \}"/);
     assert.match(deleteButtonTag, /:aria-disabled="deleteBlockedFor\(response\) !== null \? 'true' : undefined"/);
     assert.match(deleteButtonTag, /:title="deleteBlockedFor\(response\)\?\.text \?\? 'Delete'"/);
+    assert.match(deleteButtonTag, /:aria-label="deleteButtonLabel\(response\.id, deleteBlockedFor\(response\), deletingId === response\.id\)"/);
     assert.match(deleteButtonTag, /@click="confirmDelete\(response\)"/);
     assert.doesNotMatch(deleteButtonTag, /:disabled=/);
 
@@ -691,7 +757,40 @@ test('confirmDelete asks nothing of a dimmed row, and holds the row lock from it
     const release = at('busyRowId.value = null;');
 
     assert.ok(guard < blocked && blocked < lock && lock < question && question < request && request < release);
-    assert.match(confirmDeleteBody, /\} finally \{\s*busyRowId\.value = null;\s*\}/);
+    assert.match(confirmDeleteBody, /\} finally \{\s*deletingId\.value = null;\s*busyRowId\.value = null;\s*\}/);
+});
+
+test('while its DELETE runs the pressed row\'s Delete shows a spinner and is aria-busy, and a second press stays harmless', () => {
+    // The sign: the status select's spinner in place of the bin, on that row alone.
+    assert.match(deleteButtonTag, /:aria-busy="deletingId === response\.id \? 'true' : undefined"/);
+    assert.match(
+        view,
+        /@click="confirmDelete\(response\)"\s*>\s*<span v-if="deletingId === response\.id" class="spinner-border spinner-border-sm" role="status">\s*<span class="visually-hidden">Deleting registration #\{\{ response\.id \}\}<\/span>\s*<\/span>\s*<i v-else class="bi bi-trash" aria-hidden="true"><\/i>\s*<\/button>/
+    );
+
+    // Shown from the confirmed question to the answer, and never left on.
+    const asked = confirmDeleteBody.indexOf('if (!choice.isConfirmed || !selectedFormId.value) return;');
+    const shown = confirmDeleteBody.indexOf('deletingId.value = response.id;');
+    const request = confirmDeleteBody.indexOf('formResponsesStore.deleteResponse(');
+    const hidden = confirmDeleteBody.indexOf('deletingId.value = null;');
+
+    assert.ok(asked !== -1 && asked < shown && shown < request && request < hidden);
+    assert.match(view, /const deletingId = ref<number \| null>\(null\);/);
+
+    // The second press is still turned away before anything else: the button is not
+    // disabled, so the guard is what keeps it to one request.
+    assert.ok(confirmDeleteBody.indexOf('if (busyRowId.value !== null) return;') < confirmDeleteBody.indexOf('const blocked'));
+    assert.doesNotMatch(deleteButtonTag, /:disabled=/);
+});
+
+test('the delete question takes what the row itself says about a card page, never payment_state', () => {
+    assert.match(confirmDeleteBody, /cardPageOpened: cardPageOnRecord\(response\),/);
+    assert.doesNotMatch(confirmDeleteBody, /payment_state|cardPageStarted/);
+
+    // And the row does carry what deleteStep() chooses not to read (its doc comment says so).
+    for (const column of ['paid_at', 'stripe_payment_intent_id', 'charge_flag']) {
+        assert.match(controller, new RegExp(`'${column}' => `), `serialize() sends ${column}`);
+    }
 });
 
 test('after a delete the list is re-read, and the reserved dates on a form that reserves them', () => {

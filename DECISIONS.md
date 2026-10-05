@@ -7893,6 +7893,20 @@ themselves still run only on the MySQL job.
     form (404), under this organisation's id with the other's form (404) and under the other's own URL (403),
     and this organisation's registration under another of its forms (404): rows, files and counters untouched,
     Stripe never asked.
+  - **The screen.** The cancel question no longer ends with "once it is cancelled it can also be deleted" for a
+    card page already known to be beyond checking (`page_unreachable`), nor says a delete after the cancel
+    frees its place: it says the registration stays cancelled and cannot be deleted unless Stripe can be asked
+    about its card payment page, which is what the delete would answer. The delete question tells every card
+    registration that its card page is checked first, from the row's own flags and never `payment_state`: where
+    the row says a page is on record it says so outright, and where the row does not say (on a form that has
+    lost its payment settings the server sends `card_page_opened` false on every row, and still asks Stripe
+    about a page such a row carries) it says "If a card payment page was opened for it, that page is checked
+    first". The same sentence now also shows for a card registration whose page never opened, where it is true
+    and asks nothing. `deleteStep()` still reads `status`, `payment_method` and `payment_status` alone, and its
+    comment now says that is a choice: the row carries `paid_at`, the payment intent and the charge flag, the
+    server refuses such a row on the locked row, and the screen shows that sentence. While its request runs,
+    the pressed row's Delete shows the status select's spinner in place of the bin and is `aria-busy`; a second
+    press is still turned away by the row lock and sends nothing.
 - **Known limit: on a form that reserves dates, the form row is held across the delete's Stripe calls.** The
   delete locks the form row first (see "Lock order") and keeps it to the commit, across `closeOpenSession()`:
   one read of the page, a close when the page is still open, and a second read when that close is refused. The

@@ -723,16 +723,24 @@
                                                  method and for a cancelled one that was never paid; dimmed for one a
                                                  payment was recorded on, and for a never-paid one until it is
                                                  cancelled. Still focusable and clickable while dimmed, so the reason
-                                                 (the server's own sentence) can be read rather than guessed. -->
+                                                 (the server's own sentence) can be read rather than guessed.
+                                                 While this row's DELETE runs (deletingId) it shows the status select's
+                                                 spinner in place of the bin and is aria-busy: the server can hold the
+                                                 row across a question to Stripe, and a second press meanwhile is
+                                                 turned away without a word (confirmDelete()'s guard). -->
                                             <button
                                                 class="btn btn-outline-danger"
                                                 :class="{ 'opacity-50': deleteBlockedFor(response) !== null }"
                                                 :aria-disabled="deleteBlockedFor(response) !== null ? 'true' : undefined"
+                                                :aria-busy="deletingId === response.id ? 'true' : undefined"
                                                 :title="deleteBlockedFor(response)?.text ?? 'Delete'"
-                                                :aria-label="deleteBlockedFor(response) ? `Delete is not available: ${deleteBlockedFor(response)?.text}` : `Delete registration #${response.id}`"
+                                                :aria-label="deleteButtonLabel(response.id, deleteBlockedFor(response), deletingId === response.id)"
                                                 @click="confirmDelete(response)"
                                             >
-                                                <i class="bi bi-trash" aria-hidden="true"></i>
+                                                <span v-if="deletingId === response.id" class="spinner-border spinner-border-sm" role="status">
+                                                    <span class="visually-hidden">Deleting registration #{{ response.id }}</span>
+                                                </span>
+                                                <i v-else class="bi bi-trash" aria-hidden="true"></i>
                                             </button>
                                         </div>
                                     </td>
@@ -1781,7 +1789,9 @@ import {
     FALLBACK_STATUSES,
     cancelDialogOptions,
     cancelQuestion,
+    cardPageOnRecord,
     deleteBlocked,
+    deleteButtonLabel,
     deleteDialogOptions,
     deleteFailure,
     deleteQuestion,
@@ -3441,6 +3451,9 @@ const questionBody = (lines: string[]): HTMLElement => {
     return body;
 };
 
+/** The row whose DELETE is in flight: its Delete button's spinner. The lock itself is busyRowId. */
+const deletingId = ref<number | null>(null);
+
 /**
  * The row's Delete. What it may do is deleteStep()'s answer, the mirror of
  * FormResponsesController::destroy(): a registration a payment was recorded on is never
@@ -3450,6 +3463,13 @@ const questionBody = (lines: string[]): HTMLElement => {
  * Under busyRowId, the one lock every row action takes, from the question to the answer:
  * the server holds the row's lock across a question to Stripe, so a delete can take a
  * moment, and a second press, or a status change on the row meanwhile, must wait for it.
+ * The guard turns that second press away without a word, so while the request itself runs
+ * the pressed row's Delete says so (deletingId: its spinner and aria-busy).
+ *
+ * The question tells every card registration it is asked of that its card page is checked
+ * first, from what the row itself says about a page (cardPageOnRecord()) and never from
+ * `payment_state`: the server asks Stripe about any page on the row, whatever the form's
+ * settings now are.
  *
  * Afterwards the list is re-read (the row is gone, and the header's count with it), and
  * the reserved dates where the form reserves them: the registration's reservation went
@@ -3477,7 +3497,7 @@ const confirmDelete = async (response: FormResponseRow) => {
             id: response.id,
             name: response.respondent_name,
             paymentMethod: response.payment_method ?? null,
-            cardPageOpened: response.card_page_opened === true,
+            cardPageOpened: cardPageOnRecord(response),
             reservesDates: meta.value?.reservations === true,
             capacity: meta.value?.form?.capacity ?? null
         });
@@ -3485,6 +3505,8 @@ const confirmDelete = async (response: FormResponseRow) => {
         const choice = await Swal.fire(deleteDialogOptions(question, questionBody(question.lines)));
 
         if (!choice.isConfirmed || !selectedFormId.value) return;
+
+        deletingId.value = response.id;
 
         try {
             const deleted = await formResponsesStore.deleteResponse(selectedFormId.value, response.id);
@@ -3506,6 +3528,7 @@ const confirmDelete = async (response: FormResponseRow) => {
         if (meta.value?.reservations === true) loadReservations();
         Swal.fire({ icon: 'success', title: 'Deleted!', text: 'The response has been removed.', timer: 2000, showConfirmButton: false });
     } finally {
+        deletingId.value = null;
         busyRowId.value = null;
     }
 };
