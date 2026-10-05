@@ -1510,6 +1510,94 @@ class ClassStoreCarryTest extends TestCase
     }
 
     #[Test]
+    public function a_class_that_bucks_moved_into_or_out_of_shows_the_office_no_figures(): void
+    {
+        $this->storeOn();
+        $third = $this->newClass('Grade 5');
+
+        // Three classes the office is shown: seven, five and five current students, each holding
+        // something. The first still has five after two of its students are moved.
+        foreach (['Layla', 'Omar', 'Hana', 'Idris', 'Jana'] as $i => $name) {
+            $this->credit($this->student($name), 20 + $i, '2026-10-04');
+        }
+
+        foreach (['Sara', 'Bilal', 'Noor', 'Zayd', 'Mona'] as $i => $name) {
+            $this->credit($this->student($name, $this->next), 30 + $i, '2026-10-04');
+        }
+
+        foreach (['Rami', 'Dina', 'Tariq', 'Salma', 'Anas'] as $i => $name) {
+            $this->credit($this->student($name, $third), 40 + $i, '2026-10-04');
+        }
+
+        $this->credit($this->amira, 4127, '2026-10-04');
+        $this->credit($this->yusuf, 613, '2026-10-04');
+
+        $this->actAs($this->admin);
+        $read = fn (): array => $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk()->json('data');
+        $class = fn (array $data, Group $g): array => collect($data['classes'])->firstWhere('group_id', $g->id);
+
+        $before = $read();
+        $this->assertSame(0, $before['suppressed_classes']);
+        $this->assertSame(4127 + 613 + 110, $class($before, $this->class)['outstanding'], 'a class total the office already reads');
+
+        // One child holding 4127 is moved between two shown classes.
+        $this->move($this->amira, $this->next, $this->admin);
+        $after = $read();
+
+        foreach ([$this->class, $this->next] as $moved) {
+            $this->assertSame(['group_id' => $moved->id, 'name' => $moved->name, 'suppressed' => true], $class($after, $moved), 'named, no figure and no reason');
+        }
+
+        $shown = $class($after, $third);
+        $this->assertFalse($shown['suppressed']);
+        $this->assertSame($shown['outstanding'], $after['totals']['outstanding'], 'both classes left the school totals too, by their whole figures');
+        $this->assertSame(2, $after['suppressed_classes']);
+        $this->assertNoFigureGivesAway(4127, [$before, $after]);
+
+        // The next child after her: the classes are already not shown, and nothing in the answer moves.
+        $this->move($this->yusuf, $this->next, $this->admin);
+        $afterSecond = $read();
+        $this->assertSame($after, $afterSecond);
+        $this->assertNoFigureGivesAway(613, [$before, $after, $afterSecond]);
+
+        // The old class's other balances are written off: it is still not shown.
+        $this->class->forceFill(['ends_on' => '2026-10-04'])->save();
+        $this->sweep();
+        $this->assertSame(0, (int) DB::table('prize_ledger_entries')->where('group_id', $this->class->id)->sum('amount'));
+        $afterWriteOff = $read();
+        $this->assertSame($after, $afterWriteOff, 'the write-off of the classmates is not shown beside a figure from before the move');
+        $this->assertNoFigureGivesAway(4127, [$before, $after, $afterSecond, $afterWriteOff]);
+
+        // No name and no roster id anywhere, as before.
+        $body = json_encode($afterWriteOff, JSON_THROW_ON_ERROR);
+
+        foreach (['Amira', 'Yusuf', 'membership', 'counts_from', 'transfer'] as $leak) {
+            $this->assertStringNotContainsString($leak, $body);
+        }
+    }
+
+    #[Test]
+    public function a_move_that_carried_nothing_leaves_both_classes_shown(): void
+    {
+        // PINNED AS DESIGNED, AND STATED AS A BIT THE OFFICE CAN STILL READ: the rule hides a
+        // class on the pair, not on the move, so a class that stops being shown after a single
+        // move says that child held more than nothing, and one that stays shown says they held
+        // none. The alternative (hide on the move) is with the class-store rules' owner.
+        $this->storeOn();
+        config(['groups.bucks.reconciliation_min_class_size' => 1]);
+        $this->credit($this->yusuf, 3, '2026-10-04');
+        $this->credit($this->student('Sara', $this->next), 2, '2026-10-04');
+
+        $this->move($this->amira, $this->next);
+
+        $this->actAs($this->admin);
+        $data = $this->getJson($this->adminUrl('/prize-reconciliation'))->assertOk()->json('data');
+
+        $this->assertSame(0, $data['suppressed_classes']);
+        $this->assertSame(5, $data['totals']['outstanding']);
+    }
+
+    #[Test]
     public function the_new_classs_teacher_and_the_family_read_the_balance_and_none_of_the_old_classs_history(): void
     {
         $this->storeOn();

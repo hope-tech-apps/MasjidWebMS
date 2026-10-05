@@ -46,6 +46,23 @@ use Illuminate\Support\Facades\Date;
  * `suppressed: true` and NO figures, and is left out of the school totals as well, because a
  * total that included it would give its figures back by subtraction. Its teachers still see
  * it on their own screen; the office sees that it exists and why it shows nothing.
+ *
+ * ## Neither does a class that Bucks moved into or out of with a student
+ *
+ * A move carries ONE child's whole balance between two classes (ClassStore::carryBalance), and
+ * the office knows exactly who was moved. So a class that holds at least one row of a transfer
+ * kind is treated exactly as a class that is too small: listed by name, `suppressed: true`, no
+ * figures, and left out of the school totals. Both classes stop showing in the same response in
+ * which the pair first exists, so no figure, sum or difference, in one response or across a
+ * before-and-after pair, equals the moved child's balance; and two year-end write-offs that
+ * differ only by that child are never both shown. The arithmetic of a shown class is untouched:
+ * a shown class holds no transfer row. The payload gives no reason for `suppressed`.
+ *
+ * What it costs: the class left stays hidden until its transfer rows are purged (about a year
+ * after the last move out), and the class entered for as long as a moved child's ledger exists
+ * there. A school that moves its classes up before the year's Bucks end therefore loses this
+ * view for those classes. And it leaves one bit: a class that stops being shown after a single
+ * move tells the office that child held more than nothing.
  */
 final class ClassStoreReconciliation
 {
@@ -74,7 +91,18 @@ final class ClassStoreReconciliation
             ->pluck('students', 'group_id')
             ->map(fn ($v): int => (int) $v);
 
-        [$shown, $small] = $groups->partition(fn (Group $g) => (int) ($sizes[$g->id] ?? 0) >= $minSize);
+        // Classes that Bucks moved into or out of with a student: one query, class ids only.
+        $carried = PrizeLedgerEntry::query()
+            ->whereIn('group_id', $groups->pluck('id')->all())
+            ->whereIn('kind', PrizeLedgerEntry::TRANSFER_KINDS)
+            ->distinct()
+            ->pluck('group_id')
+            ->map(fn ($id): int => (int) $id)
+            ->flip();
+
+        [$shown, $small] = $groups->partition(
+            fn (Group $g) => (int) ($sizes[$g->id] ?? 0) >= $minSize && ! $carried->has((int) $g->id)
+        );
         $groups = $shown->values();
         $groupIds = $groups->pluck('id')->map(fn ($id): int => (int) $id)->all();
 
@@ -141,7 +169,7 @@ final class ClassStoreReconciliation
                 'from' => $window === [] ? null : end($window)->startDate(),
                 'to' => $window === [] ? null : $window[0]->lastDate(),
             ],
-            // In the caller's display order: the shown classes, then the ones too small to show.
+            // In the caller's display order: the shown classes, then the ones that show nothing.
             'classes' => $classes->map(fn (array $c): array => $c + ['suppressed' => false])->concat($suppressed)->values(),
             'min_class_size' => $minSize,
             'suppressed_classes' => $suppressed->count(),
