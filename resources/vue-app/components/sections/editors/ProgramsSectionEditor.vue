@@ -377,8 +377,13 @@ const onDocumentUploaded = (index: number, stored: { url: string; name: string; 
     // Only a BLANK link text is filled, from the file's name, so the link says what it opens; words
     // the office wrote are theirs, and these can be changed. The office is told it was filled.
     if (!(program.link_text || '').trim()) {
-        program.link_text = sectionDocumentLabel(stored.name) || 'View PDF';
-        stored.filled?.('Link Text was filled in from the file\'s name. Change it if you like.');
+        // Empty when the name has nothing to read (`___.pdf`): the words are then this editor's,
+        // and are not said to have come from the file's name.
+        const fromName = sectionDocumentLabel(stored.name);
+        program.link_text = fromName || 'View PDF';
+        stored.filled?.(fromName
+            ? 'Link Text was filled in from the file\'s name. Change it if you like.'
+            : 'Link Text was filled in as "View PDF". Change it if you like.');
     }
     emitUpdate();
 };

@@ -78,7 +78,10 @@ not.)
 - **Only blank companions are filled** (a Link Buttons label and icon, a program's Link
   Text). Words the office chose are theirs. When the editor fills one it says so by
   calling `stored.filled('…one sentence…')` on the `uploaded` payload, and the control
-  shows that sentence in its "Uploaded." note.
+  shows that sentence in its "Uploaded." note. "From the file's name" is said only
+  when the name gave the words: a name with nothing to read (`___.pdf`) gets the
+  editor's own word ("Document" in Link Buttons, "View PDF" in Programs), and the
+  sentence then says what it was filled in as.
 - **Save waits for an upload.** `SectionFormModal` provides a count,
   `sectionDocumentUploads`, beside `sectionImages`; the control raises it when a file
   goes and lowers it when the answer comes, or when the control is unmounted first.
@@ -116,8 +119,9 @@ not.)
   "This file is taken offline when you save, unless another saved section still links
   it." Never word either of these so that it is false for the other kind of file.
 - **Rows are named.** Pass the row's label as `:label` (a button's label, a program's
-  name, else "Link 2"): it goes into the accessible names of the button and the Open
-  link. The button is never `disabled` while it uploads (that drops the keyboard's
+  name; for a row that has none yet, what its card is headed: "Link 2" in Link
+  Buttons, "Program 2" in Programs): it goes into the accessible names of the button
+  and the Open link. The button is never `disabled` while it uploads (that drops the keyboard's
   focus to the page); it is `aria-disabled`, and a press does nothing.
 - Adding the control to another link field is a template line, an `onDocumentUploaded`
   and, in a list editor, the busy counter, the key and the label. The modal and the

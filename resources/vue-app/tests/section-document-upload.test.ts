@@ -177,6 +177,19 @@ test('Link Buttons: a file with no readable name still gets a label, never a raw
 
     assert.equal(editor.content().links[0].label, 'Document');
 
+    // The label did not come from the file's name (it had nothing to read), and the note does not
+    // say it did: it says what the label now is.
+    assert.ok(editor.screen.text().includes('A label ("Document") and a download icon were filled in. Change them if you like.'), editor.screen.text());
+    assert.ok(!editor.screen.text().includes('the file\'s name'));
+
+    // The same when only the label was blank.
+    const labelOnly = await mountEditor(LINK_LIST, links({ icon: 'bi-calendar' }), store);
+    await labelOnly.choose(0, pdf('---.pdf'));
+    assert.equal(labelOnly.content().links[0].label, 'Document');
+    assert.ok(labelOnly.screen.text().includes('The label was filled in as "Document". Change it if you like.'), labelOnly.screen.text());
+    assert.ok(!labelOnly.screen.text().includes('the file\'s name'));
+
+    labelOnly.screen.unmount();
     editor.screen.unmount();
 });
 
@@ -644,9 +657,14 @@ test('Programs: the PDF\'s address goes into that program\'s Link URL, and a bla
     assert.equal(editor.screen.text().split('Link Text was filled in').length - 1, 1);
 
     // A name with nothing to read still leaves words on the link.
-    const blank = await mountEditor(PROGRAMS, programs({ name: 'Elementary' }), fakeStore(stored(ADDRESS, '')).store);
+    const blank = await mountEditor(PROGRAMS, programs({ name: 'Elementary' }, {}), fakeStore(stored(ADDRESS, '')).store);
     await blank.choose(0, pdf('___.pdf'));
     assert.equal(blank.content().programs[0].link_text, 'View PDF');
+    // A program with no name yet is named as its card is headed: "Program 2", not "Link 2".
+    assert.deepEqual(blank.uploadButtons().map((b) => b.props['aria-label']), ['Replace PDF for Elementary', 'Upload a PDF for Program 2']);
+    // Those words did not come from the file's name, and the note does not say they did.
+    assert.ok(blank.screen.text().includes('Link Text was filled in as "View PDF". Change it if you like.'), blank.screen.text());
+    assert.ok(!blank.screen.text().includes('the file\'s name'));
 
     blank.screen.unmount();
     editor.screen.unmount();

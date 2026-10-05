@@ -251,16 +251,23 @@ const onDocumentUploaded = (index: number, stored: { url: string; name: string; 
     // help says to leave it blank for a button with no icon, so an icon that appears needs a word).
     const labelFilled = !(link.label || '').trim();
     const iconFilled = !(link.icon || '').trim();
+    // Empty when the name has nothing to read (`___.pdf`): the label is then a word of this
+    // editor's, and is not said to have come from the file's name.
+    const fromName = sectionDocumentLabel(stored.name);
     if (labelFilled) {
-        link.label = sectionDocumentLabel(stored.name) || 'Document';
+        link.label = fromName || 'Document';
     }
     if (iconFilled) {
         link.icon = SECTION_DOCUMENT_ICON;
     }
     if (labelFilled && iconFilled) {
-        stored.filled?.('The label (from the file\'s name) and a download icon were filled in. Change them if you like.');
+        stored.filled?.(fromName
+            ? 'The label (from the file\'s name) and a download icon were filled in. Change them if you like.'
+            : 'A label ("Document") and a download icon were filled in. Change them if you like.');
     } else if (labelFilled) {
-        stored.filled?.('The label was filled in from the file\'s name. Change it if you like.');
+        stored.filled?.(fromName
+            ? 'The label was filled in from the file\'s name. Change it if you like.'
+            : 'The label was filled in as "Document". Change it if you like.');
     } else if (iconFilled) {
         stored.filled?.('A download icon was filled in. Change it, or clear it, if you like.');
     }
