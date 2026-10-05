@@ -2574,4 +2574,190 @@ class RosterMoveTest extends TestCase
             fn (array $key): bool => in_array('consent_carried_from_group_id', $key['columns'], true),
         ));
     }
+
+    // ==================================================== the marker's writers
+
+    #[Test]
+    public function the_marker_is_cleared_by_a_record_kept_by_a_withdrawal_and_follows_a_consent_a_merge_clears(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $huda = $this->guardian($student, 'Huda', consent: 'feed');
+        $gamal = $this->guardian($student, 'Gamal', consent: 'media');
+        $nadia = $this->guardian($student, 'Nadia', consent: 'media');
+        $samira = $this->guardian($student, 'Samira', consent: 'media');
+        $this->move($student, $this->second, self::TODAY)->assertOk();
+
+        $marker = fn (GroupMembership $of): ?int => DB::table('group_memberships')
+            ->where('id', $this->entryIn($this->second, $of)->id)->value('consent_carried_from_group_id');
+
+        foreach ([$huda, $gamal, $nadia, $samira] as $entry) {
+            $this->assertSame($this->first->id, $marker($entry), 'carried from the class left');
+        }
+
+        // A WITHDRAWAL KEEPS IT: "withdrawn here after it was carried". The
+        // verb still writes its two columns and nothing else.
+        $this->withdrawConsent($this->entryIn($this->second, $huda))->assertOk()
+            ->assertJsonPath('data.consent_scope', null)
+            ->assertJsonPath('data.consent_carried_from_group_id', $this->first->id);
+        $this->assertSame($this->first->id, $marker($huda));
+        $this->assertFalse($this->entryIn($this->second, $huda)->consentColumnsAreSet());
+
+        // A RECORD CLEARS IT: the office is now asserting it for this class.
+        $this->recordConsent($this->entryIn($this->second, $huda), 'feed')->assertOk()
+            ->assertJsonPath('data.consent_scope', 'feed')
+            ->assertJsonPath('data.consent_carried_from_group_id', null);
+        $this->assertNull($marker($huda));
+
+        // Also when the office saves the dialog as it stands: same scope, same day.
+        $this->recordConsent($this->entryIn($this->second, $gamal), 'media', '2026-09-04')->assertOk()
+            ->assertJsonPath('data.consent_scope', 'media')
+            ->assertJsonPath('data.consent_carried_from_group_id', null);
+        $this->assertNull($marker($gamal));
+        $this->assertSame('2026-09-04', $this->entryIn($this->second, $gamal)->consent_granted_at->toDateString());
+
+        // The source entries in the class left were never marked and still are not.
+        $this->assertSame(0, DB::table('group_memberships')->where('group_id', $this->first->id)->whereNotNull('consent_carried_from_group_id')->count());
+
+        // A MERGE'S UN-CONFIRM clears the marker together with a consent it
+        // clears: the row is no longer that pair, and nobody withdrew.
+        $this->entryIn($this->second, $nadia)->unconfirm()->save();
+        $this->assertNull($marker($nadia));
+        $this->assertFalse($this->entryIn($this->second, $nadia)->consentColumnsAreSet());
+
+        // But an entry that was ALREADY blank keeps it. That state records a
+        // family's withdrawal, and a merge is a de-duplication of one child.
+        $this->withdrawConsent($this->entryIn($this->second, $samira))->assertOk();
+        $this->entryIn($this->second, $samira)->unconfirm()->save();
+        $this->assertSame($this->first->id, $marker($samira), 'a merge forgot that a carried consent was withdrawn');
+
+        // Not fillable: no request body and no mass assignment sets it.
+        $this->assertNotContains('consent_carried_from_group_id', (new GroupMembership())->getFillable());
+        Sanctum::actingAs($this->admin);
+        $this->putJson($this->consentUrl($this->entryIn($this->second, $huda)), ['scope' => 'feed', 'consent_carried_from_group_id' => $this->first->id])->assertOk();
+        $this->assertNull($marker($huda));
+    }
+
+    // ================================================ what a withdrawal answers
+
+    #[Test]
+    public function a_withdrawal_says_where_that_parents_consent_still_stands_the_same_class_first(): void
+    {
+        $third = $this->makeClass('3rd Grade');
+        $parent = $this->makePerson('Huda', 'Guardian');
+        // A live family sign-in, so what the class opens to them can be asked below.
+        $parent->forceFill(['login_email' => 'parent-'.uniqid().'@test.local', 'login_enabled_at' => now()])->save();
+        $maryam = $this->enrol($this->first, 'Maryam');
+        $this->guardian($maryam, $parent, consent: 'media');
+
+        // The same adult stands in the second class for a brother, with
+        // photograph consent recorded there, so Maryam's is carried into it.
+        $yusuf = $this->enrol($this->second, 'Yusuf');
+        $forYusuf = $this->guardian($yusuf, $parent, consent: 'media');
+        // And Maryam is in a third class at the same time, with consent recorded there too.
+        $this->guardian($this->enrol($third, $maryam->contact), $parent, consent: 'feed');
+        // Another organisation's rows are never named.
+        $elsewhere = $this->makeSchool();
+        DB::table('group_memberships')->insert([
+            'masjid_id' => $elsewhere->id, 'group_id' => $this->makeClass('Their class', school: $elsewhere)->id,
+            'contact_id' => $parent->id, 'role' => 'guardian', 'guardian_of_contact_id' => $maryam->contact_id,
+            'provenance' => 'confirmed', 'consent_scope' => 'media', 'consent_granted_at' => '2026-09-04 10:00:00',
+        ]);
+
+        $this->move($maryam, $this->second, self::TODAY)->assertOk()->assertJsonPath('data.consent_carried', ['media' => 1, 'feed' => 0]);
+        $copy = GroupMembership::where('group_id', $this->second->id)->where('contact_id', $parent->id)
+            ->where('guardian_of_contact_id', $maryam->contact_id)->sole();
+
+        $answer = $this->withdrawConsent($copy)->assertOk()->assertJsonPath('data.consent_scope', null);
+
+        $this->assertSame([
+            // THE SAME CLASS FIRST: an adult is admitted to a class's story on
+            // any one of their current entries there.
+            "Huda Guardian still receives 2nd Grade's class story through their entry for Yusuf Student (class story and "
+                .'photographs). Withdraw that too if the family meant the whole class.',
+            // Then the same child's other classes: a closed entry, and a current one.
+            'Consent for Huda Guardian about Maryam Student is still on record in 1st Grade (class story and photographs, '
+                .'recorded 4 Sep 2026) and comes back into force if Maryam Student returns there. Withdraw it there too '
+                .'if the family meant both.',
+            'Consent for Huda Guardian about Maryam Student still stands in 3rd Grade (class story, recorded 4 Sep 2026). '
+                .'Withdraw it there too if the family meant both.',
+        ], $answer->json('notes'));
+
+        // And the first note is true: the class is still open to them.
+        $audience = app(\App\Support\GroupAudience::class);
+        $this->assertTrue($audience->mayReceive($parent->fresh(), $this->second->fresh(), \App\Support\GroupAudience::DISCLOSURE_FEED));
+        $this->assertTrue($audience->mayReceive($parent->fresh(), $this->second->fresh(), \App\Support\GroupAudience::DISCLOSURE_MEDIA));
+
+        // Withdrawing the brother's too closes it, and that answer names only
+        // what is left: nothing in this class, and nothing about another child.
+        $this->assertSame([], $this->withdrawConsent($forYusuf)->assertOk()->json('notes'));
+        $this->assertFalse($audience->mayReceive($parent->fresh(), $this->second->fresh(), \App\Support\GroupAudience::DISCLOSURE_FEED));
+
+        // An entry of that adult in this class that has left, or holds
+        // nothing, opens nothing and is not named.
+        $this->assertSame(2, count($this->withdrawConsent($copy)->assertOk()->json('notes')));
+
+        // A participant row has nothing to withdraw and nothing to be told.
+        $this->withdrawConsent($yusuf)->assertOk()->assertJsonPath('notes', []);
+    }
+
+    #[Test]
+    public function a_record_that_narrows_names_the_entries_in_that_class_that_still_hold_more(): void
+    {
+        $parent = $this->makePerson('Huda', 'Guardian');
+        $forMaryam = $this->guardian($this->enrol($this->first, 'Maryam'), $parent, consent: 'media');
+        $forYusuf = $this->guardian($this->enrol($this->first, 'Yusuf'), $parent, consent: 'media');
+
+        // Recorded as it stands: nothing in this class holds more than it does.
+        $this->recordConsent($forMaryam, 'media', '2026-09-04')->assertOk()->assertJsonPath('notes', []);
+
+        // Narrowed to the class story: the brother's entry still opens the photographs.
+        $this->recordConsent($forMaryam->fresh(), 'feed', '2026-09-04')->assertOk()->assertJsonPath('notes', [
+            "Huda Guardian still receives 1st Grade's class story through their entry for Yusuf Student (class story and "
+                .'photographs). Withdraw that too if the family meant the whole class.',
+        ]);
+
+        // The brother's narrowed as well: neither holds more than the other now.
+        $this->recordConsent($forYusuf->fresh(), 'feed', '2026-09-04')->assertOk()->assertJsonPath('notes', []);
+
+        // A refusal answers no notes and writes nothing.
+        $claim = $this->guardian($this->enrol($this->first, 'Layla'), $parent, confirmed: false);
+        $refused = $this->recordConsent($claim, 'media')->assertStatus(422);
+        $this->assertArrayNotHasKey('notes', $refused->json());
+    }
+
+    #[Test]
+    public function a_notes_read_that_fails_never_turns_a_withdrawal_into_an_error(): void
+    {
+        $this->logLikeProduction();
+
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+
+        $this->app->bind(\App\Http\Controllers\AdminDashboard\GroupConsentController::class, fn () => new class extends \App\Http\Controllers\AdminDashboard\GroupConsentController {
+            protected function whereConsentStillStands(Group $group, GroupMembership $entry): array
+            {
+                throw new \RuntimeException('the read behind the notes failed, with something private in its message');
+            }
+        });
+
+        $this->withdrawConsent($parent)->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.consent_scope', null)
+            ->assertJsonPath('notes', []);
+
+        $this->assertFalse($parent->fresh()->consentColumnsAreSet(), 'the withdrawal was not written');
+
+        // Kept where production keeps it (LOG_LEVEL=warning), by the fault's
+        // class and the row's id, never by its message.
+        $lines = $this->loggedLines('laravel.log', 'group.consent.notes_failed');
+        $this->assertCount(1, $lines);
+        $this->assertStringContainsString('.WARNING: group.consent.notes_failed', $lines[0]);
+        $this->assertStringContainsString('"membership":'.$parent->id, $lines[0]);
+        $this->assertStringContainsString('RuntimeException', $lines[0]);
+        $this->assertStringNotContainsString('something private', $lines[0]);
+
+        // A record is answered the same way.
+        $this->recordConsent($parent->fresh(), 'feed')->assertOk()->assertJsonPath('notes', [])->assertJsonPath('data.consent_scope', 'feed');
+        $this->assertCount(2, $this->loggedLines('laravel.log', 'group.consent.notes_failed'));
+    }
 }
