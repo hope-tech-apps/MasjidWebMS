@@ -20,6 +20,8 @@ use App\Support\Arabic\ArabicCurriculum;
 use App\Support\GroupAudience;
 use App\Support\GroupPostAttachments;
 use App\Support\Letters\CurriculumRegistry;
+use App\Support\RosterMove;
+use App\Support\SchoolCalendar;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -1283,6 +1285,211 @@ class FamilyPortalTest extends TestCase
 
         $this->as($this->parentA)->getJson($this->groupUrl('/posts'))->assertStatus(403);
         $this->as($this->parentA)->getJson($this->url('/groups'))->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    // ------------------ 4b. a class the child has LEFT stays listed, and says so
+    //
+    // `may_receive_feed` is false for a family that never gave consent and for a
+    // family whose child has left the class, and the portal told both "You have
+    // not given consent". `in_class_now` is what lets it tell them apart: it
+    // draws that notice only for a class the family is still in.
+
+    /** Record a student as having left today, the write GroupWithdrawalController makes. */
+    private function leaves(GroupMembership $student): void
+    {
+        GroupMembership::withoutMasjidScope()->findOrFail($student->id)->markLeftByStaff(null)->save();
+    }
+
+    /** This parent's guardian entry for one child in a class, read fresh. */
+    private function entryOf(Contact $parent, Contact $child, Group $class): GroupMembership
+    {
+        return GroupMembership::withoutMasjidScope()
+            ->where('group_id', $class->id)
+            ->where('contact_id', $parent->id)
+            ->where('guardian_of_contact_id', $child->id)
+            ->firstOrFail();
+    }
+
+    #[Test]
+    public function a_class_the_family_is_in_says_so_with_or_without_consent(): void
+    {
+        // No consent on file: the one family the "no consent" notice is for.
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.may_receive_feed', false)
+            ->assertJsonPath('data.0.in_class_now', true);
+
+        // The class screen reads its own payload, so the key is on both.
+        $this->as($this->parentA)->getJson($this->groupUrl())
+            ->assertOk()
+            ->assertJsonPath('data.may_receive_feed', false)
+            ->assertJsonPath('data.in_class_now', true);
+
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.may_receive_feed', true)
+            ->assertJsonPath('data.0.in_class_now', true);
+
+        $this->as($this->parentA)->getJson($this->groupUrl())
+            ->assertOk()
+            ->assertJsonPath('data.may_receive_feed', true)
+            ->assertJsonPath('data.in_class_now', true);
+    }
+
+    #[Test]
+    public function a_class_the_child_has_left_reads_as_left_while_the_consent_stays_on_file(): void
+    {
+        $this->consent($this->parentA, GroupMembership::CONSENT_MEDIA);
+
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.may_receive_feed', true)
+            ->assertJsonPath('data.0.in_class_now', true);
+
+        // The office records that Amina left. Her mother's entry leaves with
+        // her (the model's hook), and nothing touches the consent on it.
+        $this->leaves($this->childAMembership);
+
+        // Still listed: what the school recorded while she was here is still
+        // her family's to read.
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.may_receive_feed', false)
+            ->assertJsonPath('data.0.may_receive_media', false)
+            ->assertJsonPath('data.0.in_class_now', false);
+
+        $this->as($this->parentA)->getJson($this->groupUrl())
+            ->assertOk()
+            ->assertJsonPath('data.may_receive_feed', false)
+            ->assertJsonPath('data.in_class_now', false);
+
+        // WHY the key exists. The feed is closed and the consent is still
+        // there, so "You have not given consent" is false of this family.
+        $entry = $this->entryOf($this->parentA, $this->childA, $this->group);
+
+        $this->assertTrue($entry->hasLeft());
+        $this->assertSame(GroupMembership::CONSENT_MEDIA, $entry->consent_scope);
+        $this->assertNotNull($entry->consent_granted_at);
+
+        // The other family in the same class is where it was.
+        $this->as($this->parentB)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.in_class_now', true);
+
+        // Put back on the roster, the class is theirs again and so is its story.
+        GroupMembership::withoutMasjidScope()->findOrFail($this->childAMembership->id)->returnToRoster()->save();
+
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.may_receive_feed', true)
+            ->assertJsonPath('data.0.in_class_now', true);
+    }
+
+    #[Test]
+    public function a_moved_child_reads_as_left_in_the_old_class_and_as_there_in_the_new_one(): void
+    {
+        $this->consent($this->parentA, GroupMembership::CONSENT_MEDIA);
+
+        $next = Group::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'kind' => Group::KIND_CLASS,
+            'name' => 'Grade 4',
+        ]);
+
+        // The office's own move, not a hand-made pair of rows: it closes Amina's
+        // place and her mother's entry in Grade 3 and opens both in Grade 4.
+        app(TenantContext::class)->set($this->masjid->id);
+
+        app(RosterMove::class)->move(
+            $this->group,
+            $this->childAMembership->fresh(),
+            (int) $next->id,
+            SchoolCalendar::for((int) $this->masjid->id)->today(),
+            [],
+            null,
+        );
+
+        $response = $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+
+        // By id: the list is in display order, and `data.0` would be whichever
+        // class that order put first.
+        $listed = collect($response->json('data'))->keyBy('id');
+
+        $this->assertFalse($listed[$this->group->id]['in_class_now']);
+        $this->assertFalse($listed[$this->group->id]['may_receive_feed']);
+        $this->assertTrue($listed[$next->id]['in_class_now']);
+
+        // Whether Grade 4's story is open to her is the move's rule about
+        // consent, pinned by the move's own tests. Not asserted here.
+
+        $old = $this->as($this->parentA)->getJson($this->groupUrl())
+            ->assertOk()
+            ->assertJsonPath('data.in_class_now', false)
+            ->assertJsonPath('data.may_receive_feed', false);
+
+        $new = $this->as($this->parentA)->getJson($this->url("/groups/{$next->id}"))
+            ->assertOk()
+            ->assertJsonPath('data.in_class_now', true);
+
+        // The consent she gave in Grade 3 is still on that entry (a move clears
+        // nothing), which is why the old class must not say she never gave it.
+        $this->assertSame(
+            GroupMembership::CONSENT_MEDIA,
+            $this->entryOf($this->parentA, $this->childA, $this->group)->consent_scope,
+        );
+
+        // NOT a move column. A family is told it is in a class or is not: never
+        // that the child was moved, where to, by whom, or anything about a
+        // consent that travelled or a balance that did.
+        foreach ([$response, $old, $new] as $served) {
+            $keys = array_filter(
+                array_keys(iterator_to_array(
+                    new \RecursiveIteratorIterator(
+                        new \RecursiveArrayIterator($served->json()),
+                        \RecursiveIteratorIterator::SELF_FIRST,
+                    ),
+                    true,
+                )),
+                fn ($key): bool => is_string($key) && preg_match('/moved|carried|counts_from/', $key) === 1,
+            );
+
+            $this->assertSame([], array_values($keys));
+        }
+    }
+
+    #[Test]
+    public function a_parent_with_another_child_still_in_the_class_is_still_in_it(): void
+    {
+        // Consent is on the entry for Amina only: it was recorded before her
+        // sister was listed.
+        $this->consent($this->parentA, GroupMembership::CONSENT_MEDIA);
+
+        $sister = Contact::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'first_name' => 'Samira',
+            'email' => null,
+        ]);
+        $this->seedMembership($sister, GroupMembership::ROLE_MEMBER);
+        $this->seedMembership($this->parentA, GroupMembership::ROLE_GUARDIAN, $sister);
+
+        $this->leaves($this->childAMembership);
+
+        // ONE entry without a leaving date is a family still in the class. The
+        // feed is closed, and this time the notice is true: no consent is on
+        // file for the child who is still here.
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.may_receive_feed', false)
+            ->assertJsonPath('data.0.in_class_now', true);
+
+        $this->as($this->parentA)->getJson($this->groupUrl())
+            ->assertOk()
+            ->assertJsonPath('data.in_class_now', true);
     }
 
     #[Test]
