@@ -141,6 +141,8 @@ function patchProp(el: Node, key: string, _prev: any, next: any) {
     }
     if (key === 'value') el.value = next ?? '';
     if (key === 'type') el.type = String(next ?? '');
+    // A checkbox or a radio drawn with `:checked`: what a browser would show as ticked.
+    if (key === 'checked') (el as any).checked = next === true || next === '';
 }
 
 const { createApp } = vue.createRenderer({ ...nodeOps, patchProp });
@@ -313,6 +315,62 @@ export function submit(form: Node): void {
 export function type(el: Node, value: string): void {
     el.value = value;
     run(el, 'input');
+}
+
+/**
+ * Tick or untick a checkbox, as a tap does: the box takes the new state, then its `change`
+ * handler runs. Nothing at all on a disabled box. Returns whether it ran.
+ */
+export function check(el: Node, on: boolean): boolean {
+    if (el.disabled) return false;
+    (el as any).checked = on;
+    return run(el, 'change') > 0;
+}
+
+/** Choose one radio of a group: it becomes the checked one, then its `change` handler runs. */
+export function choose(el: Node): boolean {
+    if (el.disabled) return false;
+    (el as any).checked = true;
+    return run(el, 'change') > 0;
+}
+
+/**
+ * Choose the option of a `<select v-model>` whose value is `value`, as a tap on it does: the
+ * runtime's directive reads the select's `options` and which of them is `selected`, then the
+ * `change` listeners run.
+ */
+export function select(el: Node, value: any): void {
+    el.options = el.children.filter((c) => c.kind === 'el' && c.tag === 'option');
+    el.options.forEach((o: any) => { o.selected = o.value === value; });
+    el.selectedIndex = el.options.findIndex((o: any) => o.selected);
+    run(el, 'change');
+}
+
+/** The field loses focus. */
+export function blur(el: Node): void {
+    run(el, 'blur');
+}
+
+// A DIALOG LISTENS FOR KEYS ON THE DOCUMENT and hands focus back to whatever opened it. The stub
+// document has no events and no tree to ask "is this still on the page", so `withDocumentKeys()`
+// gives it both for the file that asks: the keydown listeners a screen adds are kept and
+// `pressKey()` calls them, and `document.contains` answers from `onPage`.
+const documentKeydown = new Set<(e: any) => void>();
+export const onPage = new Set<any>();
+
+export function withDocumentKeys(): { listeners: Set<(e: any) => void>; onPage: Set<any> } {
+    const doc = (globalThis as any).document;
+    (globalThis as any).HTMLElement ??= Node;
+    doc.addEventListener = (name: string, fn: (e: any) => void) => { if (name === 'keydown') documentKeydown.add(fn); };
+    doc.removeEventListener = (name: string, fn: (e: any) => void) => { if (name === 'keydown') documentKeydown.delete(fn); };
+    doc.contains = (node: any) => onPage.has(node);
+
+    return { listeners: documentKeydown, onPage };
+}
+
+/** Press a key with the page focused: every keydown listener on the document hears it (Escape closes a dialog). */
+export function pressKey(key: string): void {
+    [...documentKeydown].forEach((fn) => fn({ key, shiftKey: false, preventDefault() {} }));
 }
 
 /** Let every settled promise and Vue's scheduler run; throw what the component threw meanwhile. */
