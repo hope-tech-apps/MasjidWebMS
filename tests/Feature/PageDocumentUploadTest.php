@@ -141,11 +141,14 @@ class PageDocumentUploadTest extends TestCase
         Sanctum::actingAs($this->admin);
 
         // This deployment answers to more than one hostname, and any Host reaches the application.
-        $url = $this->withHeader('Host', 'other-host.example.test')
-            ->post($this->documents(), ['document' => $this->upload('calendar.pdf', self::PDF)])
+        // Posted to the full address: in a test a `Host` header alone does not become the request's
+        // host, which is taken from the address the request is made to.
+        $url = $this->post('https://other-host.example.test' . $this->documents(), ['document' => $this->upload('calendar.pdf', self::PDF)])
             ->assertStatus(201)
             ->json('data.url');
 
+        // The request did come in on the other host, and the answer is not built from it.
+        $this->assertSame('other-host.example.test', request()->getHost());
         $this->assertStringStartsWith(self::PUBLIC_DISK_URL . '/', $url);
         $this->assertStringNotContainsString('other-host', $url);
     }

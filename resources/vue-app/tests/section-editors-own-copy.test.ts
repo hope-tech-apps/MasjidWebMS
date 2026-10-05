@@ -196,15 +196,45 @@ for (const { name, lists, content } of EDITORS) {
             click(addButtons(screen)[at]);
             await flush();
         }
+        // Something different into every field, one after another. Each edit sends the content up,
+        // the editor is handed it back, and it builds every row again.
+        const said: string[] = [];
         for (let at = 0; at < typed(screen).length; at++) {
-            type(typed(screen)[at], 'Changed');
+            said.push(`Typed ${at + 1}.`);
+            type(typed(screen)[at], said[at]);
             await flush();
         }
         assert.deepEqual(later, content, 'an edit wrote into content the editor was handed while it was open');
 
+        // WHAT WAS TYPED IS STILL THERE after all those rebuilds: in each field on the screen, and
+        // in the content the editor sends up. A row rebuilt from the wrong copy would have lost it.
+        const fields = typed(screen);
+        assert.equal(fields.length, said.length, 'typing changed how many fields there are');
+        said.forEach((value, at) => {
+            assert.equal(fields[at].value, value, `field ${at + 1} no longer shows what was typed into it`);
+        });
+
+        // (This harness runs a field's own `@input` ahead of its v-model, the other way round from a
+        // browser, so each content sent up holds everything typed BEFORE that edit. One more edit,
+        // of the first field with the text it already has, brings the last one up too.)
+        type(fields[0], said[0]);
+        await flush();
+        const now = sent[sent.length - 1];
+        const sentUp = new Set<string>();
+        const collect = (value: unknown): void => {
+            if (typeof value === 'string') {
+                sentUp.add(value);
+            } else if (value && typeof value === 'object') {
+                Object.values(value).forEach(collect);
+            }
+        };
+        collect(now);
+        said.forEach((value, at) => {
+            assert.ok(sentUp.has(value), `what was typed into field ${at + 1} is not in the content the editor sent up`);
+        });
+
         // And the test did reach every list: what the editor sent up has a row added to each, and
         // each first row changed.
-        const now = sent[sent.length - 1];
         for (const list of lists) {
             assert.notDeepEqual(now[list][0], content[list][0], `nothing was typed into ${list}`);
             assert.ok(now[list].length > content[list].length, `no row was added to ${list}`);

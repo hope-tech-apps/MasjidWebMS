@@ -15,6 +15,9 @@
  *  - AN EDIT THAT IS ABANDONED IS GONE. The modal is opened on the object the page list holds, and
  *    Cancel does not reload that list. Its form is a copy of its own, so nothing an editor did before
  *    Cancel is there the next time the section is opened.
+ *  - WHAT WAS UPLOADED WHILE IT WAS OPEN. A file the form has let go of (its row removed, its type
+ *    changed, another put in its place, the form set aside for Attach Existing) is online and in no
+ *    saved section, and only the modal still knows its address: the footer keeps it on the screen.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
@@ -72,6 +75,11 @@ interface ModalOptions {
 /**
  * Mount the modal on a saved section, or on none (a new section). `upload` answers each file the
  * control sends; a bare `true` or `false` is `closeAnyway`.
+ *
+ * The section is handed over as the page list holds it: a REACTIVE object (PageSectionsView keeps
+ * its sections in a ref). A test that passes a plain one has it made reactive here, so every modal
+ * in this file is opened on a proxy, and a fault only a proxy shows (a copy that throws on one, a
+ * write that reaches the list through one) cannot hide behind a plain object.
  */
 async function mountModal(saved: any, upload: (file: any) => Promise<any>, options: boolean | ModalOptions = false) {
     const { closeAnyway = false, editors: standIns, sectionTypes = [], library = [] }: ModalOptions = typeof options === 'boolean' ? { closeAnyway: options } : options;
@@ -128,7 +136,7 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, optio
     const asked: any[] = [];
     const emitted = { close: 0, saved: 0 };
     const screen = await mountSfc(MODAL, {
-        section: saved,
+        section: saved && !vue.isReactive(saved) ? vue.reactive(saved) : saved,
         pageId: 3,
         onClose: () => { emitted.close++; },
         onSaved: () => { emitted.saved++; },
