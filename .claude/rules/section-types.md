@@ -62,8 +62,10 @@ everything else as a download (`deploy/nginx/manara-storage.conf`, installed by
 hand on each server, `deploy/README.md`). So a new upload whose file must OPEN
 in the browser needs its ending on that list too, on every server:
 `NginxStorageAllowlistTest` fails when a rule's `extensions:` names an ending
-the repository's copy does not. The `extensions:` rule is still required: the
-server's list is for the name nobody thought of, not a reason to skip the rule.
+the repository's copy does not. Changing the list is a change to the servers
+(production's two vhosts and staging read it), so it waits for the owner's yes
+each time. The `extensions:` rule is still required: the server's list is for
+the name nobody thought of, not a reason to skip the rule.
 
 **The pair is for every upload whose client file name can reach the public disk,
 not for sections only.** On 2026-10-05 every such upload carried it (found by

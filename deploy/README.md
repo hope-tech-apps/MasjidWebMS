@@ -186,14 +186,16 @@ for the name nobody thought of. Inside `location ^~ /storage/`:
   it runs no script;
 - everything else is `application/octet-stream` with `Content-Disposition: attachment`;
 - a dot file is refused, and nothing under `/storage` reaches PHP (`^~` stops the server block's
-  regex locations, the `\.php$` one among them).
+  regex locations, the `\.php$` one among them). The refusal has no `.well-known` exception, unlike
+  the server block's own: nothing of that name belongs under `/storage`.
 
 Why it exists: before it, a file named `x.html` under `/storage` was answered `text/html`, and a
 file named `x.php` there was EXECUTED (seen on staging on 2026-10-05 with an inert file). Uploads
 refuse both names; this makes the answer not depend on that.
 
 **A new kind of upload that must OPEN in the browser has to be added to the list in that file, on
-every server.** Otherwise it downloads. `tests/Feature/NginxStorageAllowlistTest.php` fails when an
+every server.** Otherwise it downloads. That is a change to production's web server (two vhosts
+read it) and to staging's, so it needs the owner's yes each time, like any server setting. `tests/Feature/NginxStorageAllowlistTest.php` fails when an
 upload rule lets in an ending the repository's copy does not list; it cannot see the servers.
 
 ### Install (one-time per server, as root; done on staging and production 2026-10-05)
