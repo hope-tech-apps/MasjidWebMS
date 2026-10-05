@@ -1097,6 +1097,21 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function another_sites_address_with_a_line_feed_before_its_path_is_still_another_sites(): void
+    {
+        // A browser drops the line feed and asks the other site for the path. Read as an address
+        // with no host, it would be one of ours with no document behind it, and the document this
+        // save drops would be kept for good. (The pattern this reading replaced read past one line
+        // feed, and so does it.)
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        $this->updateLinkList($section, ["https://elsewhere.example.test\n/storage/999999/annual-report.pdf"]);
+
+        $this->assertDocumentGone($document);
+    }
+
+    #[Test]
     public function an_id_written_with_a_leading_zero_beside_the_real_address_never_deletes_the_file(): void
     {
         $zero = fn (array $document) => self::PUBLIC_DISK_URL . "/0{$document['file']}";
