@@ -140,15 +140,16 @@ class ClassStoreLedgerTest extends TestCase
         $this->refusedWith('not_a_student', fn () => $this->redeem($stranger, $prize));
         // A guardian edge names a relationship, not a person to give a prize to.
         $this->refusedWith('not_a_student', fn () => $this->redeem($guardianEdge, $prize));
-        // A child who has left is no longer this room's, and the refusal says so (W6-C1): their Bucks stay
-        // on their record, and the teacher is told why they cannot be spent rather than "no such student".
+        // A child who has left is no longer this room's, and the refusal says so: the teacher is told why
+        // nothing can be spent rather than "no such student". It does not say where their Bucks are, because
+        // that depends on how they left (moved to another class, the balance went with them).
         $this->yusuf->forceFill(['left_on' => now()->subDay()->toDateString()])->save();
         $this->refusedWith('student_left', fn () => $this->redeem($this->yusuf->fresh(), $prize));
         try {
             $this->redeem($this->yusuf->fresh(), $prize);
+            $this->fail('a student who has left cannot be given a prize');
         } catch (\App\Support\ClassStoreRefusal $e) {
-            $this->assertStringContainsString('has left this class', $e->getMessage());
-            $this->assertStringContainsString('stay on their record', $e->getMessage());
+            $this->assertSame('That student has left this class, so nothing can be spent for them here.', $e->getMessage());
         }
         $this->assertSame(20, $this->balanceOf($this->yusuf), 'nothing is taken, and nothing is lost');
 

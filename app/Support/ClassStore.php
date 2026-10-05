@@ -10,11 +10,16 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use LogicException;
+use Throwable;
 
 /**
  * Every WRITE to the Manara Bucks ledger that a person makes, in one place (T-003.4).
  *
- * Redeem, reverse, cash out, and the internal `append()` that minting and expiry share.
+ * Redeem, reverse, cash out, the internal `append()` that minting and expiry share, and the
+ * pair that carries a balance to another class when a student is moved (`carryBalance`).
  * Nothing else writes `prize_ledger_entries`, so the rules below cannot be forgotten by a
  * second caller.
  *
@@ -40,6 +45,10 @@ use Illuminate\Support\Facades\DB;
  *    redemption, with a guard that refuses to go below zero, and given back by a reversal.
  *  - CASH-OUT TO PAPER is built and OFF: refused here, not just in a controller, while the
  *    school's `paper_bucks_enabled` is false.
+ *  - A BALANCE FOLLOWS A MOVED STUDENT. The move writes one `transfer_out` on the roster row
+ *    being left and one `transfer_in` on the row in the new class, for the old row's WHOLE
+ *    balance or not at all, both rows or neither (`carryBalance`). It is the one write here
+ *    that takes no lock of its own: its only caller already holds both roster rows.
  *
  * ## Reading a balance
  *
@@ -54,6 +63,21 @@ final class ClassStore
 
     /** A client's request id: a UUID or a short token, never something that could be a key. */
     public const REQUEST_ID_PATTERN = '/^[A-Za-z0-9_-]{8,36}$/';
+
+    /** carryRule(): Bucks go with a student moved between these two classes on this day. */
+    public const CARRY_MOVE = 'move';
+
+    /** carryRule(): the class being left ended before today, so its Bucks end with it. */
+    public const CARRY_FROM_ENDED = 'from_ended';
+
+    /** carryRule(): the class being entered ended before today, so nothing moves into it. */
+    public const CARRY_TO_ENDED = 'to_ended';
+
+    /** A missing `counts_from` column is asked about again after this long (carryReady). */
+    private const CARRY_RECHECK_SECONDS = 30;
+
+    /** @var array{0: bool, 1: int}|null  whether the column was there, and when that was asked */
+    private static ?array $carryColumnSeen = null;
 
     // ------------------------------------------------------------------ reads
 
@@ -96,6 +120,78 @@ final class ClassStore
         }
 
         return $out;
+    }
+
+    /**
+     * Do Bucks move between these two classes on this day (the school's today)? A rule about two
+     * classes and a date. It reads no ledger and says nothing about any child, so the move may
+     * print a sentence from it, and `carryBalance` asks the same function before it writes: the
+     * sentence and the write cannot disagree.
+     *
+     * A class that ENDED before today keeps its Bucks: its own end date is a cutoff only its own
+     * sweep ever evaluates, so a balance carried out in the days before that write-off would
+     * escape it for good. And nothing moves INTO a class that has ended, whose cutoff would then
+     * be applied to an amount it never governed. A class that ends today has not ended.
+     *
+     * @param  string  $today  'Y-m-d' on the school's clock: the day the move is RUN, never the day typed
+     * @return self::CARRY_*
+     */
+    public static function carryRule(Group $from, Group $to, string $today): string
+    {
+        if ($from->ends_on !== null && $from->ends_on->toDateString() < $today) {
+            return self::CARRY_FROM_ENDED;
+        }
+
+        if ($to->ends_on !== null && $to->ends_on->toDateString() < $today) {
+            return self::CARRY_TO_ENDED;
+        }
+
+        return self::CARRY_MOVE;
+    }
+
+    /**
+     * Whether `migrate` has added `prize_ledger_entries.counts_from` yet.
+     *
+     * bin/deploy makes the new code live BEFORE it runs `php artisan migrate`. For that window
+     * the hourly expiry must not name the column in its sum, and a move must not reach
+     * `carryBalance`. Memoised per process as App\Support\StudentAge is: a column that exists is
+     * remembered for good, one that is missing is asked again after CARRY_RECHECK_SECONDS, and a
+     * question that could not be answered is "not yet" for that call only.
+     */
+    public static function carryReady(): bool
+    {
+        $now = now()->getTimestamp();
+        $seen = self::$carryColumnSeen;
+
+        if ($seen !== null && ($seen[0] || $now - $seen[1] < self::CARRY_RECHECK_SECONDS)) {
+            return $seen[0];
+        }
+
+        try {
+            $exists = Schema::hasColumn('prize_ledger_entries', 'counts_from');
+        } catch (Throwable) {
+            return false;
+        }
+
+        self::$carryColumnSeen = [$exists, $now];
+
+        return $exists;
+    }
+
+    /** Forget what carryReady() saw: for a test that drops or adds the column, and for nothing else. */
+    public static function forgetCarryReady(): void
+    {
+        self::$carryColumnSeen = null;
+    }
+
+    /**
+     * Does this organisation hold any ledger row at all? One EXISTS. A fact about the SCHOOL,
+     * whatever its switch says today, and never about a child: it is what the move asks so that
+     * nothing the office reads about one student's place depends on that student's own ledger.
+     */
+    public static function schoolHoldsRows(int $masjidId): bool
+    {
+        return DB::table('prize_ledger_entries')->where('masjid_id', $masjidId)->exists();
     }
 
     // ----------------------------------------------------------------- writes
@@ -380,6 +476,120 @@ final class ClassStore
         }
     }
 
+    /**
+     * CALLED ONLY BY RosterMove::write(), inside the move's transaction, with BOTH roster rows
+     * already held by that transaction. It takes no lock of its own. Writes the pair for the old
+     * row's whole balance, or nothing. Returns nothing: no caller can learn whether a pair was
+     * written, so no caller can print it.
+     *
+     * Nothing is written when the two classes' dates say Bucks do not move (carryRule), or when
+     * the old row holds nothing or owes (a zero or negative balance stays where it is). It is
+     * written whatever the school's `class_store` switch says: a school that switched the store
+     * off still holds rows.
+     *
+     * NOT through appendForSystem() or guarded(): both swallow a refusal or a duplicate key and
+     * answer null or a replay, and through them a move could commit with half a pair. NOT
+     * through lockStudent(), which refuses a row that has left and locks what the move already
+     * holds. Everything thrown here leaves the move's transaction and rolls the whole move back.
+     * A fault is a LogicException, never a refusal: the move answers a unique violation as "this
+     * roster changed, try again", which is right for the roster's own index and a loop for a
+     * ledger key that is wrong by construction, so a duplicate key is rethrown as a fault here.
+     *
+     * @param  string  $today  'Y-m-d' on the school's clock: the day the move is RUN
+     *
+     * @throws LogicException
+     */
+    public static function carryBalance(Group $from, GroupMembership $old, Group $to, GroupMembership $new, ?User $by, string $today): void
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new LogicException('A balance is carried inside the move\'s transaction, with both roster rows held: no transaction is open.');
+        }
+
+        if ((int) $old->id === (int) $new->id) {
+            throw new LogicException('A balance is carried from one roster row to ANOTHER: the same row was given twice.');
+        }
+
+        foreach ([$old, $new] as $row) {
+            if (! in_array($row->role, GroupMembership::PARTICIPANT_ROLES, true)) {
+                throw new LogicException("Roster row {$row->id} is not a student's own place, so it holds no balance to carry.");
+            }
+        }
+
+        if ((int) $old->contact_id !== (int) $new->contact_id) {
+            throw new LogicException("Roster rows {$old->id} and {$new->id} are two different people's: a balance never changes hands.");
+        }
+
+        if ((int) $old->masjid_id !== (int) $new->masjid_id
+            || (int) $from->masjid_id !== (int) $old->masjid_id
+            || (int) $to->masjid_id !== (int) $new->masjid_id) {
+            throw new LogicException("Roster rows {$old->id} and {$new->id} are not in one organisation: a balance never leaves its school.");
+        }
+
+        if ((int) $old->group_id !== (int) $from->id || (int) $new->group_id !== (int) $to->id) {
+            throw new LogicException("Roster rows {$old->id} and {$new->id} are not the places held in the class left and the class entered.");
+        }
+
+        if (self::carryRule($from, $to, $today) !== self::CARRY_MOVE) {
+            return;
+        }
+
+        // Exact: every ledger writer takes the roster row's lock first, and the move holds it.
+        $balance = self::rawBalance((int) $old->id);
+
+        if ($balance < 1) {
+            return;
+        }
+
+        // Counted by kind, never with LIKE on the key (its underscore is a wildcard).
+        $n = DB::table('prize_ledger_entries')
+            ->where('group_membership_id', $old->id)
+            ->where('kind', PrizeLedgerEntry::KIND_TRANSFER_OUT)
+            ->count() + 1;
+
+        $countsFrom = self::countsFrom((int) $old->id, $today);
+
+        // What the new row reads before the pair. Nothing is DECIDED from it (on a return it was
+        // read before that row's lock): it is only what the check below compares the row with.
+        $before = self::rawBalance((int) $new->id);
+
+        try {
+            $out = self::insert($from, $old, PrizeLedgerEntry::KIND_TRANSFER_OUT, -$balance, [
+                'created_by_user_id' => $by?->id,
+                'dedupe_key' => 'transfer_out:'.$old->id.':'.$n,
+                'counts_from' => $countsFrom,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // Not chained: the database's own message carries the insert's values, the amount among them.
+            throw new LogicException("The ledger already holds transfer_out:{$old->id}:{$n}, a key only this write makes.");
+        }
+
+        try {
+            self::insert($to, $new, PrizeLedgerEntry::KIND_TRANSFER_IN, $balance, [
+                'created_by_user_id' => $by?->id,
+                'dedupe_key' => 'transfer_in:'.$out->id,
+                'counts_from' => $countsFrom,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            throw new LogicException("The ledger already holds transfer_in:{$out->id}, a key only this write makes.");
+        }
+
+        // A check of THIS METHOD'S OWN ARITHMETIC, not a race guard: both sums are this
+        // transaction's snapshot plus its own two rows, so they can catch a mistake here and
+        // nothing another transaction did. It does not ask whether the new row is below zero: a
+        // re-opened row that owes for an older reason of its own is not this write's fault.
+        if (self::rawBalance((int) $old->id) !== 0 || self::rawBalance((int) $new->id) !== $before + $balance) {
+            throw new LogicException("The pair written for roster rows {$old->id} and {$new->id} does not add up: nothing was carried.");
+        }
+
+        // AFTER the commit, so a move that was retried or rolled back says nothing. At WARNING
+        // because production drops info lines. Ids only: no amount and no count.
+        $line = ['membership' => (int) $old->id, 'new_membership' => (int) $new->id, 'by' => $by?->id];
+
+        DB::afterCommit(static function () use ($line): void {
+            Log::warning('class_store.carried', $line);
+        });
+    }
+
     // -------------------------------------------------------------- internals
 
     /**
@@ -434,9 +644,12 @@ final class ClassStore
     /**
      * The student's roster row, locked, and only if they are a CURRENT participant of THIS class.
      *
-     * A child who has LEFT the class gets their own refusal, saying why (owner question W6-C1):
-     * their Bucks stay on their record here, and what happens to them on a move or a withdrawal
-     * is not decided yet, so nothing can be spent from this class meanwhile.
+     * A child who has LEFT the class gets their own refusal, saying why: nothing can be spent
+     * for them from this class any more. The sentence does not say where their Bucks are, because
+     * that depends on how they left. A move to another class takes the balance with it
+     * (carryBalance); a move out of a class that had already ended, and a student simply
+     * recorded as left, leave it on this row (the withdrawal half of owner question W6-C1 is not
+     * decided).
      */
     private static function lockStudent(Group $group, GroupMembership $membership): GroupMembership
     {
@@ -453,7 +666,7 @@ final class ClassStore
         if ($student->hasLeft()) {
             throw new ClassStoreRefusal(
                 'student_left',
-                'That student has left this class. Their Manara Bucks stay on their record here, but they cannot be spent in this class.',
+                'That student has left this class, so nothing can be spent for them here.',
             );
         }
 
@@ -475,6 +688,42 @@ final class ClassStore
             'amount' => $amount,
             'occurred_at' => now(),
         ] + $attributes);
+    }
+
+    /**
+     * The day a carried amount counts as minted on: the newest week the old row was minted for
+     * (a positive `earned` or `adjusted` row), or the newest date an earlier transfer brought
+     * onto it, whichever is later; never after `$today`; null when the row has neither. Read
+     * under the old row's lock, and written on BOTH rows of the pair.
+     *
+     * It is what lets a cutoff older than the move leave a carried balance alone (the old row
+     * held something minted since that cutoff, so the date is on or after it) and lets a cutoff
+     * after the move take it (the date is never after the day the move ran). It travels down a
+     * chain of moves: on the next move the new row is the old row, and its own `transfer_in`
+     * brings the date along.
+     */
+    private static function countsFrom(int $oldRowId, string $today): ?string
+    {
+        $minted = DB::table('prize_ledger_entries')
+            ->where('group_membership_id', $oldRowId)
+            ->whereIn('kind', PrizeLedgerEntry::MINTED_KINDS)
+            ->where('amount', '>', 0)
+            ->max('week_start');
+
+        $brought = DB::table('prize_ledger_entries')
+            ->where('group_membership_id', $oldRowId)
+            ->where('kind', PrizeLedgerEntry::KIND_TRANSFER_IN)
+            ->max('counts_from');
+
+        $days = [];
+
+        foreach ([$minted, $brought] as $day) {
+            if ($day !== null) {
+                $days[] = substr((string) $day, 0, 10);
+            }
+        }
+
+        return $days === [] ? null : min(max($days), $today);
     }
 
     private static function existing(string $key): ?PrizeLedgerEntry
