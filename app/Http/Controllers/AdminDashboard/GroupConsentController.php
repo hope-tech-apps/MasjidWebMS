@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\Groups\RecordGuardianConsentRequest;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Support\RosterMove;
 use App\Support\RosterMovePlan;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
@@ -38,7 +39,10 @@ use Throwable;
  *
  *   - RECORDING clears the marker, also when the form is saved unchanged: the
  *     office is now asserting this consent for this class, and it is no longer
- *     "carried".
+ *     "carried". EXCEPT a record of LESS than the class it was carried from
+ *     still holds: that keeps the marker. The family reduced what was
+ *     carried, and the kept marker is what lets a later move refuse to bring
+ *     the wider consent of the other class back into force.
  *   - WITHDRAWING keeps the marker and writes its two columns exactly as it
  *     always did. It still cannot be refused and needs nothing new. The kept
  *     marker is what tells a later move that the family took a carried consent
@@ -111,8 +115,21 @@ class GroupConsentController extends Controller
         // The marker is not fillable, hence `forceFill`; the key is written
         // only once `migrate` has added its column, and before that there is
         // no marker to clear.
+        //
+        // UNLESS WHAT IS RECORDED IS LESS THAN THE OTHER CLASS STILL HOLDS
+        // (the class story here, photographs there). That is a family
+        // reducing a consent that was carried, on a copy that was marked or
+        // on one they had withdrawn. With the marker gone nothing would tell
+        // a later move that the wider consent of the other class must not
+        // come back into force, and it would, the day the student went back.
+        // So the marker stays, exactly as it does on a withdrawal.
         if (GroupMembership::consentCarryReady()) {
-            $recorded[GroupMembership::CONSENT_CARRIED_FROM] = null;
+            $source = $membership->carriedConsentSource();
+            $less = $source !== null && $source->consentRank() > GroupMembership::consentRankOf($recorded['consent_scope']);
+
+            if (! $less) {
+                $recorded[GroupMembership::CONSENT_CARRIED_FROM] = null;
+            }
         }
 
         $membership->forceFill($recorded)->save();
@@ -121,7 +138,7 @@ class GroupConsentController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $saved,
+            'data' => $this->serialised($saved),
             'notes' => $this->notes($group, $saved),
         ], Response::HTTP_OK);
     }
@@ -154,7 +171,7 @@ class GroupConsentController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $saved,
+            'data' => $this->serialised($saved),
             'notes' => $this->notes($group, $saved),
         ], Response::HTTP_OK);
     }
@@ -228,6 +245,24 @@ class GroupConsentController extends Controller
     }
 
     // ------------------------------------------------------------- internals
+
+    /**
+     * The entry as both writes answer it: the roster row, and the one thing
+     * about a carried consent the row cannot say by itself, which the roster
+     * list computes for every row and the screen must not have to wait for:
+     * `consent_less_than_carried_from`, true when this entry is marked, holds
+     * consent, and holds less than the class it was carried from does. A read
+     * of one row; before the marker column exists it is false.
+     *
+     * @return array<string, mixed>
+     */
+    private function serialised(GroupMembership $saved): array
+    {
+        return array_merge($saved->toArray(), [
+            'consent_less_than_carried_from' => GroupMembership::consentCarryReady()
+                && RosterMove::holdingLessThanCarried(collect([$saved]))->isNotEmpty(),
+        ]);
+    }
 
     /**
      * The notes of an answer, or none when they could not be read. The write

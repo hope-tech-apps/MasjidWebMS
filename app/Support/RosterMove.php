@@ -111,6 +111,8 @@ class RosterMove
     /** Why an entry that would re-open with consent must not, or cannot be checked (rule R10). */
     public const COPY_WITHDRAWN = 'copy_withdrawn';
 
+    public const COPY_NARROWED = 'copy_narrowed';
+
     public const SOURCE_WITHDRAWN = 'source_withdrawn';
 
     public const SOURCE_NARROWED = 'source_narrowed';
@@ -175,11 +177,12 @@ class RosterMove
      * What a move would do, without doing it. No lock, no write. The same
      * decision the move makes under its locks.
      *
-     * `$options` are a whole-class run's, and no request can supply them:
-     * `standing_before_id` (see `standingForAnotherChild`) and `today`, the
-     * school's day read once for the run. A single preview passes neither.
+     * `$options` are a whole-class preview's or run's, and no request can
+     * supply them: `whole_class` and `standing_before_id` (see
+     * `standingForAnotherChild`) and `today`, the school's day read once for
+     * the run. A single preview passes none.
      *
-     * @param  array{standing_before_id?: ?int, today?: ?string}  $options
+     * @param  array{whole_class?: bool, standing_before_id?: ?int, today?: ?string}  $options
      *
      * @throws RosterMoveRefused
      */
@@ -194,6 +197,7 @@ class RosterMove
             $options['today'] ?? $this->todayFor($from),
             self::standingBefore($options),
             false,
+            (bool) ($options['whole_class'] ?? false),
         );
     }
 
@@ -207,17 +211,24 @@ class RosterMove
      * (`expected_consent`, the plan's fingerprint) and the rule for Manara
      * Bucks (`expected_bucks_rule`).
      *
-     * Four more options are a whole-class run's. NO REQUEST CLASS HAS A RULE
+     * `consent_must_be_echoed` is the single verb's (see
+     * `refuseWhenNotWhatWasShown`): a request that does not say what it was
+     * shown about consent may not carry any.
+     *
+     * Five more options are a whole-class run's. NO REQUEST CLASS HAS A RULE
      * FOR THEM, and the single verb's controller names every key it passes, so
      * none can arrive over HTTP:
      *
      *   - `run`: the run's id, for the log line (null for a single move);
+     *   - `whole_class`: this student is one of a class being moved, so a
+     *     brother or sister may be going back with them (see
+     *     `standingForAnotherChild`);
      *   - `standing_before_id`: see `standingForAnotherChild`;
      *   - `today`: the school's day read ONCE for the run, so two students of
      *     one run are never judged on two days;
      *   - `attempts`: 1 inside a run (see ATTEMPTS).
      *
-     * @param  array{grade_given?: bool, grade_label?: ?string, expected_path?: ?string, expected_first_day?: ?string, expected_joined_on?: ?string, expected_consent?: ?string, expected_bucks_rule?: ?string, run?: ?string, standing_before_id?: ?int, today?: ?string, attempts?: ?int}  $options
+     * @param  array{grade_given?: bool, grade_label?: ?string, expected_path?: ?string, expected_first_day?: ?string, expected_joined_on?: ?string, expected_consent?: ?string, expected_bucks_rule?: ?string, consent_must_be_echoed?: bool, run?: ?string, whole_class?: bool, standing_before_id?: ?int, today?: ?string, attempts?: ?int}  $options
      *
      * @throws RosterMoveRefused
      */
@@ -230,6 +241,7 @@ class RosterMove
         $fromId = (int) $from->getKey();
         $today = $options['today'] ?? $this->todayFor($from);
         $standingBefore = self::standingBefore($options);
+        $wholeClass = (bool) ($options['whole_class'] ?? false);
         $attempts = max(1, (int) ($options['attempts'] ?? self::ATTEMPTS));
 
         // The cheap refusals, answered before any lock is asked for. Every one
@@ -237,11 +249,12 @@ class RosterMove
         $this->preview($from, $seen, Group::query()->find($toGroupId), $on, [
             'today' => $today,
             'standing_before_id' => $standingBefore,
+            'whole_class' => $wholeClass,
         ]);
 
         try {
             $plan = $this->withShortLockWait(fn (): RosterMovePlan => DB::transaction(
-                function () use ($rowId, $contactId, $fromId, $toGroupId, $on, $today, $standingBefore, $options, $actor): RosterMovePlan {
+                function () use ($rowId, $contactId, $fromId, $toGroupId, $on, $today, $standingBefore, $wholeClass, $options, $actor): RosterMovePlan {
                     // 1. The student's contact row: the mutex for everything
                     //    about this child. On MySQL an insert of any roster row
                     //    naming this contact, as the person or as the child of
@@ -289,7 +302,7 @@ class RosterMove
                         throw RosterMoveRefused::changed();
                     }
 
-                    $plan = $this->decide($from, $to, $rows, $row, $on, $today, $standingBefore, true);
+                    $plan = $this->decide($from, $to, $rows, $row, $on, $today, $standingBefore, true, $wholeClass);
 
                     $this->refuseWhenNotWhatWasShown($plan, $options);
 
@@ -421,6 +434,14 @@ class RosterMove
      *     the marker naming THIS entry's class and holds no consent. This entry
      *     is the source (or an earlier record) and its copy was withdrawn where
      *     it had been carried.
+     *   - `copy_narrowed`: the same, where the marked entry holds LESS than
+     *     this one (the class story where this one holds photographs). The
+     *     office recorded less on the copy after the carry, and that record
+     *     kept the marker (`GroupConsentController::update`). It is a
+     *     comparison of the two rows as they are: a copy nobody touched whose
+     *     source was recorded wider afterwards reads the same and is refused
+     *     the same, so the sentence says what each class holds, never who
+     *     changed what.
      *   - `source_withdrawn` / `source_narrowed`: this entry's own marker names
      *     a class, that class holds an entry for the same adult and child, and
      *     that entry now holds nothing, or the class story where this one holds
@@ -434,15 +455,18 @@ class RosterMove
      *
      * An entry with none of these is absent from the answer.
      *
-     * WHAT THIS CANNOT SEE. `copy_withdrawn` is a row state, "marker set and
-     * consent blank", and three ordinary acts erase it: Remove on the place
-     * where the copy sits, a merge that re-issues the row, and the office
-     * saving the consent dialog on the copy (which clears the marker on
-     * purpose) before withdrawing. Down a chain (carried on to a third class
-     * and withdrawn there) the first class's own copy is not blank, so nothing
-     * fires. And it has no memory: after the remedy and a fresh record, the
-     * blank marked copy still exists and refuses again. Each fails towards
-     * asking the family, never towards more than was recorded.
+     * WHAT THIS CANNOT SEE. `copy_withdrawn` and `copy_narrowed` are row
+     * states, "marker set, and less than the other side holds", and four
+     * ordinary acts erase them: Remove on the student's place where the copy
+     * sits; Remove on the guardian's own entry there (after which the guardian
+     * rule tells the office to add them again, and the entry it adds is
+     * unmarked); a merge that re-issues the row; and the office recording, on
+     * the copy, as much as the other class holds (which clears the marker on
+     * purpose) before withdrawing or reducing. Down a chain (carried on to a
+     * third class and withdrawn there) the first class's own copy is not
+     * blank, so nothing fires. And it has no memory: after the remedy and a
+     * fresh record, the marked copy still exists and refuses again. Each
+     * fails towards asking the family, never towards more than was recorded.
      *
      * @param  Collection<int, GroupMembership>  $entriesToOpen  guardian entries naming one child, in one class
      * @param  Collection<int, GroupMembership>  $elsewhere  guardian entries naming that child in the organisation's other classes
@@ -476,6 +500,17 @@ class RosterMove
                 continue;
             }
 
+            $narrowedCopy = $theirs->first(
+                fn (GroupMembership $e): bool => (int) $e->{GroupMembership::CONSENT_CARRIED_FROM} === (int) $entry->group_id
+                    && $e->holdsLessThanCarriedFrom($entry),
+            );
+
+            if ($narrowedCopy !== null) {
+                $verdicts[(int) $entry->getKey()] = [self::COPY_NARROWED, (int) $narrowedCopy->group_id];
+
+                continue;
+            }
+
             $carriedFrom = $entry->{GroupMembership::CONSENT_CARRIED_FROM};
 
             if ($carriedFrom === null) {
@@ -501,7 +536,7 @@ class RosterMove
 
     /**
      * For the roster list: what "Put back" would mean on each student row that
-     * was moved out of this class. Keyed by roster row id.
+     * was moved out of this class, or that has left it. Keyed by roster row id.
      *
      * `student_there` is about the class the row was moved TO (it decides the
      * badge and the wording). `guardians_not_vouched` is computed against where
@@ -526,27 +561,39 @@ class RosterMove
      *   - `bucks_line`: null. It is filled from the commit that lets a move
      *     carry Manara Bucks.
      *
-     * The two consent lists are computed only once the marker column exists
-     * (`GroupMembership::consentCarryReady()`); until then both are empty, and
-     * this list, which every roster read goes through, never names the column.
+     * A ROW THAT SIMPLY LEFT GETS THE TWO CONSENT LISTS TOO. "Put back" re-opens
+     * the entries beside it whichever way the student left, and a carried copy
+     * beside a row that left is the same copy: its source may have been
+     * withdrawn while the child was in neither class. Such a row has no "moved
+     * to", so `student_there` is `none`, `open_group` is null and
+     * `guardians_not_vouched` is empty; and it is listed only when one of the
+     * two consent lists has something to say.
      *
-     * Two queries for the whole list, and only when a row carries "moved to".
+     * The two consent lists are computed only once the marker column exists
+     * (`GroupMembership::consentCarryReady()`); until then both are empty, a
+     * row that simply left is not listed at all, and this list, which every
+     * roster read goes through, never names the column.
+     *
+     * Two queries for the whole list, and only when a student row has left or
+     * carries "moved to".
      *
      * @param  Collection<int, GroupMembership>  $roster  this class's rows, with `contact` loaded
      * @return array<int, array{student_there: string, open_group: ?array{id:int,name:string}, guardians_not_vouched: list<array{membership_id:int, reason:string, sentence:string}>, consent_blocks: list<string>, consent_lines: list<string>, bucks_line: ?string}>
      */
     public static function movedToStates(Group $group, Collection $roster): array
     {
-        $moved = $roster->filter(
+        $carryReady = GroupMembership::consentCarryReady();
+
+        $listed = $roster->filter(
             fn (GroupMembership $m): bool => in_array($m->role, GroupMembership::PARTICIPANT_ROLES, true)
-                && $m->moved_to_group_id !== null,
+                && ($m->moved_to_group_id !== null || ($carryReady && $m->left_on !== null)),
         );
 
-        if ($moved->isEmpty()) {
+        if ($listed->isEmpty()) {
             return [];
         }
 
-        $students = $moved->pluck('contact_id')->unique()->values();
+        $students = $listed->pluck('contact_id')->unique()->values();
 
         $elsewhere = GroupMembership::query()
             ->where('group_id', '!=', $group->getKey())
@@ -554,7 +601,7 @@ class RosterMove
             ->get();
 
         $live = Group::query()
-            ->whereIn('id', $elsewhere->pluck('group_id')->merge($moved->pluck('moved_to_group_id'))->unique())
+            ->whereIn('id', $elsewhere->pluck('group_id')->merge($listed->pluck('moved_to_group_id')->filter())->unique())
             ->get(['id', 'name'])
             ->keyBy('id');
 
@@ -562,53 +609,56 @@ class RosterMove
         // (a class is soft-deleted), and they are left out here.
         $about = $elsewhere->filter(fn (GroupMembership $m): bool => $live->has((int) $m->group_id));
 
-        $carryReady = GroupMembership::consentCarryReady();
         $states = [];
 
-        foreach ($moved as $row) {
+        foreach ($listed as $row) {
             $student = (int) $row->contact_id;
+            $wasMoved = $row->moved_to_group_id !== null;
             $movedTo = (int) $row->moved_to_group_id;
-
-            $places = $about->filter(
-                fn (GroupMembership $m): bool => (int) $m->contact_id === $student
-                    && in_array($m->role, GroupMembership::PARTICIPANT_ROLES, true),
-            );
-            $entries = $about->filter(
-                fn (GroupMembership $m): bool => $m->isGuardian() && (int) $m->guardian_of_contact_id === $student,
-            );
-
-            $there = $places->where('group_id', $movedTo);
-            $studentThere = match (true) {
-                $there->isEmpty() => 'none',
-                $there->contains(fn (GroupMembership $m): bool => $m->left_on === null) => 'current',
-                default => 'left',
-            };
-
-            $currentIn = $places->filter(fn (GroupMembership $m): bool => $m->left_on === null)
-                ->pluck('group_id')->map(fn ($id): int => (int) $id)->unique()->values();
+            $name = self::nameOf($row->contact);
 
             $entriesHere = $roster->filter(
                 fn (GroupMembership $m): bool => $m->isGuardian() && (int) $m->guardian_of_contact_id === $student,
             );
 
-            if ($currentIn->isNotEmpty()) {
-                $compareWith = $currentIn;
-                $unvouched = self::notVouched(
-                    $entriesHere,
-                    $entries->filter(fn (GroupMembership $m): bool => $currentIn->contains((int) $m->group_id)),
-                    true,
+            $studentThere = 'none';
+            $compareWith = collect();
+            $unvouched = [];
+
+            if ($wasMoved) {
+                $places = $about->filter(
+                    fn (GroupMembership $m): bool => (int) $m->contact_id === $student
+                        && in_array($m->role, GroupMembership::PARTICIPANT_ROLES, true),
                 );
-            } elseif ($studentThere === 'left') {
-                $compareWith = collect([$movedTo]);
-                $unvouched = self::notVouched($entriesHere, $entries->where('group_id', $movedTo), false);
-            } else {
-                $compareWith = collect();
-                $unvouched = [];
+                $entries = $about->filter(
+                    fn (GroupMembership $m): bool => $m->isGuardian() && (int) $m->guardian_of_contact_id === $student,
+                );
+
+                $there = $places->where('group_id', $movedTo);
+                $studentThere = match (true) {
+                    $there->isEmpty() => 'none',
+                    $there->contains(fn (GroupMembership $m): bool => $m->left_on === null) => 'current',
+                    default => 'left',
+                };
+
+                $currentIn = $places->filter(fn (GroupMembership $m): bool => $m->left_on === null)
+                    ->pluck('group_id')->map(fn ($id): int => (int) $id)->unique()->values();
+
+                if ($currentIn->isNotEmpty()) {
+                    $compareWith = $currentIn;
+                    $unvouched = self::notVouched(
+                        $entriesHere,
+                        $entries->filter(fn (GroupMembership $m): bool => $currentIn->contains((int) $m->group_id)),
+                        true,
+                    );
+                } elseif ($studentThere === 'left') {
+                    $compareWith = collect([$movedTo]);
+                    $unvouched = self::notVouched($entriesHere, $entries->where('group_id', $movedTo), false);
+                }
             }
 
             $where = $compareWith->map(fn (int $id): string => (string) $live->get($id)?->name)->filter()->implode(' or ');
-            $name = self::nameOf($row->contact);
-            $openId = $compareWith->first() ?? ($live->has($movedTo) ? $movedTo : null);
+            $openId = $compareWith->first() ?? ($wasMoved && $live->has($movedTo) ? $movedTo : null);
 
             // Rule R10 from this side. Read against EVERY other class of the
             // organisation, a deleted one included: a family's withdrawal
@@ -636,6 +686,9 @@ class RosterMove
                         self::COPY_WITHDRAWN => $consentBlocks[] = "{$guardian} withdrew consent in {$class} after it had been "
                             ."carried there from this class. Putting {$name} back would bring the consent recorded here "
                             ."({$held}) into force again.",
+                        self::COPY_NARROWED => $consentBlocks[] = "{$guardian}'s consent in {$class} was carried there from "
+                            ."this class and is now for the class story only. Putting {$name} back would bring the consent "
+                            ."recorded here ({$held}) into force again.",
                         self::SOURCE_WITHDRAWN, self::SOURCE_NARROWED => $consentBlocks[] = "{$guardian}'s consent here "
                             ."({$held}) was carried from {$class}, and consent in {$class} "
                             .($verdict === self::SOURCE_NARROWED ? 'is now for the class story only' : 'has since been withdrawn')
@@ -649,6 +702,12 @@ class RosterMove
                     $consentBlocks[] = "Withdraw it on this roster first (the Consent button on the guardian's row), "
                         ."then put {$name} back.";
                 }
+            }
+
+            // A row that simply left and brings no consent back has nothing
+            // to say: it stays absent, as it always was.
+            if (! $wasMoved && $consentBlocks === [] && $consentLines === []) {
+                continue;
             }
 
             $states[(int) $row->getKey()] = [
@@ -740,10 +799,11 @@ class RosterMove
      * @param  Collection<int, GroupMembership>  $rows  every roster row about the student in the two classes
      * @param  ?int  $standingBeforeId  a whole-class run's: see `standingForAnotherChild`
      * @param  bool  $underLocks  the move's own call; the preview's is false
+     * @param  bool  $wholeClass  one student of a class being moved: see `standingForAnotherChild`
      *
      * @throws RosterMoveRefused
      */
-    protected function decide(Group $from, ?Group $to, Collection $rows, GroupMembership $row, string $on, string $today, ?int $standingBeforeId = null, bool $underLocks = false): RosterMovePlan
+    protected function decide(Group $from, ?Group $to, Collection $rows, GroupMembership $row, string $on, string $today, ?int $standingBeforeId = null, bool $underLocks = false, bool $wholeClass = false): RosterMovePlan
     {
         $studentId = (int) $row->contact_id;
         $names = $this->namesFor($rows->pluck('contact_id')->push($studentId));
@@ -891,6 +951,8 @@ class RosterMove
             $sentences[] = match ($verdict) {
                 self::COPY_WITHDRAWN => "{$guardian} withdrew consent in {$class} after it had been carried there from "
                     ."{$to->name}. The consent recorded in {$to->name} ({$held}) would come back into force.",
+                self::COPY_NARROWED => "{$guardian}'s consent in {$class} was carried there from {$to->name} and is now for "
+                    ."the class story only. The consent recorded in {$to->name} ({$held}) would come back into force.",
                 self::SOURCE_WITHDRAWN => "{$guardian}'s consent in {$to->name} ({$held}) was carried there from {$class}, "
                     ."and consent in {$class} has since been withdrawn. It would come back into force in {$to->name}.",
                 self::SOURCE_NARROWED => "{$guardian}'s consent in {$to->name} for the class story and photographs was "
@@ -1016,19 +1078,24 @@ class RosterMove
 
         $heldThere = $untwinned->isEmpty()
             ? []
-            : $this->standingForAnotherChild($to, $studentId, $untwinned->pluck('contact_id'), $standingBeforeId);
+            : $this->standingForAnotherChild(
+                $to, $studentId, $untwinned->pluck('contact_id'), $standingBeforeId,
+                $wholeClass ? (int) $from->getKey() : null,
+            );
 
         foreach ($untwinned as $entry) {
             $adult = (int) $entry->contact_id;
-            $holds = $heldThere[$adult] ?? null;
+            [$holds, $whenTheyReturn] = $heldThere[$adult] ?? [null, false];
 
             if (! $entry->hasConsent()) {
                 // Nothing to carry. Whether they already receive the class's
-                // story through another child decides which sentence is true.
-                if ($holds !== null && $holds !== 'none') {
+                // story through another child decides which sentence is true;
+                // an entry that is closed today delivers nothing yet.
+                if ($holds !== null && $holds !== 'none' && ! $whenTheyReturn) {
                     $plan->consentNoneButReceives++;
                 } else {
                     $plan->consentNoneRecorded++;
+                    $plan->consentNoneRecordedFor[] = $adult;
                 }
 
                 continue;
@@ -1039,11 +1106,15 @@ class RosterMove
             if ($holds === null || self::CONSENT_RANK[$holds] >= self::CONSENT_RANK[$scope]) {
                 $plan->consentToCarry[] = (int) $entry->getKey();
                 $plan->consentCarried[$scope]++;
+                $plan->consentCarriedFor[] = $adult;
 
                 continue;
             }
 
-            $plan->consentNotCarriedForSibling[] = ['guardian' => $names[$adult] ?? 'A guardian', 'holds' => $holds];
+            // `returning` is present only when it is true, so what a single
+            // move answers for a guardian who IS in the class has not changed.
+            $plan->consentNotCarriedForSibling[] = ['guardian' => $names[$adult] ?? 'A guardian', 'holds' => $holds]
+                + ($whenTheyReturn ? ['returning' => true] : []);
             $plan->consentEntriesNotCarried[] = (int) $entry->getKey();
         }
 
@@ -1079,12 +1150,21 @@ class RosterMove
 
         $plan->consentRecordedHere = $fromEntries->contains(fn (GroupMembership $e): bool => $e->consentColumnsAreSet());
 
+        // A blank entry that still carries THE MARKER is a record too: a
+        // family withdrew here a consent that had been carried here. Remove
+        // would take it, and with it the one thing rule R10 reads to refuse a
+        // later move that would bring the other class's consent back.
+        $plan->carriedConsentWithdrawnHere = $fromEntries->contains(
+            fn (GroupMembership $e): bool => $e->{GroupMembership::CONSENT_CARRIED_FROM} !== null && ! $e->consentColumnsAreSet(),
+        );
+
         // Remove takes the guardian entries beside a student row with it, and
         // whatever consent they carry. So the old entry is offered as removable
         // only when it holds nothing a delete would destroy AND no entry beside
-        // it carries consent.
+        // it carries consent or the record of a carried consent withdrawn.
         $plan->oldEntryRemovable = ! AcademicRecordsHeld::any(AcademicRecordsHeld::blocking($plan->held))
-            && ! $plan->consentRecordedHere;
+            && ! $plan->consentRecordedHere
+            && ! $plan->carriedConsentWithdrawnHere;
 
         $plan->bucksStaying = $this->classStoreBucksStaying($from, $plan->held);
         $plan->scheduledMessagesStopping = $this->scheduledMessagesStopping($row);
@@ -1120,43 +1200,149 @@ class RosterMove
      * the entry the first child's move made a moment earlier, and the family
      * would keep or lose the story by the order of a list. Entries above it
      * did not stand in the class before the run and are ignored, with one
-     * exception: an entry that is blank WITH its marker set was withdrawn
-     * after a carry, and it always counts, whatever its id. A single move
-     * passes null and counts every entry.
+     * exception: an entry the family has taken back since it was carried
+     * always counts, whatever its id. That is a marked entry that is blank
+     * (withdrawn), or that holds less than the class it was carried from
+     * (reduced). A single move passes null and counts every entry.
+     *
+     * `$classBeingLeft` is a whole-class preview's or run's too, and null for
+     * a single move. WHEN THE ADULT HAS NO CURRENT ENTRY THERE, an entry of
+     * theirs that has LEFT counts after all, if the child it names is in the
+     * class being left today: that brother or sister may go back in the same
+     * act, and their entry opens again with whatever it holds. Without this
+     * the order of the list decided it: with the returning child first the
+     * re-opened blank entry capped the carry, and with the other child first
+     * the consent was carried and the blank entry opened beside it a moment
+     * later, with nothing said. Now both orders, and the preview before them,
+     * give the same answer. Among several such entries the NARROWEST counts,
+     * because any one of them may be the only one that comes back; and the
+     * second value of the answer says the standing is of this kind, so the
+     * sentence does not say the adult "is already in" a class they are not in.
+     * It errs towards less: a brother who is not ticked, or cannot move,
+     * still caps.
      *
      * @param  Collection<int, mixed>  $adultContactIds
-     * @return array<int, string> contact id => `none`, `feed` or `media`
+     * @return array<int, array{0: string, 1: bool}> contact id => [`none`, `feed` or `media`, held on an entry that would re-open]
      */
-    protected function standingForAnotherChild(Group $to, int $studentId, Collection $adultContactIds, ?int $standingBeforeId): array
+    protected function standingForAnotherChild(Group $to, int $studentId, Collection $adultContactIds, ?int $standingBeforeId, ?int $classBeingLeft = null): array
     {
         $entries = GroupMembership::query()
             ->where('group_id', $to->getKey())
             ->where('role', GroupMembership::ROLE_GUARDIAN)
             ->whereIn('contact_id', $adultContactIds->unique()->values())
             ->where('guardian_of_contact_id', '!=', $studentId)
-            ->whereNull('left_on')
             ->confirmed()
-            ->when($standingBeforeId !== null, fn ($query) => $query->where(fn ($stood) => $stood
-                ->where('id', '<=', $standingBeforeId)
-                ->orWhere(fn ($withdrawn) => $withdrawn
-                    ->whereNotNull(GroupMembership::CONSENT_CARRIED_FROM)
-                    ->whereNull('consent_granted_at')
-                    ->whereNull('consent_scope'))))
+            ->where(fn ($counted) => $counted
+                ->whereNull('left_on')
+                ->when($classBeingLeft !== null, fn ($query) => $query->orWhereIn(
+                    'guardian_of_contact_id',
+                    GroupMembership::query()->select('contact_id')
+                        ->where('group_id', $classBeingLeft)
+                        ->where('role', GroupMembership::ROLE_MEMBER)
+                        ->whereNull('left_on'),
+                )))
             ->orderBy('id')
             ->get();
 
-        $widest = [];
+        $current = $entries->filter(fn (GroupMembership $e): bool => $e->left_on === null);
 
-        foreach ($entries as $entry) {
+        if ($standingBeforeId !== null) {
+            $late = $current->filter(fn (GroupMembership $e): bool => (int) $e->getKey() > $standingBeforeId);
+            $takenBack = self::takenBackSinceCarried($late);
+
+            $current = $current->reject(
+                fn (GroupMembership $e): bool => (int) $e->getKey() > $standingBeforeId && ! in_array((int) $e->getKey(), $takenBack, true),
+            );
+        }
+
+        $level = fn (GroupMembership $e): string => $e->hasConsent() ? (string) $e->consent_scope : 'none';
+        $holds = [];
+
+        foreach ($current as $entry) {
             $adult = (int) $entry->contact_id;
-            $level = $entry->hasConsent() ? (string) $entry->consent_scope : 'none';
 
-            if (! isset($widest[$adult]) || self::CONSENT_RANK[$level] > self::CONSENT_RANK[$widest[$adult]]) {
-                $widest[$adult] = $level;
+            if (! isset($holds[$adult]) || self::CONSENT_RANK[$level($entry)] > self::CONSENT_RANK[$holds[$adult][0]]) {
+                $holds[$adult] = [$level($entry), false];
             }
         }
 
-        return $widest;
+        foreach ($entries as $entry) {
+            $adult = (int) $entry->contact_id;
+
+            // Only for an adult with no current entry there: one who has, is
+            // judged on what they hold today.
+            if ($entry->left_on === null || ($holds[$adult][1] ?? true) === false) {
+                continue;
+            }
+
+            if (! isset($holds[$adult]) || self::CONSENT_RANK[$level($entry)] < self::CONSENT_RANK[$holds[$adult][0]]) {
+                $holds[$adult] = [$level($entry), true];
+            }
+        }
+
+        return $holds;
+    }
+
+    /**
+     * WHICH OF THESE ENTRIES HOLD A CARRIED CONSENT THE FAMILY HAS SINCE TAKEN
+     * BACK, wholly or in part: marked, and either blank (withdrawn here) or in
+     * force for less than the entry in the marked class holds
+     * (`GroupMembership::holdsLessThanCarriedFrom`). One query for the entries
+     * they were carried from, and only when a marked entry holds something.
+     *
+     * Read by the sibling rule above (such an entry caps whatever its id) and
+     * by the roster list and the consent answer, which say it on the screen.
+     *
+     * @param  Collection<int, GroupMembership>  $entries
+     * @return list<int> roster row ids
+     */
+    public static function takenBackSinceCarried(Collection $entries): array
+    {
+        $marked = $entries->filter(
+            fn (GroupMembership $e): bool => $e->isGuardian() && $e->{GroupMembership::CONSENT_CARRIED_FROM} !== null,
+        );
+
+        $withdrawn = $marked->reject(fn (GroupMembership $e): bool => $e->consentColumnsAreSet());
+
+        return $withdrawn->concat(self::holdingLessThanCarried($marked))
+            ->map(fn (GroupMembership $e): int => (int) $e->getKey())->unique()->values()->all();
+    }
+
+    /**
+     * Of these entries, the ones whose carried consent is in force for LESS
+     * than the entry it was carried from holds now. The sources are found by
+     * class, adult and child (one row each by the unique index), in one query,
+     * with the organisation named so it holds where no tenant is bound.
+     *
+     * @param  Collection<int, GroupMembership>  $entries
+     * @return Collection<int, GroupMembership>
+     */
+    public static function holdingLessThanCarried(Collection $entries): Collection
+    {
+        $carried = $entries->filter(
+            fn (GroupMembership $e): bool => $e->isGuardian()
+                && $e->{GroupMembership::CONSENT_CARRIED_FROM} !== null
+                && $e->hasConsent(),
+        )->values();
+
+        if ($carried->isEmpty()) {
+            return $carried;
+        }
+
+        $key = fn (int $class, GroupMembership $e): string => $class.':'.(int) $e->contact_id.':'.(int) $e->guardian_of_contact_id;
+
+        $sources = GroupMembership::query()
+            ->whereIn('masjid_id', $carried->pluck('masjid_id')->unique()->values())
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->whereIn('group_id', $carried->pluck(GroupMembership::CONSENT_CARRIED_FROM)->unique()->values())
+            ->whereIn('contact_id', $carried->pluck('contact_id')->unique()->values())
+            ->whereIn('guardian_of_contact_id', $carried->pluck('guardian_of_contact_id')->unique()->values())
+            ->get()
+            ->keyBy(fn (GroupMembership $e): string => $key((int) $e->group_id, $e));
+
+        return $carried->filter(fn (GroupMembership $e): bool => $e->holdsLessThanCarriedFrom(
+            $sources->get($key((int) $e->{GroupMembership::CONSENT_CARRIED_FROM}, $e)),
+        ))->values();
     }
 
     /**
@@ -1246,6 +1432,16 @@ class RosterMove
      * the tap can change any of them. An expectation that is absent is not
      * checked.
      *
+     * WITH ONE EXCEPTION, the single verb's (`consent_must_be_echoed`): a
+     * request that says nothing about consent may not CARRY any. The dialog
+     * always echoes what it showed, so a body without it comes from a page
+     * that was opened before a move carried consent. That page's sentence was
+     * "Consent ... does not move. Record it again ...", and a tap on it that
+     * carried a consent would do what the screen said it would not. It is
+     * told to reload, in its own sentence: "look again" would loop, because
+     * that page can never send the echo. A move that carries nothing is not
+     * held up.
+     *
      * `expected_bucks_rule` arrives here too and is not compared yet: the
      * plan's `bucksRule` is null until a move can carry Manara Bucks.
      *
@@ -1258,12 +1454,23 @@ class RosterMove
         $joinedOn = $options['expected_joined_on'] ?? null;
         $consent = $options['expected_consent'] ?? null;
 
+        if ($consent === null && ($options['consent_must_be_echoed'] ?? false) && $plan->consentToCarry !== []) {
+            throw RosterMoveRefused::conflict(self::pageIsOlderThanTheCarry($plan->student));
+        }
+
         if (($path !== null && $path !== $plan->path)
             || ($firstDay !== null && $firstDay !== $plan->firstDay)
             || ($plan->path === RosterMovePlan::RETURNED && $joinedOn !== null && $joinedOn !== $plan->joinedOn)
             || ($consent !== null && $consent !== $plan->consentFingerprint)) {
             throw RosterMoveRefused::lookAgain();
         }
+    }
+
+    /** What a page that cannot say what it showed about consent is told. */
+    public static function pageIsOlderThanTheCarry(string $student): string
+    {
+        return "Manara has been updated since this page was opened, and a move now carries each guardian's consent "
+            ."with the student. Nothing was moved. Reload this page, read what will happen, then move {$student} again.";
     }
 
     /**

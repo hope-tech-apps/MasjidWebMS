@@ -77,9 +77,15 @@ class GroupMoveController extends Controller
      * changed while the office was looking.
      *
      * EVERY OPTION IS NAMED HERE. The move also takes options that only a
-     * whole-class run may set (`run`, `standing_before_id`, `today`,
-     * `attempts`); none is read from the request, so a body that carries one
-     * changes nothing.
+     * whole-class run may set (`run`, `whole_class`, `standing_before_id`,
+     * `today`, `attempts`); none is read from the request, so a body that
+     * carries one changes nothing.
+     *
+     * `consent_must_be_echoed` is this verb's own and always on: the dialog
+     * sends back what it showed about consent (`expected_consent`), so a body
+     * without it comes from a page opened before a move carried consent, and
+     * such a tap is told to reload instead of carrying a consent its screen
+     * said would not move (`RosterMove::refuseWhenNotWhatWasShown`).
      */
     public function store(MoveStudentRequest $request, RosterMove $mover, $masjid_id, $group_id, $membership_id)
     {
@@ -100,6 +106,7 @@ class GroupMoveController extends Controller
                     'expected_joined_on' => $request->input('expected_joined_on'),
                     'expected_consent' => $request->input('expected_consent'),
                     'expected_bucks_rule' => $request->input('expected_bucks_rule'),
+                    'consent_must_be_echoed' => true,
                 ],
                 $this->actor($request),
             );

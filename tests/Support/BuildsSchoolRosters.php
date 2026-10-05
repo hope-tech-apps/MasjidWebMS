@@ -135,6 +135,19 @@ trait BuildsSchoolRosters
 
     protected function move(GroupMembership $row, Group|int $to, ?string $on = null, array $body = [], ?User $as = null): TestResponse
     {
+        // AS THE DIALOG DOES: it sends back what its check showed about
+        // consent. A body that says nothing about consent is told to reload
+        // when a consent would be carried, so a caller that names no
+        // `expected_consent` gets the one the preview gives now; a test of a
+        // body WITHOUT it posts to `moveUrl()` itself.
+        if (! array_key_exists('expected_consent', $body)) {
+            $shown = $this->previewMove($row, $to, $on, $as)->json('data.expected_consent');
+
+            if (is_string($shown)) {
+                $body['expected_consent'] = $shown;
+            }
+        }
+
         Sanctum::actingAs($as ?? $this->admin);
 
         return $this->postJson($this->moveUrl($row), array_filter([

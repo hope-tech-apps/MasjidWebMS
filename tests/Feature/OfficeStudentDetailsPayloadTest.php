@@ -70,6 +70,11 @@ class OfficeStudentDetailsPayloadTest extends TestCase
      *     person. Beside the two consent columns it lets the roster say
      *     "carried from …" or "withdrawn here after it was carried from …"
      *     (RosterMoveRosterTest pins both).
+     *   - `consent_less_than_carried_from`: a boolean, true on a guardian
+     *     entry whose carried consent now stands for less than the class it
+     *     came from holds (the family reduced it here). It says which of two
+     *     scopes each class holds and nothing else, and both scopes are on
+     *     this list already, one roster each.
      *
      * @var list<string>
      */
@@ -83,7 +88,7 @@ class OfficeStudentDetailsPayloadTest extends TestCase
         'created_at', 'updated_at',
         'contact', 'guardian_of', 'confirmed_by', 'source_registration',
         'moved_to', 'moved_from', 'moved_to_state',
-        'consent_carried_from',
+        'consent_carried_from', 'consent_less_than_carried_from',
         'age', 'age_given',
         'claim',
     ];

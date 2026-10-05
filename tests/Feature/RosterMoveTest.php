@@ -2036,6 +2036,46 @@ class RosterMoveTest extends TestCase
     }
 
     #[Test]
+    public function an_entry_reduced_after_a_carry_caps_a_later_carry_whatever_its_id_and_an_untouched_one_does_not(): void
+    {
+        $third = $this->makeClass('3rd Grade');
+        $run = function (Group $to, ?string $reducedTo): RosterMovePlan {
+            $parent = $this->makePerson('Huda', 'Guardian');
+            $first = $this->enrol($this->first, $this->makePerson('Maryam', 'Student'));
+            $second = $this->enrol($this->first, $this->makePerson('Yusuf', 'Student'));
+            $this->guardian($first, $parent, consent: 'media');
+            $this->guardian($second, $parent, consent: 'media');
+
+            $standing = (int) DB::table('group_memberships')->max('id');
+
+            // The run carries the first child's consent...
+            $this->moveByService($first, $to, ['standing_before_id' => $standing]);
+            $carried = GroupMembership::where('group_id', $to->id)->where('contact_id', $parent->id)->sole();
+            $this->assertGreaterThan($standing, $carried->id);
+
+            // ...and the office records the class story only on the new entry a moment later.
+            if ($reducedTo !== null) {
+                $this->recordConsent($carried, $reducedTo)->assertOk()
+                    ->assertJsonPath('data.consent_carried_from_group_id', $this->first->id);
+            }
+
+            return $this->moveByService($second, $to, ['standing_before_id' => $standing]);
+        };
+
+        // Reduced: the second child's photograph consent is not carried into
+        // a class where the family has just said "the story only".
+        $plan = $run($this->second, 'feed');
+        $this->assertSame(['media' => 0, 'feed' => 0], $plan->consentCarried);
+        $this->assertSame([['guardian' => 'Huda Guardian', 'holds' => 'feed']], $plan->consentNotCarriedForSibling);
+
+        // Untouched: the entry the run made a moment earlier still does not
+        // stand "before the run", so both children are carried, in any order.
+        $plan = $run($third, null);
+        $this->assertSame(['media' => 1, 'feed' => 0], $plan->consentCarried);
+        $this->assertSame([], $plan->consentNotCarriedForSibling);
+    }
+
+    #[Test]
     public function what_only_a_class_run_may_set_cannot_be_sent_by_a_request(): void
     {
         $this->logLikeProduction();
@@ -2051,7 +2091,7 @@ class RosterMoveTest extends TestCase
 
         // `standing_before_id` would switch the cap off; `today` would allow a
         // day that has not come; `run` would write a run into the history.
-        $internal = ['standing_before_id' => $standing, 'today' => '2026-10-09', 'attempts' => 9, 'run' => 'typed'];
+        $internal = ['standing_before_id' => $standing, 'today' => '2026-10-09', 'attempts' => 9, 'run' => 'typed', 'whole_class' => '1'];
 
         $this->move($photographs, $this->second, '2026-10-05', $internal)->assertStatus(422)
             ->assertJsonPath('message', 'The first day in the new class cannot be in the future.');
@@ -2397,10 +2437,30 @@ class RosterMoveTest extends TestCase
         // While the blank, marked copy exists a return is refused...
         $this->previewMove($inSecond, $this->first, self::TODAY)->assertOk()->assertJsonPath('data.can_move', false);
 
-        // ...the student moves on, and the place that held the copy is removed
-        // (Remove takes the guardian entries beside it, and a blank one does
-        // not refuse). The state the refusal reads is gone with it.
-        $inThird = $this->movedTo($inSecond, $third);
+        // ...the student moves on. The place being left holds the record of
+        // that withdrawal and nothing else, and the move no longer says "it
+        // holds nothing, so you can remove it afterwards" about it.
+        $onward = $this->previewMove($inSecond, $third, self::TODAY)->assertOk()
+            ->assertJsonPath('data.consent_recorded_here', false)
+            ->assertJsonPath('data.old_entry_removable', false);
+        $this->assertContains(
+            "A guardian's withdrawal of a carried consent is recorded in 2nd Grade, so Maryam Student's place here is kept, "
+                .'shown as moved.',
+            $onward->json('data.lines'),
+        );
+        $this->assertStringNotContainsString('remove it', $this->said($onward));
+
+        $moved = $this->move($inSecond, $third, self::TODAY)->assertOk()->assertJsonPath('data.old_entry_removable', false);
+        $this->assertContains(
+            "Their entry in 2nd Grade is kept, shown as moved. A guardian's withdrawal of a carried consent is recorded there, "
+                .'so it stays.',
+            $moved->json('data.lines'),
+        );
+        $inThird = GroupMembership::findOrFail($moved->json('data.membership_id'));
+
+        // Remove is still not refused for it (the verb is untouched), and
+        // the place that held the copy can be removed. The state the refusal
+        // reads is gone with it.
         $this->removeFromRoster($inSecond->fresh())->assertOk();
         $this->assertSame(0, GroupMembership::where('group_id', $this->second->id)->count());
 
@@ -2446,6 +2506,24 @@ class RosterMoveTest extends TestCase
             RosterMove::consentComingBack(collect([$source]), collect([$elsewhere($withdrawnCopy)])),
         );
 
+        // Its copy, recorded since for less than it holds: the class story
+        // where this one holds photographs. As much, or a copy of an entry
+        // that itself holds only the class story, is not less.
+        $storyOnly = ['consent_scope' => 'feed', 'consent_granted_at' => '2026-10-04 10:00:00'];
+        $this->assertSame(
+            [$source->id => [RosterMove::COPY_NARROWED, $this->second->id]],
+            RosterMove::consentComingBack(collect([$source]), collect([$elsewhere($withdrawnCopy + $storyOnly)])),
+        );
+        $this->assertSame([], RosterMove::consentComingBack(
+            collect([$source]),
+            collect([$elsewhere($withdrawnCopy + ['consent_scope' => 'media', 'consent_granted_at' => '2026-10-04 10:00:00'])]),
+        ));
+        // An entry that holds the class story and was never marked is its own record.
+        $this->assertSame([], RosterMove::consentComingBack(collect([$source]), collect([$elsewhere($storyOnly)])));
+        $feedSource = tap($source->replicate(), fn (GroupMembership $m) => $m->forceFill(['consent_scope' => 'feed']));
+        $feedSource->id = $source->id;
+        $this->assertSame([], RosterMove::consentComingBack(collect([$feedSource]), collect([$elsewhere($withdrawnCopy + $storyOnly)])));
+
         // ONLY AN ENTRY THAT WOULD RE-OPEN WITH CONSENT IS LOOKED AT. One that
         // is open already, or holds none, is not, even with its own copy
         // withdrawn elsewhere: nothing would come back into force through it.
@@ -2486,6 +2564,187 @@ class RosterMoveTest extends TestCase
         $this->assertSame([], RosterMove::consentComingBack(collect([$feedCopy]), collect([$elsewhere($held('media'))])));
     }
 
+    #[Test]
+    public function a_carried_consent_reduced_in_the_new_class_stops_a_return_as_a_withdrawal_does(): void
+    {
+        $narrowed = "Huda Guardian's consent in 2nd Grade was carried there from 1st Grade and is now for the class story only. "
+            .'The consent recorded in 1st Grade (class story and photographs, recorded 4 Sep 2026) would come back into force.';
+
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $there = $this->movedTo($student, $this->second);
+        $copy = $this->entryIn($this->second, $parent);
+
+        // The family reduces it in the new class: the class story only. The
+        // office saves that there, and the entry KEEPS its marker: with it
+        // gone nothing would tell a move back that the first class's
+        // photograph consent must not come back into force.
+        $this->recordConsent($copy, 'feed', '2026-10-04')->assertOk()
+            ->assertJsonPath('data.consent_scope', 'feed')
+            ->assertJsonPath('data.consent_carried_from_group_id', $this->first->id)
+            ->assertJsonPath('data.consent_less_than_carried_from', true);
+        $this->assertSame('feed', $copy->fresh()->consent_scope);
+        $this->assertSame($this->first->id, (int) $copy->fresh()->consent_carried_from_group_id);
+
+        // The roster says it for that entry and for no other row.
+        $rows = collect($this->roster($this->second)->assertOk()->json('data'))->keyBy('id');
+        $this->assertTrue($rows[$copy->id]['consent_less_than_carried_from']);
+        $this->assertFalse($rows[$there->id]['consent_less_than_carried_from']);
+
+        $this->assertRefusedForConsent($there, $this->first, $narrowed, $parent);
+        $this->assertTrue($parent->fresh()->hasConsent(), 'a refused move wrote to a consent column');
+        $this->assertSame('media', $parent->fresh()->consent_scope);
+
+        // WITHDRAWN, THEN RECORDED FOR LESS: the refusal stands through both.
+        $this->withdrawConsent($copy->fresh())->assertOk();
+        $this->previewMove($there, $this->first, self::TODAY)->assertOk()->assertJsonPath('data.can_move', false);
+        $this->recordConsent($copy->fresh(), 'feed', '2026-10-04')->assertOk()
+            ->assertJsonPath('data.consent_carried_from_group_id', $this->first->id);
+        $this->assertRefusedForConsent($there, $this->first, $narrowed, $parent);
+
+        // A re-save of the same reduced record keeps it too.
+        $this->recordConsent($copy->fresh(), 'feed', '2026-10-04')->assertOk()
+            ->assertJsonPath('data.consent_carried_from_group_id', $this->first->id);
+
+        // THE REMEDY IS THE SAME ACT: withdraw the old one on its roster, then move.
+        $this->withdrawConsent($parent)->assertOk();
+        $before = $this->rosterSnapshot();
+        $back = $this->move($there, $this->first, self::TODAY)->assertOk()
+            ->assertJsonPath('data.path', RosterMovePlan::RETURNED)
+            ->assertJsonPath('data.consent_in_force_again', []);
+        $this->assertStringNotContainsString('in force again', $this->said($back));
+        $this->assertFalse($parent->fresh()->hasConsent(), 'the photograph consent came back');
+        $this->assertNothingWasDestroyed($before);
+    }
+
+    #[Test]
+    public function a_record_of_as_much_as_the_other_class_holds_makes_a_carried_consent_this_classs_own(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $huda = $this->guardian($student, 'Huda', consent: 'media');
+        $gamal = $this->guardian($student, 'Gamal', consent: 'feed');
+        $nadia = $this->guardian($student, 'Nadia', consent: 'media');
+        $there = $this->movedTo($student, $this->second);
+
+        // As much (photographs where the other class holds photographs), and
+        // MORE (photographs where it holds the class story): both are the
+        // office asserting it for this class, and neither can bring anything
+        // wider back. The marker goes, as it always did.
+        foreach ([[$huda, 'media'], [$gamal, 'media'], [$gamal, 'feed']] as [$entry, $scope]) {
+            $this->recordConsent($this->entryIn($this->second, $entry), $scope)->assertOk()
+                ->assertJsonPath('data.consent_carried_from_group_id', null)
+                ->assertJsonPath('data.consent_less_than_carried_from', false);
+        }
+
+        // Less than a source that has since been WITHDRAWN is not "less than
+        // it holds": there is nothing wider there to come back.
+        $this->withdrawConsent($nadia)->assertOk();
+        $this->recordConsent($this->entryIn($this->second, $nadia), 'feed')->assertOk()
+            ->assertJsonPath('data.consent_carried_from_group_id', null);
+
+        // And then nothing stands in the way of a return, which names what comes back.
+        $back = $this->previewMove($there, $this->first, self::TODAY)->assertOk()->assertJsonPath('data.can_move', true);
+        $this->assertStringContainsString(
+            'Consent already recorded in 1st Grade is in force again: Huda Guardian (class story and photographs, recorded 4 Sep 2026).',
+            $this->said($back),
+        );
+
+        // An entry that was never carried has no other class to be compared
+        // with: narrowing it is an ordinary correction and marks nothing.
+        $own = $this->guardian($this->enrol($this->second, 'Yusuf'), 'Samira', consent: 'media');
+        $this->recordConsent($own, 'feed')->assertOk()
+            ->assertJsonPath('data.consent_carried_from_group_id', null)
+            ->assertJsonPath('data.consent_less_than_carried_from', false);
+    }
+
+    #[Test]
+    public function a_tap_that_does_not_say_what_it_was_shown_about_consent_carries_none_and_is_told_to_reload(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $before = DB::table('group_memberships')->orderBy('id')->get()->toArray();
+
+        // The body of a page that was opened before a move carried consent.
+        // Its screen said "Consent ... does not move. Record it again ...".
+        $old = ['to_group_id' => $this->second->id, 'moved_on' => self::TODAY, 'expected_path' => 'left_and_started', 'expected_first_day' => self::TODAY];
+        Sanctum::actingAs($this->admin);
+
+        foreach ([$old, $old + ['expected_consent' => ''], $old + ['expected_consent' => null, 'consent_must_be_echoed' => 0]] as $body) {
+            $this->postJson($this->moveUrl($student), $body)->assertStatus(409)
+                ->assertJsonPath('status', 'error')
+                ->assertJsonPath('message', "Manara has been updated since this page was opened, and a move now carries each guardian's "
+                    .'consent with the student. Nothing was moved. Reload this page, read what will happen, then move Maryam Student again.');
+        }
+
+        $this->assertEquals($before, DB::table('group_memberships')->orderBy('id')->get()->toArray(), 'a refused move changed a row');
+        $this->assertNull($student->fresh()->left_on);
+
+        // The dialog as it is now always says it, and is moved.
+        $this->postJson($this->moveUrl($student), $old + ['expected_consent' => 'm1f0s0n0e0'])->assertOk()
+            ->assertJsonPath('data.consent_carried', ['media' => 1, 'feed' => 0]);
+
+        // A MOVE THAT CARRIES NOTHING IS NOT HELD UP: a guardian with nothing
+        // on record, one whose consent is not carried for a brother's sake,
+        // and no guardian at all. The old sentence was true of each.
+        $plain = $this->enrol($this->first, 'Yusuf');
+        $this->guardian($plain, 'Gamal');
+        $this->postJson($this->moveUrl($plain), $old)->assertOk()->assertJsonPath('data.consent_none_recorded', 1);
+
+        $capped = $this->enrol($this->first, 'Layla');
+        $this->guardian($capped, $parent->contact, consent: 'media');
+        $this->withdrawConsent($this->entryIn($this->second, $parent))->assertOk();
+        $this->postJson($this->moveUrl($capped), $old)->assertOk()
+            ->assertJsonPath('data.consent_carried', ['media' => 0, 'feed' => 0])
+            ->assertJsonPath('data.consent_not_carried', [['guardian' => 'Huda Guardian', 'holds' => 'none']]);
+
+        // It is the single verb's rule, set where the request is read and by
+        // nothing a request sends. The service's other callers are not pages:
+        // a whole-class run always echoes, and is checked on what it echoes.
+        $controller = file_get_contents(app_path('Http/Controllers/AdminDashboard/GroupMoveController.php'));
+        $this->assertSame(1, substr_count($controller, "'consent_must_be_echoed' => true,"));
+        $this->assertArrayNotHasKey('consent_must_be_echoed', (new \App\Http\Requests\Admin\Groups\MoveStudentRequest())->rules());
+
+        $other = $this->enrol($this->first, 'Zayd');
+        $this->guardian($other, 'Nadia', consent: 'feed');
+        $this->assertSame(['media' => 0, 'feed' => 1], $this->moveByService($other, $this->second)->consentCarried);
+    }
+
+    #[Test]
+    public function another_organisations_rows_never_stop_a_move_here_even_where_no_organisation_is_bound(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $there = $this->movedTo($student, $this->second);
+
+        // A row of ANOTHER organisation that reads, to the letter, as "this
+        // adult withdrew a consent carried from the first class about this
+        // child". Planted with the query builder: no screen can make it.
+        $elsewhere = $this->makeSchool();
+        DB::table('group_memberships')->insert([
+            'masjid_id' => $elsewhere->id, 'group_id' => $this->makeClass('Their class', school: $elsewhere)->id,
+            'contact_id' => $parent->contact_id, 'role' => 'guardian', 'guardian_of_contact_id' => $student->contact_id,
+            'provenance' => 'confirmed', 'consent_scope' => null, 'consent_granted_at' => null,
+            'consent_carried_from_group_id' => $this->first->id,
+        ]);
+
+        // Through the office's request the model's tenant scope hides it.
+        $this->previewMove($there, $this->first, self::TODAY)->assertOk()->assertJsonPath('data.can_move', true);
+
+        // And the move's own read names the organisation, so it holds where
+        // no tenant is bound at all (a console caller, a queued job).
+        $plan = app(\App\Support\TenantContext::class)->runWithout(
+            fn () => app(RosterMove::class)->preview($this->second->fresh(), $there->fresh(), $this->first->fresh(), self::TODAY),
+        );
+        $this->assertSame(RosterMovePlan::RETURNED, $plan->path);
+        $this->assertSame('media', $plan->consentInForceAgain[0]['scope']);
+
+        // The read behind "holds less than the class it was carried from"
+        // finds the same entry with or without a tenant bound.
+        $copy = $this->entryIn($this->second, $parent);
+        $this->assertSame($parent->id, (int) $copy->carriedConsentSource()->id);
+        $this->assertSame($parent->id, (int) app(\App\Support\TenantContext::class)->runWithout(fn () => $copy->fresh()->carriedConsentSource())->id);
+    }
+
     // ------------------------------------------------------ the deploy window
 
     #[Test]
@@ -2519,7 +2778,9 @@ class RosterMoveTest extends TestCase
 
         $before = DB::table('group_memberships')->orderBy('id')->get()->toArray();
 
-        $this->move($student, $this->second, self::TODAY)->assertStatus(409)
+        // The dialog's own body, with what its check showed about consent
+        // before the deploy began (so this is one request, not a check and a tap).
+        $this->move($student, $this->second, self::TODAY, ['expected_consent' => 'm1f0s0n0e0'])->assertStatus(409)
             ->assertJsonPath('status', 'error')
             ->assertJsonPath('message', 'Manara is being updated. Try this move again in a minute.');
 
@@ -2702,6 +2963,11 @@ class RosterMoveTest extends TestCase
             'contact_id' => $parent->id, 'role' => 'guardian', 'guardian_of_contact_id' => $maryam->contact_id,
             'provenance' => 'confirmed', 'consent_scope' => 'media', 'consent_granted_at' => '2026-09-04 10:00:00',
         ]);
+        // Nor is a class that was deleted: its rows still exist (a class is
+        // soft-deleted), and it is not somewhere consent can be in force.
+        $deleted = $this->makeClass('A class since removed');
+        $this->guardian($this->enrol($deleted, $maryam->contact), $parent, consent: 'media');
+        $deleted->delete();
 
         $this->move($maryam, $this->second, self::TODAY)->assertOk()->assertJsonPath('data.consent_carried', ['media' => 1, 'feed' => 0]);
         $copy = GroupMembership::where('group_id', $this->second->id)->where('contact_id', $parent->id)
@@ -2721,6 +2987,8 @@ class RosterMoveTest extends TestCase
             'Consent for Huda Guardian about Maryam Student still stands in 3rd Grade (class story, recorded 4 Sep 2026). '
                 .'Withdraw it there too if the family meant both.',
         ], $answer->json('notes'));
+        $this->assertStringNotContainsString('in  (', implode(' ', $answer->json('notes')), 'a note named a class with no name');
+        $this->assertStringNotContainsString('removed', implode(' ', $answer->json('notes')));
 
         // And the first note is true: the class is still open to them.
         $audience = app(\App\Support\GroupAudience::class);

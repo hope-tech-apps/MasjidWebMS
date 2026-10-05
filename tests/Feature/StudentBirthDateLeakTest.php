@@ -269,9 +269,15 @@ class StudentBirthDateLeakTest extends TestCase
         $base = "/api/admin/masjids/{$this->school->id}";
         $move = "{$base}/groups/{$this->class->id}/members/{$this->student->id}/move";
 
+        // The tap sends back what the check showed about consent, as the
+        // dialog does: a body without it may not carry a guardian's consent.
+        $preview = $this->getJson("{$move}?to_group_id={$next->id}&moved_on=2026-10-06")->assertOk();
+
         $answers = [
-            'move preview' => $this->getJson("{$move}?to_group_id={$next->id}&moved_on=2026-10-06")->assertOk(),
-            'move' => $this->postJson($move, ['to_group_id' => $next->id, 'moved_on' => '2026-10-06'])->assertOk(),
+            'move preview' => $preview,
+            'move' => $this->postJson($move, [
+                'to_group_id' => $next->id, 'moved_on' => '2026-10-06', 'expected_consent' => $preview->json('data.expected_consent'),
+            ])->assertOk(),
             'old roster' => $this->getJson("{$base}/groups/{$this->class->id}/members")->assertOk(),
             'new roster' => $this->getJson("{$base}/groups/{$next->id}/members")->assertOk(),
         ];

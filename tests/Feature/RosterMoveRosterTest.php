@@ -542,10 +542,22 @@ class RosterMoveRosterTest extends TestCase
         $this->assertNull($now['bucks_line']);
         $this->assertSame([], $now['guardians_not_vouched']);
 
+        // THE COPY WAS REDUCED where it had been carried: the class story
+        // only, where this class holds photographs. Refused as a withdrawal is.
+        $this->recordConsent($copy, 'feed', '2026-10-04')->assertOk();
+        $now = $state($this->first, $student);
+        $this->assertSame([
+            "Huda Guardian's consent in 2nd Grade was carried there from this class and is now for the class story only. "
+                .'Putting Maryam Student back would bring the consent recorded here (class story and photographs, recorded '
+                .'4 Sep 2026) into force again.',
+            "Withdraw it on this roster first (the Consent button on the guardian's row), then put Maryam Student back.",
+        ], $now['consent_blocks']);
+        $this->assertSame([], $now['consent_lines']);
+
         // THE COPY WAS WITHDRAWN where it had been carried. One sentence for
         // the entry, then once what to do; and the entry is no longer among
         // those that would simply come back.
-        $this->withdrawConsent($copy)->assertOk();
+        $this->withdrawConsent($copy->fresh())->assertOk();
         $now = $state($this->first, $student);
         $this->assertSame([
             'Huda Guardian withdrew consent in 2nd Grade after it had been carried there from this class. Putting Maryam '
@@ -600,6 +612,108 @@ class RosterMoveRosterTest extends TestCase
         $current = $state($this->second, $there);
         $this->assertSame([], $current['consent_blocks']);
         $this->assertSame([], $current['consent_lines']);
+    }
+
+    #[Test]
+    public function put_back_on_a_row_that_simply_left_is_withheld_for_a_carried_copy_whose_source_was_withdrawn_since(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        $this->guardian($student, 'Gamal');
+        $there = GroupMembership::findOrFail($this->move($student, $this->second, self::TODAY)->assertOk()->json('data.membership_id'));
+        $copy = $this->entryIn($this->second, $parent);
+
+        // Recorded as having LEFT the second class. Not a move: the row
+        // carries no "moved to", and "Put back" on it re-opens the entries
+        // beside it exactly as it does on a row a move left.
+        Sanctum::actingAs($this->admin);
+        $withdrawal = "/api/admin/masjids/{$this->school->id}/groups/{$this->second->id}/members/{$there->id}/withdrawal";
+        $this->putJson($withdrawal, ['left_on' => self::TODAY])->assertOk();
+        $row = fn (GroupMembership $of): array => collect($this->roster($this->second)->assertOk()->json('data'))->firstWhere('id', $of->id);
+
+        // It says whose consent comes back with the student, as a moved row does.
+        $this->assertNull($row($there)['moved_to_group_id']);
+        $this->assertSame([
+            'student_there' => 'none',
+            'open_group' => null,
+            'guardians_not_vouched' => [],
+            'consent_blocks' => [],
+            'consent_lines' => ["Putting Maryam Student back brings Huda Guardian's consent in this class into force again (class story and photographs, recorded 4 Sep 2026)."],
+            'bucks_line' => null,
+        ], $row($there)['moved_to_state']);
+
+        // While the child is in neither class the family withdraws, and the
+        // office does it on the first class's roster, where it was given.
+        $this->withdrawConsent($parent)->assertOk();
+
+        $this->assertSame([
+            "Huda Guardian's consent here (class story and photographs, recorded 4 Sep 2026) was carried from 1st Grade, and "
+                .'consent in 1st Grade has since been withdrawn. Putting Maryam Student back would bring it into force again.',
+            "Withdraw it on this roster first (the Consent button on the guardian's row), then put Maryam Student back.",
+        ], $row($there)['moved_to_state']['consent_blocks']);
+        $this->assertSame([], $row($there)['moved_to_state']['consent_lines']);
+
+        // The remedy, on this roster. With nothing left to bring back the row
+        // says nothing at all, as a row that left always did.
+        $this->withdrawConsent($copy)->assertOk();
+        $this->assertNull($row($there)['moved_to_state']);
+
+        // A row that left with no consent beside it was never listed, and is not now.
+        $plain = $this->enrol($this->second, 'Yusuf');
+        $this->guardian($plain, 'Nadia');
+        $this->putJson("/api/admin/masjids/{$this->school->id}/groups/{$this->second->id}/members/{$plain->id}/withdrawal", ['left_on' => self::TODAY])->assertOk();
+        $this->assertNull($row($plain)['moved_to_state']);
+
+        // A CURRENT row is not listed either, whatever its guardians hold.
+        $current = $this->enrol($this->second, 'Layla');
+        $this->guardian($current, 'Samira', consent: 'media');
+        $this->assertNull($row($current)['moved_to_state']);
+    }
+
+    #[Test]
+    public function a_row_put_back_by_hand_that_later_simply_leaves_is_no_longer_moved_to_anywhere(): void
+    {
+        $student = $this->enrol($this->first, 'Maryam');
+        $there = GroupMembership::findOrFail($this->move($student, $this->second, self::TODAY)->assertOk()->json('data.membership_id'));
+        $url = fn (GroupMembership $row): string => "/api/admin/masjids/{$this->school->id}/groups/{$row->group_id}/members/{$row->id}/withdrawal";
+        $row = fn (GroupMembership $of): array => collect($this->roster($this->first)->assertOk()->json('data'))->firstWhere('id', $of->id);
+
+        // The mistaken move is undone the way the roster offers: left in the
+        // new class, put back in the old one. The row keeps "moved to", so
+        // the roster can say what happened.
+        Sanctum::actingAs($this->admin);
+        $this->putJson($url($there), ['left_on' => self::TODAY])->assertOk();
+        $this->deleteJson($url($student))->assertOk();
+        $this->assertNull($student->fresh()->left_on);
+        $this->assertSame($this->second->id, (int) $student->fresh()->moved_to_group_id);
+
+        // Later the student simply leaves. That is a new act, not that move.
+        $this->putJson($url($student), ['left_on' => self::TODAY])->assertOk();
+
+        $left = $student->fresh();
+        $this->assertNotNull($left->left_on);
+        $this->assertNull($left->moved_to_group_id, 'a row that left by hand still says it was moved away');
+        $this->assertNull($left->moved_on);
+        $this->assertNull($left->moved_by_user_id);
+        $this->assertNull($row($student)['moved_to']);
+        $this->assertNull($row($student)['moved_to_state']);
+
+        // And a move is told what is true of it, not to go and open the class
+        // of a move that was undone.
+        $this->previewMove($left, $this->second, self::TODAY)->assertOk()
+            ->assertJsonPath('data.can_move', false)
+            ->assertJsonPath('data.open_group', null)
+            ->assertJsonPath('data.refusal', 'Maryam Student has already left this class. To place them in another class, put them '
+                .'back on this roster first, then move them.');
+
+        // A ROW THE MOVE LEFT KEEPS "MOVED TO" when the office corrects its
+        // leaving date: it had already left, and a new date does not un-move it.
+        $moved = $this->enrol($this->first, 'Yusuf');
+        $this->move($moved, $this->second, self::TODAY)->assertOk();
+        $this->putJson($url($moved), ['left_on' => '2026-10-01'])->assertOk();
+        $this->assertSame('2026-10-01', $moved->fresh()->left_on->toDateString());
+        $this->assertSame($this->second->id, (int) $moved->fresh()->moved_to_group_id);
+        $this->assertSame('current', $row($moved)['moved_to_state']['student_there']);
     }
 
     // -------------------------------------------------------- "Add to roster"

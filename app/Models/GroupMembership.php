@@ -182,7 +182,9 @@ class GroupMembership extends Model
      *
      *   marker   consent columns   reads as
      *   null     set               recorded by the office for this class
-     *   set      set               carried from that class, untouched since
+     *   set      set               carried from that class: untouched since, or
+     *                              recorded here since for LESS than that class
+     *                              still holds (`holdsLessThanCarriedFrom()`)
      *   set      null              withdrawn here after it was carried
      *   null     null              never asked, or withdrawn where it was recorded
      *
@@ -191,12 +193,16 @@ class GroupMembership extends Model
      *   - `carriedFrom()` with consent SETS it;
      *   - `GroupConsentController::update` (the office records consent) CLEARS
      *     it, also on a re-save that changes nothing: the office is now
-     *     asserting the consent for this class;
+     *     asserting the consent for this class. WITH ONE EXCEPTION: a record of
+     *     LESS than the entry in the marked class holds (the class story where
+     *     that one holds photographs) KEEPS it. The family reduced what was
+     *     carried; with the marker gone a move back would bring the wider
+     *     consent of the other class into force and nothing would refuse it;
      *   - `GroupConsentController::destroy` (a withdrawal) does NOT touch it.
      *     The kept marker beside two blank columns is the only record that a
      *     family withdrew a carried consent, and `App\Support\RosterMove`
      *     refuses a move that would bring the other class's consent back into
-     *     force while that state stands;
+     *     force while that state, or the reduced one above, stands;
      *   - `unconfirm()` clears it together with a consent it clears, and leaves
      *     it on an entry that was already blank;
      *   - leaving, returning and "Put back" never touch it.
@@ -908,6 +914,69 @@ class GroupMembership extends Model
     public function consentColumnsAreSet(): bool
     {
         return $this->consent_granted_at !== null || $this->consent_scope !== null;
+    }
+
+    /**
+     * HOW MUCH A SCOPE OPENS, as a number to compare two consents by: 0 for
+     * none (or a scope nobody can read), 1 for the class story, 2 for the
+     * class story and photographs.
+     */
+    public static function consentRankOf(?string $scope): int
+    {
+        return match ($scope) {
+            self::CONSENT_MEDIA => 2,
+            self::CONSENT_FEED => 1,
+            default => 0,
+        };
+    }
+
+    /** How much THIS entry's consent opens now: 0 when none is in force (`hasConsent()`). */
+    public function consentRank(): int
+    {
+        return $this->hasConsent() ? self::consentRankOf($this->consent_scope) : 0;
+    }
+
+    /**
+     * THE ENTRY A CARRIED CONSENT WAS COPIED FROM: the same adult and child in
+     * the class THE MARKER names, current or closed, or null when this entry
+     * is not marked or that class holds no entry for them any more (the place
+     * there was removed, or a merge re-issued the row). One row by the unique
+     * index. The organisation is named in the query as well as scoped by the
+     * model, so it holds where no tenant is bound.
+     */
+    public function carriedConsentSource(): ?self
+    {
+        $from = $this->{self::CONSENT_CARRIED_FROM};
+
+        if ($from === null || ! $this->isGuardian()) {
+            return null;
+        }
+
+        return self::query()
+            ->where('masjid_id', $this->masjid_id)
+            ->where('group_id', $from)
+            ->where('role', self::ROLE_GUARDIAN)
+            ->where('contact_id', $this->contact_id)
+            ->where('guardian_of_contact_id', $this->guardian_of_contact_id)
+            ->first();
+    }
+
+    /**
+     * IS THIS A CARRIED CONSENT THAT NOW STANDS FOR LESS THAN THE CLASS IT CAME
+     * FROM HOLDS? Marked, in force, and narrower than `$source` (the class
+     * story here, photographs there).
+     *
+     * It is how a consent the family REDUCED after a move reads, and it is a
+     * comparison of two rows, not a memory of an act: an untouched copy whose
+     * source was recorded WIDER afterwards reads the same. So every sentence
+     * built on it says what the two classes hold and never "was reduced".
+     */
+    public function holdsLessThanCarriedFrom(?self $source): bool
+    {
+        return $this->{self::CONSENT_CARRIED_FROM} !== null
+            && $source !== null
+            && $this->hasConsent()
+            && $this->consentRank() < $source->consentRank();
     }
 
     /**

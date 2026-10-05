@@ -156,7 +156,8 @@ class GroupMembershipsController extends Controller
      *     own word for the page, so a wrong kind is visible instead of silent.
      *   - `meta.school_today`: today on the school's clock, for the date field.
      *   - `moved_to_state` on each student row that carries "moved to" (null on
-     *     every other row): whether the student is still where they were moved
+     *     every other row but one that left with a consent to bring back, see
+     *     below): whether the student is still where they were moved
      *     to, and which guardian entries here "Put back" must not re-open. It
      *     is the move's own guardian rule (`RosterMove::notVouched`) read from
      *     the other side, not a second copy.
@@ -169,8 +170,13 @@ class GroupMembershipsController extends Controller
      * that class (id, name, deleted_at), loaded as `moved_to` and `moved_from`
      * are. With the two consent columns beside it the screen can say "carried
      * from …" or "withdrawn here after it was carried from …" without
-     * guessing. `moved_to_state` gains what "Put back" would bring back into
-     * force (`RosterMove::movedToStates`).
+     * guessing. One state needs the OTHER class's row and is computed here:
+     * `consent_less_than_carried_from`, true on a marked entry whose consent is
+     * in force for less than the class it was carried from holds (the family
+     * reduced it here, and a move back is refused while that stands). False
+     * on every other row. `moved_to_state` gains what "Put back" would bring
+     * back into force (`RosterMove::movedToStates`), and is served on a row
+     * that simply left when it has something to say.
      *
      * bin/deploy serves this code before it migrates. Until the column exists
      * the relation is not loaded and the key is absent, which the screen reads
@@ -197,6 +203,11 @@ class GroupMembershipsController extends Controller
         $contested = RosterClaimIdentity::contestedClaimIds($memberships);
         $movedToStates = RosterMove::movedToStates($group, $memberships);
 
+        // One query, and only when a marked entry holds consent.
+        $lessThanCarried = GroupMembership::consentCarryReady()
+            ? RosterMove::holdingLessThanCarried($memberships)->map(fn (GroupMembership $m): int => (int) $m->getKey())->all()
+            : [];
+
         // A whole-number age for each STUDENT IN A CLASS, and null on every other
         // row. The date behind it is read in StudentAge's own query and never
         // joins this payload; the office reads it one student at a time through
@@ -207,11 +218,12 @@ class GroupMembershipsController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $movedToStates, $ages): array {
+            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $movedToStates, $lessThanCarried, $ages): array {
                 $isContested = in_array((int) $membership->getKey(), $contested, true);
 
                 return array_merge($membership->toArray(), [
                     'moved_to_state' => $movedToStates[(int) $membership->getKey()] ?? null,
+                    'consent_less_than_carried_from' => in_array((int) $membership->getKey(), $lessThanCarried, true),
                     'age' => $ages[(int) $membership->getKey()]['age'] ?? null,
                     'age_given' => $ages[(int) $membership->getKey()]['given'] ?? false,
                     'claim' => [
