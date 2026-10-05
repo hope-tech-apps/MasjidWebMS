@@ -7986,3 +7986,17 @@ themselves still run only on the MySQL job.
   the kinds of image accepted and every other field of the three rules are as they were.
 - **Rejected.** Naming the title background server-side (`usingFileName`). It removes the class without refusing
   anything, but it changes stored names and addresses, and 2026-09-25 chose a 422 for the same kind of upload.
+- **The screen (the lunch board; its own commit).** A refused flyer was shown as axios's "Request failed with
+  status code 422": `serverReason()` in `JummahLunchView` reads a string `data` or a `message`, and a refused file
+  arrives keyed by its field. The field's sentences are now read with `serverFieldErrors` and put under the flyer
+  input (`flyerError`), cleared by the next pick and by reopening the dialog. Not in a toast: the dialog's overlay
+  (`.jl-modal`, z-index 1080) is stacked above the toast's container, and at phone width the dialog covered the
+  toast completely. Both were seen in a browser against a local server and a scratch database: a JPEG named
+  `x.html` picked in the New menu dialog put the sentence under the input, a reopened dialog did not carry it,
+  and `IMG_0001.JPG` then uploaded and cleared it. Any other failure of the upload goes to the toast as before.
+  Not seen: a desktop-width window, and the lunch realm's own sign-in (it is the same view).
+- **The title background has no screen.** The admin SPA's page form sends no file to the pages endpoints (the
+  page-title editor uploads through the section requests, which already pin the name), so that sentence is read
+  by a caller of the API and by nobody on a screen.
+- **Left as found.** Every other toast raised while a `.jl-modal` dialog is open (a failed menu save, "Flyer
+  uploaded") is still behind the overlay. Moving them is its own change to that screen.
