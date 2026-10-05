@@ -734,6 +734,46 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function another_organisations_private_file_with_that_number_and_name_does_not_change_what_happens_to_this_ones_document(): void
+    {
+        // "Is the document it named gone?" has an answer the administrator can see: their own
+        // document is deleted, or kept. So it is asked only of what anyone can already find out. That
+        // a PUBLIC file answers at /storage/{number}/{name} is known to every visitor who asks for
+        // it; that another organisation holds a PRIVATE file of that number and name is not.
+        Storage::fake('local');
+        $other = $this->organisation();
+        $private = $other->addMedia($this->file('class-roster.pdf'))
+            ->usingFileName('class-roster.pdf')->toMediaCollection('rosters', 'local');
+        $this->assertSame('local', $private->disk);
+        Storage::disk('local')->assertExists("{$private->id}/class-roster.pdf");
+        Storage::disk('public')->assertMissing("{$private->id}/class-roster.pdf");
+
+        // This application's address for that number and that name. No public file is there, so
+        // it reads as a deleted document's address: the save is out of date, and the document kept.
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        Log::spy();
+        $this->updateLinkList($section, [self::PUBLIC_DISK_URL . "/{$private->id}/class-roster.pdf"]);
+
+        $this->assertDocumentKept($document);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_starts_with($message, 'Page documents NOT removed')
+                && $context === ['masjid_id' => $this->masjid->id, 'section_id' => $section, 'media_ids' => [$document['id']]])
+            ->once();
+
+        // Exactly what happens for a name no row has at all: nothing can be learnt from the two.
+        $again = $this->uploadDocument('Schedule.pdf');
+        $buttons = $this->saveLinkList([$again['url']]);
+        $this->updateLinkList($buttons, [self::PUBLIC_DISK_URL . "/{$private->id}/class-list.pdf"]);
+        $this->assertDocumentKept($again);
+
+        // And their file is as it was.
+        $this->assertSame(1, DB::table('media')->where('id', $private->id)->count());
+        Storage::disk('local')->assertExists("{$private->id}/class-roster.pdf");
+    }
+
+    #[Test]
     public function a_dead_link_that_was_already_in_the_section_does_not_hold_up_a_later_deletion(): void
     {
         // Only an address a save BRINGS IN marks it as out of date. A section that already carries

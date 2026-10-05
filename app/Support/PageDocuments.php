@@ -321,9 +321,16 @@ final class PageDocuments
      * PDF in another collection, and by another site's address. So both of these must hold:
      *
      *  1. the address is one of OURS as it is written (writtenAsOurs()), and
-     *  2. NO media row at all has that id and that file name: the document it named is gone. A row
-     *     of another organisation, or in another collection, is a file that exists, and putting its
-     *     address in is an ordinary edit.
+     *  2. NO media row on the disk page documents live on (the public disk) has that id and that
+     *     file name: the document it named is gone. A row of another organisation, or in another
+     *     collection, is a file that exists, and putting its address in is an ordinary edit.
+     *
+     * ONLY THE PUBLIC DISK IS ASKED, because the answer shows: the administrator sees their own
+     * document deleted or kept. That a public file answers at `/storage/{id}/{name}` is something
+     * any visitor finds out by asking for it. Asked of every disk, the same save told an
+     * administrator whether ANOTHER ORGANISATION'S PRIVATE file has a given number and name. A row
+     * on a private disk is therefore not looked at: no file of that address is online, which is
+     * all an old copy's dead link means.
      *
      * Anything else is an ordinary replace, and what it drops is cleaned up as usual. Read from the
      * content as written and percent-decoded once (decoded()), not in the wider spellings of
@@ -354,7 +361,10 @@ final class PageDocuments
                     continue;
                 }
 
-                if (! Media::query()->whereKey((int) $mediaId)->where('file_name', $storedName)->exists()) {
+                $online = Media::query()->whereKey((int) $mediaId)->where('file_name', $storedName)
+                    ->where('disk', self::disk())->exists();
+
+                if (! $online) {
                     return true;
                 }
             }
@@ -447,7 +457,7 @@ final class PageDocuments
 
         try {
             // `https://host/storage` as configured; what stands in front of `/storage` is the host.
-            $disk = rtrim(Storage::disk(config('media-library.disk_name'))->url(''), '/');
+            $disk = rtrim(Storage::disk(self::disk())->url(''), '/');
             if (preg_match('~^https?://(.+)/storage$~i', $disk, $match)) {
                 $hosts[] = strtolower($match[1]);
             }
@@ -464,6 +474,12 @@ final class PageDocuments
         }
 
         return array_values(array_unique($hosts));
+    }
+
+    /** The disk page documents live on: the media library's own, which is the public one. */
+    private static function disk(): string
+    {
+        return (string) config('media-library.disk_name');
     }
 
     /**
