@@ -51,17 +51,37 @@ bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
 the uploaded file name on the public disk, and the web server serves it by its
 extension, so matching bytes named `.html` would be a page on this app's origin.
 
-**The pair is for any image written to the public disk, not for sections only.**
-A page's own title background (`StorePageRequest`, `UpdatePageRequest`) and the
-Friday-lunch flyer (`MealMenusController::uploadFlyer`) carry it too, each with
-`extensions:` listing exactly what its `mimes:` lists, and a sentence that says
-what the name must end in. Write the list in lower case: `extensions` lower-cases
-the client's name and not its own list, so `IMG_0001.JPG` passes `extensions:jpg`
-and nothing passes `extensions:JPG`. An upload this application names itself (the
-flyer is `<uuid>.<ext>`) takes that extension from the sniffed type
-(`$file->extension()`), never from the client's name. `PublicUploadFileNameTest`
-pins both uploads with real bytes, because `UploadedFile::fake()` reports a type
-from its argument or its name and so cannot show bytes named as something else.
+**The pair is for every upload whose client file name can reach the public disk,
+not for sections only, and `UploadFileNameCoverageTest` holds it there.** That
+test reads every rule under `app/` and fails when one that can admit a file
+(`image`, `file`, `mimes:`, `mimetypes:`) has no `extensions:` in the same rule
+string or the same rule list, unless its `NAME_NEVER_PUBLIC` list says why the
+name cannot reach a public address (a name this application chooses, a private
+disk behind a signed-in download, a file that is never stored) and the facts it
+gives for that still hold. A new upload therefore does not depend on anyone
+remembering this paragraph: the failure names the rule and says what to add.
+
+What it asks for, on each such rule:
+
+- `extensions:` listing, **in lower case**, what the rule's bytes check admits:
+  its own `mimes:` list, or `jpeg,jpg,png,gif,bmp,webp` beside a bare `image`.
+  `extensions` lower-cases the client's name and not its own list, so
+  `IMG_0001.JPG` passes `extensions:jpg` and nothing passes `extensions:JPG`.
+- `bail` first, so a file that is not an image is told that once and is not also
+  told to rename it (a PDF renamed `.jpg` is still refused).
+- a sentence of the field's own for the name: "The …'s file name must end in ….
+  Rename the file and upload it again."
+
+An upload this application names itself (the lunch flyer is `<uuid>.<ext>`)
+takes that extension from the sniffed type (`$file->extension()`), never from
+the client's name. `PublicUploadFileNameTest` (a page's title background, the
+flyer) and `PublicUploadFileNameDoorsTest` (the thirteen admin uploads found
+beside them: announcements, the gallery, logos, avatars, services, About, the
+donation link, a push, the publish composer) prove each door with real bytes
+through the real route, because `UploadedFile::fake()` reports a type from its
+argument or its name and so cannot show bytes named as something else. Add a row
+there for a new door. The coverage test cannot see an upload that is read with no
+rule at all, so validate every file a controller reads.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without

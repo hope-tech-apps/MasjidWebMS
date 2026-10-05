@@ -7969,7 +7969,8 @@ themselves still run only on the MySQL job.
 - **Decided.**
   - `extensions:` beside `mimes:`, naming the same kinds, on all three rules: `jpeg,jpg,png,gif,webp` for the
     title background, `jpeg,jpg,png,webp` for the flyer, which has never taken a GIF. This is the rule of
-    2026-09-25 (above), applied to two uploads it had not reached.
+    2026-09-25 (above), applied to two uploads it had not reached. They were not the only two: thirteen more
+    had the same gap and were closed the same day (the next entry).
   - The flyer is stored under `$file->extension()`, which is guessed from the sniffed type and which `mimes` has
     already held to its own list, never under the client's extension. PNG bytes sent as `photo.jpg` are kept as
     `.png`, and a `.jpeg` is kept as `.jpg`. Nothing reads that name except the address the upload answers.
@@ -8000,3 +8001,69 @@ themselves still run only on the MySQL job.
   by a caller of the API and by nobody on a screen.
 - **Left as found.** Every other toast raised while a `.jl-modal` dialog is open (a failed menu save, "Flyer
   uploaded") is still behind the overlay. Moving them is its own change to that screen.
+
+## 2026-10-05 — Every upload kept on the public disk under the client's file name pins that name, and a coverage test holds it there (round 2 of `fix/pin-upload-file-names`)
+
+- **Found.** After the entry above, every upload under `app/` was audited (28, read at 9e026457). Thirteen more
+  image uploads, 26 rule lines in 18 requests, checked a file's bytes and not its name while the media library
+  kept the client's file name on the public disk: announcements, splash announcements, the gallery (one picture
+  or a bag of them), the organisation logo on Details, the header and footer logos on General settings, the
+  logos on organisation create and edit, a user's picture on the Users screen, an admin's own profile picture
+  (no capability gate, so every admin-realm login reaches it), a service's picture and icon, the About picture
+  and its two icons, the donation link's picture, a push notification's picture, and the publish composer's
+  main picture, which is copied under the same name into the announcement and the notification it makes.
+- **Reproduced before any rule changed** (`PublicUploadFileNameDoorsTest`: real bytes through the real routes,
+  29 doors, one or more per rule line). Image bytes named `x.html` and `x.svg` were answered 200, 201 or 202 at
+  every door and kept as `<media id>/x.html` and `<media id>/x.svg`; the composer kept three of each
+  (`broadcasts`, `announcements`, `notifications`). 58 refusal cases, each red first.
+  Not reproduced here, as before: the web server answering such a file as a page (the suite has no web server).
+- **Production, read only, by the lead on 2026-10-05.** No `.html` file is on the public disk, and its 37 `.svg`
+  files carry no script.
+- **Decided.**
+  - `extensions:` on every one, in lower case, mirroring what that rule's bytes check admits:
+    `jpeg,jpg,png,gif,webp` beside `mimes:jpeg,png,jpg,gif,webp`; an icon's list mirrors the icon's own `mimes:`
+    (`png,ico,webp`; `png,gif,ico,icns,webp` on a service edit); the two rules that are a bare `image` (the
+    donation link, a push notification) take `jpeg,jpg,png,gif,bmp,webp`, which is what `image` admits. No size
+    limit and no accepted kind of file changed.
+  - `bail` first on each of them and on the three rules of the entry above. A file that is not an image is told
+    that once ("The avatar field must be an image.") and is no longer also told what type it must be and to
+    rename it: a PDF sent as `notice.jpg` is still refused, so "rename the file" was advice that could not work.
+    A file refused for its name alone reads its field's own sentence, for example "The avatar's file name must
+    end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again."
+  - The composer's feed channel borrows the announcement's rules, and its picture rule is the composer's own
+    plus `required`. A picture the composer's rule has refused is no longer reported a second time with
+    "Announcements feed:" in front of it. With no picture at all the feed's `required` still speaks.
+  - `SaveMasjidAboutRequest` writes each field's rule whole. It used to join fragments held in variables, which
+    the coverage test below cannot read together.
+  - **`UploadFileNameCoverageTest`** reads every PHP file under `app/` (tokens, so a comment is not a rule) and
+    fails when a rule that can admit a file (`image`, `file`, `mimes:`, `mimetypes:`, `dimensions:`,
+    `Rule::file()`, `File::types()` and their like) has no `extensions:` in the same rule string or the same
+    rule list. The way out is `NAME_NEVER_PUBLIC` in that test: an entry says what the upload is and why the
+    client's file name cannot reach a public address, and carries facts the test checks (the disk a config key
+    names is not the public one; a line the storing code must still contain). Twelve entries today: the
+    assistant's chat picture (kept under PHP's temporary name), the newsletter's block pictures (re-encoded,
+    `<uuid>.<ext>`), the Studio draft logo and the flyer photo (private disk, random name), public form
+    attachments and a form's own file question, class feed photos and videos, class handouts, a contact's
+    credential document (all private disk, random name, signed-in download), and the roster spreadsheet at
+    its two steps (never stored). Seen red with the pin removed from an admin's profile picture, from the
+    donation link's picture and from the About mission icon, one at a time, and green again with each put back.
+- **What a person meets that they did not before.** On these uploads too, a real image whose name ends in
+  something else (`.jfif`, `.jpe`, a trailing dot, or no extension at all) is refused until it is renamed.
+- **The screens.** Each of the thirteen is sent by one form in the admin SPA, and each form puts what the server
+  answered into its failure dialog (`getMessageFromObj` flattens a refusal's field messages; run on the exact
+  refusal envelope, it returns the sentence). Nobody is left without a reason, so no screen was changed. Read
+  from the views and not driven in a browser. Left as found: most of those dialogs are titled with axios's
+  "Request failed with status code 422" above the server's sentence, and three forms (announcement, service,
+  splash) leave the form after the failure dialog, so what was typed is lost.
+- **Deliberately left.**
+  - Files already stored are not scanned, renamed or moved.
+  - A name the media library itself refuses after validation (`x.php.jpg`, a name over 255 bytes) still answers
+    500 after the record is written, and a page UPDATE then loses its old background. It was so before this
+    branch, and it is its own change.
+  - The web server still serves whatever is on the public disk by its extension. A server-side backstop (nothing
+    page-like under `/storage` is served as a page) is recommended to the owner as a separate, deliberate server
+    change. It is the only thing that would cover a file that reached the disk some other way.
+  - The coverage test cannot see an upload that is read with no rule at all, and it does not judge whether a
+    list of extensions is a sensible one. The two door tests do that, with real bytes.
+  - `ico` and `icns` stay on the icon lists although `image` beside them admits neither, so a real `.ico` is
+    refused as "not an image", as it was before.
