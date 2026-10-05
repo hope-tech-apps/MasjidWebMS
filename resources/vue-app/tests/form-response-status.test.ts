@@ -361,6 +361,8 @@ test('the Delete button is named for what it does, why it will not, or that it i
     assert.equal(deleteButtonLabel(121, deleteBlocked('never'), false), `Delete is not available: ${DELETE_REFUSED}`);
     // Only a live Delete ever sends a request, but the name never lags behind the spinner.
     assert.equal(deleteButtonLabel(121, null, true), 'Deleting registration #121');
+    // While its request runs "deleting" wins over a reason the row has just been given.
+    assert.equal(deleteButtonLabel(121, deleteBlocked('never'), true), 'Deleting registration #121');
 });
 
 const deleteFacts = (over: Partial<DeleteFacts> = {}): DeleteFacts => ({

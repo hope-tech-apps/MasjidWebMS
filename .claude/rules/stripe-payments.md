@@ -252,7 +252,12 @@ persisted before the call, webhook-only advancement). On top of them:
   `expired` for that page, asked at the moment of the delete under the row lock through
   `closeOpenSession()`. `unpaid` on the row is not proof no money moved (the webhook can be
   late, or can have refused the event and answered 200), and the cancel records nothing about
-  its own close, so neither is trusted. Every other answer, and no answer, keeps the row. Those
+  its own close, so neither is trusted. Every other answer, and no answer, keeps the row. With
+  NO session id on the row Stripe is not asked: a page's address reaches the payer only in the
+  answer of the transaction that records its id (`onLockedRow()`), and a failed attempt is
+  rolled back whole, idempotency key included, so nothing could have been paid. That holds only
+  for a row with neither; an idempotency key with no session id is a state nothing should
+  write, and such a row is refused (`DELETE_PAGE_UNKNOWN`) and goes to a person. Those
   refusals are RETURNED from the transaction, not thrown: `closeOpenSession()` switches an
   unreachable holder off inside it. The rule is read from the row as LOCKED, never from the
   copy the request first found: a registration restored or paid in between is kept. One

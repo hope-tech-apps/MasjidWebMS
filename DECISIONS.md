@@ -7950,3 +7950,19 @@ themselves still run only on the MySQL job.
   person. Production held no registration in that state on 2026-10-05 (counted). A payment that did land on a
   page nobody can name meets the webhook: found by the registration's uuid or charge reference it is recorded
   as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries the same uuid.
+- **After the re-reviews (2026-10-05, branch `fix/never-paid-delete-followups`).** Three small things the two
+  re-reviewers of the hardening asked for, none of which changes what is deleted. (1) The rule file's paragraph and
+  `destroy()`'s docblock now name the fifth outcome: with no page on record a row is deleted only when it also holds
+  no idempotency key (`DELETE_PAGE_UNKNOWN` otherwise). (2) The CANCEL made the promise the delete had stopped
+  making: when Stripe says the page of a registration being cancelled was paid, `closePageOfCancelled()` answered
+  "…so it will show as paid once Stripe confirms it". It now says "This registration had just been paid by card. If
+  it still shows as unpaid later, check this payment in Stripe." (the refund instruction still follows) and leaves
+  one warning line by ids, as the delete does for the same answer. (3) A test pins that the row Delete's accessible
+  name says it is deleting even when the row has just been given a reason it cannot be.
+  Still open, known and not built: for a card registration that is NOT yet cancelled and whose page is pinned to an
+  account Stripe no longer lets the platform read, the dimmed Delete (its tooltip, accessible name and popup) still
+  says "a cancelled registration that was never paid can then be deleted", which the server will refuse after the
+  cancel (the cancel question for the same row already says so truly). No such registration exists today. The
+  delete question hedges ("If a card payment page was opened for it…") because the row's `card_page_opened` is
+  only sent on a form that still has payment settings. The progress sign's `role="status"` sits inside the button,
+  so what a screen reader is sure to get is the button's changed name and `aria-busy`.

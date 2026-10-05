@@ -643,8 +643,26 @@ class FormResponsesController extends Controller
         // only that organisation can refund it, so the admin is told who, and how it finds it.
         $refund = FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.';
 
+        if ($closed === 'complete') {
+            // Money at Stripe that this row does not record yet, as when the delete meets the
+            // same answer (cardPageRefusal()). When the webhook is only late its own line
+            // follows; when it refused the event and answered 200, no other is sent and this
+            // is the trace for whoever reconciles it. At warning, by ids only.
+            Log::warning('A cancelled form registration reads unpaid, and Stripe says its card payment page was paid.', [
+                'masjid_id' => $row->masjid_id,
+                'form_id' => $row->form_id,
+                'form_response_id' => $row->id,
+                'form_response_uuid' => $row->uuid,
+                'checkout_session_id' => $row->stripe_checkout_session_id,
+                'charge_masjid_id' => $row->charge_masjid_id,
+            ]);
+        }
+
         return match ($closed) {
-            'complete' => ["This registration had just been paid by card, so it will show as paid once Stripe confirms it. {$refund}", true, self::CARD_PAGE_PAID_ON_STRIPE],
+            // Promises nothing about the row, like the delete's sentence for the same answer
+            // (DELETE_PAID_ON_STRIPE): a payment whose event the webhook refused is not sent
+            // again, and the registration then reads unpaid for good.
+            'complete' => ["This registration had just been paid by card. If it still shows as unpaid later, check this payment in Stripe. {$refund}", true, self::CARD_PAGE_PAID_ON_STRIPE],
             'expired' => ['Cancelled, and its card payment page is closed.', false, self::CARD_PAGE_CLOSED],
             // The page is pinned to an account Stripe no longer lets the platform act on.
             // Retrying cannot help; the page takes no payment once charge_expires_at passes.
@@ -777,7 +795,9 @@ class FormResponsesController extends Controller
      *  - never paid and cancelled: deleted, unless a card page is on record. Then Stripe is
      *    asked about that page here, under the lock, and only 'expired' deletes
      *    (cardPageRefusal()). The cancel is not trusted for this: it keeps the page on the
-     *    row and records nothing about whether its close worked.
+     *    row and records nothing about whether its close worked. With no page on record
+     *    Stripe is not asked, and the row must hold no idempotency key either: a key with
+     *    no page id is a state nothing should write, and is refused (DELETE_PAGE_UNKNOWN).
      *
      * Nor is a row imported from the school website (`external_ref`, alrazi:sync-website):
      * the next five-minute run would write it straight back, files and all. It is

@@ -514,12 +514,32 @@ class FormResponsesMoneyAdminTest extends TestCase
         $raced = $this->onlineUnpaid();
         self::$pages[$raced->stripe_checkout_session_id] = 'open';
         self::$stripe = 'paid';
+        Log::spy();
 
         $this->putJson($this->url("/{$raced->id}"), ['status' => 'cancelled'])
             ->assertOk()
             ->assertJsonPath('data.status', 'cancelled')
             ->assertJsonPath('warning', true)
-            ->assertJsonPath('message', 'This registration had just been paid by card, so it will show as paid once Stripe confirms it. Refund it in Stripe if it should not stand.');
+            ->assertJsonPath('message', 'This registration had just been paid by card. If it still shows as unpaid later, check this payment in Stripe. Refund it in Stripe if it should not stand.');
+
+        // Money at Stripe that the row does not record yet: one line for whoever reconciles
+        // it, by ids alone, as the delete leaves when it meets the same answer.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context = []) use ($raced): bool {
+                if (! str_contains($message, 'Stripe says its card payment page was paid') || ($context['form_response_id'] ?? null) !== $raced->id) {
+                    return false;
+                }
+
+                $this->assertSame(
+                    ['masjid_id', 'form_id', 'form_response_id', 'form_response_uuid', 'checkout_session_id', 'charge_masjid_id'],
+                    array_keys($context),
+                );
+                $this->assertSame($raced->uuid, $context['form_response_uuid']);
+                $this->assertSame($raced->stripe_checkout_session_id, $context['checkout_session_id']);
+
+                return true;
+            })
+            ->once();
 
         $this->assertStillWaitingOnStripe($raced); // only the webhook marks it paid
 
