@@ -36,6 +36,12 @@ const UPLOADING = 'A PDF is still uploading.';
 const LEAVING = 'calendar-2025.pdf : This file is taken offline when you save, unless another saved section still links it.';
 const SAVED = 'It stays online while a saved section links to it. To take it offline, clear the address and save; uploading another PDF in its place does the same to this one.';
 const NOT_SAVED = 'This file is not in the saved section yet.';
+const UNSAVED_TITLE = 'A PDF has not been saved';
+const OTHER_ADDRESS = 'https://platform.example.test/storage/413/class-schedule.pdf';
+// The footer's line for a PDF uploaded while the modal was open that the form no longer holds.
+const LEFT_ONLINE = 'academic-calendar-2026.pdf : You uploaded this file here and nothing in this form links it now. '
+    + `It is online and in no saved section. Its address: ${ADDRESS} `
+    + 'To take it offline, put the address back in a link, save, then clear it and save again.';
 
 const pdf = (name = 'Academic Calendar 2026.pdf') => ({ name, type: 'application/pdf', size: 480_000 });
 
@@ -59,6 +65,8 @@ interface ModalOptions {
     editors?: (parts: { control: any }) => Record<string, any>;
     /** The store's section types, for a NEW section. */
     sectionTypes?: any[];
+    /** The store's sections library, which Attach Existing chooses from. */
+    library?: any[];
 }
 
 /**
@@ -66,12 +74,14 @@ interface ModalOptions {
  * control sends; a bare `true` or `false` is `closeAnyway`.
  */
 async function mountModal(saved: any, upload: (file: any) => Promise<any>, options: boolean | ModalOptions = false) {
-    const { closeAnyway = false, editors: standIns, sectionTypes = [] }: ModalOptions = typeof options === 'boolean' ? { closeAnyway: options } : options;
+    const { closeAnyway = false, editors: standIns, sectionTypes = [], library = [] }: ModalOptions = typeof options === 'boolean' ? { closeAnyway: options } : options;
     const saves: Array<{ pageId: number; sectionId: number | null; content: any }> = [];
+    const attaches: Array<{ pageId: number; sectionId: number }> = [];
     const uploads: any[] = [];
     const store = {
         sectionTypes,
-        sectionsLibrary: [],
+        sectionsLibrary: library,
+        attachSectionToPage: async (pageId: number, sectionId: number) => { attaches.push({ pageId, sectionId }); },
         fetchSectionTypes: async () => {},
         fetchSectionsLibrary: async () => {},
         fetchPageSections: async () => [],
@@ -141,11 +151,15 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, optio
     return {
         screen,
         saves,
+        attaches,
         uploads,
         asked,
+        /** What the modal asked before closing. (`asked` also holds the note it shows after attaching.) */
+        questions: () => asked.filter((options) => options.icon === 'warning'),
         emitted,
         save: () => screen.button('Update Section'),
         create: () => screen.button('Create Section'),
+        attach: () => screen.button('Attach Section'),
         cancel: () => screen.button('Cancel'),
         closeButton: () => screen.all((n) => n.tag === 'button' && String(n.props.class ?? '').includes('btn-close'))[0],
         form: () => screen.all((n) => n.tag === 'form')[0],
@@ -438,8 +452,10 @@ test('a file uploaded and let go before any save is not said to be taken offline
     type(modal.linkFields()[0], '');
     await flush();
 
-    // Nothing saved linked it, so "taken offline when you save" would be false.
-    assert.equal(modal.notes(), '');
+    // Nothing saved linked it, so "taken offline when you save" would be false. What is true is
+    // said instead: it is online, in no saved section, and here is its address.
+    assert.ok(!modal.notes().includes('taken offline when you save'));
+    assert.equal(modal.notes(), LEFT_ONLINE);
 
     modal.screen.unmount();
 });
@@ -659,16 +675,18 @@ test('an upload that outlives its control and answers late does not lower the co
         await flush();
         assert.equal(count.value, 1, `the first upload ${late} late, and the second is no longer counted`);
         assert.equal(modal.save().disabled, true, `the first upload ${late} late, and Save is on while the second is still uploading`);
-        assert.equal(modal.notes(), UPLOADING, late);
+        // (A late ANSWER is a stored file whose address went into no field: the footer names it,
+        // after the line about the upload still in flight. A late failure stored nothing.)
+        assert.equal(modal.notes(), late === 'answers' ? `${UPLOADING} ${LEFT_ONLINE}` : UPLOADING, late);
         submit(modal.form());
         await flush();
         assert.deepEqual(modal.saves, [], late);
 
-        answers[1].resolve({ url: SAVED_ADDRESS, name: 'second', size: 1 });
+        answers[1].resolve({ url: OTHER_ADDRESS, name: 'second', size: 1 });
         await flush();
         assert.equal(count.value, 0, late);
         assert.equal(modal.save().disabled, false, late);
-        assert.equal(modal.notes(), '', late);
+        assert.ok(!modal.notes().includes(UPLOADING), late);
 
         modal.screen.unmount();
     }
@@ -769,8 +787,6 @@ test('while a PDF uploads into a new section, Attach Existing cannot be chosen e
 
 /* ------------------------------------------- closing on a PDF that no saved section holds */
 
-const UNSAVED_TITLE = 'A PDF has not been saved';
-const OTHER_ADDRESS = 'https://platform.example.test/storage/413/class-schedule.pdf';
 
 test('Cancel and the close button ask before closing on a PDF that is in the form and not in the saved section, and say where it is', async () => {
     const upload = async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
@@ -812,13 +828,36 @@ test('Cancel and the close button ask before closing on a PDF that is in the for
     assert.equal(modal.asked[1].text, question.text);
     assert.equal(modal.emitted.close, 1);
 
-    // Once the form no longer holds it, there is nothing here to lose track of, and nothing is asked.
+    // Once the form no longer holds it, the file is still online and this modal still knows where:
+    // closing asks about it as a file that was uploaded here, not as one a save would link.
     type(modal.linkFields()[1], '');
     await flush();
     click(modal.cancel());
     await flush();
-    assert.equal(modal.asked.length, 2);
-    assert.equal(modal.emitted.close, 2);
+    assert.equal(modal.asked.length, 3);
+    assert.ok(modal.asked[2].text.startsWith('academic-calendar-2026.pdf was uploaded here and nothing in this form links it now.'), modal.asked[2].text);
+    assert.ok(!modal.asked[2].text.includes('has not been saved in this section'));
+    assert.ok(modal.asked[2].text.includes(`Its address: ${ADDRESS}`));
+    assert.equal(modal.emitted.close, 1);
+
+    modal.screen.unmount();
+});
+
+test('an address put in by hand and taken out again is nothing this modal uploaded: no note, and no question', async () => {
+    const modal = await mountModal(linkList({ label: 'Calendar', url: SAVED_ADDRESS }, { label: 'Schedule' }), async () => ({}), false);
+
+    type(modal.linkFields()[1], OTHER_ADDRESS);
+    await flush();
+    type(modal.linkFields()[1], '');
+    await flush();
+
+    // The office had that address from somewhere else, and the page tool cannot know whose file it
+    // is (PD-10). Only a file uploaded here is this modal's to keep on the screen.
+    assert.equal(modal.notes(), '');
+    click(modal.cancel());
+    await flush();
+    assert.deepEqual(modal.asked, []);
+    assert.equal(modal.emitted.close, 1);
 
     modal.screen.unmount();
 });
@@ -886,6 +925,290 @@ test('a new section asks too, and an upload still in flight beside an unsaved PD
     assert.ok(modal.asked[1].text.includes('academic-calendar-2026.pdf has not been saved in this section.'));
     assert.ok(modal.asked[1].text.includes(`Its address: ${ADDRESS}`));
     assert.equal(modal.emitted.close, 1);
+
+    modal.screen.unmount();
+});
+
+/* ------------------------------------------- an upload of this session that the form no longer holds */
+
+/**
+ * A PDF is online from the moment its upload ends, and until a save links it this form is the only
+ * screen that shows where it is. Three ways used to take its address off the screen with nothing
+ * said: Remove on its row, another Section Type for a new section, and Attach Existing. A replaced
+ * file's notice lived in the control, and went when rows moved. The modal now keeps the list of what
+ * was uploaded while it was open, and its footer names each one the form no longer holds.
+ */
+/** How often a text says something. */
+const times = (text: string, said: string) => text.split(said).length - 1;
+
+/** The question about a file the form no longer holds: its name, that it stays online, and its address, once. */
+function assertAsksAboutTheFileLeftOnline(question: any, confirm = 'Close Anyway') {
+    assert.equal(question.icon, 'warning');
+    assert.equal(question.title, UNSAVED_TITLE);
+    assert.ok(question.text.includes('academic-calendar-2026.pdf was uploaded here and nothing in this form links it now.'), question.text);
+    assert.match(question.text, /It is online, in no saved section, and stays online when you close\./);
+    assert.equal(times(question.text, ADDRESS), 1, 'the file is named once, with its address');
+    assert.equal(question.showCancelButton, true);
+    assert.deepEqual([question.confirmButtonText, question.cancelButtonText], [confirm, 'Keep Editing']);
+}
+
+test('an upload whose row is then removed stays on the screen: the footer gives its name and address, and Cancel asks once', async () => {
+    const modal = await mountModal(
+        linkList({ label: 'Calendar' }, { label: 'Fees', url: 'https://example.org/fees' }),
+        async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 }),
+        false,
+    );
+
+    // In the form, the file is the control's to speak of: the footer has nothing to add.
+    await modal.choose(0, pdf());
+    assert.equal(modal.linkFields()[0].value, ADDRESS);
+    assert.equal(modal.notes(), '');
+
+    // The row is removed: its field, its control and its note go with it.
+    click(modal.byTitle('Remove Link')[0]);
+    await flush();
+    assert.deepEqual(modal.linkFields().map((field) => field.value), ['https://example.org/fees']);
+    assert.ok(!modal.screen.text().includes(NOT_SAVED));
+
+    // The file is still online, and the screen still says where.
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    // Cancel and the close button each ask, naming it once.
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.questions().length, 1, 'closing on a file the form no longer holds asked nothing, or more than once');
+    assertAsksAboutTheFileLeftOnline(modal.questions()[0]);
+    assert.equal(modal.emitted.close, 0);
+    click(modal.closeButton());
+    await flush();
+    assert.equal(modal.questions().length, 2);
+    assert.equal(modal.questions()[1].text, modal.questions()[0].text);
+    assert.equal(modal.emitted.close, 0);
+
+    // Put back into the form, it is no longer named in the footer: the control speaks of it again,
+    // and closing asks about it as a file the form holds and no save has linked.
+    type(modal.linkFields()[0], ADDRESS);
+    await flush();
+    assert.equal(modal.notes(), '');
+    assert.ok(modal.screen.text().includes(NOT_SAVED));
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.questions().length, 3);
+    assert.ok(modal.questions()[2].text.startsWith('academic-calendar-2026.pdf has not been saved in this section.'), modal.questions()[2].text);
+    assert.ok(!modal.questions()[2].text.includes('was uploaded here'));
+
+    // And a save with it there goes ahead as any other.
+    click(modal.save());
+    await flush();
+    assert.equal(modal.saves[0].content.links[0].url, ADDRESS);
+
+    modal.screen.unmount();
+});
+
+test('an upload into a new section whose type is then changed stays on the screen, and Cancel asks once', async () => {
+    const modal = await mountModal(undefined, async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 }), { sectionTypes: offeredTypes() });
+    select(modal.typeSelect(), 'link_list');
+    await flush();
+    click(modal.screen.button('Add Link'));
+    await flush();
+    await modal.choose(0, pdf());
+    assert.equal(modal.linkFields()[0].value, ADDRESS);
+    assert.equal(modal.notes(), '');
+
+    // The upload has ended, so the type is free to change. Another type is another content: the
+    // address is in no field of it.
+    assert.equal(select(modal.typeSelect(), 'cta'), true);
+    await flush();
+    assert.deepEqual(modal.linkFields().map((field) => field.value), ['']);
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    // Going back to the first type starts it afresh: the file is still in nothing.
+    select(modal.typeSelect(), 'link_list');
+    await flush();
+    assert.equal(modal.linkFields().length, 0);
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.questions().length, 1);
+    assertAsksAboutTheFileLeftOnline(modal.questions()[0]);
+    assert.equal(modal.emitted.close, 0);
+
+    modal.screen.unmount();
+});
+
+test('a file replaced before any save is named in the footer, in one place, and is still named after a row moves', async () => {
+    const answers = [
+        { url: ADDRESS, name: 'Wrong File', size: 1 },
+        { url: OTHER_ADDRESS, name: 'Class Schedule', size: 1 },
+    ];
+    const modal = await mountModal(
+        linkList({ label: 'Calendar' }, { label: 'Fees', url: 'https://example.org/fees' }),
+        async () => answers.shift(),
+        false,
+    );
+
+    // The wrong file, then the natural reaction: Replace PDF with the right one.
+    await modal.choose(0, pdf('Wrong File.pdf'));
+    assert.equal(modal.notes(), '');
+    await modal.choose(0, pdf('Class Schedule.pdf'));
+    assert.equal(modal.linkFields()[0].value, OTHER_ADDRESS);
+
+    // No save ever linked the first file, so no save will delete it, and its address is in no
+    // field. Said once, beside Save; the control does not say it as well.
+    assert.equal(modal.notes(), LEFT_ONLINE);
+    assert.ok(!modal.screen.text().includes('The PDF this one replaced'));
+    assert.equal(times(modal.screen.text(), ADDRESS), 1);
+
+    // Rows are keyed by position, so moving one makes each control anew. The footer is the modal's.
+    click(modal.byTitle('Move Down')[0]);
+    await flush();
+    assert.deepEqual(modal.linkFields().map((field) => field.value), ['https://example.org/fees', OTHER_ADDRESS]);
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    // One question for both files, each named once: the one in the form that no save has linked,
+    // and the one the form no longer holds.
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.questions().length, 1);
+    const { title, text } = modal.questions()[0];
+    assert.equal(title, 'PDFs have not been saved');
+    assert.ok(text.includes('class-schedule.pdf has not been saved in this section.'), text);
+    assert.ok(text.includes('academic-calendar-2026.pdf was uploaded here and nothing in this form links it now.'), text);
+    assert.deepEqual([times(text, OTHER_ADDRESS), times(text, ADDRESS)], [1, 1]);
+    assert.equal(modal.emitted.close, 0);
+
+    modal.screen.unmount();
+});
+
+/** A new Link Buttons section with a PDF uploaded into it, then set aside for Attach Existing with a library section chosen. */
+async function uploadedThenAttachExisting(closeAnyway: boolean) {
+    const modal = await mountModal(undefined, async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 }), {
+        closeAnyway,
+        sectionTypes: offeredTypes(),
+        library: [{ id: 21, title: 'Welcome', section_type: 'text', section_type_label: 'Text', is_active: true }],
+    });
+    select(modal.typeSelect(), 'link_list');
+    await flush();
+    click(modal.screen.button('Add Link'));
+    await flush();
+    await modal.choose(0, pdf());
+    assert.equal(modal.notes(), '');
+
+    assert.equal(check(modal.modeRadios()[1]), true);
+    await flush();
+    assert.equal(modal.form(), undefined, 'Attach Existing shows no form');
+    select(modal.screen.all((n) => n.tag === 'select')[0], 21);
+    await flush();
+    assert.equal(modal.attach().disabled, false);
+
+    return modal;
+}
+
+test('an upload made before switching to Attach Existing stays on the screen, and Attach Section and Cancel each ask before closing', async () => {
+    const modal = await uploadedThenAttachExisting(false);
+
+    // The form that held the address is set aside: attaching would save none of it.
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    // Attach Section closes the modal as Cancel does, so it asks the same thing first. "Keep
+    // Editing": nothing is attached, and the modal stays.
+    click(modal.attach());
+    await flush();
+    assert.equal(modal.questions().length, 1, 'Attach Section closed on an unsaved upload without asking');
+    assertAsksAboutTheFileLeftOnline(modal.questions()[0], 'Attach Anyway');
+    assert.deepEqual(modal.attaches, []);
+    assert.equal(modal.emitted.saved, 0);
+
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.questions().length, 2);
+    assertAsksAboutTheFileLeftOnline(modal.questions()[1]);
+    assert.equal(modal.emitted.close, 0);
+
+    // Back to Create New, the form holds the file again, and the footer has nothing to add.
+    check(modal.modeRadios()[0]);
+    await flush();
+    assert.equal(modal.linkFields()[0].value, ADDRESS);
+    assert.equal(modal.notes(), '');
+
+    modal.screen.unmount();
+
+    // "Attach Anyway": the section is attached and the modal closes, once.
+    const going = await uploadedThenAttachExisting(true);
+    click(going.attach());
+    await flush();
+    assert.equal(going.questions().length, 1);
+    assert.deepEqual(going.attaches, [{ pageId: 3, sectionId: 21 }]);
+    assert.equal(going.emitted.saved, 1);
+    going.screen.unmount();
+});
+
+test('Attach Section asks nothing when no PDF was uploaded here', async () => {
+    const modal = await mountModal(undefined, async () => ({}), {
+        sectionTypes: offeredTypes(),
+        library: [{ id: 21, title: 'Welcome', section_type: 'text', section_type_label: 'Text', is_active: true }],
+    });
+    check(modal.modeRadios()[1]);
+    await flush();
+    select(modal.screen.all((n) => n.tag === 'select')[0], 21);
+    await flush();
+    assert.equal(modal.notes(), '');
+
+    click(modal.attach());
+    await flush();
+    assert.deepEqual(modal.questions(), []);
+    assert.deepEqual(modal.attaches, [{ pageId: 3, sectionId: 21 }]);
+    assert.equal(modal.emitted.saved, 1);
+
+    modal.screen.unmount();
+});
+
+test('an upload that answers after its control is gone is named too: its address was never in any field', async () => {
+    const upload = deferred<any>();
+    // A real control that can be taken away while its file is in flight.
+    const removable = ({ control }: { control: any }) => ({
+        StatsSectionEditor: {
+            setup() {
+                const shown = vue.ref(true);
+
+                return () => vue.h('div', [
+                    shown.value ? vue.h(control, { key: 'only', value: '' }) : null,
+                    vue.h('button', { type: 'button', title: 'Take the control away', onClick: () => { shown.value = false; } }),
+                ]);
+            },
+        },
+    });
+    const modal = await mountModal(section('stats', stats()), () => upload.promise, { editors: removable });
+
+    void modal.choose(0, pdf());
+    await flush();
+    click(modal.byTitle('Take the control away')[0]);
+    await flush();
+    assert.equal(modal.fileInputs().length, 0);
+    assert.equal(modal.notes(), '');
+
+    // The file is stored all the same, and nothing was there to write its address into.
+    upload.resolve({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
+    await flush();
+    assert.equal(modal.notes(), LEFT_ONLINE);
+
+    modal.screen.unmount();
+});
+
+test('a file the saved section links is never named as left online: the save takes that one offline, and the footer says so', async () => {
+    // The store answers with the address the saved section already links (no real upload does: each
+    // is a new address). What is true of it is the saved file's sentence, and only that.
+    const modal = await mountModal(
+        linkList({ label: 'Calendar', url: SAVED_ADDRESS }, { label: 'Fees' }),
+        async () => ({ url: SAVED_ADDRESS, name: 'Calendar 2025', size: 1 }),
+    );
+    await modal.choose(1, pdf());
+    type(modal.linkFields()[0], '');
+    type(modal.linkFields()[1], '');
+    await flush();
+
+    assert.equal(modal.notes(), LEAVING);
 
     modal.screen.unmount();
 });

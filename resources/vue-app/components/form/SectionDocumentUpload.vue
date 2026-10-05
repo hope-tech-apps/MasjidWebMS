@@ -48,15 +48,6 @@
             <template v-if="replacedSomething">Check that the wording beside it still describes this file.</template>
         </div>
 
-        <!-- A file that was replaced before it was ever saved is linked from nowhere and deleted by
-             nothing, and this is the last screen that knows its address. -->
-        <div v-for="left in leftOnline" :key="left.url" class="form-text" role="status">
-            The PDF this one replaced ({{ left.name }}) was not in the saved section, so replacing it
-            did not take it offline: it is still online. To take it offline, save a section with its
-            address in a link, then clear the address and save again. Its address:
-            <span class="user-select-all text-break">{{ left.url }}</span>
-        </div>
-
         <div v-if="documentName && savedDocument" class="form-text">
             It stays online while a saved section links to it. To take it offline, clear the address
             and save; uploading another PDF in its place does the same to this one.
@@ -93,6 +84,12 @@
  *
  * The modal also provides a count of uploads in flight (`sectionDocumentUploads`), which this raises
  * and lowers, so Save waits: a section saved mid-upload would be saved without the address.
+ *
+ * And it provides the list of PDFs uploaded while it is open (`sectionUploadedDocuments`), which this
+ * adds to as each upload ENDS, whether or not this control is still there by then. That is how a file
+ * the form has let go of stays on the screen: this control is made anew when rows move and is gone
+ * when its row is removed, so it says nothing itself about a file it no longer shows (one that was
+ * uploaded here and replaced before any save, for one). The modal's footer does, from that list.
  *
  * It never shows the PDF inside the admin (the admin's content policy forbids embedding one); the
  * link opens a new tab.
@@ -131,9 +128,10 @@ const emit = defineEmits<{
 
 const pagesStore = usePagesStore();
 
-// Both provided by SectionFormModal, beside `sectionImages`; absent anywhere else.
+// All three provided by SectionFormModal, beside `sectionImages`; absent anywhere else.
 const uploadsInFlight = inject<Ref<number> | null>('sectionDocumentUploads', null);
 const savedDocuments = inject<readonly SectionDocument[] | null>('sectionSavedDocuments', null);
+const uploadedInTheModal = inject<Ref<SectionDocument[]> | null>('sectionUploadedDocuments', null);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
@@ -143,9 +141,8 @@ const problem = ref('');
 const uploadedUrl = ref('');
 const replacedSomething = ref(false);
 const filledNote = ref('');
-// Every address this control was given by an upload, and the unsaved documents its uploads replaced.
+// Every address this control was given by an upload.
 const uploadedHere = ref<string[]>([]);
-const replacedUnsaved = ref<Array<{ url: string; name: string }>>([]);
 let mounted = true;
 let counted = false;
 
@@ -168,9 +165,6 @@ const isSaved = (value: unknown): boolean => {
 
 const savedDocument = computed(() => isSaved(props.value));
 
-/** The replaced files that are still online and no longer in this field. */
-const leftOnline = computed(() => replacedUnsaved.value.filter((left) => left.url !== (props.value ?? '').trim()));
-
 const buttonText = computed(() => {
     if (uploading.value) {
         return 'Uploading…';
@@ -178,6 +172,21 @@ const buttonText = computed(() => {
 
     return documentName.value ? 'Replace PDF' : 'Upload a PDF';
 });
+
+/**
+ * Tell the modal a file was stored: its name and its address, once. The modal keeps the list for as
+ * long as it is open and names, beside Save, each file on it that the form no longer holds.
+ */
+const tellTheModal = (url: string, name: string) => {
+    if (!uploadedInTheModal) {
+        return;
+    }
+    // By its path, as every other reading here; an address of another shape is its own.
+    const path = sectionDocumentPath(url) ?? url;
+    if (!uploadedInTheModal.value.some((file) => file.path === path)) {
+        uploadedInTheModal.value.push({ path, name: sectionDocumentName(url) ?? name, address: url });
+    }
+};
 
 /** Tell the modal an upload started or ended here, once each. */
 const count = (running: boolean) => {
@@ -212,8 +221,6 @@ const onFileChosen = async (event: Event) => {
     }
 
     const replaced = typeof props.value === 'string' ? props.value.trim() : '';
-    const replacedName = sectionDocumentName(replaced);
-    const replacedWasUnsaved = replacedName !== null && !isSaved(replaced);
 
     uploading.value = true;
     emit('busy', true);
@@ -221,14 +228,15 @@ const onFileChosen = async (event: Event) => {
     try {
         const stored = await pagesStore.uploadPageDocument(file);
 
+        // Before anything that needs this control to be there still: the file is stored either
+        // way, and if the control has gone its address was written into no field at all.
+        tellTheModal(stored.url, stored.name || file.name);
+
         if (mounted) {
             uploadedUrl.value = stored.url;
             uploadedHere.value.push(stored.url);
             replacedSomething.value = replaced !== '';
             filledNote.value = '';
-            if (replacedWasUnsaved && replaced !== stored.url && !replacedUnsaved.value.some((left) => left.url === replaced)) {
-                replacedUnsaved.value.push({ url: replaced, name: replacedName });
-            }
             emit('uploaded', {
                 url: stored.url,
                 name: stored.name || file.name,

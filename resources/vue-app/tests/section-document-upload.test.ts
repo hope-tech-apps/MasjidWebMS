@@ -508,30 +508,56 @@ test('a document the saved section links is told how to take it offline; one upl
     editor.screen.unmount();
 });
 
-test('replacing a file that was never saved leaves it online, and the control says so with its address', async () => {
+test('the control tells the modal each file it stores, by name and address, and says nothing itself about one it replaced', async () => {
     const { store } = fakeStore(stored());
-    const editor = await mountEditor(LINK_LIST, links({ label: 'Calendar' }), store, { sectionSavedDocuments: [] });
-    const leftOnline = () => editor.screen.all((n) => n.textContent.startsWith('The PDF this one replaced')).map((n) => n.textContent);
+    // As SectionFormModal provides it: the PDFs uploaded while the modal is open. (Vue is the test's
+    // own copy; the list is a plain ref.)
+    const uploaded = { value: [] as any[] };
+    const editor = await mountEditor(LINK_LIST, links({ label: 'Calendar' }), store, {
+        sectionSavedDocuments: [], sectionUploadedDocuments: uploaded,
+    });
 
     // The wrong file, then the natural reaction: Replace PDF with the right one.
     await editor.choose(0, pdf('Wrong File.pdf'));
-    assert.deepEqual(leftOnline(), []);
+    assert.deepEqual(uploaded.value, [
+        { path: '/storage/412/academic-calendar-2026.pdf', name: 'academic-calendar-2026.pdf', address: ADDRESS },
+    ]);
     store.uploadPageDocument = stored(OTHER_ADDRESS, 'Class Schedule');
     await editor.choose(0, pdf('Class Schedule.pdf'));
     assert.equal(editor.content().links[0].url, OTHER_ADDRESS);
 
     // No save ever linked the first file, so no save will delete it, and its address is now in no
-    // field: this is the last screen that can show it.
-    assert.deepEqual(leftOnline(), [
-        'The PDF this one replaced (academic-calendar-2026.pdf) was not in the saved section, so replacing it did not take it '
-        + 'offline: it is still online. To take it offline, save a section with its address in a link, then clear the address '
-        + `and save again. Its address: ${ADDRESS}`,
-    ]);
+    // field. The modal has both on its list, and its footer names the one the form no longer holds
+    // (section-form-modal-documents.test.ts). The control is made anew whenever rows move, so it
+    // says nothing itself about a file it no longer shows: said in one place, which stays.
+    assert.deepEqual(uploaded.value.map((file) => file.address), [ADDRESS, OTHER_ADDRESS]);
+    assert.ok(!editor.screen.text().includes('The PDF this one replaced'));
+    assert.ok(!editor.screen.text().includes(ADDRESS));
 
-    // Put back into the field, it is not left anywhere.
-    type(editor.linkFields()[0], ADDRESS);
-    await flush();
-    assert.deepEqual(leftOnline(), []);
+    // A file told once is on the list once, however its address is written the second time.
+    store.uploadPageDocument = stored(`${ADDRESS}?v=2`);
+    await editor.choose(0, pdf());
+    assert.deepEqual(uploaded.value.map((file) => file.address), [ADDRESS, OTHER_ADDRESS]);
+
+    // An address that is not of the shape the page tool reads is still a stored file: it is told
+    // by the name the server gave it, and is its own path.
+    store.uploadPageDocument = stored('https://files.example.test/documents/9', 'Fees 2026');
+    await editor.choose(0, pdf('Fees 2026.pdf'));
+    assert.deepEqual(uploaded.value[2], {
+        path: 'https://files.example.test/documents/9', name: 'Fees 2026', address: 'https://files.example.test/documents/9',
+    });
+
+    editor.screen.unmount();
+});
+
+test('without the modal the control keeps no list, and an upload goes through as before', async () => {
+    const { store } = fakeStore(stored());
+    const editor = await mountEditor(LINK_LIST, links({ label: 'Calendar' }), store);
+
+    await editor.choose(0, pdf());
+
+    assert.equal(editor.content().links[0].url, ADDRESS);
+    assert.ok(editor.screen.text().includes('Uploaded. It is already online, even before you save.'));
 
     editor.screen.unmount();
 });
