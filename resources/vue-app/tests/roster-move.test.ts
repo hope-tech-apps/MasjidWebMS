@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import {
     applyConsentAnswer, carriedConsentLabel, carriedConsentNote, classOptions, className, consentBannerCount,
     consentBannerText, day, focusIdFromQuery, focusQuery, moveBody, movedLabels, putBackForm,
@@ -384,11 +384,8 @@ test('one place sends the undo, and one place builds the sentences about a move'
     assert.match(classes, /kind=class&active_only=1&per_page=100&page=\$\{page\}/);
 
     // No sentence about what a move does is written in the browser: the lines are the server's.
-    // The whole-class dialog and its helper are held to the same rule from the day they exist
-    // (they are added by their own change, and pin themselves in roster-class-move*.test.ts).
-    const classMove = ['views/dashboard/groups/MoveClassModal.vue', 'core/helpers/rosterClassMove.ts']
-        .filter((path) => existsSync(new URL(`../${path}`, import.meta.url)))
-        .map(source);
+    // The whole-class dialog and its helper are held to the same rule, comments included.
+    const classMove = ['views/dashboard/groups/MoveClassModal.vue', 'core/helpers/rosterClassMove.ts'].map(source);
     for (const file of [modal, source('core/helpers/rosterMove.ts'), ...classMove]) {
         assert.doesNotMatch(file, /is now in |start fresh|shown as moved|in force again|Record consent again/);
         assert.doesNotMatch(file, /carried as it is|Manara Bucks go with|is in force again/);

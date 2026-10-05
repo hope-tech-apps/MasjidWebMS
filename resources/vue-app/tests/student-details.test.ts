@@ -580,6 +580,17 @@ async function mountRoster(memberships: any[], options: {
             };
         },
     };
+    // The whole-class dialog, standing in: what it was mounted with, and its events.
+    const classDialog: { props: any; emit: any } = { props: null, emit: null };
+    const classStub = {
+        props: ['groupId', 'groupName', 'roster', 'schoolToday'],
+        emits: ['close', 'moved', 'reload', 'open-class'],
+        setup(props: any, { emit }: any) {
+            classDialog.emit = emit;
+            vue.onUnmounted(() => { classDialog.props = null; });
+            return () => { classDialog.props = { ...props }; return vue.h('div', { 'data-class-move-dialog': props.groupId }); };
+        },
+    };
     // `afterChange` is the function the roster hands the form: kept apart, so a test can call it
     // after the form is gone, as a slow save does.
     const birthForm: { props: any; afterChange: any } = { props: null, afterChange: null };
@@ -623,6 +634,7 @@ async function mountRoster(memberships: any[], options: {
         '@/components/common/AvatarPicker.vue': { default: avatarStub },
         './StudentDetailsPanel.vue': { default: panelStub },
         './MoveStudentModal.vue': { default: moveStub },
+        './MoveClassModal.vue': { default: classStub },
         './PutBackDialog.vue': { default: putBackStub },
         './StudentBirthDateForm.vue': { default: birthStub },
         '@/core/types/config/BackendApiRoutes': {},
@@ -641,7 +653,7 @@ async function mountRoster(memberships: any[], options: {
     const nameButtons = () => screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Open student details');
     const slot = (name: string): Node | null => screen.all((n: Node) => n.props['data-slot'] === name)[0] ?? null;
 
-    return { screen, panel, nameButtons, slot, moveDialog, putBackDialog, birthForm, rereads, routed };
+    return { screen, panel, nameButtons, slot, moveDialog, classDialog, putBackDialog, birthForm, rereads, routed };
 }
 
 test('roster: a student\'s name is a button that opens their details; a teacher row\'s name is not', async () => {
@@ -1525,6 +1537,169 @@ test('roster: "Open {class}" from a refusal asks that class\'s roster for the ro
         putBackDialog.emit('open-class', 9);
         assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: {} });
         assert.deepEqual(went, ['/groups/9?focus=77', '/groups/9', '/groups/9']);
+        screen.unmount();
+    } finally {
+        (globalThis as any).window = before;
+    }
+});
+
+// =================================================================== the roster: moving the whole class
+//
+// The dialog is tested mounted on its own (roster-class-move-mounted.test.ts). What is proved here
+// is where the roster offers it, what it is handed, and what the roster does when it finishes.
+
+const classButtons = (screen: any): Node[] => screen.all((n: Node) => n.tag === 'button' && /Move the class/.test(n.textContent));
+/** Every node under `node` that matches, in document order. */
+const inside = (node: Node, match: (n: Node) => boolean): Node[] =>
+    node.children.flatMap((child: Node) => [...(match(child) ? [child] : []), ...inside(child, match)]);
+
+test('roster: "Move the class" is offered only on a class that has a current student, in a header row that wraps', async () => {
+    // A class with current students: one button, with its words and an icon beside them.
+    const r = roster();
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), { meta: CLASS_META });
+    assert.equal(classButtons(screen).length, 1);
+    assert.equal(classButtons(screen)[0].textContent.trim(), 'Move the class', 'a word as well as an icon: a tablet shows no tooltip');
+    assert.equal(classButtons(screen)[0].props.type, 'button');
+    assert.equal(inside(classButtons(screen)[0], (n) => n.tag === 'i' && /bi-arrow-right-circle/.test(String(n.props.class))).length, 1);
+
+    // It sits beside "Add to roster", and the row they share wraps under the heading on a phone.
+    const header = screen.all((n: Node) => n.tag === 'div' && n.children.some((c: Node) => c.tag === 'h6' && c.textContent === 'Roster'))[0];
+    assert.ok(String(header.props.class).split(/\s+/).includes('flex-wrap'), 'the header row does not wrap');
+    const buttons = inside(header, (n) => n.tag === 'button').map((n: Node) => n.textContent.trim());
+    assert.deepEqual(buttons, ['Move the class', 'Add to roster']);
+    assert.ok(String(header.children.find((c: Node) => c.tag === 'div')?.props.class).split(/\s+/).includes('flex-wrap'));
+    screen.unmount();
+
+    // Not a class: nobody is moved from here, one at a time or together.
+    const outside = await mountRoster(vue.reactive([...roster().rows]), { meta: { ...CLASS_META, teaches_students: false } });
+    assert.equal(classButtons(outside.screen).length, 0);
+    outside.screen.unmount();
+
+    // A roster the server said nothing about (an older answer): not offered.
+    const bare = await mountRoster(vue.reactive([...roster().rows]));
+    assert.equal(classButtons(bare.screen).length, 0);
+    bare.screen.unmount();
+
+    // A class with nobody to move: every student has left, and a teacher and guardians are not students.
+    const empty = roster();
+    for (const student of [empty.student, empty.sibling]) student.left_on = '2026-09-28T00:00:00.000000Z';
+    const leader = row({ contact: person(30, 'Teacher', 'Row'), role: 'leader' });
+    const rows = vue.reactive([...empty.rows, leader]);
+    const none = await mountRoster(rows, { meta: CLASS_META });
+    assert.equal(classButtons(none.screen).length, 0);
+    assert.match(none.screen.text(), /Add to roster/, 'the roster itself is still drawn');
+
+    // One student put back: the class can be moved again.
+    rows[0].left_on = null;
+    await flush();
+    assert.equal(classButtons(none.screen).length, 1);
+    none.screen.unmount();
+
+    // A class with no rows at all.
+    const blank = await mountRoster(vue.reactive([] as any[]), { meta: CLASS_META });
+    assert.equal(classButtons(blank.screen).length, 0);
+    blank.screen.unmount();
+});
+
+test('roster: "Move the class" opens the class dialog with this roster, and the roster is read again quietly when the dialog says it is out of date', async () => {
+    const r = roster();
+    const memberships = vue.reactive([...r.rows]);
+    let changed = 0;
+    const { screen, classDialog, moveDialog, rereads } = await mountRoster(memberships, {
+        meta: CLASS_META,
+        onChanged: () => { changed += 1; },
+        // What the server holds after the class was moved: both students are marked as left.
+        store: {
+            refreshMemberships: async (groupId: any) => {
+                rereads.push(groupId);
+                if (rereads.length === 2) for (const student of [memberships[0], memberships[1]]) student.left_on = '2026-10-04T00:00:00.000000Z';
+            },
+        },
+    });
+    const dialogs = () => screen.all((n: Node) => n.props['data-class-move-dialog'] !== undefined).length;
+
+    assert.equal(dialogs(), 0);
+    assert.equal(classDialog.props, null);
+
+    click(classButtons(screen)[0]);
+    await flush();
+    assert.equal(dialogs(), 1);
+    assert.deepEqual(
+        [classDialog.props.groupId, classDialog.props.groupName, classDialog.props.schoolToday],
+        [CLASS, 'Third Grade', '2026-10-04'],
+    );
+    // The page's own rows, not a copy: the dialog counts the class from what the office is looking at.
+    assert.equal(classDialog.props.roster.length, memberships.length);
+    assert.deepEqual(classDialog.props.roster.map((m: any) => m.id), memberships.map((m: any) => m.id));
+    assert.equal(moveDialog.membership, null, 'the single-student dialog opened as well');
+    assert.equal((globalThis as any).document.body.style.overflow, 'hidden', 'the page scrolls behind the dialog');
+    assert.deepEqual([rereads.length, changed], [0, 0], 'opening the dialog sent something');
+
+    // Cancel before anything was moved: shut, and nothing else.
+    classDialog.emit('close');
+    await flush();
+    assert.equal(dialogs(), 0);
+    assert.equal((globalThis as any).document.body.style.overflow, '');
+    assert.equal(rereads.length, 0);
+
+    // "Reload the roster" (a move out of this class is still running, or the answer never arrived):
+    // shut, and the roster read again without the spinner that would empty the table.
+    click(classButtons(screen)[0]);
+    await flush();
+    classDialog.emit('reload');
+    await flush();
+    assert.equal(dialogs(), 0);
+    assert.deepEqual(rereads, [CLASS]);
+    assert.equal(classButtons(screen).length, 1, 'nobody was moved: the class can still be moved');
+
+    // The result was read and OK pressed: shut, read again, and with nobody left to move the button goes.
+    click(classButtons(screen)[0]);
+    await flush();
+    classDialog.emit('moved');
+    await flush();
+    assert.equal(dialogs(), 0);
+    assert.deepEqual(rereads, [CLASS, CLASS]);
+    assert.equal(changed, 0, 'the page was asked for the reload that empties the table');
+    assert.equal((globalThis as any).document.body.style.overflow, '');
+    assert.equal(classButtons(screen).length, 0, 'a class with no current student still offers the move');
+    screen.unmount();
+});
+
+test('roster: when the quiet re-read after a class move fails, the ordinary reload is asked for', async () => {
+    let changed = 0;
+    const { screen, classDialog } = await mountRoster(vue.reactive([...roster().rows]), {
+        meta: CLASS_META,
+        onChanged: () => { changed += 1; },
+        store: { refreshMemberships: async () => { throw new Error('Network Error'); } },
+    });
+
+    click(classButtons(screen)[0]);
+    await flush();
+    classDialog.emit('moved');
+    await flush();
+
+    assert.equal(changed, 1);
+    assert.equal(screen.all((n: Node) => n.props['data-class-move-dialog'] !== undefined).length, 0);
+    screen.unmount();
+});
+
+test('roster: "Open {class}" from the class dialog asks that roster for the guardian row a student\'s refusal is about', async () => {
+    const went: string[] = [];
+    const before = (globalThis as any).window;
+    (globalThis as any).window = { location: { assign: (href: string) => went.push(href) } };
+
+    try {
+        const { screen, classDialog, routed } = await mountRoster(vue.reactive([...roster().rows]), { meta: CLASS_META });
+
+        click(classButtons(screen)[0]);
+        await flush();
+        // A student held back for a consent: the class and the entry to withdraw there first.
+        classDialog.emit('open-class', 9, 77);
+        assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: { focus: '77' } });
+        // A refusal that names a class and no row.
+        classDialog.emit('open-class', 9, undefined);
+        assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: {} });
+        assert.deepEqual(went, ['/groups/9?focus=77', '/groups/9']);
         screen.unmount();
     } finally {
         (globalThis as any).window = before;

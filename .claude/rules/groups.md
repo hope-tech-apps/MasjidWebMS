@@ -583,7 +583,12 @@ Recorded on the guardian edge as `consent_granted_at` + `consent_scope`
 consent"). Because the edge already says guardian-of-WHOM-in-WHICH-group,
 consent cannot leak sideways to a parent's other children or their other groups:
 a parent with two children in one classroom consents twice, because those are
-two decisions.
+two decisions. ONE act copies it to another class, and only one: moving the
+student, which carries the same adult's consent for the same child as it was
+recorded, marks the copy with the class it came from, and never widens what
+the adult already holds in the class entered (the owner, 2026-10-05; "Moving a
+student to another class", R8 and R10). Nothing else writes consent but the
+office.
 
 - `GroupMembership::CONSENT_SCOPES` = `feed`, `media` — PHP constants, not a DB
   enum, for the same reason as `ROLES`.
@@ -615,7 +620,10 @@ two decisions.
   nothing to read is a guess.
 - Withdrawal nulls both columns, returning the row to the never-consented state
   — "absence of a record means no consent" only works if that state is
-  reachable.
+  reachable. It writes those two keys and nothing else, so on an entry whose
+  consent a move carried the marker stays, and the roster reads "withdrawn here
+  after it was carried": that is the state a later move back is checked
+  against. Its answer names where else the same adult's consent still stands.
 
 Least disclosure is applied to the PAYLOAD, not just the download: a reader
 without media consent gets no attachment list at all, because a filename and a
@@ -1871,11 +1879,12 @@ owner (2026-10-05): ages are to be there for every student. So a roster has a SE
   wins, the age grows, the value is hidden), the screen tests in `student-age.test.ts` and
   `student-details.test.ts`, and on MySQL `tests/Mysql/ContactDateOfBirthMysqlTest.php` (CI only).
 
-## Moving a student to another class (2026-10-04)
+## Moving a student to another class (2026-10-04; consent carried and a whole class, 2026-10-05)
 
 `App\Support\RosterMove`, behind `GET` / `POST …/members/{id}/move` (`GroupMoveController`, both
 `permission:manage contacts`). The office says who belongs in a class; there is no teacher or
 family route. Design and the review that changed it: the roster features folder of 2026-10-04.
+A whole class is the same move run once per student (`RosterClassMove`, below).
 
 **A roster row NEVER changes class.** There is one path, "left and started": the old place gets a
 leaving day and stays where it is with everything recorded on it, and a new place opens in the
@@ -1886,17 +1895,24 @@ then writes by primary key with no lock, so a row that changed class would be wr
 requests that loaded it under the old one. When the old place holds nothing the answer says so,
 and Remove (which refuses if something landed meanwhile) takes it.
 
-Four rules:
+The rules. R1, R3 and R4 are as they shipped; R2 was reworded and R8 to R10 added when consent
+began to travel (the owner, 2026-10-05: "Carry each parent's consent as it is", and for a single
+move "yes it should carry it too"). R5 to R7 are about a class-store balance following the
+student and are written here with the commit that first lets a move carry one; until then the
+"Class store" paragraph below is the whole of it.
 
 - **R1. Records never change class.** Ten of the eleven tables that point at a roster row carry
   their own `group_id` and the eleventh names its class through its file; a record whose class
   disagreed with its roster row could be opened from neither.
-- **R2. A move never widens anybody's access.** A closed entry in the class being LEFT never
-  travels. A confirmed entry in the class being ENTERED is re-opened only when the same adult
-  holds a confirmed, current entry for the student in the class being left; otherwise the move is
-  refused. An unconfirmed entry may be re-opened and stays unconfirmed. On a return, consent
-  already recorded on a re-opened entry is in force again, and the screen names each guardian
-  with the scope and the date.
+- **R2. A move never gives an adult more than they held.** A closed entry in the class being
+  LEFT never travels. A confirmed entry in the class being ENTERED is re-opened only when the
+  same adult holds a confirmed, current entry for the student in the class being left; otherwise
+  the move is refused. An unconfirmed entry may be re-opened and stays unconfirmed. Consent is
+  carried as it is onto an entry the move creates, from a confirmed, current entry, and not when
+  the adult already stands in the class being entered for another child with less. Consent on an
+  entry the class already holds is never written by a move; when it is in force again the screen
+  names each guardian with the scope and the date, and a move is refused while it would bring
+  back a consent the family withdrew where it had been carried.
 - **R3. A move destroys nothing.** No row is deleted and no consent column is cleared, on any
   path. Every successful-move test ends with that invariant.
 - **R4. Locks first.** One transaction: the student's CONTACT row by primary key (the mutex for
@@ -1906,7 +1922,21 @@ Four rules:
   ascending, then a SHARED lock on the two class rows, which are checked again (still a class,
   still running, not deleted). Never a range lock. A short lock wait is set for the move; a
   deadlock, a lock wait timeout and a unique violation are answered 409 "this roster changed",
-  never a 500. The move is logged after the commit.
+  never a 500. The move is logged after the commit. Carrying consent added NO lock: its reads
+  of other children's entries and of other classes are ordinary reads (why that is sound is
+  under "never wider" below), and the two source pins that count lock expressions are unchanged.
+- **R8. A consent travels only as it was recorded.** Same adult, same child, from a confirmed,
+  current entry for which `hasConsent()` is true, onto an entry this move creates, both columns
+  unchanged, marked with the class it came from, and not at all when it would widen what the
+  adult already holds in the class entered. A blank stays blank: no consent is written for an
+  adult who has none on record, on any path, and no gate (`hasConsent`, `mayReceive`,
+  `standingIn`, the recipient resolver) was touched.
+- **R9. A class is moved one student at a time, and the answer names every student.** One
+  transaction per student; nothing is locked across two students; the request names the roster
+  rows the office was shown.
+- **R10. Nothing withdrawn comes back by a move.** An entry that a move or a "Put back" would
+  re-open with consent is checked against the other side of every carry it took part in; when
+  the family has since withdrawn or narrowed there, the act is refused with the remedy.
 
 **The guardian rule, and its refusal.** `RosterMove::notVouched()` is one pure function with two
 callers: the move (may the target's confirmed entries be open again?) and the roster list's
@@ -1921,10 +1951,122 @@ COPIES one, unchanged, for the SAME (adult, child) pair onto a new row in anothe
 same organisation. Its one caller is `RosterMove::carry()`, which stamps the new row
 `selfAssertedFrom(null)` first, so a row that misses the copy is an unconfirmed claim with no
 consent. It copies provenance and `source_registration_id`, and the confirmer and time only when
-the old provenance is exactly `confirmed`; never consent, never a leaving date. It throws on a
-saved row, on another person, role, child or organisation, on the same class, and on an old row
-that has left. Both caller lists are counted by `RosterMoveTest`. Consent is one guardian, one
-child and ONE class: it does not move and is asked again.
+the old provenance is exactly `confirmed`; never a leaving date. It throws on a saved row, on
+another person, role, child or organisation, on the same class, and on an old row that has left.
+Both caller lists are counted by `RosterMoveTest`.
+
+**Consent is carried as it is, through that one door.** `carriedFrom(self $old, bool $withConsent
+= false)`: a caller that says nothing copies nothing. With the argument, and only inside the
+confirmed branch, on a guardian entry, from a source for which `hasConsent()` is true (never
+`consentColumnsAreSet()`, which is true for half a record), it copies `consent_scope` and
+`consent_granted_at` unchanged (the day the family gave it, not the move day) and sets the
+marker. The unconfirmed branch nulls both consent columns, so a claim cannot hold consent
+whatever was put on the unsaved row. The student's own place never gets consent. A twin (an
+entry the class entered already holds for that adult and child), open or closed, blank or not,
+is re-used or re-opened with what it holds and nothing is written to it. The old entries keep
+their consent (R3). `RosterMove::carry()` passes the argument only for the source entries
+`decide()` put in the plan's `consentToCarry`.
+
+**The marker.** `group_memberships.consent_carried_from_group_id` (`GroupMembership::
+CONSENT_CARRIED_FROM`): the id of the CLASS the consent was copied from. Nullable, no foreign key
+(a key into this table would be a twelfth and fail the schema walk), no index, not fillable. It
+names the class and not the entry because Remove and a merge re-issue rows; while the source
+entry exists it is the one row for that class, adult and child.
+
+| Marker | Consent columns | Reads as |
+|---|---|---|
+| null | set | recorded by the office for this class |
+| set | set | carried from that class, untouched since |
+| set | null | withdrawn here after it was carried |
+| null | null | never asked, or withdrawn where it was recorded (the same state, by design) |
+
+Its writers: `carriedFrom` with consent sets it. `GroupConsentController::update` CLEARS it, an
+unchanged re-save included (the office is now asserting the consent for this class, and the
+dialog says so). `destroy` keeps it: a withdrawal writes its two keys and nothing else, is never
+refused and depends on no new column. `unconfirm()` clears it together with a consent it clears,
+and leaves it alone on an entry that was already blank (that state records a withdrawal). A merge
+re-issue loses it with the old row. Leaving, returning and "Put back" do not touch it: rule R10
+reads it on a closed copy. Known limit: withdraw, record again, withdraw again leaves null and
+null, "never asked". The office roster row carries the column and `consent_carried_from`
+(`{id, name, deleted_at}`); the teacher and family payloads carry neither (pinned), and the
+records export has no column for it, so a carried consent reads there as dated before the
+entry's own joining day.
+
+**Who carried a consent, and when, is not on the entry.** "When" is the copy's own first day
+(`joined_at`) and `created_at`. "Who" is `moved_by_user_id` on the student's row until that
+student's next move, and after that only the `roster.move` log line, which production keeps for
+about two weeks. The column is the record; the line is history.
+
+**Never wider than the adult's standing in the class entered.** An adult is admitted to a class's
+broadcasts on ANY one current entry there that covers the disclosure, so a consent carried for
+one child would open the class to an adult whose entry there for a brother or sister is blank,
+and blank may be a withdrawal. So `decide()` reads the adult's other current, confirmed entries
+in the class entered (for a child other than this one): with none, or when the widest among
+them covers the source's scope, the consent is carried as it is; when the widest is narrower,
+NOTHING is carried for that entry, the new entry is blank and unmarked, and the plan names the
+guardian. As it is, or not at all: no narrowed copy is ever written. Unconfirmed entries are not
+counted. A blank entry whose marker is set (withdrawn there after a carry) always caps. That read
+takes no lock, on purpose: a withdrawal on the other child's entry that lands between the read
+and the commit gives the state "moved, then withdrew", which no lock can forbid, and the
+withdrawal's own answer names what still stands.
+
+**What the dialog showed is what happens.** The preview takes no lock, so the POST echoes what it
+showed: `expected_path`, `expected_first_day`, `expected_joined_on`, and now `expected_consent`,
+a fingerprint of the consent result (`m{photographs}f{story}s{not carried for a sibling}n{none on
+record}e{left as it was}`). A difference under the locks is 409 "changed while you were looking"
+and nothing is moved. `expected_bucks_rule` is accepted and handed on and is null until a move
+carries a balance. A null expectation is not checked.
+
+**Rule W: what R10 refuses.** Let E be a guardian entry naming the student, in the class that
+would be entered (or, for "Put back", beside the old row), closed now, open afterwards, with
+consent. `RosterMove::consentComingBack()` is one pure function with two callers, as `notVouched`
+is: the move, and the roster list's `moved_to_state`. It answers, per entry:
+
+- `copy_withdrawn`: another entry of the same adult and child, in any class, has its marker
+  naming E's class and both consent columns blank. E is the source; its copy was withdrawn where
+  it had been carried. REFUSED.
+- `source_withdrawn` / `source_narrowed`: E's own marker names a class, that class holds an entry
+  for the same adult and child, and that entry now holds nothing, or the class story where E
+  holds photographs. E is the copy. The source's columns are read as they are, left or not.
+  REFUSED.
+- `source_gone`: the marker names a class that no longer holds an entry for them. Nothing to
+  compare with: the move goes ahead and the guardian is NAMED.
+
+The refusal is the unvouched-guardian refusal's shape (409, one sentence per guardian, "Nothing
+was moved.", the class to open and now the roster row the remedy is about, `open_group.
+membership_id`, which the roster brings into view through `?focus=`). The remedy is one act in
+every case: the office withdraws E's consent on that roster (the Consent button is drawn on
+entries that have left, and now shows its word), moves again, and records consent afresh there
+if the family still agrees. The office stays the only one who withdraws or records.
+
+**What rule W cannot see. Each fails towards asking the family, never towards more than was
+recorded.** `copy_withdrawn` is a row state, "marker set and consent blank", and three ordinary
+acts erase it, after which a return re-opens the old consent and the office reads a line, not a
+refusal: Remove on the place where the copy sits (it deletes the guardian entries beside it); a
+merge that re-issues the row; and saving the consent dialog on the copy (which clears the marker
+on purpose) before withdrawing. Down a chain (carried on to a third class and withdrawn there) a
+return straight to the first class is not refused: its own copy in the second is not blank. It
+has no memory: after the remedy and a fresh record the blank marked copy still exists, and a
+later move out and back is refused again. For "Put back" the rule exists only on a row that
+carries "moved to", and only on the screen (below). All of these are in ASSUMPTIONS.md.
+
+**A withdrawal says where else consent stands.** Both consent verbs answer top-level `notes`,
+sentences built on the server, read AFTER the write; a failure in that read is swallowed and
+logged at WARNING, so it can never turn a withdrawal into an error. First the same class: the
+adult's other current entries there, for any child, that still open more than this entry now
+does (withdrawing for one child leaves the class open through a brother's or sister's entry).
+Then the same adult's entries for the SAME child in every other class, current or closed, that
+still hold consent. The roster keeps its success message up while there are notes.
+
+**The deploy window.** `bin/deploy` serves new code before it migrates. `RosterMove::ready()`
+asks one question per column a move needs, each of the class that owns the column (today only
+`GroupMembership::consentCarryReady()`, the `StudentAge` pattern). Until it is true every preview
+and every move, single or whole-class, is refused through `refuseUnlessReady()` with "Manara is
+being updated. Try this move again in a minute." and one WARNING line, `roster.move.not_ready`,
+naming the missing column; nothing is locked, read or written. Everything else behaves as
+before its column: the consent verbs write the marker key only when the column exists,
+`movedToStates()` computes its consent fields only then (every roster read goes through it), and
+the roster list loads `consent_carried_from` only then.
 
 **"Holds records": one list, two questions.** `AcademicRecordsHeld::KEYS` is every foreign key
 into `group_memberships.id` (eleven; a schema walk fails on a twelfth). All eleven say what STAYS
@@ -1953,11 +2095,15 @@ you were looking". NOT covered: the teacher's register and the office's today ba
 **"Put back" on a row that was moved.** `DELETE …/withdrawal` stays ungated: its docblock rules
 out an undo that can be refused. The guard is on the screen (`PutBackDialog.vue`, the only place
 in the SPA that sends the undo): it reads the roster again, and offers nothing while
-`moved_to_state.guardians_not_vouched` names anybody. That list is computed against the student's
-CURRENT rows anywhere in the organisation, and against the class they were moved to only when
-they are current nowhere. What a screen guard leaves open: a hand-made request; a change between
-the read and the tap; and a student with no row left in the other class, where there is nothing
-to compare and the dialog names every guardian instead.
+`moved_to_state.guardians_not_vouched` names anybody, or while `moved_to_state.consent_blocks`
+is not empty (rule W read from this side: one server sentence per entry, then once what to do).
+`consent_lines` (every other entry here whose consent would be in force again) is printed above
+the button; `bucks_line` is null until a move carries a balance. The first list is computed
+against the student's CURRENT rows anywhere in the organisation, and against the class they were
+moved to only when they are current nowhere. What a screen guard leaves open: a hand-made
+request; a tab loaded before the release that added a field; a change between the read and the
+tap; and a student with no row left in the other class, where there is nothing to compare and
+the dialog names every guardian instead.
 
 **"Add to roster" takes the same contact lock.** `GroupMembershipsController::store` locks the
 student's contact row as the FIRST statement of its transaction; every lookup runs before the
@@ -1973,12 +2119,90 @@ owner's); the seam for a later transfer is `RosterMove::classStoreBucksStaying`.
 `moved_to_group_id`, `moved_on`, `moved_by_user_id`; no foreign key, no index, the
 `left_recorded_by_user_id` precedent) keep the LATEST move of a row; `markMovedOut` clears
 "moved from". Each move also writes `roster.move` at WARNING (production drops info), ids only,
-with every guardian entry carried, re-used or re-opened.
+with every guardian entry carried, re-used or re-opened, and now `consent_carried` (pairs of new
+entry and source entry), `consent_not_carried` (sources left blank by "never wider") and `run`
+(a whole-class run's id; null for a single move).
+
+**Moving a whole class.** `App\Support\RosterClassMove` and `RosterClassMovePlan`, behind `GET` /
+`POST …/groups/{group_id}/class-move` (`GroupClassMoveController`, both `permission:manage
+contacts`; the URI does not end in `/move`, and the suite pins one URI for each). "Move the
+class" on the Roster tab is drawn only on a class with a current student. The preview takes no
+lock: it runs the class-level checks once (`RosterMove::refuseUnlessClassesAndDayAllow`, the
+single move's own checks 3 to 7, so the office reads one refusal and not N), then the single
+preview for every current student, and answers the class as a list of students, each with what
+the POST must echo, plus class-level sentences built on the server from the single plans'
+fields. The run, in order:
+
+1. the deploy-window guard, then the class-level checks (422);
+2. ONE RUN AT A TIME PER CLASS BEING LEFT: a non-blocking lock on `Cache::store('database')`,
+   named so the mutex does not depend on `CACHE_STORE` (the suite's default is `array`), 120
+   seconds, released in `finally`; held: 409. It needs the framework's `cache_locks` table;
+3. three things read once for the whole run: the newest roster row id (`standing_before_id`),
+   a ULID for the log lines, and the school's today (a run that crossed school midnight would
+   otherwise decide its students by two different days);
+4. a pre-flight with no lock and no write: every named row must be a current student of this
+   class and preview to the same path, first day, joining day on a return, consent fingerprint
+   and grade the request echoes. Any difference for any student is 409 with `data.students`
+   (`RosterClassMoveChanged`), and nothing has been written;
+5. `RosterMove::move()` once per named student, in the request's order, each in its own
+   transaction, with four options no request can supply (`run`, `standing_before_id`, `today`,
+   `attempts` = 1; neither verb's Request has a rule for them). A refused student is reported
+   with the single move's own sentence and THE RUN GOES ON (`retry` true only when the roster
+   was busy or had changed). Any other exception is a fault: it is reported, it STOPS the run,
+   and the answer is still 200, because an error page would hide who was already moved;
+6. no student is started after `BUDGET_SECONDS` (40); the rest are `not_reached`.
+
+Why per student and not one transaction: a held row would fail the whole class (inside an outer
+transaction the framework rethrows a deadlock instead of retrying), and a register save or a
+redemption about ANY student would wait for all of them. Between two students the state is always
+"these fully moved, those not touched". `MAX_STUDENTS` is 60 per request. Inside a run a student
+gets ONE attempt (a single move keeps three): `LOCK_WAIT_SECONDS` is per lock request, so three
+times three is the wait behind one held row, not a bound.
+
+Two children of one family in one run: without care the second child's move would find the entry
+the first child's move made a moment earlier and be capped by it, so the family would keep or
+lose the story by the order of a list. Entries with an id above `standing_before_id` did not
+stand in the class before the run and do not cap, except a blank one whose marker is set. What
+is left fails towards less: two siblings moved on two occasions, a run that is split (the answer
+counts `siblings_left_behind` and says to read the next check), and a run in which one sibling
+returns to the class while another enters it for the first time (the second is reported
+"changed while you were looking").
+
+Grades are a choice with no default (`keep`, `set`, `up` through `GradeLevel::next()`; a label
+it cannot read, or the last grade, is kept and the row says so). With `keep`, a student going
+BACK to a place they held gets the grade recorded on that place, which is what puts a class back
+as it was. Putting a class back is the same action from the other class: each row carries
+`came_from_target`, and the dialog offers "Only the students who came from {class}". Nothing
+belonging to the class travels (teachers, story, files, lesson plans, the program that enrols
+into it), the run never ends or switches off the old class, and no run is recorded anywhere but
+in the log lines' `run`.
+
+The dialog's ticks are the office's: kept by roster row id across every re-check and every 409;
+only the first check for a class ticks everyone who can move. The preview's class sentences
+count everyone who CAN move, not the ticks (the server never learns the ticks), and the dialog
+says so when some are unticked; the result's sentences are exact. When the answer never arrives
+the dialog assumes nothing and never sends the same body again. The shared `apiErrorText()`
+would print an object for the 409 that carries `data.students`: the dialog has its own reader.
+
+**The family's list says whether the child is still in the class.** `in_class_now` on each class
+of the family's list and on the family's class (`Family/GroupsController`): true while any entry
+the parent stands through has no leaving date; consent is not consulted. The portal draws its
+"no consent" notice only when `may_receive_feed` is false and `in_class_now` is not false: after
+a move the old class's story is hidden because the child left, not because consent is missing,
+and the notice said the opposite. A payload without the key behaves as before. It is not a move
+column: the family payload carries no `moved_*` key and no marker (pinned). The portal says
+nothing new about a carried consent, in any language; a parent who wants it withdrawn asks the
+office.
 
 **Known gaps, for whoever owns them.** A contact merge after a move re-opens the old class's
 closed guardian entries as open pending claims (`RosterMergeService::reissue()` drops `left_on`),
-and merge's drop path deletes Arabic daily notes and addressed files silently. A whole class is
-moved one student at a time.
+and merge's drop path deletes Arabic daily notes and addressed files silently. The move's
+old-entry sentence can still say "It holds nothing, so you can remove it afterwards" about a
+place whose guardian entry is a withdrawn carried copy, and that Remove erases the state rule W
+reads. Never run on MySQL where they were written: every MySQL case of the consent carry and of
+the class move (CI only), and two cases nobody has written because they need two connections
+waiting on each other, which this suite's one process cannot stage: two class runs in opposite
+directions with siblings who share a parent, and a registration against a move of the same child.
 
 **Registration, narrowed.** `RegistrationService::writeRosterMemberships()` now holds each
 child's contact row before its "already there?" checks (`lockRosterSubjects`), so a move and a
@@ -1988,9 +2212,11 @@ it took the lock, is invisible to those checks. The visible result is a second, 
 place for the child that holds nothing, which Remove takes away. Only a key that covers a
 student's place closes it for every writer.
 
-Proven by `RosterMoveTest`, `RosterMoveRosterTest`, `resources/vue-app/tests/roster-move*.test.ts`,
-and on MySQL by `tests/Mysql/RosterMoveMysqlTest.php` and `tests/MysqlLocks/RosterMoveLocksTest.php`
-(CI only).
+Proven by `RosterMoveTest`, `RosterMoveRosterTest`, `RosterClassMoveTest`, `FamilyPortalTest`,
+`resources/vue-app/tests/roster-move*.test.ts`, `roster-class-move*.test.ts`,
+`student-details.test.ts` and `family-left-class-notice.test.ts`, and on MySQL by
+`tests/Mysql/RosterMoveMysqlTest.php`, `tests/MysqlLocks/RosterMoveLocksTest.php` and
+`tests/MysqlLocks/RosterClassMoveLocksTest.php` (CI only).
 
 ## The office's class list names each class's teachers (2026-10-04)
 

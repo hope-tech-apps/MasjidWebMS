@@ -7749,3 +7749,73 @@ themselves still run only on the MySQL job.
   - A teacher now sees an age for these students too, with no mark that it may be one short.
 - **Tests.** `StudentAgeGivenTest` (20), the two SPA files, one MySQL case (CI only).
 
+## 2026-10-05: a moved student's consent goes with them as it was recorded, and a whole class can be moved in one go (owner: "Carry each parent's consent as it is"; "yes it should carry it too"; "defaults makes sense"; branch `feat/r2-integration`)
+
+- **Asked.** After the single-student move shipped the owner asked for a whole class to be moved at once, and
+  for consent to go with the students: 25 students with two guardians each would otherwise be 50 consents to
+  record again by hand. Asked which he meant, he chose "carry each parent's consent as it is" over "consent
+  not required", and said a single move should carry it too. This REPLACES the decision of 2026-10-04 that
+  consent does not follow a move.
+- **Decided: one door, and as it is or not at all.** `GroupMembership::carriedFrom()` gains a named argument,
+  false by default, and copies the two consent columns unchanged, for the same adult and child, from a
+  confirmed, current entry with consent, onto an entry the move CREATES. Never onto an entry the class already
+  holds; never for an adult with none on record; never a narrowed copy. When the adult already stands in the
+  class entered for another child with less, nothing is carried and the guardian is named. No gate that decides
+  who receives a class story was touched.
+- **A marker column, naming the class.** `group_memberships.consent_carried_from_group_id` tells a carried
+  consent from one the office recorded, on the row, for as long as the row exists. A record by the office
+  clears it; a withdrawal keeps it, which is how "withdrawn here after it was carried" stays readable. It names
+  the class and not the entry, because Remove and a contact merge re-issue rows. No column for who carried it
+  or when: the copy's own dates and the move's stamp on the student's row say it, and the log line for about
+  two weeks (ASSUMPTIONS.md M-12).
+- **Nothing withdrawn comes back by a move: refused, not just named.** A move destroys nothing, so a source and
+  its copy both keep their consent, and the family can since have withdrawn or narrowed on either. A move back,
+  or a "Put back", that would re-open one of them with more than the other side now holds is REFUSED with the
+  remedy (withdraw it on that roster first, then move, then record afresh if the family agrees). Naming it in a
+  line was the alternative and was rejected: the only way to not re-arm a consent without a move writing to an
+  existing entry's consent is to refuse. Where the other side no longer exists there is nothing to compare, and
+  the guardian is named. What the refusal cannot see is written down (the rules file, and M-11).
+- **A withdrawal says where else consent stands.** Its answer lists the same adult's other entries that still
+  open this class, then their entries for the same child in other classes. A carry makes two rows of one
+  family decision, and the moment of a withdrawal is when the office is acting for the family.
+- **What the tap echoes.** The preview takes no lock, so the POST now also echoes a fingerprint of the consent
+  result; a difference under the locks is "changed while you were looking" and nothing is moved.
+- **A whole class is the single move, once per student, in ONE request that names the rows.** The server
+  pre-flights the whole list and refuses the request when anything differs from what was shown; then each
+  student moves in their own transaction and the answer names every one: moved, not moved and why, or not
+  reached. A refused student does not stop the others; a fault does, and the answer still says who was moved.
+  One transaction for the class was rejected: one held row would fail everybody, and a register save about
+  any student would wait for all of them. The browser sending the single request N times was rejected: only a
+  server run can judge two siblings against the class as it stood BEFORE the run, so the result does not
+  depend on the order of a list.
+- **Its limits are judgements, not measurements.** One run at a time per class being left (a lock on the
+  `database` cache store, named so it does not depend on configuration); 60 students per request; no student
+  started after 40 seconds; one attempt per student inside a run. Nobody has timed a move on MySQL (M-13).
+- **Grades are asked each time.** Keep, up one, or one grade for everyone, with none pre-selected: the request
+  was "move a class UP", and a pre-chosen "keep" would land a class in next year's room with last year's
+  labels. "Keep" on a return gives the grade recorded on the place re-opened, which is what puts a class back.
+- **Putting a class back is the same action from the other class**, with one filter ("only the students who
+  came from …"). No table of runs: each student's row already says where it came from.
+- **The class moved is not ended or switched off by the run**, before or after; the result says how, after it
+  has said how to put the class back.
+- **The family portal says nothing new** about a carried consent (the owner's default: no new text in six
+  languages); a parent who wants it withdrawn asks the office. One false sentence is removed: the portal no
+  longer says "You have not given consent" about a class the child has left (`in_class_now`).
+- **Between new code and its migration a move is refused**, with one sentence and one WARNING line, rather than
+  carrying nothing for a while: a move made then would do something its own sentences do not say.
+- **Decided here, the owner did not say.** The old place a student is moved back FROM is no longer offered for
+  Remove once a consent was carried beside it. The roster's consent button shows the word "Consent". The
+  consent answers carry their notes at the top level of the answer. For a class the child has left, the
+  portal's Story tab shows nothing rather than "Nothing posted yet." (M-20).
+- **Not built, and whose it is.** The class-store balance does NOT follow a moved student yet: the ledger's
+  two transfer kinds, their writer and their labels are in this branch and nothing calls them; the commit
+  that lets a move carry a balance waits on the class-store rules and is made separately, with its own
+  record. Recording a whole class as having LEFT the school is not part of this. A parent withdrawing their
+  own consent is not built. Two lock cases have no test (M-15).
+- **Tests.** `RosterMoveTest`, `RosterMoveRosterTest`, `RosterClassMoveTest`, `FamilyPortalTest`,
+  `OfficeStudentDetailsPayloadTest`, and the SPA files `roster-move*.test.ts`, `roster-class-move*.test.ts`,
+  `student-details.test.ts`, `family-left-class-notice.test.ts` (run). `tests/Mysql/RosterMoveMysqlTest.php`
+  and `tests/MysqlLocks/RosterClassMoveLocksTest.php` were NOT run where they were written (no MySQL server);
+  they run in CI's MySQL job (M-16). See ASSUMPTIONS.md M-9 to M-21 and `.claude/rules/groups.md`, "Moving a
+  student to another class".
+

@@ -2,11 +2,20 @@
     <!-- The capture listener takes the outline off a row that a link asked
          for (`?focus=`): it stays until the next tap anywhere on the roster. -->
     <div @click.capture="unfocusRow">
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <!-- The row wraps: on a phone the two buttons go under the heading
+             instead of pushing the page sideways. -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
             <h6 class="mb-0 text-muted">Roster</h6>
-            <button class="btn btn-sm btn-success" @click="openAddModal">
-                <i class="bi bi-person-plus me-1"></i> Add to roster
-            </button>
+            <div class="d-flex flex-wrap gap-2">
+                <!-- A whole class at once. Only where there is somebody to
+                     move: a class, with at least one current student. -->
+                <button v-if="canMoveClass" type="button" class="btn btn-sm btn-outline-primary" @click="movingClass = true">
+                    <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i> Move the class
+                </button>
+                <button class="btn btn-sm btn-success" @click="openAddModal">
+                    <i class="bi bi-person-plus me-1"></i> Add to roster
+                </button>
+            </div>
         </div>
 
         <div v-if="loading" class="text-center py-5">
@@ -515,9 +524,21 @@
         </Teleport>
     </div>
 
-        <!-- A student moved to another class, and a student put back. Each
-             is its own component: this file only opens them. -->
+        <!-- A student moved to another class, a whole class moved, and a
+             student put back. Each is its own component: this file only
+             opens them. -->
         <Teleport to="body">
+            <MoveClassModal
+                v-if="movingClass"
+                :group-id="groupId"
+                :group-name="rosterMeta?.group_name ?? 'this class'"
+                :roster="memberships"
+                :school-today="rosterMeta?.school_today ?? todayLocal()"
+                @close="movingClass = false"
+                @moved="afterMoveDialog"
+                @reload="afterMoveDialog"
+                @open-class="openClass"
+            />
             <MoveStudentModal
                 v-if="moveFor"
                 :group-id="groupId"
@@ -782,6 +803,7 @@ import { isStudentRow, studentRowFor } from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
 import { useRoute, useRouter } from 'vue-router';
 import MoveStudentModal from './MoveStudentModal.vue';
+import MoveClassModal from './MoveClassModal.vue';
 import PutBackDialog from './PutBackDialog.vue';
 import {
     applyConsentAnswer, carriedConsentLabel, carriedConsentNote, consentBannerCount, consentBannerText, focusIdFromQuery,
@@ -1056,6 +1078,16 @@ const moveNote = computed<string>(() => rosterMeta.value?.move_note ?? '');
 
 /** Is this group a class? Move, the Age column and the date of birth all hang on it. */
 const isClass = computed<boolean>(() => rosterMeta.value?.teaches_students === true);
+
+/**
+ * MOVING THE WHOLE CLASS is a dialog of its own (MoveClassModal.vue): this file
+ * opens it and reads the roster again when it says the roster is out of date.
+ * The button is drawn only where somebody could be moved, by the same rule as
+ * a row's own Move button, so an empty class or a group that is not a class
+ * never offers a dialog that could only say "nobody".
+ */
+const movingClass = ref(false);
+const canMoveClass = computed<boolean>(() => props.memberships.some(canBeMoved));
 const missingBirthDates = computed<string>(() => missingBirthDatesLine(props.memberships, isClass.value));
 const consentBanner = computed<string>(() => consentBannerText(consentBannerCount(props.memberships)));
 
@@ -1075,6 +1107,7 @@ const reloadQuietly = async () => {
 
 const afterMoveDialog = async () => {
     moveFor.value = null;
+    movingClass.value = false;
     putBackFor.value = null;
     await reloadQuietly();
 };
@@ -1803,7 +1836,7 @@ const confirmRemove = async (membership: GroupMembership) => {
 // Lock body scroll while either dialog is open. One watcher for both: two of them
 // writing the same style property would have the first to close clear the lock
 // while the other was still up.
-watch([showAddModal, consentFor, withdrawFor, studentFor, moveFor, putBackFor], (open) => {
+watch([showAddModal, consentFor, withdrawFor, studentFor, moveFor, movingClass, putBackFor], (open) => {
     document.body.style.overflow = open.some(Boolean) ? 'hidden' : '';
 });
 
