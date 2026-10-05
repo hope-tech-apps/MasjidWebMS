@@ -1234,7 +1234,240 @@ class ClassStoreCarryTest extends TestCase
 
     // -------------------------------------- the mint, once a student was moved
 
+    #[Test]
+    public function nothing_is_minted_or_adjusted_on_a_row_that_was_carried_away_with_a_pair_or_without(): void
+    {
+        $this->mintingFrom('2026-10-04');
+        $layla = $this->student('Layla');
+        $this->awardAt('2026-10-06 10:00', $this->amira, 12);
+        $this->awardAt('2026-10-06 10:00', $this->yusuf, 4);
+        $this->awardAt('2026-10-06 10:00', $layla, 4);
+        $this->mint();
+
+        // Amira is moved with 12. Yusuf has spent everything and is moved with nothing. Layla is
+        // recorded as having left, by hand.
+        $amiraNew = $this->move($this->amira, $this->next);
+        $this->redeem($this->yusuf, 4);
+        $this->move($this->yusuf, $this->next);
+        $layla->markLeftByStaff(null)->save();
+        $this->assertSame(2, $this->transferRows());
+
+        // A late award for the week already minted: the mint re-reads every row that has a minted
+        // row for a week in its two-week window, whether or not the student is still there.
+        foreach ([$this->amira, $this->yusuf, $layla] as $row) {
+            $this->awardAt('2026-10-08 10:00', $row, 3);
+        }
+
+        $this->mint();
+        $this->mint();
+
+        $this->assertSame(['earned:12', 'transfer_out:-12'], $this->ledger($this->amira), 'nothing lands on a row whose balance went to another class');
+        $this->assertSame(['earned:4', 'redeemed:-4'], $this->ledger($this->yusuf), 'nor on a row that was moved with nothing');
+        $this->assertSame(['earned:4', 'adjusted:3'], $this->ledger($layla), 'an ordinary left row is still corrected inside the window');
+        $this->assertSame(12, $this->balanceOf($amiraNew), 'and a late change in the old class does not reach what was carried');
+
+        // The race the guard exists for: a mint that listed a child as current, then waited
+        // behind their move. When it gets the row it finds a leaving date and a "moved to".
+        foreach ([$this->amira, $this->yusuf] as $row) {
+            foreach ([PrizeLedgerEntry::KIND_EARNED, PrizeLedgerEntry::KIND_ADJUSTED] as $kind) {
+                $asked = false;
+                $written = ClassStore::appendForSystem($this->class, (int) $row->id, function (int $balance) use ($kind, $row, &$asked): array {
+                    $asked = true;
+
+                    return ['kind' => $kind, 'amount' => 5, 'week_start' => '2026-10-11', 'week_basis' => 5, 'dedupe_key' => $kind.':'.$row->id.':2026-10-11:9'];
+                });
+
+                $this->assertTrue($asked, 'decided under the lock, after the row was read');
+                $this->assertNull($written, "{$kind} on a row that was carried away");
+            }
+        }
+
+        $this->assertSame(0, DB::table('prize_ledger_entries')->where('week_start', '2026-10-11')->count());
+
+        // What is NOT a mint is still written there: a write-off, and a write-off given back.
+        $this->plant($this->yusuf, PrizeLedgerEntry::KIND_EARNED, 2, ['week_start' => '2026-09-27']);
+        $expired = ClassStore::appendForSystem($this->class, (int) $this->yusuf->id, fn (int $balance): array => [
+            'kind' => PrizeLedgerEntry::KIND_EXPIRED, 'amount' => -2, 'dedupe_key' => 'expired:'.$this->yusuf->id.':2026-10-04:1',
+        ]);
+        $this->assertNotNull($expired);
+        $this->assertNotNull(ClassStore::appendForSystem($this->class, (int) $this->yusuf->id, fn (int $balance): array => [
+            'kind' => PrizeLedgerEntry::KIND_REVERSAL, 'amount' => 2, 'reverses_entry_id' => $expired->id, 'dedupe_key' => 'reversal:'.$expired->id,
+        ]));
+    }
+
+    #[Test]
+    public function a_row_the_student_returned_to_by_a_move_mints_again(): void
+    {
+        $this->mintingFrom('2026-10-04');
+        $this->awardAt('2026-10-06 10:00', $this->amira, 12);
+        $this->mint();
+
+        $there = $this->move($this->amira, $this->next);
+        $this->move($there, $this->class);
+        $this->assertSame(12, $this->balanceOf($this->amira));
+
+        // A week in the class she came back to.
+        $this->awardAt('2026-10-13 10:00', $this->amira, 5);
+        $this->freeze('2026-10-19 09:00');
+        $this->mint();
+
+        $this->assertSame(['earned:12', 'transfer_out:-12', 'transfer_in:12', 'earned:5'], $this->ledger($this->amira));
+        $this->assertSame('earned:'.$this->amira->id.':2026-10-11', DB::table('prize_ledger_entries')->where('group_membership_id', $this->amira->id)->orderByDesc('id')->value('dedupe_key'));
+    }
+
+    #[Test]
+    public function a_row_put_back_by_hand_after_a_move_that_carried_12_mints_again(): void
+    {
+        // The office moves a student by mistake and undoes it the way the roster offers: "Left
+        // the class" in the new class and "Put back" in the old one. The student is current in
+        // the old class only, as before the mistake, and must earn there again. A rule that read
+        // the ledger ("the row's newest transfer row is a transfer_out") would stop them for
+        // good, only because they had held Bucks, with no screen to say so.
+        $this->mintingFrom('2026-10-04');
+        $this->awardAt('2026-10-06 10:00', $this->amira, 12);
+        $this->mint();
+
+        $there = $this->move($this->amira, $this->next);
+        $there->markLeftByStaff(null)->save();
+        $this->putBack($this->amira);
+
+        $row = $this->amira->fresh();
+        $this->assertNull($row->left_on);
+        $this->assertSame((int) $this->next->id, (int) $row->moved_to_group_id, '"Put back" clears the leaving date and nothing else');
+
+        $this->awardAt('2026-10-13 10:00', $this->amira, 5);
+        $this->freeze('2026-10-19 09:00');
+        $this->mint();
+
+        $this->assertSame(['earned:12', 'transfer_out:-12', 'earned:5'], $this->ledger($this->amira));
+        $this->assertSame(5, $this->balanceOf($this->amira));
+        $this->assertSame(12, $this->balanceOf($there), 'the Bucks that were carried are still on the other row');
+
+        // Nothing doubles: the key is per roster row and week, and a second run writes nothing.
+        $this->mint();
+        $this->assertSame(17, (int) DB::table('prize_ledger_entries')->whereIn('group_membership_id', [$this->amira->id, $there->id])->sum('amount'));
+
+        // Recorded as left again, by hand, it keeps its old "moved to" and reads as carried away.
+        $this->amira->fresh()->markLeftByStaff(null)->save();
+        $this->awardAt('2026-10-14 10:00', $this->amira, 3);
+        $this->mint();
+        $this->assertSame(['earned:12', 'transfer_out:-12', 'earned:5'], $this->ledger($this->amira), 'pinned as designed: harmless, and stated');
+    }
+
+    #[Test]
+    public function points_that_were_not_turned_into_bucks_before_a_move_are_not_chased(): void
+    {
+        // The week of 4 October closed at midnight; the mint has not run since. Amira is moved in
+        // those minutes. A week's first row is written only for a student who is current when the
+        // MINT runs, so that week becomes Bucks in neither class. Chosen, and said on the screen.
+        $this->mintingFrom('2026-10-04');
+        $this->awardAt('2026-10-06 10:00', $this->amira, 7);
+        $this->awardAt('2026-10-06 10:00', $this->yusuf, 7);
+        // And two minutes into the new week she is given 4 more in the old class.
+        $this->awardAt('2026-10-11 00:02', $this->amira, 4);
+        $this->freeze('2026-10-11 00:05');
+
+        $new = $this->move($this->amira, $this->next);
+        $this->mint();
+
+        $this->assertSame(['earned:7'], $this->ledger($this->yusuf), 'the classmate who stayed is minted for');
+        $this->assertSame([], $this->ledger($this->amira));
+        $this->assertSame([], $this->ledger($new));
+
+        // The same for the week of the move itself: what she was given in the old class that week stays points.
+        $this->freeze('2026-10-19 09:00');
+        $this->mint();
+
+        $this->assertSame([], $this->ledger($this->amira));
+        $this->assertSame([], $this->ledger($new));
+    }
+
     // -------------------------------------- the undo, once a student was moved
+
+    #[Test]
+    public function an_undo_after_a_move_that_carried_nothing_is_refused_and_puts_no_bucks_on_the_row_that_was_left(): void
+    {
+        // Earned 5, spent 5, moved with nothing: the common case. An undo would put 5 on a row
+        // the student has left, where nothing can be spent, with the prize back on the shelf.
+        $this->credit($this->amira, 5, '2026-10-04');
+        $spent = $this->redeem($this->amira, 5, 3);
+        $prize = Prize::query()->findOrFail($spent->prize_id);
+        $this->assertSame(2, $prize->stock);
+
+        $this->move($this->amira, $this->next);
+        $this->assertSame(0, $this->transferRows());
+
+        $refusal = $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $spent, $this->teacher));
+        $this->assertSame(self::MOVED_AWAY, $refusal->getMessage());
+        $this->assertSame(422, $refusal->status);
+
+        $this->assertSame(['earned:5', 'redeemed:-5'], $this->ledger($this->amira));
+        $this->assertSame(0, $this->balanceOf($this->amira));
+        $this->assertSame(2, $prize->fresh()->stock, 'the prize is not back on the shelf');
+
+        // Through the teacher's own route, which still draws the button: a sentence, and nothing written.
+        $this->storeOn();
+        $this->actAs($this->teacher);
+        $this->postJson($this->teacherUrl('/prize-entries/'.$spent->id.'/reverse'))
+            ->assertStatus(422)
+            ->assertJsonPath('reason', 'moved_away')
+            ->assertJsonPath('message', self::MOVED_AWAY);
+        $this->assertSame(0, PrizeLedgerEntry::query()->where('kind', PrizeLedgerEntry::KIND_REVERSAL)->count());
+    }
+
+    #[Test]
+    public function an_undo_stays_refused_after_a_pair_even_when_the_student_is_back_on_that_row(): void
+    {
+        // By a move back.
+        $this->credit($this->amira, 9, '2026-10-04');
+        $spent = $this->redeem($this->amira, 5);
+        $there = $this->move($this->amira, $this->next);
+        $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $spent, $this->teacher));
+
+        $this->move($there, $this->class);
+        $this->assertNull($this->amira->fresh()->left_on);
+        $refusal = $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $spent, $this->teacher));
+        $this->assertSame(self::MOVED_AWAY, $refusal->getMessage());
+        $this->assertSame(4, $this->balanceOf($this->amira));
+
+        // By "Put back".
+        $this->credit($this->yusuf, 9, '2026-10-04');
+        $yusufSpent = $this->redeem($this->yusuf, 5);
+        $this->move($this->yusuf, $this->next);
+        $this->putBack($this->yusuf);
+        $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $yusufSpent, $this->teacher));
+        $this->assertSame(0, $this->balanceOf($this->yusuf));
+
+        // A prize given AFTER the return is not behind any transfer and can be undone as always.
+        $later = $this->redeem($this->amira, 1);
+        ClassStore::reverse($this->class, $later, $this->teacher);
+        $this->assertSame(4, $this->balanceOf($this->amira));
+    }
+
+    #[Test]
+    public function an_undo_is_allowed_again_when_the_student_was_moved_with_nothing_and_is_back(): void
+    {
+        // Put back by hand.
+        $this->credit($this->amira, 5, '2026-10-04');
+        $spent = $this->redeem($this->amira, 5, 3);
+        $this->move($this->amira, $this->next);
+        $this->refusedWith('moved_away', fn () => ClassStore::reverse($this->class, $spent, $this->teacher));
+        $this->putBack($this->amira);
+
+        ClassStore::reverse($this->class, $spent, $this->teacher);
+        $this->assertSame(5, $this->balanceOf($this->amira));
+        $this->assertSame(3, Prize::query()->findOrFail($spent->prize_id)->stock);
+
+        // Returned by a move.
+        $this->credit($this->yusuf, 5, '2026-10-04');
+        $yusufSpent = $this->redeem($this->yusuf, 5);
+        $there = $this->move($this->yusuf, $this->next);
+        $this->move($there, $this->class);
+        $this->assertSame(0, $this->transferRows(), 'nothing was ever carried for either of them');
+
+        ClassStore::reverse($this->class, $yusufSpent, $this->teacher);
+        $this->assertSame(5, $this->balanceOf($this->yusuf));
+    }
 
     // ---------------------------------------------------- what the office reads
 

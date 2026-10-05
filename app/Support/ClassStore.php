@@ -48,7 +48,9 @@ use Throwable;
  *  - A BALANCE FOLLOWS A MOVED STUDENT. The move writes one `transfer_out` on the roster row
  *    being left and one `transfer_in` on the row in the new class, for the old row's WHOLE
  *    balance or not at all, both rows or neither (`carryBalance`). It is the one write here
- *    that takes no lock of its own: its only caller already holds both roster rows.
+ *    that takes no lock of its own: its only caller already holds both roster rows. From then
+ *    on the row left behind is CARRIED AWAY (a leaving date and a "moved to"): the mint writes
+ *    nothing on it and a prize given from it can no longer be undone there.
  *
  * ## Reading a balance
  *
@@ -315,6 +317,22 @@ final class ClassStore
                 throw new ClassStoreRefusal('expired', 'That balance has expired, so this entry can no longer be reversed.');
             }
 
+            // A move closes it too, in two ways. While the student is away after a move, giving
+            // Bucks back would put them on a row nothing can be spent from, with the prize back on
+            // the shelf: decided from the row's own state, so a move that carried nothing (a child
+            // who had spent everything) is covered as well. And once a balance has left this row
+            // in a transfer, an entry older than that transfer stays closed even after the
+            // student comes back to the row.
+            $movedSince = self::carriedAway($student) || PrizeLedgerEntry::query()
+                ->where('group_membership_id', $student->id)
+                ->where('kind', PrizeLedgerEntry::KIND_TRANSFER_OUT)
+                ->where('id', '>', $entry->id)
+                ->exists();
+
+            if ($movedSince) {
+                throw new ClassStoreRefusal('moved_away', 'That student was moved to another class after this was recorded, so it can no longer be undone here.');
+            }
+
             $reversal = self::insert($group, $student, PrizeLedgerEntry::KIND_REVERSAL, -((int) $entry->amount), [
                 'prize_id' => $entry->prize_id,
                 'prize_title' => $entry->prize_title,
@@ -434,6 +452,12 @@ final class ClassStore
      * attributes of the row to write, or null to write nothing. So a clawback can be clamped
      * to what the child still holds without a second, unlocked read.
      *
+     * NOTHING IS MINTED ON A ROW THAT WAS CARRIED AWAY. The mint lists a class's current
+     * students BEFORE it takes a row's lock, so a run that listed a child and then waited behind
+     * their move would otherwise write `earned` on the row they have just left, after its balance
+     * went to the other class. Decided here, under the lock, from the row's own state and for
+     * both minted kinds; an `expired` row and an expiry given back are still written there.
+     *
      * @param  callable(int):?array{kind:string,amount:int,dedupe_key:string}  $decide
      */
     public static function appendForSystem(Group $group, int $membershipId, callable $decide): ?PrizeLedgerEntry
@@ -449,6 +473,10 @@ final class ClassStore
                 $attributes = $decide(self::rawBalance((int) $student->id));
 
                 if ($attributes === null) {
+                    return null;
+                }
+
+                if (in_array($attributes['kind'], PrizeLedgerEntry::MINTED_KINDS, true) && self::carriedAway($student)) {
                     return null;
                 }
 
@@ -688,6 +716,19 @@ final class ClassStore
             'amount' => $amount,
             'occurred_at' => now(),
         ] + $attributes);
+    }
+
+    /**
+     * Was this roster row left by a MOVE? Read from the row alone: a leaving date AND a "moved
+     * to". That is exactly what a move leaves on the old row, whether or not a pair was written.
+     * A row the student returned to by a move has neither, and a row put back by hand has no
+     * leaving date, so both are current again and earn again. No ledger row is consulted: a test
+     * on "the newest transfer row" would stop a child put back after a mistaken move from ever
+     * earning in that class again, and only if they had held Bucks.
+     */
+    private static function carriedAway(GroupMembership $row): bool
+    {
+        return $row->left_on !== null && $row->moved_to_group_id !== null;
     }
 
     /**
