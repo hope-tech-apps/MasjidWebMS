@@ -112,14 +112,17 @@ class SectionsController extends Controller
 
             $section->update($data);
 
-            // Handle image uploads
-            $this->handleImageUploads($request, $section);
-
-            $section->refresh();
-
             // The same as PageSectionsController::update: this route writes a section too, so a page
-            // document it stops linking is taken offline here as well.
-            PageDocuments::forgetUnlinked($masjid, $contentBefore, $section->content, (int) $section->id);
+            // document it stops linking is taken offline here as well. In a `finally`, because the
+            // row above is written whether or not the images below are stored.
+            try {
+                // Handle image uploads
+                $this->handleImageUploads($request, $section);
+
+                $section->refresh();
+            } finally {
+                PageDocuments::forgetUnlinkedBySave($masjid, $contentBefore, (int) $section->id);
+            }
 
             return response()->json([
                 'status' => 'success',

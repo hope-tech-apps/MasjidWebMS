@@ -8,6 +8,7 @@ use App\Models\Page;
 use App\Models\Section;
 use App\Models\User;
 use App\Support\PageDocuments;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -38,6 +39,9 @@ class PageDocumentCleanupTest extends TestCase
         . "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n";
 
     private const DELETED_LOG = 'Page document deleted: no saved section links it any more';
+
+    /** A 1x1 PNG, for a save that also carries an image. */
+    private const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
     private Masjid $masjid;
 
@@ -385,9 +389,11 @@ class PageDocumentCleanupTest extends TestCase
         $section = $this->saveLinkList([$document['url']]);
 
         Log::spy();
-        // The disk refuses: the row cannot be deleted, as when a file system is read-only.
+        // The ROW cannot be deleted (the database refuses, or something listening to the delete
+        // throws). A disk that will not let the FILE go is another failure and raises nothing:
+        // a_file_the_disk_will_not_let_go_is_never_called_deleted().
         Media::deleting(function (): void {
-            throw new \RuntimeException('the disk refused, with a path a log must not carry: /srv/storage/secret');
+            throw new \RuntimeException('the delete was refused, with a path a log must not carry: /srv/storage/secret');
         });
 
         $saved = $this->updateLinkList($section, ['']);
@@ -471,6 +477,312 @@ class PageDocumentCleanupTest extends TestCase
             ->once();
     }
 
+    /* ------------------------------------------ a save from an out-of-date copy */
+
+    #[Test]
+    public function a_save_from_an_out_of_date_editor_deletes_nothing_and_an_ordinary_replace_still_deletes(): void
+    {
+        $x = $this->uploadDocument('Calendar 2025.pdf');
+        $section = $this->saveLinkList([$x['url']]);
+
+        // Two tabs have the section open. This is what the second one is holding: the whole
+        // content, which the page tool sends back on every save, whatever was edited.
+        $heldByTheSecondTab = $this->getJson($this->pageSections())->assertStatus(200)->json('data.0.content');
+        $this->assertSame($x['url'], $heldByTheSecondTab['links'][0]['url']);
+
+        // The first tab replaces X with Y and saves. An ordinary replace: X is deleted.
+        $y = $this->uploadDocument('Calendar 2026.pdf');
+        $this->updateLinkList($section, [$y['url']]);
+        $this->assertDocumentGone($x);
+        $this->assertDocumentKept($y);
+
+        // The second tab, still showing X, changes the title and saves.
+        Log::spy();
+        $saved = $this->post("{$this->pageSections()}/{$section}", [
+            '_method' => 'PUT',
+            'section_type' => 'link_list',
+            'title' => 'Downloads',
+            'content' => json_encode($heldByTheSecondTab),
+            'is_active' => 1,
+        ])->assertStatus(200)->json('data');
+
+        // The save is stored as it was sent: the old copy's link is back, and it is dead...
+        $this->assertSame($x['url'], $saved['content']['links'][0]['url']);
+        $this->get(parse_url($x['url'], PHP_URL_PATH))->assertStatus(404);
+        // ...but the document the office publishes now was not deleted with it.
+        $this->assertDocumentKept($y);
+
+        // One line, by ids alone, naming what was kept.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context = []) use ($y, $section): bool {
+                if (! str_starts_with($message, 'Page documents NOT removed')) {
+                    return false;
+                }
+
+                $this->assertStringContainsString('out-of-date editor', $message);
+                $this->assertSame([
+                    'masjid_id' => $this->masjid->id,
+                    'section_id' => $section,
+                    'media_ids' => [$y['id']],
+                ], $context);
+
+                return true;
+            })
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+
+        // The office puts the right address back by hand: an ordinary save again, and Y is linked.
+        $this->updateLinkList($section, [$y['url']]);
+        $this->assertDocumentKept($y);
+    }
+
+    #[Test]
+    public function an_address_with_no_document_of_this_organisation_behind_it_put_in_place_of_one_keeps_that_one(): void
+    {
+        // The guard above can only KEEP. It cannot tell an old copy from an office that pastes, in
+        // place of its own document, the address of a PDF of the same shape on another site: both
+        // bring in an address with none of this organisation's documents behind it.
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        $this->updateLinkList($section, ['https://elsewhere.example.test/storage/999999/annual-report.pdf']);
+
+        $this->assertDocumentKept($document);
+    }
+
+    /* ------------------------------------------------ still linked, spelt differently */
+
+    #[Test]
+    public function a_viewer_link_that_carries_the_address_percent_encoded_keeps_the_file(): void
+    {
+        $viewer = fn (array $document) => 'https://viewer.example.test/view?url=' . rawurlencode($document['url']) . '&embedded=true';
+
+        // In the SAME section: the office swaps the plain address for a viewer's link to it.
+        $same = $this->uploadDocument('Calendar.pdf');
+        $this->assertStringNotContainsString(parse_url($same['url'], PHP_URL_PATH), $viewer($same), 'the plain path is not in the link');
+        $section = $this->saveLinkList([$same['url']]);
+        $saved = $this->updateLinkList($section, [$viewer($same)]);
+        $this->assertSame($viewer($same), $saved['content']['links'][0]['url']);
+        $this->assertDocumentKept($same);
+
+        // In ANOTHER section: a call to action opens the document through the viewer, and the
+        // buttons that carried the plain address let go.
+        $other = $this->uploadDocument('Schedule.pdf');
+        $cta = $this->saveSection('cta', $this->cta($viewer($other)));
+        $buttons = $this->saveLinkList([$other['url']]);
+        $this->updateLinkList($buttons, ['']);
+        $this->assertDocumentKept($other);
+
+        // A link that only ever carried the address encoded keeps a file and never starts a
+        // deletion: when it goes too, the file is left online. Kept, not wrongly deleted.
+        $this->updateSection($cta, $this->cta(''));
+        $this->assertDocumentKept($other);
+    }
+
+    #[Test]
+    public function an_id_written_with_a_leading_zero_beside_the_real_address_never_deletes_the_file(): void
+    {
+        $zero = fn (array $document) => self::PUBLIC_DISK_URL . "/0{$document['file']}";
+
+        // Two buttons of ONE section, one spelt each way; the mistyped one is removed.
+        $first = $this->uploadDocument('Fees.pdf');
+        $this->assertSame(self::PUBLIC_DISK_URL . "/0{$first['id']}/fees.pdf", $zero($first));
+        $section = $this->saveLinkList([$first['url'], $zero($first)]);
+        $saved = $this->updateLinkList($section, [$first['url']]);
+        $this->assertSame($first['url'], $saved['content']['links'][0]['url']);
+        $this->assertDocumentKept($first);
+
+        // One button, corrected from the mistyped spelling to the real one in a single save.
+        $second = $this->uploadDocument('Handbook.pdf');
+        $corrected = $this->saveLinkList([$zero($second)]);
+        $this->updateLinkList($corrected, [$second['url']]);
+        $this->assertDocumentKept($second);
+
+        // Across TWO sections: one holds the real address, the other the mistyped one, and the
+        // other lets go, then is deleted from the library.
+        $third = $this->uploadDocument('Calendar.pdf');
+        $this->saveSection('cta', $this->cta($third['url']));
+        $mistyped = $this->saveLinkList([$zero($third)]);
+        $this->updateLinkList($mistyped, ['']);
+        $this->assertDocumentKept($third);
+        $again = $this->saveLinkList([$zero($third)]);
+        $this->deleteJson("/api/admin/masjids/{$this->masjid->id}/sections/{$again}")->assertStatus(200);
+        $this->assertDocumentKept($third);
+    }
+
+    #[Test]
+    public function an_address_whose_id_has_a_leading_zero_is_not_a_page_document_address_and_starts_no_deletion(): void
+    {
+        // Nothing else links this document, so nothing but the address pattern stands between the
+        // mistyped spelling (which, read as a number, IS this document's id) and its deletion.
+        $document = $this->uploadDocument('Calendar.pdf');
+        $mistyped = self::PUBLIC_DISK_URL . "/00{$document['file']}";
+
+        // Not a working address either: there is no file behind it.
+        Storage::disk('public')->assertMissing("00{$document['file']}");
+        $this->get(parse_url($mistyped, PHP_URL_PATH))->assertStatus(404);
+
+        $section = $this->saveLinkList([$mistyped]);
+        $this->updateLinkList($section, ['']);
+        $this->assertDocumentKept($document);
+
+        $again = $this->saveLinkList([$mistyped]);
+        $this->deleteJson("/api/admin/masjids/{$this->masjid->id}/sections/{$again}")->assertStatus(200);
+        $this->assertDocumentKept($document);
+    }
+
+    /* ------------------------------------------- a save that fails after it wrote */
+
+    #[Test]
+    public function a_save_whose_image_step_fails_after_the_content_was_written_still_takes_the_document_offline(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveSection('cta', $this->cta($document['url']));
+
+        // The section's row is written first and its image is stored second, in no transaction.
+        // The image step is made to throw (as the media library does for a name it will not keep).
+        Media::creating(function (): void {
+            throw new \RuntimeException('the image could not be stored');
+        });
+
+        $this->post("{$this->pageSections()}/{$section}", [
+            '_method' => 'PUT',
+            'content' => json_encode($this->cta('')),
+            'background_image_url' => $this->image('banner.png'),
+        ])->assertStatus(500);
+
+        // The office was told the save failed, and the content is stored all the same: the
+        // address is gone from it, so no later save could find the document to remove.
+        $this->assertSame('', Section::findOrFail($section)->content['button_link']);
+        $this->assertDocumentGone($document);
+    }
+
+    #[Test]
+    public function the_library_route_does_the_same_when_its_image_step_fails(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $kept = $this->uploadDocument('Schedule.pdf');
+        $section = $this->postJson("/api/admin/masjids/{$this->masjid->id}/sections", [
+            'section_type' => 'cta',
+            'content' => $this->cta($document['url']),
+        ])->assertStatus(201)->json('data.id');
+        $this->saveLinkList([$kept['url']]);
+
+        Media::creating(function (): void {
+            throw new \RuntimeException('the image could not be stored');
+        });
+
+        $this->post("/api/admin/masjids/{$this->masjid->id}/sections/{$section}", [
+            '_method' => 'PUT',
+            'content' => json_encode($this->cta('')),
+            'background_image_url' => $this->image('banner.png'),
+        ])->assertStatus(500);
+
+        $this->assertSame('', Section::findOrFail($section)->content['button_link']);
+        $this->assertDocumentGone($document);
+        // Only what that save unlinked: another section's document is untouched by the failure.
+        $this->assertDocumentKept($kept);
+    }
+
+    #[Test]
+    public function a_save_that_fails_before_the_content_is_written_deletes_nothing(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        // The write itself fails: the stored content still links the document.
+        Section::updating(function (): void {
+            throw new \RuntimeException('the section could not be written');
+        });
+
+        $this->post("{$this->pageSections()}/{$section}", [
+            '_method' => 'PUT',
+            'content' => json_encode($this->linkList([''])),
+        ])->assertStatus(500);
+
+        $this->assertSame($document['url'], Section::findOrFail($section)->content['links'][0]['url']);
+        $this->assertDocumentKept($document);
+    }
+
+    #[Test]
+    public function a_saved_section_that_cannot_be_read_back_deletes_nothing_and_is_written_down(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        Log::spy();
+
+        // The section is gone by the time the cleanup looks (deleted from the library by someone
+        // else in the same moment). "It links nothing now" would be a guess that deletes.
+        Section::whereKey($section)->delete();
+        PageDocuments::forgetUnlinkedBySave($this->masjid, $this->linkList([$document['url']]), $section);
+
+        $this->assertDocumentKept($document);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'Page documents were not checked')
+                && $context === ['masjid_id' => $this->masjid->id, 'section_id' => $section, 'exception' => \RuntimeException::class])
+            ->once();
+    }
+
+    /* ------------------------------------------------ a file the disk keeps */
+
+    #[Test]
+    public function a_file_the_disk_will_not_let_go_is_never_called_deleted(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $other = $this->uploadDocument('Schedule.pdf');
+        $section = $this->saveLinkList([$document['url'], $other['url']]);
+
+        // A disk that refuses every removal the way the public disk really does (a tree owned by
+        // another user, a read-only mount): it does not throw, it answers false. The media library
+        // has deleted the row by then, and reports nothing.
+        $real = Storage::disk('public');
+        Storage::set('public', new class($real->getDriver(), $real->getAdapter(), $real->getConfig()) extends FilesystemAdapter
+        {
+            public function delete($paths)
+            {
+                return false;
+            }
+
+            public function deleteDirectory($directory)
+            {
+                return false;
+            }
+        });
+
+        Log::spy();
+        $this->updateLinkList($section, ['']);
+
+        foreach ([$document, $other] as $kept) {
+            // The row is gone and the file is still public.
+            $this->assertSame(0, DB::table('media')->where('id', $kept['id'])->count());
+            Storage::disk('public')->assertExists($kept['file']);
+        }
+
+        // Each file has its own line, by ids alone, and it does not say the file was deleted.
+        foreach ([$document, $other] as $kept) {
+            Log::shouldHaveReceived('warning')
+                ->withArgs(function (string $message, array $context = []) use ($kept, $section): bool {
+                    if (($context['media_id'] ?? null) !== $kept['id']) {
+                        return false;
+                    }
+
+                    $this->assertStringStartsWith('Page document NOT removed', $message);
+                    $this->assertStringContainsString('still online', $message);
+                    $this->assertStringNotContainsString('deleted', $message);
+                    $this->assertSame([
+                        'masjid_id' => $this->masjid->id,
+                        'section_id' => $section,
+                        'media_id' => $kept['id'],
+                    ], $context);
+
+                    return true;
+                })
+                ->once();
+        }
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+    }
+
     #[Test]
     public function a_deleted_documents_address_is_a_404_from_the_application(): void
     {
@@ -489,6 +801,16 @@ class PageDocumentCleanupTest extends TestCase
     {
         $path = tempnam(sys_get_temp_dir(), 'upload');
         file_put_contents($path, self::PDF);
+        $this->temporaryFiles[] = $path;
+
+        return new UploadedFile($path, $name, null, null, true);
+    }
+
+    /** A real picture, as a section's own image upload. */
+    private function image(string $name): UploadedFile
+    {
+        $path = tempnam(sys_get_temp_dir(), 'upload');
+        file_put_contents($path, base64_decode(self::PNG_BASE64));
         $this->temporaryFiles[] = $path;
 
         return new UploadedFile($path, $name, null, null, true);

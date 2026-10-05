@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Masjid;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -52,8 +53,14 @@ final class PageDocuments
      * host or of http to https can never make a live file look unlinked. The lookahead refuses a
      * longer name that merely starts the same way (`calendar.pdf.html`, `calendar.pdfx`), and still
      * takes an address followed by a full stop, a query or a fragment.
+     *
+     * The id has NO LEADING ZERO. `/storage/03/calendar.pdf` has no file behind it and is not an
+     * address anybody is given, but read as a number it is document 3: it would find that document's
+     * row while the "still linked" test looked for the string `/storage/03/...`, which no section
+     * holding the real address contains. So it is not a page-document address at all, and removing
+     * one can never start a deletion.
      */
-    private const ADDRESS = '#/storage/(\d+)/([a-z0-9-]+\.pdf)(?![\w.-]*\w)#';
+    private const ADDRESS = '#/storage/([1-9]\d*)/([a-z0-9-]+\.pdf)(?![\w.-]*\w)#';
 
     /**
      * Store one PDF for this organisation and return its media row.
@@ -97,36 +104,46 @@ final class PageDocuments
      * Called after the write, with the section's content as it was and as it now is (`[]` once the
      * section is deleted). This DELETES PUBLIC FILES, so every step narrows what it may touch:
      *
-     *  1. Only an address that was in THIS section before the write and is in it no longer.
+     *  1. Only an address that was in THIS section before the write and is in it no longer. Read
+     *     from the content as it was written: an address that was only ever there percent-encoded,
+     *     inside another link, keeps its file (step 3) and never starts a deletion.
      *  2. Only a file that is this organisation's own page document, found through
      *     Masjid::pageDocuments() by media id AND stored name. Another organisation's document whose
      *     address was pasted here, a section image, a gallery photo: none of them can match.
-     *  3. Not while any other section of this organisation still carries the address, on a page or
-     *     only in the library, active or not. Looked for in the decoded content, because the stored
+     *  3. Not while this section, or any other section of this organisation (on a page or only in
+     *     the library, active or not), still LINKS the file. "Links" is read widely, because a wrong
+     *     answer here deletes a file a page still uses: the address as it was written, the
+     *     document's own path (`/storage/{id}/{stored name}`), and either of them percent-encoded
+     *     inside another address (linked()). Looked for in the decoded content, because the stored
      *     JSON writes each `/` as `\/`.
+     *  4. Not on a save that looks OUT OF DATE (linksADocumentNotOnFile()): then nothing is deleted.
      *
      * It never fails the save it follows: whatever goes wrong here, the office's edit is already
      * stored, and the worst outcome is a file left online, which is the state before this existed.
      * Every removal, and every failure, leaves a line at WARNING (production's log level drops
-     * anything quieter), by ids alone.
+     * anything quieter), by ids alone. A file is only ever called deleted once the disk says it is
+     * gone (remove()).
      */
     public static function forgetUnlinked(Masjid $masjid, mixed $before, mixed $after, int $sectionId): void
     {
         $ids = ['masjid_id' => $masjid->id, 'section_id' => $sectionId];
 
         try {
+            $beforeStrings = self::strings($before);
             $afterStrings = self::strings($after);
+            $afterSpellings = self::spellings($afterStrings);
+
             $unlinked = array_filter(
-                self::addresses(self::strings($before)),
-                fn (string $path) => ! self::mentions($afterStrings, $path),
+                self::addresses($beforeStrings),
+                fn (string $path) => ! self::mentions($afterSpellings, $path),
                 ARRAY_FILTER_USE_KEY
             );
 
             $documents = [];
             foreach ($unlinked as $path => [$mediaId, $storedName]) {
-                $media = $masjid->pageDocuments()->whereKey($mediaId)->where('file_name', $storedName)->first();
+                $media = self::document($masjid, $mediaId, $storedName);
 
-                if ($media !== null) {
+                if ($media !== null && ! self::linked($afterSpellings, $path, $media)) {
                     $documents[$path] = $media;
                 }
             }
@@ -139,33 +156,164 @@ final class PageDocuments
             // for every row, and nothing below needs it.
             $elsewhere = $masjid->sections()->whereKeyNot($sectionId)->toBase()->pluck('content');
             foreach ($elsewhere as $content) {
-                $strings = self::strings($content);
+                $spellings = self::spellings(self::strings($content));
                 $documents = array_filter(
                     $documents,
-                    fn (string $path) => ! self::mentions($strings, $path),
-                    ARRAY_FILTER_USE_KEY
+                    fn (Media $media, string $path) => ! self::linked($spellings, $path, $media),
+                    ARRAY_FILTER_USE_BOTH
                 );
             }
 
-            foreach ($documents as $media) {
-                // Through the model, so the row and the file go together. One at a time: a file that
-                // cannot be removed must not keep the others online.
-                try {
-                    $media->delete();
+            if ($documents === []) {
+                return;
+            }
 
-                    Log::warning('Page document deleted: no saved section links it any more', $ids + ['media_id' => $media->id]);
-                } catch (Throwable $e) {
-                    Log::warning('Page document NOT deleted, and no saved section links it any more', $ids + [
-                        'media_id' => $media->id,
-                        'exception' => $e::class,
-                    ]);
-                }
+            if (self::linksADocumentNotOnFile($masjid, $beforeStrings, $afterStrings)) {
+                Log::warning(
+                    'Page documents NOT removed: this save links a page document that is not on file, as a save from an out-of-date editor does',
+                    $ids + ['media_ids' => array_values(array_map(fn (Media $media) => $media->id, $documents))]
+                );
+
+                return;
+            }
+
+            foreach ($documents as $media) {
+                self::remove($media, $ids);
             }
         } catch (Throwable $e) {
             Log::warning('Page documents were not checked after a section was saved or deleted', $ids + [
                 'exception' => $e::class,
             ]);
         }
+    }
+
+    /**
+     * forgetUnlinked() for a section that was just SAVED, compared with what is stored now.
+     *
+     * A save writes the section's row and then does more (the placement, the images), in no
+     * transaction. When a later step fails the office is answered 500, but the content is written:
+     * the address is already gone from it, and the next save's "before" no longer carries it, so a
+     * cleanup that ran only on success would leave that document online for good. Both controllers
+     * therefore call this in a `finally` that starts once the content write has succeeded. It reads
+     * the row itself rather than trust a model a failed step left half-updated, and like
+     * forgetUnlinked() it cannot throw: in a `finally`, an exception from here would replace the one
+     * the office has to be told about.
+     */
+    public static function forgetUnlinkedBySave(Masjid $masjid, mixed $before, int $sectionId): void
+    {
+        try {
+            $stored = $masjid->sections()->whereKey($sectionId)->toBase()->first(['content']);
+
+            if ($stored === null) {
+                // Nothing to compare with. Not "the section links nothing now": that reading
+                // would delete every document it linked.
+                throw new RuntimeException('The saved section is not there to be read.');
+            }
+        } catch (Throwable $e) {
+            Log::warning('Page documents were not checked after a section was saved or deleted', [
+                'masjid_id' => $masjid->id,
+                'section_id' => $sectionId,
+                'exception' => $e::class,
+            ]);
+
+            return;
+        }
+
+        self::forgetUnlinked($masjid, $before, $stored->content, $sectionId);
+    }
+
+    /**
+     * Delete one document, and say what happened to its FILE.
+     *
+     * The media library deletes the row first and removes the file afterwards, and a disk that
+     * will not let a file go raises nothing: the public disk does not throw, and the library reports
+     * what would. So "the delete returned" is not "the file is gone". The disk is asked. A file it
+     * still holds is still public, with no row left for a later save to find it by, and the line
+     * must say so: it is the only record there will be.
+     *
+     * One document at a time, each in its own try: a file that cannot be removed must not keep the
+     * others online.
+     *
+     * @param  array{masjid_id: int, section_id: int}  $ids
+     */
+    private static function remove(Media $media, array $ids): void
+    {
+        $ids += ['media_id' => $media->id];
+
+        try {
+            // Read before the delete: the row cannot be asked afterwards.
+            $disk = $media->disk;
+            $file = $media->getPathRelativeToRoot();
+
+            // Through the model, so the row and the file go together.
+            $media->delete();
+        } catch (Throwable $e) {
+            Log::warning('Page document NOT deleted, and no saved section links it any more', $ids + [
+                'exception' => $e::class,
+            ]);
+
+            return;
+        }
+
+        if (self::onDisk($disk, $file)) {
+            Log::warning('Page document NOT removed: no saved section links it and its record is gone, but the disk kept the file, which is still online', $ids);
+
+            return;
+        }
+
+        Log::warning('Page document deleted: no saved section links it any more', $ids);
+    }
+
+    /** Whether the disk still holds this file. A disk that cannot say has not removed it. */
+    private static function onDisk(string $disk, string $file): bool
+    {
+        try {
+            return Storage::disk($disk)->exists($file);
+        } catch (Throwable) {
+            return true;
+        }
+    }
+
+    /** This organisation's own page document with this id AND this stored name, or nothing. */
+    private static function document(Masjid $masjid, int $mediaId, string $storedName): ?Media
+    {
+        return $masjid->pageDocuments()->whereKey($mediaId)->where('file_name', $storedName)->first();
+    }
+
+    /**
+     * Whether a save looks as if it came from an OUT-OF-DATE editor: its content brings in an
+     * address of page-document shape that the section did not have before, and no document of this
+     * organisation is behind that address.
+     *
+     * That is what a second tab does. Two tabs have one section open, linking document X. One
+     * replaces X with Y and saves, and X is deleted, as it should be. The other, still showing X,
+     * saves: X's address comes back, Y's goes, and without this Y would be deleted too, leaving the
+     * page linking a file that is gone and the office with neither. An editor is only ever handed
+     * the address of a document that exists, so a new address with nothing behind it is the mark of
+     * an old copy. On such a save nothing is deleted. The link the old copy put back is still
+     * dead (the save itself is not refused), but the current document is not lost with it.
+     *
+     * It errs towards keeping, and can only keep: an address of that shape on another site, or
+     * another organisation's document, pasted in the same save that removes one of this
+     * organisation's own, also stops that deletion.
+     *
+     * @param  list<string>  $before
+     * @param  list<string>  $after
+     */
+    private static function linksADocumentNotOnFile(Masjid $masjid, array $before, array $after): bool
+    {
+        $introduced = array_diff_key(
+            self::addresses(self::spellings($after)),
+            self::addresses(self::spellings($before))
+        );
+
+        foreach ($introduced as [$mediaId, $storedName]) {
+            if (self::document($masjid, $mediaId, $storedName) === null) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -215,6 +363,46 @@ final class PageDocuments
         }
 
         return $found;
+    }
+
+    /**
+     * These strings, and each of them percent-decoded where that reads differently.
+     *
+     * A link to a document viewer carries the document's address inside its own, encoded
+     * (`https://viewer.example/view?url=https%3A%2F%2F...%2Fstorage%2F3%2Fcalendar.pdf`). That is a
+     * link to the file all the same, and the page that carries it goes dead if the file is deleted.
+     * Decoded once: an address encoded twice over is not found.
+     *
+     * @param  list<string>  $strings
+     * @return list<string>
+     */
+    private static function spellings(array $strings): array
+    {
+        $spellings = $strings;
+
+        foreach ($strings as $string) {
+            $decoded = rawurldecode($string);
+
+            if ($decoded !== $string) {
+                $spellings[] = $decoded;
+            }
+        }
+
+        return $spellings;
+    }
+
+    /**
+     * Whether these strings still link this document: by the address as it was written, or by the
+     * document's own path. The two are the same string today, because ADDRESS takes an id in one
+     * spelling only. The document's own path is asked as well so that this test, the last thing
+     * between a save and a deleted file, does not rest on that pattern alone.
+     *
+     * @param  list<string>  $spellings
+     */
+    private static function linked(array $spellings, string $path, Media $media): bool
+    {
+        return self::mentions($spellings, $path)
+            || self::mentions($spellings, "/storage/{$media->id}/{$media->file_name}");
     }
 
     /**

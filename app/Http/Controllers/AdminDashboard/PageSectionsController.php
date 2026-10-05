@@ -178,30 +178,37 @@ class PageSectionsController extends Controller
                 $section->update($sectionData);
             }
 
-            // Update pivot order/platforms if provided (placement-level fields).
-            $pivotUpdate = [];
-            if (array_key_exists('order', $validated)) {
-                $pivotUpdate['order'] = $validated['order'];
-            }
-            if (array_key_exists('platforms', $validated)) {
-                $pivotUpdate['platforms'] = $validated['platforms'];
-            }
-            if (!empty($pivotUpdate)) {
-                $page->sections()->updateExistingPivot($section->id, $pivotUpdate);
-            }
+            // From here the section's row is WRITTEN, and nothing below is in a transaction with it.
+            // So the cleanup is in a `finally`: if the placement or an image fails, the office is
+            // answered 500 but the content has already lost the address, and no later save would
+            // have it in its "before" to find the document by.
+            try {
+                // Update pivot order/platforms if provided (placement-level fields).
+                $pivotUpdate = [];
+                if (array_key_exists('order', $validated)) {
+                    $pivotUpdate['order'] = $validated['order'];
+                }
+                if (array_key_exists('platforms', $validated)) {
+                    $pivotUpdate['platforms'] = $validated['platforms'];
+                }
+                if (!empty($pivotUpdate)) {
+                    $page->sections()->updateExistingPivot($section->id, $pivotUpdate);
+                }
 
-            // Handle image uploads
-            $this->handleImageUploads($request, $section);
+                // Handle image uploads
+                $this->handleImageUploads($request, $section);
 
-            // Reload section to get updated content with image URLs
-            $section->refresh();
-            $section->load(['pages' => function ($query) use ($page_id) {
-                $query->where('pages.id', $page_id);
-            }]);
-
-            // A page document this save stopped linking is taken offline now, unless another section
-            // of the organisation still links it. Never fails the save (App\Support\PageDocuments).
-            PageDocuments::forgetUnlinked($masjid, $contentBefore, $section->content, (int) $section->id);
+                // Reload section to get updated content with image URLs
+                $section->refresh();
+                $section->load(['pages' => function ($query) use ($page_id) {
+                    $query->where('pages.id', $page_id);
+                }]);
+            } finally {
+                // A page document this save stopped linking is taken offline now, unless another
+                // section of the organisation still links it. Compared with what is STORED, and
+                // never fails the save or hides its failure (App\Support\PageDocuments).
+                PageDocuments::forgetUnlinkedBySave($masjid, $contentBefore, (int) $section->id);
+            }
 
             $order = $validated['order'] ?? $currentOrder;
             $platforms = array_key_exists('platforms', $validated)
