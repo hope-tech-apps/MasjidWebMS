@@ -1,5 +1,5 @@
 <template>
-    <div ref="root" class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
+    <div ref="root" class="modal fade show d-block move-student" tabindex="-1" style="background:rgba(0,0,0,.5)"
          role="dialog" aria-modal="true" aria-labelledby="move-student-title"
          @click.self="cancel">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
@@ -367,3 +367,19 @@ onBeforeUnmount(() => {
     if (opener && document.contains(opener)) opener.focus();
 });
 </script>
+
+<style scoped>
+/*
+ * The form stands between the dialog's box and its body and footer. Unless it is itself a
+ * column that may shrink, the body never scrolls and the box cuts off everything below the
+ * fold, the Move button with it. Seen in a browser at 1280 by 900 once a move carried consent:
+ * the lines about what follows the student grew past the window, and the button could not be
+ * reached with a mouse or a finger.
+ */
+.move-student form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+</style>

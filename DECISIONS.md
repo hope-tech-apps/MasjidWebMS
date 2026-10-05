@@ -7807,6 +7807,14 @@ themselves still run only on the MySQL job.
   Remove once a consent was carried beside it. The roster's consent button shows the word "Consent". The
   consent answers carry their notes at the top level of the answer. For a class the child has left, the
   portal's Story tab shows nothing rather than "Nothing posted yet." (M-20).
+- **From the integration walk, in a browser on a local instance.** Three things no test without a layout could
+  see, each fixed and pinned. The single-student dialog's Move button was out of reach on a laptop-height
+  window once its preview carried the consent lines: the form between the dialog's box and its body stopped the
+  body scrolling (the class dialog had the same fault on a phone, fixed by its builder). "Open {class}" on a
+  refusal outlined the guardian's row and left it below the fold: every navigation in the admin app ends by
+  scrolling to the top, the one that takes `focus` off the address included, so the roster now waits for that
+  navigation before it scrolls. And after a move that empties a class the keyboard was on nothing, because the
+  button the dialog returns it to had just gone: it goes to "Add to roster".
 - **Not built, and whose it is.** The class-store balance does NOT follow a moved student yet: the ledger's
   two transfer kinds, their writer and their labels are in this branch and nothing calls them; the commit
   that lets a move carry a balance waits on the class-store rules and is made separately, with its own

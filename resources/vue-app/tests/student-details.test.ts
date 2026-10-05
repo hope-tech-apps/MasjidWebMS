@@ -535,6 +535,8 @@ async function mountRoster(memberships: any[], options: {
     meta?: any; swal?: (o: any) => Promise<any>; api?: any; store?: any; onChanged?: () => void;
     /** The page's address query, as the router hands it over (`?focus=` names a roster row). */
     query?: Record<string, any>;
+    /** The router's `replace`, when a test must decide WHEN a change of address finishes. */
+    replace?: (to: any) => Promise<any>;
 } = {}) {
     const panel: { student: any; memberships: any[]; emit: any } = { student: null, memberships: [], emit: null };
     // The panel, standing in: it records what it was given and draws the five mount points the
@@ -620,7 +622,7 @@ async function mountRoster(memberships: any[], options: {
             const query = new URLSearchParams(to?.query ?? {}).toString();
             return { href: `/groups/${to?.params?.groupId ?? ''}${query ? `?${query}` : ''}` };
         },
-        replace: async (to: any) => { routed.replaced.push(to); },
+        replace: async (to: any) => { routed.replaced.push(to); await options.replace?.(to); },
     };
 
     const screen = await mountSfc('views/dashboard/groups/GroupRosterTab.vue', {
@@ -1467,6 +1469,45 @@ test('roster: a link that names a row brings it into view and outlines it until 
     }
 });
 
+test('roster: the row is brought into view only after the address has changed, because every navigation scrolls the page to the top', async () => {
+    // router.ts ends each navigation, a `replace` included, by scrolling the page to the top. Seen
+    // in a browser: the roster asked the router to take `focus` off the address and scrolled to the
+    // row at once, the navigation then scrolled back to the top, and the row was left outlined
+    // below the fold. So the scroll waits for the navigation.
+    const scrolled: any[] = [];
+    (Node.prototype as any).scrollIntoView = function () { scrolled.push(this.props.id); };
+
+    try {
+        const r = roster();
+        const navigation = deferred<void>();
+        const { screen, routed } = await mountRoster(vue.reactive([...r.rows]), {
+            meta: CLASS_META, query: { focus: String(r.father.id) }, replace: () => navigation.promise,
+        });
+        const outlined = () => screen.all((n: Node) => n.tag === 'tr' && String(n.props.class ?? '').split(/\s+/).includes('roster-row-focus')).length;
+
+        // The navigation was asked for and has not finished: nothing is scrolled or outlined yet.
+        assert.deepEqual(routed.replaced, [{ query: {} }]);
+        assert.deepEqual(scrolled, []);
+        assert.equal(outlined(), 0);
+
+        navigation.resolve();
+        await flush();
+        assert.deepEqual(scrolled, [`roster-row-${r.father.id}`]);
+        assert.equal(outlined(), 1);
+        screen.unmount();
+
+        // A navigation that fails (the router refused it) still brings the row into view.
+        const s = roster();
+        const refused = await mountRoster(vue.reactive([...s.rows]), {
+            meta: CLASS_META, query: { focus: String(s.mother.id) }, replace: async () => { throw new Error('navigation cancelled'); },
+        });
+        assert.deepEqual(scrolled, [`roster-row-${r.father.id}`, `roster-row-${s.mother.id}`]);
+        refused.screen.unmount();
+    } finally {
+        delete (Node.prototype as any).scrollIntoView;
+    }
+});
+
 test('roster: a row that is not on this roster, or a value that is not a row, is ignored', async () => {
     const scrolled: any[] = [];
     (Node.prototype as any).scrollIntoView = function () { scrolled.push(this.props.id); };
@@ -1612,7 +1653,10 @@ test('roster: "Move the class" opens the class dialog with this roster, and the 
         store: {
             refreshMemberships: async (groupId: any) => {
                 rereads.push(groupId);
-                if (rereads.length === 2) for (const student of [memberships[0], memberships[1]]) student.left_on = '2026-10-04T00:00:00.000000Z';
+                if (rereads.length === 2) {
+                    for (const student of [memberships[0], memberships[1]]) student.left_on = '2026-10-04T00:00:00.000000Z';
+                    (globalThis as any).document.activeElement = null;
+                }
             },
         },
     });
@@ -1646,15 +1690,20 @@ test('roster: "Move the class" opens the class dialog with this roster, and the 
     // shut, and the roster read again without the spinner that would empty the table.
     click(classButtons(screen)[0]);
     await flush();
+    // As a browser leaves it once the dialog is gone: the keyboard is back on the button that opened it.
+    (globalThis as any).document.activeElement = classButtons(screen)[0];
     classDialog.emit('reload');
     await flush();
     assert.equal(dialogs(), 0);
     assert.deepEqual(rereads, [CLASS]);
     assert.equal(classButtons(screen).length, 1, 'nobody was moved: the class can still be moved');
+    assert.equal((globalThis as any).document.activeElement?.textContent?.trim(), 'Move the class', 'the keyboard was taken from the button that is still there');
 
     // The result was read and OK pressed: shut, read again, and with nobody left to move the button goes.
     click(classButtons(screen)[0]);
     await flush();
+    // The re-read takes the button away while it holds the keyboard, and a browser then leaves the
+    // keyboard on nothing: the stand-in store does the same as it empties the class.
     classDialog.emit('moved');
     await flush();
     assert.equal(dialogs(), 0);
@@ -1662,6 +1711,8 @@ test('roster: "Move the class" opens the class dialog with this roster, and the 
     assert.equal(changed, 0, 'the page was asked for the reload that empties the table');
     assert.equal((globalThis as any).document.body.style.overflow, '');
     assert.equal(classButtons(screen).length, 0, 'a class with no current student still offers the move');
+    // The dialog gave the keyboard back to a button that has just gone: it goes to the one beside it.
+    assert.equal((globalThis as any).document.activeElement?.textContent?.trim(), 'Add to roster');
     screen.unmount();
 });
 

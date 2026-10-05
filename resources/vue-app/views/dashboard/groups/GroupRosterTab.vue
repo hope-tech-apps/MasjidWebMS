@@ -12,7 +12,7 @@
                 <button v-if="canMoveClass" type="button" class="btn btn-sm btn-outline-primary" @click="movingClass = true">
                     <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i> Move the class
                 </button>
-                <button class="btn btn-sm btn-success" @click="openAddModal">
+                <button ref="addToRosterButton" class="btn btn-sm btn-success" @click="openAddModal">
                     <i class="bi bi-person-plus me-1"></i> Add to roster
                 </button>
             </div>
@@ -1088,6 +1088,8 @@ const isClass = computed<boolean>(() => rosterMeta.value?.teaches_students === t
  */
 const movingClass = ref(false);
 const canMoveClass = computed<boolean>(() => props.memberships.some(canBeMoved));
+/** "Add to roster": where the keyboard goes when the button that opened the class dialog is gone. */
+const addToRosterButton = ref<HTMLButtonElement | null>(null);
 const missingBirthDates = computed<string>(() => missingBirthDatesLine(props.memberships, isClass.value));
 const consentBanner = computed<string>(() => consentBannerText(consentBannerCount(props.memberships)));
 
@@ -1106,10 +1108,21 @@ const reloadQuietly = async () => {
 };
 
 const afterMoveDialog = async () => {
+    const wasClassMove = movingClass.value;
     moveFor.value = null;
     movingClass.value = false;
     putBackFor.value = null;
     await reloadQuietly();
+
+    // The class dialog hands the keyboard back to "Move the class" as it shuts.
+    // When the move emptied the class that button has just gone, and the
+    // keyboard with it (seen in a browser: focus on nothing at all). Only
+    // then, it goes to the button beside it.
+    if (wasClassMove) {
+        await nextTick();
+        const held = document.activeElement;
+        if (!held || held === document.body) addToRosterButton.value?.focus();
+    }
 };
 
 /**
@@ -1131,7 +1144,8 @@ const openClass = (groupId: number, membershipId?: number | null) => {
  * Read once. An id that is not on this roster is ignored, and either way the
  * value is taken off the address: the tabs of this page mount this component
  * again each time Roster is chosen, and the roster must not jump back to the
- * row every time.
+ * row every time. The row is scrolled to only after that change of address
+ * has finished (see below).
  */
 const route = useRoute();
 const focusedRow = ref<number | null>(null);
@@ -1146,8 +1160,13 @@ watch(() => [props.loading, props.loadError, props.memberships.length], async ()
     const id = focusAsked;
     focusAsked = null;
 
+    // Off the address FIRST, and waited for. Every navigation in this app ends
+    // by scrolling the page to the top (router.ts), this one included: a row
+    // brought into view before it had finished was scrolled away from again,
+    // and the office landed on the top of the roster with the row outlined
+    // below the fold.
     const { focus: _used, ...rest } = route.query;
-    router.replace({ query: rest }).catch(() => {});
+    await router.replace({ query: rest }).catch(() => {});
 
     if (!props.memberships.some((m) => m.id === id)) return;
 

@@ -392,6 +392,16 @@ test('one place sends the undo, and one place builds the sentences about a move'
     }
     assert.match(modal, /v-for="\(line, i\) in preview\.lines"/);
 
+    // THE FORM MAY SHRINK, SO THE BODY SCROLLS AND THE BUTTON STAYS IN REACH. The dialog is
+    // `modal-dialog-scrollable` and its body and footer sit inside a <form>. Seen in a browser at
+    // 1280 by 900 once a move carried consent: the preview grew past the window, the body did not
+    // scroll and the box cut the Move button off. No test without a layout can see that, so the
+    // rule is pinned where it is written, as it is for the whole-class dialog.
+    assert.match(modal, /class="modal fade show d-block move-student"/);
+    assert.match(modal, /modal-dialog modal-dialog-centered modal-dialog-scrollable/);
+    assert.match(modal, /<form v-else @submit\.prevent="save">\s+<div class="modal-body">/);
+    assert.match(modal, /<style scoped>[\s\S]*\.move-student form \{\s+display: flex;\s+flex-direction: column;\s+flex: 1 1 auto;\s+min-height: 0;\s+\}/);
+
     // Put back: the server's three fields are printed, never rebuilt. The helper reads them and the
     // dialog draws `decision.lines`; neither writes a sentence about consent or Manara Bucks.
     const helper = source('core/helpers/rosterMove.ts');
