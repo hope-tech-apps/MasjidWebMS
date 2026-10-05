@@ -1146,6 +1146,46 @@ class RosterMoveTest extends TestCase
         $this->assertSame($student->id, (int) DB::table('prize_ledger_entries')->value('group_membership_id'));
     }
 
+    /**
+     * The same rule for everything a move began to say about consent: a
+     * refusal, the roster list's "Put back" lines, a withdrawal's notes and
+     * the history line are about guardians and classes. None of them reads a
+     * ledger, so none can differ with what one child holds.
+     */
+    #[Test]
+    public function nothing_said_about_consent_carries_a_figure_about_a_childs_bucks(): void
+    {
+        $this->logLikeProduction();
+        $this->school->forceFill(['capability_overrides' => [SchoolSettings::CLASS_STORE => true]])->save();
+
+        $student = $this->enrol($this->first, 'Maryam');
+        $parent = $this->guardian($student, 'Huda', consent: 'media');
+        // A balance no id, day or count in these answers could spell by chance.
+        $this->plantRecord('prize_ledger_entries', $student, ['amount' => 91735]);
+        $ledger = DB::table('prize_ledger_entries')->orderBy('id')->get()->toArray();
+        $this->assertSame(91735, (int) $ledger[0]->amount);
+
+        $there = $this->movedTo($student, $this->second);
+        $withdrawal = $this->withdrawConsent($this->entryIn($this->second, $parent))->assertOk();
+        $this->assertNotSame([], $withdrawal->json('notes'));
+
+        $refusedPreview = $this->previewMove($there, $this->first, self::TODAY)->assertOk()->assertJsonPath('data.can_move', false);
+        $refusedMove = $this->move($there, $this->first, self::TODAY)->assertStatus(409);
+        $roster = $this->roster($this->first)->assertOk();
+        $this->assertNotSame([], collect($roster->json('data'))->firstWhere('id', $student->id)['moved_to_state']['consent_blocks']);
+
+        foreach ([$withdrawal, $refusedPreview, $refusedMove, $roster, $this->roster($this->second)->assertOk()] as $response) {
+            $this->assertStringNotContainsString('91735', $response->getContent());
+        }
+
+        $history = $this->loggedLines('laravel.log', 'roster.move');
+        $this->assertCount(1, $history);
+        $this->assertStringNotContainsString('91735', $history[0]);
+
+        // And nothing here wrote to the ledger.
+        $this->assertEquals($ledger, DB::table('prize_ledger_entries')->orderBy('id')->get()->toArray());
+    }
+
     #[Test]
     public function a_message_still_waiting_is_counted_apart_from_the_record_it_also_is(): void
     {
