@@ -242,8 +242,11 @@ persisted before the call, webhook-only advancement). On top of them:
   deleted, only cancelled: paid by card, cash or elsewhere, in any status, refunded or
   disputed. "Never paid" is an allowlist, `FormResponse::neverRecordedAPayment()` (method
   `online` or `office`, `payment_status` exactly `unpaid`, no `paid_at`, no payment intent, no
-  charge flag), so a state nothing writes goes to a person, never to the delete. Do not widen
-  `hasMoneyLeg()` or test "not paid" instead. A never-paid registration that is not cancelled is
+  charge flag, and every other column only a payment writes empty: `paid_via`,
+  `marked_paid_by_user_id`, `staff_code_id`, `collected_at`, `charge_flagged_at`,
+  `charge_refunded_minor`), so a state nothing writes goes to a person, never to the delete. A
+  new column that only a payment writes joins that list. Do not widen `hasMoneyLeg()` or test
+  "not paid" instead. A never-paid registration that is not cancelled is
   refused ("cancel it first") without asking Stripe: until it is cancelled it can still be paid.
   A cancelled one with a card page on record is deleted only when Stripe answers exactly
   `expired` for that page, asked at the moment of the delete under the row lock through
@@ -251,8 +254,13 @@ persisted before the call, webhook-only advancement). On top of them:
   late, or can have refused the event and answered 200), and the cancel records nothing about
   its own close, so neither is trusted. Every other answer, and no answer, keeps the row. Those
   refusals are RETURNED from the transaction, not thrown: `closeOpenSession()` switches an
-  unreachable holder off inside it. One warning line, ids only, is written before the delete;
-  `$row->delete()` is the last write, because the uploaded files leave the disk in its hook.
+  unreachable holder off inside it. The rule is read from the row as LOCKED, never from the
+  copy the request first found: a registration restored or paid in between is kept. One
+  warning line, ids only, is written before the delete and worded in the present ("is being
+  deleted"), so a delete that then rolls back has not been called done; a page Stripe says was
+  paid leaves its own warning line, and its sentence promises nothing about the row.
+  `$row->delete()` comes after everything that can refuse, because the uploaded files leave the
+  disk in its hook and no rollback puts them back.
   On a form that reserves dates the form row is locked first, as `update()` locks it.
 - **`customer_email`** is prefilled only when `FILTER_VALIDATE_EMAIL` passes and the
   domain has a dot. A Stripe `InvalidRequestException` is retried ONCE without it,

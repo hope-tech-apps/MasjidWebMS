@@ -140,8 +140,12 @@ class FormResponsesController extends Controller
     /** Never paid, but not cancelled, so it can still be paid. Stripe is not asked. */
     private const DELETE_CANCEL_FIRST = 'This registration has not been paid, but it still can be. Cancel it first; a cancelled registration that was never paid can then be deleted.';
 
-    /** Stripe says the card page was paid. The refund instruction follows it. */
-    private const DELETE_PAID_ON_STRIPE = 'This registration was paid by card, so it was not deleted. It will show as paid once Stripe confirms it.';
+    /**
+     * Stripe says the card page was paid. The refund instruction follows it. It promises
+     * nothing about the row: when the webhook refused that payment's event and answered
+     * Stripe 200, no second event comes, and the registration reads unpaid for good.
+     */
+    private const DELETE_PAID_ON_STRIPE = 'This registration was paid by card, so it was not deleted. If it still shows as unpaid later, check this payment in Stripe.';
 
     /** A page is on the row and its organisation has no Stripe account on record to ask about it. */
     private const DELETE_PAGE_UNCHECKED = 'This registration has a card payment page, and there is no Stripe account on record to check it on, so we cannot tell whether it was paid. It was not deleted and stays cancelled.';
@@ -791,7 +795,9 @@ class FormResponsesController extends Controller
                 // and the public submit lock it. The submit holds the form and then locks
                 // the registration holding the date it asks for (FormReservations::claim());
                 // a delete holds the registration and then writes the form's counter. Taken
-                // in one order the two queue, and never deadlock.
+                // in one order the two queue, and never deadlock. The cost is a known limit
+                // (DECISIONS.md 2026-10-05): the form row is then held across this delete's
+                // questions to Stripe, and submissions to that form wait for them.
                 if ($form->reservation() !== null) {
                     Form::whereKey($form->id)->lockForUpdate()->first();
                 }
@@ -810,12 +816,23 @@ class FormResponsesController extends Controller
                     return $refusal;
                 }
 
-                // At warning, the level production runs at. The uuid and the Checkout
-                // session are what the webhook's "NOTHING was recorded" warnings carry
-                // (FormResponsePaymentService), so a payment that arrives for a registration
-                // deleted here can still be matched to it. Ids only: never a name, an
-                // address or an answer.
-                Log::warning('A form registration was deleted from the admin screen. Nothing of it is kept; these ids are the record of it.', [
+                // Written BEFORE the delete, so the record exists even if the process dies
+                // between the two, and worded in the present for the same reason: a delete
+                // that then fails rolls back, and this line must not have said "deleted" of
+                // a registration that is still there. At warning, the level production
+                // runs at.
+                //
+                // What matches a payment that arrives afterwards to the registration it was
+                // for (the webhook's "NOTHING was recorded" warnings,
+                // FormResponsePaymentService): the uuid, which the warning carries for a
+                // charge on the organisation's own account; the Checkout session, which the
+                // page's own event carries as `object` when it was charged through another
+                // organisation; and the charge reference, the one key such a charge carries
+                // in Stripe's own metadata, since its payment intent's warning names nothing
+                // else of the registration. The cancel's who-and-when goes with the row, so
+                // it is here too. Ids, amounts and a time: never a name, an address or an
+                // answer.
+                Log::warning('A form registration is being deleted from the admin screen. Nothing of it is kept; these ids are the record of it.', [
                     'masjid_id' => $row->masjid_id,
                     'form_id' => $row->form_id,
                     'form_response_id' => $row->id,
@@ -823,14 +840,19 @@ class FormResponsesController extends Controller
                     'payment_method' => $row->payment_method,
                     'checkout_session_id' => $row->stripe_checkout_session_id,
                     'charge_masjid_id' => $row->charge_masjid_id,
+                    'charge_ref' => $row->charge_ref,
                     'amount_due_minor' => $row->amount_due_minor,
                     'total_minor' => $row->total_minor,
+                    'status_changed_by_user_id' => $row->status_changed_by_user_id,
+                    'status_changed_at' => optional($row->status_changed_at)->toIso8601String(),
                     'user_id' => $operator?->id,
                 ]);
 
-                // The last write, after everything that can refuse: the deleting hook
-                // removes the uploaded files from the disk (FormResponse::booted()), and no
-                // rollback puts those back.
+                // After everything that can refuse: the deleting hook removes the uploaded
+                // files from the disk (FormResponse::booted()), and no rollback puts those
+                // back. It is not the last write: the row's own DELETE, the form's counter
+                // and the commit follow the files, so a failure in one of them leaves the
+                // registration in the list without its files.
                 $row->delete();
 
                 return [Response::HTTP_OK, null];
@@ -933,11 +955,28 @@ class FormResponsesController extends Controller
                 : [Response::HTTP_SERVICE_UNAVAILABLE, self::DELETE_STRIPE_UNCONFIRMED];
         }
 
+        if ($page === 'complete') {
+            // The moment the platform learns there is money at Stripe that this row does
+            // not record. When the webhook is only late, its own line follows; when it
+            // refused the event and answered 200, Stripe sends no other and this is the
+            // one trace for whoever reconciles it. At warning, the level production runs
+            // at; by ids only.
+            Log::warning('A cancelled form registration was not deleted: Stripe says its card payment page was paid, and the registration reads unpaid.', [
+                'masjid_id' => $row->masjid_id,
+                'form_id' => $row->form_id,
+                'form_response_id' => $row->id,
+                'form_response_uuid' => $row->uuid,
+                'checkout_session_id' => $row->stripe_checkout_session_id,
+                'charge_masjid_id' => $row->charge_masjid_id,
+            ]);
+        }
+
         return match ($page) {
             'expired' => null,
             // The payer finished the page, even a moment before the close landed. The
-            // webhook records it against this row, which is why the row must still be
-            // here; a cancelled registration that was paid is the organisation's to refund.
+            // webhook records it against this row when it arrives, which is why the row
+            // must still be here; a cancelled registration that was paid is the
+            // organisation's to refund.
             'complete' => [
                 Response::HTTP_UNPROCESSABLE_ENTITY,
                 self::DELETE_PAID_ON_STRIPE . ' ' . (FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.'),

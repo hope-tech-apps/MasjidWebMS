@@ -7856,3 +7856,62 @@ themselves still run only on the MySQL job.
   two questions, the wiring, the two sentences against the controller's source),
   `tests/Mysql/FormResponseDeleteLockMysqlTest.php` (the two locking reads and their order; CI only, NOT run
   where it was written).
+- **After the three reviews (2026-10-05, same branch).** Three reviewers (server, money, screen) found no
+  defect in the committed behaviour. This round closes the test gaps they named, hardens the allowlist and makes
+  four sentences true. Where a line here differs from a bullet above, this one stands.
+  - **The allowlist names every column only a payment writes.** `neverRecordedAPayment()` now also requires
+    `paid_via`, `marked_paid_by_user_id`, `staff_code_id`, `collected_at` and `charge_flagged_at` to be null and
+    `charge_refunded_minor` to be empty. The application writes each of them together with `paid` or with the
+    charge flag, so nothing it writes is newly refused; an unpaid registration carrying one of them alone is a
+    state nothing writes, and goes to a person like the others. A new column that only a payment writes joins
+    the list.
+  - **The rule is pinned to the locked row.** Reading it from the copy the request first found left every test
+    green and deleted a registration paid in between. Two tests now change the row after the first read
+    (restored: "cancel it first", Stripe not asked, its page left open; paid meanwhile: the paid sentence, the
+    registration kept), and each was seen to fail against that one-line regression.
+  - **Stripe is asked about any page on the row, whatever its payment method**, and a test now holds the code
+    to it: an unpaid office registration carrying a page that was paid is kept.
+  - **A page Stripe says was paid.** The refusal no longer says "It will show as paid once Stripe confirms it":
+    when the webhook refused that payment's event and answered 200, no second event comes and the registration
+    reads unpaid for good. It now ends "If it still shows as unpaid later, check this payment in Stripe.",
+    followed by the refund instruction as before. The delete also writes one WARNING line for it, by ids only
+    (organisation, form, registration, its uuid, Checkout session, the organisation the page was charged
+    through): the moment the platform learns of money at Stripe that the row does not record.
+  - **The delete's own line** is still written before the delete, so the record exists even if the process
+    dies between the two, and for that reason it now reads "is being deleted": a delete that then fails rolls
+    back, and the line had said "was deleted" of a registration that was still there. It now also carries
+    `charge_ref` and the cancel's stamp (`status_changed_by_user_id`, `status_changed_at`). The bullet above
+    overstated what a late payment can be matched by: the webhook's warning carries the uuid only for a charge
+    on the organisation's own account. For one taken through another organisation it carries the Stripe object
+    and no uuid, so the Checkout session matches that page's own event, and `charge_ref`, the one key such a
+    charge carries in Stripe's metadata, is what matches the rest.
+  - **"The delete is the last write" was wrong.** The files leave the disk in the model's deleting hook; the
+    row's own DELETE, the form's counter and the commit follow. A failure in one of them leaves the
+    registration in the list without its files. The comment and the rule file now say so; changing it is the
+    fourth open item below.
+  - **Tenant isolation of the DELETE is tested.** Another organisation's registration under this organisation's
+    form (404), under this organisation's id with the other's form (404) and under the other's own URL (403),
+    and this organisation's registration under another of its forms (404): rows, files and counters untouched,
+    Stripe never asked.
+- **Known limit: on a form that reserves dates, the form row is held across the delete's Stripe calls.** The
+  delete locks the form row first (see "Lock order") and keeps it to the commit, across `closeOpenSession()`:
+  one read of the page, a close when the page is still open, and a second read when that close is refused. The
+  public submit takes the same form lock for every submission, and a triage of that form takes it too, so they
+  wait for as long as Stripe takes. No timeout is set on the Stripe client, so the SDK's own apply (80 seconds
+  a request, 30 to connect, read in the vendored client; the wait itself was read from the code, not measured
+  under load). Cancelling such a registration from the list already waits the same way; an office clearing a
+  list of abandoned registrations repeats it once per row. A form that reserves nothing holds only the
+  registration's own row across the calls. Not changed here: a short timeout for these admin-side page reads
+  is its own decision.
+- **Open after the reviews, not built in this round.**
+  1. `update()`, take-cash and the public checkout answer 500, not 404, for a registration deleted while they
+     waited for its lock (`lockRow()` still ends in `firstOrFail()` inside the transaction). Only the DELETE
+     answers 404. Before this change a registration with a payment method could not disappear under them.
+  2. After a delete the whole list is re-read behind the page's spinner, so at phone width the table's scroll
+     position and the focus are lost; and deleting the only row of a last page re-reads that page, which is now
+     empty, instead of the one before it. Read from the template, not seen in a browser.
+  3. A registration with NO payment method is deleted even when it carries a payment intent or `paid_at`
+     (unchanged from before this change: the old rule tested only `hasMoneyLeg()`). No path that writes such a
+     row was found.
+  4. An attachment's bytes are removed before the commit (see "The delete is the last write" above). Removing
+     them only after it is a change to the model's hooks, shared by every delete of a registration.

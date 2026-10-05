@@ -6,6 +6,7 @@ use App\Models\Form;
 use App\Models\FormDateReservation;
 use App\Models\FormResponse;
 use App\Models\FormResponseAttachment;
+use App\Models\FormStaffCode;
 use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Stripe\FormResponseCheckoutService;
@@ -36,7 +37,8 @@ use Tests\TestCase;
  *  - no money leg: deleted, as it always was;
  *  - imported from another system: refused, whatever its payment state;
  *  - a payment on record (card, cash or elsewhere; any status; a refund or dispute
- *    flagged), and every state nothing writes: refused in the words it always was;
+ *    flagged), and every state nothing writes (an unpaid row carrying any column only a
+ *    payment writes): refused in the words it always was;
  *  - never paid and NOT cancelled, card or office: "cancel it first", and Stripe is not
  *    asked;
  *  - never paid and cancelled, no card page on record (every office row): deleted without
@@ -50,6 +52,10 @@ use Tests\TestCase;
  * reserved date removed, the form's counter and its place given back, a 404 for a row
  * that went away while the request waited, and nothing left for the payer's page or a
  * late webhook to find.
+ *
+ * And what it never does: decide on the row as it read before the lock (a registration
+ * restored or paid meanwhile is kept), or reach another organisation's registration, or
+ * one of another form, whatever ids the URL carries.
  *
  * Stripe is the checkout service with its three seams stubbed by subclassing; nothing
  * here reaches Stripe. Every name, address and id is invented.
@@ -75,7 +81,11 @@ class FormResponseNeverPaidDeleteTest extends TestCase
 
     private const CANCEL_FIRST = 'This registration has not been paid, but it still can be. Cancel it first; a cancelled registration that was never paid can then be deleted.';
 
-    private const DELETED_LOG = 'A form registration was deleted from the admin screen.';
+    private const DELETED_LOG = 'A form registration is being deleted from the admin screen.';
+
+    private const PAID_ON_STRIPE = 'This registration was paid by card, so it was not deleted. If it still shows as unpaid later, check this payment in Stripe. Refund it in Stripe if it should not stand.';
+
+    private const PAID_ON_STRIPE_LOG = 'was not deleted: Stripe says its card payment page was paid';
 
     /** @var array<string,string> Stripe's view of each page: 'open' | 'complete' | 'expired' */
     public static array $pages = [];
@@ -230,6 +240,8 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     {
         $this->neverBuildsAStripeClient();
 
+        [$code] = FormStaffCode::issue($this->form, 'Test Holder', now()->addDay());
+
         // Each is cancelled and reads "unpaid" somewhere, and each carries one thing an
         // unpaid registration never has. Written by hand: the application writes none of them.
         $rows = [
@@ -241,6 +253,13 @@ class FormResponseNeverPaidDeleteTest extends TestCase
             'a payment elsewhere never marked paid' => $this->row(['payment_method' => FormResponse::METHOD_EXTERNAL, 'payment_status' => FormResponse::PAYMENT_UNPAID]),
             'a card row with no payment status' => $this->row(['payment_method' => FormResponse::METHOD_ONLINE, 'payment_status' => null]),
             'a method this version does not know' => $this->row(['payment_method' => 'voucher', 'payment_status' => FormResponse::PAYMENT_UNPAID]),
+            // The other columns only a payment writes, each alone on a row that reads unpaid.
+            'an unpaid card row saying how its payment came' => $this->cardRow(['paid_via' => FormResponse::PAID_VIA_CASH]),
+            'an unpaid card row an admin is named on as having marked paid' => $this->cardRow(['marked_paid_by_user_id' => $this->admin->id]),
+            'an unpaid office row a staff code is named on as having taken cash for' => $this->officeRow(['staff_code_id' => $code->id]),
+            'an unpaid office row that was checked in' => $this->officeRow(['collected_at' => now(), 'collected_by_user_id' => $this->admin->id]),
+            'an unpaid card row with a time its charge was flagged at' => $this->cardRow(['charge_flagged_at' => now()]),
+            'an unpaid card row with an amount refunded' => $this->cardRow(['charge_refunded_minor' => 500]),
         ];
 
         foreach ($rows as $kind => $row) {
@@ -256,6 +275,29 @@ class FormResponseNeverPaidDeleteTest extends TestCase
 
         $this->assertSame(count($rows), $this->form->fresh()->response_count);
         $this->assertSame([], self::$asked);
+
+        // A refund of nothing is no refund: zero reads as the column left empty.
+        $this->assertTrue($this->officeRow(['charge_refunded_minor' => 0])->neverRecordedAPayment());
+    }
+
+    #[Test]
+    public function an_unpaid_office_registration_carrying_a_card_page_is_asked_about_at_stripe_and_kept_when_that_page_was_paid(): void
+    {
+        // Another state nothing writes (a family paying the office is never sent to a card
+        // page), and one the allowlist lets through: Stripe is asked about ANY page on the
+        // row, whatever its payment method, and here the page was paid.
+        $row = $this->officeRow(['stripe_checkout_session_id' => 'cs_test_delete_office_page'], ['status' => 'cancelled']);
+        self::$pages['cs_test_delete_office_page'] = 'complete';
+
+        $this->assertTrue($row->neverRecordedAPayment());
+
+        $this->deleteJson($this->url("/{$row->id}"))
+            ->assertStatus(422)
+            ->assertJsonPath('message', self::PAID_ON_STRIPE);
+
+        $this->assertDatabaseHas('form_responses', ['id' => $row->id, 'status' => 'cancelled']);
+        $this->assertSame([['seam' => 'retrieve', 'account' => self::ACCOUNT, 'session' => 'cs_test_delete_office_page']], self::$asked);
+        $this->assertSame(1, $this->form->fresh()->response_count);
     }
 
     // ------------------------------------------------ never paid, not cancelled: cancel first
@@ -372,8 +414,11 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     public function a_cancelled_card_registration_stripe_says_was_paid_is_kept_and_its_payment_still_has_a_row_to_land_on(): void
     {
         config(['services.stripe.connect_webhook_secret' => self::CONNECT_SECRET, 'services.stripe.webhook_secret' => 'whsec_test_delete_platform']);
+        Log::spy();
 
-        $sentence = 'This registration was paid by card, so it was not deleted. It will show as paid once Stripe confirms it. Refund it in Stripe if it should not stand.';
+        // The sentence promises nothing about the row: a webhook that refused this
+        // payment's event is not sent it again, so it says where to look instead.
+        $this->assertStringNotContainsString('will show as paid', self::PAID_ON_STRIPE);
 
         // The page is complete at Stripe while the row still reads unpaid: the webhook is
         // late, or was refused. Unpaid on the row is not proof that no money moved.
@@ -385,10 +430,10 @@ class FormResponseNeverPaidDeleteTest extends TestCase
         $raced = $this->cardRow([], ['status' => 'cancelled']);
         self::$pages[$raced->stripe_checkout_session_id] = 'open';
 
-        $this->deleteJson($this->url("/{$paid->id}"))->assertStatus(422)->assertJsonPath('message', $sentence);
+        $this->deleteJson($this->url("/{$paid->id}"))->assertStatus(422)->assertJsonPath('message', self::PAID_ON_STRIPE);
 
         self::$stripe = 'paid';
-        $this->deleteJson($this->url("/{$raced->id}"))->assertStatus(422)->assertJsonPath('message', $sentence);
+        $this->deleteJson($this->url("/{$raced->id}"))->assertStatus(422)->assertJsonPath('message', self::PAID_ON_STRIPE);
         self::$stripe = null;
 
         foreach ([$paid, $raced] as $row) {
@@ -396,12 +441,38 @@ class FormResponseNeverPaidDeleteTest extends TestCase
             $this->assertNotNull($kept, 'the registration is still there');
             $this->assertSame(FormResponse::PAYMENT_UNPAID, $kept->payment_status, 'only the webhook marks it paid');
             $this->assertTrue($kept->isCancelled());
+
+            // Money at Stripe that the row does not record: each time the delete finds it,
+            // it leaves one line for whoever reconciles it, by ids alone.
+            Log::shouldHaveReceived('warning')
+                ->withArgs(function (string $message, array $context = []) use ($row): bool {
+                    if (! str_contains($message, self::PAID_ON_STRIPE_LOG) || ($context['form_response_id'] ?? null) !== $row->id) {
+                        return false;
+                    }
+
+                    $this->assertSame([
+                        'masjid_id' => $this->org->id,
+                        'form_id' => $this->form->id,
+                        'form_response_id' => $row->id,
+                        'form_response_uuid' => $row->uuid,
+                        'checkout_session_id' => $row->stripe_checkout_session_id,
+                        'charge_masjid_id' => null,
+                    ], $context);
+
+                    foreach ([self::NAME, self::EMAIL, self::PHONE, 'Guest One', 'test-waiver.pdf'] as $personal) {
+                        $this->assertStringNotContainsString($personal, $message . json_encode($context));
+                    }
+
+                    return true;
+                })
+                ->once();
         }
 
         $this->assertSame(2, $this->form->fresh()->response_count);
         $this->assertSame([], self::$expired);
         $this->assertNotNull(FormResponseAttachment::find($file->id));
         Storage::disk($this->disk())->assertExists($file->path);
+        Log::shouldNotHaveReceived('warning', fn (string $message) => str_contains($message, self::DELETED_LOG));
 
         // The signed webhook arrives afterwards and finds the row it names.
         $this->postWebhook($this->completed($paid, 'pi_test_delete_late'))->assertOk();
@@ -548,16 +619,29 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     {
         Log::spy();
 
-        $row = $this->cardRow([], ['status' => 'cancelled']);
+        // Cancelled by a colleague, through the screen's own PUT, which stamps who and when.
+        // That stamp goes with the row, so the line is where it survives.
+        Carbon::setTestNow(Carbon::parse('2027-03-01 15:00:00', 'UTC'));
+        $colleague = $this->makeSuperAdmin();
+        $row = $this->cardRow(['charge_ref' => 'fcr_test_delete_0001']);
         $session = $row->stripe_checkout_session_id;
 
+        Sanctum::actingAs($colleague);
+        $this->putJson($this->url("/{$row->id}"), ['status' => 'cancelled'])->assertOk();
+
+        Carbon::setTestNow(Carbon::parse('2027-03-02 09:30:00', 'UTC'));
+        Sanctum::actingAs($this->admin);
         $this->deleteJson($this->url("/{$row->id}"))->assertOk();
 
         Log::shouldHaveReceived('warning')
-            ->withArgs(function (string $message, array $context = []) use ($row, $session): bool {
+            ->withArgs(function (string $message, array $context = []) use ($row, $session, $colleague): bool {
                 if (! str_contains($message, self::DELETED_LOG)) {
                     return false;
                 }
+
+                // Written before the delete, so it says what is happening, never that it
+                // happened: a delete that fails after it leaves the registration in place.
+                $this->assertStringNotContainsString('was deleted', $message);
 
                 $this->assertSame([
                     'masjid_id' => $this->org->id,
@@ -567,12 +651,15 @@ class FormResponseNeverPaidDeleteTest extends TestCase
                     'payment_method' => FormResponse::METHOD_ONLINE,
                     'checkout_session_id' => $session,
                     'charge_masjid_id' => null,
+                    'charge_ref' => 'fcr_test_delete_0001',
                     'amount_due_minor' => 3000,
                     'total_minor' => 3120,
+                    'status_changed_by_user_id' => $colleague->id,
+                    'status_changed_at' => '2027-03-01T15:00:00+00:00',
                     'user_id' => $this->admin->id,
                 ], $context);
 
-                // Ids and amounts: never who registered or what they answered.
+                // Ids, amounts and a time: never who registered or what they answered.
                 foreach ([self::NAME, self::EMAIL, self::PHONE, 'Guest One', 'test-waiver.pdf'] as $personal) {
                     $this->assertStringNotContainsString($personal, $message . json_encode($context));
                 }
@@ -693,6 +780,112 @@ class FormResponseNeverPaidDeleteTest extends TestCase
         $this->deleteJson($this->url("/{$row->id}"))->assertStatus(404);
     }
 
+    // ------------------------------------------- decided on the locked row, never the first read
+
+    #[Test]
+    public function a_registration_restored_while_the_delete_waited_for_its_lock_is_told_to_cancel_it_first_and_stripe_is_not_asked(): void
+    {
+        // Cancelled when the request found it, its card page still open at Stripe.
+        $row = $this->cardRow([], ['status' => 'cancelled']);
+        $session = $row->stripe_checkout_session_id;
+        self::$pages[$session] = 'open';
+
+        // A colleague restores it before the delete takes the row's lock: it can be paid again.
+        $this->changesAfterTheFirstRead($row, ['status' => 'new']);
+
+        $this->deleteJson($this->url("/{$row->id}"))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonPath('message', self::CANCEL_FIRST);
+
+        $this->assertDatabaseHas('form_responses', ['id' => $row->id, 'status' => 'new']);
+        $this->assertSame([], self::$asked, 'Stripe is not asked about a registration that can still be paid');
+        $this->assertSame('open', self::$pages[$session], 'and its page is left open for the registrant');
+        $this->assertSame(1, $this->form->fresh()->response_count);
+    }
+
+    #[Test]
+    public function a_registration_paid_while_the_delete_waited_for_its_lock_is_kept_with_its_payment(): void
+    {
+        $this->neverBuildsAStripeClient();
+
+        // A family that chose the office: cancelled and unpaid when the request found it, so
+        // the row as first read would be deleted without a question to anyone.
+        $row = $this->officeRow([], ['status' => 'cancelled']);
+
+        // A colleague restores it and records the family's payment before the delete takes
+        // the row's lock.
+        $this->changesAfterTheFirstRead($row, [
+            'status' => 'confirmed',
+            'payment_method' => FormResponse::METHOD_EXTERNAL,
+            'payment_status' => FormResponse::PAYMENT_PAID,
+            'paid_via' => FormResponse::PAID_VIA_ZELLE,
+            'paid_at' => now(),
+            'marked_paid_by_user_id' => $this->admin->id,
+        ]);
+
+        $this->deleteJson($this->url("/{$row->id}"))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonPath('message', self::PAID_SENTENCE);
+
+        $kept = FormResponse::find($row->id);
+        $this->assertNotNull($kept, 'the registration and the payment recorded on it are still there');
+        $this->assertTrue($kept->isPaid());
+        $this->assertSame(FormResponse::METHOD_EXTERNAL, $kept->payment_method);
+        $this->assertSame(1, $this->form->fresh()->response_count);
+    }
+
+    // ------------------------------------------------------------------ another organisation's
+
+    #[Test]
+    public function a_delete_never_reaches_another_organisations_registration_or_one_of_another_form(): void
+    {
+        // This organisation's own admin, not the platform's.
+        Sanctum::actingAs($this->makeAdminFor($this->org));
+
+        // Another organisation's registration, of the one kind a delete removes: cancelled,
+        // never paid, its card page expired, with a file.
+        $other = $this->makeOrg('acct_test_delete_other');
+        $theirForm = $this->makeEventForm($other);
+        $theirs = $this->cardRow([], ['status' => 'cancelled'], $theirForm);
+        $theirFile = $this->withFile($theirs);
+
+        // And one of this organisation's own, on its first form; it has a second form too.
+        $ours = $this->cardRow([], ['status' => 'cancelled']);
+        $ourFile = $this->withFile($ours);
+        $secondForm = $this->makeEventForm($this->org);
+
+        $admin = fn (Masjid $org, Form $form, FormResponse $row): string => "/api/admin/masjids/{$org->id}/forms/{$form->id}/responses/{$row->id}";
+
+        // Theirs under this organisation's form; under this organisation's id with their
+        // form; under their own URL; and this organisation's own under another of its forms.
+        $this->deleteJson($admin($this->org, $this->form, $theirs))->assertStatus(404);
+        $this->deleteJson($admin($this->org, $theirForm, $theirs))->assertStatus(404);
+        $this->deleteJson($admin($other, $theirForm, $theirs))->assertStatus(403);
+        $this->deleteJson($admin($this->org, $secondForm, $ours))->assertStatus(404);
+
+        foreach ([[$theirs, $theirFile], [$ours, $ourFile]] as [$row, $file]) {
+            $this->assertDatabaseHas('form_responses', ['id' => $row->id, 'status' => 'cancelled']);
+            $this->assertNotNull(FormResponseAttachment::find($file->id));
+            Storage::disk($this->disk())->assertExists($file->path);
+        }
+
+        $this->assertSame(1, $theirForm->fresh()->response_count);
+        $this->assertSame(1, $this->form->fresh()->response_count);
+        $this->assertSame(0, $secondForm->fresh()->response_count);
+        $this->assertSame([], self::$asked, 'Stripe was never asked, on either organisation\'s account');
+
+        // Its own registration, under its own form, is the one that goes, asked about on its
+        // own account.
+        $this->deleteJson($admin($this->org, $this->form, $ours))->assertOk();
+
+        $this->assertDatabaseMissing('form_responses', ['id' => $ours->id]);
+        $this->assertDatabaseHas('form_responses', ['id' => $theirs->id]);
+        $this->assertSame([self::ACCOUNT], array_column(self::$asked, 'account'));
+        $this->assertSame(1, $theirForm->fresh()->response_count);
+    }
+
     #[Test]
     public function after_a_delete_the_payers_page_and_a_late_webhook_find_nothing(): void
     {
@@ -721,6 +914,26 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * A colleague's change that commits between the request finding the row and locking it:
+     * written straight to the table the first time the row is read, which in a DELETE is
+     * resolveResponse()'s read, before the transaction opens. What the delete then decides
+     * on is what it reads under the lock, or these tests fail.
+     *
+     * @param  array<string,mixed>  $columns
+     */
+    private function changesAfterTheFirstRead(FormResponse $row, array $columns): void
+    {
+        $done = false;
+
+        FormResponse::retrieved(function (FormResponse $found) use ($row, $columns, &$done) {
+            if (! $done && $found->id === $row->id) {
+                $done = true;
+                DB::table('form_responses')->where('id', $row->id)->update($columns);
+            }
+        });
+    }
 
     private function assertStillThereWithItsFile(FormResponse $row, FormResponseAttachment $file, string $when): void
     {
