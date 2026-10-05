@@ -590,3 +590,74 @@ test('a new section starts from a copy of its type\'s default content: what is t
 
     modal.screen.unmount();
 });
+
+/* ------------------------------------------- the count is lowered once for each upload */
+
+test('an upload that outlives its control and answers late does not lower the count for another that is still in flight', async () => {
+    for (const late of ['answers', 'fails']) {
+        const answers = [deferred<any>(), deferred<any>()];
+        let sent = 0;
+        let count: any = null;
+
+        // Two real controls in one editor, the first of which can be taken away while its file is in
+        // flight (as a control is when its editor goes), and the modal's own count as they are given it.
+        const twoControls = ({ control }: { control: any }) => ({
+            StatsSectionEditor: {
+                setup() {
+                    const first = vue.ref(true);
+                    count = vue.inject('sectionDocumentUploads');
+
+                    return () => vue.h('div', [
+                        first.value ? vue.h(control, { key: 'first', value: '' }) : null,
+                        vue.h(control, { key: 'second', value: '' }),
+                        vue.h('button', { type: 'button', title: 'Take the first control away', onClick: () => { first.value = false; } }),
+                    ]);
+                },
+            },
+        });
+        const modal = await mountModal(section('stats', stats()), () => answers[sent++].promise, { editors: twoControls });
+        assert.equal(modal.fileInputs().length, 2);
+
+        void modal.choose(0, pdf('first.pdf'));
+        await flush();
+        assert.equal(count.value, 1, late);
+        assert.equal(modal.save().disabled, true, late);
+
+        // The first control goes while its upload runs, and its count goes with it.
+        click(modal.byTitle('Take the first control away')[0]);
+        await flush();
+        assert.equal(modal.fileInputs().length, 1);
+        assert.equal(count.value, 0, late);
+        assert.equal(modal.save().disabled, false, late);
+
+        // Another upload starts, in the control that is left.
+        void modal.choose(0, pdf('second.pdf'));
+        await flush();
+        assert.equal(modal.uploads.length, 2);
+        assert.equal(count.value, 1, late);
+        assert.equal(modal.save().disabled, true, late);
+
+        // The first answers late. It was counted down when its control went; counted down a second
+        // time it would open Save while the second file is still on its way.
+        if (late === 'answers') {
+            answers[0].resolve({ url: ADDRESS, name: 'first', size: 1 });
+        } else {
+            answers[0].reject(new Error('The PDF could not be uploaded. Check your connection and try again.'));
+        }
+        await flush();
+        assert.equal(count.value, 1, `the first upload ${late} late, and the second is no longer counted`);
+        assert.equal(modal.save().disabled, true, `the first upload ${late} late, and Save is on while the second is still uploading`);
+        assert.equal(modal.notes(), UPLOADING, late);
+        submit(modal.form());
+        await flush();
+        assert.deepEqual(modal.saves, [], late);
+
+        answers[1].resolve({ url: SAVED_ADDRESS, name: 'second', size: 1 });
+        await flush();
+        assert.equal(count.value, 0, late);
+        assert.equal(modal.save().disabled, false, late);
+        assert.equal(modal.notes(), '', late);
+
+        modal.screen.unmount();
+    }
+});
