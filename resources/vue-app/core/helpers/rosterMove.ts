@@ -3,16 +3,20 @@
  *
  * NOT the sentences about a move. "What will happen" and what happened are built once, on the
  * server (App\Support\RosterMovePlan::lines), and the dialog prints them as a list. What is here is
- * what the browser alone can know: which classes to offer, what to send, how a moved row is
- * labelled, and which of the "Put back" forms a row gets.
+ * what the browser alone can know: which classes to offer, what to send, how a moved row and a
+ * consent that came with a move are labelled, and which of the "Put back" forms a row gets.
  *
  * Pure functions, no imports to run: `npm run test:spa` loads this file as it stands.
  */
 import type { GroupMembership, MovedClass, MovePreview } from '@/core/types/data/masjid-related/Group';
 
 type Row = Pick<GroupMembership, 'id' | 'role' | 'contact_id' | 'guardian_of_contact_id' | 'left_on' | 'provenance'
-    | 'consent_granted_at' | 'consent_scope' | 'moved_from_group_id' | 'moved_to_group_id' | 'moved_on' | 'moved_to'
+    | 'consent_granted_at' | 'consent_scope' | 'consent_carried_from_group_id' | 'consent_carried_from'
+    | 'moved_from_group_id' | 'moved_to_group_id' | 'moved_on' | 'moved_to'
     | 'moved_from' | 'moved_to_state'> & { contact?: { first_name?: string | null; last_name?: string | null } | null };
+
+/** The three fields of a row that say what consent it holds and whether a move carried it. */
+type ConsentRow = Pick<GroupMembership, 'consent_granted_at' | 'consent_scope' | 'consent_carried_from_group_id' | 'consent_carried_from'>;
 
 type ClassRow = { id: number; name: string; kind?: string; is_active?: boolean; ends_on?: string | null; position?: number | null };
 
@@ -129,9 +133,55 @@ export function movedLabels(row: Row): { badge: string | null; note: string | nu
 }
 
 /**
+ * How a consent that a move carried is labelled, under the badge and the date in the roster's
+ * consent cell. A state label, like "Moved from …" above: the entry is marked with the class the
+ * consent was copied from. Marked and set, it stands here as it was recorded there; marked and
+ * blank, the family withdrew it in this class afterwards. No mark, no label.
+ */
+export function carriedConsentLabel(row: ConsentRow): string | null {
+    if (!row.consent_carried_from_group_id) return null;
+
+    const from = className(row.consent_carried_from);
+
+    return row.consent_scope || row.consent_granted_at
+        ? `Carried from ${from}`
+        : `Withdrawn here after it was carried from ${from}`;
+}
+
+/**
+ * The line the consent dialog shows above its choices on an entry whose consent was carried and
+ * still stands. Saving the form, changed or not, makes the record this class's own: the server
+ * clears the mark.
+ */
+export function carriedConsentNote(row: ConsentRow, child: string): string | null {
+    if (!row.consent_carried_from_group_id || !(row.consent_scope || row.consent_granted_at)) return null;
+
+    return `Carried from ${className(row.consent_carried_from)} when ${child} was moved. Saving records it for this class.`;
+}
+
+/**
+ * Write the server's answer to a consent that was recorded or withdrawn onto the row the office
+ * is looking at: the scope, the day, and the mark of a carried consent. A record clears the mark
+ * and a withdrawal keeps it, so the cell says "Withdrawn here after it was carried from …" at
+ * once, without the roster being read again.
+ */
+export function applyConsentAnswer(row: ConsentRow, data: Partial<ConsentRow> | null | undefined): void {
+    row.consent_scope = data?.consent_scope ?? null;
+    row.consent_granted_at = data?.consent_granted_at ?? null;
+    row.consent_carried_from_group_id = data?.consent_carried_from_group_id ?? null;
+
+    // The class's name came with the roster and is kept while the mark still names it.
+    if (!row.consent_carried_from_group_id) row.consent_carried_from = null;
+}
+
+/**
  * Guardians of students who moved INTO this class and have no consent recorded here: confirmed,
  * current entries without consent whose student's row carries "moved from". Until consent is
  * recorded they receive nothing from the class story.
+ *
+ * NOT an entry that carries the mark of a carried consent. With no consent that entry is one the
+ * family WITHDREW here, and counting it would turn their withdrawal into something for the next
+ * person at the desk to record. Its own cell says what happened.
  */
 export function consentBannerCount(roster: Row[]): number {
     const movedIn = new Set(
@@ -140,7 +190,8 @@ export function consentBannerCount(roster: Row[]): number {
 
     return roster.filter((r) => r.role === 'guardian'
         && r.guardian_of_contact_id !== null && movedIn.has(r.guardian_of_contact_id)
-        && r.provenance === 'confirmed' && !r.left_on && !r.consent_granted_at).length;
+        && r.provenance === 'confirmed' && !r.left_on && !r.consent_granted_at
+        && !r.consent_carried_from_group_id).length;
 }
 
 export const consentBannerText = (n: number): string => n === 0 ? '' : `${n} ${n === 1 ? 'guardian' : 'guardians'} of students `

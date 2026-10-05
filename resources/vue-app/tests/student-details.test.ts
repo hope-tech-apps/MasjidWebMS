@@ -1234,6 +1234,179 @@ test('roster: a school is told, in the server\'s words, when a group holding stu
     none.screen.unmount();
 });
 
+// =================================================================== the roster: a consent a move carried
+//
+// A moved student's guardians keep their consent as it was recorded: the entry the move makes holds
+// the same scope and day and is marked with the class it came from. What is proved here is what the
+// roster then shows and does: the cell's line, the dialog's line, the button's word, the answer
+// written back with its mark, and the server's notes left on screen.
+
+const SECOND = { id: 8, name: 'Second Grade', deleted_at: null };
+const guardianRowOf = (screen: any, m: any): Node => screen.all((n: Node) => n.tag === 'tr' && n.props.id === `roster-row-${m.id}`)[0];
+const consentCell = (screen: any, m: any): string => guardianRowOf(screen, m).children.filter((c: Node) => c.tag === 'td')[3].textContent;
+const consentButtonOf = (screen: any, m: any): Node => guardianRowOf(screen, m).children.filter((c: Node) => c.tag === 'td')[4]
+    .children.filter((c: Node) => c.tag === 'button' && /consented to/.test(c.props.title ?? ''))[0];
+
+test('roster: the Consent button says its word, and the consent cell says when a move carried it or the family withdrew it here', async () => {
+    const r = roster();
+    Object.assign(r.mother, { consent_carried_from_group_id: 8, consent_carried_from: SECOND });      // photographs, 5 Sep: carried
+    Object.assign(r.father, { consent_carried_from_group_id: 8, consent_carried_from: SECOND });      // blank: withdrawn here
+    Object.assign(r.aunt, { consent_scope: 'feed', consent_granted_at: '2026-09-06T00:00:00.000000Z',
+        consent_carried_from_group_id: 7, consent_carried_from: { id: 7, name: 'First Grade', deleted_at: '2026-10-01T09:00:00.000000Z' } });
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), { meta: CLASS_META });
+
+    assert.match(consentCell(screen, r.mother), /^Photos & notes .*2026.* Carried from Second Grade$/);
+    assert.equal(consentCell(screen, r.father), 'Not given Withdrawn here after it was carried from Second Grade');
+    assert.match(consentCell(screen, r.aunt), /^Notes only .*2026.* Carried from a class that was removed$/);
+    // Never asked, and a claim that cannot hold consent: nothing about a move.
+    assert.equal(consentCell(screen, r.motherOfSibling), 'Not given');
+    assert.equal(consentCell(screen, r.claimant), 'Not given Confirm this entry first');
+    assert.equal(consentCell(screen, r.departed), 'Not given');
+
+    // The button a refusal sends the office to has a NAME on it, on every entry that can hold a
+    // consent, one that has left included (that is where a consent is withdrawn before a move back).
+    const buttons = screen.all((n: Node) => n.tag === 'button' && /consented to/.test(n.props.title ?? ''));
+    assert.equal(buttons.length, 5);
+    assert.ok(buttons.every((b: Node) => b.textContent === 'Consent'), 'an icon alone: a tablet shows no tooltip');
+    assert.ok(consentButtonOf(screen, r.departed), 'an entry that has left keeps its Consent button');
+    assert.equal(consentButtonOf(screen, r.claimant), undefined, 'a claim is confirmed first');
+    screen.unmount();
+});
+
+test('roster: the line above the table does not count a guardian who withdrew here after a move carried their consent', async () => {
+    const arrived = () => {
+        const r = roster();
+        Object.assign(r.student, { moved_on: '2026-10-02', moved_from_group_id: 8, moved_to_group_id: null, moved_from: SECOND });
+        return r;
+    };
+
+    // The father has no consent here and was never asked: one guardian to record.
+    const asked = arrived();
+    const a = await mountRoster(vue.reactive([...asked.rows]), { meta: CLASS_META });
+    assert.match(a.screen.text(), /1 guardian of students who moved into this class has no consent recorded here\./);
+    a.screen.unmount();
+
+    // The same entry, marked: the family withdrew it here. It is not a to-do, and its cell says why.
+    const withdrew = arrived();
+    Object.assign(withdrew.father, { consent_carried_from_group_id: 8, consent_carried_from: SECOND });
+    const b = await mountRoster(vue.reactive([...withdrew.rows]), { meta: CLASS_META });
+    assert.doesNotMatch(b.screen.text(), /no consent recorded here/);
+    assert.equal(consentCell(b.screen, withdrew.father), 'Not given Withdrawn here after it was carried from Second Grade');
+    b.screen.unmount();
+});
+
+test('roster: the consent dialog says a consent was carried; Save makes it this class\'s own, a withdrawal keeps the mark, and the server\'s notes stay up in its order', async () => {
+    const r = roster();
+    Object.assign(r.mother, { consent_carried_from_group_id: 8, consent_carried_from: SECOND });
+    Object.assign(r.aunt, { consent_scope: 'feed', consent_granted_at: '2026-09-06T00:00:00.000000Z',
+        consent_carried_from_group_id: 8, consent_carried_from: SECOND });
+
+    // The server's notes for the withdrawal: the same class first, then the other classes. The class
+    // names in them are what somebody typed, so one carries markup.
+    const sameClass = 'Zaynab Otherchild still receives <b>Third</b> Grade\'s class story through their entry for Maryam Testwood '
+        + '(the class story). Withdraw that too if the family meant the whole class.';
+    const otherClass = 'Consent for Zaynab Otherchild about Yahya Testwood is still on record in Second Grade (the class story, recorded '
+        + '6 Sep 2026) and comes back into force if Yahya Testwood returns there. Withdraw it there too if the family meant both.';
+    const boxes: any[] = [];
+    const sent: any[] = [];
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), {
+        meta: CLASS_META,
+        swal: async (o: any) => { boxes.push(o); return { isConfirmed: true }; },
+        api: {
+            put: async (url: string, body: any) => {
+                sent.push(['put', url, body]);
+                return { data: { status: 'success', notes: [],
+                    data: { consent_scope: body.scope, consent_granted_at: `${body.granted_at}T00:00:00.000000Z`, consent_carried_from_group_id: null } } };
+            },
+            delete: async (url: string) => {
+                sent.push(['delete', url]);
+                return { data: { status: 'success', notes: [sameClass, otherClass],
+                    data: { consent_scope: null, consent_granted_at: null, consent_carried_from_group_id: 8 } } };
+            },
+        },
+    });
+    const dialogForm = () => screen.all((n: Node) => n.tag === 'form' && n.textContent.includes('Date on the signed form'))[0];
+
+    // An entry the office recorded itself: the dialog says nothing about a move.
+    click(consentButtonOf(screen, r.father));
+    await flush();
+    assert.doesNotMatch(dialogForm().textContent, /Carried from/);
+    click(screen.button('Cancel'));
+    await flush();
+
+    // The mother's consent came with the move. The dialog says so, and what Save does, before the choices.
+    click(consentButtonOf(screen, r.mother));
+    await flush();
+    const said = dialogForm().textContent;
+    assert.match(said, /Carried from Second Grade when Maryam Testwood was moved\. Saving records it for this class\./);
+    assert.ok(said.indexOf('Saving records it for this class.') < said.indexOf('Notes only'), 'the line comes before the choices');
+
+    // Saved as it stands: the same scope and day go up, and the mark comes off the row.
+    dialogForm().props.onSubmit({ preventDefault() {} });
+    await flush();
+    assert.deepEqual(sent[0], ['put', `/api/admin/masjids/1/groups/${CLASS}/members/${r.mother.id}/consent`, { scope: 'media', granted_at: '2026-09-05' }]);
+    assert.equal(r.mother.consent_carried_from_group_id, null);
+    assert.match(consentCell(screen, r.mother), /^Photos & notes .*2026.*$/);
+    assert.doesNotMatch(consentCell(screen, r.mother), /Carried from/);
+    // Nothing more to act on: the message closes by itself, as it always did.
+    assert.deepEqual([boxes.at(-1).title, boxes.at(-1).timer, boxes.at(-1).showConfirmButton], ['Consent recorded', 1600, false]);
+
+    // The aunt withdraws. The mark stays, so the cell says what happened instead of "never asked".
+    click(consentButtonOf(screen, r.aunt));
+    await flush();
+    assert.match(dialogForm().textContent, /Carried from Second Grade when Yahya Testwood was moved\./);
+    click(screen.button('Withdraw'));
+    await flush();
+    assert.deepEqual(sent[1], ['delete', `/api/admin/masjids/1/groups/${CLASS}/members/${r.aunt.id}/consent`]);
+    assert.deepEqual([r.aunt.consent_scope, r.aunt.consent_granted_at, r.aunt.consent_carried_from_group_id], [null, null, 8]);
+    assert.equal(consentCell(screen, r.aunt), 'Not given Withdrawn here after it was carried from Second Grade');
+
+    // Where consent still stands is something to act on: the message WAITS, with the server's
+    // sentences in the server's order (this class first), as text and never as markup.
+    const answer = boxes.at(-1);
+    assert.equal(answer.title, 'Consent withdrawn');
+    assert.equal(answer.timer, undefined, 'the notes were on a message that closes by itself');
+    assert.notEqual(answer.showConfirmButton, false);
+    assert.equal(answer.html,
+        '<p class="text-start mb-2">Zaynab Otherchild still receives &lt;b&gt;Third&lt;/b&gt; Grade&#39;s class story through their entry for '
+        + 'Maryam Testwood (the class story). Withdraw that too if the family meant the whole class.</p>'
+        + '<p class="text-start mb-2">Consent for Zaynab Otherchild about Yahya Testwood is still on record in Second Grade (the class story, '
+        + 'recorded 6 Sep 2026) and comes back into force if Yahya Testwood returns there. Withdraw it there too if the family meant both.</p>');
+    screen.unmount();
+});
+
+test('roster: a record that narrows is answered with notes too, and they stay up', async () => {
+    const r = roster();
+    const note = 'Salma Testwood still receives Third Grade\'s class story through their entry for Yahya Testwood (the class story and '
+        + 'photographs). Withdraw that too if the family meant the whole class.';
+    const boxes: any[] = [];
+    const sent: any[] = [];
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), {
+        meta: CLASS_META,
+        swal: async (o: any) => { boxes.push(o); return {}; },
+        api: { put: async (_url: string, body: any) => {
+            sent.push(body);
+            return { data: { status: 'success', notes: [note],
+                data: { consent_scope: body.scope, consent_granted_at: '2026-09-05T00:00:00.000000Z', consent_carried_from_group_id: null } } };
+        } },
+    });
+
+    click(consentButtonOf(screen, r.mother));
+    await flush();
+    // "Notes only" is chosen over the photographs that stood: the radio's own change listener.
+    const feed = screen.all((n: Node) => n.tag === 'input' && n.props.id === 'consent-feed')[0];
+    (feed.listeners.change ?? []).forEach((heard) => heard({ target: feed }));
+    screen.all((n: Node) => n.tag === 'form' && n.textContent.includes('Date on the signed form'))[0].props.onSubmit({ preventDefault() {} });
+    await flush();
+
+    assert.deepEqual(sent, [{ scope: 'feed', granted_at: '2026-09-05' }]);
+    assert.equal(r.mother.consent_scope, 'feed');
+    assert.equal(boxes.at(-1).title, 'Consent recorded');
+    assert.equal(boxes.at(-1).timer, undefined);
+    assert.match(boxes.at(-1).html, /still receives Third Grade&#39;s class story through their entry for Yahya Testwood/);
+    screen.unmount();
+});
+
 // =================================================================== the store: what a roster read keeps
 
 test('store: a roster read keeps what the server said about the group, and the removal answer names a contact only when the server did', async () => {

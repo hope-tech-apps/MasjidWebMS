@@ -304,6 +304,17 @@ export type GroupMembership = {
     consent_granted_at: string | null;
     consent_scope: ConsentScope | null;
     /**
+     * A CONSENT A MOVE CARRIED. When a student is moved, each guardian's consent
+     * goes with them as it was recorded, onto the entry the move creates, and
+     * that entry is marked with the class it came from. With the two columns
+     * above: marked and set is "carried from that class"; marked and blank is
+     * "withdrawn here after it was carried". Recording consent here clears the
+     * mark; withdrawing keeps it. `consent_carried_from` names the class, as
+     * `moved_from` does. Absent on a server from before the release.
+     */
+    consent_carried_from_group_id?: number | null;
+    consent_carried_from?: MovedClass | null;
+    /**
      * ON WHOSE AUTHORITY THIS ROW EXISTS — mirrors `GroupMembership::PROVENANCES`.
      *
      * `confirmed` means a staff member stands behind it and it grants what a

@@ -8,8 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import {
-    classOptions, className, consentBannerCount, consentBannerText, day, focusIdFromQuery, focusQuery, moveBody, movedLabels,
-    putBackForm,
+    applyConsentAnswer, carriedConsentLabel, carriedConsentNote, classOptions, className, consentBannerCount,
+    consentBannerText, day, focusIdFromQuery, focusQuery, moveBody, movedLabels, putBackForm,
 } from '../core/helpers/rosterMove.ts';
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -140,6 +140,63 @@ test('a moved row is labelled by where the student is now', () => {
         { badge: null, note: 'Moved from 1st Grade 4 Oct 2026' });
 });
 
+test('a consent a move carried is labelled by what the entry holds now, and a class removed since has no name', () => {
+    const first = { id: 1, name: '1st Grade', deleted_at: null };
+    const carried = guardian(1, 'Huda', { consent_scope: 'media', consent_granted_at: '2026-09-05T00:00:00.000000Z',
+        consent_carried_from_group_id: 1, consent_carried_from: first });
+    const withdrawn = guardian(2, 'Nadia', { consent_carried_from_group_id: 1, consent_carried_from: first });
+
+    assert.equal(carriedConsentLabel(carried), 'Carried from 1st Grade');
+    assert.equal(carriedConsentLabel(withdrawn), 'Withdrawn here after it was carried from 1st Grade');
+
+    // Recorded by the office for this class, or never asked: no mark, no line.
+    assert.equal(carriedConsentLabel(guardian(3, 'Own', { consent_scope: 'feed', consent_granted_at: '2026-09-05' })), null);
+    assert.equal(carriedConsentLabel(guardian(4, 'Never')), null);
+    // A row from a server that does not send the mark at all.
+    const { consent_carried_from_group_id: _a, consent_carried_from: _b, ...old } = carried;
+    assert.equal(carriedConsentLabel(old), null);
+
+    // The class was removed since: deleted, or no longer served with the row.
+    assert.equal(carriedConsentLabel({ ...carried, consent_carried_from: { ...first, deleted_at: '2026-10-04T10:00:00Z' } }),
+        'Carried from a class that was removed');
+    assert.equal(carriedConsentLabel({ ...withdrawn, consent_carried_from: null }),
+        'Withdrawn here after it was carried from a class that was removed');
+
+    // The consent dialog's line: only while the carried consent still stands.
+    assert.equal(carriedConsentNote(carried, 'Maryam Student'),
+        'Carried from 1st Grade when Maryam Student was moved. Saving records it for this class.');
+    assert.equal(carriedConsentNote(withdrawn, 'Maryam Student'), null);
+    assert.equal(carriedConsentNote(guardian(3, 'Own', { consent_scope: 'feed', consent_granted_at: '2026-09-05' }), 'Maryam Student'), null);
+});
+
+test('the answer to a consent is written onto the row with its mark: a record clears it, a withdrawal keeps it', () => {
+    const first = { id: 1, name: '1st Grade', deleted_at: null };
+    const carried = () => guardian(1, 'Huda', { consent_scope: 'media', consent_granted_at: '2026-09-05T00:00:00.000000Z',
+        consent_carried_from_group_id: 1, consent_carried_from: first });
+
+    // Saved in the dialog, changed or not: this class's own record now.
+    const recorded = carried();
+    applyConsentAnswer(recorded, { consent_scope: 'media', consent_granted_at: '2026-09-05T00:00:00.000000Z', consent_carried_from_group_id: null });
+    assert.deepEqual([recorded.consent_scope, recorded.consent_granted_at, recorded.consent_carried_from_group_id, recorded.consent_carried_from],
+        ['media', '2026-09-05T00:00:00.000000Z', null, null]);
+    assert.equal(carriedConsentLabel(recorded), null);
+
+    // Withdrawn: both columns blank, the mark kept, and the cell says so at once.
+    const withdrawn = carried();
+    applyConsentAnswer(withdrawn, { consent_scope: null, consent_granted_at: null, consent_carried_from_group_id: 1 });
+    assert.deepEqual([withdrawn.consent_scope, withdrawn.consent_granted_at, withdrawn.consent_carried_from_group_id], [null, null, 1]);
+    assert.deepEqual(withdrawn.consent_carried_from, first);
+    assert.equal(carriedConsentLabel(withdrawn), 'Withdrawn here after it was carried from 1st Grade');
+
+    // An answer without the key (the column is not there yet), or no row at all: nothing is carried.
+    const before = carried();
+    applyConsentAnswer(before, { consent_scope: 'feed', consent_granted_at: '2026-10-04T00:00:00.000000Z' });
+    assert.deepEqual([before.consent_scope, before.consent_carried_from_group_id, before.consent_carried_from], ['feed', null, null]);
+    const empty = carried();
+    applyConsentAnswer(empty, null);
+    assert.deepEqual([empty.consent_scope, empty.consent_granted_at, empty.consent_carried_from_group_id], [null, null, null]);
+});
+
 test('the consent banner counts confirmed, current guardians of students who moved in and have no consent here', () => {
     const roster = [
         student({ moved_from_group_id: 1 }),
@@ -149,9 +206,15 @@ test('the consent banner counts confirmed, current guardians of students who mov
         guardian(4, 'Former', { left_on: '2026-09-20' }),                 // not current
         student({ id: 11, contact_id: 101 }),                             // never moved
         guardian(5, 'Other', { guardian_of_contact_id: 101 }),
+        // Withdrawn here after it was carried: the family said no, so it is not something to record.
+        guardian(6, 'Samira', { consent_carried_from_group_id: 1, consent_carried_from: { id: 1, name: '1st Grade', deleted_at: null } }),
+        // Carried and standing: has consent.
+        guardian(7, 'Layla', { consent_granted_at: '2026-09-05', consent_scope: 'feed', consent_carried_from_group_id: 1 }),
     ];
 
     assert.equal(consentBannerCount(roster), 1);
+    // Without the mark the withdrawn entry would have been the second one counted.
+    assert.equal(consentBannerCount(roster.map((r) => ({ ...r, consent_carried_from_group_id: null }))), 2);
     assert.equal(consentBannerText(0), '');
     assert.match(consentBannerText(1), /^1 guardian of students who moved into this class has no consent recorded here\./);
     assert.match(consentBannerText(2), /^2 guardians of students who moved into this class have no consent/);
@@ -344,6 +407,15 @@ test('one place sends the undo, and one place builds the sentences about a move'
 
     // The echo of what was shown is the helper's: the dialog hands it the preview as it came.
     assert.match(modal, /moveBody\(\{[\s\S]*?\}, preview\.value\)\)/);
+
+    // The roster: the consent button says its word, the answer to a consent is written back with
+    // its mark, and a message that carries the server's notes has no timer on it.
+    assert.match(tab, /<i class="bi bi-file-earmark-check me-1" aria-hidden="true"><\/i>Consent\s*<\/button>/);
+    assert.match(tab, /const applyConsent = \(membership: GroupMembership, data: any\) => applyConsentAnswer\(membership, data\);/);
+    assert.equal((tab.match(/applyConsent\(membership, res\.data\?\.data\);\s*consentFor\.value = null;\s*consentSaved\('Consent (recorded|withdrawn)', res\.data\?\.notes\);/g) ?? []).length, 2);
+    const saved = tab.slice(tab.indexOf('const consentSaved = '), tab.indexOf('const saveConsent = '));
+    assert.equal((saved.match(/timer:/g) ?? []).length, 1, 'only the message with no notes closes by itself');
+    assert.match(saved, /said\.map\(\(note\) => `<p class="text-start mb-2">\$\{escapeHtml\(note\)\}<\/p>`\)\.join\(''\)/);
 
     // The Remove message is the server's, not a fixed word, and the roster shows that one.
     assert.match(store, /if \(res\.data\?\.status !== 'success'\) return null;/);
