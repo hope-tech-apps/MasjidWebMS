@@ -79,10 +79,15 @@ final class PageDocuments
     {
         $base = self::baseName($file->getClientOriginalName());
 
-        $media = $masjid->addMedia($file)
+        // NO ROW WITHOUT A FILE. The media library saves the row and then copies the file, and it
+        // takes its row back only for the failure it expects (a write the disk refuses). A copy that
+        // THROWS, as when the file's directory cannot be made on a full or unwritable disk, leaves the
+        // row behind, pointing at nothing, and each retry leaves one more. Inside a transaction the
+        // row goes with the exception.
+        $media = $masjid->getConnection()->transaction(fn () => $masjid->addMedia($file)
             ->usingName(self::displayName($base))
             ->usingFileName(self::storedName($base))
-            ->toMediaCollection(self::COLLECTION);
+            ->toMediaCollection(self::COLLECTION));
 
         // The address is written into page content and read by the public website, which is another
         // host: a root-relative address would be looked up THERE and miss the file. The public disk's

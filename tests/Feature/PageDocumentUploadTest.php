@@ -7,12 +7,14 @@ use App\Models\MasjidUser;
 use App\Models\Page;
 use App\Models\User;
 use App\Support\PageDocuments;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
+use League\Flysystem\UnableToCreateDirectory;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -28,8 +30,9 @@ use Tests\TestCase;
  *     The type a browser declares is never read.
  *  2. WHAT IS WRITTEN: a name the server makes, ending `.pdf`, never the client's.
  *  3. WHAT IS ANSWERED: an absolute address built from configuration, never from the request's Host.
- *  4. WHO MAY: exactly the people who may save a page.
- *  5. WHAT DID NOT CHANGE: a PDF sent with a section's save is still refused (the image rule), and the
+ *  4. WHO MAY: exactly the people who may save a page, thirty times an hour each.
+ *  5. WHAT IS LEFT BY A FAILURE: nothing. No row without a file.
+ *  6. WHAT DID NOT CHANGE: a PDF sent with a section's save is still refused (the image rule), and the
  *     three link fields carry an absolute address to the public API untouched.
  *
  * Every file here is REAL bytes (UploadedFile::fake() answers its type from its name or its argument,
@@ -364,7 +367,7 @@ class PageDocumentUploadTest extends TestCase
         $this->assertSame(['POST'], $route->methods());
 
         $middleware = $route->gatherMiddleware();
-        foreach (['auth:sanctum', 'admin', 'tenant', 'capability:web_pages', 'capability:website'] as $gate) {
+        foreach (['auth:sanctum', 'admin', 'tenant', 'capability:web_pages', 'capability:website', 'throttle:page-documents'] as $gate) {
             $this->assertContains($gate, $middleware, "the upload route lost {$gate}");
         }
         // An upload changes nothing a visitor sees; the section save that links it purges.
@@ -393,6 +396,93 @@ class PageDocumentUploadTest extends TestCase
         $this->post($this->documents(), ['document' => $this->upload('calendar.pdf', self::PDF)])
             ->assertStatus(500)
             ->assertJsonPath('status', 'failed');
+
+        $this->assertNothingStored();
+    }
+
+    #[Test]
+    public function a_copy_that_fails_leaves_no_row_without_a_file(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // The media library saves the row and THEN copies the file. This disk fails the copy as a
+        // full or unwritable one does when the file's directory cannot be made: with an exception
+        // that is not the refused write the library cleans up after.
+        $real = Storage::disk('public');
+        Storage::set('public', new class($real->getDriver(), $real->getAdapter(), $real->getConfig()) extends FilesystemAdapter
+        {
+            public function put($path, $contents, $options = [])
+            {
+                throw UnableToCreateDirectory::atLocation(dirname((string) $path), 'no space left on device');
+            }
+        });
+
+        // Twice: each retry used to leave one more row pointing at nothing.
+        foreach (['the first try', 'the retry'] as $attempt) {
+            $response = $this->post($this->documents(), ['document' => $this->upload('Academic Calendar 2026.pdf', self::PDF)]);
+
+            $this->assertSame(500, $response->status(), $attempt);
+            $this->assertSame('failed', $response->json('status'), $attempt);
+        }
+
+        $this->assertNothingStored();
+        $this->assertSame(0, $this->masjid->pageDocuments()->count());
+    }
+
+    #[Test]
+    public function the_thirty_first_upload_in_an_hour_is_refused_with_a_sentence_and_the_next_hour_is_open_again(): void
+    {
+        $limit = 'You have uploaded a lot of documents in the last hour. Wait a little, then try again.';
+        $send = fn (?Masjid $masjid = null) => $this->post($this->documents($masjid), ['document' => $this->upload('calendar.pdf', self::PDF)]);
+
+        Sanctum::actingAs($this->admin);
+        for ($upload = 1; $upload <= 30; $upload++) {
+            $this->assertSame(201, $send()->status(), "upload {$upload} was not stored");
+        }
+
+        $response = $send()->assertStatus(429);
+        $this->assertSame(['status' => 'error', 'message' => $limit], $response->json());
+        $this->assertGreaterThan(0, (int) $response->headers->get('Retry-After'));
+        $this->assertSame(30, DB::table('media')->count(), 'the refused upload was stored');
+
+        // Counted for each USER: a colleague in the same office is not held up.
+        Sanctum::actingAs($this->adminOf($this->masjid));
+        $send()->assertStatus(201);
+
+        // And the hour passes.
+        Sanctum::actingAs($this->admin);
+        $send()->assertStatus(429);
+        $this->travel(61)->minutes();
+        $send()->assertStatus(201);
+        $this->assertSame(32, DB::table('media')->count());
+    }
+
+    #[Test]
+    public function every_signed_in_request_to_the_route_is_counted_and_one_with_no_sign_in_is_not(): void
+    {
+        $send = fn (Masjid $masjid, string $bytes = self::PDF) => $this->postJson($this->documents($masjid), ['document' => $this->upload('calendar.pdf', $bytes)]);
+
+        // Nobody signed in: there is no user to count for, and the answer is always the 401.
+        for ($attempt = 1; $attempt <= 31; $attempt++) {
+            $this->assertSame(401, $send($this->masjid)->status(), "attempt {$attempt}");
+        }
+
+        // Signed in, the limiter runs BEFORE the tenant and capability gates and before the
+        // upload's own rule (Laravel orders `throttle` straight after `auth`, whatever the route
+        // lists). So a request those refuse is counted like one that is stored. The page tool
+        // refuses a wrong or oversize file before it sends one.
+        Sanctum::actingAs($this->admin);
+        for ($attempt = 1; $attempt <= 30; $attempt++) {
+            $this->assertSame(422, $send($this->masjid, self::HTML)->status(), "attempt {$attempt}");
+        }
+        $send($this->masjid)->assertStatus(429);
+
+        $other = $this->organisation(['web_pages' => true]);
+        Sanctum::actingAs($this->adminOf($other));
+        for ($attempt = 1; $attempt <= 30; $attempt++) {
+            $this->assertSame(403, $send($this->masjid)->status(), "attempt {$attempt}");
+        }
+        $send($other)->assertStatus(429);
 
         $this->assertNothingStored();
     }
