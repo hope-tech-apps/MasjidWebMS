@@ -15,7 +15,10 @@ is the local idiom.
   re-normalizes, and every input calls `emitUpdate()`. Content authored before a
   field existed must not blow up a `v-for`; default it in `normalize()`.
 - Images go through `ImageDraggableInput` + the injected
-  `sectionImages` composable, never a bare `<input type="file">`.
+  `sectionImages` composable, never a bare `<input type="file">`. (A file that
+  is NOT an image has a bare input, because `ImageDraggableInput` decodes
+  whatever it is given as a picture: the MP4 in `VideoSectionEditor`, still
+  queued on `sectionImages`, and a PDF, below, which is not queued at all.)
 
 ## Registering a new editor
 
@@ -45,8 +48,12 @@ maps it back through `getImageFieldsForSectionType`. Two consequences:
 ## A PDF is an address, not a queued file (the one exception to the uploads above)
 
 Link Buttons, Programs & Curriculum and Call to Action carry `SectionDocumentUpload`
-(`components/form/`) under their link field. It is the one place an editor's subtree
-uses a bare `<input type="file">` and talks to a store, and it does both on purpose:
+(`components/form/`) under their link field. It is the one upload in an editor's
+subtree that is NOT queued on `sectionImages`: it sends its file through a store
+action at once. (It is not the only bare file input, which Video also has, nor the
+only use of a store here: several editors read pages or forms from one. The rule
+above is that an editor never talks to a store ABOUT THE SECTION, and it still does
+not.)
 
 - **The file is sent at once** (`pagesStore.uploadPageDocument`), not on Save, and what
   comes back is an absolute address. The editor writes that string into its link field
@@ -58,12 +65,34 @@ uses a bare `<input type="file">` and talks to a store, and it does both on purp
   on the wrong row. Each control's `:key` carries a counter the editor bumps on every move
   and removal, so a refusal shown under one row does not stay behind under another.
 - **Only blank companions are filled** (a Link Buttons label and icon, a program's Link
-  Text). Words the office chose are theirs.
-- The modal is not told an upload is running: Save is not held. A section saved before
-  the upload ends is saved without the address, and the file stays online, linked from
-  nowhere (see `App\Support\PageDocuments` for what is kept and what is deleted).
+  Text). Words the office chose are theirs. When the editor fills one it says so by
+  calling `stored.filled('…one sentence…')` on the `uploaded` payload, and the control
+  shows that sentence in its "Uploaded." note.
+- **Save waits for an upload.** `SectionFormModal` provides a count,
+  `sectionDocumentUploads`, beside `sectionImages`; the control raises it when a file
+  goes and lowers it when the answer comes, or when the control is unmounted first.
+  While it is above zero Create/Update Section is off, the footer says "A PDF is still
+  uploading.", `handleSubmit` returns (Enter in a field submits the form and asks no
+  button), and Cancel and the close button ask before closing. The editors do nothing
+  for this: their own `uploadsInFlight` only holds their rows.
+- **What is true to say about taking a file offline depends on whether it is SAVED.** The
+  server deletes a document when a save stops linking it, compared with the saved
+  section, so a file uploaded since the last save is deleted by nothing. The modal
+  provides `sectionSavedDocuments`, the page documents in the section as it was opened
+  (read once: the editors write into objects they share with `props.section.content`).
+  The control tells a saved document "clear the address and save", an unsaved one that
+  clearing or replacing it now leaves it online, and, when an upload replaces an unsaved
+  one, shows the replaced file's address, which is then in no field. The modal's footer
+  names each saved document the content no longer links, in any field of any editor:
+  "This file is taken offline when you save, unless another saved section still links
+  it." Never word either of these so that it is false for the other kind of file.
+- **Rows are named.** Pass the row's label as `:label` (a button's label, a program's
+  name, else "Link 2"): it goes into the accessible names of the button and the Open
+  link. The button is never `disabled` while it uploads (that drops the keyboard's
+  focus to the page); it is `aria-disabled`, and a press does nothing.
 - Adding the control to another link field is a template line, an `onDocumentUploaded`
-  and, in a list editor, the busy counter and the key. The server needs nothing.
+  and, in a list editor, the busy counter, the key and the label. The modal and the
+  server need nothing.
 
 ## Arrays of plain strings
 

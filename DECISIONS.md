@@ -8019,3 +8019,73 @@ themselves still run only on the MySQL job.
   5. Not run by this change, and release gates in the design: the response headers of a stored PDF on staging
      and production, what the edge cache does after a delete, the request-size ceiling of each web server, and
      the walk through the real screens. See ASSUMPTIONS.md, "A PDF attached to a web page".
+- **Fix round after three reviews, the same day** (the upload, the deletion on save, the editors). All three
+  said "ship after fixes"; none found a way to store or serve anything but a PDF. Of "Open, not built" above,
+  item 1 (Save is not held) and the rate limit of item 4 are now built; the rest stands.
+  - **The deletion on save, four corrections.**
+    1. **A save from an out-of-date editor deletes nothing.** Two tabs hold one section linking X; one replaces
+       X with Y and saves (X is deleted, as designed); the other, still showing X, saves, and Y was deleted
+       too, leaving the page linking a file that was gone. When the content after a save brings in an address
+       of page-document shape that the section did not have before, and none of the organisation's documents
+       is behind it, nothing is deleted on that save and one warning line names what was kept. Chosen over
+       refusing the stale save: no client sends a version today. So the old copy's link is still stored and
+       still dead; what is saved is the current file. Not covered: a stale save that only DROPS a document
+       the other tab added (nothing new comes in, so it reads as an ordinary removal). The guard can only
+       keep: an address of that shape with no document of this organisation behind it (another site's, another
+       organisation's) put in place of an own document also stops that deletion, and no later save reaches it.
+    2. **"Still linked" sees through spellings.** It is asked of the address as written, of the document's
+       own path, and of both percent-decoded once (a viewer's link that carries the address encoded keeps the
+       file). The address pattern refuses an id with a leading zero, so `/storage/03/x.pdf` is nobody's
+       document and can never start a deletion of document 3. What STARTS a deletion was not widened: a link
+       that only ever carried the address encoded keeps a file and, when it goes, leaves it online. An address
+       encoded twice is not found.
+    3. **A file is called deleted only when the disk says it is gone.** The media library deletes the row
+       first and a disk that refuses a removal raises nothing, so the disk is asked afterwards; a file it
+       still holds is logged as NOT removed and still online. Its row is gone by then, so no later save
+       retries it: the line is the record.
+    4. **The cleanup runs whenever the content was written.** Both `update` actions call it in a `finally`
+       that starts after the section's row is updated, compared with what is stored. A save that failed in
+       its image step (answered 500) has already lost the address, and no later save could find the file. So
+       a save the office was told failed can now delete a file: consistent with what is stored, not with the
+       answer.
+  - **The upload.** The store runs in a transaction, so a copy that throws (the file's directory cannot be
+    made) leaves no `page_documents` row; the cost is that anything throwing AFTER the file is written would
+    leave a file with no row. A named limiter, `page-documents`: 30 requests an hour for each signed-in user,
+    with a sentence in the 429 that the screen shows. Laravel runs it straight after authentication, ahead of
+    the tenant and capability gates and of the upload's own rule, so a refused request is counted too.
+  - **The editors.**
+    1. **Save waits for an upload.** `SectionFormModal` provides a count the control raises and lowers
+       (cleared if the control unmounts). While it is above zero Create/Update Section is off, one line says
+       why, Enter in a field submits nothing, and Cancel and the close button ask first.
+    2. **Only true sentences.** What may be said about taking a file offline depends on whether the SAVED
+       section links it, and the modal provides that (read once, when it opens). A saved document is told
+       "clear the address and save"; one uploaded since is told that clearing or replacing it now leaves it
+       online, and how to take it offline. When an upload replaces an unsaved file the control shows that
+       file's address, which is then in no field; that notice lives with the control, so it goes when rows
+       move.
+    3. **Said where the office acts.** Beside Save, for each saved document the content no longer links, in
+       any field of any editor: "This file is taken offline when you save, unless another saved section
+       still links it."
+    4. **Sentences and names.** The page tool's two refusals for a wrong file are now the server's own, word
+       for word, so both say what to do; a file a little over the limit reads "a little over 25 MB"; a label
+       made from a file's name reads dashes and underscores as spaces and keeps a dash between two digits;
+       the "Uploaded." note says which blank fields were filled; each row's button and Open link carry the
+       row's label in their accessible name; the button is `aria-disabled` while it uploads, never
+       `disabled`, so the keyboard's focus stays on it.
+- **Limits that stay, confirmed by the reviews.**
+  1. Only a SECTION of the SAME organisation keeps a file online. A link from an announcement, a menu, a
+     section's settings or another organisation's page does not: when the owning organisation's last section
+     lets go, the file is deleted and that link is dead.
+  2. An upload that was never saved is kept, and no screen lists such files. The hourly limit bounds how fast
+     they can be made, not how many there are.
+  3. There is no ceiling for an organisation beyond the hourly limit for each user.
+  4. `GET /storage/{missing}` answers 404 for EVERY missing file under `/storage`, on every hostname this
+     deployment answers to, not only for page documents. Why: the web server hands any path with no file
+     behind it to the application, and the admin SPA's catch-all answered each of them with a 200 and the
+     sign-in screen, so a removed file still "opened" for a visitor, a link checker and a search engine.
+- **This branch ships with or after `fix/pin-upload-file-names`.** The upload review found, outside this
+  branch's diff, that older public image uploads check a file's bytes and not its name, so image bytes named
+  `.html` can be stored under that name on the origin where the admin screens keep their sign-in token. Page
+  documents neither open nor widen that (they only ever write `.pdf` names), but `StorePageDocumentRequest`
+  says every upload rule beside it pins the name, which is true only once that branch has landed. Both
+  branches edit this file and `.claude/rules/section-types.md`: keep both additions when the second merges.

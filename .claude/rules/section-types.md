@@ -79,6 +79,16 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   `url`, never from the request (`.claude/rules/generated-urls.md`). It must be
   absolute, because the website is another host: a disk with no absolute `url`
   refuses the upload and keeps nothing.
+- **A failed upload leaves no row.** The media library saves the row and then
+  copies the file, and takes its row back only for a write the disk refuses; a
+  copy that THROWS (the file's directory cannot be made) would leave a row with
+  no file. `PageDocuments::store()` runs in a transaction for that reason.
+- **Thirty an hour for each signed-in user** (`throttle:page-documents`,
+  `AppServiceProvider`), because each upload is a public file no screen lists.
+  Laravel runs the limiter straight after `auth`, AHEAD of the tenant and
+  capability gates and of the upload's own rule, so every signed-in request to
+  the route is counted, stored or refused. The 429 carries a sentence
+  (`message`), which the page tool shows.
 - **It is public from the second the upload ends**, before any save. The editor
   says so. A document that must not be public does not go here
   (`.claude/rules/private-uploads.md`).
@@ -94,7 +104,30 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   or a gallery photo can never match; it never fails the save; and it leaves a
   WARNING line by ids alone for each file it removes or cannot remove. **Any new
   route that writes or deletes a section must call it**, or documents unlinked
-  there are simply left online.
+  there are simply left online. Four things it is careful about, each of which
+  was a wrong deletion or a false record before it was written down here:
+  - **Only one spelling STARTS a deletion, and every spelling stops one.** The
+    address pattern takes an id with no leading zero (`/storage/03/x.pdf` is
+    nobody's document, though read as a number it is document 3). "Still linked"
+    is asked of the address as written, of the document's own path, and of both
+    percent-decoded (a viewer's link that carries the address encoded keeps the
+    file). A link that was only ever there encoded never starts a deletion.
+  - **A save from an out-of-date editor deletes nothing.** If the content after
+    the save brings in an address of this shape that the section did not have
+    before, and none of the organisation's documents is behind it, the save is an
+    old copy putting a deleted file's link back (a second tab): the document it
+    would otherwise unlink is the CURRENT one. One warning line names what was
+    kept. The save is not refused, so the old link stays dead.
+  - **"Deleted" is said only when the disk says the file is gone.** The media
+    library deletes the row first, and a disk that will not let a file go raises
+    nothing (the public disk does not throw). The disk is asked afterwards; a
+    file it still holds is logged as NOT removed and still online.
+  - **It runs whenever the content was written**, not only when the save
+    succeeded: both `update` actions call `forgetUnlinkedBySave()` in a
+    `finally` that starts after the section's row is updated, and it compares
+    with what is STORED. The row is written before the images, in no
+    transaction, so a failed image step answers 500 with the address already
+    gone, and no later save would find the document.
 - **Kept on purpose:** a document whose section was only taken off a page, or
   whose page was deleted (the section is still in the library), and a document
   that was uploaded and never saved. Nothing scheduled deletes one: a sweeper
@@ -113,9 +146,15 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   field of Link Buttons, Programs & Curriculum and Call to Action only (the local
   rules are in `components/sections/editors/CLAUDE.md`). The address can be
   pasted into any other link field by hand.
+- **`SectionFormModal` holds Save while a PDF uploads** and asks before closing
+  (a section saved mid-upload is saved without the address), and says beside
+  Save which saved documents the content no longer links: those are the files
+  the save takes offline. What the screen may say about a file depends on
+  whether the SAVED section links it; a file uploaded since is deleted by no
+  save, and must never be told that clearing or replacing it takes it offline.
 - `PageDocumentUploadTest` and `PageDocumentCleanupTest` pin all of it; the SPA's
-  `section-document-file.test.ts` and `section-document-upload.test.ts` pin the
-  control.
+  `section-document-file.test.ts`, `section-document-upload.test.ts` and
+  `section-form-modal-documents.test.ts` pin the control and the modal.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
