@@ -148,10 +148,11 @@ class FormResponsesController extends Controller
     private const DELETE_PAID_ON_STRIPE = 'This registration was paid by card, so it was not deleted. If it still shows as unpaid later, check this payment in Stripe.';
 
     /**
-     * A page was asked for and its handle never reached the row: the idempotency key is
-     * saved before Stripe is called and the session id only after it answers
-     * (FormResponseCheckoutService::create(), openPage()). Nobody here can name that page,
-     * so nobody can ask Stripe whether it was paid.
+     * An idempotency key and no session id: a state nothing should write. The key is saved
+     * inside the transaction that opens a page (FormResponseCheckoutService::onLockedRow()),
+     * so a failed attempt takes it back and a successful one records the id beside it. A row
+     * found holding only the key was asked a page nobody here can name, so nobody can ask
+     * Stripe whether it was paid.
      */
     private const DELETE_PAGE_UNKNOWN = 'A card payment page was requested for this registration, but its reference was not saved, so we cannot tell whether it was paid. It was not deleted, and it stays cancelled.';
 
@@ -913,18 +914,19 @@ class FormResponsesController extends Controller
         }
 
         if (! $row->stripe_checkout_session_id) {
-            // A page was ASKED FOR and never recorded (Stripe failed, or the request died
-            // between Stripe's answer and the save of the session id). The address of a
-            // page is handed to the payer only after that save, so such a page should be
-            // in nobody's hands; but it may exist at Stripe, and with no id on the row
-            // there is nothing to ask Stripe about. It goes to a person, not to a delete.
+            // A key with no id is a state nothing should write (see DELETE_PAGE_UNKNOWN):
+            // it goes to a person, not to a delete.
             if ($row->idempotency_key !== null) {
                 return [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_PAGE_UNKNOWN];
             }
 
-            // No page was ever asked for (a family paying the office never has one; a card
-            // registration whose payer never reached the card step): nothing at Stripe
-            // could have been paid.
+            // Neither a key nor an id: no page of this registration was ever handed to
+            // anybody. A page's address reaches the payer only in the answer of the
+            // transaction that records its id (FormResponseCheckoutService::onLockedRow()),
+            // so an attempt in which Stripe failed, or whose answer or commit was lost, is
+            // rolled back to this state, and whatever Stripe made then has an address
+            // nobody was given. Nothing at Stripe could have been paid. (A family paying the
+            // office never has a page at all.)
             return null;
         }
 

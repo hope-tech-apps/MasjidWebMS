@@ -389,9 +389,10 @@ class FormResponseNeverPaidDeleteTest extends TestCase
     {
         $this->neverBuildsAStripeClient();
 
-        // The key is saved before Stripe is called and the session id only after it answers:
-        // this is the row an attempt leaves when Stripe failed, or when the request died in
-        // between. A page may exist at Stripe that nobody here can name.
+        // A key and no session id is a state nothing should write: the key is saved inside
+        // the transaction that opens a page, so a failed attempt takes it back
+        // (FormPaymentCheckoutTest pins that) and a successful one records the id beside
+        // it. A row found like this was asked a page nobody here can name.
         $row = $this->cardRow(['stripe_checkout_session_id' => null], ['status' => 'cancelled']);
         $file = $this->withFile($row);
         $this->assertNotNull($row->idempotency_key);
