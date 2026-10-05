@@ -1724,4 +1724,34 @@ class ClassStoreCarryTest extends TestCase
         Schema::shouldReceive('hasColumn')->once()->andThrow(new RuntimeException('the database is away'));
         $this->assertFalse(ClassStore::carryReady());
     }
+
+    #[Test]
+    public function the_transfer_rows_command_prints_a_count_and_answers_with_its_exit_code(): void
+    {
+        // Other kinds of row are not what it asks about.
+        $this->credit($this->yusuf, 3, '2026-10-04');
+        $this->assertSame(0, Artisan::call('bucks:transfer-rows'));
+        $this->assertSame("0\n", Artisan::output());
+
+        $this->credit($this->amira, 4127, '2026-10-04');
+        $this->move($this->amira, $this->next, $this->admin);
+
+        $this->assertSame(3, Artisan::call('bucks:transfer-rows'));
+        $this->assertSame("2\n", Artisan::output(), 'a count and nothing else: no amount, no id, no school');
+
+        // Across organisations, with no tenant bound and whatever any switch says.
+        $other = $this->newSchool('Elsewhere');
+        $theirs = $this->newClass('Their class', [], (int) $other->id);
+        $row = GroupMembership::create([
+            'masjid_id' => $other->id, 'group_id' => $theirs->id, 'role' => GroupMembership::ROLE_MEMBER,
+            'contact_id' => Contact::factory()->create(['masjid_id' => $other->id, 'email' => null])->id,
+        ]);
+        PrizeLedgerEntry::create([
+            'masjid_id' => $other->id, 'group_id' => $theirs->id, 'group_membership_id' => $row->id,
+            'kind' => PrizeLedgerEntry::KIND_TRANSFER_IN, 'amount' => 1, 'dedupe_key' => 'transfer_in:0',
+        ]);
+
+        $this->assertSame(3, Artisan::call('bucks:transfer-rows'));
+        $this->assertSame("3\n", Artisan::output());
+    }
 }
