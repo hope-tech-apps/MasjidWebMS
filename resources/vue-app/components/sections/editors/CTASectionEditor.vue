@@ -38,6 +38,10 @@
                     @input="emitUpdate"
                     placeholder="https://example.com"
                 />
+                <SectionDocumentUpload
+                    :value="localContent.button_link"
+                    @uploaded="onDocumentUploaded"
+                />
             </div>
             <div class="col-md-6 mb-3">
                 <label class="form-label">Button Style</label>
@@ -76,6 +80,7 @@
 import { CTASectionContent } from '@/core/types/data/masjid-related/PageSection';
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
+import SectionDocumentUpload from '@/components/form/SectionDocumentUpload.vue';
 import { ref, watch } from 'vue';
 
 const props = defineProps<{
@@ -106,6 +111,13 @@ watch(() => props.modelValue, (newVal) => {
 
 const emitUpdate = () => {
     emit('update:modelValue', localContent.value);
+};
+
+// A PDF is uploaded at once by SectionDocumentUpload and comes back as an address. There is one
+// button and no rows to hold still, and the button's text has a default, so only the link is written.
+const onDocumentUploaded = (stored: { url: string; name: string }) => {
+    localContent.value.button_link = stored.url;
+    emitUpdate();
 };
 
 const onImageChange = (data: UploadedImageInfo) => {

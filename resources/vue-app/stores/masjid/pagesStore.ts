@@ -6,6 +6,7 @@ import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
+import { SECTION_DOCUMENT_UPLOAD_FAILED, sectionDocumentUploadProblem } from "@/core/helpers/sectionDocumentFile";
 
 export const usePagesStore = defineStore('pagesStore', () => {
 
@@ -250,6 +251,40 @@ export const usePagesStore = defineStore('pagesStore', () => {
     }
 
     /**
+     * Upload one PDF for a web page and return its public address (PageDocumentsController).
+     *
+     * The file is stored, and PUBLIC, the moment this resolves: it is not part of a section's save.
+     * The caller puts `url` into a link field; nothing else keeps the document. Throws an Error whose
+     * message is a sentence for the office (the server's own, for a refused file).
+     *
+     * `url` must be absolute. The public website is another host, so a root-relative address would
+     * be looked up there and open nothing; one that came back is treated as a failed upload rather
+     * than written into a page.
+     */
+    async function uploadPageDocument(file: File): Promise<{ url: string; name: string; size: number }> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error(SECTION_DOCUMENT_UPLOAD_FAILED);
+        }
+
+        const body = new FormData();
+        body.append('document', file);
+
+        let res: AxiosResponse;
+        try {
+            res = await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/pages/documents`, body);
+        } catch (e) {
+            throw new Error(sectionDocumentUploadProblem(e));
+        }
+
+        const data = res.data?.data;
+        if (res.data?.status === 'success' && typeof data?.url === 'string' && /^https?:\/\//i.test(data.url)) {
+            return { url: data.url, name: typeof data.name === 'string' ? data.name : '', size: Number(data.size) || 0 };
+        }
+
+        throw new Error(SECTION_DOCUMENT_UPLOAD_FAILED);
+    }
+
+    /**
      * Fetch available section types
      */
     async function fetchSectionTypes(): Promise<void> {
@@ -410,6 +445,7 @@ export const usePagesStore = defineStore('pagesStore', () => {
         updateSectionWithImages,
         deleteSection,
         fetchSectionTypes,
+        uploadPageDocument,
 
         // Sections Library methods
         fetchSectionsLibrary,

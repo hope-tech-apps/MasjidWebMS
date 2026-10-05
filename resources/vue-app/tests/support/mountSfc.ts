@@ -184,11 +184,12 @@ let seq = 0;
 const componentErrors: any[] = [];
 
 /**
- * Compile and mount `relPath` (from resources/vue-app/) with these props, reading each of its
- * imports from `modules` (keyed by the specifier exactly as the component writes it). 'vue' is
- * supplied here; anything else the component imports and the test did not supply fails loudly.
+ * Compile `relPath` (from resources/vue-app/) into a component WITHOUT mounting it, reading each of
+ * its imports from `modules`. For a parent that is mounted with one of its real children inside it:
+ * compile the child here, then hand it to mountSfc as the module the parent imports
+ * (`{ default: child }`). 'vue' is supplied here.
  */
-export async function mountSfc(relPath: string, props: Record<string, any>, modules: Record<string, any>): Promise<Mounted> {
+export async function compileSfc(relPath: string, modules: Record<string, any>): Promise<any> {
     const file = new URL(`../../${relPath}`, import.meta.url);
     const source = readFileSync(file, 'utf8');
     const { descriptor, errors } = sfc.parse(source, { filename: file.pathname });
@@ -213,12 +214,20 @@ export async function mountSfc(relPath: string, props: Record<string, any>, modu
         return supplied[spec];
     };
 
-    let component: any;
     try {
-        component = (await import(pathToFileURL(out).href)).default;
+        return (await import(pathToFileURL(out).href)).default;
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
+}
+
+/**
+ * Compile and mount `relPath` (from resources/vue-app/) with these props, reading each of its
+ * imports from `modules` (keyed by the specifier exactly as the component writes it). 'vue' is
+ * supplied here; anything else the component imports and the test did not supply fails loudly.
+ */
+export async function mountSfc(relPath: string, props: Record<string, any>, modules: Record<string, any>): Promise<Mounted> {
+    const component = await compileSfc(relPath, modules);
 
     const root = new Node('el', 'root');
     const app = createApp(component, props);
