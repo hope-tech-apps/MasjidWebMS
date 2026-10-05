@@ -7950,3 +7950,72 @@ themselves still run only on the MySQL job.
   person. Production held no registration in that state on 2026-10-05 (counted). A payment that did land on a
   page nobody can name meets the webhook: found by the registration's uuid or charge reference it is recorded
   as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries the same uuid.
+
+## 2026-10-05 — An office can attach a PDF to a web page: uploaded on its own, linked from a field a section already has (branch `feat/page-documents`)
+
+- **Asked.** An office tried to put three documents on one of its public pages (a curriculum, a calendar, a
+  schedule) by uploading them into a programme's image box. That box takes images, and no section took a
+  document: section uploads are images, and an MP4 for the Video section.
+- **Decided.** Upload first, no new section type. `POST {masjid}/pages/documents` (in the group that guards
+  saving a page) stores ONE PDF on the organisation (media collection `page_documents`, public disk) and answers
+  `{url, name, size}`. "Upload a PDF" under the link field of Link Buttons, Programs & Curriculum and Call to
+  Action sends the file at once and writes the address into that field, as if it had been pasted. The website
+  and the apps are not changed. Rule: `.claude/rules/section-types.md`, "A PDF is not a section upload".
+  - **Let in:** a PDF by its bytes (`mimetypes:application/pdf`), by its first five bytes (`%PDF-`), by its name
+    (`extensions:pdf`), at most 25 MB (the media library's own ceiling). The type a browser declares is not read.
+  - **Written:** under a name the server makes (a slug of the client's name, then `.pdf`). The client's name
+    never reaches the disk; it is kept on the media row for people to read.
+  - **Answered:** an absolute address from the public disk's configured `url`, never from the request.
+  - **Told to the office, where it acts:** the file is public as soon as it is uploaded; it stays online while a
+    saved section links to it; how to take it offline; what to do about a file uploaded by mistake; and each
+    refusal with what to do about it.
+  - **A label is never a raw address:** a blank Link Buttons label and icon, and a blank programme Link Text, are
+    filled from the file's name. Words the office chose are left alone.
+- **A document is deleted when the last saved section that links it lets go.** On a section's save (either
+  route) and on its deletion from the library, `PageDocuments::forgetUnlinked()` deletes the organisation's own
+  page documents whose address that write removed, unless another section of the organisation still carries it.
+  Matched by path (not host), resolved by media id AND stored name through `Masjid::pageDocuments()`, never
+  failing the save, one warning line by ids alone per file. **Kept on purpose:** a document whose section was
+  only taken off a page or whose page was deleted, and one that was uploaded and never saved. Nothing is
+  scheduled: a sweeper would delete public files by inference, which is how media was lost here before.
+- **Rejected.**
+  - A "Documents" section type first. It needs a renderer component in the website's repository before a
+    visitor sees anything, the palette is not gated on the renderer, and it adds no reach: the three link
+    fields already carry an address to every visitor.
+  - Riding the section's save (the Video precedent). The file would have no address until Save, so the live
+    preview could not open it; queued files are keyed by list position and Link Buttons moves rows; and a late
+    refusal is a 500 on a half-saved section.
+  - A scheduled deleter for uploads that were never saved, and a forced download (`Content-Disposition`), which
+    would stop the document opening in the browser.
+- **Decided here, the owner did not say** (the design's four questions, taken at their defaults by the lead):
+  documents are not in the apps (the apps show no pages); a document a save stops linking is deleted then;
+  never-saved uploads are kept; the address is on the platform's own host, as every section image's is.
+- **Found while building, where the code differed from the design.**
+  1. **`%PDF-` at byte 0 is the guard, not a belt.** PHP 8.3's type sniffer reports a web page followed by a
+     PDF as `application/pdf`, so `mimetypes` alone lets that file in. The first-five-bytes check refuses it
+     (`PageDocumentUploadTest`, "a web page with a PDF after it").
+  2. **A path under `/storage` with no file behind it answered the admin screen with a 200**, from the SPA's
+     catch-all route, so a removed document would still "open". `routes/web.php` now answers such a path 404,
+     ahead of the catch-all. The route's parameter is deliberately not `path`: the framework registers
+     `storage/{path}` (signed links to the private disk) after the catch-all, where a GET has never reached it,
+     and a route of the same address is replaced by it in the earlier place. This changes the answer for EVERY
+     missing file under `/storage`, not only documents. Checked with routes cached and uncached.
+  3. **A Teacher is answered 401, not 403:** the `admin` middleware has always answered 401 for a signed-in
+     account that is not an administrator. Pinned as it is.
+  4. **A public disk with no absolute `url` refuses the upload** (500, nothing kept) rather than answering a
+     root-relative address the website would look for on itself. `Storage::fake('public')` drops the `url`, so
+     the tests hand the fake one.
+  5. **The page tool sends a `.pdf` the computer gave no type** (the server reads the bytes); it refuses a
+     file with any other type. One more server sentence than the design listed: a wrong NAME is told apart
+     from wrong bytes.
+- **Open, not built.**
+  1. Save is not held while a PDF uploads (the modal is unchanged). A section saved before the upload ends is
+     saved without the address, and the file stays online, linked from nowhere.
+  2. An address pasted somewhere that is not a section (a menu link, an announcement) does not keep its file
+     online.
+  3. Two saves in the same instant, one removing a document's last link and one adding the address to another
+     section, are not serialised.
+  4. No rate limit on the upload, as on no other admin upload; no list of documents; no report of unlinked ones.
+  5. Not run by this change, and release gates in the design: the response headers of a stored PDF on staging
+     and production, what the edge cache does after a delete, the request-size ceiling of each web server, and
+     the walk through the real screens. See ASSUMPTIONS.md, "A PDF attached to a web page".

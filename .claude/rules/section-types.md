@@ -6,6 +6,10 @@ paths:
   - "app/Http/Requests/Admin/Sections/**"
   - "app/Http/Requests/Admin/PageSections/**"
   - "app/Support/SectionContentBinder.php"
+  - "app/Support/PageDocuments.php"
+  - "app/Http/Controllers/AdminDashboard/PageDocumentsController.php"
+  - "app/Http/Requests/Admin/Pages/StorePageDocumentRequest.php"
+  - "resources/vue-app/components/form/SectionDocumentUpload.vue"
   - "app/Http/Resources/Api/V1/PageSectionResource.php"
   - "resources/vue-app/components/sections/editors/**"
   - "resources/vue-app/components/modals/SectionFormModal.vue"
@@ -49,6 +53,69 @@ rule: an MP4 in a field an `<img>` draws is a blank box on a live page
 bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
 the uploaded file name on the public disk, and the web server serves it by its
 extension, so matching bytes named `.html` would be a page on this app's origin.
+
+**A PDF is not a section upload, and takes none of the seven places.** An office
+attaches a document (a curriculum, a calendar, a schedule) by uploading it ON ITS
+OWN: `POST {masjid}/pages/documents` (`PageDocumentsController`,
+`StorePageDocumentRequest`, `App\Support\PageDocuments`), in the group that
+guards saving a page and outside the purge groups. It stores one PDF on the
+ORGANISATION (media collection `page_documents`, read only through
+`Masjid::pageDocuments()`) and answers `{url, name, size}`; the page tool writes
+`url` into a link field a section already has (`links[].url`,
+`programs[].link_url`, `button_link`), where the website already draws a link.
+So: no `SectionType` case, no entry in either upload map, no change to
+`sectionUploadRules()`, no renderer component. A PDF sent WITH a section's save
+is still a 422 (`PageDocumentUploadTest` pins it on both routes).
+
+- **What is let in:** `mimetypes:application/pdf` (the bytes) AND `%PDF-` as the
+  first five bytes AND `extensions:pdf` AND 25 MB. The second is not a belt: the
+  type sniffer calls a web page with a PDF after it `application/pdf` (seen on
+  PHP 8.3). The type a browser declares is never read.
+- **What is written:** a name the SERVER makes, `Str::slug` of the client's name
+  plus `.pdf` (`PageDocuments::storedName`). The client's name never reaches the
+  disk, so the rule above about `extensions` is a refusal a person can act on
+  here, not the guard.
+- **What is answered:** the media row's URL, from the public disk's configured
+  `url`, never from the request (`.claude/rules/generated-urls.md`). It must be
+  absolute, because the website is another host: a disk with no absolute `url`
+  refuses the upload and keeps nothing.
+- **It is public from the second the upload ends**, before any save. The editor
+  says so. A document that must not be public does not go here
+  (`.claude/rules/private-uploads.md`).
+- **A document stays online while a saved section links to it.**
+  `PageDocuments::forgetUnlinked()` runs after `PageSectionsController::update`,
+  `SectionsController::update` and `SectionsController::destroy`, and DELETES the
+  organisation's own page documents whose address that write removed from the
+  section, unless another section of the organisation (on a page or only in the
+  library, active or not) still carries it. It matches the PATH
+  (`/storage/{id}/{name}.pdf`), so a change of host or scheme cannot make a live
+  file look unlinked; it resolves by media id AND stored name through
+  `Masjid::pageDocuments()`, so another organisation's document, a section image
+  or a gallery photo can never match; it never fails the save; and it leaves a
+  WARNING line by ids alone for each file it removes or cannot remove. **Any new
+  route that writes or deletes a section must call it**, or documents unlinked
+  there are simply left online.
+- **Kept on purpose:** a document whose section was only taken off a page, or
+  whose page was deleted (the section is still in the library), and a document
+  that was uploaded and never saved. Nothing scheduled deletes one: a sweeper
+  would delete public files by inference, and `media:verify` exists because that
+  went wrong here once. An address pasted somewhere that is NOT a section (a menu
+  link, an announcement) does not keep its file online.
+- **`media:verify`:** the collection is counted like any other. If the platform
+  holds five or more page documents and every one is taken offline between two
+  runs, the vanish floor reports it until an operator accepts the baseline. That
+  is the detector working.
+- **A removed file's address is a 404**, not the admin screen: `routes/web.php`
+  answers `/storage/{missing}` ahead of the SPA catch-all. Keep the parameter's
+  name: a route spelt `storage/{path}` is replaced, in that place, by the
+  framework's signed route to the PRIVATE disk.
+- **The control** is `components/form/SectionDocumentUpload.vue`, under the link
+  field of Link Buttons, Programs & Curriculum and Call to Action only (the local
+  rules are in `components/sections/editors/CLAUDE.md`). The address can be
+  pasted into any other link field by hand.
+- `PageDocumentUploadTest` and `PageDocumentCleanupTest` pin all of it; the SPA's
+  `section-document-file.test.ts` and `section-document-upload.test.ts` pin the
+  control.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
