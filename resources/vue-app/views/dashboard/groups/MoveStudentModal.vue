@@ -1,5 +1,5 @@
 <template>
-    <div ref="root" class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)"
+    <div ref="root" class="modal fade show d-block move-student" tabindex="-1" style="background:rgba(0,0,0,.5)"
          role="dialog" aria-modal="true" aria-labelledby="move-student-title"
          @click.self="cancel">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
@@ -27,6 +27,21 @@
 
                 <form v-else @submit.prevent="save">
                     <div class="modal-body">
+                        <!-- A refusal from the move itself. FIRST in the body, and it
+                             takes the keyboard: the body scrolls since a carried
+                             consent made "What will happen" long, and after the lines
+                             the refusal could sit below the fold, where the dialog
+                             looked as if the tap had done nothing. The check below
+                             runs again by itself. -->
+                        <div v-if="saveError" ref="refusalAlert" tabindex="-1" class="alert alert-danger mb-3" role="alert" data-part="refused">
+                            <i class="bi bi-x-octagon me-1"></i>
+                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
+                            <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
+                                    @click="openClass(saveOpenGroup)">
+                                Open {{ saveOpenGroup.name }}
+                            </button>
+                        </div>
+
                         <p class="mb-3">
                             <span class="fw-semibold">{{ studentName }}</span> is in
                             <span class="fw-semibold">{{ groupName }}</span>.
@@ -93,7 +108,7 @@
                                     <i v-if="i === 0" class="bi bi-x-octagon me-1"></i>{{ line }}
                                 </div>
                                 <button v-if="preview.open_group" type="button" class="btn btn-sm btn-outline-secondary mt-1"
-                                        @click="openClass(preview.open_group.id)">
+                                        @click="openClass(preview.open_group)">
                                     Open {{ preview.open_group.name }}
                                 </button>
                             </div>
@@ -103,16 +118,6 @@
                             </ul>
                         </div>
 
-                        <!-- A refusal from the move itself: shown here, in the
-                             dialog, and the check above runs again by itself. -->
-                        <div v-if="saveError" class="alert alert-danger mt-3 mb-0" role="alert">
-                            <i class="bi bi-x-octagon me-1"></i>
-                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
-                            <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
-                                    @click="openClass(saveOpenGroup.id)">
-                                Open {{ saveOpenGroup.name }}
-                            </button>
-                        </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" :disabled="saving" @click="cancel">Cancel</button>
@@ -133,8 +138,9 @@
  *
  * One read and one write. Choosing a class (or changing the day) asks the server what the move
  * would do, and the dialog prints the server's own lines; the Move button is off until that answer
- * says the move can happen. Saving sends what was shown back with the request, so a move the
- * server would now make differently is refused and the office reads again.
+ * says the move can happen. Saving sends what was shown back with the request (the path, the days,
+ * what was said about consent and the rule for Manara Bucks), so a move the server would now make
+ * differently is refused and the office reads again.
  *
  * THE BUTTON IS OFF, AND THE HANDLER REFUSES TOO: while the check is running, after a refusal, and
  * from the tap until the answer. A second tap that lands before the button is redrawn sends
@@ -144,7 +150,7 @@
  * the suite (tests/roster-move-mounted.test.ts).
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { GroupMembership, MovePreview } from '@/core/types/data/masjid-related/Group';
+import type { GroupMembership, MovePreview, OpenGroup } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { trapTab } from '@/core/helpers/focusTrap';
@@ -164,7 +170,8 @@ const emit = defineEmits<{
     (event: 'moved'): void;
     /** The roster this dialog was opened from is out of date. */
     (event: 'reload'): void;
-    (event: 'open-class', groupId: number): void;
+    /** The class to open, and the roster row there that a refusal's remedy is about, when it names one. */
+    (event: 'open-class', groupId: number, membershipId?: number | null): void;
 }>();
 
 const groupsStore = useGroupsStore();
@@ -271,7 +278,7 @@ watch(options, (list) => {
 
 const saving = ref(false);
 const saveError = ref('');
-const saveOpenGroup = ref<{ id: number; name: string } | null>(null);
+const saveOpenGroup = ref<OpenGroup | null>(null);
 const done = ref<string[] | null>(null);
 
 const canMove = computed(() => !saving.value && previewState.value === 'ready' && preview.value?.can_move === true);
@@ -298,6 +305,11 @@ const save = async () => {
         saveError.value = apiErrorText(error, 'The move could not be saved. Nothing was moved.');
         saveOpenGroup.value = error?.response?.data?.open_group ?? null;
         await check();
+
+        // The view and the keyboard go to the refusal, at the top of the body.
+        await nextTick();
+        refusalAlert.value?.focus();
+        refusalAlert.value?.scrollIntoView?.({ block: 'start' });
     } finally {
         saving.value = false;
     }
@@ -315,7 +327,7 @@ const cancel = () => {
 
 const finish = () => emit('moved');
 const reloadRoster = () => emit('reload');
-const openClass = (groupId: number) => emit('open-class', groupId);
+const openClass = (group: OpenGroup) => emit('open-class', group.id, group.membership_id ?? null);
 
 // THE KEYBOARD COMES INTO THE DIALOG AND STAYS IN IT, as in PutBackDialog: the
 // dialog is teleported to <body>, so Escape and Tab are heard on the DOCUMENT,
@@ -325,6 +337,7 @@ const openClass = (groupId: number) => emit('open-class', groupId);
 const root = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
 const okButton = ref<HTMLButtonElement | null>(null);
+const refusalAlert = ref<HTMLElement | null>(null);
 let opener: HTMLElement | null = null;
 let open = true;
 
@@ -365,3 +378,19 @@ onBeforeUnmount(() => {
     if (opener && document.contains(opener)) opener.focus();
 });
 </script>
+
+<style scoped>
+/*
+ * The form stands between the dialog's box and its body and footer. Unless it is itself a
+ * column that may shrink, the body never scrolls and the box cuts off everything below the
+ * fold, the Move button with it. Seen in a browser at 1280 by 900 once a move carried consent:
+ * the lines about what follows the student grew past the window, and the button could not be
+ * reached with a mouse or a finger.
+ */
+.move-student form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+</style>

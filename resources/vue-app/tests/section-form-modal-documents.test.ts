@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as documentFile from '../core/helpers/sectionDocumentFile.ts';
 import * as shopSection from '../core/helpers/shopSection.ts';
-import { check, click, compileSfc, deferred, flush, loadTs, mountSfc, Node, press, select, submit, type } from './support/mountSfc.ts';
+import { chooseOption, chooseRadio, click, compileSfc, deferred, flush, loadTs, mountSfc, Node, press, submit, type } from './support/mountSfc.ts';
 
 const vue = createRequire(import.meta.url)('vue');
 
@@ -613,7 +613,7 @@ test('a new section starts from a copy of its type\'s default content: what is t
     const asServed = copyOf(types);
 
     const modal = await mountModal(undefined, async () => ({}), { sectionTypes: types, editors: () => ({ StatsSectionEditor: scribbler }) });
-    assert.equal(select(modal.typeSelect(), 'stats'), true);
+    assert.equal(chooseOption(modal.typeSelect(), 'stats'), true);
     await flush();
     click(modal.byTitle('Scribble')[0]);
     await flush();
@@ -722,7 +722,7 @@ async function newSectionMidUpload() {
     const upload = deferred<any>();
     const modal = await mountModal(undefined, () => upload.promise, { sectionTypes: offeredTypes() });
 
-    assert.equal(select(modal.typeSelect(), 'link_list'), true);
+    assert.equal(chooseOption(modal.typeSelect(), 'link_list'), true);
     await flush();
     click(modal.screen.button('Add Link'));
     await flush();
@@ -747,7 +747,7 @@ test('while a PDF uploads into a new section, its Section Type cannot be changed
     // as Save is, and the line beside Save already says why.
     assert.equal(modal.typeSelect().disabled, true);
     assert.equal(modal.notes(), UPLOADING);
-    assert.equal(select(modal.typeSelect(), 'cta'), false);
+    assert.equal(chooseOption(modal.typeSelect(), 'cta'), false);
     await flush();
     assert.equal(modal.fileInputs().length, 1, 'the control the upload was started from is gone');
     assert.equal(modal.linkFields().length, 1);
@@ -775,7 +775,7 @@ test('while a PDF uploads into a new section, Attach Existing cannot be chosen e
 
     // Attach Existing takes the whole form away. Both choices are held, as the type and Save are.
     assert.deepEqual([createNew.disabled, attachExisting.disabled], [true, true]);
-    assert.equal(check(attachExisting), false);
+    assert.equal(chooseRadio(attachExisting), false);
     await flush();
     assert.equal(modal.fileInputs().length, 1, 'the form, and the control the upload was started from, are gone');
     assert.ok(modal.form(), 'the form is gone');
@@ -786,7 +786,7 @@ test('while a PDF uploads into a new section, Attach Existing cannot be chosen e
     // A failed upload frees them as an answered one does.
     assert.deepEqual(modal.modeRadios().map((radio) => radio.disabled), [false, false]);
     assert.equal(modal.typeSelect().disabled, false);
-    assert.equal(check(modal.modeRadios()[1]), true);
+    assert.equal(chooseRadio(modal.modeRadios()[1]), true);
     await flush();
     assert.equal(modal.form(), undefined, 'Attach Existing shows no form');
 
@@ -900,7 +900,7 @@ test('a new section asks too, and an upload still in flight beside an unsaved PD
     const answers = [deferred<any>(), deferred<any>()];
     let sent = 0;
     const modal = await mountModal(undefined, () => answers[sent++].promise, { sectionTypes: offeredTypes() });
-    select(modal.typeSelect(), 'link_list');
+    chooseOption(modal.typeSelect(), 'link_list');
     await flush();
     click(modal.screen.button('Add Link'));
     await flush();
@@ -1015,7 +1015,7 @@ test('an upload whose row is then removed stays on the screen: the footer gives 
 
 test('an upload into a new section whose type is then changed stays on the screen, and Cancel asks once', async () => {
     const modal = await mountModal(undefined, async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 }), { sectionTypes: offeredTypes() });
-    select(modal.typeSelect(), 'link_list');
+    chooseOption(modal.typeSelect(), 'link_list');
     await flush();
     click(modal.screen.button('Add Link'));
     await flush();
@@ -1025,13 +1025,13 @@ test('an upload into a new section whose type is then changed stays on the scree
 
     // The upload has ended, so the type is free to change. Another type is another content: the
     // address is in no field of it.
-    assert.equal(select(modal.typeSelect(), 'cta'), true);
+    assert.equal(chooseOption(modal.typeSelect(), 'cta'), true);
     await flush();
     assert.deepEqual(modal.linkFields().map((field) => field.value), ['']);
     assert.equal(modal.notes(), LEFT_ONLINE);
 
     // Going back to the first type starts it afresh: the file is still in nothing.
-    select(modal.typeSelect(), 'link_list');
+    chooseOption(modal.typeSelect(), 'link_list');
     await flush();
     assert.equal(modal.linkFields().length, 0);
     assert.equal(modal.notes(), LEFT_ONLINE);
@@ -1096,17 +1096,17 @@ async function uploadedThenAttachExisting(closeAnyway: boolean) {
         sectionTypes: offeredTypes(),
         library: [{ id: 21, title: 'Welcome', section_type: 'text', section_type_label: 'Text', is_active: true }],
     });
-    select(modal.typeSelect(), 'link_list');
+    chooseOption(modal.typeSelect(), 'link_list');
     await flush();
     click(modal.screen.button('Add Link'));
     await flush();
     await modal.choose(0, pdf());
     assert.equal(modal.notes(), '');
 
-    assert.equal(check(modal.modeRadios()[1]), true);
+    assert.equal(chooseRadio(modal.modeRadios()[1]), true);
     await flush();
     assert.equal(modal.form(), undefined, 'Attach Existing shows no form');
-    select(modal.screen.all((n) => n.tag === 'select')[0], 21);
+    chooseOption(modal.screen.all((n) => n.tag === 'select')[0], 21);
     await flush();
     assert.equal(modal.attach().disabled, false);
 
@@ -1135,7 +1135,7 @@ test('an upload made before switching to Attach Existing stays on the screen, an
     assert.equal(modal.emitted.close, 0);
 
     // Back to Create New, the form holds the file again, and the footer has nothing to add.
-    check(modal.modeRadios()[0]);
+    chooseRadio(modal.modeRadios()[0]);
     await flush();
     assert.equal(modal.linkFields()[0].value, ADDRESS);
     assert.equal(modal.notes(), '');
@@ -1157,9 +1157,9 @@ test('Attach Section asks nothing when no PDF was uploaded here', async () => {
         sectionTypes: offeredTypes(),
         library: [{ id: 21, title: 'Welcome', section_type: 'text', section_type_label: 'Text', is_active: true }],
     });
-    check(modal.modeRadios()[1]);
+    chooseRadio(modal.modeRadios()[1]);
     await flush();
-    select(modal.screen.all((n) => n.tag === 'select')[0], 21);
+    chooseOption(modal.screen.all((n) => n.tag === 'select')[0], 21);
     await flush();
     assert.equal(modal.notes(), '');
 

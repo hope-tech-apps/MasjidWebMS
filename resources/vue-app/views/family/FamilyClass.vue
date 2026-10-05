@@ -135,9 +135,18 @@
 
             <!-- ------------------------------------------------ class story -->
             <section v-else-if="tab === 'story'">
-                <div v-if="!group.may_receive_feed" class="alert alert-warning">
-                    {{ t('story_no_consent') }}
-                </div>
+                <!-- The feed is closed for two different families, and the notice is true
+                     of one of them. A family still in the class with no consent on file is
+                     told so. A family whose child has LEFT the class (`in_class_now` false)
+                     is told nothing here: the story is closed because they left, whatever
+                     consent is still on file. "Nothing posted yet." would be just as false
+                     of them, so the closed feed never falls through to it. `!== false`, so
+                     a payload without the key draws the notice as it always did. -->
+                <template v-if="!group.may_receive_feed">
+                    <div v-if="group.in_class_now !== false" class="alert alert-warning">
+                        {{ t('story_no_consent') }}
+                    </div>
+                </template>
 
                 <div v-else-if="!posts.length" class="text-muted small">{{ t('story_empty') }}</div>
 

@@ -107,10 +107,45 @@ test('every ledger kind has a word in English and in Arabic, and the other four 
     const ar = i18n.slice(i18n.indexOf('\n    ar: {'));
     const keys = [...LEDGER_KINDS.map((k) => `bucks_kind_${k}`), 'bucks_section', 'bucks_balance', 'bucks_none', 'bucks_undone', 'bucks_week_of', 'bucks_explain', 'bucks_rate_one', 'bucks_rate_many', 'bucks_failed', 'bucks_more'];
 
+    // Eight kinds: the six a class writes, and the two lines of a student moved to another class.
+    assert.equal(keys.filter((k) => k.startsWith('bucks_kind_')).length, 8);
+    assert.ok(keys.includes('bucks_kind_transfer_out') && keys.includes('bucks_kind_transfer_in'));
+
     for (const [lang, table] of [['en', en], ['ar', ar], ['ur', read('views/family/locales/ur.ts')], ['ps', read('views/family/locales/ps.ts')], ['fa-AF', read('views/family/locales/fa-AF.ts')], ['es', read('views/family/locales/es.ts')]] as const) {
         for (const key of keys) {
             assert.match(table, new RegExp(`^\\s+${key}: ".+",$`, 'm'), `${lang} is missing ${key}`);
         }
+    }
+});
+
+test('the two lines of a moved student sit inside each table\'s Manara Bucks block, so its MACHINE-DRAFTED marker covers them', () => {
+    const i18n = read('views/family/familyI18n.ts');
+    const en = i18n.slice(i18n.indexOf('\n    en: {'), i18n.indexOf('\n    ar: {'));
+    const ar = i18n.slice(i18n.indexOf('\n    ar: {'));
+    const moved = ['bucks_kind_transfer_out', 'bucks_kind_transfer_in'];
+    const word = (table: string, key: string) => new RegExp(`^\\s+${key}: "(.+)",$`, 'm').exec(table)?.[1];
+
+    // The line names no class: a parent knows which class their child came from.
+    assert.equal(word(en, 'bucks_kind_transfer_out'), 'Moved to the new class');
+    assert.equal(word(en, 'bucks_kind_transfer_in'), 'Brought from the previous class');
+
+    const drafted: Array<[string, string]> = [['ar', ar], ...['ur', 'ps', 'fa-AF', 'es'].map((l): [string, string] => [l, read(`views/family/locales/${l}.ts`)])];
+    for (const [lang, table] of [['en', en] as [string, string], ...drafted]) {
+        for (const key of moved) {
+            const at = table.indexOf(`${key}:`);
+            assert.ok(at > table.indexOf('bucks_section:') && at < table.indexOf('bucks_more:'), `${lang}: ${key} is inside the bucks_* block`);
+        }
+    }
+    for (const [lang, table] of drafted) {
+        for (const key of moved) assert.notEqual(word(table, key), word(en, key), `${lang}: ${key} was left in English`);
+    }
+
+    // Arabic: the marker over the block speaks for every line under it (the test above pins where it sits).
+    assert.match(ar.slice(ar.indexOf('MACHINE-DRAFTED', ar.indexOf("The class store's Manara Bucks")), ar.indexOf('bucks_section:')), /every bucks_\* line below needs a human review/);
+    // The four newer tables are machine-drafted whole files: the banner says so, and the block says it again.
+    for (const [lang, table] of drafted.slice(1)) {
+        assert.match(table.slice(0, table.indexOf('bucks_section:')), /^ \* MACHINE-DRAFTED\. NOT YET REVIEWED BY A FLUENT [A-Z]+ SPEAKER\.$/m, `${lang}: the file banner`);
+        assert.match(table, /Machine-drafted like the rest of this file: flag for review\.\n\s+bucks_section:/, `${lang}: the block's own line`);
     }
 });
 

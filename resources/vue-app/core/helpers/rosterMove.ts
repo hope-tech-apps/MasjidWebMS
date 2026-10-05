@@ -3,16 +3,21 @@
  *
  * NOT the sentences about a move. "What will happen" and what happened are built once, on the
  * server (App\Support\RosterMovePlan::lines), and the dialog prints them as a list. What is here is
- * what the browser alone can know: which classes to offer, what to send, how a moved row is
- * labelled, and which of the "Put back" forms a row gets.
+ * what the browser alone can know: which classes to offer, what to send, how a moved row and a
+ * consent that came with a move are labelled, and which of the "Put back" forms a row gets.
  *
  * Pure functions, no imports to run: `npm run test:spa` loads this file as it stands.
  */
 import type { GroupMembership, MovedClass, MovePreview } from '@/core/types/data/masjid-related/Group';
 
 type Row = Pick<GroupMembership, 'id' | 'role' | 'contact_id' | 'guardian_of_contact_id' | 'left_on' | 'provenance'
-    | 'consent_granted_at' | 'consent_scope' | 'moved_from_group_id' | 'moved_to_group_id' | 'moved_on' | 'moved_to'
+    | 'consent_granted_at' | 'consent_scope' | 'consent_carried_from_group_id' | 'consent_carried_from' | 'consent_less_than_carried_from'
+    | 'moved_from_group_id' | 'moved_to_group_id' | 'moved_on' | 'moved_to'
     | 'moved_from' | 'moved_to_state'> & { contact?: { first_name?: string | null; last_name?: string | null } | null };
+
+/** The fields of a row that say what consent it holds, whether a move carried it, and whether it now stands for less. */
+type ConsentRow = Pick<GroupMembership, 'consent_granted_at' | 'consent_scope' | 'consent_carried_from_group_id' | 'consent_carried_from'
+    | 'consent_less_than_carried_from'>;
 
 type ClassRow = { id: number; name: string; kind?: string; is_active?: boolean; ends_on?: string | null; position?: number | null };
 
@@ -54,11 +59,13 @@ export function classOptions(groups: ClassRow[], currentGroupId: number, onDay: 
 /**
  * What a move sends. Strings only, no booleans and never the word "null": the body is
  * form-encoded. The `expected_*` keys are what the dialog showed, so the server refuses when what
- * it decides under its locks is something else.
+ * it decides under its locks is something else. That now covers what was shown about consent and
+ * the rule for Manara Bucks; one the preview did not give is left out, and the server does not
+ * check what it was not sent.
  */
 export function moveBody(
     form: { toGroupId: number; movedOn: string; gradeLabel: string },
-    preview: Pick<MovePreview, 'path' | 'first_day_in_new_class' | 'joined_on'>,
+    preview: Pick<MovePreview, 'path' | 'first_day_in_new_class' | 'joined_on' | 'expected_consent' | 'expected_bucks_rule'>,
 ): Record<string, string> {
     const body: Record<string, string> = {
         to_group_id: String(form.toGroupId),
@@ -72,8 +79,26 @@ export function moveBody(
         body.expected_joined_on = preview.joined_on;
     }
 
+    if (preview.expected_consent) body.expected_consent = preview.expected_consent;
+    if (preview.expected_bucks_rule) body.expected_bucks_rule = preview.expected_bucks_rule;
+
     return body;
 }
+
+/** The roster row a link asks for (`?focus=`): a plain positive whole number, or nothing. */
+export function focusIdFromQuery(value: unknown): number | null {
+    if (typeof value !== 'string' || !/^[1-9]\d{0,15}$/.test(value)) return null;
+
+    const id = Number(value);
+    return Number.isSafeInteger(id) ? id : null;
+}
+
+/**
+ * The query that opens a class's roster on one row: "Open {Class}" on a refusal whose remedy is
+ * about a guardian's entry there. No row named, no query.
+ */
+export const focusQuery = (membershipId: number | null | undefined): Record<string, string> =>
+    membershipId ? { focus: String(membershipId) } : {};
 
 /**
  * How a row that was moved is labelled.
@@ -109,9 +134,72 @@ export function movedLabels(row: Row): { badge: string | null; note: string | nu
 }
 
 /**
+ * How a consent that a move carried is labelled, under the badge and the date in the roster's
+ * consent cell. A state label, like "Moved from …" above: the entry is marked with the class the
+ * consent was copied from. Marked and set, it stands here as it was recorded there; marked and
+ * blank, the family withdrew it in this class afterwards. No mark, no label.
+ *
+ * ONE MORE STATE, which the server works out because it takes the other class's row
+ * (`consent_less_than_carried_from`): marked, set, and LESS than that class holds. That is how a
+ * consent the family reduced here reads. The label says what the two classes hold and not who
+ * changed what: an untouched copy whose class of origin was recorded for more afterwards reads
+ * the same. It matters to the office either way, because a move back there is refused while it
+ * stands.
+ */
+export function carriedConsentLabel(row: ConsentRow): string | null {
+    if (!row.consent_carried_from_group_id) return null;
+
+    const from = className(row.consent_carried_from);
+
+    if (!(row.consent_scope || row.consent_granted_at)) return `Withdrawn here after it was carried from ${from}`;
+
+    return row.consent_less_than_carried_from
+        ? `Carried from ${from}, which holds photograph consent`
+        : `Carried from ${from}`;
+}
+
+/**
+ * The line the consent dialog shows above its choices on an entry whose consent was carried and
+ * still stands. Saving the form, changed or not, makes the record this class's own: the server
+ * clears the mark. Unless what is saved is less than the class it came from holds: then the mark
+ * stays, and the line says so, because "saving records it for this class" would not be true.
+ */
+export function carriedConsentNote(row: ConsentRow, child: string): string | null {
+    if (!row.consent_carried_from_group_id || !(row.consent_scope || row.consent_granted_at)) return null;
+
+    const from = className(row.consent_carried_from);
+
+    return row.consent_less_than_carried_from
+        ? `Carried from ${from} when ${child} was moved. ${from === 'a class that was removed' ? 'That class' : from} holds photograph `
+            + 'consent; here it is the class story only. Saving photographs records it for this class.'
+        : `Carried from ${from} when ${child} was moved. Saving records it for this class.`;
+}
+
+/**
+ * Write the server's answer to a consent that was recorded or withdrawn onto the row the office
+ * is looking at: the scope, the day, and the mark of a carried consent. A record clears the mark
+ * and a withdrawal keeps it, so the cell says "Withdrawn here after it was carried from …" at
+ * once, without the roster being read again.
+ */
+export function applyConsentAnswer(row: ConsentRow, data: Partial<ConsentRow> | null | undefined): void {
+    row.consent_scope = data?.consent_scope ?? null;
+    row.consent_granted_at = data?.consent_granted_at ?? null;
+    row.consent_carried_from_group_id = data?.consent_carried_from_group_id ?? null;
+    // A record of less than the class it was carried from holds keeps the mark, and says so.
+    row.consent_less_than_carried_from = data?.consent_less_than_carried_from === true;
+
+    // The class's name came with the roster and is kept while the mark still names it.
+    if (!row.consent_carried_from_group_id) row.consent_carried_from = null;
+}
+
+/**
  * Guardians of students who moved INTO this class and have no consent recorded here: confirmed,
  * current entries without consent whose student's row carries "moved from". Until consent is
  * recorded they receive nothing from the class story.
+ *
+ * NOT an entry that carries the mark of a carried consent. With no consent that entry is one the
+ * family WITHDREW here, and counting it would turn their withdrawal into something for the next
+ * person at the desk to record. Its own cell says what happened.
  */
 export function consentBannerCount(roster: Row[]): number {
     const movedIn = new Set(
@@ -120,7 +208,8 @@ export function consentBannerCount(roster: Row[]): number {
 
     return roster.filter((r) => r.role === 'guardian'
         && r.guardian_of_contact_id !== null && movedIn.has(r.guardian_of_contact_id)
-        && r.provenance === 'confirmed' && !r.left_on && !r.consent_granted_at).length;
+        && r.provenance === 'confirmed' && !r.left_on && !r.consent_granted_at
+        && !r.consent_carried_from_group_id).length;
 }
 
 export const consentBannerText = (n: number): string => n === 0 ? '' : `${n} ${n === 1 ? 'guardian' : 'guardians'} of students `
@@ -132,6 +221,8 @@ export type PutBackForm = {
     form: 'unchanged' | 'blocked' | 'both_classes' | 'ordinary';
     title: string;
     lines: string[];
+    /** Which of `lines` say why the student cannot be put back yet (the blocked form's red lines). */
+    stops: number[];
     confirmLabel: string | null;
     /** The class to offer as "Open {Class}", when opening it helps. */
     openGroup: { id: number; name: string } | null;
@@ -139,10 +230,23 @@ export type PutBackForm = {
 
 /**
  * WHICH "PUT BACK" A ROW GETS. Putting a student back re-opens EVERY guardian entry beside them in
- * this class. On a row that was moved those are the entries the move left behind, and one of them
- * can belong to an adult the office has since removed where the student is now. The server says so
- * per row (`moved_to_state`, the move's own guardian rule), and while it names anybody the form is
- * `blocked`: it offers no way to put the student back.
+ * this class. On a row that was moved those are the entries the move left behind, and two things
+ * can be wrong with one of them. It can belong to an adult the office has since removed where the
+ * student is now. And it can hold a consent the family has since withdrawn or narrowed on the
+ * other side of a move that carried it, which putting the student back would revive. The server
+ * says both per row (`moved_to_state`: `guardians_not_vouched`, the move's own guardian rule, and
+ * `consent_blocks`), and while either names anything the form is `blocked`: it offers no way to
+ * put the student back.
+ *
+ * Everything the server says about consent and Manara Bucks is printed as it came, after what
+ * this screen says for itself: the blocking sentences, then `consent_lines` (every other consent
+ * here that comes back with the student), then `bucks_line`. No sentence about consent or Bucks
+ * is written here.
+ *
+ * A ROW THAT SIMPLY LEFT (no "moved to") gets the same two consent lists from the server when it
+ * has something to say: putting the student back re-opens the entries beside them whichever way
+ * they left, and one of those can be a carried consent whose class of origin has withdrawn it
+ * since. So that row is blocked on `consent_blocks` too, and otherwise names what comes back.
  */
 export function putBackForm(row: Row, roster: Row[]): PutBackForm {
     const student = fullName(row.contact);
@@ -151,11 +255,27 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
     const state = row.moved_to_state;
 
     if (!row.moved_to_group_id || !state) {
+        const blocks = state?.consent_blocks ?? [];
+        const comingBack = state?.consent_lines ?? [];
+
+        if (blocks.length > 0) {
+            return {
+                form: 'blocked',
+                title: 'Not yet: check consent first',
+                lines: [...blocks, ...comingBack],
+                // One sentence for each entry, then once what to do: the last line is the remedy.
+                stops: blocks.map((_, i) => i).filter((i) => i < blocks.length - 1 || blocks.length === 1),
+                confirmLabel: null,
+                openGroup: null,
+            };
+        }
+
         return {
             form: 'unchanged',
             title: 'Put them back on the roster?',
             lines: [`${student} will be back on the register and every class list, and their guardians will be back in `
-                + 'the class with them.'],
+                + 'the class with them.', ...comingBack],
+            stops: [],
             confirmLabel: 'Yes, put them back',
             openGroup: null,
         };
@@ -164,24 +284,40 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
     const to = className(row.moved_to);
     const on = day(row.moved_on);
     const openGroup = state.open_group;
+    const notVouched = state.guardians_not_vouched ?? [];
+    const consentBlocks = state.consent_blocks ?? [];
+    const alsoSaid = [...(state.consent_lines ?? []), ...(state.bucks_line ? [state.bucks_line] : [])];
 
-    if (state.guardians_not_vouched.length > 0) {
-        const where = openGroup?.name ?? to;
-        const several = state.guardians_not_vouched.length > 1;
+    if (notVouched.length > 0 || consentBlocks.length > 0) {
+        const lines: string[] = [];
+        const stops: number[] = [];
+
+        if (notVouched.length > 0) {
+            const where = openGroup?.name ?? to;
+            const several = notVouched.length > 1;
+
+            notVouched.forEach((g) => { stops.push(lines.length); lines.push(g.sentence); });
+            lines.push(state.student_there === 'current' || openGroup?.id !== row.moved_to_group_id
+                ? `Remove ${several ? 'those entries' : 'that entry'} on this roster first. Or, if they should still be a `
+                    + `guardian, add or confirm them in ${where}.`
+                : `Remove ${several ? 'those entries' : 'that entry'} on this roster first. (If an unconfirmed entry for `
+                    + `them is listed in ${where}, confirming it there also clears this.)`);
+        }
+
+        // One sentence for each entry, then once what to do: the server's list, in the server's order.
+        consentBlocks.forEach((sentence, i) => {
+            if (i < consentBlocks.length - 1 || consentBlocks.length === 1) stops.push(lines.length);
+            lines.push(sentence);
+        });
 
         return {
             form: 'blocked',
-            title: 'Not yet: check the guardians first',
-            lines: [
-                ...state.guardians_not_vouched.map((g) => g.sentence),
-                state.student_there === 'current' || openGroup?.id !== row.moved_to_group_id
-                    ? `Remove ${several ? 'those entries' : 'that entry'} on this roster first. Or, if they should still be a `
-                        + `guardian, add or confirm them in ${where}.`
-                    : `Remove ${several ? 'those entries' : 'that entry'} on this roster first. (If an unconfirmed entry for `
-                        + `them is listed in ${where}, confirming it there also clears this.)`,
-            ],
+            title: notVouched.length > 0 ? 'Not yet: check the guardians first' : 'Not yet: check consent first',
+            lines: [...lines, ...alsoSaid],
+            stops,
             confirmLabel: null,
-            openGroup,
+            // What a consent asks for is done on THIS roster, so only a guardian sends the office elsewhere.
+            openGroup: notVouched.length > 0 ? openGroup : null,
         };
     }
 
@@ -192,7 +328,8 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
             form: 'both_classes',
             title: 'Put them back in this class too?',
             lines: [`${student} was moved to ${to} on ${on}. Putting them back here leaves them in both classes, on two `
-                + `registers.${coming} To move them back instead, open ${to} and use Move there.`],
+                + `registers.${coming} To move them back instead, open ${to} and use Move there.`, ...alsoSaid],
+            stops: [],
             confirmLabel: 'Put back here anyway',
             openGroup,
         };
@@ -203,7 +340,8 @@ export function putBackForm(row: Row, roster: Row[]): PutBackForm {
         title: 'Put them back on the roster?',
         lines: [`${student} was moved to ${to} on ${on} and is no longer there. They will be back on the register and `
             + `every class list here.${names.length === 0 ? '' : ` These guardians come back with them: ${names.join(', ')}. `
-                + 'Remove any who should no longer be a guardian before you continue.'}`],
+                + 'Remove any who should no longer be a guardian before you continue.'}`, ...alsoSaid],
+        stops: [],
         confirmLabel: 'Yes, put them back',
         openGroup: null,
     };

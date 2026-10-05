@@ -92,8 +92,13 @@
                     </div>
 
                     <!-- Stated, not inferred. A parent who has not consented must not be
-                         shown an empty class story and left to think the teacher posts nothing. -->
-                    <div v-if="!group.may_receive_feed" class="alert alert-warning small mt-3 mb-0 py-2">
+                         shown an empty class story and left to think the teacher posts nothing.
+                         NOT for a class the child has left (`in_class_now` false): its story is
+                         closed because they left, whatever consent is still on file, and "You
+                         have not given consent" is false of a family that gave it. `!== false`,
+                         so a payload without the key draws the notice as it always did. -->
+                    <div v-if="!group.may_receive_feed && group.in_class_now !== false"
+                         class="alert alert-warning small mt-3 mb-0 py-2">
                         {{ t('home_no_consent') }}
                     </div>
                 </div>

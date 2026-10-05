@@ -20,6 +20,13 @@ use Carbon\CarbonImmutable;
  * NO FIGURE ABOUT THE CLASS STORE. The office reads class totals only
  * (.claude/rules/groups.md, "Class store"), so `bucksStaying` is a boolean and
  * the ledger's count is left out of `recordsStaying()`.
+ *
+ * CONSENT IS CARRIED AS IT IS (2026-10-05). The decision counts, per guardian
+ * entry, what will be carried, what is not and why, and what comes back into
+ * force; `lines()` says each before the tap and again after it. The counts are
+ * also a fingerprint (`consentFingerprint`) that the tap must echo, because the
+ * preview is not locked and a consent can be recorded or withdrawn between the
+ * read and the tap.
  */
 final class RosterMovePlan
 {
@@ -30,6 +37,9 @@ final class RosterMovePlan
     public const RETURNED = 'returned';
 
     public const PATHS = [self::LEFT_AND_STARTED, self::RETURNED];
+
+    /** How a class that was deleted, or is gone, is named in a sentence: the screen's own words for it. */
+    public const CLASS_REMOVED = 'a class that was removed';
 
     public string $path = self::LEFT_AND_STARTED;
 
@@ -79,6 +89,9 @@ final class RosterMovePlan
     /** A guardian entry beside the old row carries consent bytes. */
     public bool $consentRecordedHere = false;
 
+    /** A guardian entry beside the old row is blank and marked: a carried consent was withdrawn there. */
+    public bool $carriedConsentWithdrawnHere = false;
+
     /** Guardian entries that go with the student (current ones only). */
     public int $travelling = 0;
 
@@ -88,10 +101,73 @@ final class RosterMovePlan
     /** Every other unconfirmed entry that will stand beside the student there. */
     public int $formClaims = 0;
 
-    public int $consentToRecordAgain = 0;
+    /** @var list<int> the adults behind the travelling entries (contact ids); never serialised */
+    public array $guardianContactIds = [];
 
-    /** @var list<array{guardian: string, scope: string, recorded_on: ?string}> */
+    /** @var list<int> ids of the entries in the old class whose consent WILL be carried; never serialised */
+    public array $consentToCarry = [];
+
+    /** @var array{media: int, feed: int} consents that will be carried, by scope */
+    public array $consentCarried = ['media' => 0, 'feed' => 0];
+
+    /** @var list<int> the adults whose consent WILL be carried (contact ids); never serialised */
+    public array $consentCarriedFor = [];
+
+    /** Vouching entries with no consent in the old class, whose adult receives nothing from the new one either. */
+    public int $consentNoneRecorded = 0;
+
+    /** @var list<int> the adults counted in `consentNoneRecorded` (contact ids); never serialised */
+    public array $consentNoneRecordedFor = [];
+
+    /** The same, where the adult already receives the new class's story through another child there. */
+    public int $consentNoneButReceives = 0;
+
+    /**
+     * The same again, where the adult's consent for a BROTHER OR SISTER is
+     * carried in the same whole-class move, so the class's story reaches them
+     * through that child. Only a whole-class move knows it
+     * (`siblingsCarryFor()`); a single move leaves it at zero.
+     */
+    public int $consentNoneThroughSibling = 0;
+
+    /**
+     * Not carried because the adult already stands in the new class for
+     * another child with less: what they hold there, `none` or `feed`.
+     * `returning`, present only when true: they are not in that class today;
+     * the entry is one that has left, for a brother or sister who is in the
+     * class being left and may go back in the same whole-class move.
+     *
+     * @var list<array{guardian: string, holds: string, returning?: true}>
+     */
+    public array $consentNotCarriedForSibling = [];
+
+    /** Vouching entries WITH consent whose entry in the new class has none: that entry is never written. */
+    public int $consentLeftAsItWas = 0;
+
+    /**
+     * Every entry the new class holds for this student that has consent.
+     * `reopens`: it is closed now and the move opens it. `source_gone_in`: it
+     * was carried there from a class that no longer holds an entry for them.
+     *
+     * @var list<array{guardian: string, scope: string, recorded_on: ?string, reopens: bool, source_gone_in: ?string}>
+     */
     public array $consentInForceAgain = [];
+
+    /** What the tap must echo: see `fingerprintOfConsent()`. */
+    public string $consentFingerprint = '';
+
+    /** Current students in the new class other than this one. */
+    public int $othersInNewClass = 0;
+
+    /** @var array{stories: int, with_media: int} published stories the new class still keeps, and those with a photograph or a video */
+    public array $newClassHolds = ['stories' => 0, 'with_media' => 0];
+
+    /**
+     * The rule for Manara Bucks on this move (`move`, `from_ended`,
+     * `to_ended`), echoed by the tap as `expected_bucks_rule`. NULL: no move
+     * carries a balance yet, and the commit that lets one sets it.
+     */
+    public ?string $bucksRule = null;
 
     public bool $studentUnconfirmed = false;
 
@@ -121,6 +197,51 @@ final class RosterMovePlan
 
     /** @var list<int> */
     public array $guardianEntriesReused = [];
+
+    /** @var list<array{0: int, 1: int}> a carried consent: [the new entry, the entry it was copied from] */
+    public array $consentEntriesCarried = [];
+
+    /** @var list<int> entries in the old class whose consent was NOT carried for a brother or sister's sake (filled by the decision) */
+    public array $consentEntriesNotCarried = [];
+
+    /**
+     * The consent result as one short string, `m{a}f{b}s{c}n{d}e{e}`: carried
+     * for photographs, carried for the story, not carried for a sibling,
+     * nothing on record, left as it was. For example `m1f0s0n1e0`.
+     *
+     * Counts only, so it tells nothing a preview does not already say, and it
+     * is a string because the tap's body is form-encoded.
+     */
+    public function fingerprintOfConsent(): string
+    {
+        return 'm'.$this->consentCarried['media']
+            .'f'.$this->consentCarried['feed']
+            .'s'.count($this->consentNotCarriedForSibling)
+            .'n'.($this->consentNoneRecorded + $this->consentNoneButReceives + $this->consentNoneThroughSibling)
+            .'e'.$this->consentLeftAsItWas;
+    }
+
+    /**
+     * A WHOLE-CLASS MOVE TELLS THIS STUDENT'S PLAN WHICH ADULTS HAVE A CONSENT
+     * CARRIED FOR ANOTHER STUDENT OF THE SAME MOVE. An adult is admitted to a
+     * class's story on any ONE of their current entries there, so a guardian
+     * with nothing on record for this child and photographs for a brother
+     * moved with them does receive the story, and "they receive nothing until
+     * consent is recorded" would send the office to record a consent for
+     * something that already arrives. Those places move from "none recorded"
+     * to their own count and their own sentence. What the tap echoes does not
+     * change: the fingerprint counts both under one letter.
+     *
+     * @param  list<int>  $adults  contact ids
+     */
+    public function siblingsCarryFor(array $adults): void
+    {
+        $through = count(array_intersect($this->consentNoneRecordedFor, $adults));
+
+        $this->consentNoneRecorded -= $through;
+        $this->consentNoneThroughSibling += $through;
+        $this->consentNoneRecordedFor = array_values(array_diff($this->consentNoneRecordedFor, $adults));
+    }
 
     /**
      * What stays with the old class, as the office is told it: the non-zero
@@ -180,6 +301,8 @@ final class RosterMovePlan
                         ."where {$s} will be shown as moved.",
                     $this->consentRecordedHere => "A guardian's consent is recorded in {$from}, so {$s}'s place here "
                         .'is kept, shown as moved.',
+                    $this->carriedConsentWithdrawnHere => "A guardian's withdrawal of a carried consent is recorded in "
+                        ."{$from}, so {$s}'s place here is kept, shown as moved.",
                     default => "{$s} has nothing recorded in {$from}. Their entry here is kept, shown as moved. "
                         .$this->oldEntryLine($records),
                 };
@@ -198,21 +321,7 @@ final class RosterMovePlan
             $lines[] = 'No guardian is on this roster for them.';
         }
 
-        if ($this->consentToRecordAgain > 0) {
-            $c = self::count($this->consentToRecordAgain, 'guardian', 'guardians');
-            $lines[] = ($this->done
-                    ? "Record consent again for {$c} in {$to}."
-                    : "Consent for the class story and photographs does not move. Record it again in {$to} for {$c}.")
-                .' Until then they receive nothing from that class\'s story, class-wide conversations and class files, '
-                .'and no weekly points email. Files and conversations about their own child still reach them.';
-        }
-
-        foreach ($this->consentInForceAgain as $consent) {
-            $lines[] = "Consent already recorded in {$to} is in force again: {$consent['guardian']} ("
-                .self::scopeWords($consent['scope'])
-                .($consent['recorded_on'] !== null ? ', recorded '.self::day($consent['recorded_on']) : '')
-                .'). To withdraw a family\'s consent completely, withdraw it in both classes.';
-        }
+        array_push($lines, ...$this->consentLines());
 
         if ($this->confirmedInOldClassOnly > 0) {
             $a = $this->confirmedInOldClassOnly;
@@ -271,6 +380,146 @@ final class RosterMovePlan
     }
 
     /**
+     * THE CONSENT BLOCK. Each line only when its count is not zero. Counts of
+     * guardians here are adults for ONE child, so "guardian" is the right word.
+     *
+     * Together the first lines are what the office has to know before it taps:
+     * what is carried and with which scope, what those families start to
+     * receive (everything the class still keeps, emails included), who gets
+     * nothing because none was recorded, and who is not carried because they
+     * already stand in the new class for another child with less.
+     *
+     * @return list<string>
+     */
+    private function consentLines(): array
+    {
+        $s = $this->student;
+        $from = $this->fromName;
+        $to = $this->toName;
+        $media = $this->consentCarried['media'];
+        $feed = $this->consentCarried['feed'];
+        $carried = $media + $feed;
+        $lines = [];
+
+        if ($carried > 0) {
+            $for = match (true) {
+                $carried === 1 => '1 guardian, for the '.self::scopeWords($media === 1 ? 'media' : 'feed').'.',
+                $media === 0 || $feed === 0 => "{$carried} guardians, all for the ".self::scopeWords($feed === 0 ? 'media' : 'feed').'.',
+                default => "{$carried} guardians: {$media} for the class story and photographs, {$feed} for the class story only.",
+            };
+
+            $lines[] = $this->done
+                ? "Consent was carried as it is for {$for}"
+                : "Consent is carried as it is for {$for} Nobody is asked again.";
+
+            $lines[] = ($this->done ? 'They can now open' : 'From the move on they can open')
+                ." everything {$to} has shared and still keeps, including what it shared before {$s} joined: its class "
+                .'story, class-wide conversations and class files, and for photograph consent its photographs and '
+                ."videos. They also start receiving {$to}'s story emails and its weekly points email.";
+
+            if ($media > 0 && $this->newClassHolds['with_media'] > 0) {
+                $q = $this->newClassHolds['with_media'];
+                $lines[] = "{$to} still holds ".self::count($q, 'story', 'stories').' with photographs or videos from '
+                    ."before this move. They show students who were in {$to} then, and "
+                    .($media === 1 ? 'this guardian' : 'these guardians').' will see them.';
+            }
+
+            if ($media > 0 && $this->othersInNewClass > 0) {
+                $lines[] = "{$to} has ".self::count($this->othersInNewClass, 'other student', 'other students')
+                    ." now, so its photographs show other families' children too.";
+            }
+        }
+
+        if ($this->consentNoneRecorded > 0) {
+            $lines[] = self::count($this->consentNoneRecorded, 'guardian has', 'guardians have')
+                ." no consent on record in {$from}, so nothing is carried for them. They receive nothing from {$to}'s "
+                .'class story, class-wide conversations and class files until consent is recorded there. Files and '
+                .'conversations about their own child still reach them.';
+        }
+
+        if ($this->consentNoneButReceives > 0) {
+            $lines[] = self::count($this->consentNoneButReceives, 'guardian has', 'guardians have')
+                ." no consent on record in {$from} for {$s}, so nothing is carried for {$s}. They already receive "
+                ."{$to}'s class story through another child there. The weekly points email about {$s} does not reach "
+                ."them until consent is recorded on their entry for {$s} in {$to}.";
+        }
+
+        if ($this->consentNoneThroughSibling > 0) {
+            $lines[] = self::count($this->consentNoneThroughSibling, 'guardian has', 'guardians have')
+                ." no consent on record in {$from} for {$s}, so nothing is carried for {$s}. "
+                .($this->done
+                    ? "Their consent for a brother or sister who moved with {$s} was carried, so {$to}'s class story "
+                        .'reaches them through that child.'
+                    : "Their consent for a brother or sister in this move is carried, so {$to}'s class story will reach "
+                        .'them through that child.')
+                ." The weekly points email about {$s} does not reach them until consent is recorded on their entry for "
+                ."{$s} in {$to}.";
+        }
+
+        foreach ($this->consentNotCarriedForSibling as $not) {
+            $g = $not['guardian'];
+            $record = "Record it in {$to} if the family agrees.";
+
+            // Not in the class today: the entry is a brother's or sister's
+            // that has left and may open again in the same whole-class move.
+            if ($not['returning'] ?? false) {
+                $with = $not['holds'] === 'feed' ? 'with consent for the class story only' : 'with no consent recorded on it';
+
+                $lines[] = $this->done
+                    ? "{$g}'s ".($not['holds'] === 'feed' ? 'photograph consent' : 'consent')." was not carried: they have an "
+                        ."earlier entry in {$to} for another child who was in {$from} too, {$with}. {$record}"
+                    : "{$g} has an earlier entry in {$to} for another child who is in {$from} too and may go back with this "
+                        ."class, {$with}: ".($not['holds'] === 'feed' ? 'photograph consent is ' : '')."not carried. {$record}";
+
+                continue;
+            }
+
+            if ($not['holds'] === 'feed') {
+                $lines[] = $this->done
+                    ? "{$g}'s photograph consent was not carried: they are already in {$to} for another child, with "
+                        ."consent for the class story only. {$record}"
+                    : "{$g} is already in {$to} for another child, with consent for the class story only: photograph "
+                        ."consent is not carried. {$record}";
+            } else {
+                $lines[] = $this->done
+                    ? "{$g}'s consent was not carried: they are already in {$to} for another child, with no consent "
+                        ."recorded there. {$record}"
+                    : "{$g} is already in {$to} for another child, with no consent recorded there: not carried. {$record}";
+            }
+        }
+
+        if ($this->consentLeftAsItWas > 0) {
+            $lines[] = self::count($this->consentLeftAsItWas, 'guardian', 'guardians')." already had an entry for {$s} in "
+                ."{$to}. It stays exactly as it was there and nothing is copied onto it. Check their consent on {$to}'s "
+                .'roster.';
+        }
+
+        foreach ($this->consentInForceAgain as $consent) {
+            $held = self::consentWords($consent['scope'], $consent['recorded_on']);
+            $gone = $consent['source_gone_in'] ?? null;
+
+            $lines[] = $gone !== null
+                ? "{$consent['guardian']}'s consent in {$to} was carried there from {$gone} earlier, and {$gone} no longer "
+                    ."holds an entry for them, so it cannot be checked against it. It is in force again in {$to} "
+                    ."({$held}). Withdraw it in {$to} if the family did not mean it for this class."
+                : "Consent already recorded in {$to} is in force again: {$consent['guardian']} ({$held}). To withdraw a "
+                    .'family\'s consent completely, withdraw it in both classes.';
+        }
+
+        if ($carried > 0) {
+            $lines[] = "Consent recorded in {$from} stays on record there and is in force again if {$s} goes back. To "
+                .'withdraw a family\'s consent completely, withdraw it in both classes.';
+
+            if ($this->done) {
+                $lines[] = "Tell {$to}'s teacher: ".self::count($carried, 'more guardian now receives', 'more guardians now receive')
+                    .' its class story'.($media > 0 ? ", and {$media} of them its photographs" : '').'.';
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
      * What the preview answers.
      *
      * @return array<string, mixed>
@@ -297,9 +546,19 @@ final class RosterMovePlan
                 'travelling' => $this->travelling,
                 'confirmed_in_old_class_only' => $this->confirmedInOldClassOnly,
                 'form_claims' => $this->formClaims,
-                'consent_to_record_again' => $this->consentToRecordAgain,
+                'consent_carried' => $this->consentCarried,
+                'consent_none_recorded' => $this->consentNoneRecorded,
+                'consent_none_but_receives' => $this->consentNoneButReceives,
+                'consent_not_carried' => $this->consentNotCarriedForSibling,
+                'consent_left_as_it_was' => $this->consentLeftAsItWas,
                 'consent_in_force_again' => $this->consentInForceAgain,
             ],
+            // What the tap must echo beside the path and the days. The Bucks
+            // rule is null until a move can carry a balance.
+            'expected_consent' => $this->consentFingerprint,
+            'expected_bucks_rule' => $this->bucksRule,
+            'others_in_new_class' => $this->othersInNewClass,
+            'new_class_holds' => $this->newClassHolds,
             'student_unconfirmed' => $this->studentUnconfirmed,
             'bucks_staying' => $this->bucksStaying,
             'scheduled_messages_stopping' => $this->scheduledMessagesStopping,
@@ -333,8 +592,14 @@ final class RosterMovePlan
             'guardians_confirmed_in_old_class_only' => $this->confirmedInOldClassOnly,
             'guardian_form_claims' => $this->formClaims,
             'student_unconfirmed' => $this->studentUnconfirmed,
-            'consent_to_record_again' => $this->consentToRecordAgain,
+            'consent_carried' => $this->consentCarried,
+            'consent_none_recorded' => $this->consentNoneRecorded,
+            'consent_none_but_receives' => $this->consentNoneButReceives,
+            'consent_not_carried' => $this->consentNotCarriedForSibling,
+            'consent_left_as_it_was' => $this->consentLeftAsItWas,
             'consent_in_force_again' => $this->consentInForceAgain,
+            'others_in_new_class' => $this->othersInNewClass,
+            'new_class_holds' => $this->newClassHolds,
             'pairs_in_both_classes' => $this->travelling,
             'records_staying' => (object) $this->recordsStaying(),
             'bucks_staying' => $this->bucksStaying,
@@ -357,6 +622,10 @@ final class RosterMovePlan
             return "A guardian's consent is recorded there, so it stays.";
         }
 
+        if ($this->carriedConsentWithdrawnHere) {
+            return "A guardian's withdrawal of a carried consent is recorded there, so it stays.";
+        }
+
         if (! $this->oldEntryRemovable) {
             return 'It stays.';
         }
@@ -377,8 +646,15 @@ final class RosterMovePlan
         return CarbonImmutable::createFromFormat('!Y-m-d', substr($day, 0, 10))->format('j M Y');
     }
 
-    private static function scopeWords(string $scope): string
+    /** What a consent scope opens, in the words every roster sentence uses. */
+    public static function scopeWords(string $scope): string
     {
         return $scope === 'media' ? 'class story and photographs' : 'class story';
+    }
+
+    /** "class story and photographs, recorded 4 Sep 2026": a consent as a sentence names one. */
+    public static function consentWords(string $scope, ?string $recordedOn): string
+    {
+        return self::scopeWords($scope).($recordedOn !== null ? ', recorded '.self::day($recordedOn) : '');
     }
 }

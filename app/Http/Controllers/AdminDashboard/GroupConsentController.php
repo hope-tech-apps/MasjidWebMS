@@ -4,9 +4,14 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\RecordGuardianConsentRequest;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Support\RosterMove;
+use App\Support\RosterMovePlan;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
+use Throwable;
 
 /**
  * Guardian consent, recorded against ONE guardian edge (PLAN T-005b).
@@ -22,6 +27,32 @@ use Symfony\Component\HttpFoundation\Response;
  * other children or to their other groups. A parent with two children in one
  * classroom consents twice, once per child, because those are two different
  * decisions.
+ *
+ * ## SINCE A MOVE CARRIES CONSENT (2026-10-05)
+ *
+ * A student who is moved takes each guardian's consent along as it was
+ * recorded: the move copies the two columns onto the entry it creates in the
+ * new class and marks that entry with the class it came from
+ * (`GroupMembership::carriedFrom`, THE MARKER). So one adult and one child can
+ * hold consent in two classes, and the two verbs here each owe the office one
+ * more thing:
+ *
+ *   - RECORDING clears the marker, also when the form is saved unchanged: the
+ *     office is now asserting this consent for this class, and it is no longer
+ *     "carried". EXCEPT a record of LESS than the class it was carried from
+ *     still holds: that keeps the marker. The family reduced what was
+ *     carried, and the kept marker is what lets a later move refuse to bring
+ *     the wider consent of the other class back into force.
+ *   - WITHDRAWING keeps the marker and writes its two columns exactly as it
+ *     always did. It still cannot be refused and needs nothing new. The kept
+ *     marker is what tells a later move that the family took a carried consent
+ *     back (`RosterMove::consentComingBack`).
+ *   - BOTH ANSWER `notes`: where consent for this adult still stands, so a
+ *     family that meant "not at all" is not left receiving the class through
+ *     another entry. The same class first (an adult is admitted to a class's
+ *     story on ANY one of their current entries there, so withdrawing for one
+ *     child leaves it open through a brother's or sister's), then the same
+ *     child's other classes, current or closed. Sentences, built here.
  *
  * Tenant isolation is the guardrail, not hand-filtering: Group and
  * GroupMembership are both BelongsToMasjid, so another organization's group or
@@ -72,16 +103,43 @@ class GroupConsentController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $membership->update([
+        $recorded = [
             'consent_scope' => $request->input('scope'),
             'consent_granted_at' => $request->filled('granted_at')
                 ? $request->date('granted_at')
                 : now(),
-        ]);
+        ];
+
+        // A consent the office records is this class's own from now on, so
+        // "carried from another class" goes, even when nothing else changed.
+        // The marker is not fillable, hence `forceFill`; the key is written
+        // only once `migrate` has added its column, and before that there is
+        // no marker to clear.
+        //
+        // UNLESS WHAT IS RECORDED IS LESS THAN THE OTHER CLASS STILL HOLDS
+        // (the class story here, photographs there). That is a family
+        // reducing a consent that was carried, on a copy that was marked or
+        // on one they had withdrawn. With the marker gone nothing would tell
+        // a later move that the wider consent of the other class must not
+        // come back into force, and it would, the day the student went back.
+        // So the marker stays, exactly as it does on a withdrawal.
+        if (GroupMembership::consentCarryReady()) {
+            $source = $membership->carriedConsentSource();
+            $less = $source !== null && $source->consentRank() > GroupMembership::consentRankOf($recorded['consent_scope']);
+
+            if (! $less) {
+                $recorded[GroupMembership::CONSENT_CARRIED_FROM] = null;
+            }
+        }
+
+        $membership->forceFill($recorded)->save();
+
+        $saved = $membership->fresh()->load(['contact', 'guardianOf']);
 
         return response()->json([
             'status' => 'success',
-            'data' => $membership->fresh()->load(['contact', 'guardianOf']),
+            'data' => $this->serialised($saved),
+            'notes' => $this->notes($group, $saved),
         ], Response::HTTP_OK);
     }
 
@@ -92,6 +150,12 @@ class GroupConsentController extends Controller
      * as never having consented — because that is exactly what withdrawal
      * means here, and because "absence of a record means no consent" only works
      * if the absent state is reachable.
+     *
+     * TWO KEYS, AS ALWAYS, AND NEVER REFUSED. It does not touch the marker of a
+     * carried consent, on purpose (see the class docblock), and it does not
+     * depend on that column existing. The `notes` are read AFTER the write and
+     * a failure in that read is swallowed: nothing may turn a withdrawal into
+     * an error.
      */
     public function destroy($masjid_id, $group_id, $membership_id)
     {
@@ -103,9 +167,12 @@ class GroupConsentController extends Controller
             'consent_scope' => null,
         ]);
 
+        $saved = $membership->fresh()->load(['contact', 'guardianOf']);
+
         return response()->json([
             'status' => 'success',
-            'data' => $membership->fresh()->load(['contact', 'guardianOf']),
+            'data' => $this->serialised($saved),
+            'notes' => $this->notes($group, $saved),
         ], Response::HTTP_OK);
     }
 
@@ -175,5 +242,138 @@ class GroupConsentController extends Controller
             ],
             'meta' => ['scopes' => GroupMembership::CONSENT_SCOPES],
         ], Response::HTTP_OK);
+    }
+
+    // ------------------------------------------------------------- internals
+
+    /**
+     * The entry as both writes answer it: the roster row, and the one thing
+     * about a carried consent the row cannot say by itself, which the roster
+     * list computes for every row and the screen must not have to wait for:
+     * `consent_less_than_carried_from`, true when this entry is marked, holds
+     * consent, and holds less than the class it was carried from does. A read
+     * of one row; before the marker column exists it is false.
+     *
+     * @return array<string, mixed>
+     */
+    private function serialised(GroupMembership $saved): array
+    {
+        return array_merge($saved->toArray(), [
+            'consent_less_than_carried_from' => GroupMembership::consentCarryReady()
+                && RosterMove::holdingLessThanCarried(collect([$saved]))->isNotEmpty(),
+        ]);
+    }
+
+    /**
+     * The notes of an answer, or none when they could not be read. The write
+     * has already happened: a fault here is logged at WARNING (production
+     * drops anything lower), by its class and never its message, and the
+     * answer goes out without notes.
+     *
+     * @return list<string>
+     */
+    private function notes(Group $group, GroupMembership $entry): array
+    {
+        try {
+            return $this->whereConsentStillStands($group, $entry);
+        } catch (Throwable $e) {
+            Log::warning('group.consent.notes_failed', [
+                'membership' => (int) $entry->getKey(),
+                'error' => $e::class,
+            ]);
+
+            return [];
+        }
+    }
+
+    /**
+     * WHERE THIS ADULT'S CONSENT STILL STANDS, after the entry was written.
+     *
+     *   1. THE SAME CLASS FIRST: the adult's other current entries in this
+     *      class, for any child, that open MORE than this entry now does.
+     *      After a withdrawal that is every one of them with consent; after a
+     *      record it is none unless the office narrowed.
+     *   2. Then every other entry of the same adult for the SAME child, in any
+     *      class of the organisation that still exists, that holds consent.
+     *      A current one still stands; a closed one comes back into force if
+     *      the child returns there.
+     *
+     * Ordinary reads, made after the write and never locked.
+     *
+     * @return list<string>
+     */
+    protected function whereConsentStillStands(Group $group, GroupMembership $entry): array
+    {
+        if (! $entry->isGuardian()) {
+            return [];
+        }
+
+        $guardian = self::nameOf($entry->contact);
+        $child = self::nameOf($entry->guardianOf);
+        $notes = [];
+
+        $sameClass = GroupMembership::query()
+            ->where('group_id', $group->getKey())
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->where('contact_id', $entry->contact_id)
+            ->whereKeyNot($entry->getKey())
+            ->whereNull('left_on')
+            ->with('guardianOf:id,first_name,last_name')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($sameClass as $other) {
+            $opensMore = collect([GroupMembership::CONSENT_FEED, GroupMembership::CONSENT_MEDIA])
+                ->contains(fn (string $disclosure): bool => $other->consentCovers($disclosure) && ! $entry->consentCovers($disclosure));
+
+            if ($opensMore) {
+                $notes[] = "{$guardian} still receives {$group->name}'s class story through their entry for "
+                    .self::nameOf($other->guardianOf).' ('.RosterMovePlan::scopeWords((string) $other->consent_scope).'). '
+                    .'Withdraw that too if the family meant the whole class.';
+            }
+        }
+
+        // Tenant-scoped through the model, as every read in this controller:
+        // it never names another organisation's class.
+        $elsewhere = GroupMembership::query()
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->where('contact_id', $entry->contact_id)
+            ->where('guardian_of_contact_id', $entry->guardian_of_contact_id)
+            ->where('group_id', '!=', $group->getKey())
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (GroupMembership $other): bool => $other->hasConsent());
+
+        if ($elsewhere->isEmpty()) {
+            return $notes;
+        }
+
+        $classes = Group::query()->whereIn('id', $elsewhere->pluck('group_id')->unique()->values())->pluck('name', 'id');
+
+        foreach ($elsewhere as $other) {
+            $class = $classes->get($other->group_id);
+
+            // A class that was deleted is not somewhere consent can be in force.
+            if ($class === null) {
+                continue;
+            }
+
+            $held = RosterMovePlan::consentWords((string) $other->consent_scope, $other->consent_granted_at?->toDateString());
+
+            $notes[] = $other->left_on === null
+                ? "Consent for {$guardian} about {$child} still stands in {$class} ({$held}). Withdraw it there too if "
+                    .'the family meant both.'
+                : "Consent for {$guardian} about {$child} is still on record in {$class} ({$held}) and comes back into "
+                    ."force if {$child} returns there. Withdraw it there too if the family meant both.";
+        }
+
+        return $notes;
+    }
+
+    private static function nameOf(?Contact $contact): string
+    {
+        $name = trim(($contact?->first_name ?? '').' '.($contact?->last_name ?? ''));
+
+        return $name === '' ? 'This person' : $name;
     }
 }

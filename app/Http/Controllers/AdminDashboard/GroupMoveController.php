@@ -35,7 +35,9 @@ class GroupMoveController extends Controller
      *
      * Takes no lock and writes nothing. A move the server would refuse is a
      * 200 with `can_move: false` and the sentence, so the dialog can print it
-     * where the office is reading.
+     * where the office is reading. `open_group` is the class to open to clear
+     * the refusal, and may carry `membership_id`: the roster row there that
+     * the remedy is about.
      */
     public function show(PreviewMoveRequest $request, RosterMove $mover, $masjid_id, $group_id, $membership_id)
     {
@@ -73,6 +75,17 @@ class GroupMoveController extends Controller
      * verb's shape, `{status: 'error', message}`: 422 when the request cannot
      * be, 409 when the rosters are in a state the move must not touch or
      * changed while the office was looking.
+     *
+     * EVERY OPTION IS NAMED HERE. The move also takes options that only a
+     * whole-class run may set (`run`, `whole_class`, `standing_before_id`,
+     * `today`, `attempts`); none is read from the request, so a body that
+     * carries one changes nothing.
+     *
+     * `consent_must_be_echoed` is this verb's own and always on: the dialog
+     * sends back what it showed about consent (`expected_consent`), so a body
+     * without it comes from a page opened before a move carried consent, and
+     * such a tap is told to reload instead of carrying a consent its screen
+     * said would not move (`RosterMove::refuseWhenNotWhatWasShown`).
      */
     public function store(MoveStudentRequest $request, RosterMove $mover, $masjid_id, $group_id, $membership_id)
     {
@@ -91,6 +104,9 @@ class GroupMoveController extends Controller
                     'expected_path' => $request->input('expected_path'),
                     'expected_first_day' => $request->input('expected_first_day'),
                     'expected_joined_on' => $request->input('expected_joined_on'),
+                    'expected_consent' => $request->input('expected_consent'),
+                    'expected_bucks_rule' => $request->input('expected_bucks_rule'),
+                    'consent_must_be_echoed' => true,
                 ],
                 $this->actor($request),
             );

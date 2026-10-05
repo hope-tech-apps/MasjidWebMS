@@ -60,18 +60,35 @@ class OfficeStudentDetailsPayloadTest extends TestCase
      *     birth is read one student at a time from its own endpoint
      *     (StudentBirthDateLeakTest pins that it rides on no list).
      *
+     * Classified when a move began to carry consent (2026-10-05), as the
+     * `moved_*` keys were: the office is meant to read both on this list.
+     *
+     *   - `consent_carried_from_group_id` and the class it names
+     *     (`consent_carried_from`: id, name, deleted_at): on a guardian entry,
+     *     that its consent was copied by a move and from which class. An id of
+     *     one of this school's classes and that class's name; nothing about a
+     *     person. Beside the two consent columns it lets the roster say
+     *     "carried from …" or "withdrawn here after it was carried from …"
+     *     (RosterMoveRosterTest pins both).
+     *   - `consent_less_than_carried_from`: a boolean, true on a guardian
+     *     entry whose carried consent now stands for less than the class it
+     *     came from holds (the family reduced it here). It says which of two
+     *     scopes each class holds and nothing else, and both scopes are on
+     *     this list already, one roster each.
+     *
      * @var list<string>
      */
     private const ROW = [
         'id', 'masjid_id', 'group_id', 'contact_id', 'role', 'grade_label',
         'guardian_of_contact_id', 'joined_at', 'left_on',
-        'consent_granted_at', 'consent_scope',
+        'consent_granted_at', 'consent_scope', 'consent_carried_from_group_id',
         'provenance', 'confirmed_at', 'confirmed_by_user_id', 'source_registration_id',
         'left_recorded_by_user_id',
         'moved_from_group_id', 'moved_to_group_id', 'moved_on', 'moved_by_user_id',
         'created_at', 'updated_at',
         'contact', 'guardian_of', 'confirmed_by', 'source_registration',
         'moved_to', 'moved_from', 'moved_to_state',
+        'consent_carried_from', 'consent_less_than_carried_from',
         'age', 'age_given',
         'claim',
     ];

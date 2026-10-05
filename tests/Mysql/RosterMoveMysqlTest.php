@@ -14,13 +14,18 @@
 |   - the two attendance reads. `session_date` is a DATE here and a midnight timestamp string on
 |     SQLite, and "on that day" and "after the leaving day" compare differently on the two;
 |   - the unique index over (class, person, role, child) when a student goes back to a class
-|     where their row and their guardians' entries have left.
+|     where their row and their guardians' entries have left;
+|   - a carried consent on real columns: the copy's `consent_granted_at` is the source's, value
+|     for value, on a real TIMESTAMP; a consent carried on a return, onto a roster whose rows have
+|     left, does not trip that unique index; and the refusal of a return that would bring back a
+|     consent the family withdrew where it had been carried, on real rows.
 |
 | The locks themselves are in tests/MysqlLocks/RosterMoveLocksTest.php: under RefreshDatabase this
 | whole file is one transaction, where a lock on a row the transaction inserted is not visible
 | and a second connection can see nothing.
 */
 
+use App\Exceptions\RosterMoveRefused;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\User;
@@ -57,6 +62,25 @@ afterEach(fn () => Carbon::setTestNow());
 function rosterMoveOnMysql(User $admin, GroupMembership $row, Group $to, string $on, array $options = []): RosterMovePlan
 {
     return app(RosterMove::class)->move($row->group, $row, $to->id, $on, $options, $admin);
+}
+
+/**
+ * The two consent columns and the marker of one roster row, as the engine holds them: the raw
+ * TIMESTAMP string, the scope, and the marker as an integer or null (a driver may hand an
+ * integer column back as a string). Takes an id, so it reads nothing off the test.
+ *
+ * @return array{0: ?string, 1: ?string, 2: ?int}
+ */
+function rosterMoveRawConsent(int $id): array
+{
+    $row = DB::table('group_memberships')->where('id', $id)
+        ->first(['consent_granted_at', 'consent_scope', 'consent_carried_from_group_id']);
+
+    return [
+        $row->consent_granted_at === null ? null : (string) $row->consent_granted_at,
+        $row->consent_scope,
+        $row->consent_carried_from_group_id === null ? null : (int) $row->consent_carried_from_group_id,
+    ];
 }
 
 it('lists every foreign key into a roster row, with the rule the database really has', function () {
@@ -159,12 +183,26 @@ it('goes back onto a place and entries that have left without a duplicate key', 
     $this->plantRecord('attendance_records', $student, ['session_date' => '2026-09-06']);
 
     $there = GroupMembership::findOrFail(rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04')->membershipId);
+
+    // The first move carried the consent as it was recorded: the same raw value on a real
+    // TIMESTAMP, the same scope, and the class it came from. The claim's copy holds nothing.
+    $copy = $this->entryIn($this->second, $parent);
+    [$recordedAt] = rosterMoveRawConsent($parent->id);
+
+    expect($recordedAt)->not->toBeNull()
+        ->and(rosterMoveRawConsent($copy->id))->toBe([$recordedAt, 'media', (int) $this->first->id])
+        ->and(rosterMoveRawConsent($parent->id))->toBe([$recordedAt, 'media', null])
+        ->and(rosterMoveRawConsent($this->entryIn($this->second, $claim)->id))->toBe([null, null, null]);
+
     $before = $this->rosterSnapshot();
 
     $plan = app(RosterMove::class)->move($this->second, $there, $this->first->id, '2026-10-04', [], $this->admin);
 
+    // The copy was not withdrawn, so the consent recorded in the first class is in force again.
     expect($plan->path)->toBe(RosterMovePlan::RETURNED)
         ->and($plan->membershipId)->toBe($student->id)
+        ->and($plan->consentInForceAgain)->toHaveCount(1)
+        ->and($plan->consentInForceAgain[0]['reopens'])->toBeTrue()
         ->and(GroupMembership::where('group_id', $this->first->id)->where('contact_id', $student->contact_id)->whereNull('left_on')->count())->toBe(1)
         ->and($parent->fresh()->left_on)->toBeNull()
         ->and($parent->fresh()->hasConsent())->toBeTrue()
@@ -173,6 +211,106 @@ it('goes back onto a place and entries that have left without a duplicate key', 
         // One entry per adult per class: nothing was inserted beside the ones that came back.
         ->and(GroupMembership::where('group_id', $this->first->id)->where('role', 'guardian')->count())->toBe(2)
         ->and(GroupMembership::where('group_id', $this->second->id)->where('role', 'guardian')->whereNull('left_on')->count())->toBe(0);
+
+    $this->assertNothingWasDestroyed($before);
+});
+
+it('carries a consent on a return, onto a roster whose rows have left, without a duplicate key', function () {
+    $student = $this->enrol($this->first, 'Maryam');
+    $parent = $this->guardian($student, 'Huda', consent: 'feed');
+
+    // There and back: the second class now holds a place and an entry that have left.
+    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04')->membershipId);
+    rosterMoveOnMysql($this->admin, $there, $this->first, '2026-10-04');
+
+    // A second guardian is added in the first class, with consent recorded there.
+    $later = $this->guardian($student->fresh(), 'Gamal', consent: 'media');
+    $before = $this->rosterSnapshot();
+
+    $plan = rosterMoveOnMysql($this->admin, $student->fresh(), $this->second, '2026-10-04');
+
+    $carried = $this->entryIn($this->second, $later);
+    [$recordedAt] = rosterMoveRawConsent($later->id);
+
+    expect($plan->path)->toBe(RosterMovePlan::RETURNED)
+        ->and((int) $plan->membershipId)->toBe((int) $there->id)
+        // Only the entry this move created was carried onto; the one that came back is as it was.
+        ->and($plan->consentCarried)->toBe(['media' => 1, 'feed' => 0])
+        ->and($plan->consentEntriesCarried)->toBe([[(int) $carried->id, (int) $later->id]])
+        ->and($recordedAt)->not->toBeNull()
+        ->and(rosterMoveRawConsent($carried->id))->toBe([$recordedAt, 'media', (int) $this->first->id])
+        ->and($this->entryIn($this->second, $parent)->left_on)->toBeNull()
+        ->and($this->entryIn($this->second, $parent)->consent_scope)->toBe('feed')
+        // One entry per adult per class, all of them open.
+        ->and(GroupMembership::where('group_id', $this->second->id)->where('role', 'guardian')->count())->toBe(2)
+        ->and(GroupMembership::where('group_id', $this->second->id)->where('role', 'guardian')->whereNull('left_on')->count())->toBe(2);
+
+    $this->assertNothingWasDestroyed($before);
+});
+
+it('refuses a return that would bring back a consent the family withdrew where it had been carried', function () {
+    $student = $this->enrol($this->first, 'Maryam');
+    $parent = $this->guardian($student, 'Huda', consent: 'media');
+
+    $there = GroupMembership::findOrFail(rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04')->membershipId);
+    $copy = $this->entryIn($this->second, $parent);
+
+    // The withdrawal, as the office's verb writes it: two columns, and the marker stays.
+    $copy->update(['consent_granted_at' => null, 'consent_scope' => null]);
+    expect((int) $copy->fresh()->consent_carried_from_group_id)->toBe($this->first->id);
+
+    $rows = fn (): array => DB::table('group_memberships')->orderBy('id')->get()->map(fn ($r): array => (array) $r)->all();
+    $before = $rows();
+
+    // A closure made here, where `$this` is the test: the administrator is a protected member
+    // of the trait and a plain function could not read it.
+    $back = fn () => app(RosterMove::class)->move($this->second, $there->fresh(), $this->first->id, '2026-10-04', [], $this->admin);
+
+    $refused = null;
+
+    try {
+        $back();
+    } catch (RosterMoveRefused $e) {
+        $refused = $e;
+    }
+
+    expect($refused)->not->toBeNull()
+        ->and($refused->status())->toBe(409)
+        ->and($refused->getMessage())->toStartWith('Huda Guardian withdrew consent in 2nd Grade after it had been carried there from 1st Grade.')
+        ->and($refused->openGroup())->toBe(['id' => (int) $this->first->id, 'name' => '1st Grade', 'membership_id' => (int) $parent->id])
+        // Nothing was written.
+        ->and($rows())->toBe($before);
+
+    // The remedy: the old consent is withdrawn too, and the move goes through.
+    $parent->fresh()->update(['consent_granted_at' => null, 'consent_scope' => null]);
+
+    $plan = $back();
+
+    expect($plan->path)->toBe(RosterMovePlan::RETURNED)
+        ->and($plan->consentInForceAgain)->toBe([])
+        ->and($parent->fresh()->left_on)->toBeNull()
+        ->and($parent->fresh()->hasConsent())->toBeFalse();
+});
+
+it('does not carry for a sibling\'s sake what the adult does not hold in the class entered, read without a lock', function () {
+    $adult = $this->makePerson('Huda', 'Guardian');
+    $student = $this->enrol($this->first, 'Maryam');
+    $this->guardian($student, $adult, consent: 'media');
+    // The same adult, in the second class for a brother, with the class story only.
+    $sibling = $this->guardian($this->enrol($this->second, 'Yusuf'), $adult, consent: 'feed');
+    $before = $this->rosterSnapshot();
+
+    $plan = rosterMoveOnMysql($this->admin, $student, $this->second, '2026-10-04');
+
+    $copy = GroupMembership::where('group_id', $this->second->id)->where('contact_id', $adult->id)
+        ->where('guardian_of_contact_id', $student->contact_id)->sole();
+
+    expect($plan->consentCarried)->toBe(['media' => 0, 'feed' => 0])
+        ->and($plan->consentNotCarriedForSibling)->toBe([['guardian' => 'Huda Guardian', 'holds' => 'feed']])
+        ->and($copy->consentColumnsAreSet())->toBeFalse()
+        ->and($copy->consent_carried_from_group_id)->toBeNull()
+        ->and($copy->isConfirmed())->toBeTrue()
+        ->and($sibling->fresh()->consent_scope)->toBe('feed');
 
     $this->assertNothingWasDestroyed($before);
 });

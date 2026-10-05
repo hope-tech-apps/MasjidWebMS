@@ -38,11 +38,33 @@ use Illuminate\Support\Facades\DB;
  * between the hourly mint (:10) and this sweep (:40) in which those bucks show; they are gone
  * by the next expiry run.
  *
+ * ## A balance carried from another class
+ *
+ * When a student is moved, their balance follows them as a `transfer_out` on the row they left
+ * and a `transfer_in` on the row in the new class (ClassStore::carryBalance). A carried amount
+ * has no week, so both rows carry `counts_from`: the newest week the old row had been minted
+ * for, never later than the day the move was run. "Minted from weeks starting on or after the
+ * cutoff" therefore also counts BOTH transfer kinds whose `counts_from` is on or after the
+ * cutoff, each with its own sign:
+ *
+ *   - the `transfer_in` adds its amount, so a cutoff older than the move (last June's, for a
+ *     student moved in October) takes nothing of a balance that had been minted since it, while
+ *     a cutoff after the move takes the carried amount like any other;
+ *   - the `transfer_out` takes its amount back out on the row that was left, so when a write-off
+ *     is later given back onto that row (below), the cutoff that replaces it treats what is
+ *     there exactly as it treats a classmate's, and a moved child does not keep both the carried
+ *     Bucks and the given-back ones.
+ *
+ * One date cannot split a balance that straddles a cutoff already due and not yet written off
+ * on the old row at the instant of the move (the half hour between the :10 mint and the :40
+ * sweep, the hour after a past year end is typed, a school whose sweep is not running): the
+ * whole of it is kept, never lost. A move itself writes no `expired` row and gives none back.
+ *
  * ## A mistyped date must not wipe a class, and a corrected one gives it back
  *
  * The cutoffs come from dates the office types (a class's `ends_on`, a school year's
  * `last_day`), and any date is accepted there. So a cutoff acts only once it is
- * `groups.bucks.expiry_grace_days` days old (default 7): a wrong date typed on Monday is
+ * `groups.bucks.expiry_grace_days` days old (default 7, and never more): a wrong date typed on Monday is
  * normally seen and corrected long before it takes anything. And when a cutoff that has
  * already been written off DISAPPEARS (the date was corrected, or moved later), every
  * `expired` row written for it is given back by a compensating `reversal` row pointing at it
@@ -60,10 +82,25 @@ use Illuminate\Support\Facades\DB;
  */
 final class BucksExpiry
 {
-    /** How many days a cutoff waits before it acts, from config (never below zero). */
+    /** The longest a cutoff may wait: one week, the length of a minted week (see graceDays). */
+    public const MAX_GRACE_DAYS = 7;
+
+    /**
+     * How many days a cutoff waits before it acts, from config: never below zero and NEVER
+     * ABOVE SEVEN, whatever the environment says.
+     *
+     * The bound is what makes "Bucks end with the school year" hold for a student moved in the
+     * days after the last day. A week that starts on or after a cutoff closes seven days later
+     * at the earliest, and only closed weeks mint, so while a cutoff is still inside a grace of
+     * seven days nothing on any row can be dated on or after it, and a balance carried to
+     * another class in those days is written off there with everybody else's. With a longer
+     * grace a week could be minted beyond a cutoff still waiting, a move in those days would
+     * carry that week's date, and the whole old-year balance would be kept. The value comes from
+     * the environment, so the bound is enforced here and not left to a default.
+     */
     public static function graceDays(): int
     {
-        return max(0, (int) config('groups.bucks.expiry_grace_days', 7));
+        return min(self::MAX_GRACE_DAYS, max(0, (int) config('groups.bucks.expiry_grace_days', 7)));
     }
 
     /**
@@ -124,6 +161,10 @@ final class BucksExpiry
             return $out;
         }
 
+        // The transfer half of "later" names `counts_from`, which a deploy serves code for before
+        // it migrates. Without the column there can be no transfer row either.
+        $transfers = ClassStore::carryReady();
+
         $holding = DB::table('prize_ledger_entries')
             ->where('group_id', $group->id)
             ->groupBy('group_membership_id')
@@ -137,11 +178,23 @@ final class BucksExpiry
                 // What this cutoff has to write off, decided under the student's lock.
                 $amount = 0;
 
-                $decide = function (int $balance) use ($membershipId, $cutoff, &$amount): ?array {
+                $decide = function (int $balance) use ($membershipId, $cutoff, $transfers, &$amount): ?array {
+                    // What this row holds from the cutoff on: what was minted for a week that
+                    // starts on or after it, and a balance carried in or out that counts from a
+                    // day on or after it, the one carried out with its minus sign.
                     $later = (int) DB::table('prize_ledger_entries')
                         ->where('group_membership_id', $membershipId)
-                        ->whereIn('kind', PrizeLedgerEntry::MINTED_KINDS)
-                        ->where('week_start', '>=', $cutoff)
+                        ->where(function ($q) use ($cutoff, $transfers) {
+                            $q->where(fn ($w) => $w
+                                ->whereIn('kind', PrizeLedgerEntry::MINTED_KINDS)
+                                ->where('week_start', '>=', $cutoff));
+
+                            if ($transfers) {
+                                $q->orWhere(fn ($w) => $w
+                                    ->whereIn('kind', PrizeLedgerEntry::TRANSFER_KINDS)
+                                    ->where('counts_from', '>=', $cutoff));
+                            }
+                        })
                         ->sum('amount');
 
                     $amount = max(0, min($balance, $balance - $later));

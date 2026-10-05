@@ -14,6 +14,7 @@ import {
     MovePreview,
     RosterMeta
 } from "@/core/types/data/masjid-related/Group";
+import type { ClassMoveAnswer, ClassMovePreview } from "@/core/helpers/rosterClassMove";
 
 /**
  * What one press of the confirm button actually did.
@@ -335,6 +336,55 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         throw new Error('The move could not be saved.');
     }
 
+    // ------------------------------------------------------- moving a whole class
+
+    /**
+     * What moving this class there would do: every current student, each with what
+     * the single move would do for them or why it would not. Reads only; every
+     * sentence is the server's. `gradeMode` is null while the office has not chosen.
+     */
+    async function previewClassMove(
+        groupId: number | string,
+        toGroupId: number,
+        movedOn: string,
+        gradeMode: string | null,
+        gradeLabel: string
+    ): Promise<ClassMovePreview> {
+        const query = new URLSearchParams({ to_group_id: String(toGroupId), moved_on: movedOn });
+        if (gradeMode) query.set('grade_mode', gradeMode);
+        if (gradeMode === 'set') query.set('grade_label', gradeLabel);
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid?.id}/groups/${groupId}/class-move?${query.toString()}` as BackendApiRoute
+        );
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Could not check this move.');
+    }
+
+    /**
+     * Move the students the dialog ticked. `fields` are the body's pairs, in order,
+     * as `classMoveFields` built them: the rows the office was shown, each with what
+     * it was shown. They are appended as they come and nothing is added here.
+     *
+     * Returns the server's answer, which names every student: moved, not moved and
+     * why, or not reached. A refusal before anything was written is thrown.
+     */
+    async function moveClass(groupId: number | string, fields: Array<[string, string]>): Promise<ClassMoveAnswer> {
+        const body = new FormData();
+        fields.forEach(([key, value]) => body.append(key, value));
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid?.id}/groups/${groupId}/class-move` as BackendApiRoute,
+            body
+        );
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('The move could not be saved.');
+    }
+
     /** Put a student who left back on the roster (the withdrawal's own undo). */
     async function putBack(groupId: number | string, membershipId: number | string): Promise<void> {
         await ApiService.delete(
@@ -507,6 +557,8 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         fetchClassesForMove,
         previewMove,
         moveMembership,
+        previewClassMove,
+        moveClass,
         putBack,
         addMembership,
         confirmClaims,
