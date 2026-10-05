@@ -34,6 +34,21 @@ use Tests\TestCase;
  * public/storage from disk and picks the Content-Type from the extension, so image bytes
  * kept as `<media id>/x.html` would be answered as a page on the application's own origin.
  *
+ * What this file proves, door by door:
+ *
+ *  - image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.svg`, a name
+ *    with no extension) are refused and nothing is stored;
+ *  - every kind of file an office may upload at that door is accepted, under a lower-case
+ *    and an upper-case name, and kept under that name. The kinds are stated in DOORS, in
+ *    this file, and are NOT read from the rule: a rule whose list loses `webp` turns that
+ *    door's rows red, which it could not if the list under test were the list being read;
+ *  - a file refused for its name alone reads one sentence that says what to do, and a
+ *    file that is not an image is told that once.
+ *
+ * What it does not prove: that a list is not too WIDE, beyond the page-like names above.
+ * A new upload to the public disk needs a new row in DOORS. UploadFileNameCoverageTest
+ * catches the ordinary ways of writing its rule without a pin, and says which it cannot.
+ *
  * Every upload here is REAL bytes in a real UploadedFile sent through the real route, so
  * its type is what finfo reads from the file. UploadedFile::fake() answers getMimeType()
  * from its argument or its name, which proves nothing about bytes named as something else.
@@ -53,36 +68,53 @@ class PublicUploadFileNameDoorsTest extends TestCase
     /** What a bare `image` rule admits (Laravel's own list), for the two rules with no `mimes:`. */
     private const ANY_IMAGE_ENDINGS = '.jpg, .jpeg, .png, .gif, .bmp or .webp';
 
+    /**
+     * What an office may upload at a door: each kind of file (its BYTES), and the endings
+     * a file of that kind is named with. Written out here on purpose, as this file's own
+     * statement of what each door is for.
+     */
+    private const PHOTOS = ['jpeg' => ['jpg', 'jpeg'], 'png' => ['png'], 'gif' => ['gif'], 'webp' => ['webp']];
+
+    /** The two doors whose rule is a bare `image` have always taken a bitmap as well. */
+    private const PHOTOS_OR_BITMAP = self::PHOTOS + ['bmp' => ['bmp']];
+
+    /** An icon is a PNG or a WebP: the only bytes the icon rules let through. */
+    private const ICONS = ['png' => ['png'], 'webp' => ['webp']];
+
+    /** The service EDIT form's icon has always taken a GIF too; the create form's has not. */
+    private const ICONS_OR_GIF = ['png' => ['png'], 'gif' => ['gif'], 'webp' => ['webp']];
+
+    /** Every door, and what an office may upload there. */
     private const DOORS = [
-        'a new announcement',
-        'an edited announcement',
-        'a new splash announcement',
-        'an edited splash announcement',
-        'a gallery photo sent alone',
-        'gallery photos sent together',
-        'the organisation logo on Details',
-        'the header logo on General settings',
-        'the footer logo on General settings',
-        'a new organisation: logo',
-        'a new organisation: footer logo',
-        'an edited organisation: logo',
-        'an edited organisation: footer logo',
-        'a new user: picture',
-        'an edited user: picture',
-        'an admin\'s own profile picture',
-        'a new service: picture',
-        'a new service: icon',
-        'an edited service: picture',
-        'an edited service: icon',
-        'About, first save: picture',
-        'About, first save: mission icon',
-        'About, first save: vision icon',
-        'About, edited: picture',
-        'About, edited: mission icon',
-        'About, edited: vision icon',
-        'the donation link picture',
-        'a push notification picture',
-        'the publish composer picture',
+        'a new announcement' => self::PHOTOS,
+        'an edited announcement' => self::PHOTOS,
+        'a new splash announcement' => self::PHOTOS,
+        'an edited splash announcement' => self::PHOTOS,
+        'a gallery photo sent alone' => self::PHOTOS,
+        'gallery photos sent together' => self::PHOTOS,
+        'the organisation logo on Details' => self::PHOTOS,
+        'the header logo on General settings' => self::PHOTOS,
+        'the footer logo on General settings' => self::PHOTOS,
+        'a new organisation: logo' => self::PHOTOS,
+        'a new organisation: footer logo' => self::PHOTOS,
+        'an edited organisation: logo' => self::PHOTOS,
+        'an edited organisation: footer logo' => self::PHOTOS,
+        'a new user: picture' => self::PHOTOS,
+        'an edited user: picture' => self::PHOTOS,
+        'an admin\'s own profile picture' => self::PHOTOS,
+        'a new service: picture' => self::PHOTOS,
+        'a new service: icon' => self::ICONS,
+        'an edited service: picture' => self::PHOTOS,
+        'an edited service: icon' => self::ICONS_OR_GIF,
+        'About, first save: picture' => self::PHOTOS,
+        'About, first save: mission icon' => self::ICONS,
+        'About, first save: vision icon' => self::ICONS,
+        'About, edited: picture' => self::PHOTOS,
+        'About, edited: mission icon' => self::ICONS,
+        'About, edited: vision icon' => self::ICONS,
+        'the donation link picture' => self::PHOTOS_OR_BITMAP,
+        'a push notification picture' => self::PHOTOS_OR_BITMAP,
+        'the publish composer picture' => self::PHOTOS,
     ];
 
     private Masjid $masjid;
@@ -158,7 +190,7 @@ class PublicUploadFileNameDoorsTest extends TestCase
     public static function doors(): array
     {
         $rows = [];
-        foreach (self::DOORS as $door) {
+        foreach (array_keys(self::DOORS) as $door) {
             $rows[$door] = [$door];
         }
 
@@ -166,16 +198,42 @@ class PublicUploadFileNameDoorsTest extends TestCase
     }
 
     /**
-     * Image bytes under a page's name and under a drawing's name, through every door.
+     * Image bytes under a name that is not an image's, through every door: a page, a page
+     * in capitals (the rule lower-cases the name before it looks), an image's name with a
+     * page's after it (the LAST extension is the one that counts), a drawing that can
+     * carry script, and no extension at all.
      *
      * @return array<string, array{string, string}>
      */
     public static function refusedNames(): array
     {
         $rows = [];
-        foreach (self::DOORS as $door) {
-            foreach (['x.html', 'x.svg'] as $name) {
+        foreach (array_keys(self::DOORS) as $door) {
+            foreach (['x.html', 'x.HTML', 'x.jpg.html', 'x.svg', 'x'] as $name) {
                 $rows["{$door}: {$name}"] = [$door, $name];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Every kind of file an office may upload at each door, under a lower-case name and
+     * under an upper-case one (phones and cameras write `IMG_0001.JPG`), with the kind of
+     * bytes the name says.
+     *
+     * @return array<string, array{string, string, string}>
+     */
+    public static function namesAnOfficeMayUpload(): array
+    {
+        $rows = [];
+        foreach (self::DOORS as $door => $kinds) {
+            foreach ($kinds as $kind => $endings) {
+                foreach ($endings as $ending) {
+                    foreach (['photo.' . $ending, 'PHOTO.' . strtoupper($ending)] as $name) {
+                        $rows["{$door}: {$name}"] = [$door, $name, $kind];
+                    }
+                }
             }
         }
 
@@ -211,21 +269,21 @@ class PublicUploadFileNameDoorsTest extends TestCase
     /* ----------------------------------------------------------- still accepted */
 
     #[Test]
-    #[DataProvider('doors')]
-    public function a_file_named_as_a_camera_names_it_is_stored_under_that_name(string $key): void
+    #[DataProvider('namesAnOfficeMayUpload')]
+    public function every_kind_of_file_an_office_may_upload_here_is_stored_under_the_name_it_came_with(string $key, string $name, string $kind): void
     {
         $door = $this->door($key);
 
-        $response = $this->send($door, $this->realImage($door['good'], $door['bytes']));
+        $response = $this->send($door, $this->realImage($name, $kind));
 
-        $this->assertContains($response->status(), [200, 201, 202], "{$key}: {$door['good']} was refused: " . $response->getContent());
+        $this->assertContains($response->status(), [200, 201, 202], "{$key}: {$kind} bytes named {$name} were refused: " . $response->getContent());
 
         foreach ($door['collections'] as $collection) {
             $media = DB::table('media')->where('collection_name', $collection)->orderByDesc('id')->first();
             $this->assertNotNull($media, "{$key}: nothing was stored in {$collection}");
-            $this->assertSame($door['good'], $media->file_name, "{$key}: stored in {$collection} under another name");
+            $this->assertSame($name, $media->file_name, "{$key}: stored in {$collection} under another name");
             $this->assertSame('public', $media->disk);
-            Storage::disk('public')->assertExists($media->id . '/' . $door['good']);
+            Storage::disk('public')->assertExists($media->id . '/' . $name);
         }
     }
 
@@ -325,18 +383,19 @@ class PublicUploadFileNameDoorsTest extends TestCase
 
     /**
      * One door: who knocks, where, with what beside the file, which field carries the file
-     * under test, where a refusal is reported, what bytes that field takes, the collections
-     * a good file lands in, the tables the door writes, and the sentence a name-only
-     * refusal reads. An "edited" door first creates its record through the "new" one.
+     * under test, where a refusal is reported, the bytes a refused NAME is sent with (a kind
+     * the field takes, so that the name is the only thing wrong), the collections a good
+     * file lands in, the tables the door writes, and the sentence a name-only refusal
+     * reads. An "edited" door first creates its record through the "new" one.
      *
      * @return array{as: string, url: string, payload: array<string, mixed>, field: string, error: string,
-     *               bytes: string, good: string, collections: list<string>, tables: list<string>, sentence: string}
+     *               bytes: string, collections: list<string>, tables: list<string>, sentence: string}
      */
     private function door(string $key): array
     {
         $org = '/api/admin/masjids/' . $this->masjid->id;
         $photo = fn (string $what): string => "The {$what}'s file name must end in " . self::PHOTO_ENDINGS . '. Rename the file and upload it again.';
-        $defaults = ['as' => 'admin', 'payload' => [], 'field' => 'image', 'bytes' => 'jpeg', 'good' => 'IMG_0001.JPG'];
+        $defaults = ['as' => 'admin', 'payload' => [], 'field' => 'image', 'bytes' => 'jpeg'];
 
         $door = match ($key) {
             'a new announcement', 'an edited announcement' => [
@@ -429,7 +488,6 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'payload' => $this->serviceFields(),
                 'field' => 'icon',
                 'bytes' => 'png',
-                'good' => 'ICON_0001.PNG',
                 'collections' => ['servicesIcons'],
                 'tables' => ['services'],
                 'sentence' => 'The service icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
@@ -439,7 +497,6 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'payload' => $this->serviceFields(),
                 'field' => 'icon',
                 'bytes' => 'png',
-                'good' => 'ICON_0001.PNG',
                 'collections' => ['servicesIcons'],
                 'tables' => ['services'],
                 // The edit rule has always taken two kinds the create rule does not name.
@@ -459,7 +516,6 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'payload' => $this->aboutFields(),
                 'field' => str_contains($key, 'mission') ? 'mission_icon' : 'vision_icon',
                 'bytes' => 'png',
-                'good' => 'ICON_0001.PNG',
                 'collections' => [str_contains($key, 'mission') ? 'missionIcons' : 'visionIcons'],
                 'tables' => ['masjid_abouts'],
                 'sentence' => 'The ' . (str_contains($key, 'mission') ? 'mission' : 'vision')
@@ -648,15 +704,28 @@ class PublicUploadFileNameDoorsTest extends TestCase
     /** A real image of that kind (GD), under the name the client gave it. */
     private function realImage(string $name, string $kind = 'jpeg'): UploadedFile
     {
-        $image = imagecreatetruecolor(8, 8);
+        return $this->realUpload($name, $this->imageBytes($kind));
+    }
+
+    /**
+     * The bytes of a real image of that kind, made by GD.
+     *
+     * A kind is skipped only where this PHP cannot make its bytes: GD is built with or
+     * without each format, and a build without WebP (or BMP, or GIF) has no way to write
+     * one. The skip names the kind, so a run that proved less says so.
+     */
+    private function imageBytes(string $kind): string
+    {
+        $write = ['jpeg' => 'imagejpeg', 'png' => 'imagepng', 'gif' => 'imagegif', 'webp' => 'imagewebp', 'bmp' => 'imagebmp'][$kind];
+
+        if (! function_exists($write)) {
+            $this->markTestSkipped("This PHP's GD has no {$write}(), so it cannot make the bytes of a {$kind} file. Nothing is proven about that kind here.");
+        }
 
         ob_start();
-        match ($kind) {
-            'jpeg' => imagejpeg($image),
-            'png' => imagepng($image),
-        };
+        $write(imagecreatetruecolor(8, 8));
 
-        return $this->realUpload($name, (string) ob_get_clean());
+        return (string) ob_get_clean();
     }
 
     /** The smallest file finfo reads as a PDF. */

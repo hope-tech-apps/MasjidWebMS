@@ -32,8 +32,15 @@ use Tests\TestCase;
  * section uploads and the shop's pictures already pin the name
  * (ValidatesVideoSection::sectionUploadRules, UploadProductImagesRequest); these two had
  * been left out. So had thirteen more, which PublicUploadFileNameDoorsTest holds door by
- * door, and UploadFileNameCoverageTest fails when a rule that accepts an upload is added
- * without its name pinned.
+ * door. A new upload needs its own row there: UploadFileNameCoverageTest catches the
+ * ordinary ways of writing an upload rule without its name pinned, and lists the ways it
+ * cannot see.
+ *
+ * For each of its four doors (a new page, a replacement, the flyer through the admin
+ * realm and through the lunch realm) this file proves that page-like names are refused
+ * and that every kind of file an office may upload there is accepted, under a lower-case
+ * and an upper-case name. The kinds are stated here (PAGE_KINDS, FLYER_KINDS) and are not
+ * read from the rules, so a rule whose list loses a kind turns this file red.
  *
  * Every upload here is REAL bytes in a real UploadedFile, so its type is what finfo reads
  * from the file. UploadedFile::fake() answers getMimeType() from its argument or from its
@@ -50,6 +57,19 @@ class PublicUploadFileNameTest extends TestCase
     private const PAGE_NAME_REFUSAL = 'The background image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.';
 
     private const FLYER_NAME_REFUSAL = 'The flyer\'s file name must end in .jpg, .jpeg, .png or .webp. Rename the file and upload it again.';
+
+    /**
+     * What an office may upload as a page's title background: each kind of file (its
+     * BYTES), and the endings a file of that kind is named with. Written out here on
+     * purpose, as this file's own statement of what the door is for.
+     */
+    private const PAGE_KINDS = ['jpeg' => ['jpg', 'jpeg'], 'png' => ['png'], 'gif' => ['gif'], 'webp' => ['webp']];
+
+    /** The same for the lunch flyer, which has never taken a GIF. */
+    private const FLYER_KINDS = ['jpeg' => ['jpg', 'jpeg'], 'png' => ['png'], 'webp' => ['webp']];
+
+    /** The extension a flyer of each kind is stored under: the one its bytes say. */
+    private const FLYER_STORED_AS = ['jpeg' => 'jpg', 'png' => 'png', 'webp' => 'webp'];
 
     private Masjid $masjid;
 
@@ -122,39 +142,52 @@ class PublicUploadFileNameTest extends TestCase
     }
 
     /**
-     * Names a page's title background takes, with the kind of bytes each carries.
+     * Every name a page's title background takes, with the kind of bytes each carries:
+     * each ending of each kind in PAGE_KINDS, in lower case and in capitals.
      *
      * @return array<string, array{string, string}>
      */
     public static function pageImageNames(): array
     {
-        return [
-            'photo.jpg' => ['photo.jpg', 'jpeg'],
-            'photo.jpeg' => ['photo.jpeg', 'jpeg'],
-            'photo.png' => ['photo.png', 'png'],
-            'photo.gif' => ['photo.gif', 'gif'],
-            'photo.webp' => ['photo.webp', 'webp'],
+        $rows = [
             'IMG_0001.JPG, as a camera or a phone names it' => ['IMG_0001.JPG', 'jpeg'],
             'Scan.PNG' => ['Scan.PNG', 'png'],
         ];
+
+        foreach (self::PAGE_KINDS as $kind => $endings) {
+            foreach ($endings as $ending) {
+                foreach (['photo.' . $ending, 'PHOTO.' . strtoupper($ending)] as $name) {
+                    $rows[$name] = [$name, $kind];
+                }
+            }
+        }
+
+        return $rows;
     }
 
     /**
-     * Names a flyer takes, the kind of bytes each carries, and the extension it is stored
-     * under: the one its BYTES say, whatever the name says.
+     * Every name a flyer takes, the kind of bytes each carries, and the extension it is
+     * stored under: the one its BYTES say, whatever the name says. Each ending of each
+     * kind in FLYER_KINDS, in lower case and in capitals.
      *
      * @return array<string, array{string, string, string}>
      */
     public static function flyerImageNames(): array
     {
-        return [
-            'photo.jpg' => ['photo.jpg', 'jpeg', 'jpg'],
-            'photo.jpeg' => ['photo.jpeg', 'jpeg', 'jpg'],
-            'photo.png' => ['photo.png', 'png', 'png'],
-            'photo.webp' => ['photo.webp', 'webp', 'webp'],
+        $rows = [
             'IMG_0001.JPG, as a camera or a phone names it' => ['IMG_0001.JPG', 'jpeg', 'jpg'],
             'PNG bytes under a .jpg name' => ['photo.jpg', 'png', 'png'],
         ];
+
+        foreach (self::FLYER_KINDS as $kind => $endings) {
+            foreach ($endings as $ending) {
+                foreach (['photo.' . $ending, 'PHOTO.' . strtoupper($ending)] as $name) {
+                    $rows[$name] = [$name, $kind, self::FLYER_STORED_AS[$kind]];
+                }
+            }
+        }
+
+        return $rows;
     }
 
     /* ------------------------------------------------- a page's title background */
@@ -222,18 +255,25 @@ class PublicUploadFileNameTest extends TestCase
     }
 
     #[Test]
-    public function a_replacement_with_an_images_name_takes_the_place_of_the_old_background(): void
+    #[DataProvider('pageImageNames')]
+    public function a_replacement_with_an_images_name_takes_the_place_of_the_old_background(string $name, string $kind): void
     {
         Sanctum::actingAs($this->admin);
-        $page = $this->pageWithBackground('photo.jpg');
+        $page = $this->pageWithBackground('first.jpg');
+        $old = DB::table('media')->value('id');
 
-        $this->post($this->pagesUrl($page), [
+        $response = $this->post($this->pagesUrl($page), [
             '_method' => 'PUT',
-            self::PAGE_FIELD => $this->realImage('IMG_0002.JPG'),
-        ], self::JSON)->assertOk();
+            self::PAGE_FIELD => $this->realImage($name, $kind),
+        ], self::JSON);
 
-        $this->assertSame(['IMG_0002.JPG'], DB::table('media')->pluck('file_name')->all());
-        $this->assertCount(1, Storage::disk('public')->allFiles());
+        $this->assertSame(200, $response->status(), "{$name} was refused: " . $response->getContent());
+
+        $media = DB::table('media')->get();
+        $this->assertCount(1, $media, 'the old background was kept beside the new one');
+        $this->assertNotSame($old, $media[0]->id, 'the old background is still the page\'s');
+        $this->assertSame($name, $media[0]->file_name);
+        $this->assertSame([$media[0]->id . '/' . $name], Storage::disk('public')->allFiles());
     }
 
     /* --------------------------------------------------------- the lunch flyer */
@@ -271,29 +311,34 @@ class PublicUploadFileNameTest extends TestCase
     }
 
     #[Test]
-    public function lunch_staff_meet_the_same_rule_at_their_own_door(): void
+    #[DataProvider('namesThatAreNotAnImages')]
+    public function lunch_staff_meet_the_same_rule_at_their_own_door(string $name): void
     {
-        $staff = User::factory()->create([
-            'type' => User::TYPE_LUNCH_STAFF,
-            'phone' => '+1' . random_int(1000000000, 9999999999),
-        ]);
-        MasjidUser::create([
-            'masjid_id' => $this->masjid->id,
-            'user_id' => $staff->id,
-            'role' => 'lunch-staff',
-            'is_default' => true,
-        ]);
-        app(TenantContext::class)->forgetTenant();
-        Sanctum::actingAs($staff);
+        $url = $this->lunchStaffFlyerUrl();
 
-        $url = '/api/lunch/masjids/' . $this->masjid->id . '/jummah-lunch/flyer';
+        $response = $this->post($url, ['flyer' => $this->realImage($name)], self::JSON);
 
-        $response = $this->post($url, ['flyer' => $this->realImage('x.html')], self::JSON);
-        $this->assertRefusedByName($response, 'flyer', 'x.html');
+        $this->assertRefusedByName($response, 'flyer', $name);
         $this->assertSame([], Storage::disk('public')->allFiles(), 'a refused flyer reached the public disk');
+    }
 
-        $this->post($url, ['flyer' => $this->realImage('IMG_0001.JPG')], self::JSON)->assertStatus(201);
-        $this->assertCount(1, Storage::disk('public')->allFiles());
+    #[Test]
+    #[DataProvider('flyerImageNames')]
+    public function lunch_staff_can_upload_every_kind_of_flyer_at_their_own_door(string $name, string $kind, string $storedAs): void
+    {
+        $url = $this->lunchStaffFlyerUrl();
+
+        $response = $this->post($url, ['flyer' => $this->realImage($name, $kind)], self::JSON);
+
+        $this->assertSame(201, $response->status(), "{$name} was refused: " . $response->getContent());
+
+        $stored = Storage::disk('public')->allFiles();
+        $this->assertCount(1, $stored);
+        $this->assertMatchesRegularExpression(
+            '#^lunch-flyers/[0-9a-f-]{36}\.' . $storedAs . '$#',
+            $stored[0],
+            "{$name} ({$kind} bytes) was not stored as a .{$storedAs}",
+        );
     }
 
     /* ------------------------------------------------- what the person is told */
@@ -445,6 +490,25 @@ class PublicUploadFileNameTest extends TestCase
         return '/api/admin/masjids/' . $this->masjid->id . '/jummah-lunch/flyer';
     }
 
+    /** Signs in a lunch-staff login of this masjid and answers the lunch realm's flyer address. */
+    private function lunchStaffFlyerUrl(): string
+    {
+        $staff = User::factory()->create([
+            'type' => User::TYPE_LUNCH_STAFF,
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+        MasjidUser::create([
+            'masjid_id' => $this->masjid->id,
+            'user_id' => $staff->id,
+            'role' => 'lunch-staff',
+            'is_default' => true,
+        ]);
+        app(TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($staff);
+
+        return '/api/lunch/masjids/' . $this->masjid->id . '/jummah-lunch/flyer';
+    }
+
     /** A page titled "About" that already has a title background, uploaded through the door. */
     private function pageWithBackground(string $name): Page
     {
@@ -457,18 +521,23 @@ class PublicUploadFileNameTest extends TestCase
         return Page::findOrFail($id);
     }
 
-    /** A real image of that kind (GD), under the name the client gave it. */
+    /**
+     * A real image of that kind (GD), under the name the client gave it.
+     *
+     * A kind is skipped only where this PHP cannot make its bytes: GD is built with or
+     * without each format, and a build without WebP (or GIF) has no way to write one. The
+     * skip names the kind, so a run that proved less says so.
+     */
     private function realImage(string $name, string $kind = 'jpeg'): UploadedFile
     {
-        $image = imagecreatetruecolor(8, 8);
+        $write = ['jpeg' => 'imagejpeg', 'png' => 'imagepng', 'gif' => 'imagegif', 'webp' => 'imagewebp'][$kind];
+
+        if (! function_exists($write)) {
+            $this->markTestSkipped("This PHP's GD has no {$write}(), so it cannot make the bytes of a {$kind} file. Nothing is proven about that kind here.");
+        }
 
         ob_start();
-        match ($kind) {
-            'jpeg' => imagejpeg($image),
-            'png' => imagepng($image),
-            'gif' => imagegif($image),
-            'webp' => imagewebp($image),
-        };
+        $write(imagecreatetruecolor(8, 8));
 
         return $this->realUpload($name, (string) ob_get_clean());
     }
