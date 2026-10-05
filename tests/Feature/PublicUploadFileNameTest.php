@@ -1,0 +1,442 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Masjid;
+use App\Models\MasjidUser;
+use App\Models\Page;
+use App\Models\User;
+use App\Support\TenantContext;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Testing\TestResponse;
+use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+
+/**
+ * Two image uploads to the PUBLIC disk pin the file's NAME as well as its bytes:
+ *
+ *  - a page's title background (PagesController store and update), which the media library
+ *    keeps under the client's own file name;
+ *  - the Friday-lunch flyer (MealMenusController::uploadFlyer, served to the admin realm
+ *    and to the lunch realm), stored as `<uuid>.<extension>`.
+ *
+ * Both checked the bytes only. The web server serves public/storage straight from disk
+ * and picks the Content-Type from the extension, so real image bytes stored under a name
+ * ending in `.html` would be answered as a page on the application's own origin. The
+ * section uploads and the shop's pictures already pin the name
+ * (ValidatesVideoSection::sectionUploadRules, UploadProductImagesRequest); these two had
+ * been left out.
+ *
+ * Every upload here is REAL bytes in a real UploadedFile, so its type is what finfo reads
+ * from the file. UploadedFile::fake() answers getMimeType() from its argument or from its
+ * name, which proves nothing about image bytes that are named as something else.
+ */
+class PublicUploadFileNameTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private const JSON = ['Accept' => 'application/json'];
+
+    private const PAGE_FIELD = 'page_title_background_image';
+
+    private const PAGE_NAME_REFUSAL = 'The background image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.';
+
+    private const FLYER_NAME_REFUSAL = 'The flyer\'s file name must end in .jpg, .jpeg, .png or .webp. Rename the file and upload it again.';
+
+    private Masjid $masjid;
+
+    private User $admin;
+
+    /** @var list<string> */
+    private array $temporaryFiles = [];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['database.default' => 'sqlite']);
+        config(['database.connections.sqlite' => [
+            'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '',
+            'foreign_key_constraints' => true,
+        ]]);
+
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
+        // Uploads land on the fake disk, never in this checkout's storage.
+        Storage::fake('public');
+
+        $this->masjid = Masjid::create([
+            'name' => 'Test Masjid ' . uniqid(),
+            'email' => 'masjid-' . uniqid() . '@example.test',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
+            'latitude' => 0.0, 'longitude' => 0.0, 'org_type' => 'masjid',
+        ]);
+        // The page builder is a grant (config/capabilities.php); Friday lunch is on for a masjid.
+        $this->masjid->forceFill(['capability_overrides' => ['web_pages' => true]])->save();
+
+        $this->admin = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+        $this->masjid->user_id = $this->admin->id;
+        $this->masjid->save();
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->temporaryFiles as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+
+        parent::tearDown();
+    }
+
+    /* ------------------------------------------------------------------ names */
+
+    /**
+     * Names that are not an image's, each carried by real JPEG bytes.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function namesThatAreNotAnImages(): array
+    {
+        return [
+            'a page: x.html' => ['x.html'],
+            'an image name with a page name after it: x.jpg.html' => ['x.jpg.html'],
+            'a page in capitals: x.HTML' => ['x.HTML'],
+            'a drawing that can carry script: x.svg' => ['x.svg'],
+            'a script: x.php' => ['x.php'],
+            'no extension at all: x' => ['x'],
+        ];
+    }
+
+    /**
+     * Names a page's title background takes, with the kind of bytes each carries.
+     *
+     * @return array<string, array{string, string}>
+     */
+    public static function pageImageNames(): array
+    {
+        return [
+            'photo.jpg' => ['photo.jpg', 'jpeg'],
+            'photo.jpeg' => ['photo.jpeg', 'jpeg'],
+            'photo.png' => ['photo.png', 'png'],
+            'photo.gif' => ['photo.gif', 'gif'],
+            'photo.webp' => ['photo.webp', 'webp'],
+            'IMG_0001.JPG, as a camera or a phone names it' => ['IMG_0001.JPG', 'jpeg'],
+            'Scan.PNG' => ['Scan.PNG', 'png'],
+        ];
+    }
+
+    /**
+     * Names a flyer takes, the kind of bytes each carries, and the extension it is stored
+     * under: the one its BYTES say, whatever the name says.
+     *
+     * @return array<string, array{string, string, string}>
+     */
+    public static function flyerImageNames(): array
+    {
+        return [
+            'photo.jpg' => ['photo.jpg', 'jpeg', 'jpg'],
+            'photo.jpeg' => ['photo.jpeg', 'jpeg', 'jpg'],
+            'photo.png' => ['photo.png', 'png', 'png'],
+            'photo.webp' => ['photo.webp', 'webp', 'webp'],
+            'IMG_0001.JPG, as a camera or a phone names it' => ['IMG_0001.JPG', 'jpeg', 'jpg'],
+            'PNG bytes under a .jpg name' => ['photo.jpg', 'png', 'png'],
+        ];
+    }
+
+    /* ------------------------------------------------- a page's title background */
+
+    #[Test]
+    #[DataProvider('namesThatAreNotAnImages')]
+    public function a_new_pages_title_background_is_refused_by_its_name_and_nothing_is_stored(string $name): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $response = $this->post($this->pagesUrl(), [
+            'slug' => 'about',
+            'title' => 'About',
+            self::PAGE_FIELD => $this->realImage($name),
+        ], self::JSON);
+
+        $this->assertRefusedByName($response, self::PAGE_FIELD, $name);
+        $this->assertSame([], Storage::disk('public')->allFiles(), 'a refused background reached the public disk');
+        $this->assertSame(0, DB::table('media')->count(), 'a refused background left a media row');
+        $this->assertSame(0, Page::count(), 'a refused background left a page behind');
+    }
+
+    #[Test]
+    #[DataProvider('namesThatAreNotAnImages')]
+    public function a_replacement_title_background_is_refused_by_its_name_and_the_page_keeps_what_it_had(string $name): void
+    {
+        Sanctum::actingAs($this->admin);
+        $page = $this->pageWithBackground('photo.jpg');
+        $before = Storage::disk('public')->allFiles();
+        $this->assertCount(1, $before);
+
+        // A browser can only send a file to a PUT route as a POST that names the method.
+        $response = $this->post($this->pagesUrl($page), [
+            '_method' => 'PUT',
+            'title' => 'Renamed',
+            self::PAGE_FIELD => $this->realImage($name),
+        ], self::JSON);
+
+        $this->assertRefusedByName($response, self::PAGE_FIELD, $name);
+        $this->assertSame($before, Storage::disk('public')->allFiles(), 'the public disk changed on a refused replacement');
+        $this->assertSame(['photo.jpg'], DB::table('media')->pluck('file_name')->all());
+        $this->assertSame('About', $page->fresh()->title, 'a refused request still changed the page');
+    }
+
+    #[Test]
+    #[DataProvider('pageImageNames')]
+    public function a_title_background_with_an_images_name_is_stored_under_that_name(string $name, string $kind): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $response = $this->post($this->pagesUrl(), [
+            'slug' => 'about',
+            'title' => 'About',
+            self::PAGE_FIELD => $this->realImage($name, $kind),
+        ], self::JSON);
+
+        $this->assertSame(201, $response->status(), "{$name} was refused: " . $response->getContent());
+
+        $media = DB::table('media')->get();
+        $this->assertCount(1, $media);
+        $this->assertSame($name, $media[0]->file_name);
+        $this->assertSame('page_title_backgrounds', $media[0]->collection_name);
+        Storage::disk('public')->assertExists($media[0]->id . '/' . $name);
+        $this->assertStringEndsWith('/' . $name, (string) $response->json('data.page_title_background_image_url'));
+    }
+
+    #[Test]
+    public function a_replacement_with_an_images_name_takes_the_place_of_the_old_background(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $page = $this->pageWithBackground('photo.jpg');
+
+        $this->post($this->pagesUrl($page), [
+            '_method' => 'PUT',
+            self::PAGE_FIELD => $this->realImage('IMG_0002.JPG'),
+        ], self::JSON)->assertOk();
+
+        $this->assertSame(['IMG_0002.JPG'], DB::table('media')->pluck('file_name')->all());
+        $this->assertCount(1, Storage::disk('public')->allFiles());
+    }
+
+    /* --------------------------------------------------------- the lunch flyer */
+
+    #[Test]
+    #[DataProvider('namesThatAreNotAnImages')]
+    public function a_flyer_is_refused_by_its_name_and_nothing_is_stored(string $name): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $response = $this->post($this->flyerUrl(), ['flyer' => $this->realImage($name)], self::JSON);
+
+        $this->assertRefusedByName($response, 'flyer', $name);
+        $this->assertSame([], Storage::disk('public')->allFiles(), 'a refused flyer reached the public disk');
+    }
+
+    #[Test]
+    #[DataProvider('flyerImageNames')]
+    public function a_flyer_with_an_images_name_is_stored_under_the_extension_of_its_bytes(string $name, string $kind, string $storedAs): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $response = $this->post($this->flyerUrl(), ['flyer' => $this->realImage($name, $kind)], self::JSON);
+
+        $this->assertSame(201, $response->status(), "{$name} was refused: " . $response->getContent());
+
+        $stored = Storage::disk('public')->allFiles();
+        $this->assertCount(1, $stored);
+        $this->assertMatchesRegularExpression(
+            '#^lunch-flyers/[0-9a-f-]{36}\.' . $storedAs . '$#',
+            $stored[0],
+            "{$name} ({$kind} bytes) was not stored as a .{$storedAs}",
+        );
+        $this->assertStringEndsWith('/storage/' . $stored[0], (string) $response->json('data.url'));
+    }
+
+    #[Test]
+    public function lunch_staff_meet_the_same_rule_at_their_own_door(): void
+    {
+        $staff = User::factory()->create([
+            'type' => User::TYPE_LUNCH_STAFF,
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+        MasjidUser::create([
+            'masjid_id' => $this->masjid->id,
+            'user_id' => $staff->id,
+            'role' => 'lunch-staff',
+            'is_default' => true,
+        ]);
+        app(TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($staff);
+
+        $url = '/api/lunch/masjids/' . $this->masjid->id . '/jummah-lunch/flyer';
+
+        $response = $this->post($url, ['flyer' => $this->realImage('x.html')], self::JSON);
+        $this->assertRefusedByName($response, 'flyer', 'x.html');
+        $this->assertSame([], Storage::disk('public')->allFiles(), 'a refused flyer reached the public disk');
+
+        $this->post($url, ['flyer' => $this->realImage('IMG_0001.JPG')], self::JSON)->assertStatus(201);
+        $this->assertCount(1, Storage::disk('public')->allFiles());
+    }
+
+    /* ------------------------------------------------- what the person is told */
+
+    #[Test]
+    public function a_file_refused_only_for_its_name_is_told_what_the_name_must_end_in_and_what_to_do(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // The bytes are a JPEG, so the name is the only thing wrong and this is the whole answer.
+        $this->post($this->pagesUrl(), [
+            'slug' => 'about',
+            'title' => 'About',
+            self::PAGE_FIELD => $this->realImage('photo.html'),
+        ], self::JSON)->assertStatus(422)->assertExactJson([
+            'status' => 'failed',
+            'data' => [self::PAGE_FIELD => [self::PAGE_NAME_REFUSAL]],
+        ]);
+
+        $page = $this->pageWithBackground('photo.jpg');
+        $this->post($this->pagesUrl($page), [
+            '_method' => 'PUT',
+            self::PAGE_FIELD => $this->realImage('photo.html'),
+        ], self::JSON)->assertStatus(422)->assertExactJson([
+            'status' => 'failed',
+            'data' => [self::PAGE_FIELD => [self::PAGE_NAME_REFUSAL]],
+        ]);
+
+        $this->post($this->flyerUrl(), ['flyer' => $this->realImage('photo.html')], self::JSON)
+            ->assertStatus(422)
+            ->assertExactJson([
+                'status' => 'failed',
+                'data' => ['flyer' => [self::FLYER_NAME_REFUSAL]],
+            ]);
+    }
+
+    /* ------------------------------------------------ what did not change */
+
+    #[Test]
+    public function the_bytes_are_still_checked_whatever_the_name_says(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $page = '<!doctype html><html><body><script>document.title = 1</script></body></html>';
+
+        $this->post($this->pagesUrl(), [
+            'slug' => 'about',
+            'title' => 'About',
+            self::PAGE_FIELD => $this->realUpload('photo.jpg', $page),
+        ], self::JSON)->assertStatus(422)->assertJsonStructure(['data' => [self::PAGE_FIELD]]);
+
+        $this->post($this->flyerUrl(), ['flyer' => $this->realUpload('photo.jpg', $page)], self::JSON)
+            ->assertStatus(422)->assertJsonStructure(['data' => ['flyer']]);
+
+        // A flyer has never taken a GIF; pinning the name must not have widened the list.
+        $this->post($this->flyerUrl(), ['flyer' => $this->realImage('photo.gif', 'gif')], self::JSON)
+            ->assertStatus(422)->assertJsonStructure(['data' => ['flyer']]);
+
+        $this->assertSame([], Storage::disk('public')->allFiles());
+        $this->assertSame(0, DB::table('media')->count());
+        $this->assertSame(0, Page::count());
+    }
+
+    /* -------------------------------------------- how the rule treats capitals */
+
+    #[Test]
+    public function the_extensions_rule_lower_cases_the_files_name_and_not_its_own_list(): void
+    {
+        $named = fn (string $name): array => ['file' => $this->realImage($name)];
+
+        // Illuminate\Validation\Concerns\ValidatesAttributes::validateExtensions() compares
+        // strtolower(the client's extension) with the list exactly as the rule wrote it.
+        // So a name in capitals passes a list in lower case...
+        $this->assertTrue(Validator::make($named('IMG_0001.JPG'), ['file' => 'extensions:jpg,jpeg'])->passes());
+        $this->assertTrue(Validator::make($named('IMG_0001.JpEg'), ['file' => 'extensions:jpg,jpeg'])->passes());
+        $this->assertTrue(Validator::make($named('x.HTML'), ['file' => 'extensions:jpg,jpeg'])->fails());
+
+        // ...and a list written in capitals matches no name at all, which is why every
+        // `extensions:` list in this application is written in lower case.
+        $this->assertTrue(Validator::make($named('IMG_0001.JPG'), ['file' => 'extensions:JPG'])->fails());
+        $this->assertTrue(Validator::make($named('photo.jpg'), ['file' => 'extensions:JPG'])->fails());
+    }
+
+    /* ---------------------------------------------------------------- helpers */
+
+    /**
+     * Refused with 422 on that field. When it was NOT refused, the failure says what was
+     * answered and under which name the bytes now sit on the public disk.
+     */
+    private function assertRefusedByName(TestResponse $response, string $field, string $name): void
+    {
+        $this->assertSame(422, $response->status(), sprintf(
+            'JPEG bytes named "%s" were answered %d; on the public disk: %s; media rows: %s',
+            $name,
+            $response->status(),
+            json_encode(Storage::disk('public')->allFiles()),
+            json_encode(DB::table('media')->pluck('file_name')->all()),
+        ));
+
+        $response->assertJsonPath('status', 'failed')->assertJsonStructure(['data' => [$field]]);
+    }
+
+    private function pagesUrl(?Page $page = null): string
+    {
+        return '/api/admin/masjids/' . $this->masjid->id . '/pages' . ($page ? '/' . $page->id : '');
+    }
+
+    private function flyerUrl(): string
+    {
+        return '/api/admin/masjids/' . $this->masjid->id . '/jummah-lunch/flyer';
+    }
+
+    /** A page titled "About" that already has a title background, uploaded through the door. */
+    private function pageWithBackground(string $name): Page
+    {
+        $id = $this->post($this->pagesUrl(), [
+            'slug' => 'about-' . uniqid(),
+            'title' => 'About',
+            self::PAGE_FIELD => $this->realImage($name),
+        ], self::JSON)->assertStatus(201)->json('data.id');
+
+        return Page::findOrFail($id);
+    }
+
+    /** A real image of that kind (GD), under the name the client gave it. */
+    private function realImage(string $name, string $kind = 'jpeg'): UploadedFile
+    {
+        $image = imagecreatetruecolor(8, 8);
+
+        ob_start();
+        match ($kind) {
+            'jpeg' => imagejpeg($image),
+            'png' => imagepng($image),
+            'gif' => imagegif($image),
+            'webp' => imagewebp($image),
+        };
+
+        return $this->realUpload($name, (string) ob_get_clean());
+    }
+
+    private function realUpload(string $name, string $bytes): UploadedFile
+    {
+        $path = tempnam(sys_get_temp_dir(), 'upload');
+        file_put_contents($path, $bytes);
+        $this->temporaryFiles[] = $path;
+
+        return new UploadedFile($path, $name, null, null, true);
+    }
+}

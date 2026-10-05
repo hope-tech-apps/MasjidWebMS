@@ -186,16 +186,29 @@ class MealMenusController extends Controller
      * answers to three hostnames, so an admin who opened the SPA on
      * manara.hopetechapps.com instead of masjid.hopetechapps.com permanently
      * pinned a customer-facing image to the other one. See App\Support\SiteUrl.
+     *
+     * THE FILE'S NAME IS PINNED AS WELL AS ITS BYTES. `image` and `mimes` read the
+     * bytes; `extensions` holds the client's file name to the same list, the pair
+     * every image upload to the public disk has
+     * (Concerns\ValidatesVideoSection::sectionUploadRules). And the extension the
+     * file is stored under is the one its bytes say, never the one in its name:
+     * the web server serves public/storage from disk and picks the Content-Type
+     * from the extension, so image bytes kept as `<uuid>.html` would be served as
+     * a page on this app's own origin.
      */
     public function uploadFlyer(Request $request, $masjid_id)
     {
         $request->validate([
-            'flyer' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
+            'flyer' => 'required|image|mimes:jpeg,jpg,png,webp|extensions:jpeg,jpg,png,webp|max:5120',
+        ], [
+            'flyer.extensions' => 'The flyer\'s file name must end in .jpg, .jpeg, .png or .webp. Rename the file and upload it again.',
         ]);
 
         try {
             $file = $request->file('flyer');
-            $name = Str::uuid() . '.' . strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            // extension() is guessed from the sniffed type, and `mimes` above has already
+            // held that guess to its own list, so this is jpg, png or webp.
+            $name = Str::uuid() . '.' . ($file->extension() ?: 'jpg');
             $path = $file->storeAs('lunch-flyers', $name, 'public');
 
             return response()->json([

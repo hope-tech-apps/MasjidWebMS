@@ -5,6 +5,7 @@ paths:
   - "app/Http/Controllers/AdminDashboard/PageSectionsController.php"
   - "app/Http/Requests/Admin/Sections/**"
   - "app/Http/Requests/Admin/PageSections/**"
+  - "app/Http/Requests/Admin/Pages/**"
   - "app/Support/SectionContentBinder.php"
   - "app/Http/Resources/Api/V1/PageSectionResource.php"
   - "resources/vue-app/components/sections/editors/**"
@@ -49,6 +50,18 @@ rule: an MP4 in a field an `<img>` draws is a blank box on a live page
 bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
 the uploaded file name on the public disk, and the web server serves it by its
 extension, so matching bytes named `.html` would be a page on this app's origin.
+
+**The pair is for any image written to the public disk, not for sections only.**
+A page's own title background (`StorePageRequest`, `UpdatePageRequest`) and the
+Friday-lunch flyer (`MealMenusController::uploadFlyer`) carry it too, each with
+`extensions:` listing exactly what its `mimes:` lists, and a sentence that says
+what the name must end in. Write the list in lower case: `extensions` lower-cases
+the client's name and not its own list, so `IMG_0001.JPG` passes `extensions:jpg`
+and nothing passes `extensions:JPG`. An upload this application names itself (the
+flyer is `<uuid>.<ext>`) takes that extension from the sniffed type
+(`$file->extension()`), never from the client's name. `PublicUploadFileNameTest`
+pins both uploads with real bytes, because `UploadedFile::fake()` reports a type
+from its argument or its name and so cannot show bytes named as something else.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without

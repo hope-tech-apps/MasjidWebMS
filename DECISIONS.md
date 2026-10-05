@@ -7950,3 +7950,39 @@ themselves still run only on the MySQL job.
   person. Production held no registration in that state on 2026-10-05 (counted). A payment that did land on a
   page nobody can name meets the webhook: found by the registration's uuid or charge reference it is recorded
   as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries the same uuid.
+
+## 2026-10-05 — Two public image uploads pin the file's name as well as its bytes (owner asked; branch `fix/pin-upload-file-names`)
+
+- **Asked.** Pin the file name on two image uploads to the public disk that checked a file's bytes and not its
+  name: a page's title background (`StorePageRequest`, `UpdatePageRequest`; the media library keeps it under the
+  client's own file name) and the Friday-lunch flyer (`MealMenusController::uploadFlyer`, served to the admin
+  realm and to the lunch realm; stored as `<uuid>.<the client's extension>`).
+- **Reproduced before anything was changed** (`PublicUploadFileNameTest`: real JPEG bytes in a real
+  `UploadedFile`, so the type is what finfo reads from the file). Named `x.html`, a new page answered 201 and the
+  file was on the public disk as `<media id>/x.html` with a media row of that name; a replacement answered 200
+  the same way; the flyer answered 201 and was stored as `lunch-flyers/<uuid>.html`, through either realm. The
+  same for `x.jpg.html`, `x.HTML` (the flyer lower-cased it to `.html`) and `x.svg`. A name with no extension
+  was kept as it came on a page and became `<uuid>.jpg` on the flyer. `x.php` was already refused by both:
+  `image` and `mimes` turn a PHP extension away themselves (`shouldBlockPhpUpload`).
+  Not reproduced here: the web server answering such a file as a page. The suite has no web server; that half
+  is read from how `public/storage` is served (from disk, the Content-Type from the extension).
+- **Decided.**
+  - `extensions:` beside `mimes:`, naming the same kinds, on all three rules: `jpeg,jpg,png,gif,webp` for the
+    title background, `jpeg,jpg,png,webp` for the flyer, which has never taken a GIF. This is the rule of
+    2026-09-25 (above), applied to two uploads it had not reached.
+  - The flyer is stored under `$file->extension()`, which is guessed from the sniffed type and which `mimes` has
+    already held to its own list, never under the client's extension. PNG bytes sent as `photo.jpg` are kept as
+    `.png`, and a `.jpeg` is kept as `.jpg`. Nothing reads that name except the address the upload answers.
+  - A file refused only for its name reads one sentence: "The flyer's file name must end in .jpg, .jpeg, .png or
+    .webp. Rename the file and upload it again." (the title background's also names `.gif`). The other rules keep
+    the framework's sentences, as before.
+  - Capitals. `validateExtensions()` compares `strtolower()` of the client's extension with the list exactly as
+    the rule wrote it (`Illuminate\Validation\Concerns\ValidatesAttributes`). `IMG_0001.JPG` therefore still
+    passes, and a test says so on every door; a list written in capitals would match no name at all, so the
+    lists stay in lower case.
+- **What a person meets that they did not before.** A real image whose name ends in something else (`.jfif`,
+  `.jpe`, or no extension at all) is refused until it is renamed. It used to be accepted on its bytes alone.
+- **Not changed.** No migration. No file already on the disk is renamed, moved or looked for. The size limits,
+  the kinds of image accepted and every other field of the three rules are as they were.
+- **Rejected.** Naming the title background server-side (`usingFileName`). It removes the class without refusing
+  anything, but it changes stored names and addresses, and 2026-09-25 chose a 422 for the same kind of upload.
