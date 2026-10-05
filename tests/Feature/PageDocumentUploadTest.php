@@ -471,6 +471,23 @@ class PageDocumentUploadTest extends TestCase
         }
     }
 
+    #[Test]
+    public function an_address_with_no_file_behind_it_is_a_404_from_the_application_and_never_the_admin_screen(): void
+    {
+        // On the servers nginx answers for a file that exists and hands every other path to the
+        // application, whose catch-all route answers the admin shell with a 200 for any path it is
+        // given. A document that was taken offline, or never was, must not come back as a page.
+        $this->get('/storage/999999/academic-calendar-2026.pdf')->assertStatus(404);
+        $this->get('/storage/lunch-flyers/gone.jpg')->assertStatus(404);
+
+        // Control: what answered is the route in routes/web.php. The framework's own
+        // `storage/{path}` (signed links to the private disk) is still behind the catch-all: a route
+        // of the same address would have been replaced by it, here, ahead of the catch-all.
+        $route = Route::getRoutes()->match(\Illuminate\Http\Request::create('/storage/999999/academic-calendar-2026.pdf'));
+        $this->assertSame('storage/{missing}', $route->uri());
+        $this->assertNull($route->getName());
+    }
+
     /* -------------------------------------------------------------- helpers */
 
     /** An upload backed by REAL bytes; `$declared` is the type a browser would claim for it. */

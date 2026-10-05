@@ -133,6 +133,23 @@ Route::get('/', function () {
     return $masjidId ? redirect('/portal') : view('vue-app-index');
 });
 
+/*
+ * A path under /storage with no file behind it is not a screen of this application.
+ *
+ * The web server answers for a public file that exists and hands every other path here, where the
+ * catch-all below would answer the admin shell with a 200. A page document that an office took
+ * offline (App\Support\PageDocuments), or any removed picture, would then still "open" at its old
+ * address, as a sign-in screen, for a visitor, a link checker and a search engine alike. Registered
+ * before the catch-all, so such a path is the 404 it is.
+ *
+ * The parameter is NOT called `path`, on purpose. The framework registers its own `storage/{path}`
+ * (signed links to the PRIVATE disk) after this file's routes; a route with the same address would be
+ * replaced by it IN THIS PLACE, ahead of the catch-all, and a GET would reach it for the first time.
+ * Under another name this route keeps its place and the framework's stays behind the catch-all, as
+ * it always was. Nothing in this application makes such a link (see GroupResource).
+ */
+Route::get('/storage/{missing}', fn () => abort(404))->where('missing', '.*');
+
 Route::get('/{any}', function () {
     return view('vue-app-index');
 })->where('any', '^(?!api).*$');
