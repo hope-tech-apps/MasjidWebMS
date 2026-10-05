@@ -228,6 +228,7 @@
                                 <SectionDocumentUpload
                                     :key="`program-document-${index}-${rowsMoved}`"
                                     :value="program.link_url"
+                                    :label="(program.name || '').trim() || `Program ${index + 1}`"
                                     @busy="onDocumentBusy"
                                     @uploaded="(stored) => onDocumentUploaded(index, stored)"
                                 />
@@ -366,7 +367,7 @@ const onDocumentBusy = (busy: boolean) => {
     uploadsInFlight.value = Math.max(0, uploadsInFlight.value + (busy ? 1 : -1));
 };
 
-const onDocumentUploaded = (index: number, stored: { url: string; name: string }) => {
+const onDocumentUploaded = (index: number, stored: { url: string; name: string; filled?: (sentence: string) => void }) => {
     const program = localContent.value.programs[index];
     if (!program) {
         return;
@@ -374,9 +375,10 @@ const onDocumentUploaded = (index: number, stored: { url: string; name: string }
 
     program.link_url = stored.url;
     // Only a BLANK link text is filled, from the file's name, so the link says what it opens; words
-    // the office wrote are theirs, and these can be changed.
+    // the office wrote are theirs, and these can be changed. The office is told it was filled.
     if (!(program.link_text || '').trim()) {
         program.link_text = sectionDocumentLabel(stored.name) || 'View PDF';
+        stored.filled?.('Link Text was filled in from the file\'s name. Change it if you like.');
     }
     emitUpdate();
 };

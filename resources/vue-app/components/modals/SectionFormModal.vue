@@ -19,7 +19,7 @@
                         <i class="bi me-1" :class="showPreview ? 'bi-eye-slash' : 'bi-eye'"></i>
                         {{ showPreview ? 'Hide preview' : 'Show preview' }}
                     </button>
-                    <button type="button" class="btn-close" @click="$emit('close')"></button>
+                    <button type="button" class="btn-close" @click="requestClose"></button>
                 </div>
                 <div class="modal-body">
                   <div :class="previewOn ? 'row g-3 h-100' : ''">
@@ -314,7 +314,17 @@
                   </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" @click="$emit('close')">
+                    <!-- What Save will do about this section's PDFs, said beside Save: always in
+                         view, whichever editor or row the office was in when it let a file go. -->
+                    <div class="section-form-notes me-auto small text-muted" role="status">
+                        <div v-if="documentUploads > 0">A PDF is still uploading.</div>
+                        <div v-for="file in documentsLeaving" :key="file.path">
+                            <strong>{{ file.name }}</strong>: This file is taken offline when you
+                            save, unless another saved section still links it.
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-secondary" @click="requestClose">
                         Cancel
                     </button>
 
@@ -337,7 +347,7 @@
                         type="button"
                         class="btn btn-primary"
                         @click="handleSubmit"
-                        :disabled="loading || (!isEdit && mode === 'create' && !formData.section_type)"
+                        :disabled="loading || documentUploads > 0 || (!isEdit && mode === 'create' && !formData.section_type)"
                     >
                         <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
                         <i class="bi" :class="isEdit ? 'bi-check-circle me-1' : 'bi-plus-circle me-1'"></i>
@@ -353,6 +363,7 @@
 import { PageSection, SectionType } from '@/core/types/data/masjid-related/PageSection';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { isWebOnlySectionType, webOnlyPlatforms } from '@/core/helpers/shopSection';
+import { sectionDocumentsIn, sectionDocumentsLeaving } from '@/core/helpers/sectionDocumentFile';
 import { ref, computed, onMounted, shallowRef, provide, watch } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
 import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
@@ -417,6 +428,22 @@ const sectionImages = useSectionImages();
 // Provide to child components
 provide('sectionImages', sectionImages);
 
+// A PDF for a link field is not queued with the images above: SectionDocumentUpload sends it at
+// once and writes its address into the content. Two things only this modal can know about that:
+//
+//  - How many of those uploads are in flight. The control raises and lowers this, and Save waits on
+//    it: a section saved mid-upload is saved without the address, the answer then lands in an editor
+//    that is gone, and the file is online, linked from nowhere, its address shown on no screen.
+//  - Which page documents the SAVED section links. The server deletes a document when a save stops
+//    linking it, compared with what was saved; one uploaded since is in nothing saved, and letting go
+//    of it deletes nothing. Read ONCE, here, before any editor is mounted: the editors write into
+//    objects they share with `props.section.content`, so it does not stay the saved content.
+const documentUploads = ref(0);
+provide('sectionDocumentUploads', documentUploads);
+
+const savedDocuments = sectionDocumentsIn(props.section?.content);
+provide('sectionSavedDocuments', savedDocuments);
+
 // State
 const loading = ref(false);
 const mode = ref<'create' | 'attach'>('create');
@@ -437,6 +464,13 @@ const formData = ref<any>({
 // Computed
 const isEdit = computed(() => !!props.section);
 const sectionTypes = computed(() => pagesStore.sectionTypes);
+
+/**
+ * The saved section's page documents that the content no longer links, in any field of any editor
+ * (an address cleared or replaced, a row removed, a link taken out of a paragraph): the files this
+ * save takes offline. Said in the footer until the save, and gone again if the address is put back.
+ */
+const documentsLeaving = computed(() => sectionDocumentsLeaving(savedDocuments, formData.value.content));
 
 /**
  * The server's own record for the type being added — including whether the
@@ -695,7 +729,38 @@ const stripBase64Images = (content: any): any => {
     return cleaned;
 };
 
+/**
+ * Cancel and the close button. Closing while a PDF is uploading discards the editor the answer is
+ * for, but not the upload: the request is already on its way, so the office is asked first.
+ */
+const requestClose = async () => {
+    if (documentUploads.value > 0) {
+        const answer = await Swal.fire({
+            icon: 'warning',
+            title: 'A PDF is still uploading',
+            text: 'If you close now it may still be stored. It would then stay online, linked from nowhere, with its address shown on no screen. Wait for the upload to finish, then close.',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Close Anyway',
+            cancelButtonText: 'Keep Editing',
+        });
+
+        if (!answer.isConfirmed) {
+            return;
+        }
+    }
+
+    emit('close');
+};
+
 const handleSubmit = async () => {
+    // The button is off while a PDF is uploading, but the form is also submitted by Enter in any of
+    // its fields, which asks no button.
+    if (documentUploads.value > 0) {
+        return;
+    }
+
     loading.value = true;
 
     try {
@@ -772,6 +837,14 @@ const handleSubmit = async () => {
 .section-editor-column {
     max-height: calc(100vh - 160px);
     overflow-y: auto;
+}
+
+/* The footer's notes take the room the buttons leave and wrap inside it, so a long file name
+   never pushes Cancel and Save off their line on a wide screen. */
+.section-form-notes {
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .btn-check:checked + .btn-outline-primary {

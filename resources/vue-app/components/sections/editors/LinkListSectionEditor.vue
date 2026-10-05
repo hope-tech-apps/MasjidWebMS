@@ -132,6 +132,7 @@
                                 <SectionDocumentUpload
                                     :key="`link-document-${index}-${rowsMoved}`"
                                     :value="link.url"
+                                    :label="(link.label || '').trim() || `Link ${index + 1}`"
                                     @busy="onDocumentBusy"
                                     @uploaded="(stored) => onDocumentUploaded(index, stored)"
                                 />
@@ -234,7 +235,7 @@ const onDocumentBusy = (busy: boolean) => {
     uploadsInFlight.value = Math.max(0, uploadsInFlight.value + (busy ? 1 : -1));
 };
 
-const onDocumentUploaded = (index: number, stored: { url: string; name: string }) => {
+const onDocumentUploaded = (index: number, stored: { url: string; name: string; filled?: (sentence: string) => void }) => {
     const link = localContent.value.links[index];
     if (!link) {
         return;
@@ -242,12 +243,22 @@ const onDocumentUploaded = (index: number, stored: { url: string; name: string }
 
     link.url = stored.url;
     // A button is never left reading as a raw address. Only what is BLANK is filled: a label or an
-    // icon the office chose is theirs.
-    if (!(link.label || '').trim()) {
+    // icon the office chose is theirs. What was filled is said under the field (the Icon field's own
+    // help says to leave it blank for a button with no icon, so an icon that appears needs a word).
+    const labelFilled = !(link.label || '').trim();
+    const iconFilled = !(link.icon || '').trim();
+    if (labelFilled) {
         link.label = sectionDocumentLabel(stored.name) || 'Document';
     }
-    if (!(link.icon || '').trim()) {
+    if (iconFilled) {
         link.icon = SECTION_DOCUMENT_ICON;
+    }
+    if (labelFilled && iconFilled) {
+        stored.filled?.('The label (from the file\'s name) and a download icon were filled in. Change them if you like.');
+    } else if (labelFilled) {
+        stored.filled?.('The label was filled in from the file\'s name. Change it if you like.');
+    } else if (iconFilled) {
+        stored.filled?.('A download icon was filled in. Change it, or clear it, if you like.');
     }
     emitUpdate();
 };
