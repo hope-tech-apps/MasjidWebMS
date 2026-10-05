@@ -7877,3 +7877,205 @@ None found a blocker; five findings were major. What was decided in answering th
 - **Tests.** The same files as above, with a test that fails without each change. See ASSUMPTIONS.md M-7, M-9,
   M-11, M-17 (rewritten) and M-22 to M-26.
 
+
+## 2026-10-05 — A registration that was never paid can be deleted once it is cancelled (narrows the rule that a registration with a money leg is never deleted; branch `fix/delete-unpaid-registration`)
+
+- **Asked.** An organisation's office reported that it could not delete registrations: people start a
+  registration, reach the card payment page and never pay, and what they leave behind stays in the list for good.
+- **The rule until today, written down here for the first time.** `FormResponsesController::destroy()` refused
+  every registration with a money leg (`FormResponse::hasMoneyLeg()`: any `payment_method` at all) with "A
+  registration with a payment is never deleted. Cancel it instead, and add a note." The rule existed only as code
+  comments citing "festival brief, blocker 2", a brief that is not in this repository, and no entry above states
+  it. Its reason holds: a holder's cash, a Stripe charge and the cash totals all point at the row. But
+  `payment_method` is written the moment a registrant CHOOSES how to pay, so a card registration whose page was
+  abandoned (`online`, `unpaid`) and a family that chose the office and never came (`office`, `unpaid`) were
+  "registrations with a payment" although no money had moved.
+- **Decided: the rule is narrowed, not removed.** A registration is deleted only when it never held money AND
+  can no longer take any. `destroy()` decides on the locked row, in this order:
+  1. **A payment on record: never deleted**, in the words it always was. "On record" is everything outside an
+     ALLOWLIST, `FormResponse::neverRecordedAPayment()`: method `online` or `office`, `payment_status` exactly
+     `unpaid`, and `paid_at`, `stripe_payment_intent_id` and `charge_flag` all null. So a registration paid by
+     card, in cash or elsewhere, in any status, cancelled, refunded or disputed, is never deleted, and neither is
+     any state nothing writes (cash that reads unpaid, an unpaid row carrying a payment intent): those go to a
+     person. `hasMoneyLeg()` itself is unchanged; it has six other readers.
+  2. **Imported from another system** (`external_ref`): refused as before, whatever its payment state. The next
+     import would write it back.
+  3. **No money leg**: deleted, as before.
+  4. **Never paid and not cancelled: refused**, "This registration has not been paid, but it still can be. Cancel
+     it first; a cancelled registration that was never paid can then be deleted." Stripe is not asked. Cancel
+     comes first because only a cancelled registration is refused a new card page and a payment by hand: one left
+     `new` can be paid at any later date (`FormResponseCheckoutService::preflight()` checks no window and no age).
+     The cancel is also the reversible step, it is stamped with who and when, and it is what closes the card page.
+  5. **Never paid and cancelled, no card page on record** (every office registration; a card registration whose
+     page never opened): deleted, with no Stripe call.
+  6. **Never paid and cancelled, a card page on record**: Stripe is asked about that page under the row lock,
+     through the existing `closeOpenSession()` (which closes a page that is still open), and the registration is
+     deleted only when the answer is exactly `expired`. `complete`, an account Stripe no longer lets the platform
+     act on, no account on record to ask, a refused close, any Stripe error and any status that is not a page's
+     each KEEP the registration, cancelled as it was, and the answer says it was not deleted and why. The earlier
+     cancel is not trusted for this: it leaves the session id on the row and records nothing about its close.
+- **Why "unpaid" on the row is not enough.** The webhook answers Stripe 200 and records nothing when an event
+  carries no connected account, names an account no organisation holds, or fails a pinned row's account,
+  currency, session or amount test. The row then reads unpaid while its page is `complete` at Stripe. Only
+  Stripe's status for the page on the row tells the two apart, which is also why no delete by age alone was
+  built. After a delete a late payment finds no row, is logged, and Stripe is not asked to retry.
+- **Paying the office is included.** No Stripe leg can exist for such a registration, and once cancelled it is in
+  no figure of the cash totals (the cancel is what takes it out of "owed to the office", so the delete moves
+  none). What remains is money handed to the office and never recorded, which only the office knows: the
+  screen's question says to delete it only if the office received no payment for it.
+- **What a delete does, and the one record of it.** There is no soft delete: the answers and the uploaded files
+  go (the files in the model's deleting hook, so the delete is the last write, after everything that can
+  refuse), the reserved date goes with the row, and the place on a form with a capacity is given back. The
+  cancel's stamp goes too. So every delete this endpoint performs writes one WARNING line first, by ids only:
+  organisation, form, registration, its uuid, payment method, Checkout session, the organisation the page was
+  charged through, the amount due and the total, and the admin's user id. The uuid and the session are what the
+  webhook's "NOTHING was recorded" warnings carry, so an orphan payment can be matched to the deleted row.
+  Never a name, an address or an answer.
+- **Refusals are returned from the transaction, never thrown.** `closeOpenSession()` switches an unreachable
+  holder's card payments off inside the caller's transaction; an exception leaving `destroy()` would roll that
+  back. A row that went away while the request waited for its lock answers 404, where it answered 500.
+- **Lock order.** On a form that reserves dates the FORM row is locked before the registration's row, as
+  `update()` and the public submit lock them. The submit holds the form and then locks the registration holding
+  the date it asks for; a delete that held the registration and then wrote the form's counter could wait on it
+  for ever. A form that reserves nothing is locked as it was.
+- **The screen.** One pure rule, `formResponseStatus.ts::deleteStep()` (delete / cancel-first / never), read
+  from `status`, `payment_method` and `payment_status`. Not `payment_state`: that is null on every row of a form
+  that no longer has payment settings, and a paid registration there would be offered a delete. Delete is dimmed
+  with the server's sentence for "never" and "cancel-first", and still clickable so the sentence can be read.
+  A live Delete asks a question that says what goes with the registration, holds the row busy from the question
+  to the answer, shows a refusal in the server's own words, and re-reads the list and, where the form reserves
+  dates, the board. The cancel question now says, for a never-paid registration, that the cancel is what lets it
+  be deleted, and that deleting it afterwards frees its place; the detail's "its payment on record" hint shows
+  only for a paid registration.
+- **Rejected.**
+  - **Delete in one step, without the cancel.** Safe for the payment (pages open only under the row lock, which
+    the delete holds), but it removes a registration that can still be paid in one press, with no reversible
+    step and no stamp. Cancel-first also reuses what `update()` already says about the card page.
+  - **"Anything that is not paid" (`payment_status != paid`).** A denylist: it would delete states the
+    application cannot write instead of sending them to a person.
+  - **A server-sent "deletable" flag.** The list row already carries the three columns, the server decides on
+    the locked row whatever the screen thinks, and the screen's convention is a mirrored rule plus the server's
+    sentence.
+  - **Guards against a cart line or an offering registration pointing at the row.** Both pointers only ever land
+    on a row with no money leg or a paid one, so the two queries could never refuse.
+- **Not in this change, each its own decision.** A soft delete. Hiding cancelled registrations by default.
+  Expiring abandoned registrations automatically. Any delete without Stripe's `expired` (by age, or the
+  "I checked the holder's dashboard" override that take-cash has). A Delete in the detail panel. Raising the
+  webhook's row-not-found line to error level.
+- **Known limits.**
+  - Three kinds of cancelled card registration can never be answered `expired`, so they stay, cancelled, as
+    they do today: an organisation with no Stripe account on record any more; a page pinned to an account Stripe
+    no longer lets the platform read; and (inferred, not run) an unpinned page whose organisation has since
+    moved to another Stripe account, which is asked about on the new account and answers "try again" each time.
+  - A family that chose the office was emailed its registration number at submit; after a delete that email
+    points at nothing. A card registrant was never emailed, and their open tab reads "This registration was not
+    found."
+  - The native apps are not in this repository. A client that still sends the old request gets the new sentences.
+  - The screen was not driven in a browser by this change, and nothing was run against Stripe or any server.
+- **Not verified in Stripe.** Two facts this leans on are only asserted by the code's own comments and stubs:
+  ASSUMPTIONS.md D-1 and D-2. They should be tried in Stripe test mode before this ships.
+- **Earlier entries this narrows.** 2026-09-13, "Unpaid office rows count toward capacity and never lapse…
+  unless someone has a plan to cancel stale rows": a stale one can now be cancelled and then deleted, which
+  frees its place. 2026-09-27 (responses list status select, review fixes), "A registration with a payment is
+  never deleted, so for it the capacity line says cancelling does not free a place": true of a registration a
+  payment was recorded on; a never-paid one is told that deleting it after the cancel frees the place.
+- **Rule file.** `.claude/rules/stripe-payments.md`, "A registration that was never paid can be deleted".
+- **Tests.** `FormResponseNeverPaidDeleteTest` (one per kind of row, and what a delete does),
+  `FormResponsesMoneyAdminTest` (the pinned delete test, split), `form-response-status.test.ts` (the rule, the
+  two questions, the wiring, the two sentences against the controller's source),
+  `tests/Mysql/FormResponseDeleteLockMysqlTest.php` (the two locking reads and their order; CI only, NOT run
+  where it was written).
+- **After the three reviews (2026-10-05, same branch).** Three reviewers (server, money, screen) found no
+  defect in the committed behaviour. This round closes the test gaps they named, hardens the allowlist and makes
+  four sentences true. Where a line here differs from a bullet above, this one stands.
+  - **The allowlist names every column only a payment writes.** `neverRecordedAPayment()` now also requires
+    `paid_via`, `marked_paid_by_user_id`, `staff_code_id`, `collected_at` and `charge_flagged_at` to be null and
+    `charge_refunded_minor` to be empty. The application writes each of them together with `paid` or with the
+    charge flag, so nothing it writes is newly refused; an unpaid registration carrying one of them alone is a
+    state nothing writes, and goes to a person like the others. A new column that only a payment writes joins
+    the list.
+  - **The rule is pinned to the locked row.** Reading it from the copy the request first found left every test
+    green and deleted a registration paid in between. Two tests now change the row after the first read
+    (restored: "cancel it first", Stripe not asked, its page left open; paid meanwhile: the paid sentence, the
+    registration kept), and each was seen to fail against that one-line regression.
+  - **Stripe is asked about any page on the row, whatever its payment method**, and a test now holds the code
+    to it: an unpaid office registration carrying a page that was paid is kept.
+  - **A page Stripe says was paid.** The refusal no longer says "It will show as paid once Stripe confirms it":
+    when the webhook refused that payment's event and answered 200, no second event comes and the registration
+    reads unpaid for good. It now ends "If it still shows as unpaid later, check this payment in Stripe.",
+    followed by the refund instruction as before. The delete also writes one WARNING line for it, by ids only
+    (organisation, form, registration, its uuid, Checkout session, the organisation the page was charged
+    through): the moment the platform learns of money at Stripe that the row does not record.
+  - **The delete's own line** is still written before the delete, so the record exists even if the process
+    dies between the two, and for that reason it now reads "is being deleted": a delete that then fails rolls
+    back, and the line had said "was deleted" of a registration that was still there. It now also carries
+    `charge_ref` and the cancel's stamp (`status_changed_by_user_id`, `status_changed_at`). The bullet above
+    overstated what a late payment can be matched by: the webhook's warning carries the uuid only for a charge
+    on the organisation's own account. For one taken through another organisation it carries the Stripe object
+    and no uuid, so the Checkout session matches that page's own event, and `charge_ref`, the one key such a
+    charge carries in Stripe's metadata, is what matches the rest.
+  - **"The delete is the last write" was wrong.** The files leave the disk in the model's deleting hook; the
+    row's own DELETE, the form's counter and the commit follow. A failure in one of them leaves the
+    registration in the list without its files. The comment and the rule file now say so; changing it is the
+    fourth open item below.
+  - **Tenant isolation of the DELETE is tested.** Another organisation's registration under this organisation's
+    form (404), under this organisation's id with the other's form (404) and under the other's own URL (403),
+    and this organisation's registration under another of its forms (404): rows, files and counters untouched,
+    Stripe never asked.
+  - **The screen.** The cancel question no longer ends with "once it is cancelled it can also be deleted" for a
+    card page already known to be beyond checking (`page_unreachable`), nor says a delete after the cancel
+    frees its place: it says the registration stays cancelled and cannot be deleted unless Stripe can be asked
+    about its card payment page, which is what the delete would answer. The delete question tells every card
+    registration that its card page is checked first, from the row's own flags and never `payment_state`: where
+    the row says a page is on record it says so outright, and where the row does not say (on a form that has
+    lost its payment settings the server sends `card_page_opened` false on every row, and still asks Stripe
+    about a page such a row carries) it says "If a card payment page was opened for it, that page is checked
+    first". The same sentence now also shows for a card registration whose page never opened, where it is true
+    and asks nothing. `deleteStep()` still reads `status`, `payment_method` and `payment_status` alone, and its
+    comment now says that is a choice: the row carries `paid_at`, the payment intent and the charge flag, the
+    server refuses such a row on the locked row, and the screen shows that sentence. While its request runs,
+    the pressed row's Delete shows the status select's spinner in place of the bin and is `aria-busy`; a second
+    press is still turned away by the row lock and sends nothing.
+- **Known limit: on a form that reserves dates, the form row is held across the delete's Stripe calls.** The
+  delete locks the form row first (see "Lock order") and keeps it to the commit, across `closeOpenSession()`:
+  one read of the page, a close when the page is still open, and a second read when that close is refused. The
+  public submit takes the same form lock for every submission, and a triage of that form takes it too, so they
+  wait for as long as Stripe takes. No timeout is set on the Stripe client, so the SDK's own apply (80 seconds
+  a request, 30 to connect, read in the vendored client; the wait itself was read from the code, not measured
+  under load). Cancelling such a registration from the list already waits the same way; an office clearing a
+  list of abandoned registrations repeats it once per row. A form that reserves nothing holds only the
+  registration's own row across the calls. Not changed here: a short timeout for these admin-side page reads
+  is its own decision.
+- **Open after the reviews, not built in this round.**
+  1. `update()`, take-cash and the public checkout answer 500, not 404, for a registration deleted while they
+     waited for its lock (`lockRow()` still ends in `firstOrFail()` inside the transaction). Only the DELETE
+     answers 404. Before this change a registration with a payment method could not disappear under them.
+  2. After a delete the whole list is re-read behind the page's spinner, so at phone width the table's scroll
+     position and the focus are lost; and deleting the only row of a last page re-reads that page, which is now
+     empty, instead of the one before it. Read from the template, not seen in a browser.
+  3. A registration with NO payment method is deleted even when it carries a payment intent or `paid_at`
+     (unchanged from before this change: the old rule tested only `hasMoneyLeg()`). No path that writes such a
+     row was found.
+  4. An attachment's bytes are removed before the commit (see "The delete is the last write" above). Removing
+     them only after it is a change to the model's hooks, shared by every delete of a registration.
+- **"No Checkout session id on the row" means nothing at Stripe could have been paid (the lead reviewer's
+  question, 2026-10-05).** The delete of a cancelled, never-paid card registration asks Stripe only when a
+  session id is on the row. What makes the other case safe is ONE fact: a page's address reaches the payer only
+  in the answer of the transaction that records its id (`FormResponseCheckoutService::onLockedRow()` returns
+  after its commit). So: (1) an attempt in which Stripe failed, or whose answer or commit was lost, is ROLLED
+  BACK whole. `create()` does save the idempotency key before it calls Stripe, but inside that same
+  transaction, so the key goes too and the row is left with neither a key nor an id; whatever session Stripe
+  made in that attempt has an address nobody was ever given, and nobody can pay it. Pinned by
+  `FormPaymentCheckoutTest::a_stripe_failure_after_the_row_is_written_leaves_it_unpaid_and_payable_again`
+  (the key is saved when Stripe is asked, and null afterwards). (2) The id is cleared in one place,
+  `reuseOrReplace()`, and only after Stripe answered for the old page: `complete` throws and keeps it, an open
+  page with an address is handed back and keeps it, an open page with none is closed first (`complete` there
+  throws), so the id goes only when the page is expired (for a pinned account Stripe no longer lets the platform
+  read, only once the pinned expiry has passed); and a replace that then fails is rolled back to the old,
+  expired id and key, so a later delete asks Stripe about that old page. (3) A row holding an idempotency key
+  and NO session id is therefore a state nothing should write. If one is ever found, cancelled and never paid,
+  it is NOT deleted: 422, "A card payment page was requested for this registration, but its reference was not
+  saved, so we cannot tell whether it was paid. It was not deleted, and it stays cancelled." It goes to a
+  person. Production held no registration in that state on 2026-10-05 (counted). A payment that did land on a
+  page nobody can name meets the webhook: found by the registration's uuid or charge reference it is recorded
+  as paid as usual; refused, it writes the "NOTHING was recorded" warning that carries the same uuid.

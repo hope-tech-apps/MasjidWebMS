@@ -559,6 +559,13 @@ class FormPaymentCheckoutTest extends TestCase
         $this->assertSame($row->uuid, $response->json('data.uuid'));
         $this->assertSame(FormResponse::PAYMENT_UNPAID, $row->payment_status);
         $this->assertNull($row->stripe_checkout_session_id);
+        // The key was saved before the call, INSIDE the transaction that opens a page, and
+        // went with its rollback: a failed attempt leaves neither a key nor a page id. The
+        // admin delete leans on this (DECISIONS.md 2026-10-05): such a row was handed no
+        // page, so a cancelled one is deleted without asking Stripe.
+        $this->assertNull($row->idempotency_key, 'the key saved before the Stripe call is rolled back with the failed attempt');
+        $this->assertCount(1, self::$created, 'Stripe was asked once');
+        $this->assertTrue(self::$created[0]['persisted'], 'with the key already saved when it was asked');
         Mail::assertNothingOutgoing();
 
         // "Try payment again", once Stripe is back.

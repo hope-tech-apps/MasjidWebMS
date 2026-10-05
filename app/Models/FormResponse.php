@@ -508,12 +508,59 @@ class FormResponse extends Model
     // ---------------------------------------------------------------- money leg
 
     /**
-     * Whether this row carries a money leg at all. A money row is never deleted,
-     * only cancelled, and its re-triage is stamped (stampStatusChange()).
+     * Whether this row carries a money leg at all. A money row's re-triage is
+     * stamped (stampStatusChange()), and it is never deleted, only cancelled, with
+     * one exception: a cancelled one no payment was ever recorded on
+     * (neverRecordedAPayment(); DECISIONS.md 2026-10-05).
      */
     public function hasMoneyLeg(): bool
     {
         return $this->payment_method !== null;
+    }
+
+    /**
+     * A money leg nothing was ever recorded as paid on: the only kind of money row
+     * an office may delete (FormResponsesController::destroy(), DECISIONS.md
+     * 2026-10-05).
+     *
+     * An ALLOWLIST, not "anything that is not paid". It names the two states the
+     * submit writes unpaid (FormResponseWriter: a card registration and a family
+     * paying the office) and requires every trace of a payment to be absent: no
+     * paid_at, no payment intent (markPaid() records one on whatever row a card
+     * payment lands on, without flipping a cash or external row), no refund or
+     * dispute flagged by the holder of the charge. A state nothing writes (cash
+     * that reads unpaid, an unpaid row carrying a payment intent) therefore fails
+     * here and goes to a person, instead of being deleted because nobody thought
+     * of it.
+     *
+     * The same goes for every other column only a payment writes: how it came
+     * (`paid_via`), who recorded it by hand or at the gate
+     * (`marked_paid_by_user_id`, `staff_code_id`), a check-in, which is refused
+     * to a registration that is not settled (`collected_at`), and when and how
+     * much of a charge its holder gave back (`charge_flagged_at`,
+     * `charge_refunded_minor`). The application writes each of them together
+     * with `paid` or with the flag (paidAs(), settleByHand(), settleCash(),
+     * markCollected(), flagCharge()), so on a row this allows they are all
+     * empty, and a row carrying one of them alone is a state nothing writes.
+     *
+     * NOT proof that no money moved. A card page can be complete at Stripe while
+     * the row still reads unpaid (the webhook is late, or refused the event and
+     * answered Stripe 200), so the delete also asks Stripe about the page, under
+     * the row lock, and requires the answer 'expired'.
+     */
+    public function neverRecordedAPayment(): bool
+    {
+        return in_array($this->payment_method, [self::METHOD_ONLINE, self::METHOD_OFFICE], true)
+            && $this->payment_status === self::PAYMENT_UNPAID
+            && $this->paid_at === null
+            && $this->stripe_payment_intent_id === null
+            && $this->charge_flag === null
+            && $this->paid_via === null
+            && $this->marked_paid_by_user_id === null
+            && $this->staff_code_id === null
+            && $this->collected_at === null
+            && $this->charge_flagged_at === null
+            && (int) $this->charge_refunded_minor === 0;
     }
 
     /**

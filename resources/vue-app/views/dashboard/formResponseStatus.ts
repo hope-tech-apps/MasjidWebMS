@@ -9,6 +9,10 @@
  * decides WHEN the list saves (statusSelectController()), and words the question asked
  * before a cancel, every sentence of which is something that code, or FormReservations,
  * does.
+ *
+ * It also holds what the row's Delete button does (deleteStep()) and the question it asks
+ * (deleteQuestion()): the screen's mirror of FormResponsesController::destroy(), which
+ * decides for itself on the locked row whatever the screen thought.
  */
 import type { FormPaymentMethod, FormPaymentStatus, FormResponseStatus } from '../../core/types/data/masjid-related/Form';
 
@@ -74,10 +78,12 @@ export type CancelFacts = {
     /** That refund covers the whole payment (charge_refunded_minor >= total_minor). */
     refundedInFull: boolean;
     /**
-     * The registration has a payment method (a money leg): it can never be deleted, only
-     * cancelled (FormResponsesController::destroy(), the list's DELETE_REFUSED).
+     * What Delete answers for the registration as it stands, before this cancel
+     * (deleteStep()): 'delete' for one with no payment method, 'cancel-first' for one that
+     * was never paid (the cancel being asked about is what lets it be deleted), 'never'
+     * for one a payment was recorded on.
      */
-    hasPayment: boolean;
+    deleteStep: DeleteStep;
     checkedIn: boolean;
     /** The form reserves dates from a list (meta.reservations). */
     reservesDates: boolean;
@@ -116,10 +122,20 @@ export function registrationName(id: number, name: string | null): string {
  * - A reserved date stops being protected at once and goes to the next payer who asks for
  *   it; a restore gets it back only if nobody has (FormReservations::reclaimForRestore()).
  * - Cancelling does not lower forms.response_count (only a delete does), so it frees no
- *   place on a form with a capacity; and a registration with a payment is never deleted,
- *   so for one of those nothing frees it. Pinned on the server by
- *   FormResponsesAdminTest::cancelling_a_registration_keeps_its_place_and_only_deleting_frees_one:
- *   change the sentence and that test together.
+ *   place on a form with a capacity. A registration a payment was recorded on is never
+ *   deleted, so for one of those nothing frees it; one that was never paid can be deleted
+ *   once it is cancelled, and that is what frees its place (destroy(), DECISIONS.md
+ *   2026-10-05). Pinned on the server by
+ *   FormResponsesAdminTest::cancelling_a_registration_keeps_its_place_and_only_deleting_frees_one
+ *   and FormResponseNeverPaidDeleteTest: change the sentences and those tests together.
+ * - The last line says it stays listed, and, for a registration that was never paid, that
+ *   the cancel is what lets it be deleted: the Delete button says "Cancel it first", so
+ *   the cancel question is where the office learns the second step exists.
+ * - Except where that second step is known not to work: the delete asks Stripe about a
+ *   card page before it removes anything, and keeps the registration when it cannot
+ *   (destroy()'s "Stripe no longer lets us check…"). A page already known to be beyond
+ *   checking (`page_unreachable`) is therefore promised neither the delete nor the place
+ *   it would free, and is told what the delete will say.
  */
 export function cancelQuestion(facts: CancelFacts): CancelQuestion {
     const lines: string[] = [];
@@ -154,13 +170,29 @@ export function cancelQuestion(facts: CancelFacts): CancelQuestion {
         lines.push('If it reserved a date, that date is offered to others again. Restoring it later gets the date back only if nobody else has reserved it.');
     }
 
+    // Never paid, with a card page nobody can ask Stripe about: the delete would be refused.
+    // Read from the row's own flag, not from `card`, which a form that has lost its payment
+    // settings turns off while the page is still on the row.
+    const neverPaid = facts.deleteStep === 'cancel-first';
+    const uncheckable = neverPaid && facts.pageUnreachable;
+
     if (facts.capacity !== null) {
-        lines.push(facts.hasPayment
-            ? `It still counts towards the form's limit of ${facts.capacity}, and a registration with a payment cannot be deleted, so cancelling does not free a place.`
-            : `It still counts towards the form's limit of ${facts.capacity}; only deleting a registration frees a place.`);
+        lines.push({
+            never: `It still counts towards the form's limit of ${facts.capacity}, and a registration with a payment cannot be deleted, so cancelling does not free a place.`,
+            'cancel-first': `It still counts towards the form's limit of ${facts.capacity} while it is cancelled; deleting it after the cancel frees its place.`,
+            delete: `It still counts towards the form's limit of ${facts.capacity}; only deleting a registration frees a place.`
+        }[uncheckable ? 'delete' : facts.deleteStep]);
     }
 
-    lines.push('It stays in this list, and choosing another status restores it.');
+    const stays = 'It stays in this list, and choosing another status restores it.';
+
+    if (uncheckable) {
+        lines.push(`${stays} It was never paid, but it stays cancelled and cannot be deleted unless Stripe can be asked about its card payment page.`);
+    } else if (neverPaid) {
+        lines.push(`${stays} It was never paid, so once it is cancelled it can also be deleted.`);
+    } else {
+        lines.push(stays);
+    }
 
     return {
         title: `Cancel ${registrationName(facts.id, facts.name)}?`,
@@ -243,6 +275,188 @@ export async function saveStatusOptimistically<R>(
         row.status = previous;
         throw error;
     }
+}
+
+// --- Delete --------------------------------------------------------------------------
+
+/**
+ * FormResponsesController::destroy()'s two refusals the screen can know before it asks,
+ * word for word (the controller's DELETE_PAID and DELETE_CANCEL_FIRST; pinned against its
+ * source by form-response-status.test.ts). Every other refusal (imported from another
+ * system, paid at Stripe, Stripe unreachable) is known only to the server, and is shown
+ * as the server sent it.
+ */
+export const DELETE_REFUSED = 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
+export const DELETE_CANCEL_FIRST = 'This registration has not been paid, but it still can be. Cancel it first; a cancelled registration that was never paid can then be deleted.';
+
+/**
+ * What the row's Delete button does (DECISIONS.md 2026-10-05):
+ *  - delete:       asks, then sends the DELETE.
+ *  - cancel-first: never paid, but not cancelled, so it can still be paid. Dimmed; says so.
+ *  - never:        a payment was recorded on it. Dimmed; says so.
+ */
+export type DeleteStep = 'delete' | 'cancel-first' | 'never';
+
+/** The three columns of a row deleteStep() reads. */
+export type DeleteRow = { status: string; payment_method?: string | null; payment_status?: string | null };
+
+/**
+ * The mirror of the server's rule (FormResponsesController::deleteRefusal()): a
+ * registration is deleted only when it never held money and can no longer take any.
+ *
+ * It reads `payment_status`, the column, and never `payment_state`: that reading is null
+ * on every row of a form that no longer has payment settings, and a paid registration on
+ * such a form would be offered a delete the server refuses. "Never paid" is the same
+ * allowlist as FormResponse::neverRecordedAPayment(): chosen to be paid by card or at the
+ * office, and exactly 'unpaid'. Anything else with a payment method is 'never'.
+ *
+ * It reads these three columns and no more, by choice. The row also carries `paid_at`,
+ * the payment intent, the charge flag and the other traces of a payment the server's
+ * allowlist requires to be absent, so the screen could mirror it in full. It does not: an
+ * unpaid row carrying one of them is a state nothing writes, the server refuses it on the
+ * locked row with the paid sentence, and the screen shows that sentence. A second copy of
+ * the whole list here would only be a second thing to keep in step.
+ *
+ * What the screen cannot know: that a row was imported from another system, and what
+ * Stripe says about its card page. The server decides both.
+ */
+export function deleteStep(row: DeleteRow): DeleteStep {
+    if (!row.payment_method) return 'delete';
+
+    const neverPaid = (row.payment_method === 'online' || row.payment_method === 'office') && row.payment_status === 'unpaid';
+    if (!neverPaid) return 'never';
+
+    return row.status === 'cancelled' ? 'delete' : 'cancel-first';
+}
+
+/**
+ * Why Delete is not available for a row, as the popup's title and the server's sentence,
+ * or null when it is. The button stays focusable and clickable while dimmed, so the reason
+ * can be read rather than guessed; the sentence is also its tooltip and accessible name.
+ */
+export function deleteBlocked(step: DeleteStep): { title: string; text: string } | null {
+    if (step === 'never') return { title: 'This registration cannot be deleted', text: DELETE_REFUSED };
+    if (step === 'cancel-first') return { title: 'Cancel it first', text: DELETE_CANCEL_FIRST };
+    return null;
+}
+
+/**
+ * The row Delete's accessible name: that it is deleting, while its request runs (the
+ * button shows a spinner then, and is aria-busy); else why it is not available, in the
+ * server's sentence; else what it deletes.
+ */
+export function deleteButtonLabel(id: number, blocked: { text: string } | null, deleting: boolean): string {
+    if (deleting) return `Deleting registration #${id}`;
+    return blocked ? `Delete is not available: ${blocked.text}` : `Delete registration #${id}`;
+}
+
+/** What the delete question needs to know about one registration and its form. */
+export type DeleteFacts = {
+    id: number;
+    name: string | null;
+    /** The registration's payment method, or null for one with none. */
+    paymentMethod: FormPaymentMethod | null;
+    /**
+     * The row SAYS a card payment page is on record for it (cardPageOnRecord()). False is
+     * not "there is none": the row does not always say.
+     */
+    cardPageOpened: boolean;
+    /** The form reserves dates from a list (meta.reservations). */
+    reservesDates: boolean;
+    /** The form's capacity, or null for none. */
+    capacity: number | null;
+};
+
+/** What a row says about a card payment page: the two flags cardPageOnRecord() reads. */
+export type CardPageRow = { card_page_opened?: boolean | null; page_unreachable?: boolean | null };
+
+/**
+ * Whether the row says a card payment page is on record for it, from the row's own flags
+ * and never `payment_state`: `card_page_opened`, or `page_unreachable`, which is only ever
+ * true of a page on the row (FormResponsesController::knownUnreachable()).
+ *
+ * False does not mean no page. The server sends `card_page_opened` true only where the
+ * row's `payment_state` reads unpaid, and that reading is null on every row of a form that
+ * has lost its payment settings, while destroy() still asks Stripe about any page such a
+ * row carries. deleteQuestion() therefore never stays silent about the check for a card
+ * registration: where the row does not say, it says the page is checked if there is one.
+ */
+export function cardPageOnRecord(row: CardPageRow): boolean {
+    return row.card_page_opened === true || row.page_unreachable === true;
+}
+
+/**
+ * The question before a delete, asked only of a row deleteStep() answers 'delete' for:
+ * one with no payment method, or a cancelled one that was never paid. Each sentence is
+ * something destroy() does, or refuses to do:
+ *
+ * - A registration with no payment method is asked as it always was.
+ * - One that was never paid is said to be cancelled and never paid, so nobody reads the
+ *   question as deleting a payment.
+ * - A family that chose the office: only the office knows whether money changed hands
+ *   and was never recorded, so it is told to delete only if none did.
+ * - A card registration: the server asks Stripe about any card page on the row first, and
+ *   deletes nothing unless that page has expired without being paid (cardPageRefusal()).
+ *   Said outright where the row says a page is on record, and as "if a page was opened"
+ *   where it does not (cardPageOnRecord()), so the check is never left out of the question
+ *   and then met as a refusal.
+ * - What goes with it: its answers and uploaded files (FormResponse's deleting hook), its
+ *   reserved date (the reservation row cascades), its place on a form with a capacity
+ *   (forms.response_count). There is no soft delete: it cannot be undone.
+ */
+export function deleteQuestion(facts: DeleteFacts): CancelQuestion {
+    if (!facts.paymentMethod) {
+        return {
+            title: 'Are you sure?',
+            lines: [`Delete the response from ${facts.name?.trim() || 'this respondent'}? This cannot be undone.`],
+            confirmText: 'Yes, delete it!',
+            keepText: 'Cancel'
+        };
+    }
+
+    const who = registrationName(facts.id, facts.name);
+
+    const lines = ['It is cancelled and was never paid.'];
+
+    if (facts.paymentMethod === 'office') {
+        lines.push('It was to be paid at the office. Delete it only if the office received no payment for it.');
+    } else if (facts.cardPageOpened) {
+        lines.push('Its card payment page is checked first; if it was paid, nothing is deleted.');
+    } else if (facts.paymentMethod === 'online') {
+        lines.push('If a card payment page was opened for it, that page is checked first; if it was paid, nothing is deleted.');
+    }
+
+    lines.push('Its answers and any files uploaded with it are removed.');
+
+    if (facts.reservesDates) lines.push('If it reserved a date, that reservation is removed with it.');
+    if (facts.capacity !== null) lines.push(`Its place towards the form's limit of ${facts.capacity} is freed.`);
+
+    lines.push('This cannot be undone.');
+
+    return {
+        title: `Delete ${who}?`,
+        lines,
+        confirmText: 'Delete registration',
+        keepText: 'Keep it'
+    };
+}
+
+/**
+ * The delete question as SweetAlert options: the cancel question's, for the same reason
+ * (the title is set as text because it carries the respondent's own name), and with the
+ * same focus on the button that changes nothing.
+ */
+export const deleteDialogOptions = cancelDialogOptions;
+
+/**
+ * What a failed delete says. The server's own sentence wherever it sent one. A 404 is a
+ * registration that is already gone (a second press, a colleague's delete): the app's own
+ * 404 carries no sentence an office can use, so this one is the screen's.
+ */
+export function deleteFailure(status: number | undefined, serverSentence: string): { title: string; text: string } {
+    return status === 404
+        ? { title: 'Already deleted', text: 'This registration had already been deleted. The list now shows what is there.' }
+        : { title: 'Not deleted', text: serverSentence };
 }
 
 // --- When the list saves -------------------------------------------------------------

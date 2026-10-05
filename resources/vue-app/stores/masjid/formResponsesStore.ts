@@ -356,7 +356,12 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         return actionResult(res, 'Failed to update response.');
     }
 
-    /** Delete a response outright — spam and test submissions. Refused for money rows. */
+    /**
+     * Delete a response outright: spam, test submissions, and a cancelled registration that
+     * was never paid. Refused (a 422 or 503 with the server's sentence) for one a payment was
+     * recorded on, for a never-paid one that is not cancelled yet, and whenever Stripe does
+     * not say its card page expired unpaid (FormResponsesController::destroy()).
+     */
     async function deleteResponse(
         formId: number | string,
         responseId: number | string

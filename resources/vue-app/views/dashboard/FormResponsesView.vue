@@ -719,17 +719,28 @@
                                             >
                                                 <i class="bi bi-eye" aria-hidden="true"></i>
                                             </button>
-                                            <!-- A money row is never deleted (only cancelled). Still focusable and
-                                                 clickable, so the reason can be read rather than guessed. -->
+                                            <!-- Delete (deleteStep()): live for a registration with no payment
+                                                 method and for a cancelled one that was never paid; dimmed for one a
+                                                 payment was recorded on, and for a never-paid one until it is
+                                                 cancelled. Still focusable and clickable while dimmed, so the reason
+                                                 (the server's own sentence) can be read rather than guessed.
+                                                 While this row's DELETE runs (deletingId) it shows the status select's
+                                                 spinner in place of the bin and is aria-busy: the server can hold the
+                                                 row across a question to Stripe, and a second press meanwhile is
+                                                 turned away without a word (confirmDelete()'s guard). -->
                                             <button
                                                 class="btn btn-outline-danger"
-                                                :class="{ 'opacity-50': isMoneyRow(response) }"
-                                                :aria-disabled="isMoneyRow(response) ? 'true' : undefined"
-                                                :title="isMoneyRow(response) ? DELETE_REFUSED : 'Delete'"
-                                                :aria-label="isMoneyRow(response) ? `Delete is not available: ${DELETE_REFUSED}` : `Delete registration #${response.id}`"
+                                                :class="{ 'opacity-50': deleteBlockedFor(response) !== null }"
+                                                :aria-disabled="deleteBlockedFor(response) !== null ? 'true' : undefined"
+                                                :aria-busy="deletingId === response.id ? 'true' : undefined"
+                                                :title="deleteBlockedFor(response)?.text ?? 'Delete'"
+                                                :aria-label="deleteButtonLabel(response.id, deleteBlockedFor(response), deletingId === response.id)"
                                                 @click="confirmDelete(response)"
                                             >
-                                                <i class="bi bi-trash" aria-hidden="true"></i>
+                                                <span v-if="deletingId === response.id" class="spinner-border spinner-border-sm" role="status">
+                                                    <span class="visually-hidden">Deleting registration #{{ response.id }}</span>
+                                                </span>
+                                                <i v-else class="bi bi-trash" aria-hidden="true"></i>
                                             </button>
                                         </div>
                                     </td>
@@ -1507,8 +1518,10 @@
                                         <option v-for="choice in statusOptions" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
                                     </select>
                                 </div>
+                                <!-- Only for a registration a payment was recorded on: one that was
+                                     never paid has no payment to keep on record. -->
                                 <div
-                                    v-if="paymentEnabled && isMoneyRow(selectedResponse) && editStatus === 'cancelled' && selectedResponse.status !== 'cancelled'"
+                                    v-if="paymentEnabled && selectedResponse.payment_state === 'paid' && editStatus === 'cancelled' && selectedResponse.status !== 'cancelled'"
                                     class="col-md-8 small text-muted d-flex align-items-end"
                                 >
                                     Cancelling keeps this registration and its payment on record. Cash moves to its holder's
@@ -1776,6 +1789,13 @@ import {
     FALLBACK_STATUSES,
     cancelDialogOptions,
     cancelQuestion,
+    cardPageOnRecord,
+    deleteBlocked,
+    deleteButtonLabel,
+    deleteDialogOptions,
+    deleteFailure,
+    deleteQuestion,
+    deleteStep,
     refreshesAfterStatusChange,
     statusChoices,
     statusLabel,
@@ -1837,9 +1857,6 @@ const PAYMENT_FILTER_LABELS: Record<FormPaymentFilter, string> = {
     office: 'Paying the office, not paid yet'
 };
 const FALLBACK_PAYMENT_FILTERS: FormPaymentFilter[] = ['paid', 'unpaid', 'settled', 'cash', 'online', 'external', 'office'];
-
-/** FormResponsesController::destroy()'s refusal, word for word. */
-const DELETE_REFUSED = 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
 
 // State
 const loading = ref(false);
@@ -2392,8 +2409,11 @@ const ariaSort = (column: FormResponseSortColumn | null): 'ascending' | 'descend
 
 const isCancelled = (row: FormResponseRow): boolean => row.status === 'cancelled';
 
-/** A registration with a payment leg: never deleted, only cancelled. */
-const isMoneyRow = (row: FormResponseRow): boolean => !!row.payment_method;
+/**
+ * Why a row's Delete is dimmed (the popup's title and the server's sentence), or null when
+ * it is live. The rule is deleteStep()'s, the mirror of the server's.
+ */
+const deleteBlockedFor = (row: FormResponseRow) => deleteBlocked(deleteStep(row));
 
 /** A registration whose family chose to pay the office (settings.payment.officePayment). */
 const isOfficeRow = (row: FormResponseRow): boolean => row.payment_method === 'office';
@@ -3405,53 +3425,111 @@ const confirmCancel = async (row: FormResponseRow): Promise<boolean> => {
         refundedAmount: refundedMinor !== null && refundedMinor > 0 ? money(refundedMinor, row.currency) : null,
         refundedInFull: refundedMinor !== null && refundedMinor > 0
             && row.total_minor !== null && row.total_minor !== undefined && refundedMinor >= row.total_minor,
-        hasPayment: isMoneyRow(row),
+        deleteStep: deleteStep(row),
         checkedIn: !!row.collected_at,
         reservesDates: meta.value?.reservations === true,
         capacity: meta.value?.form?.capacity ?? null
     });
 
+    const body = questionBody(question.lines);
+    const choice = await Swal.fire(cancelDialogOptions(question, body));
+
+    return choice.isConfirmed;
+};
+
+/** A question's lines as DOM text, one paragraph each. Never HTML: a line can carry the respondent's own name. */
+const questionBody = (lines: string[]): HTMLElement => {
     const body = document.createElement('div');
     body.className = 'text-start small';
-    for (const line of question.lines) {
+    for (const line of lines) {
         const paragraph = document.createElement('p');
         paragraph.className = 'mb-2';
         paragraph.textContent = line;
         body.appendChild(paragraph);
     }
 
-    const choice = await Swal.fire(cancelDialogOptions(question, body));
-
-    return choice.isConfirmed;
+    return body;
 };
 
+/** The row whose DELETE is in flight: its Delete button's spinner. The lock itself is busyRowId. */
+const deletingId = ref<number | null>(null);
+
+/**
+ * The row's Delete. What it may do is deleteStep()'s answer, the mirror of
+ * FormResponsesController::destroy(): a registration a payment was recorded on is never
+ * deleted, one that was never paid is cancelled first, and the rest are asked about
+ * (deleteQuestion()) and deleted.
+ *
+ * Under busyRowId, the one lock every row action takes, from the question to the answer:
+ * the server holds the row's lock across a question to Stripe, so a delete can take a
+ * moment, and a second press, or a status change on the row meanwhile, must wait for it.
+ * The guard turns that second press away without a word, so while the request itself runs
+ * the pressed row's Delete says so (deletingId: its spinner and aria-busy).
+ *
+ * The question tells every card registration it is asked of that its card page is checked
+ * first, from what the row itself says about a page (cardPageOnRecord()) and never from
+ * `payment_state`: the server asks Stripe about any page on the row, whatever the form's
+ * settings now are.
+ *
+ * Afterwards the list is re-read (the row is gone, and the header's count with it), and
+ * the reserved dates where the form reserves them: the registration's reservation went
+ * with it. The cash totals are not: a registration this deletes is in none of their
+ * figures (it has no payment method, or it is cancelled and was never paid).
+ *
+ * A refusal is shown in the server's own words, and the row is re-read first: the server
+ * refuses what the list did not know (paid at Stripe a moment ago, restored by a
+ * colleague), and "not deleted" beside a stale row would only be pressed again.
+ */
 const confirmDelete = async (response: FormResponseRow) => {
     // Not while a row action or status save runs: its answer would close this question.
     if (busyRowId.value !== null) return;
 
-    if (isMoneyRow(response)) {
-        Swal.fire({ icon: 'info', title: 'This registration cannot be deleted', text: DELETE_REFUSED });
+    const blocked = deleteBlockedFor(response);
+    if (blocked) {
+        Swal.fire({ icon: 'info', title: blocked.title, text: blocked.text });
         return;
     }
 
-    const result = await Swal.fire({
-        title: 'Are you sure?',
-        text: `Delete the response from ${response.respondent_name || 'this respondent'}? This cannot be undone.`,
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Yes, delete it!'
-    });
-
-    if (!result.isConfirmed || !selectedFormId.value) return;
+    busyRowId.value = response.id;
 
     try {
-        await formResponsesStore.deleteResponse(selectedFormId.value, response.id);
+        const question = deleteQuestion({
+            id: response.id,
+            name: response.respondent_name,
+            paymentMethod: response.payment_method ?? null,
+            cardPageOpened: cardPageOnRecord(response),
+            reservesDates: meta.value?.reservations === true,
+            capacity: meta.value?.form?.capacity ?? null
+        });
+
+        const choice = await Swal.fire(deleteDialogOptions(question, questionBody(question.lines)));
+
+        if (!choice.isConfirmed || !selectedFormId.value) return;
+
+        deletingId.value = response.id;
+
+        try {
+            const deleted = await formResponsesStore.deleteResponse(selectedFormId.value, response.id);
+            if (!deleted) throw new Error('Failed to delete the response.');
+        } catch (error: any) {
+            const status = error?.response?.status;
+
+            if (status === 404) {
+                await loadData(paginationOptions.value?.currentPage || 1);
+            } else if (status === 422 || status === 409 || status === 503) {
+                await refreshRow(response.id);
+            }
+
+            Swal.fire({ icon: 'error', ...deleteFailure(status, serverMessage(error, 'Failed to delete the response.')) });
+            return;
+        }
+
         await loadData(paginationOptions.value?.currentPage || 1);
+        if (meta.value?.reservations === true) loadReservations();
         Swal.fire({ icon: 'success', title: 'Deleted!', text: 'The response has been removed.', timer: 2000, showConfirmButton: false });
-    } catch (error) {
-        Swal.fire({ icon: 'error', title: 'Not deleted', text: serverMessage(error, 'Failed to delete the response.') });
+    } finally {
+        deletingId.value = null;
+        busyRowId.value = null;
     }
 };
 

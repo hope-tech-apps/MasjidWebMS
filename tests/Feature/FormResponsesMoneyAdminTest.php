@@ -30,9 +30,11 @@ use Tests\TestCase;
  *
  *  - never free by accident: "Mark collected" refuses a registration that has not paid
  *    on a form that charges — a Wix-fallback row with no money leg at all included;
- *  - money rows are never deleted or silently shrunk: DELETE refuses them, re-triaging
- *    one is stamped with who and when, and a cancelled row's cash moves to its own
- *    column without lowering what was taken;
+ *  - money rows are never deleted or silently shrunk: DELETE refuses one a payment was
+ *    recorded on, and tells one that was never paid to be cancelled first (what happens
+ *    after that is FormResponseNeverPaidDeleteTest's; DECISIONS.md 2026-10-05);
+ *    re-triaging one is stamped with who and when, and a cancelled row's cash moves to
+ *    its own column without lowering what was taken;
  *  - double payment at the gate: "Take cash" closes the open card page first, under the
  *    row lock, refuses when Stripe says the payer has just paid, and records nothing
  *    when Stripe cannot say the page is closed;
@@ -403,7 +405,7 @@ class FormResponsesMoneyAdminTest extends TestCase
     {
         [$code] = FormStaffCode::issue($this->form, 'Najd Haddad', now()->addDay());
         $cash = $this->cashRow($code);
-        $card = $this->onlineUnpaid();
+        $card = $this->onlinePaid();
         $plain = $this->wixRow();
 
         $counted = $this->form->fresh()->response_count;
@@ -422,6 +424,31 @@ class FormResponsesMoneyAdminTest extends TestCase
         $this->deleteJson($this->url("/{$plain->id}"))->assertOk();
         $this->assertDatabaseMissing('form_responses', ['id' => $plain->id]);
         $this->assertSame($counted - 1, $this->form->fresh()->response_count);
+    }
+
+    /**
+     * Until 2026-10-05 this row answered the sentence above: it had a payment METHOD, and
+     * that alone made it "a registration with a payment". It never held money, so it is
+     * told what would let it be deleted instead. Everything a delete of such a row does
+     * once it is cancelled is in FormResponseNeverPaidDeleteTest.
+     */
+    #[Test]
+    public function a_card_registration_that_was_never_paid_is_told_to_cancel_it_first_not_that_it_has_a_payment(): void
+    {
+        $card = $this->onlineUnpaid();
+        self::$pages[$card->stripe_checkout_session_id] = 'open';
+
+        $counted = $this->form->fresh()->response_count;
+
+        $this->deleteJson($this->url("/{$card->id}"))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonPath('message', 'This registration has not been paid, but it still can be. Cancel it first; a cancelled registration that was never paid can then be deleted.');
+
+        $this->assertDatabaseHas('form_responses', ['id' => $card->id]);
+        $this->assertSame($counted, $this->form->fresh()->response_count);
+        $this->assertSame([], self::$expired, 'Stripe was not asked, and the page the registrant holds is left open');
+        $this->assertStillWaitingOnStripe($card);
     }
 
     #[Test]

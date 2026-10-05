@@ -671,7 +671,9 @@ Route::prefix('admin')->group(function () {
                 // can only ever download an attachment their own masjid collected.
                 Route::get('/{response_id}/attachments/{attachment_id}', 'downloadAttachment');
                 Route::put('/{response_id}', 'update');
-                // Refused for a registration with a payment: cancel it instead.
+                // Refused for a registration a payment was recorded on (cancel it instead),
+                // and for one that was never paid until it is cancelled and its card page
+                // has expired at Stripe (DECISIONS.md 2026-10-05).
                 Route::delete('/{response_id}', 'destroy');
                 // The door (DECISIONS.md 2026-09-11): bracelets handed out, and payment
                 // recorded by a named admin. The same group middleware, so MasjidAdmin
