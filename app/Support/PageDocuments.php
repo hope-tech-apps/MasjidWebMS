@@ -619,10 +619,18 @@ final class PageDocuments
         $spellings = self::decoded($strings);
 
         foreach ($spellings as $string) {
-            $resolved = self::resolved($string);
+            // BOTH resolutions, each added to what is searched: the browser's, and the careful one.
+            // A string here may be a paragraph, not one address, and neither reading is right for
+            // every text (resolved() says why).
+            $browser = self::resolved($string);
+            $careful = self::resolved($string, careful: true);
 
-            if ($resolved !== $string) {
-                $spellings[] = $resolved;
+            if ($browser !== $string) {
+                $spellings[] = $browser;
+            }
+
+            if ($careful !== $string && $careful !== $browser) {
+                $spellings[] = $careful;
             }
         }
 
@@ -670,8 +678,18 @@ final class PageDocuments
      *    `/storage/a/b/../../3/x.pdf`).
      *
      * Done to the whole text, which may be a paragraph: it is only ever SEARCHED for a path, never
-     * shown or stored, and anything odd it does to prose can only keep a file. (The two slashes
-     * after a scheme's colon become one with the rest; nothing reads the result as an address.)
+     * shown or stored. (The two slashes after a scheme's colon become one with the rest; nothing
+     * reads the result as an address.)
+     *
+     * TWO READINGS, and spellings() searches both beside the text as written, because neither is
+     * right for every text. Read as a browser reads ONE address, a `..` steps back over whatever
+     * segment stands before it; in a paragraph that segment can be "name.pdf and the words after
+     * it", so `/storage//3/x.pdf more text/../other` loses the file's name and reads as no link,
+     * though the address in it is one. The CAREFUL reading does not step back over a segment that
+     * holds white space, a quote or an angle bracket (and so drops no tab or line break either):
+     * it keeps that file, and misses a `..` over a segment that really does hold a space, which the
+     * browser's reading finds. Each can only add a reading that keeps a file; neither takes one
+     * away from the other.
      *
      * IN ONE PASS, whatever the text holds. This runs over every string of a section on every save,
      * and over every other section of the organisation when a save drops a document, and a section's
@@ -697,10 +715,13 @@ final class PageDocuments
      *  - a link that does not hold the path at all: a redirect, a short link, an address relative
      *    to another.
      */
-    private static function resolved(string $string): string
+    private static function resolved(string $string, bool $careful = false): string
     {
-        // A tab or a line break is dropped wherever it stands, and a backslash is a slash.
-        $segments = explode('/', str_replace(["\t", "\r", "\n", '\\'], ['', '', '', '/'], $string));
+        // A backslash is a slash. Read as a browser reads an address, a tab or a line break is
+        // dropped wherever it stands; read carefully they stay, as white space a `..` stops at.
+        $segments = explode('/', $careful
+            ? str_replace('\\', '/', $string)
+            : str_replace(["\t", "\r", "\n", '\\'], ['', '', '', '/'], $string));
         // What stands before the first slash is no segment of a path, and nothing steps back over it.
         $front = array_shift($segments);
         $path = [];
@@ -720,7 +741,8 @@ final class PageDocuments
                     continue;
                 }
 
-                if ($last !== '..' && strpbrk($last, '?#') === false) {
+                if ($last !== '..' && strpbrk($last, '?#') === false
+                    && ! ($careful && strpbrk($last, " \t\n\r\v\f\"'<>") !== false)) {
                     array_pop($path);
 
                     continue;

@@ -211,6 +211,11 @@ test('a saved document still linked in a spelling a browser resolves to the file
         'a tab inside the address': 'https://platform.example.test/stor\tage/412/calendar.pdf',
         'a carriage return inside the address': 'https://platform.example.test/storage\r/412/calendar.pdf',
         'a line feed inside the address': 'https://platform.example.test/storage/412/calendar\n.pdf',
+        // Only visible once resolved, with a dot-dot in the words AFTER it: read as one address the
+        // dot-dot eats the file's name; the careful reading (no step back over a segment holding
+        // white space, a quote or an angle bracket) still finds it, as the server's does.
+        'a doubled slash, then a dot-dot in the words after it': 'https://platform.example.test/storage//412/calendar.pdf more text/../other',
+        'a doubled slash inside a tag, then a dot-dot in its words': '<a href="/storage//412/calendar.pdf">old/../new</a>',
     })) {
         assert.deepEqual(leaving(url), [], what);
     }

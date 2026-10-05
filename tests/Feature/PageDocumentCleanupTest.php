@@ -937,6 +937,13 @@ class PageDocumentCleanupTest extends TestCase
             'a tab inside the address' => [fn (string $plain) => str_replace('/storage/', "/stor\tage/", $plain)],
             'a carriage return inside the address' => [fn (string $plain) => str_replace('/storage/', "/storage\r/", $plain)],
             'a line feed inside the address' => [fn (string $plain) => str_replace('.pdf', "\n.pdf", $plain)],
+            // The address is only visible once it is resolved (a doubled slash), and words AFTER it in
+            // the same text hold a dot-dot. Read as a browser reads one address, that dot-dot steps
+            // back over "name.pdf and the words after it" and the file's name is gone from the text.
+            // The careful reading, which does not step back over a segment holding white space, a
+            // quote or an angle bracket, still finds it.
+            'a doubled slash, then a dot-dot in the words after it' => [fn (string $plain) => str_replace('/storage/', '/storage//', $plain) . ' more text/../other'],
+            'a doubled slash inside a tag, then a dot-dot in its words' => [fn (string $plain) => '<a href="' . str_replace('/storage/', '/storage//', $plain) . '">old/../new</a>'],
         ];
     }
 

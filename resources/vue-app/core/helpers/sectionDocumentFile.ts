@@ -136,9 +136,15 @@ function percentDecoded(value: string): string {
  * `..` stepping back over the segment before it (any segment but one holding `?` or `#`, where a
  * browser's path has ended). The footer reads the whole content on every edit, and one step per pass
  * over the text made a link of 40,000 steps hold each keystroke for nine seconds.
+ *
+ * TWO READINGS, as on the server, because a string may be a paragraph and not one address. Read as a
+ * browser reads one address, a `..` in the words after a link steps back over "name.pdf and those
+ * words" and the file's name is gone. The CAREFUL reading does not step back over a segment holding
+ * white space, a quote or an angle bracket (and drops no tab or line break). Both are searched; each
+ * can only find one more link.
  */
-function resolved(value: string): string {
-    const [front, ...segments] = value.replace(/[\t\r\n]/g, '').replace(/\\/g, '/').split('/');
+function resolved(value: string, careful = false): string {
+    const [front, ...segments] = (careful ? value : value.replace(/[\t\r\n]/g, '')).replace(/\\/g, '/').split('/');
     const path: string[] = [];
 
     for (const segment of segments) {
@@ -152,7 +158,7 @@ function resolved(value: string): string {
                 // Nothing to step back over: a browser stays at the root.
                 continue;
             }
-            if (last !== '..' && !/[?#]/.test(last)) {
+            if (last !== '..' && !/[?#]/.test(last) && !(careful && /[\s"'<>]/.test(last))) {
                 path.pop();
                 continue;
             }
@@ -189,6 +195,10 @@ export function sectionDocumentReadings(text: string): string[] {
         const plain = resolved(reading);
         if (plain !== reading) {
             readings.push(plain);
+        }
+        const careful = resolved(reading, true);
+        if (careful !== reading && careful !== plain) {
+            readings.push(careful);
         }
     }
 
