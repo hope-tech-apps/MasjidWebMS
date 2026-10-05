@@ -580,9 +580,9 @@ Route::prefix('admin')->group(function () {
                 // its public address, which the page tool puts into a link field a section already
                 // has. Inside this group, so exactly the people who may save pages may upload one.
                 // Outside the purge groups below: an upload changes nothing a visitor sees, and the
-                // section save that links the document purges. Thirty an hour for each signed-in
-                // user (`page-documents`, AppServiceProvider): every upload is a public file that
-                // no screen lists.
+                // section save that links the document purges. Thirty requests an hour for each
+                // signed-in user and each organisation (`page-documents`, AppServiceProvider):
+                // every upload is a public file that no screen lists.
                 Route::post('{masjid_id}/pages/documents', [PageDocumentsController::class, 'store'])
                     ->middleware('throttle:page-documents');
 

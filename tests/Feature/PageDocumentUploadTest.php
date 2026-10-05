@@ -429,10 +429,12 @@ class PageDocumentUploadTest extends TestCase
         $this->assertSame(0, $this->masjid->pageDocuments()->count());
     }
 
+    /** What the hourly limit says. True of whoever meets it, whether their uploads were stored or refused. */
+    private const TOO_MANY = 'You have tried to upload a lot of documents in the last hour. Wait a little, then try again.';
+
     #[Test]
     public function the_thirty_first_upload_in_an_hour_is_refused_with_a_sentence_and_the_next_hour_is_open_again(): void
     {
-        $limit = 'You have uploaded a lot of documents in the last hour. Wait a little, then try again.';
         $send = fn (?Masjid $masjid = null) => $this->post($this->documents($masjid), ['document' => $this->upload('calendar.pdf', self::PDF)]);
 
         Sanctum::actingAs($this->admin);
@@ -441,11 +443,11 @@ class PageDocumentUploadTest extends TestCase
         }
 
         $response = $send()->assertStatus(429);
-        $this->assertSame(['status' => 'error', 'message' => $limit], $response->json());
+        $this->assertSame(['status' => 'error', 'message' => self::TOO_MANY], $response->json());
         $this->assertGreaterThan(0, (int) $response->headers->get('Retry-After'));
         $this->assertSame(30, DB::table('media')->count(), 'the refused upload was stored');
 
-        // Counted for each USER: a colleague in the same office is not held up.
+        // Counted for each PERSON: a colleague in the same office is not held up.
         Sanctum::actingAs($this->adminOf($this->masjid));
         $send()->assertStatus(201);
 
@@ -455,6 +457,34 @@ class PageDocumentUploadTest extends TestCase
         $this->travel(61)->minutes();
         $send()->assertStatus(201);
         $this->assertSame(32, DB::table('media')->count());
+    }
+
+    #[Test]
+    public function one_person_has_thirty_an_hour_for_each_organisation_however_its_number_is_written(): void
+    {
+        $send = fn (string $organisation) => $this->post("/api/admin/masjids/{$organisation}/pages/documents", ['document' => $this->upload('calendar.pdf', self::PDF)]);
+
+        // One person setting two organisations up: thirty for the first...
+        $second = $this->organisation(['web_pages' => true]);
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => $this->phone()])->fresh());
+        for ($upload = 1; $upload <= 30; $upload++) {
+            $this->assertSame(201, $send((string) $this->masjid->id)->status(), "upload {$upload} to the first was not stored");
+        }
+        $send((string) $this->masjid->id)->assertStatus(429);
+
+        // ...and thirty more for the second, which the first's count does not touch.
+        for ($upload = 1; $upload <= 30; $upload++) {
+            $this->assertSame(201, $send((string) $second->id)->status(), "upload {$upload} to the second was not stored");
+        }
+        $send((string) $second->id)->assertStatus(429);
+        $this->assertSame(60, DB::table('media')->count());
+
+        // The organisation is the NUMBER in the address, as the tenant gate reads it: writing the
+        // same number another way is the same organisation, and opens no new thirty.
+        foreach (['0' . $this->masjid->id, $this->masjid->id . '.0', '%20' . $this->masjid->id] as $spelling) {
+            $send($spelling)->assertStatus(429);
+        }
+        $this->assertSame(60, DB::table('media')->count());
     }
 
     #[Test]
@@ -469,22 +499,30 @@ class PageDocumentUploadTest extends TestCase
 
         // Signed in, the limiter runs BEFORE the tenant and capability gates and before the
         // upload's own rule (Laravel orders `throttle` straight after `auth`, whatever the route
-        // lists). So a request those refuse is counted like one that is stored. The page tool
-        // refuses a wrong or oversize file before it sends one.
+        // lists). So what is counted is REQUESTS to this address by this person, and a request
+        // those refuse is counted like one that is stored. The page tool refuses a wrong or
+        // oversize file before it sends one.
         Sanctum::actingAs($this->admin);
         for ($attempt = 1; $attempt <= 30; $attempt++) {
             $this->assertSame(422, $send($this->masjid, self::HTML)->status(), "attempt {$attempt}");
         }
-        $send($this->masjid)->assertStatus(429);
+        // Not one of the thirty was stored, and the sentence is still true of this person: they
+        // TRIED to upload a lot of documents.
+        $this->assertSame(self::TOO_MANY, $send($this->masjid)->assertStatus(429)->json('message'));
+        $this->assertStringNotContainsString('have uploaded', self::TOO_MANY);
 
+        // Someone aiming at an organisation that is not theirs is refused thirty times, and then
+        // limited, for THAT organisation's address. Their own organisation has its own thirty.
         $other = $this->organisation(['web_pages' => true]);
         Sanctum::actingAs($this->adminOf($other));
         for ($attempt = 1; $attempt <= 30; $attempt++) {
             $this->assertSame(403, $send($this->masjid)->status(), "attempt {$attempt}");
         }
-        $send($other)->assertStatus(429);
-
+        $send($this->masjid)->assertStatus(429);
         $this->assertNothingStored();
+
+        $send($other)->assertStatus(201);
+        $this->assertSame([$other->id], DB::table('media')->pluck('model_id')->map(fn ($id) => (int) $id)->all());
     }
 
     /* -------------------------------------------- what this did not change */

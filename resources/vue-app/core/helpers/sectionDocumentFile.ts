@@ -219,8 +219,12 @@ export function sectionDocumentLabel(name: unknown): string {
 /** What the page tool says when an upload fails and the server gave no sentence of its own. */
 export const SECTION_DOCUMENT_UPLOAD_FAILED = 'The PDF could not be uploaded. Check your connection and try again.';
 
-/** The server's sentence for the thirty-first upload in an hour (the `page-documents` limiter), for a 429 that carries none. */
-export const SECTION_DOCUMENT_TOO_MANY = 'You have uploaded a lot of documents in the last hour. Wait a little, then try again.';
+/**
+ * The server's sentence for the thirty-first request in an hour (the `page-documents` limiter), for a
+ * 429 that carries none. "Tried to upload": the server counts every request to the upload's address,
+ * so someone whose files were all refused meets it too.
+ */
+export const SECTION_DOCUMENT_TOO_MANY = 'You have tried to upload a lot of documents in the last hour. Wait a little, then try again.';
 
 /**
  * The sentence for a failed upload, from the failed request.

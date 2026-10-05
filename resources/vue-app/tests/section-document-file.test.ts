@@ -252,7 +252,8 @@ test('a refusal by the server is shown word for word; anything else gets one pla
 
     // The thirty-first upload in an hour: the limiter's own sentence, or the same words when a 429
     // comes from something in front of the application and carries none.
-    const limit = 'You have uploaded a lot of documents in the last hour. Wait a little, then try again.';
+    // "Tried to upload": the server counts every request, so the thirty may all have been refused.
+    const limit = 'You have tried to upload a lot of documents in the last hour. Wait a little, then try again.';
     assert.equal(SECTION_DOCUMENT_TOO_MANY, limit);
     assert.equal(sectionDocumentUploadProblem(httpError(429, { status: 'error', message: limit })), limit);
     assert.equal(sectionDocumentUploadProblem(httpError(429, { status: 'error', message: 'Slow down for a minute.' })), 'Slow down for a minute.');
