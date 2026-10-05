@@ -98,6 +98,17 @@ class RosterClassMove
     /** What the student in hand is told when something that is not a refusal stopped the run. */
     public const FAULT = 'A fault stopped this move. Nothing about this student was changed.';
 
+    /**
+     * What a student is told when their own move answered "this roster
+     * changed" or "look again": a held row, a deadlock, or something saved
+     * about them between the check and their turn. The single move's two
+     * sentences say "Nothing was moved" and "read what will happen below",
+     * which is true of one student's dialog and false in a result that lists
+     * the classmates who WERE moved and has nothing below to read.
+     */
+    public const BUSY = 'Something about this student was being saved, or had changed since the list was drawn. Nothing '
+        .'about this student was changed. Use Move the rest to try again.';
+
     public function __construct(private readonly RosterMove $mover)
     {
     }
@@ -115,7 +126,10 @@ class RosterClassMove
      *
      * No `standing_before_id` here: nothing of a run exists yet, so each
      * student is previewed against the class entered as it stands, which is
-     * what the run then decides.
+     * what the run then decides. `whole_class` is passed, as the run passes
+     * it: a brother or sister of this class who held a place in the class
+     * entered may go back in the same act, and what their entry holds caps a
+     * carry before it re-opens (RosterMove::standingForAnotherChild).
      *
      * @param  array{mode?: ?string, label?: ?string}  $gradeChoice
      */
@@ -139,7 +153,7 @@ class RosterClassMove
             ->orderBy('id')
             ->get();
 
-        $plan->students = $this->decideEach($from, $to, $rows, $on, $gradeChoice, ['today' => $today]);
+        $plan->students = $this->decideEach($from, $to, $rows, $on, $gradeChoice, ['today' => $today, 'whole_class' => true]);
 
         return $this->describe($plan, $from, $to);
     }
@@ -219,6 +233,7 @@ class RosterClassMove
             $plan->students = $this->preflight($plan, $from, $to, $on, $gradeChoice, $students, $rows, [
                 'today' => $today,
                 'standing_before_id' => $standingBefore,
+                'whole_class' => true,
             ]);
 
             $stopped = false;
@@ -234,19 +249,42 @@ class RosterClassMove
 
                 $echo = $shown[$student['membership_id']];
 
+                // THE ROW IS READ AGAIN, through this class, a moment before
+                // its move. Nothing is held between two students, so somebody
+                // else may have moved or removed this one since the run's
+                // first read. The single move makes its cheap refusals from
+                // the row it is handed: given the copy read before the run it
+                // would not see a leaving date written since, would find it
+                // only under its locks, and would answer "this roster
+                // changed, try again" about a student who is in another class
+                // and cannot be tried again from here. Given the row as it is,
+                // it answers with its own "was moved to ..." and the class to
+                // open.
+                $row = $from->memberships()->find($student['membership_id']);
+
+                if ($row === null) {
+                    $plan->students[$i]['outcome'] = RosterClassMovePlan::NOT_MOVED;
+                    $plan->students[$i]['reason'] = self::gone($from);
+                    $plan->students[$i]['open_group'] = null;
+                    $plan->students[$i]['retry'] = false;
+
+                    continue;
+                }
+
                 try {
                     // The single verb's call, with what the office was shown
-                    // for this student, and four options no request can
+                    // for this student, and five options no request can
                     // supply. ONE attempt: a busy student is reported and
                     // offered again, so the single move's retries would only
                     // spend the budget.
-                    $moved = $this->mover->move($from, $rows->get($student['membership_id']), $toGroupId, $on, [
+                    $moved = $this->mover->move($from, $row, $toGroupId, $on, [
                         'expected_path' => $echo['expected_path'],
                         'expected_first_day' => $echo['expected_first_day'],
                         'expected_joined_on' => $echo['expected_joined_on'],
                         'expected_consent' => $echo['expected_consent'],
                         'expected_bucks_rule' => $expectedBucksRule,
                         'run' => $run,
+                        'whole_class' => true,
                         'standing_before_id' => $standingBefore,
                         'today' => $today,
                         'attempts' => 1,
@@ -257,16 +295,19 @@ class RosterClassMove
                 } catch (RosterMoveRefused $refused) {
                     // A held row, a deadlock, or something saved about this
                     // student between the check and the move: worth offering
-                    // again. Every other refusal is a decision about the
-                    // rosters.
-                    $plan->students[$i]['outcome'] = RosterClassMovePlan::NOT_MOVED;
-                    $plan->students[$i]['reason'] = $refused->getMessage();
-                    $plan->students[$i]['open_group'] = $refused->openGroup();
-                    $plan->students[$i]['retry'] = in_array(
+                    // again, and said in the run's own words (BUSY). Every
+                    // other refusal is a decision about the rosters, and is
+                    // the single move's sentence word for word.
+                    $busy = in_array(
                         $refused->getMessage(),
                         [RosterMoveRefused::CHANGED, RosterMoveRefused::LOOK_AGAIN],
                         true,
                     );
+
+                    $plan->students[$i]['outcome'] = RosterClassMovePlan::NOT_MOVED;
+                    $plan->students[$i]['reason'] = $busy ? self::BUSY : $refused->getMessage();
+                    $plan->students[$i]['open_group'] = $refused->openGroup();
+                    $plan->students[$i]['retry'] = $busy;
                 } catch (\Throwable $fault) {
                     report($fault);
 
@@ -291,6 +332,12 @@ class RosterClassMove
             ->exists();
 
         return $this->describe($plan, $from, $to);
+    }
+
+    /** What is said of a named row this class no longer holds. */
+    private static function gone(Group $from): string
+    {
+        return "This student is no longer on {$from->name}'s roster.";
     }
 
     /** The name of the run's lock: one per class being left. */
@@ -353,7 +400,7 @@ class RosterClassMove
             $row = $decided->get($id) ?? [
                 'membership_id' => $id, 'name' => null, 'grade_label' => null, 'grade_after' => null, 'grade_note' => null,
                 'came_from_target' => false, 'plan' => null, 'open_group' => null, 'held_back_for_consent' => false,
-                'refusal' => "This student is no longer on {$from->name}'s roster.",
+                'refusal' => self::gone($from),
             ];
 
             $inOrder[] = $row;
@@ -457,7 +504,9 @@ class RosterClassMove
      *     right result for putting a class back (moved "up one" and put back
      *     with "keep", every student has their original grade again), and it
      *     differs from the single dialog, which always sends the grade typed.
-     *   - `set`: one label for everyone.
+     *   - `set`: one label for everyone. Chosen with nothing typed yet, it is
+     *     no choice (`chosenMode`): the rows read as `keep` does, never "to no
+     *     grade".
      *   - `up`: one step along GradeLevel::LEVELS from the grade the student
      *     holds in the class being left, on both paths. A blank label, a label
      *     it cannot read and the last level are kept, and the row says so.
@@ -469,7 +518,7 @@ class RosterClassMove
      */
     private function withGrades(array $students, Collection $rows, array $gradeChoice): array
     {
-        $mode = $gradeChoice['mode'] ?? null;
+        $mode = self::chosenMode($gradeChoice);
 
         // The places being re-opened, for `keep`: one read for the class.
         $reopening = collect($students)
@@ -513,9 +562,31 @@ class RosterClassMove
      */
     private function gradeOptions(array $gradeChoice, ?string $gradeAfter): array
     {
-        return in_array($gradeChoice['mode'] ?? null, [self::GRADE_SET, self::GRADE_UP], true)
+        return in_array(self::chosenMode($gradeChoice), [self::GRADE_SET, self::GRADE_UP], true)
             ? ['grade_given' => true, 'grade_label' => $gradeAfter]
             : [];
+    }
+
+    /**
+     * The grade choice that has been MADE: one of the three modes, or null.
+     * "Give everyone this grade" with no grade typed is not made yet. The
+     * field can only be typed in after that choice is ticked, so the first
+     * check after the tick always arrives with a blank label, and answering it
+     * as "everyone gets no grade" printed "Every student's grade becomes ."
+     * and "to no grade" on every row. The run cannot be reached in that state:
+     * its request requires the label.
+     *
+     * @param  array<string, mixed>  $gradeChoice
+     */
+    private static function chosenMode(array $gradeChoice): ?string
+    {
+        $mode = $gradeChoice['mode'] ?? null;
+
+        if (! in_array($mode, self::GRADE_MODES, true)) {
+            return null;
+        }
+
+        return $mode === self::GRADE_SET && self::cleanGrade($gradeChoice['label'] ?? null) === null ? null : $mode;
     }
 
     /**
@@ -530,7 +601,7 @@ class RosterClassMove
         $plan->fromName = (string) $from->name;
         $plan->movedOn = $on;
         $plan->today = $today;
-        $plan->gradeMode = in_array($gradeChoice['mode'] ?? null, self::GRADE_MODES, true) ? $gradeChoice['mode'] : null;
+        $plan->gradeMode = self::chosenMode($gradeChoice);
         $plan->gradeLabel = self::cleanGrade($gradeChoice['label'] ?? null);
         $plan->maxStudents = self::MAX_STUDENTS;
 
@@ -578,6 +649,24 @@ class RosterClassMove
 
                 break;
             }
+        }
+
+        // BROTHERS AND SISTERS IN ONE MOVE. Each student is decided on their
+        // own, and in a run the entries the run itself made are hidden from
+        // every later decision, so a guardian with nothing on record for one
+        // child and a consent carried for another reads, child by child, as
+        // "receives nothing from the class story". They do receive it, through
+        // the other child's entry. Told to each plan here, once, from the
+        // plans the counts are about: before the run those of everyone who
+        // can move, after it those of the students who were moved.
+        $counted = $plan->counted();
+        $carriedFor = array_values(array_unique(array_merge(
+            [],
+            ...array_map(fn (RosterMovePlan $single): array => $single->consentCarriedFor, $counted),
+        )));
+
+        foreach ($counted as $single) {
+            $single->siblingsCarryFor($carriedFor);
         }
 
         return $plan;

@@ -6,6 +6,7 @@ use App\Exceptions\RosterClassMoveChanged;
 use App\Exceptions\RosterMoveRefused;
 use App\Http\Requests\Admin\Groups\MoveClassRequest;
 use App\Http\Requests\Admin\Groups\PreviewClassMoveRequest;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupPost;
@@ -265,8 +266,8 @@ class RosterClassMoveTest extends TestCase
         );
         $this->assertSame(
             ['students', 'can_move', 'cannot_move', 'held_back_for_consent', 'guardians_travelling', 'consent_carried',
-                'consent_none_recorded', 'consent_none_but_receives', 'consent_not_carried', 'consent_left_as_it_was',
-                'consent_in_force_again', 'students_unconfirmed', 'guardian_form_claims',
+                'consent_none_recorded', 'consent_none_but_receives', 'consent_none_through_sibling', 'consent_not_carried',
+                'consent_left_as_it_was', 'consent_in_force_again', 'students_unconfirmed', 'guardian_form_claims',
                 'guardians_confirmed_in_old_class_only', 'report_cards_not_started', 'others_in_new_class', 'new_class_holds'],
             array_keys($data['counts']),
         );
@@ -385,6 +386,7 @@ class RosterClassMoveTest extends TestCase
             'consent_carried' => ['media' => 1, 'feed' => 1],
             'consent_none_recorded' => 1,
             'consent_none_but_receives' => 1,
+            'consent_none_through_sibling' => 0,
             'consent_not_carried' => 1,
             'consent_left_as_it_was' => 1,
             'consent_in_force_again' => ['media' => 0, 'feed' => 0],
@@ -963,8 +965,15 @@ class RosterClassMoveTest extends TestCase
         $this->assertSame(['Maryam Student' => 'moved', 'Yusuf Student' => 'not_moved', 'Layla Student' => 'moved'], $this->outcomes($answer));
         $this->assertSame([
             'membership_id' => $yusuf->id, 'name' => 'Yusuf Student', 'outcome' => 'not_moved',
-            'reason' => RosterMoveRefused::CHANGED, 'open_group' => null, 'retry' => true,
+            // In the run's own words: the single move's sentence says
+            // "Nothing was moved" and tells the office to look below, and
+            // this stands in a result that lists two students who WERE moved.
+            'reason' => 'Something about this student was being saved, or had changed since the list was drawn. Nothing about '
+                .'this student was changed. Use Move the rest to try again.',
+            'open_group' => null, 'retry' => true,
         ], $students[$yusuf->id]);
+        $this->assertSame(RosterClassMove::BUSY, $students[$yusuf->id]['reason']);
+        $this->assertStringNotContainsString('Nothing was moved', $answer->getContent());
 
         // A moved student carries the single move's own sentences.
         $this->assertSame(['membership_id', 'name', 'outcome', 'new_membership_id', 'lines'], array_keys($students[$maryam->id]));
@@ -1071,6 +1080,21 @@ class RosterClassMoveTest extends TestCase
 
         // The run's lock was given back, so the rest can be moved again at once.
         $this->assertSame(0, DB::table('cache_locks')->count());
+
+        // A FAULT ON THE FIRST STUDENT is not "0 students were moved before it".
+        $this->bindMover(atLocks: function (int $contact, int $nth): void {
+            if ($nth === 1) {
+                throw new \RuntimeException('a fault that is not a refusal');
+            }
+        });
+        $first = $this->moveClass($this->first, $this->second, $this->ticked($this->previewClass($this->first, $this->second)->assertOk()))
+            ->assertOk()->assertJsonPath('data.moved', 0)->assertJsonPath('data.stopped_by_fault', true);
+        $this->assertSame([
+            'No student was moved to 2nd Grade.',
+            'The move stopped early because something went wrong on our side. No student had been moved before it, and none '
+                .'was touched. It has been recorded. You can move the rest again.',
+        ], $first->json('data.lines.done'));
+
         $this->bindMover();
         $this->moveEveryone($this->first, $this->second)->assertJsonPath('data.moved', 3);
 
@@ -1379,61 +1403,306 @@ class RosterClassMoveTest extends TestCase
     }
 
     #[Test]
-    public function a_sibling_going_back_and_a_sibling_arriving_in_one_run_is_reported_and_carries_no_more_than_the_cap(): void
+    public function a_sibling_going_back_and_a_sibling_arriving_in_one_move_get_the_same_result_whichever_is_moved_first(): void
+    {
+        // One child held a place in the class entered before, her mother
+        // beside her there with nothing recorded (or with a carried consent
+        // she withdrew there). A brother enters it for the first time, and
+        // their mother agreed to photographs for him. Her entry there is
+        // CLOSED today, so by the single move's rule it gives her no standing
+        // and caps nothing. In a whole-class move it opens again in the same
+        // act, and which child came first in the list used to decide whether
+        // the photograph consent arrived beside it.
+        $run = function (int $n, bool $returnerFirst, bool $withdrawnAfterACarry): array {
+            $from = $this->makeClass("Class {$n}A");
+            $to = $this->makeClass("Class {$n}B");
+            $huda = $this->makePerson('Huda', 'Guardian');
+
+            if ($withdrawnAfterACarry) {
+                // Carried into the class with her, withdrawn there, and the
+                // source withdrawn too so that she could be moved back.
+                $start = $this->enrol($from, $this->makePerson('Maryam', 'Student'));
+                $source = $this->guardian($start, $huda, consent: 'feed');
+                $there = GroupMembership::findOrFail($this->move($start, $to, '2026-09-10')->assertOk()->json('data.membership_id'));
+                $this->withdrawConsent($this->entryIn($to, $source))->assertOk();
+                $this->withdrawConsent($source)->assertOk();
+            } else {
+                $there = $this->enrol($to, $this->makePerson('Maryam', 'Student'));
+                $this->guardian($there, $huda);
+            }
+
+            $maryam = GroupMembership::findOrFail($this->move($there, $from, '2026-09-20')->assertOk()->json('data.membership_id'));
+            $yusuf = $this->enrol($from, $this->makePerson('Yusuf', 'Student'));
+            $this->guardian($yusuf, $huda, consent: 'media');
+
+            // The check says it BEFORE the tap, for him and for the class.
+            $preview = $this->previewClass($from, $to)->assertOk()
+                ->assertJsonPath('data.counts.consent_carried', ['media' => 0, 'feed' => 0])
+                ->assertJsonPath('data.counts.consent_not_carried', 1);
+            $shown = collect($preview->json('data.students'))->keyBy('membership_id');
+
+            $this->assertSame(RosterMovePlan::RETURNED, $shown[$maryam->id]['path']);
+            $this->assertSame('m0f0s1n0e0', $shown[$yusuf->id]['expected_consent']);
+            $this->assertContains(
+                "Huda Guardian has an earlier entry in Class {$n}B for another child who is in Class {$n}A too and may go back "
+                    ."with this class, with no consent recorded on it: not carried. Record it in Class {$n}B if the family agrees.",
+                $shown[$yusuf->id]['lines'],
+            );
+            $this->assertContains(
+                "1 is not carried because the guardian has an entry in Class {$n}B for another child, in it now or going back "
+                    .'to it, with less consent recorded there. It is named under its student.',
+                $preview->json('data.lines.consent'),
+            );
+
+            // The single dialog, for him alone, still follows its own rule: a
+            // closed entry gives no standing, and nothing of a class move is
+            // assumed. No request can say otherwise.
+            $this->previewMove($yusuf, $to, self::TODAY)->assertOk()->assertJsonPath('data.expected_consent', 'm1f0s0n0e0');
+            $this->getJson($this->moveUrl($yusuf).'?'.http_build_query(['to_group_id' => $to->id, 'moved_on' => self::TODAY, 'whole_class' => 1]))
+                ->assertOk()->assertJsonPath('data.expected_consent', 'm1f0s0n0e0');
+
+            $before = $this->rosterSnapshot();
+            $order = $returnerFirst ? [$maryam->id, $yusuf->id] : [$yusuf->id, $maryam->id];
+            $answer = $this->moveClass($from, $to, $this->ticked($preview, $order))->assertOk()
+                // What the list showed for each child is what the move decided under its locks.
+                ->assertJsonPath('data.moved', 2)
+                ->assertJsonPath('data.not_moved', 0)
+                ->assertJsonPath('data.siblings_left_behind', 0)
+                ->assertJsonPath('data.counts.consent_carried', ['media' => 0, 'feed' => 0])
+                ->assertJsonPath('data.counts.consent_not_carried', 1);
+
+            // Afterwards each order says what was true when he was moved: his
+            // sister was already back in the class, or still to come.
+            $his = collect($answer->json('data.students'))->firstWhere('membership_id', $yusuf->id);
+            $this->assertContains(
+                $returnerFirst
+                    ? "Huda Guardian's consent was not carried: they are already in Class {$n}B for another child, with no "
+                        ."consent recorded there. Record it in Class {$n}B if the family agrees."
+                    : "Huda Guardian's consent was not carried: they have an earlier entry in Class {$n}B for another child who "
+                        ."was in Class {$n}A too, with no consent recorded on it. Record it in Class {$n}B if the family agrees.",
+                $his['lines'],
+            );
+            $this->assertStringNotContainsString('Tell Class', $answer->getContent());
+
+            $this->assertNothingWasDestroyed($before);
+
+            return GroupMembership::query()->where('group_id', $to->id)->where('contact_id', $huda->id)->orderBy('id')->get()
+                ->map(fn (GroupMembership $e): array => [
+                    (int) $e->guardian_of_contact_id === (int) $yusuf->contact_id ? 'Yusuf' : 'Maryam',
+                    $e->left_on === null, $e->consent_scope, $e->consent_carried_from_group_id !== null,
+                ])->all();
+        };
+
+        // Her entry open again and blank; his new, blank and unmarked. In
+        // BOTH orders: more was never carried than the adult held there.
+        $blank = [['Maryam', true, null, false], ['Yusuf', true, null, false]];
+        $this->assertSame($blank, $run(1, true, false));
+        $this->assertSame($blank, $run(2, false, false), 'the order of the list decided whether a consent was carried');
+
+        // The same where her blank entry is a carried consent she WITHDREW there.
+        $withdrawn = [['Maryam', true, null, true], ['Yusuf', true, null, false]];
+        $this->assertSame($withdrawn, $run(3, true, true));
+        $this->assertSame($withdrawn, $run(4, false, true), 'the order of the list decided whether a consent was carried');
+    }
+
+    #[Test]
+    public function an_entry_that_has_left_caps_only_in_a_class_move_only_for_a_child_who_may_return_and_never_loosens_a_cap(): void
     {
         $huda = $this->makePerson('Huda', 'Guardian');
+        $third = $this->makeClass('3rd Grade');
 
-        // Maryam was in the second class before, her mother beside her with nothing recorded.
-        $maryamThere = $this->enrol($this->second, $this->makePerson('Maryam', 'Student'));
-        $this->guardian($maryamThere, $huda);
-        $maryam = GroupMembership::findOrFail($this->move($maryamThere, $this->first, '2026-09-20')->assertOk()->json('data.membership_id'));
-        // Yusuf enters it for the first time, and his mother agreed to photographs for him.
+        // Layla held a place in the second class and has LEFT the school: she
+        // is in neither class, so she cannot go back in this move.
+        $layla = $this->enrol($this->second, $this->makePerson('Layla', 'Student'));
+        $this->guardian($layla, $huda);
+        Sanctum::actingAs($this->admin);
+        $this->putJson("/api/admin/masjids/{$this->school->id}/groups/{$this->second->id}/members/{$layla->id}/withdrawal", ['left_on' => '2026-09-20'])->assertOk();
+
         $yusuf = $this->enrol($this->first, $this->makePerson('Yusuf', 'Student'));
         $this->guardian($yusuf, $huda, consent: 'media');
 
-        // Before the run her entry there is closed, so it gives her no standing: carried.
-        $preview = $this->previewClass($this->first, $this->second)->assertOk();
-        $shown = collect($preview->json('data.students'))->keyBy('membership_id');
-        $this->assertSame(RosterMovePlan::RETURNED, $shown[$maryam->id]['path']);
-        $this->assertSame('m1f0s0n0e0', $shown[$yusuf->id]['expected_consent']);
+        // Her closed entry there names a child who is not in the class being left: carried.
+        $this->previewClass($this->first, $this->second)->assertOk()
+            ->assertJsonPath('data.students.0.expected_consent', 'm1f0s0n0e0');
 
-        // Maryam first: her return re-opens the old, blank entry, which has an
-        // old id and so stands "before the run". Under Yusuf's locks it caps
-        // the carry, which is not what the office was shown: he is not moved.
+        // Once she is in the class being left, she may go back with it: capped.
+        $this->enrol($this->first, Contact::findOrFail($layla->contact_id));
+        $capped = $this->previewClass($this->first, $this->second)->assertOk();
+        $this->assertSame('m0f0s1n0e0', collect($capped->json('data.students'))->firstWhere('membership_id', $yusuf->id)['expected_consent']);
+
+        // A CURRENT entry is what the adult holds today, and it decides
+        // alone. Their mother stands in the second class for a third child
+        // with photographs: the consent is carried, as it adds nothing.
+        $zayd = $this->enrol($this->second, $this->makePerson('Zayd', 'Student'));
+        $this->guardian($zayd, $huda, consent: 'media');
+        $carried = $this->previewClass($this->first, $this->second)->assertOk();
+        $this->assertSame('m1f0s0n0e0', collect($carried->json('data.students'))->firstWhere('membership_id', $yusuf->id)['expected_consent']);
+
+        // And a closed entry that holds MORE never loosens the cap a current
+        // blank one sets: into the third class she stands blank for Zayd's
+        // twin entry there, and Layla's closed one there holds photographs.
+        $zaydThere = $this->enrol($third, Contact::findOrFail($zayd->contact_id));
+        $this->guardian($zaydThere, $huda);
+        $laylaThere = $this->enrol($third, Contact::findOrFail($layla->contact_id));
+        $this->guardian($laylaThere, $huda, consent: 'media');
+        $this->putJson("/api/admin/masjids/{$this->school->id}/groups/{$third->id}/members/{$laylaThere->id}/withdrawal", ['left_on' => '2026-09-20'])->assertOk();
+
+        $intoThird = $this->previewClass($this->first, $third)->assertOk();
+        $his = collect($intoThird->json('data.students'))->firstWhere('membership_id', $yusuf->id);
+        $this->assertSame('m0f0s1n0e0', $his['expected_consent']);
+        $this->assertContains(
+            'Huda Guardian is already in 3rd Grade for another child, with no consent recorded there: not carried. Record it '
+                .'in 3rd Grade if the family agrees.',
+            $his['lines'],
+        );
+    }
+
+    #[Test]
+    public function a_parent_with_consent_for_one_child_and_none_for_another_is_not_told_they_receive_nothing(): void
+    {
+        // One parent, two children in the class being left: photographs for
+        // one, nothing on record for the other. An adult is admitted to a
+        // class's story on ANY one current entry there, so from the moment of
+        // the move this family receives the whole story through the first
+        // child's carried entry. Each student is decided alone, and in a run
+        // the first child's new entry is hidden from the second's decision,
+        // so both used to read "receives nothing ... until it is recorded".
+        $huda = $this->makePerson('Huda', 'Guardian');
+        $maryam = $this->enrol($this->first, $this->makePerson('Maryam', 'Student'));
+        $yusuf = $this->enrol($this->first, $this->makePerson('Yusuf', 'Student'));
+        $zayd = $this->enrol($this->first, $this->makePerson('Zayd', 'Student'));
+        $this->guardian($maryam, $huda, consent: 'media');
+        $this->guardian($yusuf, $huda);
+        // A second family with nothing on record at all: still "receives nothing".
+        $this->guardian($zayd, $this->makePerson('Gamal', 'Guardian'));
+
+        $preview = $this->previewClass($this->first, $this->second)->assertOk()
+            ->assertJsonPath('data.counts.consent_carried', ['media' => 1, 'feed' => 0])
+            ->assertJsonPath('data.counts.consent_none_recorded', 1)
+            ->assertJsonPath('data.counts.consent_none_through_sibling', 1)
+            ->assertJsonPath('data.counts.consent_none_but_receives', 0);
+
+        $consent = $preview->json('data.lines.consent');
+        $this->assertContains(
+            "1 guardian place has no consent on record in 1st Grade. Nothing changes for it: that family receives nothing from "
+                ."2nd Grade's class story until it is recorded on 2nd Grade's roster.",
+            $consent,
+        );
+        $this->assertContains(
+            "1 more has none on record for the child being moved, but the same guardian's consent for a brother or sister in "
+                ."this move is carried, so 2nd Grade's story will reach that family through that child.",
+            $consent,
+        );
+
+        $shown = collect($preview->json('data.students'))->keyBy('membership_id');
+        $through = "1 guardian has no consent on record in 1st Grade for Yusuf Student, so nothing is carried for Yusuf Student. "
+            ."Their consent for a brother or sister in this move is carried, so 2nd Grade's class story will reach them through "
+            ."that child. The weekly points email about Yusuf Student does not reach them until consent is recorded on their "
+            .'entry for Yusuf Student in 2nd Grade.';
+        $this->assertContains($through, $shown[$yusuf->id]['lines']);
+        $this->assertStringNotContainsString('They receive nothing', implode(' ', $shown[$yusuf->id]['lines']));
+        $this->assertStringContainsString('They receive nothing', implode(' ', $shown[$zayd->id]['lines']));
+        // What the tap echoes is the single move's own count, unchanged.
+        $this->assertSame('m0f0s0n1e0', $shown[$yusuf->id]['expected_consent']);
+        $this->assertSame('m0f0s0n1e0', $this->previewMove($yusuf, $this->second, self::TODAY)->assertOk()->json('data.expected_consent'));
+
+        // In BOTH orders the answer says the same, from what each move decided under its locks.
         $before = $this->rosterSnapshot();
-        $answer = $this->moveClass($this->first, $this->second, $this->ticked($preview, [$maryam->id, $yusuf->id]))->assertOk()
-            ->assertJsonPath('data.moved', 1)
-            ->assertJsonPath('data.not_moved', 1)
-            ->assertJsonPath('data.siblings_left_behind', 1);
+        $answer = $this->moveClass($this->first, $this->second, $this->ticked($preview, [$yusuf->id, $zayd->id, $maryam->id]))->assertOk()
+            ->assertJsonPath('data.moved', 3)
+            ->assertJsonPath('data.counts.consent_none_recorded', 1)
+            ->assertJsonPath('data.counts.consent_none_through_sibling', 1);
 
         $this->assertSame([
-            'membership_id' => $yusuf->id, 'name' => 'Yusuf Student', 'outcome' => 'not_moved',
-            'reason' => RosterMoveRefused::LOOK_AGAIN, 'open_group' => null, 'retry' => true,
-        ], $answer->json('data.students.1'));
-        $this->assertContains(
-            '1 student who was not moved has a brother or sister who was. The next check can show a different consent result '
-                .'for their guardians than this one did; read it before you move them.',
-            $answer->json('data.lines.done'),
-        );
-        $this->assertNull($yusuf->fresh()->left_on);
-        $this->assertSame(0, GroupMembership::where('group_id', $this->second->id)->where('guardian_of_contact_id', $yusuf->contact_id)->count());
+            'Consent was carried as it is for 1 guardian place (one for each parent and child): 1 class story and photographs. '
+                .'Nobody was asked again; the roster shows each one as carried.',
+            "1 guardian place has none on record and that family receives nothing from 2nd Grade's class story until it is "
+                .'recorded there.',
+            "1 guardian place has none on record for its own child but receives 2nd Grade's class story through a brother or "
+                .'sister who was moved with them.',
+            "Tell 2nd Grade's teacher: 1 more guardian place now receives its class story, 1 of them its photographs.",
+        ], $answer->json('data.lines.consent'));
 
-        // The next check shows the cap before anything is moved, and names her.
-        $fresh = $this->previewClass($this->first, $this->second)->assertOk()
-            ->assertJsonPath('data.counts.consent_not_carried', 1)
-            ->assertJsonPath('data.students.0.expected_consent', 'm0f0s1n0e0');
+        $his = collect($answer->json('data.students'))->firstWhere('membership_id', $yusuf->id);
         $this->assertContains(
-            'Huda Guardian is already in 2nd Grade for another child, with no consent recorded there: not carried. Record it '
-                .'in 2nd Grade if the family agrees.',
-            $fresh->json('data.students.0.lines'),
+            "1 guardian has no consent on record in 1st Grade for Yusuf Student, so nothing is carried for Yusuf Student. "
+                ."Their consent for a brother or sister who moved with Yusuf Student was carried, so 2nd Grade's class story "
+                .'reaches them through that child. The weekly points email about Yusuf Student does not reach them until '
+                .'consent is recorded on their entry for Yusuf Student in 2nd Grade.',
+            $his['lines'],
         );
 
-        $this->moveClass($this->first, $this->second, $this->ticked($fresh))->assertOk()->assertJsonPath('data.moved', 1);
+        // Nothing was written for the child with none on record.
         $this->assertFalse(
             GroupMembership::where('group_id', $this->second->id)->where('contact_id', $huda->id)
                 ->where('guardian_of_contact_id', $yusuf->contact_id)->sole()->consentColumnsAreSet(),
-            'more was carried than the adult held in the class entered',
         );
+        $this->assertNothingWasDestroyed($before);
+
+        // WHEN THE BROTHER IS NOT MOVED the sentence is not said: after a run
+        // the counts are over the students who were moved.
+        $third = $this->makeClass('3rd Grade');
+        $back = $this->previewClass($this->second, $third)->assertOk();
+        $only = $this->moveClass($this->second, $third, $this->ticked($back, [$this->placeIn($this->second, $yusuf)->id]))->assertOk()
+            ->assertJsonPath('data.moved', 1)
+            ->assertJsonPath('data.counts.consent_none_through_sibling', 0)
+            ->assertJsonPath('data.counts.consent_none_recorded', 1);
+        $this->assertStringNotContainsString('brother or sister', implode(' ', $only->json('data.lines.consent')));
+    }
+
+    #[Test]
+    public function a_student_somebody_else_moved_during_the_run_is_told_where_they_went_and_is_not_offered_again(): void
+    {
+        $third = $this->makeClass('3rd Grade');
+        $maryam = $this->enrol($this->first, 'Maryam');
+        $yusuf = $this->enrol($this->first, 'Yusuf');
+        $layla = $this->enrol($this->first, 'Layla');
+        $zayd = $this->enrol($this->first, 'Zayd');
+        $ticked = $this->ticked($this->previewClass($this->first, $this->second)->assertOk());
+
+        // While the run's first student is being moved, another office user
+        // moves its second student to a THIRD class with the single verb, and
+        // removes its fourth from the roster. Nothing is held between two
+        // students, so both land.
+        $this->bindMover(afterMove: function (int $nth) use ($yusuf, $zayd, $third): void {
+            if ($nth === 1) {
+                (new RosterMove())->move($this->first, $yusuf->fresh(), $third->id, self::TODAY, [], $this->admin);
+                $zayd->fresh()->delete();
+            }
+        });
+
+        $before = $this->rosterSnapshot();
+        $answer = $this->moveClass($this->first, $this->second, $ticked)->assertOk()
+            ->assertJsonPath('data.moved', 2)
+            ->assertJsonPath('data.not_moved', 2)
+            ->assertJsonPath('data.not_reached', 0);
+
+        // The single move's own refusal for a row that was moved: it names
+        // the class to open, and it is a decision, not "busy, try again".
+        $this->assertSame([
+            'membership_id' => $yusuf->id, 'name' => 'Yusuf Student', 'outcome' => 'not_moved',
+            'reason' => 'Yusuf Student was moved to 3rd Grade on 4 Oct 2026. Open 3rd Grade to move them again.',
+            'open_group' => ['id' => $third->id, 'name' => '3rd Grade'], 'retry' => false,
+        ], $answer->json('data.students.1'));
+        $this->assertSame([
+            'membership_id' => $zayd->id, 'name' => 'Zayd Student', 'outcome' => 'not_moved',
+            'reason' => "This student is no longer on 1st Grade's roster.", 'open_group' => null, 'retry' => false,
+        ], $answer->json('data.students.3'));
+
+        $this->assertSame([
+            '2 of 4 students are now in 2nd Grade.',
+            '2 were not moved. Each one says why below. Nothing about them was changed.',
+        ], array_slice($answer->json('data.lines.done'), 0, 2));
+        $this->assertStringNotContainsString('could not be moved just now', implode(' ', $answer->json('data.lines.done')));
+
+        // He is where the other user put him, once.
+        $this->assertSame($third->id, (int) $this->placeIn($third, $yusuf)->group_id);
+        $this->assertSame(0, GroupMembership::where('group_id', $this->second->id)->where('contact_id', $yusuf->contact_id)->count());
+        $this->assertNotNull($this->placeIn($this->second, $maryam));
+        $this->assertNotNull($this->placeIn($this->second, $layla));
+
+        // Everything but the row the other user removed is still there.
+        unset($before[$zayd->id]);
         $this->assertNothingWasDestroyed($before);
     }
 
@@ -1656,9 +1925,43 @@ class RosterClassMoveTest extends TestCase
         $this->assertNull($this->placeIn($this->second, $yusuf)->grade_label);
         $this->assertNothingWasDestroyed($before);
 
-        // And the preview's own query, as a browser sends it.
+        // And the preview's own query, as a browser sends it. "Give everyone
+        // this grade" with nothing typed yet is no choice: the row keeps the
+        // grade it would keep, never "to no grade".
         $this->get($this->classMoveUrl($this->second).'?to_group_id='.$this->first->id.'&moved_on='.self::TODAY.'&grade_mode=set&grade_label=',
-            ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.students.0.grade_after', null);
+            ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.students.0.grade_after', '2nd');
+    }
+
+    #[Test]
+    public function give_everyone_this_grade_with_nothing_typed_yet_is_no_choice_and_says_nothing_about_grades(): void
+    {
+        $maryam = $this->graded($this->enrol($this->first, 'Maryam'), '1st');
+        $this->enrol($this->first, 'Yusuf');
+
+        // The field can only be typed in once the choice is ticked, so this
+        // is the first check the dialog makes after the tick.
+        foreach ([['grade_mode' => 'set'], ['grade_mode' => 'set', 'grade_label' => ''], ['grade_mode' => 'set', 'grade_label' => '   ']] as $query) {
+            $preview = $this->previewClass($this->first, $this->second, $query)->assertOk()
+                ->assertJsonPath('data.can_move', true)
+                ->assertJsonPath('data.students.0.grade_label', '1st')
+                ->assertJsonPath('data.students.0.grade_after', '1st')
+                ->assertJsonPath('data.students.1.grade_after', null);
+
+            $said = implode(' ', $preview->json('data.lines.records'));
+            $this->assertStringNotContainsString('becomes', $said, 'a grade line was printed around a grade nobody typed');
+            $this->assertStringNotContainsString('grade', $said);
+        }
+
+        // Typed, it is said and shown on every row.
+        $typed = $this->previewClass($this->first, $this->second, ['grade_mode' => 'set', 'grade_label' => ' 3rd '])->assertOk()
+            ->assertJsonPath('data.students.0.grade_after', '3rd')
+            ->assertJsonPath('data.students.1.grade_after', '3rd');
+        $this->assertContains("Every student's grade becomes 3rd.", $typed->json('data.lines.records'));
+
+        // And the run cannot be asked for it without the grade.
+        $this->moveClass($this->first, $this->second, $this->ticked($typed, [$maryam->id]), ['grade_mode' => 'set', 'grade_label' => ''])
+            ->assertStatus(422);
+        $this->assertNull($maryam->fresh()->left_on);
     }
 
     // ------------------------------------------------------- who may, and where
@@ -1736,7 +2039,7 @@ class RosterClassMoveTest extends TestCase
         // day that has not come; `run` would write a run into the history;
         // `attempts` would spend the budget. Typed onto the request and onto
         // each row, none of them is read.
-        $internal = ['standing_before_id' => 0, 'today' => '2026-10-09', 'attempts' => 9, 'run' => 'typed-into-a-request'];
+        $internal = ['standing_before_id' => 0, 'today' => '2026-10-09', 'attempts' => 9, 'run' => 'typed-into-a-request', 'whole_class' => '0'];
         $ticked = array_map(fn (array $student): array => $student + $internal, $this->ticked($preview));
 
         $this->previewClass($this->first, $this->second, ['moved_on' => '2026-10-05'] + $internal)->assertOk()

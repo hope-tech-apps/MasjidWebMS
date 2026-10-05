@@ -179,8 +179,9 @@ it('moves nine of ten when one student\'s row is held, after one lock wait, and 
 
     $reported = collect($answer['students'])->firstWhere('membership_id', $held->id);
 
-    // The single move's own answer for a held row, and worth offering again.
-    expect($reported['reason'])->toBe(RosterMoveRefused::CHANGED)
+    // A held row is answered "this roster changed" by the single move; the run says it in its own
+    // words (nothing "was moved" is false in a result that lists nine who were), and offers it again.
+    expect($reported['reason'])->toBe(RosterClassMove::BUSY)
         ->and($reported['retry'])->toBeTrue()
         // ONE attempt inside a run: it really waited for the lock, once, and not three times.
         ->and($times->seconds[$held->id])->toBeGreaterThan(RosterMove::LOCK_WAIT_SECONDS - 1)

@@ -109,7 +109,7 @@ final class RosterClassMovePlan
      *
      * @return list<RosterMovePlan>
      */
-    private function counted(): array
+    public function counted(): array
     {
         $plans = [];
 
@@ -166,6 +166,9 @@ final class RosterClassMovePlan
             ],
             'consent_none_recorded' => $sum(fn (RosterMovePlan $p): int => $p->consentNoneRecorded),
             'consent_none_but_receives' => $sum(fn (RosterMovePlan $p): int => $p->consentNoneButReceives),
+            // None on record for this child, and the same guardian's consent
+            // for a brother or sister is carried in this same move.
+            'consent_none_through_sibling' => $sum(fn (RosterMovePlan $p): int => $p->consentNoneThroughSibling),
             'consent_not_carried' => $sum(fn (RosterMovePlan $p): int => count($p->consentNotCarriedForSibling)),
             'consent_left_as_it_was' => $sum(fn (RosterMovePlan $p): int => $p->consentLeftAsItWas),
             // Entries the class entered already holds that are closed now and
@@ -299,6 +302,7 @@ final class RosterClassMovePlan
             $feed = $c['consent_carried']['feed'];
             $none = $c['consent_none_recorded'];
             $receives = $c['consent_none_but_receives'];
+            $through = $c['consent_none_through_sibling'];
             $notCarried = $c['consent_not_carried'];
             $left = $c['consent_left_as_it_was'];
             $again = $c['consent_in_force_again']['media'] + $c['consent_in_force_again']['feed'];
@@ -367,11 +371,23 @@ final class RosterClassMovePlan
                     .($receives === 1 ? 'receives' : 'receive')." {$to}'s story through another child there.";
             }
 
+            // The same guardian's consent for a brother or sister is carried
+            // in this move: the story reaches them through that child.
+            if ($through > 0) {
+                $lines[] = ($none + $receives > 0 && ! $nobody ? "{$through} more" : $places($through)).' '
+                    .($through === 1 ? 'has' : 'have').' none on record for the child being moved, but the same '
+                    ."guardian's consent for a brother or sister in this move is carried, so {$to}'s story will reach "
+                    .($through === 1 ? 'that family' : 'them').' through that child.';
+            }
+
             if ($notCarried > 0) {
                 // Counts places too, so the first of these lines explains the word.
                 $lines[] = ($explained ? $notCarried : $places($notCarried)).' '.($notCarried === 1 ? 'is' : 'are')
-                    ." not carried because the guardian is already in {$to} for another child with less consent recorded "
-                    .'there. '.($notCarried === 1 ? 'It is named under its student.' : 'Each is named under their student.');
+                    .' not carried because the guardian '.($this->someAreHeldForAChildWhoMayReturn()
+                        ? "has an entry in {$to} for another child, in it now or going back to it,"
+                        : "is already in {$to} for another child")
+                    .' with less consent recorded there. '
+                    .($notCarried === 1 ? 'It is named under its student.' : 'Each is named under their student.');
             }
 
             if ($left > 0) {
@@ -405,6 +421,24 @@ final class RosterClassMovePlan
         }
 
         return $lines;
+    }
+
+    /**
+     * Is any consent not carried because of an entry that has left and may
+     * open again in this move (a brother or sister going back)? Then "is
+     * already in the class" is not true of that guardian.
+     */
+    private function someAreHeldForAChildWhoMayReturn(): bool
+    {
+        foreach ($this->counted() as $plan) {
+            foreach ($plan->consentNotCarriedForSibling as $not) {
+                if ($not['returning'] ?? false) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -474,7 +508,7 @@ final class RosterClassMovePlan
                 : 'Each student keeps their grade, except '.self::count($onReturn, 'student', 'students').' going back to a '
                     .'place they held before: '.($onReturn === 1 ? 'they get' : 'each gets').' the grade recorded on that '
                     .'place. The list shows '.($onReturn === 1 ? 'which one' : 'each one').'.';
-        } elseif ($this->gradeMode === RosterClassMove::GRADE_SET) {
+        } elseif ($this->gradeMode === RosterClassMove::GRADE_SET && $this->gradeLabel !== null) {
             $lines[] = "Every student's grade becomes {$this->gradeLabel}.";
         } elseif ($this->gradeMode === RosterClassMove::GRADE_UP) {
             $kept = count(array_filter($movable, fn (array $row): bool => $row['grade_note'] !== null));
@@ -556,9 +590,11 @@ final class RosterClassMovePlan
         };
 
         if ($this->stoppedByFault) {
-            $lines[] = 'The move stopped early because something went wrong on our side. '
-                .($moved === 1 ? '1 student was' : "{$moved} students were").' moved before it and the rest were not '
-                .'touched. It has been recorded. You can move the rest again.';
+            $lines[] = 'The move stopped early because something went wrong on our side. '.match ($moved) {
+                0 => 'No student had been moved before it, and none was touched.',
+                1 => '1 student was moved before it and the rest were not touched.',
+                default => "{$moved} students were moved before it and the rest were not touched.",
+            }.' It has been recorded. You can move the rest again.';
         }
 
         if ($refused > 0) {
@@ -610,6 +646,7 @@ final class RosterClassMovePlan
         $feed = $c['consent_carried']['feed'];
         $carried = $media + $feed;
         $none = $c['consent_none_recorded'];
+        $through = $c['consent_none_through_sibling'];
         $notCarried = $c['consent_not_carried'];
         $again = $c['consent_in_force_again']['media'] + $c['consent_in_force_again']['feed'];
         $lines = [];
@@ -636,10 +673,19 @@ final class RosterClassMovePlan
                 .'it is recorded there.';
         }
 
+        if ($through > 0) {
+            $lines[] = $places($through).' '.($through === 1 ? 'has' : 'have').' none on record for '
+                .($through === 1 ? 'its' : 'their').' own child but '.($through === 1 ? 'receives' : 'receive')
+                ." {$to}'s class story through a brother or sister who was moved with them.";
+        }
+
         if ($notCarried > 0) {
             $lines[] = ($explained ? $notCarried : $places($notCarried)).' '.($notCarried === 1 ? 'was' : 'were')
-                ." not carried because the guardian is already in {$to} for another child with less consent recorded "
-                .'there. '.($notCarried === 1 ? 'It is named under its student.' : 'Each is named under their student.');
+                .' not carried because the guardian '.($this->someAreHeldForAChildWhoMayReturn()
+                    ? "has an entry in {$to} for another child"
+                    : "is already in {$to} for another child")
+                .' with less consent recorded there. '
+                .($notCarried === 1 ? 'It is named under its student.' : 'Each is named under their student.');
         }
 
         if ($again > 0) {
