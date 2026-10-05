@@ -65,6 +65,33 @@ final class GradeLevel
     }
 
     /**
+     * The level after this one in teaching order, spelled as LEVELS spells it:
+     * what "move each grade up one" gives a student when a whole class is moved
+     * (App\Support\RosterClassMove).
+     *
+     * NULL when there is no next level to give: a blank label, a label that is
+     * not one of the levels (a school's own word for a grade), or the last
+     * level. The caller keeps the label the student has and says so; a guess
+     * here would write a grade nobody chose.
+     */
+    public static function next(?string $label): ?string
+    {
+        $key = self::key($label);
+
+        if ($key === null) {
+            return null;
+        }
+
+        foreach (self::LEVELS as $i => $level) {
+            if (self::key($level) === $key) {
+                return self::LEVELS[$i + 1] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Whether `$level` is one of `$labels`, compared by key.
      *
      * @param  list<string>  $labels
