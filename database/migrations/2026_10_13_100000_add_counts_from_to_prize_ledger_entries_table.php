@@ -38,8 +38,10 @@ use Illuminate\Support\Facades\Schema;
  * off for every organisation and the ledger holds no rows.
  *
  * DEPLOY ORDER. bin/deploy serves the new code before it runs this. The one read of the column
- * (expiry's sum) is behind App\Support\ClassStore::carryReady(), and the move, which is the
- * only caller of the writer, refuses until the column is there.
+ * (expiry's sum) is behind App\Support\ClassStore::carryReady(). The writer has no caller yet.
+ * The commit that makes the move call it must also make the move refuse until this column is
+ * there: today the move's guard (App\Support\RosterMove::ready()) asks about the roster's
+ * consent column only, and does NOT ask about this one.
  *
  * ROLLING BACK. Like every class-store migration after the ledger's own, down() refuses while
  * any ledger row exists: with the column gone, the next sweep would write off every balance

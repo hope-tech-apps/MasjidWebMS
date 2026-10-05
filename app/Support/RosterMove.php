@@ -1398,21 +1398,23 @@ class RosterMove
     }
 
     /**
-     * THE CLASS STORE SEAM (W6-C1, still the owner's question): does the old
-     * row hold Manara Bucks that stay behind?
+     * THE CLASS STORE SEAM: does the old row hold Manara Bucks that stay
+     * behind?
      *
      * A boolean, never a figure: the office reads class totals only. It
      * answers whether ledger rows exist, and only for a school that holds the
      * class store; it reads no balance and writes nothing.
      *
-     * If the owner decides a balance should follow the student, the
-     * `transfer_out` / `transfer_in` pair belongs HERE, under the roster-row
-     * locks the move already holds, reading the balance with the ledger's own
-     * locked read and never for display. Two things its builder must know:
-     * `bucks:expire` writes off what is left on a row at the old class's end
-     * or the school year's end, so a carry-over decided later has to give that
-     * back first; and the ledger's `dedupe_key` embeds the roster row id, so a
-     * transfer onto a new row starts a new namespace.
+     * STILL TRUE TODAY, AND DUE TO GO. The owner has decided that a balance
+     * follows the student (2026-10-04), and the writer for it exists:
+     * `App\Support\ClassStore::carryBalance`, which nothing calls yet. The
+     * commit that makes `write()` call it removes this method, `bucksStaying`
+     * and the sentence "They stay there for now", sets the plan's `bucksRule`,
+     * and widens `ready()` to the ledger's own column
+     * (`ClassStore::carryReady()`). Until then a move leaves the balance on
+     * the old row and says so, and this boolean differs child by child, which
+     * a whole-class preview prints for every child at once: one more reason
+     * the class store stays off until that commit.
      *
      * @param  array<string, int>  $held
      */

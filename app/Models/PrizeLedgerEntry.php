@@ -25,8 +25,9 @@ use LogicException;
  *
  * A BALANCE FOLLOWS A MOVED STUDENT as one pair of rows, a `transfer_out` on the roster row they
  * left and a `transfer_in` on the one they hold in the new class, for the old row's whole
- * balance (App\Support\ClassStore::carryBalance, called by the move and by nothing else). The
- * two rows are not linked: each explains its own roster row's balance alone, and both carry
+ * balance (App\Support\ClassStore::carryBalance: written for the move to call and for nothing
+ * else, and called by nothing until the commit that wires it into the move). The two rows are
+ * not linked: each explains its own roster row's balance alone, and both carry
  * `counts_from`, the week the carried amount counts as minted in, which is how expiry tells a
  * balance moved this year from one a past cutoff should have taken (App\Support\BucksExpiry).
  *

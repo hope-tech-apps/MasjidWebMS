@@ -45,12 +45,15 @@ use Throwable;
  *    redemption, with a guard that refuses to go below zero, and given back by a reversal.
  *  - CASH-OUT TO PAPER is built and OFF: refused here, not just in a controller, while the
  *    school's `paper_bucks_enabled` is false.
- *  - A BALANCE FOLLOWS A MOVED STUDENT. The move writes one `transfer_out` on the roster row
- *    being left and one `transfer_in` on the row in the new class, for the old row's WHOLE
- *    balance or not at all, both rows or neither (`carryBalance`). It is the one write here
- *    that takes no lock of its own: its only caller already holds both roster rows. From then
- *    on the row left behind is CARRIED AWAY (a leaving date and a "moved to"): the mint writes
- *    nothing on it and a prize given from it can no longer be undone there.
+ *  - A BALANCE FOLLOWS A MOVED STUDENT, from the commit that makes the move call the writer.
+ *    NOT YET: at this commit nothing calls `carryBalance`, a move leaves the balance on the
+ *    old row, and no transfer row can exist. When it is wired, the move writes one
+ *    `transfer_out` on the roster row being left and one `transfer_in` on the row in the new
+ *    class, for the old row's WHOLE balance or not at all, both rows or neither. It is the one
+ *    write here that takes no lock of its own: its only caller will already hold both roster
+ *    rows. What ACTS TODAY is the row's own state: a row left behind by a move is CARRIED AWAY
+ *    (a leaving date and a "moved to"), the mint writes nothing on it, and a prize given from
+ *    it can no longer be undone there.
  *
  * ## Reading a balance
  *
@@ -505,8 +508,11 @@ final class ClassStore
     }
 
     /**
-     * CALLED ONLY BY RosterMove::write(), inside the move's transaction, with BOTH roster rows
-     * already held by that transaction. It takes no lock of its own. Writes the pair for the old
+     * TO BE CALLED ONLY BY RosterMove::write(), inside the move's transaction, with BOTH roster
+     * rows already held by that transaction. NOTHING CALLS IT YET: the commit that adds that one
+     * call also widens the move's guard for the deploy window (`RosterMove::ready()`) to this
+     * class's column check (`carryReady()`), which today guards expiry's read only. It takes no
+     * lock of its own. Writes the pair for the old
      * row's whole balance, or nothing. Returns nothing: no caller can learn whether a pair was
      * written, so no caller can print it.
      *
