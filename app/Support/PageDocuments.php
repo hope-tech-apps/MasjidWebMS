@@ -418,8 +418,8 @@ final class PageDocuments
         [[, $at], [$host], [$path]] = $match;
 
         // The scheme, when it is one of the two a page is served by: it says which port is no port.
-        $scheme = preg_match('~(?<![a-z0-9+.-])(https?):$~i', substr($front, max(0, $at - 7), min($at, 7)), $written)
-            ? strtolower($written[1])
+        $scheme = preg_match('~(?<![a-z0-9+.-])(https?):$~i', substr($front, max(0, $at - 7), min($at, 7)), $named)
+            ? strtolower($named[1])
             : '';
 
         return in_array(self::plainHost($host, $scheme) . rtrim($path, '/'), $ours, true);
