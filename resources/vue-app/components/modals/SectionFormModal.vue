@@ -370,7 +370,7 @@
 import { PageSection, SectionType } from '@/core/types/data/masjid-related/PageSection';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { isWebOnlySectionType, webOnlyPlatforms } from '@/core/helpers/shopSection';
-import { sectionDocumentsIn, sectionDocumentsLeaving } from '@/core/helpers/sectionDocumentFile';
+import { sectionDocumentsIn, sectionDocumentsLeaving, sectionDocumentsNotSaved } from '@/core/helpers/sectionDocumentFile';
 import { ref, computed, onMounted, shallowRef, provide, watch } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
 import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
@@ -757,15 +757,40 @@ const stripBase64Images = (content: any): any => {
 };
 
 /**
- * Cancel and the close button. Closing while a PDF is uploading discards the editor the answer is
- * for, but not the upload: the request is already on its way, so the office is asked first.
+ * Cancel and the close button. Two things a close can leave behind, and ONE question for them:
+ *
+ *  - A PDF that is still uploading. Closing discards the editor the answer is for, but not the
+ *    upload: the request is already on its way. The advice is to wait and SAVE; waiting and then
+ *    closing leaves the same file online.
+ *  - A PDF that is in the form and not in the saved section (uploaded, or put in, since it was
+ *    opened). It is online already, no save has linked it, and this form is the last screen that
+ *    shows its address. Read from the content as the footer's notes are, against what was saved:
+ *    nothing is kept about it anywhere else. "Unless another saved section links it" because the
+ *    page tool cannot know that of an address put in by hand.
+ *
+ * Nothing is asked when there is neither.
  */
 const requestClose = async () => {
-    if (documentUploads.value > 0) {
+    const uploading = documentUploads.value > 0;
+    const notSaved = sectionDocumentsNotSaved(savedDocuments, formData.value.content);
+
+    if (uploading || notSaved.length > 0) {
+        const said: string[] = [];
+        if (uploading) {
+            said.push('If you close now it may still be stored. It would then stay online, linked from nowhere, with its address shown on no screen. Wait for the upload to finish, then save.');
+        }
+        if (notSaved.length === 1) {
+            said.push(`${notSaved[0].name} has not been saved in this section. If you close without saving, it stays online, linked from nowhere unless another saved section links it. Its address: ${notSaved[0].address}`);
+        } else if (notSaved.length > 1) {
+            said.push(`These PDFs have not been saved in this section: ${notSaved.map((file) => `${file.name} (${file.address})`).join('; ')}. If you close without saving, they stay online, linked from nowhere unless another saved section links them.`);
+        }
+
         const answer = await Swal.fire({
             icon: 'warning',
-            title: 'A PDF is still uploading',
-            text: 'If you close now it may still be stored. It would then stay online, linked from nowhere, with its address shown on no screen. Wait for the upload to finish, then close.',
+            title: uploading
+                ? 'A PDF is still uploading'
+                : notSaved.length === 1 ? 'A PDF has not been saved' : 'PDFs have not been saved',
+            text: said.join(' '),
             showCancelButton: true,
             confirmButtonColor: '#d33',
             cancelButtonColor: '#3085d6',

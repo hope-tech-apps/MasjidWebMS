@@ -303,8 +303,11 @@ test('Cancel and the close button ask before discarding an upload in flight, and
     await flush();
     assert.equal(staying.asked.length, 2);
     assert.equal(staying.asked[0].title, 'A PDF is still uploading');
-    // The question says what closing would leave behind, and offers both ways out.
+    // The question says what closing would leave behind, and offers both ways out. Its advice is to
+    // wait and SAVE: waiting and then closing would leave the same file online.
     assert.match(staying.asked[0].text, /stay online, linked from nowhere/);
+    assert.match(staying.asked[0].text, /Wait for the upload to finish, then save\.$/);
+    assert.doesNotMatch(staying.asked[0].text, /then close/);
     assert.equal(staying.asked[0].showCancelButton, true);
     assert.deepEqual([staying.asked[0].confirmButtonText, staying.asked[0].cancelButtonText], ['Close Anyway', 'Keep Editing']);
     assert.equal(staying.emitted.close, 0);
@@ -751,6 +754,129 @@ test('while a PDF uploads into a new section, Attach Existing cannot be chosen e
     assert.equal(check(modal.modeRadios()[1]), true);
     await flush();
     assert.equal(modal.form(), undefined, 'Attach Existing shows no form');
+
+    modal.screen.unmount();
+});
+
+/* ------------------------------------------- closing on a PDF that no saved section holds */
+
+const UNSAVED_TITLE = 'A PDF has not been saved';
+const OTHER_ADDRESS = 'https://platform.example.test/storage/413/class-schedule.pdf';
+
+test('Cancel and the close button ask before closing on a PDF that is in the form and not in the saved section, and say where it is', async () => {
+    const upload = async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
+    const modal = await mountModal(linkList({ label: 'Calendar', url: SAVED_ADDRESS }, { label: 'Schedule' }), upload, false);
+
+    // A document the saved section already links is not one of these: closing leaves it as it is.
+    click(modal.cancel());
+    await flush();
+    assert.deepEqual(modal.asked, []);
+    assert.equal(modal.emitted.close, 1);
+
+    // One is uploaded. The upload has ended, so nothing is in flight; the file is online, and this
+    // form is the only place its address is written.
+    await modal.choose(1, pdf());
+    assert.equal(modal.save().disabled, false);
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.asked.length, 1, 'closing on an unsaved upload asked nothing, or asked more than once');
+    const question = modal.asked[0];
+    assert.equal(question.title, UNSAVED_TITLE);
+    assert.equal(question.icon, 'warning');
+    // The file's name (in its own right: the address ends with it too), what closing leaves
+    // behind, and the address, which no screen shows afterwards.
+    assert.ok(question.text.startsWith('academic-calendar-2026.pdf has not been saved in this section.'), question.text);
+    assert.match(question.text, /If you close without saving, it stays online, linked from nowhere/);
+    assert.ok(question.text.includes(`Its address: ${ADDRESS}`));
+    // Only that file: the saved one is not said to be anything.
+    assert.ok(!question.text.includes('calendar-2025.pdf'));
+    // The same two ways out as the question about an upload in flight.
+    assert.equal(question.showCancelButton, true);
+    assert.deepEqual([question.confirmButtonText, question.cancelButtonText], ['Close Anyway', 'Keep Editing']);
+    // "Keep Editing": the modal stays.
+    assert.equal(modal.emitted.close, 1);
+
+    // The close button asks the same thing.
+    click(modal.closeButton());
+    await flush();
+    assert.equal(modal.asked.length, 2);
+    assert.equal(modal.asked[1].text, question.text);
+    assert.equal(modal.emitted.close, 1);
+
+    // Once the form no longer holds it, there is nothing here to lose track of, and nothing is asked.
+    type(modal.linkFields()[1], '');
+    await flush();
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.asked.length, 2);
+    assert.equal(modal.emitted.close, 2);
+
+    modal.screen.unmount();
+});
+
+test('the question is asked once for every unsaved PDF in the form, of one put in by hand too, and "Close Anyway" closes', async () => {
+    const modal = await mountModal(
+        linkList({ label: 'Calendar' }, { label: 'Schedule' }, { label: 'Kept', url: SAVED_ADDRESS }),
+        async () => ({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 }),
+        true,
+    );
+
+    // One uploaded, one pasted (in another spelling of its address: a query after it).
+    await modal.choose(0, pdf());
+    type(modal.linkFields()[1], `${OTHER_ADDRESS}?v=2`);
+    await flush();
+
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.asked.length, 1, 'one question, not one for each file');
+    assert.equal(modal.asked[0].title, 'PDFs have not been saved');
+    // Each by its name and its address (as it was written, without the query put after it).
+    for (const said of [`academic-calendar-2026.pdf (${ADDRESS})`, `class-schedule.pdf (${OTHER_ADDRESS})`, 'they stay online, linked from nowhere']) {
+        assert.ok(modal.asked[0].text.includes(said), `the question does not say: ${said}`);
+    }
+    assert.ok(!modal.asked[0].text.includes('calendar-2025.pdf'));
+    assert.equal(modal.emitted.close, 1);
+
+    modal.screen.unmount();
+});
+
+test('a new section asks too, and an upload still in flight beside an unsaved PDF is one question that says both', async () => {
+    const answers = [deferred<any>(), deferred<any>()];
+    let sent = 0;
+    const modal = await mountModal(undefined, () => answers[sent++].promise, { sectionTypes: offeredTypes() });
+    select(modal.typeSelect(), 'link_list');
+    await flush();
+    click(modal.screen.button('Add Link'));
+    await flush();
+
+    // Nothing in the form yet: closing asks nothing.
+    click(modal.cancel());
+    await flush();
+    assert.deepEqual(modal.asked, []);
+    assert.equal(modal.emitted.close, 1);
+
+    // A first upload ends. No section is saved at all, so it is in none.
+    void modal.choose(0, pdf());
+    await flush();
+    answers[0].resolve({ url: ADDRESS, name: 'Academic Calendar 2026', size: 1 });
+    await flush();
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.asked.length, 1);
+    assert.equal(modal.asked[0].title, UNSAVED_TITLE);
+    assert.ok(modal.asked[0].text.includes(`Its address: ${ADDRESS}`));
+
+    // A second upload is started over it and is still on its way.
+    void modal.choose(0, pdf('Class Schedule.pdf'));
+    await flush();
+    click(modal.cancel());
+    await flush();
+    assert.equal(modal.asked.length, 2, 'one question for the two things closing would leave behind');
+    assert.equal(modal.asked[1].title, 'A PDF is still uploading');
+    assert.match(modal.asked[1].text, /Wait for the upload to finish, then save\./);
+    assert.ok(modal.asked[1].text.includes('academic-calendar-2026.pdf has not been saved in this section.'));
+    assert.ok(modal.asked[1].text.includes(`Its address: ${ADDRESS}`));
+    assert.equal(modal.emitted.close, 1);
 
     modal.screen.unmount();
 });

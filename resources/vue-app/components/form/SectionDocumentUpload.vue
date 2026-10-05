@@ -62,9 +62,9 @@
             and save; uploading another PDF in its place does the same to this one.
         </div>
         <div v-else-if="documentName" class="form-text">
-            This file is not in the saved section yet. If you clear its address or upload another
-            PDF in its place before you save, it stays online. To take it offline, save the section
-            with it first, then clear the address and save again.
+            This file is not in the saved section yet. If you clear its address, upload another PDF
+            in its place, or close without saving, it stays online. To take it offline, save the
+            section with it first, then clear the address and save again.
         </div>
     </div>
 </template>

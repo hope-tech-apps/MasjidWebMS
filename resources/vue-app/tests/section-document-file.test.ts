@@ -13,7 +13,8 @@ import { httpError, loadTs } from './support/mountSfc.ts';
 const {
     SECTION_DOCUMENT_ACCEPT, SECTION_DOCUMENT_ICON, SECTION_DOCUMENT_MAX_BYTES, SECTION_DOCUMENT_MIME,
     SECTION_DOCUMENT_TOO_MANY, SECTION_DOCUMENT_UPLOAD_FAILED, sectionDocumentFileProblem, sectionDocumentLabel,
-    sectionDocumentName, sectionDocumentPath, sectionDocumentsIn, sectionDocumentsLeaving, sectionDocumentUploadProblem,
+    sectionDocumentName, sectionDocumentPath, sectionDocumentsIn, sectionDocumentsLeaving, sectionDocumentsNotSaved,
+    sectionDocumentUploadProblem,
 } = documentFile;
 
 // The server's own two sentences (StorePageDocumentRequest), so the office reads the same words
@@ -147,12 +148,21 @@ test('the page documents a section links are found in any field, as the server f
         count: 3,
     };
 
+    // Each once, by its path, with the address as it was FIRST written there: its host and path, and
+    // nothing after the path.
     assert.deepEqual(sectionDocumentsIn(content), [
-        { path: '/storage/412/calendar.pdf', name: 'calendar.pdf' },
-        { path: '/storage/415/handbook.pdf', name: 'handbook.pdf' },
+        { path: '/storage/412/calendar.pdf', name: 'calendar.pdf', address: 'https://platform.example.test/storage/412/calendar.pdf' },
+        { path: '/storage/415/handbook.pdf', name: 'handbook.pdf', address: 'https://platform.example.test/storage/415/handbook.pdf' },
     ]);
     assert.deepEqual(sectionDocumentsIn(undefined), []);
     assert.deepEqual(sectionDocumentsIn({}), []);
+
+    // Written with no host, the path is all the address there is; inside a viewer's link, the
+    // address is the document's own, not the viewer's.
+    assert.deepEqual(sectionDocumentsIn({ a: 'see /storage/7/fees.pdf.', b: 'https://viewer.example.test/view?url=https://platform.example.test:8443/storage/8/menu.pdf&x=1' }), [
+        { path: '/storage/7/fees.pdf', name: 'fees.pdf', address: '/storage/7/fees.pdf' },
+        { path: '/storage/8/menu.pdf', name: 'menu.pdf', address: 'https://platform.example.test:8443/storage/8/menu.pdf' },
+    ]);
 });
 
 test('a saved document the content no longer links is leaving; one still linked in any spelling is not', () => {
@@ -173,6 +183,24 @@ test('a saved document the content no longer links is leaving; one still linked 
     }), []);
     // A section that linked nothing has nothing to lose.
     assert.deepEqual(sectionDocumentsLeaving([], { links: [] }), []);
+});
+
+test('the documents a form holds that the saved section does not are the ones no save has linked', () => {
+    const calendar = 'https://platform.example.test/storage/412/calendar.pdf';
+    const schedule = 'https://platform.example.test/storage/413/schedule.pdf';
+    const saved = sectionDocumentsIn({ links: [{ url: calendar }] });
+    const notSaved = (content: unknown) => sectionDocumentsNotSaved(saved, content).map((document) => document.address);
+
+    assert.deepEqual(notSaved({ links: [{ url: calendar }] }), []);
+    // The saved document under another host, or with a query after it, is still the saved one.
+    assert.deepEqual(notSaved({ links: [{ url: 'http://another-host.example.test/storage/412/calendar.pdf?v=2' }] }), []);
+    // One put in beside it, in a link or in a paragraph, is not.
+    assert.deepEqual(notSaved({ links: [{ url: calendar }, { url: schedule }] }), [schedule]);
+    assert.deepEqual(notSaved({ links: [{ url: calendar }], body: `<a href="${schedule}">Schedule</a>` }), [schedule]);
+    assert.deepEqual(notSaved({ links: [] }), []);
+
+    // A section that was never saved has saved none of them.
+    assert.deepEqual(sectionDocumentsNotSaved([], { links: [{ url: calendar }, { url: schedule }] }).map((document) => document.name), ['calendar.pdf', 'schedule.pdf']);
 });
 
 test('a refusal by the server is shown word for word; anything else gets one plain sentence', () => {

@@ -37,9 +37,12 @@ const SECTION_DOCUMENT_ADDRESS = /^https?:\/\/[^/\s]+(\/storage\/[1-9]\d*\/([a-z
 
 /**
  * The same path wherever it is written inside a longer text (a paragraph, a viewer's link), which is
- * how the server looks for the documents a section links. The same pattern as PageDocuments::ADDRESS.
+ * how the server looks for the documents a section links. The path is the same pattern as
+ * PageDocuments::ADDRESS. The host written straight in front of it, when there is one, is taken too,
+ * so the document can be named by an address a person can open; it never decides what is found (it
+ * holds no `/`, so it cannot reach over one path to another).
  */
-const SECTION_DOCUMENT_PATH_ANYWHERE = /\/storage\/[1-9]\d*\/([a-z0-9-]+\.pdf)(?![\w.-]*\w)/g;
+const SECTION_DOCUMENT_ANYWHERE = /(https?:\/\/[^/\s"'<>]+)?(\/storage\/[1-9]\d*\/([a-z0-9-]+\.pdf))(?![\w.-]*\w)/g;
 
 /** The two sentences the server gives for a file that is not a PDF, word for word (StorePageDocumentRequest). */
 export const SECTION_DOCUMENT_NOT_A_PDF = 'This file is not a PDF. Save or print it as a PDF, then upload that.';
@@ -91,10 +94,15 @@ export function sectionDocumentPath(value: unknown): string | null {
     return match ? match[1] : null;
 }
 
-/** A page document a section's content links: its path, and its file's name for a person to read. */
+/**
+ * A page document a section's content links: its path, its file's name for a person to read, and its
+ * address as it is written there (host and path, with nothing after the path; the bare path when no
+ * host was written). The PATH is what makes two of these the same document.
+ */
 export interface SectionDocument {
     path: string;
     name: string;
+    address: string;
 }
 
 /** Every string anywhere in a section's content. */
@@ -129,12 +137,24 @@ export function sectionDocumentsIn(content: unknown): SectionDocument[] {
     const found = new Map<string, SectionDocument>();
 
     for (const text of stringsIn(content)) {
-        for (const match of text.matchAll(SECTION_DOCUMENT_PATH_ANYWHERE)) {
-            found.set(match[0], { path: match[0], name: match[1] });
+        for (const [, host = '', path, name] of text.matchAll(SECTION_DOCUMENT_ANYWHERE)) {
+            // Once for each document, with the address it was first written with.
+            if (!found.has(path)) {
+                found.set(path, { path, name, address: host + path });
+            }
         }
     }
 
     return [...found.values()];
+}
+
+/**
+ * The page documents a form holds that the SAVED section does not: uploaded, or put in by hand, since
+ * the section was last saved (every one of them, for a section that has never been saved). No save
+ * has linked them, so if the form is closed without saving, nothing here says where they are.
+ */
+export function sectionDocumentsNotSaved(saved: readonly SectionDocument[], content: unknown): SectionDocument[] {
+    return sectionDocumentsIn(content).filter((document) => !saved.some((kept) => kept.path === document.path));
 }
 
 /**

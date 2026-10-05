@@ -84,8 +84,20 @@ not.)
   goes and lowers it when the answer comes, or when the control is unmounted first.
   While it is above zero Create/Update Section is off, the footer says "A PDF is still
   uploading.", `handleSubmit` returns (Enter in a field submits the form and asks no
-  button), and Cancel and the close button ask before closing. The editors do nothing
-  for this: their own `uploadsInFlight` only holds their rows.
+  button), and Cancel and the close button ask before closing. A NEW section's Section
+  Type and its Create New / Attach Existing choice are held too: either takes the
+  editor away as closing does, and neither asks. The editors do nothing for this:
+  their own `uploadsInFlight` only holds their rows. The count is lowered ONCE for
+  each upload (the control's `counted`): one whose control went mid-upload has been
+  counted down already, and its late answer must not open Save for another.
+- **Closing asks about a PDF that no save has linked.** When the form holds a page
+  document the saved section does not (`sectionDocumentsNotSaved`: uploaded, or put
+  in by hand, since it was opened), Cancel and the close button ask once, naming the
+  file and giving its address, because the file is online already and this form is
+  the last screen that shows where. With an upload also in flight it is still one
+  question, and its advice is to wait and SAVE (waiting and closing leaves the same
+  file online). Nothing is kept for this: it is read from the content when the
+  office closes, as the footer's notes are.
 - **What is true to say about taking a file offline depends on whether it is SAVED.** The
   server deletes a document when a save stops linking it, compared with the saved
   section, so a file uploaded since the last save is deleted by nothing. The modal
