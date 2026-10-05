@@ -23,7 +23,7 @@ const HELP = 'Or upload a PDF (up to 25 MB) and its address is filled in for you
 // file is in the saved section: the server deletes a document when a save stops linking it, compared
 // with what was saved.
 const SAVED = 'It stays online while a saved section links to it. To take it offline, clear the address and save; uploading another PDF in its place does the same to this one.';
-const NOT_SAVED = 'This file is not in the saved section yet. Clearing its address, or uploading another PDF in its place, before you save leaves it online. To take it offline, save the section with it first, then clear the address and save again.';
+const NOT_SAVED = 'This file is not in the saved section yet. If you clear its address or upload another PDF in its place before you save, it stays online. To take it offline, save the section with it first, then clear the address and save again.';
 const NOT_A_PDF = 'This file is not a PDF. Save or print it as a PDF, then upload that.';
 
 // Any sentence saying a field beside the link was filled. (The help line's "its address is filled in

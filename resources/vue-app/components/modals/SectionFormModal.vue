@@ -840,11 +840,25 @@ const handleSubmit = async () => {
 }
 
 /* The footer's notes take the room the buttons leave and wrap inside it, so a long file name
-   never pushes Cancel and Save off their line on a wide screen. */
+   never pushes Cancel and Save off their line on a wide screen; on a narrow one they take a line
+   of their own above the buttons. With nothing to say they take no room at all (the element stays
+   in the page, so a screen reader hears it fill). */
 .section-form-notes {
     flex: 1 1 12rem;
     min-width: 0;
     overflow-wrap: anywhere;
+}
+
+.section-form-notes:empty {
+    flex-basis: 0;
+    margin: 0;
+}
+
+@media (max-width: 575.98px) {
+    /* On a phone the notes have the whole line, so Cancel and Save stay side by side under them. */
+    .section-form-notes:not(:empty) {
+        flex-basis: 100%;
+    }
 }
 
 .btn-check:checked + .btn-outline-primary {
