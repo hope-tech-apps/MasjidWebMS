@@ -618,14 +618,17 @@ class PageDocumentCleanupTest extends TestCase
     public function a_document_replaced_by_an_address_of_this_application_whose_document_is_gone_is_kept_and_written_down(): void
     {
         // What an old copy holds, in each way it can be written: on the public disk's own address (as
-        // every upload is answered), on that host by plain http, with no host at all, and on the host
-        // this request came in on (the deployment answers to more than one).
+        // every upload is answered), on that host by plain http, with no host at all, on the host
+        // this request came in on (the deployment answers to more than one), and carried
+        // percent-encoded inside a viewer's link (found in the percent-decoded reading alone).
         $request = 'admin-host.example.test';
         $spellings = [
             'the public disk\'s own address' => self::PUBLIC_DISK_URL . '/999999/annual-report.pdf',
             'the same host over http' => str_replace('https://', 'http://', self::PUBLIC_DISK_URL) . '/999998/annual-report.pdf',
             'no host at all' => '/storage/999997/annual-report.pdf',
             'the host the request came in on' => "https://{$request}/storage/999996/annual-report.pdf",
+            'percent-encoded inside a viewer\'s link' => 'https://viewer.example.test/view?url='
+                . rawurlencode(self::PUBLIC_DISK_URL . '/999995/annual-report.pdf') . '&embedded=true',
         ];
 
         foreach ($spellings as $what => $dead) {
@@ -659,6 +662,57 @@ class PageDocumentCleanupTest extends TestCase
                 })
                 ->once();
         }
+    }
+
+    #[Test]
+    public function a_stale_save_that_brings_back_a_viewers_link_to_a_deleted_document_keeps_the_current_document(): void
+    {
+        $viewer = fn (array $document) => 'https://viewer.example.test/view?url=' . rawurlencode($document['url']) . '&embedded=true';
+
+        // X is opened through a viewer from one section, and linked plainly from another.
+        $x = $this->uploadDocument('Calendar 2025.pdf');
+        $viewed = $this->saveSection('cta', $this->cta($viewer($x)));
+        $buttons = $this->saveLinkList([$x['url']]);
+
+        // What a second tab holds of the first section: the viewer's link, with X's address inside
+        // it percent-encoded and nowhere as it is written.
+        $heldByTheSecondTab = Section::findOrFail($viewed)->content;
+        $this->assertSame($viewer($x), $heldByTheSecondTab['button_link']);
+        $this->assertStringNotContainsString('/storage/', $heldByTheSecondTab['button_link']);
+
+        // The first tab puts a new document, Y, in the viewer's place. Then the buttons let go of
+        // X, nothing links it any more, and it is deleted, as it should be.
+        $y = $this->uploadDocument('Calendar 2026.pdf');
+        $this->updateSection($viewed, $this->cta($y['url']));
+        $this->assertDocumentKept($x);
+        $this->updateLinkList($buttons, ['']);
+        $this->assertDocumentGone($x);
+
+        // The second tab, still showing the viewer's link to X, saves.
+        Log::spy();
+        $saved = $this->updateSection($viewed, $heldByTheSecondTab);
+        $this->assertSame($viewer($x), $saved['content']['button_link']);
+
+        // The address it brought back is one of ours whose document is gone, though it is only
+        // there percent-encoded: the save is out of date, and Y is not deleted with it.
+        $this->assertDocumentKept($y);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context = []) use ($y, $viewed): bool {
+                if (! str_starts_with($message, 'Page documents NOT removed')) {
+                    return false;
+                }
+
+                $this->assertStringContainsString('out-of-date editor', $message);
+                $this->assertSame([
+                    'masjid_id' => $this->masjid->id,
+                    'section_id' => $viewed,
+                    'media_ids' => [$y['id']],
+                ], $context);
+
+                return true;
+            })
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
     }
 
     #[Test]
@@ -731,12 +785,22 @@ class PageDocumentCleanupTest extends TestCase
      */
     public static function spellingsABrowserResolves(): array
     {
+        $viewer = fn (string $address) => 'https://viewer.example.test/view?url=' . rawurlencode($address) . '&embedded=true';
+
         return [
             'a dot segment' => [fn (string $plain) => str_replace('/storage/', '/storage/./', $plain)],
             'a dot-dot segment' => [fn (string $plain) => str_replace('/storage/', '/storage/old/../', $plain)],
             'a doubled slash' => [fn (string $plain) => str_replace('/storage/', '/storage//', $plain)],
             'backslashes for slashes' => [fn (string $plain) => str_replace('/', '\\', $plain)],
             'JSON-escaped slashes' => [fn (string $plain) => str_replace('/', '\\/', $plain)],
+            // More than one step back, each over its own segment.
+            'two dot-dot segments' => [fn (string $plain) => str_replace('/storage/', '/storage/a/b/../../', $plain)],
+            // Percent-encoded, which a browser reads as the same segments: found only because the
+            // percent-decoded reading is resolved as well as the text as written.
+            'a dot segment written %2e' => [fn (string $plain) => str_replace('/storage/', '/storage/%2e/', $plain)],
+            'a dot-dot segment written %2E%2E' => [fn (string $plain) => str_replace('/storage/', '/storage/old/%2E%2E/', $plain)],
+            'backslashes written %5C' => [fn (string $plain) => str_replace('/', '%5C', $plain)],
+            'a dot segment, percent-encoded inside a viewer\'s link' => [fn (string $plain) => $viewer(str_replace('/storage/', '/storage/./', $plain))],
         ];
     }
 
