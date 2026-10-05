@@ -204,13 +204,13 @@ class StudentBirthDateTest extends TestCase
     {
         $this->getJson($this->birthDateUrl())->assertOk()->assertExactJson([
             'status' => 'success',
-            'data' => ['date_of_birth' => null, 'age' => null, 'unreadable' => false, 'school_today' => '2026-10-06'],
+            'data' => ['date_of_birth' => null, 'age' => null, 'age_given' => false, 'unreadable' => false, 'school_today' => '2026-10-06'],
         ]);
 
         $this->putJson($this->birthDateUrl(), ['date_of_birth' => self::SENTINEL])->assertOk()->assertExactJson([
             'status' => 'success',
             'message' => 'Date of birth saved.',
-            'data' => ['date_of_birth' => self::SENTINEL, 'age' => 9, 'unreadable' => false, 'school_today' => '2026-10-06'],
+            'data' => ['date_of_birth' => self::SENTINEL, 'age' => 9, 'age_given' => false, 'unreadable' => false, 'school_today' => '2026-10-06'],
         ]);
 
         $this->getJson($this->birthDateUrl())->assertOk()
@@ -421,7 +421,7 @@ class StudentBirthDateTest extends TestCase
         $expected = [
             'status' => 'success',
             'message' => 'Date of birth removed.',
-            'data' => ['date_of_birth' => null, 'age' => null, 'unreadable' => false],
+            'data' => ['date_of_birth' => null, 'age' => null, 'age_given' => false, 'unreadable' => false],
         ];
 
         $this->deleteJson($this->clearUrl())->assertOk()->assertExactJson($expected);

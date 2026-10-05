@@ -259,6 +259,10 @@ class MemberAccountDeletion
         // something about this person and the contact is kept. Classified from
         // the raw column: reasonsToKeep() never decrypts it.
         'date_of_birth',
+        // The age a family gave for a student (2026-10-05), copied from the
+        // school's registration answers. The same reasoning: a value here means
+        // the school holds something about this person. Raw column, never read.
+        'age_given',
     ];
 
     public function __construct(private TenantContext $tenant)

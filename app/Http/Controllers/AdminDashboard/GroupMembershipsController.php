@@ -184,8 +184,10 @@ class GroupMembershipsController extends Controller
         // A whole-number age for each STUDENT IN A CLASS, and null on every other
         // row. The date behind it is read in StudentAge's own query and never
         // joins this payload; the office reads it one student at a time through
-        // GroupBirthDateController.
-        $ages = StudentAge::forRoster($group, $memberships);
+        // GroupBirthDateController. `age_given` says the number is the age the
+        // family gave (no date of birth on file), so the screen can say so: it
+        // may be one short after a birthday.
+        $ages = StudentAge::forRosterShown($group, $memberships);
 
         return response()->json([
             'status' => 'success',
@@ -194,7 +196,8 @@ class GroupMembershipsController extends Controller
 
                 return array_merge($membership->toArray(), [
                     'moved_to_state' => $movedToStates[(int) $membership->getKey()] ?? null,
-                    'age' => $ages[(int) $membership->getKey()] ?? null,
+                    'age' => $ages[(int) $membership->getKey()]['age'] ?? null,
+                    'age_given' => $ages[(int) $membership->getKey()]['given'] ?? false,
                     'claim' => [
                         'fingerprint' => $membership->isConfirmed()
                             ? null

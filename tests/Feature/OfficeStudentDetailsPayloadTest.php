@@ -72,7 +72,7 @@ class OfficeStudentDetailsPayloadTest extends TestCase
         'created_at', 'updated_at',
         'contact', 'guardian_of', 'confirmed_by', 'source_registration',
         'moved_to', 'moved_from', 'moved_to_state',
-        'age',
+        'age', 'age_given',
         'claim',
     ];
 
@@ -156,6 +156,9 @@ class OfficeStudentDetailsPayloadTest extends TestCase
             'moved_to', 'moved_from', 'moved_to_state', 'age'] as $key) {
             $this->assertNull($row[$key], $key);
         }
+
+        // And no age was given by the family either: a plain false, never absent.
+        $this->assertFalse($row['age_given']);
     }
 
     #[Test]

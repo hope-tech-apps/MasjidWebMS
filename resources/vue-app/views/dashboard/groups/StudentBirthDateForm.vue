@@ -107,6 +107,8 @@ import { BIRTH_DATE_MIN, birthDateMax, birthDateProblem, birthDateWords } from '
 interface BirthDateChange {
     membershipId: number | string;
     age: number | null;
+    /** The age is the one the family gave at registration (no date of birth on file). */
+    given: boolean;
     held: boolean;
 }
 
@@ -262,7 +264,7 @@ const save = async () => {
 
         // THE ROSTER IS TOLD FIRST, whatever became of this form meanwhile:
         // the server saved the date for that row.
-        tell?.({ membershipId, age: res.data?.data?.age ?? null, held: true });
+        tell?.({ membershipId, age: res.data?.data?.age ?? null, given: res.data?.data?.age_given === true, held: true });
         if (mine !== asked) return;
 
         show(res.data?.data);
@@ -293,7 +295,9 @@ const remove = async () => {
     try {
         const res = await ApiService.delete(contactUrl());
 
-        tell?.({ membershipId, age: null, held: false });
+        // With the date gone the row shows the age the family gave again, when
+        // one is on file: the server says which.
+        tell?.({ membershipId, age: res.data?.data?.age ?? null, given: res.data?.data?.age_given === true, held: false });
         if (mine !== asked) return;
 
         date.value = null;

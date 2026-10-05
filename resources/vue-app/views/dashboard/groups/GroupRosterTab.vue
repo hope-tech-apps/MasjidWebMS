@@ -193,7 +193,12 @@
                             <!-- A whole number of years, worked out by the
                                  server on the school's clock. The date behind
                                  it is never on this list. -->
-                            <td v-if="isClass">{{ ageCell(membership.age) }}</td>
+                            <td v-if="isClass">
+                                {{ ageCell(membership.age) }}
+                                <!-- No date of birth on file: this is the age the
+                                     family gave at registration, and is said to be. -->
+                                <span v-if="ageWasGiven(membership)" class="text-muted small ms-1" :title="AGE_GIVEN_TITLE">{{ AGE_GIVEN_MARK }}</span>
+                            </td>
                             <!-- A calendar day, read off the string: drawn as an
                                  instant it shows the day before to everyone west of
                                  UTC, beside a "Moved from" line that names the real one. -->
@@ -705,7 +710,7 @@
                  form's own business: it asks the server, and draws nothing for
                  a login that may not see it. Students of a class only. -->
             <template #age="{ student }">
-                <div v-if="isClass && ageLabel(student.age)" class="small text-muted mb-1">{{ ageLabel(student.age) }}</div>
+                <div v-if="isClass && ageLabel(student.age)" class="small text-muted mb-1">{{ ageLabel(student.age, student.age_given) }}</div>
             </template>
             <template #birth-date="{ student }">
                 <StudentBirthDateForm
@@ -752,7 +757,7 @@ import MoveStudentModal from './MoveStudentModal.vue';
 import PutBackDialog from './PutBackDialog.vue';
 import { consentBannerCount, consentBannerText, movedLabels } from '@/core/helpers/rosterMove';
 import StudentBirthDateForm from './StudentBirthDateForm.vue';
-import { ageCell, ageLabel, missingBirthDatesLine } from '@/core/helpers/studentAge';
+import { AGE_GIVEN_MARK, AGE_GIVEN_TITLE, ageCell, ageLabel, ageWasGiven, missingBirthDatesLine } from '@/core/helpers/studentAge';
 
 /**
  * The roster — who is in this group, and how.
@@ -882,9 +887,14 @@ const moveFromPanel = (membership: GroupMembership) => {
  * can arrive after the panel was closed or moved on to another student, and the
  * age it carries still belongs on the row it was saved for.
  */
-const onBirthDateChanged = (change: { membershipId: number | string; age: number | null }) => {
+const onBirthDateChanged = (change: { membershipId: number | string; age: number | null; given?: boolean }) => {
     const row = props.memberships.find((m) => m.id === Number(change.membershipId));
-    if (row) row.age = change.age ?? null;
+    if (!row) return;
+
+    // The server's own answer: with a date saved the age is exact; with the
+    // date removed it is the age the family gave again, when there is one.
+    row.age = change.age ?? null;
+    row.age_given = change.given === true;
 };
 
 /**

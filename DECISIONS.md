@@ -7714,3 +7714,28 @@ themselves still run only on the MySQL job.
   screen mounted from its .vue file). Not run on MySQL (no server where this was written); the query uses nothing
   SQLite-specific. The column was looked at in a browser only as a static page built from the compiled
   stylesheets (375 px and 1280 px wide), not in the running app behind a sign-in.
+
+## 2026-10-05: a roster shows the age a family gave when no date of birth is on file
+
+- **Asked.** The owner, the evening the Age column shipped: every age was a dash, and "they need to be populated
+  ASAP for every student". The column was built on a date of birth and no school had one on file: the
+  registration form asks for the child's age, not the date.
+- **Decided.** A second source, `contacts.age_given` (`{age}@{day}`, encrypted, hidden, one writer and one
+  reader), used only when no date of birth can be read, brought up to today by the whole years since it was
+  given, and marked on the office's roster as the family's ("given"). A date of birth still wins and is still
+  the only exact age. Rule: `.claude/rules/groups.md`, "The age a family gave".
+- **Rejected.** Writing an estimated date of birth from the age. It would put a date nobody gave into a field
+  the office reads as the child's date of birth, and into the records export under that heading.
+- **Decided here, the owner did not say:**
+  - The office is shown which ages are the family's, in a word beside the number and one line above the roster.
+    A teacher is shown the number only.
+  - The age grows by whole years from the day it was given rather than staying as typed, so it is not a year
+    out the following autumn. It can still be one short between the child's birthday and that anniversary.
+  - One encrypted column for both facts, following `date_of_birth`, not two plain ones: the two are never
+    written apart, and a plain value reaches a log on any query error that prints its bindings.
+  - The ages are copied in by an office-run script through the model's writer, matching a student only when
+    exactly one current student has that first and last name. No request can set one.
+- **Not built.** A new registration does not carry its age onto the student by itself. No screen edits or
+  clears the age given. The records export does not carry it.
+- **Tests.** `StudentAgeGivenTest` (19), the two SPA files, one MySQL case (CI only).
+

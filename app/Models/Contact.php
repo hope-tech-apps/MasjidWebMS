@@ -246,6 +246,10 @@ class Contact extends Model implements AuthenticatableContract
         // backstop, not the rule: the rule is the one reader and the one
         // writer below (dateOfBirthOrNull(), recordDateOfBirth()).
         'date_of_birth',
+        // The age a family gave for a student, with the day they gave it
+        // (2026-10-05). Hidden for the same reason: every payload carries at
+        // most the whole-number age worked out from it, never the value.
+        'age_given',
     ];
 
     protected function casts(): array
@@ -276,6 +280,10 @@ class Contact extends Model implements AuthenticatableContract
             // recordDateOfBirth() and read only by dateOfBirthOrNull(), which
             // survives a value that cannot be decrypted; never as a property.
             'date_of_birth' => 'encrypted',
+            // `{age}@{Y-m-d}`: the age a family gave and the day they gave it.
+            // Ciphertext at rest like the date above, not in $fillable, written
+            // only by recordAgeGiven() and read only by ageGivenOrNull().
+            'age_given' => 'encrypted',
         ];
     }
 
@@ -400,6 +408,135 @@ class Contact extends Model implements AuthenticatableContract
         ]);
 
         return $verb;
+    }
+
+    /** The oldest age a family can have given: generous, so a real answer is never refused. */
+    public const AGE_GIVEN_MAX = 25;
+
+    /**
+     * THE ONE READER of `age_given`: `['age' => whole years, 'on' => 'Y-m-d']`
+     * as the family gave it, or null.
+     *
+     * NOT the age today. An age given in September is a year out by the next
+     * one, so nothing shows this number as it is: App\Support\StudentAge (its
+     * shown()) adds the whole years since `on`, and uses it only when the
+     * contact has no readable date of birth.
+     *
+     * Like dateOfBirthOrNull(): a value that cannot be decrypted, or is not in
+     * the one written form, reads as "none on file" with one ERROR line naming
+     * the contact and never the value. A column that was not selected, or does
+     * not exist yet (bin/deploy serves new code before it migrates), is null
+     * without touching the cipher.
+     *
+     * @return array{age: int, on: string}|null
+     */
+    public function ageGivenOrNull(): ?array
+    {
+        $stored = $this->attributes['age_given'] ?? null;
+
+        if ($stored === null || $stored === '') {
+            return null;
+        }
+
+        try {
+            $value = $this->getAttribute('age_given');
+        } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+            $this->reportUnreadableAgeGiven('it could not be decrypted (was it written under another APP_KEY?)');
+
+            return null;
+        }
+
+        if (! is_string($value)
+            || preg_match('/\A(\d{1,2})@(\d{4}-\d{2}-\d{2})\z/', $value, $m) !== 1
+            || (int) $m[1] > self::AGE_GIVEN_MAX
+            || ! self::isRealDay($m[2])) {
+            $this->reportUnreadableAgeGiven('it is not an age and a real day written AGE@YYYY-MM-DD');
+
+            return null;
+        }
+
+        return ['age' => (int) $m[1], 'on' => $m[2]];
+    }
+
+    /** Whether the column holds ANYTHING, readable or not. Never decrypts. */
+    public function holdsAgeGiven(): bool
+    {
+        return filled($this->attributes['age_given'] ?? null);
+    }
+
+    /**
+     * THE ONE WRITER of `age_given`. Sets it (or clears it with a null age),
+     * SAVES, and records who did it. Returns `set`, `changed`, `removed` or
+     * `unchanged`.
+     *
+     * `$age` is what the family answered, in whole years, and `$onYmd` the day
+     * they answered (a registration's day, on the school's clock): the two are
+     * one fact and are stored as one value. Not in $fillable, so no request
+     * body or import row can set it by the way. The callers are the command
+     * that copies ages out of a school's registration answers and
+     * ContactsController::merge.
+     *
+     * WHO DID IT IS RECORDED, the value never: one `warning` line, as
+     * recordDateOfBirth() writes, for the same reason (production keeps
+     * warnings and drops info).
+     *
+     * `$through` says which door was used: `registration` or `merge`.
+     */
+    public function recordAgeGiven(?int $age, ?string $onYmd, ?User $actor, string $through): string
+    {
+        if ($age !== null) {
+            if ($age < 0 || $age > self::AGE_GIVEN_MAX) {
+                throw new \InvalidArgumentException('An age given by a family must be a whole number of years from 0 to '.self::AGE_GIVEN_MAX.'.');
+            }
+
+            if ($onYmd === null || ! self::isRealDay($onYmd)) {
+                throw new \InvalidArgumentException('The day an age was given must be a real day written as YYYY-MM-DD.');
+            }
+        }
+
+        $held = $this->holdsAgeGiven();
+        $before = $held ? $this->ageGivenOrNull() : null;
+        $value = $age === null ? null : $age.'@'.$onYmd;
+
+        if (($value === null && ! $held)
+            || ($value !== null && $before !== null && $before['age'].'@'.$before['on'] === $value)) {
+            return 'unchanged';
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($value, $held, $before): void {
+            // As in recordDateOfBirth(): Eloquent decrypts the old value to see
+            // whether the column changed, and an unreadable one would throw.
+            if ($held && $before === null && $value !== null) {
+                $this->age_given = null;
+                $this->save();
+            }
+
+            $this->age_given = $value;
+            $this->save();
+        });
+
+        $verb = $value === null ? 'removed' : ($held ? 'changed' : 'set');
+
+        \Illuminate\Support\Facades\Log::warning('The age a family gave was '.$verb.' on a contact.', [
+            'contact_id' => $this->getKey(),
+            'masjid_id' => $this->attributes['masjid_id'] ?? null,
+            'actor_user_id' => $actor?->getKey(),
+            'verb' => $verb,
+            'through' => $through,
+        ]);
+
+        return $verb;
+    }
+
+    private function reportUnreadableAgeGiven(string $why): void
+    {
+        \Illuminate\Support\Facades\Log::error(
+            'A stored age given by a family could not be read, so it is treated as not on file: '.$why.'.',
+            [
+                'contact_id' => $this->getKey(),
+                'masjid_id' => $this->attributes['masjid_id'] ?? null,
+            ]
+        );
     }
 
     /** A real calendar day written exactly 'Y-m-d' (2026-02-30 is not one). */

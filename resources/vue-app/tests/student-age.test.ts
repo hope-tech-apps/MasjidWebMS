@@ -23,8 +23,9 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = (rel: string) => readFileSync(path.join(appRoot, rel), 'utf8');
 
 const {
-    AGE_NOT_ON_FILE, BIRTH_DATE_MIN, EMERGENCY_LINE, ageCell, ageLabel, birthDateMax, birthDateProblem,
-    birthDateWords, missingBirthDatesLine, sheetAgeLine, studentSheetModel, studentsMissingAnAge,
+    AGE_GIVEN_MARK, AGE_GIVEN_TITLE, AGE_NOT_ON_FILE, BIRTH_DATE_MIN, EMERGENCY_LINE, ageCell, ageLabel, ageWasGiven,
+    birthDateMax, birthDateProblem, birthDateWords, missingBirthDatesLine, sheetAgeLine, studentSheetModel,
+    studentsMissingAnAge, studentsWithAGivenAge,
 } = studentAge;
 
 // ------------------------------------------------------------------ the words
@@ -74,6 +75,52 @@ test('the office is told how many current students have no date of birth', () =>
     assert.equal(missingBirthDatesLine(null), '');
     // A group that is not a class shows no age for anybody, so it asks for no dates.
     assert.equal(missingBirthDatesLine(rows, false), '');
+});
+
+test('an age the family gave is said to be that, and only when there is an age and the server says so', () => {
+    assert.equal(ageLabel(6, true), 'Age 6, as the family gave it at registration');
+    assert.equal(ageLabel(6, false), 'Age 6');
+    assert.equal(ageLabel(6), 'Age 6');
+    // Only the server's own `true` counts: anything else reads as an exact age.
+    for (const notTrue of [null, undefined, 1, 'true', {}]) assert.equal(ageLabel(6, notTrue), 'Age 6');
+    assert.equal(ageLabel(null, true), '');
+
+    assert.equal(ageWasGiven({ age: 6, age_given: true }), true);
+    assert.equal(ageWasGiven({ age: 6, age_given: false }), false);
+    assert.equal(ageWasGiven({ age: 6 }), false);
+    assert.equal(ageWasGiven({ age: null, age_given: true }), false, 'no age, nothing to mark');
+    assert.equal(ageWasGiven(null), false);
+
+    assert.equal(AGE_GIVEN_MARK, 'given');
+    assert.match(AGE_GIVEN_TITLE, /family gave at registration/);
+    // The cell keeps the bare number: the mark is drawn beside it, not inside it.
+    assert.equal(ageCell(6), '6');
+});
+
+test('the line above the roster says which ages families gave, beside how many have none', () => {
+    const given = { role: 'member', left_on: null, age: 6, age_given: true };
+    const exact = { role: 'member', left_on: null, age: 9, age_given: false };
+    const none = { role: 'member', left_on: null, age: null, age_given: false };
+    const left = { role: 'member', left_on: '2026-09-30', age: 7, age_given: true };
+
+    assert.equal(studentsWithAGivenAge([given, given, exact, none, left]), 2, 'a student who left is not counted');
+    assert.equal(
+        missingBirthDatesLine([given, exact]),
+        '1 age marked "given" is the one the family gave at registration. Tap the name to add a date of birth for an exact age.',
+    );
+    assert.equal(
+        missingBirthDatesLine([given, given, exact]),
+        '2 ages marked "given" are the ones families gave at registration. Tap a name to add a date of birth for an exact age.',
+    );
+    // Both things are true of one class: said one after the other.
+    assert.equal(
+        missingBirthDatesLine([given, none]),
+        '1 student has no date of birth on file, so no age is shown for them. Tap their name to add it. '
+            + '1 age marked "given" is the one the family gave at registration. Tap the name to add a date of birth for an exact age.',
+    );
+    // Every age exact: nothing to say. Not a class: nothing at all.
+    assert.equal(missingBirthDatesLine([exact]), '');
+    assert.equal(missingBirthDatesLine([given, none], false), '');
 });
 
 test('the sheet model is the avatar, the name, the grade and the age, and no other key', () => {
@@ -232,7 +279,7 @@ test('form: saving sends one PUT with the day, says it was saved, and tells the 
     assert.deepEqual(calls.filter((c) => c.verb === 'put'), [{ verb: 'put', url: ROW_URL, body: { date_of_birth: '2017-03-09' } }]);
     assert.match(screen.text(), /March 9, 2017/);
     assert.match(screen.text(), /Date of birth saved\./);
-    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, given: false, held: true }]);
     assert.equal(screen.all((n: any) => n.tag === 'form').length, 0, 'the form closed');
 });
 
@@ -260,7 +307,7 @@ test('form: a second tap while the first save is on its way sends nothing more',
     pending.resolve(ok(answer({ date_of_birth: '2017-03-09', age: 9 }), 'Date of birth saved.'));
     await flush();
 
-    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, given: false, held: true }]);
 });
 
 test('form: a date saved after the panel was closed still reaches the roster row it was saved for', async () => {
@@ -282,7 +329,7 @@ test('form: a date saved after the panel was closed still reaches the roster row
     pending.resolve(ok(answer({ date_of_birth: '2017-03-09', age: 9 }), 'Date of birth saved.'));
     await flush();
 
-    assert.deepEqual(changed, [{ membershipId: 12, age: 9, held: true }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: 9, given: false, held: true }]);
 });
 
 test('form: a date removed after the panel was closed still reaches the roster row', async () => {
@@ -299,7 +346,25 @@ test('form: a date removed after the panel was closed still reaches the roster r
     pending.resolve(ok({ date_of_birth: null, age: null, unreadable: false }, 'Date of birth removed.'));
     await flush();
 
-    assert.deepEqual(changed, [{ membershipId: 12, age: null, held: false }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: null, given: false, held: false }]);
+});
+
+test("form: with the date removed the roster is told the family's age again, when the server sends one", async () => {
+    const { api } = officeApi({
+        get: async () => ok(answer({ date_of_birth: '2017-03-09', age: 9 })),
+        delete: async () => ok({ date_of_birth: null, age: 6, age_given: true, unreadable: false }, 'Date of birth removed.'),
+        put: async () => ok(answer({ date_of_birth: '2017-03-09', age: 9, age_given: false }), 'Date of birth saved.'),
+    });
+    const { screen, changed } = await mountForm(api);
+
+    click(screen.button('Remove'));
+    await flush();
+    click(screen.button('Yes, remove it'));
+    await flush();
+
+    // Not blank: the age the family gave, marked as that.
+    assert.deepEqual(changed, [{ membershipId: 12, age: 6, given: true, held: false }]);
+    screen.unmount();
 });
 
 test('form: the keyboard follows each step, because each step takes away the button just pressed', async () => {
@@ -420,7 +485,7 @@ test('form: Remove asks first, then clears by CONTACT with one request', async (
     assert.deepEqual(calls.filter((c) => c.verb === 'delete'), [{ verb: 'delete', url: CONTACT_URL }]);
     assert.match(screen.text(), /Not on file/);
     assert.match(screen.text(), /Date of birth removed\./);
-    assert.deepEqual(changed, [{ membershipId: 12, age: null, held: false }]);
+    assert.deepEqual(changed, [{ membershipId: 12, age: null, given: false, held: false }]);
 });
 
 test('form: a refused Remove is said, and the date is still shown', async () => {

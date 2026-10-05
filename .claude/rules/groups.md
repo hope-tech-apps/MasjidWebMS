@@ -1816,6 +1816,45 @@ retiring a type changes no mark a family has read. `subject_key` is derived from
   `SeedSchoolSubjectsMigrationTest`, `GradebookSchemaTest`, `TeacherRoutesRegisteredOnceTest`, `TeacherSubjectAccessTest`
   (the fence), `FamilyGradesTest` (parity and privacy) and `tests/Unit/SubjectKeyTest.php`.
 
+## The age a family gave (2026-10-05)
+
+A registration form that asks "how old is your child?" gives a school an age for every student and a date
+of birth for none, so the Age column would stay empty until the office had typed a date for each child. The
+owner (2026-10-05): ages are to be there for every student. So a roster has a SECOND source for an age.
+
+- **The value.** `contacts.age_given`, TEXT, `encrypted`, hidden, not fillable: `{age}@{Y-m-d}`, the whole
+  years the family answered and the day they answered, as ONE value (an age without its day is wrong within a
+  year). One reader, `Contact::ageGivenOrNull()`, and one writer, `Contact::recordAgeGiven()`, which logs the
+  contact, the organisation, the actor and the verb at `warning` and never the value. `StudentAgeGivenTest`
+  pins who calls them. An unreadable value reads as none, with one ERROR line.
+- **The order (`StudentAge::shown()`).** A date of birth the office typed WINS, always. With no readable date,
+  the age given is shown, plus the whole years since the day it was given, on the school's clock. It can be
+  one short after a birthday (6 in September, a birthday in October, still shown as 6 until the next
+  September). Nothing shows the stored number as it is.
+- **The office is told which ages those are.** The office roster row carries `age_given: bool` beside `age`;
+  the screen draws the word "given" beside the number, says what it means above the roster, and Student
+  details reads "Age 6, as the family gave it at registration". The birth-date endpoints answer with what the
+  roster shows (`age`, `age_given`), so removing a date puts the family's age back on the row without a
+  re-read.
+- **A teacher gets the number only.** The teacher realm's `age` is filled from either source and carries no
+  flag, no day and no answer. Nothing else changed in who sees an age: the same rows, the same realms.
+- **How it gets there.** Never from a request body. The ages are copied from a school's registration answers
+  by an office-run script or command through the model's writer (`through: registration`), matched to a
+  student only when exactly one current student has that name. A merge carries it onto a kept record that has
+  none (`through: merge`), and never replaces the kept record's own.
+- **Not built.** A registration does not write the age onto the student by itself: a student added after the
+  copy shows a dash until it is run again or a date is typed. The office cannot edit or clear the age given
+  (typing a date of birth supersedes it). The school records export does not carry it (it is in the form
+  responses export, where the family wrote it).
+- **Deploy window.** Read only behind `StudentAge::givenColumnExists()`, asked separately from the date of
+  birth's column, so between checkout and migrate a roster shows the ages dates of birth give and names no
+  missing column. Roll back by code only.
+- **Classified.** Staging scrub: `encrypted_null`. Account deletion: `OFFICE_COLUMNS` (the school holds
+  something about this person).
+- **Proven by** `StudentAgeGivenTest` (19; three guards were removed once each and a test went red: the date
+  wins, the age grows, the value is hidden), the screen tests in `student-age.test.ts` and
+  `student-details.test.ts`, and on MySQL `tests/Mysql/ContactDateOfBirthMysqlTest.php` (CI only).
+
 ## Moving a student to another class (2026-10-04)
 
 `App\Support\RosterMove`, behind `GET` / `POST …/members/{id}/move` (`GroupMoveController`, both

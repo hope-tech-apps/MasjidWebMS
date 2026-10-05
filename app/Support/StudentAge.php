@@ -9,7 +9,18 @@ use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
- * A student's AGE, worked out on read from the date of birth on their contact.
+ * A student's AGE, worked out on read from the date of birth on their contact,
+ * or, when there is none, from the age their family gave.
+ *
+ * TWO SOURCES, ONE ORDER (`shown()`):
+ *
+ *  1. the DATE OF BIRTH the office typed. Exact, and it always wins;
+ *  2. the AGE THE FAMILY GAVE, with the day they gave it (a registration form
+ *     that asks "how old is your child?"). The whole years since that day are
+ *     added, so it is not a year out of date by the next autumn. It can still
+ *     be one short: a child who was 6 in September and had a birthday in
+ *     October is shown as 6 until the following September. So the office's
+ *     roster is told which rows came from it (`given`), and says so.
  *
  * The age is never stored: a stored age is wrong within a year. And it is not an
  * accessor on Contact, which would publish it wherever a contact is serialised.
@@ -17,10 +28,14 @@ use Throwable;
  * (`SchoolCalendar::for($masjidId)->today()`, read once per request), because a
  * birthday turns over at the school's midnight, not the server's.
  *
- *  - `forRoster()`  the whole numbers for one roster, for students in a class
- *                   only. The office roster and the teacher's class.
- *  - `of()`         one contact's whole number.
- *  - `fromDate()`   the arithmetic alone, for a caller that already holds the day.
+ *  - `forRoster()`      the whole numbers for one roster, for students in a
+ *                       class only. The teacher's class.
+ *  - `forRosterShown()` the same, with whether each came from the age a family
+ *                       gave. The office roster.
+ *  - `shown()`          one contact's whole number and where it came from.
+ *  - `of()`             one contact's whole number from the date of birth alone.
+ *  - `fromDate()`       the arithmetic alone, for a caller that already holds
+ *                       the day.
  *
  * The date itself is read in ONE place, `Contact::dateOfBirthOrNull()`, which
  * turns a value that cannot be decrypted into "no date on file" plus one ERROR
@@ -30,11 +45,12 @@ final class StudentAge
 {
     public const TABLE = 'contacts';
     public const COLUMN = 'date_of_birth';
+    public const GIVEN_COLUMN = 'age_given';
 
     private const RECHECK_SECONDS = 30;
 
-    /** @var array{0: bool, 1: int}|null [exists, when it was asked] */
-    private static ?array $seen = null;
+    /** @var array<string, array{0: bool, 1: int}> column => [exists, when it was asked] */
+    private static array $seen = [];
 
     /**
      * Whole years old on `$todayYmd` ('Y-m-d', the school's today), or null.
@@ -46,6 +62,49 @@ final class StudentAge
     public static function of(?Contact $contact, string $todayYmd): ?int
     {
         return self::fromDate($contact?->dateOfBirthOrNull(), $todayYmd);
+    }
+
+    /**
+     * The age to SHOW for one contact, and where it came from:
+     * `['age' => whole years or null, 'given' => bool]`.
+     *
+     * `given` is true only when the number comes from the age the family gave
+     * (no readable date of birth on file). A caller that may not read that
+     * column yet passes `$withGiven: false` (givenColumnExists()).
+     *
+     * An age given on a day that is, on the school's clock, still tomorrow is
+     * shown as it was given: a registration taken late in the evening must not
+     * blank the age until the school's midnight.
+     *
+     * @return array{age: int|null, given: bool}
+     */
+    public static function shown(?Contact $contact, string $todayYmd, bool $withGiven = true): array
+    {
+        $age = self::of($contact, $todayYmd);
+
+        if ($age !== null) {
+            return ['age' => $age, 'given' => false];
+        }
+
+        $fromGiven = $withGiven ? self::fromGiven($contact?->ageGivenOrNull(), $todayYmd) : null;
+
+        return ['age' => $fromGiven, 'given' => $fromGiven !== null];
+    }
+
+    /**
+     * The age a family gave, brought up to `$todayYmd`: the age as given plus
+     * the whole years since the day they gave it. Null when there is none, or
+     * when today is not a real day.
+     *
+     * @param  array{age: int, on: string}|null  $given  Contact::ageGivenOrNull()
+     */
+    public static function fromGiven(?array $given, string $todayYmd): ?int
+    {
+        if ($given === null || self::parts($todayYmd) === null) {
+            return null;
+        }
+
+        return $given['age'] + (self::fromDate($given['on'], $todayYmd) ?? 0);
     }
 
     /**
@@ -101,6 +160,26 @@ final class StudentAge
      */
     public static function forRoster(Group $group, iterable $memberships, ?string $todayYmd = null): array
     {
+        return array_map(
+            fn (array $shown): ?int => $shown['age'],
+            self::forRosterShown($group, $memberships, $todayYmd),
+        );
+    }
+
+    /**
+     * forRoster(), with where each age came from:
+     * `membership id => ['age' => whole years or null, 'given' => bool]`.
+     *
+     * For the office roster, which says which ages are the ones families gave.
+     * The same students, the same single query of its own and the same today;
+     * the age a family gave is read in that query too, when its column is
+     * there, and is used only for a student with no readable date of birth.
+     *
+     * @param  iterable<GroupMembership>  $memberships
+     * @return array<int, array{age: int|null, given: bool}>
+     */
+    public static function forRosterShown(Group $group, iterable $memberships, ?string $todayYmd = null): array
+    {
         if (! $group->teachesStudents() || ! self::columnExists()) {
             return [];
         }
@@ -112,16 +191,18 @@ final class StudentAge
             return [];
         }
 
+        $withGiven = self::givenColumnExists();
+
         $contacts = Contact::query()
             ->whereKey($students->pluck('contact_id')->unique()->values())
-            ->get(['id', 'masjid_id', self::COLUMN])
+            ->get(array_merge(['id', 'masjid_id', self::COLUMN], $withGiven ? [self::GIVEN_COLUMN] : []))
             ->keyBy('id');
 
         $todayYmd ??= SchoolCalendar::for((int) $group->masjid_id)->today();
 
         return $students
             ->mapWithKeys(fn (GroupMembership $m): array => [
-                (int) $m->getKey() => self::of($contacts->get($m->contact_id), $todayYmd),
+                (int) $m->getKey() => self::shown($contacts->get($m->contact_id), $todayYmd, $withGiven),
             ])
             ->all();
     }
@@ -148,14 +229,32 @@ final class StudentAge
      */
     public static function columnExists(bool $fresh = false): bool
     {
-        $now = now()->getTimestamp();
+        return self::has(self::COLUMN, $fresh);
+    }
 
-        if (! $fresh && self::$seen !== null && (self::$seen[0] || $now - self::$seen[1] < self::RECHECK_SECONDS)) {
-            return self::$seen[0];
+    /**
+     * The same question, with the same memory and the same `$fresh`, for the
+     * column that holds the age a family gave. It arrives in a later migration
+     * than the date of birth, so each is asked about on its own: a roster read
+     * between that deploy's checkout and its migrate shows the ages from dates
+     * of birth and reads nothing else.
+     */
+    public static function givenColumnExists(bool $fresh = false): bool
+    {
+        return self::has(self::GIVEN_COLUMN, $fresh);
+    }
+
+    private static function has(string $column, bool $fresh): bool
+    {
+        $now = now()->getTimestamp();
+        $seen = self::$seen[$column] ?? null;
+
+        if (! $fresh && $seen !== null && ($seen[0] || $now - $seen[1] < self::RECHECK_SECONDS)) {
+            return $seen[0];
         }
 
         try {
-            $exists = Schema::hasColumn(self::TABLE, self::COLUMN);
+            $exists = Schema::hasColumn(self::TABLE, $column);
         } catch (Throwable $e) {
             if ($fresh) {
                 throw $e;
@@ -164,15 +263,15 @@ final class StudentAge
             return false;
         }
 
-        self::$seen = [$exists, $now];
+        self::$seen[$column] = [$exists, $now];
 
         return $exists;
     }
 
-    /** Forget what was seen: for a test that drops or adds the column, and for nothing else. */
+    /** Forget what was seen: for a test that drops or adds a column, and for nothing else. */
     public static function forget(): void
     {
-        self::$seen = null;
+        self::$seen = [];
     }
 
     /** @return array{0:int,1:int,2:int}|null year, month, day of a real 'Y-m-d' day */

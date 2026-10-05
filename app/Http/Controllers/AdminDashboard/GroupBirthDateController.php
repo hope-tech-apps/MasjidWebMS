@@ -112,10 +112,15 @@ class GroupBirthDateController extends Controller
             $contact->recordDateOfBirth(null, $this->actor($request), 'contact');
         }
 
+        // With the date gone the roster falls back to the age the family gave,
+        // when one is on file, so the answer carries that and the row does not
+        // go blank until the next reload.
+        $shown = $this->shownWithoutADate($contact);
+
         return response()->json([
             'status' => 'success',
             'message' => 'Date of birth removed.',
-            'data' => ['date_of_birth' => null, 'age' => null, 'unreadable' => false],
+            'data' => ['date_of_birth' => null, 'age' => $shown['age'], 'age_given' => $shown['given'], 'unreadable' => false],
         ], Response::HTTP_OK);
     }
 
@@ -154,8 +159,26 @@ class GroupBirthDateController extends Controller
     }
 
     /**
-     * `{ date_of_birth, age, unreadable, school_today }`, the one shape GET and
-     * PUT answer with.
+     * What the roster shows for a contact whose date of birth was just cleared:
+     * the age the family gave, brought up to today, or nothing.
+     *
+     * @return array{age: int|null, given: bool}
+     */
+    private function shownWithoutADate(Contact $contact): array
+    {
+        if (! StudentAge::givenColumnExists()) {
+            return ['age' => null, 'given' => false];
+        }
+
+        return StudentAge::shown($contact, SchoolCalendar::for((int) $contact->masjid_id)->today());
+    }
+
+    /**
+     * `{ date_of_birth, age, age_given, unreadable, school_today }`, the one
+     * shape GET and PUT answer with.
+     *
+     * `age` is what the roster shows: from the date when one is on file, else
+     * from the age the family gave (`age_given` true), else null.
      *
      * `unreadable` is true when something IS stored and cannot be read (written
      * under another key). The office then sees "enter it again" instead of an
@@ -168,6 +191,13 @@ class GroupBirthDateController extends Controller
         // Read ONCE: each read of an unreadable value writes an ERROR line.
         $date = $contact->dateOfBirthOrNull();
         $today = SchoolCalendar::for((int) $contact->masjid_id)->today();
+        // From the date just read when it gives an age (it is never read twice:
+        // an unreadable value logs an ERROR line each time), else from the age
+        // the family gave, as the roster does.
+        $fromDate = StudentAge::fromDate($date, $today);
+        $fromGiven = $fromDate === null && StudentAge::givenColumnExists()
+            ? StudentAge::fromGiven($contact->ageGivenOrNull(), $today)
+            : null;
 
         return response()->json(array_filter([
             'status' => 'success',
@@ -175,7 +205,8 @@ class GroupBirthDateController extends Controller
         ]) + [
             'data' => [
                 'date_of_birth' => $date,
-                'age' => StudentAge::fromDate($date, $today),
+                'age' => $fromDate ?? $fromGiven,
+                'age_given' => $fromGiven !== null,
                 'unreadable' => $date === null && $contact->holdsDateOfBirth(),
                 'school_today' => $today,
             ],

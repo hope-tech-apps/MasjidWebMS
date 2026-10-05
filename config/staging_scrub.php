@@ -177,15 +177,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | encrypted_null — the eleven `encrypted` cast columns
+    | encrypted_null — the twelve `encrypted` cast columns
     |--------------------------------------------------------------------------
     |
     | These hold ciphertext produced with production's APP_KEY. SQL cannot
     | re-encrypt, and writing plaintext into them makes every subsequent read
     | throw DecryptException. NULL is the only safe value.
     |
-    | Three of the eleven sit on tables that `drop_rows` empties. They are listed
-    | anyway so this file is a complete answer to "where did each of the eleven
+    | Three of the twelve sit on tables that `drop_rows` empties. They are listed
+    | anyway so this file is a complete answer to "where did each of the twelve
     | go?"; the command reports them as covered-by-drop rather than running a
     | pointless UPDATE against an emptied table.
     |
@@ -198,7 +198,9 @@ return [
     */
     'encrypted_null' => [
         'users' => ['two_factor_secret'],
-        'contacts' => ['date_of_birth'],
+        // `age_given` (2026-10-05) is the twelfth: the age a family gave for a
+        // student and the day they gave it, encrypted like the date beside it.
+        'contacts' => ['date_of_birth', 'age_given'],
         'appointment_requests' => ['date_of_birth', 'reason'],
         'appointment_request_notes' => ['body'],
         'contact_credentials' => ['identifier'],

@@ -379,6 +379,10 @@ class ContactsController extends Controller
             // an office can destroy one without meaning to.
             $birthDate = $this->carryDateOfBirth($source, $target, $actor);
 
+            // And so does the age their family gave, when the kept record has
+            // none: without it the roster's Age cell would go blank on a merge.
+            $this->carryAgeGiven($source, $target, $actor);
+
             $source->forceDelete();   // the placeholder is fully absorbed
         });
 
@@ -443,6 +447,34 @@ class ContactsController extends Controller
         return $kept === $absorbed
             ? null
             : ['message' => 'The two records had different dates of birth; the one on the kept record was kept.'];
+    }
+
+    /**
+     * The age a family gave follows the person onto the kept record, when that
+     * record has none it can read. The kept record's own is never replaced: it
+     * is the same kind of answer, and neither is more right than the other.
+     * Said nowhere on the screen: unlike a date of birth, the office never
+     * typed it and cannot see it, only the age worked out from it.
+     *
+     * Asked FRESH, as carryDateOfBirth() does and for the same reason.
+     */
+    private function carryAgeGiven(Contact $source, Contact $target, ?\App\Models\User $actor): void
+    {
+        if (! \App\Support\StudentAge::givenColumnExists(fresh: true) || ! $source->holdsAgeGiven()) {
+            return;
+        }
+
+        $absorbed = $source->ageGivenOrNull();
+
+        if ($absorbed === null) {
+            return;   // unreadable: already reported by the reader
+        }
+
+        $target->refresh();
+
+        if ($target->ageGivenOrNull() === null) {
+            $target->recordAgeGiven($absorbed['age'], $absorbed['on'], $actor, 'merge');
+        }
     }
 
     /**

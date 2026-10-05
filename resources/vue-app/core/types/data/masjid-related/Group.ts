@@ -240,6 +240,8 @@ export type GroupMembership = {
      * optional here so code that builds a row by hand need not name it.
      */
     age?: number | null;
+    /** True when `age` is the age the family gave at registration: no date of birth is on file. */
+    age_given?: boolean;
     guardian_of_contact_id: number | null;
     joined_at: string | null;
     /**

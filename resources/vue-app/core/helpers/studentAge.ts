@@ -21,19 +21,38 @@ export type TeacherStudent = {
     contact?: { id?: number; first_name?: string | null; last_name?: string | null; avatar?: unknown } | null;
 };
 
-/** The one fact a roster row needs to be counted below. */
-type RosterRow = { role?: string | null; left_on?: string | null; age?: number | null };
+/** The facts a roster row needs to be counted below. */
+type RosterRow = { role?: string | null; left_on?: string | null; age?: number | null; age_given?: boolean | null };
 
 /** A whole number of years, or null for anything else (absent, null, a string, a fraction, a negative). */
 function wholeYears(age: unknown): number | null {
     return typeof age === 'number' && Number.isInteger(age) && age >= 0 ? age : null;
 }
 
-/** "Age 7", or '' when there is no age to show. For a row, where nothing is drawn for unknown. */
-export function ageLabel(age: unknown): string {
+/**
+ * "Age 7", or '' when there is no age to show. For a row, where nothing is drawn
+ * for unknown.
+ *
+ * `given` is the office roster's `age_given`: the number is the age the family
+ * gave at registration, brought up to today, because no date of birth is on
+ * file. It can be a year behind after a birthday, so the office is told which
+ * ages those are. A teacher's payload carries no such flag and reads "Age 7".
+ */
+export function ageLabel(age: unknown, given: unknown = false): string {
     const years = wholeYears(age);
 
-    return years === null ? '' : `Age ${years}`;
+    if (years === null) return '';
+
+    return given === true ? `Age ${years}, as the family gave it at registration` : `Age ${years}`;
+}
+
+/** The word beside a number in the office's Age column when the family gave it, and what it means. */
+export const AGE_GIVEN_MARK = 'given';
+export const AGE_GIVEN_TITLE = 'The age their family gave at registration. Add a date of birth for an exact age.';
+
+/** Is this row's age the one the family gave (and is there an age at all)? */
+export function ageWasGiven(row: { age?: unknown; age_given?: unknown } | null | undefined): boolean {
+    return row?.age_given === true && wholeYears(row?.age) !== null;
 }
 
 /** "7", or "—". For the Age column of a table, where an empty cell would read as a fault. */
@@ -73,12 +92,28 @@ export function studentsMissingAnAge(rows: RosterRow[] | null | undefined): numb
  */
 export function missingBirthDatesLine(rows: RosterRow[] | null | undefined, isClass = true): string {
     const n = isClass ? studentsMissingAnAge(rows) : 0;
+    const given = isClass ? studentsWithAGivenAge(rows) : 0;
 
-    if (n === 0) return '';
+    const missing = n === 0
+        ? ''
+        : n === 1
+            ? '1 student has no date of birth on file, so no age is shown for them. Tap their name to add it.'
+            : `${n} students have no date of birth on file, so no age is shown for them. Tap a name to add it.`;
 
-    return n === 1
-        ? '1 student has no date of birth on file, so no age is shown for them. Tap their name to add it.'
-        : `${n} students have no date of birth on file, so no age is shown for them. Tap a name to add it.`;
+    // The ages families gave are shown, and said to be that: one can be a year
+    // behind after a birthday, and only a date of birth makes it exact.
+    const fromFamilies = given === 0
+        ? ''
+        : given === 1
+            ? `1 age marked "${AGE_GIVEN_MARK}" is the one the family gave at registration. Tap the name to add a date of birth for an exact age.`
+            : `${given} ages marked "${AGE_GIVEN_MARK}" are the ones families gave at registration. Tap a name to add a date of birth for an exact age.`;
+
+    return [missing, fromFamilies].filter(Boolean).join(' ');
+}
+
+/** How many CURRENT students on this roster show the age their family gave. */
+export function studentsWithAGivenAge(rows: RosterRow[] | null | undefined): number {
+    return (rows ?? []).filter((r) => r?.role === 'member' && !r.left_on && ageWasGiven(r)).length;
 }
 
 /**

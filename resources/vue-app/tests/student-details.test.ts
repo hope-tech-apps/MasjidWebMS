@@ -735,6 +735,28 @@ test('roster: a class shows an Age column, a number or a dash, and says how many
     screen.unmount();
 });
 
+test('roster: an age the family gave is marked beside the number, and the line above says what the mark means', async () => {
+    const r = roster();
+    r.student.age = 6;
+    r.student.age_given = true;
+    r.sibling.age = 9;
+    r.sibling.age_given = false;
+    const { screen } = await mountRoster(vue.reactive([...r.rows]), { meta: CLASS_META });
+
+    const ageCellOf = (n: number) => screen.all((x: Node) => x.tag === 'tr')[n].children.filter((c: Node) => c.tag === 'td')[3];
+
+    // The family's age: the number, then the mark, which carries its meaning for a pointer and a reader.
+    assert.match(ageCellOf(1).textContent.replace(/\s+/g, ' ').trim(), /^6 given$/);
+    const mark = ageCellOf(1).children.find((c: Node) => c.tag === 'span');
+    assert.equal(mark?.props?.title, studentAge.AGE_GIVEN_TITLE);
+    // An age from a date of birth: the bare number, no mark.
+    assert.equal(ageCellOf(2).textContent.replace(/\s+/g, ' ').trim(), '9');
+
+    assert.match(screen.text(), /1 age marked "given" is the one the family gave at registration\. Tap the name to add a date of birth for an exact age\./);
+    assert.doesNotMatch(screen.text(), /no date of birth on file/);
+    screen.unmount();
+});
+
 test('roster: a group that is not a class has no Age column and no line about dates', async () => {
     const r = roster();
     const { screen } = await mountRoster(vue.reactive([...r.rows]), {
@@ -776,6 +798,21 @@ test('roster: in a class the panel carries the age, the date-of-birth form for t
     assert.equal(memberships[0].age, null);
     assert.equal(slot('age')?.textContent, '');
     assert.match(screen.text(), /2 students have no date of birth on file/);
+
+    // A date was removed from a student whose family gave an age: the row shows that age, said to be that.
+    birthForm.afterChange({ membershipId: r.student.id, age: 6, given: true, held: false });
+    await flush();
+    assert.equal(memberships[0].age, 6);
+    assert.equal(memberships[0].age_given, true);
+    assert.equal(slot('age')?.textContent, 'Age 6, as the family gave it at registration');
+
+    // And a date saved for them makes the age exact again: the mark goes.
+    birthForm.afterChange({ membershipId: r.student.id, age: 7, given: false, held: true });
+    await flush();
+    assert.equal(memberships[0].age_given, false);
+    assert.equal(slot('age')?.textContent, 'Age 7');
+    birthForm.afterChange({ membershipId: r.student.id, age: null, held: false });
+    await flush();
 
     // Move, from the panel: the panel shuts and the move dialog opens for that student. One dialog at a time.
     assert.equal(moveDialog.membership, null);
