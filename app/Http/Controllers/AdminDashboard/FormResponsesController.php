@@ -64,11 +64,16 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *   cashTotals            what each holder owes, over this screen's own query.
  *   update (cancel)       cancelling an unpaid card registration closes its open card
  *                         page under the same row lock, so it is never left payable.
+ *   destroy               deletes a registration with no money leg, and a CANCELLED one
+ *                         that was never paid once it can no longer be: a card page on
+ *                         record must be expired at Stripe, asked under the row lock.
  *
- * A registration with a money leg is never deleted, only cancelled, and re-triaging one
- * is stamped with who and when (blocker 2). A payment recorded here is asserted by a
- * named admin — the MealOrdersController::markPaid carve-out from "webhook only". A card
- * payment is only ever marked paid by the signed webhook.
+ * A registration a payment was recorded on is never deleted, only cancelled, and
+ * re-triaging any registration with a money leg is stamped with who and when (blocker 2).
+ * One that was never paid is deleted only after it is cancelled (DECISIONS.md 2026-10-05).
+ * A payment recorded here is asserted by a named admin — the
+ * MealOrdersController::markPaid carve-out from "webhook only". A card payment is only
+ * ever marked paid by the signed webhook.
  *
  * The money leg is shown only on a form set up to take payment
  * (Form::hasPaymentSettings()): the payment columns in both CSVs, and the payment
@@ -118,6 +123,40 @@ class FormResponsesController extends Controller
 
     /** update()'s 409 when `expected_status` is not the row's status any more. %s: the status it has now. */
     private const STATUS_CHANGED = 'This registration changed since the list was loaded: it is now %s. Nothing was saved; the row now shows it as it stands.';
+
+    /*
+     * destroy()'s refusals (DECISIONS.md 2026-10-05). The screen knows the first and the
+     * third before it asks (formResponseStatus.ts::DELETE_REFUSED and DELETE_CANCEL_FIRST,
+     * the same words, pinned by form-response-status.test.ts) and shows every other one
+     * as it was sent. Each says what was NOT done, so "not deleted" is never a guess.
+     */
+
+    /** A payment was recorded on it, or it is in a state nothing writes. */
+    private const DELETE_PAID = 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
+
+    /** Copied from another system, whose next run would write it straight back. */
+    private const DELETE_IMPORTED = 'Imported from the school website. Cancel it instead.';
+
+    /** Never paid, but not cancelled, so it can still be paid. Stripe is not asked. */
+    private const DELETE_CANCEL_FIRST = 'This registration has not been paid, but it still can be. Cancel it first; a cancelled registration that was never paid can then be deleted.';
+
+    /** Stripe says the card page was paid. The refund instruction follows it. */
+    private const DELETE_PAID_ON_STRIPE = 'This registration was paid by card, so it was not deleted. It will show as paid once Stripe confirms it.';
+
+    /** A page is on the row and its organisation has no Stripe account on record to ask about it. */
+    private const DELETE_PAGE_UNCHECKED = 'This registration has a card payment page, and there is no Stripe account on record to check it on, so we cannot tell whether it was paid. It was not deleted and stays cancelled.';
+
+    /** The page is pinned to an account Stripe no longer lets the platform act on. %s: whose. */
+    private const DELETE_PAGE_UNREACHABLE = 'Stripe no longer lets us check this registration\'s card payment page on %s\'s Stripe account, so we cannot tell whether it was paid. It was not deleted and stays cancelled.';
+
+    /** Stripe refused the close and still reports the page open. */
+    private const DELETE_PAGE_STILL_OPEN = 'This registration\'s card payment page could not be closed, so it can still take a payment. It was not deleted. Try again in a moment.';
+
+    /** Stripe did not answer, or answered something that is not a page's status (503). */
+    private const DELETE_STRIPE_UNCONFIRMED = 'Stripe did not confirm that this registration\'s card payment page is closed, so nothing was deleted. Try again in a moment.';
+
+    /** The row went away while this request waited for its lock (404). */
+    private const DELETE_GONE = 'This registration has already been deleted.';
 
     /**
      * GET /api/admin/masjids/{masjid_id}/forms/{form_id}/responses
@@ -707,50 +746,215 @@ class FormResponsesController extends Controller
     /**
      * DELETE /api/admin/masjids/{masjid_id}/forms/{form_id}/responses/{response_id}
      *
-     * A registration with a money leg is never deleted (festival brief, blocker 2): a
-     * holder's cash, a Stripe charge and the reconciliation all point at it. It is
-     * cancelled instead, which keeps it — in its own column — in the cash totals. Checked
-     * on the locked row, so a payment recorded that same second is not deleted from under
-     * it.
+     * A registration is deleted only when it never held money AND can no longer take any
+     * (DECISIONS.md 2026-10-05, which narrows the festival brief's blocker 2, "a
+     * registration with a money leg is never deleted"). Decided on the locked row, so a
+     * payment recorded that same second is not deleted from under it:
+     *
+     *  - no money leg (a free form, a Wix-fallback row, an offering's intake answers):
+     *    deleted, as it always was;
+     *  - a payment on record (paid by card, cash or elsewhere, whatever its status; a
+     *    refund or dispute flagged; or any state nothing writes): never deleted. A holder's
+     *    cash, a Stripe charge and the reconciliation all point at it. It is cancelled
+     *    instead, which keeps it, in its own column, in the cash totals;
+     *  - never paid (FormResponse::neverRecordedAPayment(): chosen to be paid by card or
+     *    at the office, nothing recorded) and NOT cancelled: refused, and Stripe is not
+     *    asked. It can still be paid, so it is cancelled first, which is the reversible,
+     *    stamped step and what closes its card page;
+     *  - never paid and cancelled: deleted, unless a card page is on record. Then Stripe is
+     *    asked about that page here, under the lock, and only 'expired' deletes
+     *    (cardPageRefusal()). The cancel is not trusted for this: it keeps the page on the
+     *    row and records nothing about whether its close worked.
      *
      * Nor is a row imported from the school website (`external_ref`, alrazi:sync-website):
      * the next five-minute run would write it straight back, files and all. It is
      * cancelled instead, like a paid one. The one path that deletes an imported row
      * is `alrazi:purge-website-removed`, and only once the website itself no longer
      * returns it (the sync's `websiteRemoved` marker).
+     *
+     * A delete is final: there is no soft delete, the uploaded files leave the disk, a
+     * reserved date and the place on a form with a capacity are freed, and the cancel's
+     * who-and-when stamp goes with the row. So one warning line is written first, by ids
+     * only: the one record of it that survives.
      */
-    public function destroy($masjid_id, $form_id, $response_id)
+    public function destroy(Request $request, $masjid_id, $form_id, $response_id)
     {
-        [, , $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
+        [, $form, $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
+        $operator = $request->user();
 
         try {
-            $refusal = DB::transaction(function () use ($response): ?string {
-                $row = FormResponse::query()->whereKey($response->getKey())->lockForUpdate()->firstOrFail();
-
-                if ($row->hasMoneyLeg()) {
-                    return 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
+            // Every refusal is RETURNED from the transaction, never thrown out of it:
+            // closeOpenSession() switches an unreachable holder's card payments off inside
+            // this transaction, and an exception leaving it would roll that switch back.
+            [$status, $refusal] = DB::transaction(function () use ($form, $response, $operator): array {
+                // On a form that reserves dates the FORM row is locked first, as update()
+                // and the public submit lock it. The submit holds the form and then locks
+                // the registration holding the date it asks for (FormReservations::claim());
+                // a delete holds the registration and then writes the form's counter. Taken
+                // in one order the two queue, and never deadlock.
+                if ($form->reservation() !== null) {
+                    Form::whereKey($form->id)->lockForUpdate()->first();
                 }
 
-                if ($row->isExternal()) {
-                    return 'Imported from the school website. Cancel it instead.';
+                $row = FormResponse::query()->whereKey($response->getKey())->lockForUpdate()->first();
+
+                // Deleted while this request waited for the lock (a second press, a
+                // colleague's): the answer is that it is gone, not a server error.
+                if ($row === null) {
+                    return [Response::HTTP_NOT_FOUND, self::DELETE_GONE];
                 }
 
+                $refusal = $this->deleteRefusal($row);
+
+                if ($refusal !== null) {
+                    return $refusal;
+                }
+
+                // At warning, the level production runs at. The uuid and the Checkout
+                // session are what the webhook's "NOTHING was recorded" warnings carry
+                // (FormResponsePaymentService), so a payment that arrives for a registration
+                // deleted here can still be matched to it. Ids only: never a name, an
+                // address or an answer.
+                Log::warning('A form registration was deleted from the admin screen. Nothing of it is kept; these ids are the record of it.', [
+                    'masjid_id' => $row->masjid_id,
+                    'form_id' => $row->form_id,
+                    'form_response_id' => $row->id,
+                    'form_response_uuid' => $row->uuid,
+                    'payment_method' => $row->payment_method,
+                    'checkout_session_id' => $row->stripe_checkout_session_id,
+                    'charge_masjid_id' => $row->charge_masjid_id,
+                    'amount_due_minor' => $row->amount_due_minor,
+                    'total_minor' => $row->total_minor,
+                    'user_id' => $operator?->id,
+                ]);
+
+                // The last write, after everything that can refuse: the deleting hook
+                // removes the uploaded files from the disk (FormResponse::booted()), and no
+                // rollback puts those back.
                 $row->delete();
 
-                return null;
+                return [Response::HTTP_OK, null];
             });
         } catch (\Exception $e) {
             return $this->failed($e);
         }
 
         if ($refusal !== null) {
-            return $this->refused($refusal);
+            return response()->json([
+                'status' => 'failed',
+                'message' => $refusal,
+            ], $status);
         }
 
         return response()->json([
             'status' => 'success',
             'message' => 'Response deleted successfully',
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Why destroy() may not delete the locked row, as [HTTP status, sentence], or null when
+     * it may. In this order, so that a row a payment was recorded on reads today's
+     * sentence whatever else is true of it, and Stripe is asked last, only about a row
+     * everything else would let go.
+     *
+     * @return array{0: int, 1: string}|null
+     */
+    private function deleteRefusal(FormResponse $row): ?array
+    {
+        if ($row->hasMoneyLeg() && ! $row->neverRecordedAPayment()) {
+            return [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_PAID];
+        }
+
+        if ($row->isExternal()) {
+            return [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_IMPORTED];
+        }
+
+        if (! $row->hasMoneyLeg()) {
+            return null;
+        }
+
+        // Never paid, and still payable: "Return to payment" opens a new page for a card
+        // registration at any later date, and the office can record a payment by hand
+        // for either kind. Only a cancelled registration is refused both
+        // (FormResponseCheckoutService::preflight(), settleByHand()).
+        if (! $row->isCancelled()) {
+            return [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_CANCEL_FIRST];
+        }
+
+        // No page was ever recorded (a family paying the office never has one; a card
+        // registration whose page never opened): nothing at Stripe could have been paid.
+        if (! $row->stripe_checkout_session_id) {
+            return null;
+        }
+
+        return $this->cardPageRefusal($row);
+    }
+
+    /**
+     * A cancelled, never-paid registration with a card page on record: ask Stripe about
+     * the page now (FormResponseCheckoutService::closeOpenSession(), which closes it while
+     * it is open and asks again after a refused close). Null, the delete may go ahead, on
+     * exactly 'expired': the page took no payment and can take none.
+     *
+     * Everything else keeps the row. `payment_status` unpaid does not prove no money
+     * moved: the webhook can be late, or can have refused the event and answered Stripe
+     * 200, and then the page reads 'complete' at Stripe beside an unpaid row here. A
+     * registration deleted in that state would leave a charge with nothing to land on, so
+     * an answer that is not 'expired', and no answer at all, are both a refusal.
+     *
+     * Every Stripe failure is caught here and returned, as closePageOfCancelled() does,
+     * so destroy()'s transaction commits whatever Stripe says.
+     *
+     * @return array{0: int, 1: string}|null
+     */
+    private function cardPageRefusal(FormResponse $row): ?array
+    {
+        try {
+            // Resolved here, not injected: no other delete builds a Stripe client.
+            $page = app(FormResponseCheckoutService::class)->closeOpenSession($row);
+        } catch (FormCheckoutRefused|StripeException $e) {
+            // At warning, the level production runs at; by id and Stripe's code, never
+            // Stripe's message.
+            Log::warning('A cancelled form registration was not deleted: Stripe did not confirm its card payment page is closed.', [
+                'masjid_id' => $row->masjid_id,
+                'form_id' => $row->form_id,
+                'form_response_id' => $row->id,
+                'exception' => $e::class,
+                'stripe_code' => $e instanceof ApiErrorException ? $e->getStripeCode() : null,
+                'http_status' => $e instanceof ApiErrorException ? $e->getHttpStatus() : null,
+            ]);
+
+            // A refused close with the page still open is an answer (422). Anything the
+            // Stripe SDK threw (no connection, a reply it could not read, an API error)
+            // leaves the page's state unknown (503), as it does for a payment by hand.
+            return $e instanceof FormCheckoutRefused
+                ? [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_PAGE_STILL_OPEN]
+                : [Response::HTTP_SERVICE_UNAVAILABLE, self::DELETE_STRIPE_UNCONFIRMED];
+        }
+
+        return match ($page) {
+            'expired' => null,
+            // The payer finished the page, even a moment before the close landed. The
+            // webhook records it against this row, which is why the row must still be
+            // here; a cancelled registration that was paid is the organisation's to refund.
+            'complete' => [
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                self::DELETE_PAID_ON_STRIPE . ' ' . (FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.'),
+            ],
+            // Pinned to an account Stripe no longer lets the platform act on (DECISIONS.md
+            // 2026-09-15). closeOpenSession() has switched that holder's card payments
+            // off, in this transaction, which is why this is returned and not thrown.
+            FormResponseCheckoutService::UNREACHABLE => [
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                sprintf(self::DELETE_PAGE_UNREACHABLE, $this->holderName($row) ?? 'another organisation'),
+            ],
+            // The row carries a page and is unpaid, so closeOpenSession() found no Stripe
+            // account on record to ask about it.
+            null => [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_PAGE_UNCHECKED],
+            // A status Stripe does not give a page is not an answer.
+            default => [Response::HTTP_SERVICE_UNAVAILABLE, self::DELETE_STRIPE_UNCONFIRMED],
+        };
     }
 
     // ------------------------------------------------------------------ the door
