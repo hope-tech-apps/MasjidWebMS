@@ -974,6 +974,54 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function a_disk_that_cannot_be_asked_is_not_said_to_have_kept_the_file_nor_to_have_let_it_go(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+
+        // A disk that removes what it is told to and then cannot say what it holds (a network disk
+        // that stops answering). Nothing is known about the file after that, either way.
+        $real = Storage::disk('public');
+        Storage::set('public', new class($real->getDriver(), $real->getAdapter(), $real->getConfig()) extends FilesystemAdapter
+        {
+            public function exists($path)
+            {
+                throw new \RuntimeException('The disk did not answer.');
+            }
+        });
+
+        Log::spy();
+        $this->updateLinkList($section, ['']);
+        Storage::set('public', $real);
+
+        // The record is gone, so this line is all there will be: it must not say the file was
+        // deleted, and it must not say the disk kept it. It says the file could not be checked.
+        $this->assertSame(0, DB::table('media')->where('id', $document['id'])->count());
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context = []) use ($document, $section): bool {
+                if (($context['media_id'] ?? null) !== $document['id']) {
+                    return false;
+                }
+
+                $this->assertStringStartsWith('Page document could NOT be checked', $message);
+                $this->assertStringContainsString('may still be online', $message);
+                $this->assertStringNotContainsString('deleted', $message);
+                $this->assertStringNotContainsString('kept the file', $message);
+                $this->assertStringNotContainsString('NOT removed', $message);
+                // By ids alone, as every other line here.
+                $this->assertSame([
+                    'masjid_id' => $this->masjid->id,
+                    'section_id' => $section,
+                    'media_id' => $document['id'],
+                ], $context);
+
+                return true;
+            })
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+    }
+
+    #[Test]
     public function a_deleted_documents_address_is_a_404_from_the_application(): void
     {
         $document = $this->uploadDocument('Calendar.pdf');

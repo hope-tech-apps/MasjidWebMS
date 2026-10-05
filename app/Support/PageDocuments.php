@@ -128,7 +128,7 @@ final class PageDocuments
      * stored, and the worst outcome is a file left online, which is the state before this existed.
      * Every removal, and every failure, leaves a line at WARNING (production's log level drops
      * anything quieter), by ids alone. A file is only ever called deleted once the disk says it is
-     * gone (remove()).
+     * gone, and only called kept once the disk says it is still there (remove()).
      */
     public static function forgetUnlinked(Masjid $masjid, mixed $before, mixed $after, int $sectionId): void
     {
@@ -235,7 +235,8 @@ final class PageDocuments
      * will not let a file go raises nothing: the public disk does not throw, and the library reports
      * what would. So "the delete returned" is not "the file is gone". The disk is asked. A file it
      * still holds is still public, with no row left for a later save to find it by, and the line
-     * must say so: it is the only record there will be.
+     * must say so: it is the only record there will be. A disk that cannot be asked at all gets a
+     * line of its own, which claims neither: the file could not be checked and may still be online.
      *
      * One document at a time, each in its own try: a file that cannot be removed must not keep the
      * others online.
@@ -261,7 +262,16 @@ final class PageDocuments
             return;
         }
 
-        if (self::onDisk($disk, $file)) {
+        $held = self::onDisk($disk, $file);
+
+        if ($held === null) {
+            // Not "kept" and not "deleted": the disk was not able to say, so neither is known.
+            Log::warning('Page document could NOT be checked: no saved section links it and its record is gone, but the disk could not be asked whether the file is still there, so it may still be online', $ids);
+
+            return;
+        }
+
+        if ($held) {
             Log::warning('Page document NOT removed: no saved section links it and its record is gone, but the disk kept the file, which is still online', $ids);
 
             return;
@@ -270,13 +280,17 @@ final class PageDocuments
         Log::warning('Page document deleted: no saved section links it any more', $ids);
     }
 
-    /** Whether the disk still holds this file. A disk that cannot say has not removed it. */
-    private static function onDisk(string $disk, string $file): bool
+    /**
+     * Whether the disk still holds this file, or null when the disk could not be asked. The three
+     * answers are three different lines: a file is called deleted only on a "no", and called kept
+     * only on a "yes".
+     */
+    private static function onDisk(string $disk, string $file): ?bool
     {
         try {
             return Storage::disk($disk)->exists($file);
         } catch (Throwable) {
-            return true;
+            return null;
         }
     }
 
