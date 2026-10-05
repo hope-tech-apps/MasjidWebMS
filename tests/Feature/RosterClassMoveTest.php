@@ -1875,4 +1875,54 @@ class RosterClassMoveTest extends TestCase
             file_get_contents(app_path('Support/RosterClassMove.php')),
         );
     }
+
+    // ------------------------------------------------------- the MySQL suite
+
+    /**
+     * tests/MysqlLocks/RosterClassMoveLocksTest.php commits its fixtures and
+     * deletes them by hand, and it runs only on the MySQL job. A cleanup that
+     * names a table that does not exist throws, and every test in the file is
+     * then reported as an error whatever its body proved. The names are
+     * checked here, where the suite always runs.
+     */
+    #[Test]
+    public function the_lock_suites_cleanup_names_only_tables_and_columns_that_exist(): void
+    {
+        $source = file_get_contents(base_path('tests/MysqlLocks/RosterClassMoveLocksTest.php'));
+
+        // The hand-written list: the loop that is not over AcademicRecordsHeld::KEYS.
+        $this->assertSame(
+            1,
+            preg_match('/foreach \(\[([^\]]+)\] as \$table\) \{\s+DB::table\(\$table\)->where\(\x27masjid_id\x27/', $source, $m),
+            'the cleanup loop was not found',
+        );
+        preg_match_all("/'([a-z_]+)'/", $m[1], $names);
+
+        $this->assertContains((new \App\Models\MasjidUser())->getTable(), $names[1], "the administrator's pivot row is deleted");
+        $this->assertContains((new GroupMembership())->getTable(), $names[1]);
+
+        foreach ([...$names[1], ...array_keys(\App\Support\AcademicRecordsHeld::KEYS)] as $table) {
+            $this->assertTrue(Schema::hasColumn($table, 'masjid_id'), "{$table} is deleted by organisation in the lock suite's cleanup");
+        }
+
+        // Every other table the file names in a query, with the column it is read or deleted by.
+        preg_match_all("/->table\('([a-z_]+)'\)->where\('([a-z_]+)'/", $source, $queried, PREG_SET_ORDER);
+        $this->assertNotSame([], $queried);
+
+        foreach ($queried as [, $table, $column]) {
+            $this->assertTrue(Schema::hasColumn($table, $column), "the lock suite reads {$table}.{$column}, which does not exist");
+        }
+
+        $this->assertContains(['cache_locks', 'key'], array_map(fn (array $q): array => [$q[1], $q[2]], $queried));
+
+        // It declares its own helpers, under names no other MySQL file uses:
+        // every file of the group is loaded into one process.
+        preg_match_all('/^function (\w+)\(/m', $source, $declared);
+        $this->assertNotSame([], $declared[1]);
+
+        foreach (['tests/MysqlLocks/RosterMoveLocksTest.php', 'tests/Mysql/RosterMoveMysqlTest.php'] as $other) {
+            preg_match_all('/^function (\w+)\(/m', file_get_contents(base_path($other)), $theirs);
+            $this->assertSame([], array_intersect($declared[1], $theirs[1]), "a helper is declared twice: here and in {$other}");
+        }
+    }
 }
