@@ -131,18 +131,36 @@ function percentDecoded(value: string): string {
  * left), and `.` and `..` segments resolved. The server reads a section's content this way when it
  * asks whether the section STILL LINKS a document (PageDocuments::resolved), and keeps the file if
  * so. Only ever searched for a path, never shown or stored.
+ *
+ * IN ONE PASS, as on the server: the text is cut at its slashes once and its segments walked once, a
+ * `..` stepping back over the segment before it (any segment but one holding `?` or `#`, where a
+ * browser's path has ended). The footer reads the whole content on every edit, and one step per pass
+ * over the text made a link of 40,000 steps hold each keystroke for nine seconds.
  */
 function resolved(value: string): string {
-    // No lookbehind: a browser that cannot parse one would refuse the whole script.
-    let plain = value.replace(/\\\//g, '/').replace(/\\/g, '/').replace(/(^|[^:])\/{2,}/g, '$1/');
+    const [front, ...segments] = value.replace(/\\/g, '/').split('/');
+    const path: string[] = [];
 
-    for (;;) {
-        const before = plain;
-        plain = plain.replace(/\/\.(?=\/)/g, '').replace(/\/(?!\.\.?\/)[^/\s"'<>?#]+\/\.\.(?=\/)/, '');
-        if (plain === before) {
-            return plain;
+    for (const segment of segments) {
+        // An empty segment is a doubled slash; `.` is where it stands.
+        if (segment === '' || segment === '.') {
+            continue;
         }
+        if (segment === '..') {
+            const last = path[path.length - 1];
+            if (last === undefined) {
+                // Nothing to step back over: a browser stays at the root.
+                continue;
+            }
+            if (last !== '..' && !/[?#]/.test(last)) {
+                path.pop();
+                continue;
+            }
+        }
+        path.push(segment);
     }
+
+    return path.length === 0 ? front : `${front}/${path.join('/')}`;
 }
 
 /**

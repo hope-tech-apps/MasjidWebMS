@@ -217,6 +217,24 @@ test('a saved document still linked in a spelling a browser resolves to the file
     }
 });
 
+test('a link with forty thousand dot-dot steps is read in well under a second, and the right document is still kept', () => {
+    const calendar = { path: '/storage/412/calendar.pdf', name: 'calendar.pdf' };
+    const handbook = { path: '/storage/415/handbook.pdf', name: 'handbook.pdf' };
+    // The footer reads the whole content on every edit. The reader used to take one dot-dot step per
+    // pass over the text, so this one link (195 KB) held each keystroke for nine seconds.
+    const long = `https://platform.example.test/storage${'/a/..'.repeat(40_000)}/412/calendar.pdf`;
+    assert.ok(long.length > 190_000);
+    assert.ok(!long.includes(calendar.path), 'the plain path is not in the spelling');
+
+    const started = performance.now();
+    const leaving = sectionDocumentsLeaving([calendar, handbook], { links: [{ url: long }], body: `<p>${'/a/..'.repeat(40_000)}</p>` });
+    const took = performance.now() - started;
+
+    assert.ok(took < 1000, `reading it took ${Math.round(took)} ms`);
+    // The one the long link reaches is still linked; the other is leaving.
+    assert.deepEqual(leaving, [handbook]);
+});
+
 test('the documents a form holds that the saved section does not are the ones no save has linked', () => {
     const calendar = 'https://platform.example.test/storage/412/calendar.pdf';
     const schedule = 'https://platform.example.test/storage/413/schedule.pdf';

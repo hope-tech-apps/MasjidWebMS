@@ -769,6 +769,66 @@ class PageDocumentCleanupTest extends TestCase
         $this->assertDocumentKept($same);
     }
 
+    /*
+     * The spelling reader is run over every string of the section on every save, and over every
+     * other section of the organisation whenever a save drops a document. A section's text has no
+     * size limit, so the reader must not cost more than the text is long: it used to take one
+     * dot-dot step per pass over the whole text, and a text of 40,000 steps (195 KB, which no page
+     * has and any administrator can write) made each of those saves take eleven seconds.
+     */
+
+    /** The longest a save may take here. An ordinary one takes a few hundredths of a second. */
+    private const PROMPTLY = 2.0;
+
+    #[Test]
+    public function a_link_with_forty_thousand_dot_dot_steps_is_read_in_well_under_a_second_and_still_keeps_its_file(): void
+    {
+        $document = $this->uploadDocument('Calendar.pdf');
+        $dropped = $this->uploadDocument('Schedule.pdf');
+
+        // A browser resolves this to the document's own address, however many steps it takes.
+        $long = str_replace('/storage/', '/storage' . str_repeat('/a/..', 40000) . '/', $document['url']);
+        $this->assertGreaterThan(190_000, strlen($long));
+        $this->assertStringNotContainsString(parse_url($document['url'], PHP_URL_PATH), $long, 'the plain path is not in the spelling');
+        $this->saveSection('cta', $this->cta($long));
+        $buttons = $this->saveLinkList([$document['url'], $dropped['url']]);
+
+        // The buttons let go of both, and the other section's long link is read.
+        $started = microtime(true);
+        $this->updateLinkList($buttons, ['']);
+        $took = microtime(true) - $started;
+
+        $this->assertLessThan(self::PROMPTLY, $took, sprintf('reading a link of 40,000 dot-dot steps took %.2f seconds', $took));
+        // The RIGHT file is kept: the one the long link reaches, and not the one nothing links.
+        $this->assertDocumentKept($document);
+        $this->assertDocumentGone($dropped);
+    }
+
+    #[Test]
+    public function saving_a_section_whose_text_holds_forty_thousand_dot_dot_steps_returns_promptly(): void
+    {
+        // Text and nothing else: it links no document. Its own save reads it, and so does any other
+        // section's save that drops a document.
+        $steps = str_repeat('/a/..', 40000);
+        $text = $this->saveSection('text', ['content' => "<p>{$steps}</p>"]);
+        $document = $this->uploadDocument('Calendar.pdf');
+        $buttons = $this->saveLinkList([$document['url']]);
+
+        $started = microtime(true);
+        $saved = $this->updateSection($text, ['content' => "<p>{$steps}</p><p>Edited.</p>"]);
+        $own = microtime(true) - $started;
+        $this->assertStringEndsWith('<p>Edited.</p>', $saved['content']['content']);
+
+        $started = microtime(true);
+        $this->updateLinkList($buttons, ['']);
+        $other = microtime(true) - $started;
+
+        $this->assertLessThan(self::PROMPTLY, $own, sprintf('saving the section itself took %.2f seconds', $own));
+        $this->assertLessThan(self::PROMPTLY, $other, sprintf('another section\'s save that drops a document took %.2f seconds', $other));
+        // And that save did its work: nothing links the document, so it is gone.
+        $this->assertDocumentGone($document);
+    }
+
     #[Test]
     public function an_id_written_with_a_leading_zero_beside_the_real_address_never_deletes_the_file(): void
     {

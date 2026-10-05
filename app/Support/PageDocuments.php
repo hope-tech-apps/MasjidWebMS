@@ -527,24 +527,56 @@ final class PageDocuments
      *  - `.` and `..` segments (`/storage/./3/x.pdf`, `/storage/old/../3/x.pdf`).
      *
      * Done to the whole text, which may be a paragraph: it is only ever SEARCHED for a path, never
-     * shown or stored, and anything odd it does to prose can only keep a file.
+     * shown or stored, and anything odd it does to prose can only keep a file. (The two slashes
+     * after a scheme's colon become one with the rest; nothing reads the result as an address.)
+     *
+     * IN ONE PASS, whatever the text holds. This runs over every string of a section on every save,
+     * and over every other section of the organisation when a save drops a document, and a section's
+     * text has no size limit. It used to take one `..` step per pass over the whole text, so its cost
+     * grew with the SQUARE of the number of steps: a text of 40,000 of them (195 KB) held each of
+     * those saves for eleven seconds, and a larger one reached the request's time limit after the
+     * content was written and before the cleanup ended. The text is cut at its slashes once and its
+     * segments are walked once, a `..` stepping back over the segment before it.
+     *
+     * A `..` steps back over ANY segment, as a browser's does, except one that holds `?` or `#`:
+     * there a browser's path has ended, and what follows is not resolved.
      *
      * Not seen, still: an address percent-encoded twice, a path or `.PDF` in upper case (not the same
      * file on these servers), and slashes written as HTML entities (ASSUMPTIONS.md PD-17).
      */
     private static function resolved(string $string): string
     {
-        $plain = str_replace(['\\/', '\\'], '/', $string);
-        $plain = preg_replace('~(?<!:)/{2,}~', '/', $plain) ?? $plain;
+        $segments = explode('/', str_replace('\\', '/', $string));
+        // What stands before the first slash is no segment of a path, and nothing steps back over it.
+        $front = array_shift($segments);
+        $path = [];
 
-        do {
-            $before = $plain;
-            // `/./` is where it stands; `/name/../` is one step back.
-            $plain = preg_replace('~/\.(?=/)~', '', $plain) ?? $plain;
-            $plain = preg_replace('~/(?!\.\.?/)[^/\s"\'<>?\#]+/\.\.(?=/)~', '', $plain, 1) ?? $plain;
-        } while ($plain !== $before);
+        foreach ($segments as $segment) {
+            // An empty segment is a doubled slash (or a JSON-escaped one, `\/`, read as two); `.` is
+            // where it stands.
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
 
-        return $plain;
+            if ($segment === '..') {
+                $last = end($path);
+
+                if ($last === false) {
+                    // Nothing to step back over: a browser stays at the root.
+                    continue;
+                }
+
+                if ($last !== '..' && strpbrk($last, '?#') === false) {
+                    array_pop($path);
+
+                    continue;
+                }
+            }
+
+            $path[] = $segment;
+        }
+
+        return $path === [] ? $front : $front . '/' . implode('/', $path);
     }
 
     /**
