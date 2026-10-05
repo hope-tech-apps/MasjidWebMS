@@ -1,5 +1,7 @@
 <template>
-    <div>
+    <!-- The capture listener takes the outline off a row that a link asked
+         for (`?focus=`): it stays until the next tap anywhere on the roster. -->
+    <div @click.capture="unfocusRow">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0 text-muted">Roster</h6>
             <button class="btn btn-sm btn-success" @click="openAddModal">
@@ -110,7 +112,8 @@
                     </thead>
                     <tbody>
                         <tr v-for="membership in participants" :key="membership.id"
-                            :class="{ 'opacity-75': membership.left_on }">
+                            :id="`roster-row-${membership.id}`"
+                            :class="{ 'opacity-75': membership.left_on, 'roster-row-focus': focusedRow === membership.id }">
                             <td class="fw-semibold">
                                 <!-- The student's own face, so a roster reads as
                                      thirty children rather than thirty rows. -->
@@ -276,7 +279,9 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="membership in guardians" :key="membership.id" :class="{ 'table-danger': isContested(membership) }">
+                        <tr v-for="membership in guardians" :key="membership.id"
+                            :id="`roster-row-${membership.id}`"
+                            :class="{ 'table-danger': isContested(membership), 'roster-row-focus': focusedRow === membership.id }">
                             <td class="fw-semibold">
                                 {{ fullName(membership.contact) }}
                                 <!--
@@ -370,8 +375,20 @@
                                 <div v-else-if="isPending(membership)" class="small text-muted">
                                     Confirm this entry first
                                 </div>
+                                <!--
+                                    A consent a MOVE carried here, or one the family
+                                    withdrew here after it was carried. Without the
+                                    line a withdrawal reads "Not given", the same as
+                                    never asked, and the next person at the desk
+                                    records it again.
+                                -->
+                                <div v-if="carriedConsentLabel(membership)" class="small text-muted">
+                                    {{ carriedConsentLabel(membership) }}
+                                </div>
                             </td>
-                            <td class="text-end">
+                            <!-- One line: with a word on it the Consent button
+                                 would otherwise push Remove underneath. -->
+                            <td class="text-end text-nowrap">
                                 <button
                                     v-if="isPending(membership)"
                                     class="btn btn-sm me-1"
@@ -390,6 +407,11 @@
                                     it. The endpoint has existed as long as the columns;
                                     nothing in this app ever called it, so an office could
                                     read "Not given" here and had no way to set it.
+
+                                    A WORD AS WELL AS AN ICON. A move that is refused
+                                    over a consent sends the office to "the Consent
+                                    button on the guardian's row", and a tablet shows
+                                    no tooltip: the button has to say its name.
                                 -->
                                 <button
                                     v-if="!isPending(membership)"
@@ -400,7 +422,7 @@
                                         : 'Record what this guardian consented to'"
                                     @click="openConsent(membership)"
                                 >
-                                    <i class="bi bi-file-earmark-check"></i>
+                                    <i class="bi bi-file-earmark-check me-1" aria-hidden="true"></i>Consent
                                 </button>
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmRemove(membership)" title="Remove">
                                     <i class="bi bi-person-dash"></i>
@@ -582,6 +604,12 @@
                                     <span class="fw-semibold">{{ fullName(consentFor.contact) }}</span>
                                     &mdash; guardian of {{ fullName(consentFor.guardian_of) }}.
                                 </p>
+                                <!-- A consent that came with a move: said before the
+                                     choices, because Save makes it this class's own
+                                     record even when nothing on the form is changed. -->
+                                <p v-if="consentCarriedNote" class="small text-muted mb-3">
+                                    <i class="bi bi-info-circle me-1" aria-hidden="true"></i>{{ consentCarriedNote }}
+                                </p>
                                 <!--
                                     THE OFFICE IS RECORDING SOMETHING A PARENT DID, not
                                     switching a feature on for them. So each scope is
@@ -738,7 +766,7 @@
     </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
 import { AxiosResponse } from 'axios';
 import ApiService from '@/core/services/ApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
@@ -752,10 +780,13 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { isStudentRow, studentRowFor } from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import MoveStudentModal from './MoveStudentModal.vue';
 import PutBackDialog from './PutBackDialog.vue';
-import { consentBannerCount, consentBannerText, movedLabels } from '@/core/helpers/rosterMove';
+import {
+    applyConsentAnswer, carriedConsentLabel, carriedConsentNote, consentBannerCount, consentBannerText, focusIdFromQuery,
+    focusQuery, movedLabels,
+} from '@/core/helpers/rosterMove';
 import StudentBirthDateForm from './StudentBirthDateForm.vue';
 import { AGE_GIVEN_MARK, AGE_GIVEN_TITLE, ageCell, ageLabel, ageWasGiven, missingBirthDatesLine } from '@/core/helpers/studentAge';
 
@@ -1048,14 +1079,57 @@ const afterMoveDialog = async () => {
     await reloadQuietly();
 };
 
-/** Another class's page. A full load: the class page reads its id once. */
-const openClass = (groupId: number) => {
-    window.location.assign(router.resolve({ name: 'masjid.groupDetail', params: { groupId } }).href);
+/**
+ * Another class's page. A full load: the class page reads its id once. When a
+ * refusal named the roster row its remedy is about (a guardian's entry whose
+ * consent has to be withdrawn there first), the link asks that roster for it.
+ */
+const openClass = (groupId: number, membershipId?: number | null) => {
+    window.location.assign(router.resolve({
+        name: 'masjid.groupDetail', params: { groupId }, query: focusQuery(membershipId),
+    }).href);
 };
+
+/**
+ * THE ROW A LINK ASKED FOR (`?focus={roster row id}`): brought into view and
+ * outlined until the next tap, so "open that class and use the Consent button
+ * on the guardian's row" lands on the row it means.
+ *
+ * Read once. An id that is not on this roster is ignored, and either way the
+ * value is taken off the address: the tabs of this page mount this component
+ * again each time Roster is chosen, and the roster must not jump back to the
+ * row every time.
+ */
+const route = useRoute();
+const focusedRow = ref<number | null>(null);
+let focusAsked = focusIdFromQuery(route.query.focus);
+
+const unfocusRow = () => { focusedRow.value = null; };
+
+watch(() => [props.loading, props.loadError, props.memberships.length], async () => {
+    // Not before the roster is here: an empty list cannot say the row is missing.
+    if (focusAsked === null || props.loading || props.loadError || props.memberships.length === 0) return;
+
+    const id = focusAsked;
+    focusAsked = null;
+
+    const { focus: _used, ...rest } = route.query;
+    router.replace({ query: rest }).catch(() => {});
+
+    if (!props.memberships.some((m) => m.id === id)) return;
+
+    focusedRow.value = id;
+    await nextTick();
+    document.getElementById(`roster-row-${id}`)?.scrollIntoView({ block: 'center' });
+}, { immediate: true });
 
 const consentFor = ref<GroupMembership | null>(null);
 const consentForm = ref<{ scope: ConsentScope | null; granted_at: string }>({ scope: null, granted_at: '' });
 const savingConsent = ref(false);
+/** On an entry whose consent came with a move: where from, and what Save does. Null on every other. */
+const consentCarriedNote = computed<string | null>(() => consentFor.value
+    ? carriedConsentNote(consentFor.value, fullName(consentFor.value.guardian_of))
+    : null);
 /** Today where the OFFICE is. A consent cannot have been given tomorrow. */
 const today = ref('');
 
@@ -1102,10 +1176,35 @@ const consentUrl = (membership: GroupMembership): BackendApiRoute =>
  * Write the SERVER's own row back onto the one the office is looking at, rather
  * than what we hoped we sent: the badge and the date then cannot drift from the
  * record, and re-fetching the whole roster would lose their place on the page.
+ * Three fields: the scope, the day, and the mark of a consent a move carried
+ * (a record clears it, a withdrawal keeps it), so the cell's line is right too.
  */
-const applyConsent = (membership: GroupMembership, data: any) => {
-    membership.consent_scope = data?.consent_scope ?? null;
-    membership.consent_granted_at = data?.consent_granted_at ?? null;
+const applyConsent = (membership: GroupMembership, data: any) => applyConsentAnswer(membership, data);
+
+/**
+ * "Recorded" or "withdrawn", and then WHERE THIS ADULT'S CONSENT STILL STANDS.
+ *
+ * The server answers both verbs with `notes`: first the same adult's other
+ * entries in this class that still open its story (a brother's or sister's),
+ * then the same child's other classes. A family that meant "not at all" is
+ * still receiving something, so with notes the message waits for OK instead of
+ * closing by itself. The sentences are the server's, printed in its order, and
+ * they carry people's names: escaped, as everything this file hands Swal as HTML.
+ */
+const consentSaved = (title: string, notes: unknown) => {
+    const said = Array.isArray(notes) ? notes.filter((note): note is string => typeof note === 'string' && note !== '') : [];
+
+    if (said.length === 0) {
+        Swal.fire({ icon: 'success', title, timer: 1600, showConfirmButton: false });
+        return;
+    }
+
+    Swal.fire({
+        icon: 'success',
+        title,
+        html: said.map((note) => `<p class="text-start mb-2">${escapeHtml(note)}</p>`).join(''),
+        confirmButtonText: 'OK',
+    });
 };
 
 const saveConsent = async () => {
@@ -1123,7 +1222,7 @@ const saveConsent = async () => {
         });
         applyConsent(membership, res.data?.data);
         consentFor.value = null;
-        Swal.fire({ icon: 'success', title: 'Consent recorded', timer: 1600, showConfirmButton: false });
+        consentSaved('Consent recorded', res.data?.notes);
     } catch (error) {
         // The server's own sentence is worth showing verbatim: it refuses an
         // unconfirmed claim and names the fix (confirm the entry first).
@@ -1159,7 +1258,7 @@ const withdrawConsent = async () => {
         const res: AxiosResponse = await ApiService.delete(consentUrl(membership));
         applyConsent(membership, res.data?.data);
         consentFor.value = null;
-        Swal.fire({ icon: 'success', title: 'Consent withdrawn', timer: 1600, showConfirmButton: false });
+        consentSaved('Consent withdrawn', res.data?.notes);
     } catch (error) {
         Swal.fire({
             icon: 'error',
@@ -1721,6 +1820,17 @@ onBeforeUnmount(() => { document.body.style.overflow = ''; });
 
 .modal-dialog {
     margin: 1.75rem auto;
+}
+
+/* The row a link asked for. Drawn on the row and on its cells: not every
+   browser draws an outline on a table row. */
+.roster-row-focus {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: -2px;
+}
+
+.roster-row-focus > td {
+    --bs-table-bg-state: var(--bs-primary-bg-subtle);
 }
 
 /* A name that opens something: link colour, underlined, and a full touch target. */

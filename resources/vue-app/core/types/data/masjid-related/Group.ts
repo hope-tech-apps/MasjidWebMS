@@ -169,12 +169,30 @@ export type MovedClass = { id: number; name: string; deleted_at: string | null }
  * names the guardian entries here that must not be re-opened, each with the
  * sentence to print: the adult is no longer a confirmed guardian where the
  * student is now.
+ *
+ * Three more, each the server's own sentences, printed as they come:
+ * `consent_blocks` (a consent the family has since withdrawn or narrowed on the
+ * other side of a carry would come back into force: while it names anything the
+ * dialog offers no way to put the student back; its last sentence is what to do),
+ * `consent_lines` (every other consent here that would be in force again) and
+ * `bucks_line` (the rule for Manara Bucks, for a school that holds the class
+ * store). Optional: a server from before the release sends none of them.
  */
 export type MovedToState = {
     student_there: 'current' | 'left' | 'none';
     open_group: { id: number; name: string } | null;
     guardians_not_vouched: { membership_id: number; reason: 'no_entry' | 'only_unconfirmed'; sentence: string }[];
+    consent_blocks?: string[];
+    consent_lines?: string[];
+    bucks_line?: string | null;
 };
+
+/**
+ * The class to open to clear a refusal. `membership_id`, when the server sends
+ * it, is the roster row there that the remedy is about: the class's roster
+ * brings that row into view.
+ */
+export type OpenGroup = { id: number; name: string; membership_id?: number | null };
 
 /** What the roster list says about the class itself (`meta` of the list answer). */
 export type RosterMeta = {
@@ -187,15 +205,24 @@ export type RosterMeta = {
     move_note: string | null;
 };
 
-/** The answer to "what will happen if this student is moved there". Sentences are the server's. */
+/**
+ * The answer to "what will happen if this student is moved there". Sentences are the server's.
+ *
+ * `expected_consent` and `expected_bucks_rule` are what the tap must echo beside
+ * the path and the days: what the server decided about consent (a short string
+ * of counts) and which rule applies to Manara Bucks. Either can be null, and a
+ * null one is not sent.
+ */
 export type MovePreview = {
     can_move: boolean;
     refusal: string | null;
-    open_group: { id: number; name: string } | null;
+    open_group: OpenGroup | null;
     path: 'left_and_started' | 'returned' | null;
     first_day_in_new_class?: string;
     joined_on?: string | null;
     grade_label: string | null;
+    expected_consent?: string | null;
+    expected_bucks_rule?: 'move' | 'from_ended' | 'to_ended' | null;
     lines: string[];
 };
 
@@ -207,6 +234,8 @@ export type MoveRequest = {
     expected_path: string;
     expected_first_day: string;
     expected_joined_on?: string;
+    expected_consent?: string;
+    expected_bucks_rule?: string;
 };
 
 /**
@@ -274,6 +303,17 @@ export type GroupMembership = {
      */
     consent_granted_at: string | null;
     consent_scope: ConsentScope | null;
+    /**
+     * A CONSENT A MOVE CARRIED. When a student is moved, each guardian's consent
+     * goes with them as it was recorded, onto the entry the move creates, and
+     * that entry is marked with the class it came from. With the two columns
+     * above: marked and set is "carried from that class"; marked and blank is
+     * "withdrawn here after it was carried". Recording consent here clears the
+     * mark; withdrawing keeps it. `consent_carried_from` names the class, as
+     * `moved_from` does. Absent on a server from before the release.
+     */
+    consent_carried_from_group_id?: number | null;
+    consent_carried_from?: MovedClass | null;
     /**
      * ON WHOSE AUTHORITY THIS ROW EXISTS — mirrors `GroupMembership::PROVENANCES`.
      *
