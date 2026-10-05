@@ -536,18 +536,160 @@ class PageDocumentCleanupTest extends TestCase
         $this->assertDocumentKept($y);
     }
 
+    /*
+     * The guard above used to call a save out of date whenever it brought in ANY address of the
+     * page-document shape that was not one of this organisation's documents. That is far more than
+     * an old copy can hold: an office that replaced its own document with another organisation's,
+     * with its own PDF from another collection, or with another site's address was told "taken
+     * offline when you save", the file was kept, and no later save could reach it. An old copy holds
+     * an address this application gave out, for a document that has since been DELETED. Only that is
+     * out of date now. Everything else is an ordinary replace, and what it drops is cleaned up.
+     */
+
     #[Test]
-    public function an_address_with_no_document_of_this_organisation_behind_it_put_in_place_of_one_keeps_that_one(): void
+    public function a_document_replaced_by_another_organisations_real_document_is_deleted_and_theirs_is_untouched(): void
     {
-        // The guard above can only KEEP. It cannot tell an old copy from an office that pastes, in
-        // place of its own document, the address of a PDF of the same shape on another site: both
-        // bring in an address with none of this organisation's documents behind it.
+        $other = $this->organisation();
+        Sanctum::actingAs($this->adminOf($other));
+        $theirs = $this->uploadDocument('Their Calendar.pdf', $other);
+
+        Sanctum::actingAs($this->admin);
+        $mine = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$mine['url']]);
+
+        Log::spy();
+        $this->updateLinkList($section, [$theirs['url']]);
+
+        // Their document exists: nothing about this save is out of date.
+        $this->assertDocumentGone($mine);
+        $this->assertDocumentKept($theirs, $other);
+        Log::shouldNotHaveReceived('warning', fn (string $message) => str_starts_with($message, 'Page documents NOT removed'));
+
+        // And theirs is still not this organisation's to delete, when its address goes again.
+        $this->updateLinkList($section, ['']);
+        $this->assertDocumentKept($theirs, $other);
+    }
+
+    #[Test]
+    public function a_document_replaced_by_the_organisations_own_pdf_in_another_collection_is_deleted(): void
+    {
+        // A PDF the organisation holds somewhere else, under a name of the same shape. It has a media
+        // row, so the address is not a deleted document's; it is not a page document either, so it
+        // is never deleted here.
+        $flyer = $this->masjid->addMedia($this->file('flyer.pdf'))
+            ->usingFileName('ramadan-flyer.pdf')->toMediaCollection('flyers');
+        $this->assertStringStartsWith(self::PUBLIC_DISK_URL . '/', $flyer->getUrl());
+
         $document = $this->uploadDocument('Calendar.pdf');
         $section = $this->saveLinkList([$document['url']]);
 
+        $this->updateLinkList($section, [$flyer->getUrl()]);
+        $this->assertDocumentGone($document);
+
+        $this->updateLinkList($section, ['']);
+        $this->assertSame(1, DB::table('media')->where('id', $flyer->id)->count(), 'the flyer was deleted');
+        Storage::disk('public')->assertExists("{$flyer->id}/ramadan-flyer.pdf");
+    }
+
+    #[Test]
+    public function a_document_replaced_by_another_sites_address_of_the_same_shape_is_deleted(): void
+    {
+        // Rewritten: this pinned the old rule, under which the document below was KEPT, for good.
+        // Another site's address is nothing an out-of-date editor of this application could hold,
+        // whether or not a document of that number and name exists here.
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
         $this->updateLinkList($section, ['https://elsewhere.example.test/storage/999999/annual-report.pdf']);
+        $this->assertDocumentGone($document);
+
+        // The same when that site's address has the number and name of a document that WAS here and
+        // is gone: the host is what says it is not ours.
+        $gone = $this->uploadDocument('Fees.pdf');
+        $kept = $this->uploadDocument('Handbook.pdf');
+        $other = $this->saveLinkList([$gone['url']]);
+        $this->updateLinkList($other, [$kept['url']]);
+        $this->assertDocumentGone($gone);
+        $this->updateLinkList($other, ["https://elsewhere.example.test/storage/{$gone['file']}"]);
+        $this->assertDocumentGone($kept);
+    }
+
+    #[Test]
+    public function a_document_replaced_by_an_address_of_this_application_whose_document_is_gone_is_kept_and_written_down(): void
+    {
+        // What an old copy holds, in each way it can be written: on the public disk's own address (as
+        // every upload is answered), on that host by plain http, with no host at all, and on the host
+        // this request came in on (the deployment answers to more than one).
+        $request = 'admin-host.example.test';
+        $spellings = [
+            'the public disk\'s own address' => self::PUBLIC_DISK_URL . '/999999/annual-report.pdf',
+            'the same host over http' => str_replace('https://', 'http://', self::PUBLIC_DISK_URL) . '/999998/annual-report.pdf',
+            'no host at all' => '/storage/999997/annual-report.pdf',
+            'the host the request came in on' => "https://{$request}/storage/999996/annual-report.pdf",
+        ];
+
+        foreach ($spellings as $what => $dead) {
+            $document = $this->uploadDocument('Calendar.pdf');
+            $section = $this->saveLinkList([$document['url']]);
+
+            Log::spy();
+            // By its full address: a `Host` header alone does not reach the application in a test,
+            // where the host is taken from the address the request is made to.
+            $this->post("https://{$request}{$this->pageSections()}/{$section}", [
+                '_method' => 'PUT',
+                'content' => json_encode($this->linkList([$dead])),
+            ])->assertStatus(200);
+
+            $this->assertDocumentKept($document);
+            Log::shouldHaveReceived('warning')
+                ->withArgs(function (string $message, array $context = []) use ($document, $section, $what): bool {
+                    // The spy is one for the whole test: each save's own line is found by its section.
+                    if (! str_starts_with($message, 'Page documents NOT removed') || ($context['section_id'] ?? null) !== $section) {
+                        return false;
+                    }
+
+                    $this->assertStringContainsString('out-of-date editor', $message, $what);
+                    $this->assertSame([
+                        'masjid_id' => $this->masjid->id,
+                        'section_id' => $section,
+                        'media_ids' => [$document['id']],
+                    ], $context, $what);
+
+                    return true;
+                })
+                ->once();
+        }
+    }
+
+    #[Test]
+    public function an_address_of_ours_with_a_real_documents_number_and_another_name_names_no_document(): void
+    {
+        // "The document it named is gone" is asked of the number AND the file name together, as a
+        // document is always found here. A number that some row has, under another name, is not that
+        // document: no file answers at this address, so the save is treated as out of date.
+        $fees = $this->uploadDocument('Fees.pdf');
+        $noSuchFile = self::PUBLIC_DISK_URL . "/{$fees['id']}/calendar-2019.pdf";
+        Storage::disk('public')->assertMissing("{$fees['id']}/calendar-2019.pdf");
+
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$document['url']]);
+        $this->updateLinkList($section, [$noSuchFile]);
 
         $this->assertDocumentKept($document);
+        $this->assertDocumentKept($fees);
+    }
+
+    #[Test]
+    public function a_dead_link_that_was_already_in_the_section_does_not_hold_up_a_later_deletion(): void
+    {
+        // Only an address a save BRINGS IN marks it as out of date. A section that already carries
+        // a dead link of ours (an old copy saved it, above) is edited like any other afterwards.
+        $dead = self::PUBLIC_DISK_URL . '/999999/annual-report.pdf';
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$dead, $document['url']]);
+
+        $this->updateLinkList($section, [$dead]);
+
+        $this->assertDocumentGone($document);
     }
 
     /* ------------------------------------------------ still linked, spelt differently */

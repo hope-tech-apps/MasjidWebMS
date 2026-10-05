@@ -121,7 +121,7 @@ final class PageDocuments
      *     document's own path (`/storage/{id}/{stored name}`), and either of them percent-encoded
      *     inside another address (linked()). Looked for in the decoded content, because the stored
      *     JSON writes each `/` as `\/`.
-     *  4. Not on a save that looks OUT OF DATE (linksADocumentNotOnFile()): then nothing is deleted.
+     *  4. Not on a save that looks OUT OF DATE (linksADocumentThatIsGone()): then nothing is deleted.
      *
      * It never fails the save it follows: whatever goes wrong here, the office's edit is already
      * stored, and the worst outcome is a file left online, which is the state before this existed.
@@ -173,9 +173,9 @@ final class PageDocuments
                 return;
             }
 
-            if (self::linksADocumentNotOnFile($masjid, $beforeStrings, $afterStrings)) {
+            if (self::linksADocumentThatIsGone($beforeStrings, $afterStrings)) {
                 Log::warning(
-                    'Page documents NOT removed: this save links a page document that is not on file, as a save from an out-of-date editor does',
+                    'Page documents NOT removed: this save links a page document of ours that has been deleted, as a save from an out-of-date editor does',
                     $ids + ['media_ids' => array_values(array_map(fn (Media $media) => $media->id, $documents))]
                 );
 
@@ -287,38 +287,113 @@ final class PageDocuments
 
     /**
      * Whether a save looks as if it came from an OUT-OF-DATE editor: its content brings in an
-     * address of page-document shape that the section did not have before, and no document of this
-     * organisation is behind that address.
+     * address the section did not have before, which THIS APPLICATION gave out, for a document
+     * that has since been DELETED.
      *
      * That is what a second tab does. Two tabs have one section open, linking document X. One
      * replaces X with Y and saves, and X is deleted, as it should be. The other, still showing X,
      * saves: X's address comes back, Y's goes, and without this Y would be deleted too, leaving the
      * page linking a file that is gone and the office with neither. An editor is only ever handed
-     * the address of a document that exists, so a new address with nothing behind it is the mark of
-     * an old copy. On such a save nothing is deleted. The link the old copy put back is still
-     * dead (the save itself is not refused), but the current document is not lost with it.
+     * the address of a document that exists, so a new address of ours with nothing behind it is the
+     * mark of an old copy. On such a save nothing is deleted. The link the old copy put back is
+     * still dead (the save itself is not refused), but the current document is not lost with it.
      *
-     * It errs towards keeping, and can only keep: an address of that shape on another site, or
-     * another organisation's document, pasted in the same save that removes one of this
-     * organisation's own, also stops that deletion.
+     * NARROWED to what an old copy can really hold, because keeping is not free: a document kept
+     * here has left the section's content, so no later save has it in its "before", and it stays
+     * public for good while the page tool said "taken offline when you save". The first rule was
+     * "any address of this shape that is not one of this organisation's documents", which also
+     * fired for an ordinary replace by another organisation's document, by the organisation's own
+     * PDF in another collection, and by another site's address. So both of these must hold:
+     *
+     *  1. the address is one of OURS as it is written (writtenAsOurs()), and
+     *  2. NO media row at all has that id and that file name: the document it named is gone. A row
+     *     of another organisation, or in another collection, is a file that exists, and putting its
+     *     address in is an ordinary edit.
+     *
+     * Anything else is an ordinary replace, and what it drops is cleaned up as usual.
      *
      * @param  list<string>  $before
      * @param  list<string>  $after
      */
-    private static function linksADocumentNotOnFile(Masjid $masjid, array $before, array $after): bool
+    private static function linksADocumentThatIsGone(array $before, array $after): bool
     {
-        $introduced = array_diff_key(
-            self::addresses(self::spellings($after)),
-            self::addresses(self::spellings($before))
-        );
+        $had = self::addresses(self::spellings($before));
 
-        foreach ($introduced as [$mediaId, $storedName]) {
-            if (self::document($masjid, $mediaId, $storedName) === null) {
-                return true;
+        foreach (self::spellings($after) as $string) {
+            if (! preg_match_all(self::ADDRESS, $string, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+
+            foreach ($matches as [[$path, $at], [$mediaId], [$storedName]]) {
+                if (isset($had[$path]) || ! self::writtenAsOurs(substr($string, 0, $at))) {
+                    continue;
+                }
+
+                if (! Media::query()->whereKey((int) $mediaId)->where('file_name', $storedName)->exists()) {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Whether an address of page-document shape is written as one of this application's, judged by
+     * what stands in front of its path (`/storage/{id}/{name}.pdf`). One of:
+     *
+     *  - the public disk's own address, which is what every upload is answered with (by its host;
+     *    http and https are one, since erring here only ever keeps a file);
+     *  - the host this request came in on (the deployment answers to more than one, and the web
+     *    server serves the same file on each);
+     *  - no host at all (a bare path).
+     *
+     * An address on any other host is another site's, whatever number and name it carries. Only ever
+     * compared, never stored (`.claude/rules/generated-urls.md` is about what is kept).
+     */
+    private static function writtenAsOurs(string $front): bool
+    {
+        // The address's own `scheme://host` and anything between that and the path, when the text
+        // in front ends with one. A host belonging to a longer address the path is only a parameter
+        // of (`https://viewer.example/view?url=/storage/3/x.pdf`) is not this address's host.
+        if (! preg_match('~(?:[a-z][a-z0-9+.-]*:)?//([^/?\#\s"\'<>=&\\\\]+)((?:/[^?\#\s"\'<>=&]*)?)$~i', $front, $match)) {
+            return true;
+        }
+
+        $written = strtolower($match[1]) . rtrim($match[2], '/');
+
+        return in_array($written, self::ourHosts(), true);
+    }
+
+    /**
+     * The hosts (with whatever path stands before `/storage`) a page document of ours is served
+     * under: the public disk's, and the one this request came in on, with and without its port.
+     *
+     * @return list<string>
+     */
+    private static function ourHosts(): array
+    {
+        $hosts = [];
+
+        try {
+            // `https://host/storage` as configured; what stands in front of `/storage` is the host.
+            $disk = rtrim(Storage::disk(config('media-library.disk_name'))->url(''), '/');
+            if (preg_match('~^https?://(.+)/storage$~i', $disk, $match)) {
+                $hosts[] = strtolower($match[1]);
+            }
+        } catch (Throwable) {
+            // A disk with no address of its own gives out none.
+        }
+
+        try {
+            $request = request();
+            $hosts[] = strtolower($request->getHost());
+            $hosts[] = strtolower($request->getHttpHost());
+        } catch (Throwable) {
+            // A Host the framework will not read names no host of ours.
+        }
+
+        return array_values(array_unique($hosts));
     }
 
     /**
