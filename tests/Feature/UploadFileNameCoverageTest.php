@@ -62,11 +62,21 @@ use Tests\TestCase;
  *  - The ONE WORD `image` or `file`, but only where rules are plainly being written,
  *    because anywhere else it is an ordinary word. That is: as an element of a list that
  *    also holds a presence word (`required`, `nullable`, ...) or a rule with a colon; or,
- *    in one of the PLACES RULES ARE WRITTEN, as an element of any list, the whole of a
- *    field's rule, the whole of one branch of a ternary there, or the whole of an
- *    assignment. Those places are: a method with `rules` in its name, an array assigned
- *    to a variable with `rules` in its name, and the arguments of `validate(`,
- *    `validateWithBag(`, `validator(` or `Validator::make(`.
+ *    in one of the PLACES RULES ARE WRITTEN, as an element of any list or as the whole of
+ *    a VALUE. Those places are: a method with `rules` in its name, an array assigned to a
+ *    variable with `rules` in its name (or a statement that assigns to one), and the
+ *    arguments of `validate(`, `validateWithBag(`, `validator(` or `Validator::make(`.
+ *
+ *    A value is what a field is given (`'photo' => 'image'`), what is assigned
+ *    (`$rule = 'image';`, `$rule ??= 'image';`) or what is handed back (`return 'image';`,
+ *    `fn () => 'image'`). The whole of one branch of a ternary, or of the right-hand side
+ *    of `??`, in a value is a value too (`'photo' => $new ? 'image' : null`,
+ *    `return $given ?? 'image';`), and so is a value with brackets round it
+ *    (`'photo' => ($new ? 'image' : null)`). That is ALL the scan reads of the one word in
+ *    such a place. Among another call's arguments and in the arms of a `match` it reads
+ *    the word only in an array written there or in what a closure written there hands back.
+ *    So a method with `rules` in its name is not read through and through ("What this
+ *    test cannot see").
  *  - The framework's own fluent rules: `Rule::file()`, `Rule::imageFile()`,
  *    `Rule::dimensions()`, `File::types()`, `File::image()`, `File::default()`,
  *    `File::defaults()` (the same on `ImageFile`), `new File`, `new ImageFile` and
@@ -101,11 +111,14 @@ use Tests\TestCase;
  * Laravel's validator under it and sees them accepted.
  *
  *  - A rule with no file word in it at all (`'photo' => 'nullable|max:25600'`).
- *  - The one word `image` or `file` anywhere but the places listed above: returned by a
- *    helper method with no `rules` in its name, held in a constant or a property, as one
- *    arm of a `match`, handed to another call
- *    (`$validator->sometimes('photo', 'image', ...)`, `Rule::when($new, 'image')`), or in
+ *  - The one word `image` or `file` OUTSIDE the places rules are written: returned by a
+ *    helper method with no `rules` in its name, held in a constant or a property, or in
  *    the arguments of a validator made another way (`app('validator')->make(...)`).
+ *  - The one word INSIDE such a place, a method with `rules` in its name included, written
+ *    any way but as the whole of a value ("What the scan reads"): in one arm of a `match`
+ *    or handed to another call, alone or as one branch of a ternary there
+ *    (`Rule::when($new, 'image')`, `Rule::when($new, $scan ? 'image' : 'file')`,
+ *    `$validator->sometimes('photo', 'image', ...)`).
  *  - A rule that is not written as one piece of text: joined from two literals
  *    (`'required|' . 'image'`) or from a literal and a constant, read from `config()`,
  *    made by `sprintf()`, or a pinned rule changed in a later statement (its list
@@ -479,7 +492,9 @@ final class UploadFileNameCoverageTest extends TestCase
      * Upload rules with NO name pinned beside them, and what the scan must report for each
      * (the ids, in the order met). The rows marked "the review" are the shapes the second
      * review of 2026-10-05 walked through a real route with the door open while this test
-     * stayed green.
+     * stayed green. The rows marked "the check" are the shapes the independent check of
+     * round 3 found the scan saying nothing against inside a rules method: the first three
+     * written into a real request with the door open, the rest put to the scan as snippets.
      *
      * @return array<string, array{string, list<string>}>
      */
@@ -521,6 +536,53 @@ final class UploadFileNameCoverageTest extends TestCase
             ],
             'a rule added to such a variable' => [
                 "<?php class C { public function store(\$request) { \$photoRules = []; \$photoRules['photo'] = 'file'; \$request->validate(\$photoRules); } }",
+                ['store() $photoRules'],
+            ],
+
+            // The one word as the whole of a VALUE, in a place rules are written.
+            'the one word in a bracketed ternary (the check)' => [self::inRules("'photo' => (\$this->user() ? 'image' : null),"), ['rules() photo']],
+            'the one word after ?? (the check)' => [self::inRules("'photo' => \$this->input('rule') ?? 'image',"), ['rules() photo']],
+            'the one word in an assigned ternary (the check)' => [
+                self::inRules("]; \$photoRule = \$this->user() ? 'image' : null; return ['photo' => \$photoRule,"),
+                ['rules() $photoRule'],
+            ],
+            'the one word returned (the check)' => ["<?php class R { private function photoRules(): string { return 'image'; } }", ['photoRules() return']],
+            'the one word in a returned ternary (the check)' => [
+                "<?php class R { private function photoRules(\$new): ?string { return \$new ? 'image' : null; } }",
+                ['photoRules() return'],
+            ],
+            'a returned ternary of two words (the check)' => [
+                "<?php class R { private function docRules(\$new): string { return \$new ? 'file' : 'nullable'; } }",
+                ['docRules() return'],
+            ],
+            // As a field's rule this is a closure that checks nothing (Laravel does not read
+            // what a closure rule hands back), so the door is open all the same.
+            'the one word handed back by an arrow function (the check)' => [self::inRules("'photo' => fn () => 'image',"), ['rules() photo']],
+            'the one word handed back to Rule::forEach() (the check)' => [
+                self::inRules("'photos.*' => Rule::forEach(fn () => 'image'),"),
+                ['rules() (expression)'],
+            ],
+            'the one word returned by a closure' => [
+                self::inRules("'photos.*' => Rule::forEach(function () { return 'image'; }),"),
+                ['rules() return'],
+            ],
+            'a ternary an arrow function hands back' => [
+                self::inRules("'photos.*' => Rule::forEach(fn (\$value) => \$value ? 'image' : null),"),
+                ['rules() (expression)'],
+            ],
+            'the one word in brackets' => [self::inRules("'photo' => ('image'),"), ['rules() photo']],
+            'a ternary in two pairs of brackets' => [self::inRules("'photo' => ((\$new ? 'image' : null)),"), ['rules() photo']],
+            'a bracketed ternary as one branch of another' => [
+                self::inRules("'doc' => \$new ? (\$scan ? 'image' : 'file') : null,"),
+                ['rules() doc'],
+            ],
+            'a bracketed ternary in a rule list' => [self::inRules("'photo' => ['required', (\$new ? 'image' : null)],"), ['rules() photo']],
+            'the one word after ??=' => [
+                self::inRules("]; \$photoRule ??= 'image'; return ['photo' => \$photoRule,"),
+                ['rules() $photoRule'],
+            ],
+            'a ternary assigned to a variable named for rules' => [
+                "<?php class C { public function store(\$request) { \$photoRules = \$request->user() ? 'image' : null; \$request->validate(['photo' => \$photoRules]); } }",
                 ['store() $photoRules'],
             ],
 
@@ -661,6 +723,21 @@ final class UploadFileNameCoverageTest extends TestCase
             'the sentences a refusal reads' => [
                 "<?php class R { public function messages(): array { return ['photo.image' => 'Upload an image.', 'photo.extensions' => 'Rename the file.']; } }",
             ],
+            // In a rules method, a word that is not the whole of a value.
+            'a word a default is compared with' => [
+                self::inRules("'alt' => (\$this->input('kind') ?? 'image') === 'image' ? 'required' : 'nullable',"),
+            ],
+            'a word a default is switched on' => [
+                self::inRules("]; switch (\$this->input('kind') ?? 'image') { case 'image': return ['alt' => 'required']; } return ['alt' => 'nullable',"),
+            ],
+            'a default handed to another call' => [
+                self::inRules("'alt' => \$this->input('kind', 'image') === 'image' ? 'required' : 'nullable',"),
+            ],
+            'a named argument' => [self::inRules("'kind' => Rule::in(\$this->kinds(only: 'image')),")],
+            'a named argument after a ternary' => [self::inRules("'kind' => Rule::in(\$this->kinds(\$all ? 1 : 2, only: 'image')),")],
+            'a parameter\'s default' => [
+                self::inRules("'kinds.*' => Rule::in(array_map(fn (\$kind = 'image') => \$kind . 's', \$kinds)),"),
+            ],
             // Outside anything that builds rules, the words are just words.
             'ordinary vocabulary' => [<<<'PHP'
                 <?php
@@ -709,6 +786,7 @@ final class UploadFileNameCoverageTest extends TestCase
     public static function whatTheScanCannotSee(): array
     {
         $under = fn (mixed $rule, array $beside = []): Closure => static fn (UploadedFile $page): bool => Validator::make(['photo' => $page] + $beside, ['photo' => $rule])->passes();
+        $scan = true;
 
         return [
             'a rule with no file word in it at all' => [self::inRules("'photo' => 'nullable|max:25600',"), $under('nullable|max:25600')],
@@ -728,6 +806,12 @@ final class UploadFileNameCoverageTest extends TestCase
                     default => 'image',
                 }),
             ],
+            'the one word, in a ternary in one arm of a match' => [
+                self::inRules("'photo' => match (true) { \$new => 'nullable', default => \$scan ? 'image' : 'file' },"),
+                $under(match (true) {
+                    default => $scan ? 'image' : 'file',
+                }),
+            ],
             'the one word, handed to another call' => [
                 "<?php class R { public function withValidator(\$validator): void { \$validator->sometimes('photo', 'image', fn () => true); } }",
                 static function (UploadedFile $page): bool {
@@ -738,6 +822,10 @@ final class UploadFileNameCoverageTest extends TestCase
                 },
             ],
             'the one word, handed to Rule::when()' => [self::inRules("'photo' => Rule::when(\$new, 'image'),"), $under(Rule::when(true, 'image'))],
+            'the one word, in a ternary handed to Rule::when()' => [
+                self::inRules("'photo' => Rule::when(\$new, \$scan ? 'image' : 'file'),"),
+                $under(Rule::when(true, $scan ? 'image' : 'file')),
+            ],
             'the one word, in a validator made another way' => [
                 "<?php class C { public function store(\$request) { return app('validator')->make(\$request->all(), ['photo' => 'image'])->validate(); } }",
                 static fn (UploadedFile $page): bool => app('validator')->make(['photo' => $page], ['photo' => 'image'])->passes(),
@@ -961,7 +1049,7 @@ final class UploadFileNameCoverageTest extends TestCase
 
         $position = 0;
         $found = [];
-        $context = ['function' => '', 'validating' => false, 'array' => false, 'label' => '', 'imports' => self::imports($tokens)];
+        $context = ['function' => '', 'validating' => false, 'array' => false, 'in' => 'statements', 'label' => '', 'imports' => self::imports($tokens)];
         self::read(self::nest($tokens, $position, ''), $context, $found);
 
         return $found;
@@ -1083,7 +1171,7 @@ final class UploadFileNameCoverageTest extends TestCase
 
     /**
      * @param  array{open: string, children: list<PhpToken|array<string, mixed>>}  $node
-     * @param  array{function: string, validating: bool, array: bool, label: string, imports: array<string, string>}  $context
+     * @param  array{function: string, validating: bool, array: bool, in: string, label: string, imports: array<string, string>}  $context
      * @param  list<array{id: string, line: int, says: string, pinned: bool}>  $found
      */
     private static function read(array $node, array $context, array &$found): void
@@ -1111,10 +1199,13 @@ final class UploadFileNameCoverageTest extends TestCase
 
         foreach ($children as $index => $child) {
             $role = $roles[$index] ?? ['is' => 'free', 'key' => '', 'alone' => false];
+            // Where this child stands, for isWholeValue(): in an element of an array, or
+            // where this node's children stand (see `in`, below).
+            $in = $role['is'] === 'free' ? $context['in'] : 'element';
             $label = match ($role['is']) {
                 'keyed' => $role['key'],
                 'list' => $context['label'],
-                default => self::statementTarget($children, $index),
+                default => $context['in'] === 'brackets' ? $context['label'] : self::statementTarget($children, $index),
             };
             $id = $context['function'] . '() ' . $label;
             $inPinnedList = $role['is'] === 'list' && $listPinned;
@@ -1130,7 +1221,19 @@ final class UploadFileNameCoverageTest extends TestCase
 
                 $inner = $context;
                 $inner['array'] = self::isArrayLiteral($children, $index);
-                $inner['label'] = $inner['array'] ? $label : $context['label'];
+                // Where the children of this node stand: in `brackets` that are themselves
+                // the whole of a value (`'photo' => ($new ? 'image' : null)`), which hold that
+                // value and are read as it is; among `statements` (a body, a block); or among
+                // `arguments`, which is everything else: a call's arguments, the brackets of
+                // an `if`, an index, the arms of a `match`.
+                $valueInBrackets = $child['open'] === '(' && ! $inner['array'] && $role['is'] !== 'key'
+                    && ($role['alone'] || self::isWholeValue($children, $index, $in));
+                $inner['in'] = match (true) {
+                    $valueInBrackets => 'brackets',
+                    $child['open'] === '{' && ! self::isMatchBody($children, $index) => 'statements',
+                    default => 'arguments',
+                };
+                $inner['label'] = $inner['array'] || $valueInBrackets ? $label : $context['label'];
                 $inner['validating'] = $validating
                     || ($child['open'] === '(' && self::isValidationCall($children, $index))
                     || ($inner['array'] && $role['is'] === 'free' && self::isRulesVariable($label));
@@ -1175,12 +1278,13 @@ final class UploadFileNameCoverageTest extends TestCase
 
             // `mimes:...` anywhere, or `image` / `file` as one segment of several, is a rule
             // wherever it is written. The bare word alone is a rule only where rules are
-            // built: among the elements of a rule list, or as the whole of a field's rule
-            // (or of one branch of it) inside a rules method or a validation call.
+            // built: among the elements of a rule list, or as the whole of a value (what a
+            // field is given, what is assigned or handed back, or one branch of that)
+            // inside a rules method or a validation call.
             $isRule = $withParameters || ($worded && count($segments) > 1) || ($worded && match ($role['is']) {
                 'list' => $listIsRules,
-                'keyed' => $validating && ($role['alone'] || self::isWholeBranch($children, $index)),
-                default => ($validating || self::isRulesVariable($label)) && self::isWholeAssignment($children, $index),
+                'keyed' => $validating && ($role['alone'] || self::isWholeValue($children, $index, $in)),
+                default => ($validating || self::isRulesVariable($label)) && self::isWholeValue($children, $index, $in),
             });
 
             if ($isRule) {
@@ -1308,32 +1412,141 @@ final class UploadFileNameCoverageTest extends TestCase
     }
 
     /**
-     * `$rules[] = 'file';` : the literal is all there is to the right of the `=`.
+     * Is the child at `$index` (a string literal, or a pair of brackets) the whole of a
+     * VALUE where it stands? A value is what a field is given, what is assigned, or what is
+     * handed back; and the whole of one branch of a ternary, or of the right-hand side of
+     * `??`, in such a value is one too:
+     *
+     *   `$rule = 'image';`   `$rule ??= 'image';`   `return 'image';`   `fn () => 'image'`
+     *   `$new ? 'image' : null`   `$given ?: 'image'`   `$given ?? 'image'`   `('image')`
+     *
+     * `$in` says where the child stands (see read()). Among a call's arguments, and in the
+     * arms of a `match`, nothing is a value to this scan (a call may do anything with what
+     * it is handed) except what an arrow function written there hands back.
+     *
+     * Not values: a word a field is compared with (`$kind === 'image' ? ... : ...`: the
+     * value does not end at the word); a default that is compared
+     * (`($kind ?? 'image') === 'image'`: the brackets are not the whole of a value, so what
+     * is in them stands among `arguments`); a named argument (`kind: 'image'`) and a
+     * parameter's default (`fn ($kind = 'image') => ...`), which stand among arguments too.
      *
      * @param  list<PhpToken|array<string, mixed>>  $children
      */
-    private static function isWholeAssignment(array $children, int $index): bool
+    private static function isWholeValue(array $children, int $index, string $in): bool
     {
         $before = $children[$index - 1] ?? null;
         $after = $children[$index + 1] ?? null;
 
-        return $before instanceof PhpToken && self::mark($before) === '='
-            && $after instanceof PhpToken && self::mark($after) === ';';
+        // Brackets or an array beside it: it is a part of something longer.
+        if (is_array($before) || is_array($after)) {
+            return false;
+        }
+
+        $beforeMark = $before === null ? null : self::mark($before);
+        $afterMark = $after === null ? null : self::mark($after);
+
+        // `$rules[] = 'file';` and `return 'image';`: all there is between the two.
+        if ($before !== null && $afterMark === ';' && ($beforeMark === '=' || $before->is([T_COALESCE_EQUAL, T_RETURN]))) {
+            return true;
+        }
+
+        // `('image')`: all there is in brackets that are themselves the whole of a value.
+        if ($before === null && $after === null) {
+            return $in === 'brackets';
+        }
+
+        // The value ends here: at the end of its element, statement or brackets, or at the
+        // `:` that closes the middle of a ternary.
+        if ($before === null || ! in_array($afterMark, [null, ',', ';', ':'], true)) {
+            return false;
+        }
+
+        $handedBack = self::followsAnArrowFunction($children, $index);
+
+        if ($in === 'arguments' && ! $handedBack) {
+            return false;
+        }
+
+        return match (true) {
+            $beforeMark === '?', $before->is([T_COALESCE]) => true,
+            // In an array's element a `:` can only be a ternary's. Elsewhere it may name an
+            // argument (`kind: 'image'`) or end a `case`.
+            $beforeMark === ':' => $in === 'element' || self::closesATernary($children, $index - 1),
+            $before->is([T_DOUBLE_ARROW]) => $handedBack,
+            default => false,
+        };
     }
 
     /**
-     * `'photo' => $new ? 'image' : 'nullable'` : the literal is all there is to one branch
-     * of a ternary. A word a field is compared with (`$kind === 'image' ? ... : ...`) is not.
+     * `match (...) { ... }`: the braces hold arms, not statements.
      *
      * @param  list<PhpToken|array<string, mixed>>  $children
      */
-    private static function isWholeBranch(array $children, int $index): bool
+    private static function isMatchBody(array $children, int $index): bool
     {
-        $before = $children[$index - 1] ?? null;
-        $after = $children[$index + 1] ?? null;
+        $subject = $children[$index - 1] ?? null;
+        $keyword = $children[$index - 2] ?? null;
 
-        return $before instanceof PhpToken && in_array(self::mark($before), ['?', ':'], true)
-            && ($after === null || ($after instanceof PhpToken && in_array(self::mark($after), [':', ','], true)));
+        return is_array($subject) && $subject['open'] === '(' && $keyword instanceof PhpToken && $keyword->is([T_MATCH]);
+    }
+
+    /**
+     * Is there a `?` before this `:` in the same element or statement, so that the `:` is a
+     * ternary's and not an argument's name or a `case`?
+     *
+     * @param  list<PhpToken|array<string, mixed>>  $children
+     */
+    private static function closesATernary(array $children, int $colon): bool
+    {
+        for ($i = $colon - 1; $i >= 0; $i--) {
+            $child = $children[$i];
+
+            if (is_array($child)) {
+                if ($child['open'] === '{') {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (self::mark($child) === '?') {
+                return true;
+            }
+
+            if (in_array(self::mark($child), [',', ';'], true)) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Does `fn` stand before this child in the same element, argument or statement? Then the
+     * child is in what that arrow function hands back (its parameters are in brackets of
+     * their own, and so are not children here).
+     *
+     * @param  list<PhpToken|array<string, mixed>>  $children
+     */
+    private static function followsAnArrowFunction(array $children, int $index): bool
+    {
+        for ($i = $index - 1; $i >= 0; $i--) {
+            $child = $children[$i];
+
+            if (! $child instanceof PhpToken) {
+                continue;
+            }
+
+            if ($child->is([T_FN])) {
+                return true;
+            }
+
+            if (in_array(self::mark($child), [',', ';'], true)) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /**

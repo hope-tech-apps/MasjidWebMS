@@ -8082,10 +8082,14 @@ themselves still run only on the MySQL job.
   - PNG bytes named `.ico` or `.icns` are refused on the icon fields (12 kept on main, all 12 refused here; the
     icon bullet above).
 
-  A name such as `x.html.jpg` is accepted and kept as written, at all 29 doors and three times through the
-  composer; that it is an image and not a page rests on the web server typing a file by its LAST extension,
-  which is one more reason for the server-side backstop recommended under "Deliberately left". Nothing here
-  was run against a web server.
+  A name such as `x.html.jpg` is accepted and kept as written at every photo door: 23 of the 29 doors of
+  round 3, and three times through the composer when the feed and push are both ticked. The six icon doors,
+  whose lists have no `jpg`, refuse that name and take `x.html.png` in the same way (`x.html.png` and
+  `x.html.webp` are kept at every door). Round 4 sent the three names again with the four composer doors it
+  added, by a probe in a private copy and not by a committed test: `x.html.jpg` kept at 27 of 33, the other
+  two at all 33. That such a file is an image and not a page rests on the web server typing a file by its
+  LAST extension, which is one more reason for the server-side backstop recommended under "Deliberately
+  left". Nothing here was run against a web server.
 - **The screens.** Each of the thirteen is sent by one form in the admin SPA, and each form puts what the server
   answered into its failure dialog (`getMessageFromObj` flattens a refusal's field messages; run on the exact
   refusal envelope, it returns the sentence). Nobody is left without a reason, so no screen was changed. Read
@@ -8101,17 +8105,21 @@ themselves still run only on the MySQL job.
     page-like under `/storage` is served as a page) is recommended to the owner as a separate, deliberate server
     change. It is the only thing that would cover a file that reached the disk some other way.
   - The coverage test reads rules, and only rules written in the ways it knows. Each of these passes it with a
-    door open. Its own table (`whatTheScanCannotSee`, 23 rows) holds one of each that can be written as a
-    snippet, which is all but the rule outside `app/`, and shows the scanner saying nothing against it; 21 of
-    the rows also put real PNG bytes named `x.html` to Laravel's validator under that shape and see them
-    accepted:
+    door open. Its own table (`whatTheScanCannotSee`, 25 rows after round 4) holds one of each that can be
+    written as a snippet, which is all but the rule outside `app/`, and shows the scanner saying nothing
+    against it; 23 of the rows also put real PNG bytes named `x.html` to Laravel's validator under that shape
+    and see them accepted:
     - a rule with no file word in it at all (only `max:`, say);
     - the one word `image` or `file` standing alone as a rule where the scan does not expect rules: in a helper
       with no `rules` in its name, a constant, a property, or a validator made another way
-      (`app('validator')->make(...)`); and, wherever it is written, as an arm of a `match` or among another
-      call's arguments (`Rule::when($new, 'image')`). The scan takes the bare word for a rule only in a method
-      with `rules` in its name, an array assigned to a variable with `rules` in its name or a validate call, or
-      in a list beside a presence word or a rule with a colon;
+      (`app('validator')->make(...)`); and, wherever it is written, in an arm of a `match` or among another
+      call's arguments, alone or as one branch of a ternary there (`Rule::when($new, 'image')`). The scan takes
+      the bare word for a rule only in a list beside a presence word or a rule with a colon, or in a method
+      with `rules` in its name, an array assigned to a variable with `rules` in its name or a validate call.
+      Even there it reads the word only as a list element or as the whole of a value: what a field is given,
+      what is assigned or handed back (`return`, an arrow function), or one branch of a ternary or the
+      right-hand side of `??` in one of those, with or without brackets round it. A method with `rules` in
+      its name is not read through and through (round 4);
     - a rule that is not one piece of text: joined from two literals or from a constant, read from `config()`,
       made by `sprintf()`, or changed in a later statement;
     - the array form of a rule (`['mimes', 'jpg', 'png']`);
@@ -8123,10 +8131,10 @@ themselves still run only on the MySQL job.
     - a pinned upload whose stored name comes from another input;
     - whether a pinned list is a sensible one (`extensions:jpg,html` counts as pinned).
   - The door tests prove, for each door, that image bytes under a page-like name (`x.html`, `x.HTML`,
-    `x.jpg.html`, `x.svg`, no extension at all) are refused with nothing stored, and that every kind of file an
-    office may upload there is accepted under a lower-case and an upper-case name. The kinds are written in the
-    test, door by door, and are not read from the rule. They do not prove that a list is not too wide beyond
-    those page-like names.
+    `x.jpg.html`, `x.htm`, `x.xhtml`, `x.svg`, no extension at all) are refused with nothing stored, and that
+    every kind of file an office may upload there is accepted under a lower-case and an upper-case name. The
+    kinds are written in the test, door by door, and are not read from the rule. They do not prove that a list
+    is not too wide beyond those page-like names (`jfif` added to a list leaves them green).
   - The scan from the other side that the second review proposed (every call under `app/` that puts an upload
     on a disk, held to a list that names the rule pinning it) was not built. It is what would cover a rule with
     no file word in it and an upload with no rule at all.
@@ -8139,9 +8147,9 @@ themselves still run only on the MySQL job.
     stored and the test green, it now reports five (capitals; the pin in a ternary; `Rule::dimensions()`; the
     fluent rule under an import alias; `File::default()`) and still says nothing against three (no file word;
     the one word from a helper not named for rules; a list that names a page), which are on the list above.
-    It is held by tables of source snippets and not by prose: 44 it must report, 16 it must accept as pinned,
-    10 that are not rules, and the 23 it is known to miss. Under `app/` it reads what it read before: 58
-    answers, 33 of them pinned.
+    It is held by tables of source snippets and not by prose: at the end of round 3, 44 it must report, 16 it
+    must accept as pinned, 10 that are not rules, and the 23 it is known to miss. Under `app/` it reads what
+    it read before: 58 answers, 33 of them pinned.
   - The door tests. Each of the 29 doors sent one ordinary name; each now sends every kind it takes under a
     lower-case and an upper-case name (260 cases), and five page-like names where it sent two (145 cases). The
     four doors of the page and the flyer send every kind they take in the same way (44 cases; two of the four
@@ -8150,3 +8158,30 @@ themselves still run only on the MySQL job.
     rule); the gallery's `images.*` list cut to `jpeg,jpg` turned 6 red; `png` taken off the edited service
     icon's list turned 2 red. The first two left every test green before this round, as the review showed.
   - The icons, as in the icon bullet under "Decided".
+- **After the independent check (round 4, the same day).** The check found no upload open at the round-3 head,
+  and four places where the tests or this entry said more than they showed. Only tests and the record changed
+  in this round; nothing under `app/` did.
+  - The composer's own picture rule had no row in which it was the only guard. The composer door ticks the
+    announcements feed, and the feed's borrowed announcement rule refuses a bad name whatever the composer's
+    own list says: the check showed that a trailing comma in that list (an empty name, so a file with no
+    extension passes) left all three upload test files green. The composer is now five doors: the feed with
+    push, as before, and push, the signage board, email and a text message each alone (the test organisation
+    is given the CRM for the last two, which read the contact directory). A test holds where each keeps the
+    picture and that it is kept nowhere else: `broadcasts` always, `notifications` as well when push is
+    ticked, `announcements` as well when the feed is. Shown by mutation of that one list in a private copy,
+    each put back afterwards: the trailing comma turned 4 cases red (a file named `x` kept by each of the
+    four new doors); `html` added turned 18 red; `webp` taken off turned 10 red.
+  - The scanner read the one word `image` or `file` in a rules method only as a list element, as the whole of
+    a field's rule or of one branch of a ternary that was the field's rule, or after `=` with nothing else.
+    Seven shapes the check found there were not reported: a ternary in brackets, the right-hand side of `??`,
+    a ternary assigned to a variable, `return 'image';`, a returned ternary, and the word handed back by an
+    arrow function, standing as a field's rule or handed to `Rule::forEach()`. The scanner now reads the word
+    as the whole of a value (the list under "Deliberately left" says what that is and what is still unseen)
+    and reports all seven. Six of them were written into a real request in a private copy: each time the
+    coverage test turned red and named the line. Under `app/` its answers are the same, answer for answer:
+    58, 33 of them pinned. Its tables now hold 60 snippets it must report, 16 it must accept as pinned, 16
+    that are not rules and 25 it is known to miss.
+  - `x.htm` and `x.xhtml`, which a web server also types as pages, are sent to every door (231 refusal cases
+    at the 33 doors, beside 300 accepted names; 8 more refusals at the page and the flyer). `htm` added to a
+    new announcement's list turned 1 case red; the check had shown it leaving the door tests green.
+  - The count for `x.html.jpg` under "What a person meets" said all 29 doors. It is corrected there.

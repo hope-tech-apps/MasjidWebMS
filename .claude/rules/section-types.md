@@ -78,11 +78,16 @@ snippet, which is all but the rule outside `app/`):
 - the one word `image` or `file` standing alone as a rule where the scan does
   not expect rules: in a helper with no `rules` in its name, a constant, a
   property, or a validator made another way (`app('validator')->make(...)`);
-  and, wherever it is written, as an arm of a `match` or among another call's
-  arguments (`Rule::when($new, 'image')`). The scan takes the bare word for a
-  rule only in a method with `rules` in its name, an array assigned to a variable
-  with `rules` in its name or a validate call, or in a list beside a presence
-  word or a rule with a colon;
+  and, wherever it is written, in an arm of a `match` or among another call's
+  arguments, alone or as one branch of a ternary there
+  (`Rule::when($new, 'image')`). The scan takes the bare word for a rule only in
+  a list beside a presence word or a rule with a colon, or in a method with
+  `rules` in its name, an array assigned to a variable with `rules` in its name
+  or a validate call. Even there it reads the word only as a list element or as
+  the whole of a value: what a field is given, what is assigned or handed back
+  (`return`, an arrow function), or one branch of a ternary or the right-hand
+  side of `??` in one of those, with or without brackets round it. A method with
+  `rules` in its name is not read through and through;
 - a rule that is not one piece of text: joined from two literals or from a
   constant, read from `config()`, made by `sprintf()`, or changed in a later
   statement;
@@ -121,14 +126,18 @@ announcements, the gallery, logos, avatars, services, About, the donation link,
 a push, the publish composer) send real bytes through the real route, because
 `UploadedFile::fake()` reports a type from its argument or its name and so
 cannot show bytes named as something else. For each door they prove two things:
-image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.svg`,
-no extension at all) are refused and nothing is stored; and every kind of file
-an office may upload there is accepted, under a lower-case and an upper-case
-name. The kinds are written in the test, door by door, and are not read from the
-rule, so a list that loses `webp` turns that door red. They do not prove that a
-list is not too wide, beyond those page-like names. **A new upload to the public
-disk needs its own row there**, whatever the coverage test says, and every file
-a controller reads needs a rule.
+image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.htm`,
+`x.xhtml`, `x.svg`, no extension at all) are refused and nothing is stored; and
+every kind of file an office may upload there is accepted, under a lower-case
+and an upper-case name. The kinds are written in the test, door by door, and are
+not read from the rule, so a list that loses `webp` turns that door red. They do
+not prove that a list is not too wide, beyond those page-like names. A door
+proves a rule only where that rule is the only guard: the composer's picture is
+also held by the announcement's rule when the feed is ticked, so the composer is
+five doors, the feed with push and then each other channel alone (push, the
+board, email, a text message). **A new upload to the public disk needs its own
+row there**, whatever the coverage test says, and every file a controller reads
+needs a rule.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `requiresGrant()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
