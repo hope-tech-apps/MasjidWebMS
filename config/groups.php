@@ -291,6 +291,8 @@ return [
          * dates come from office screens that accept any date, so a mistyped end date
          * is given this long to be noticed before it writes every balance off (a date
          * corrected after that is still undone: BucksExpiry). 0 acts the day after.
+         * A value above 7 is read as 7 (BucksExpiry::graceDays): a longer wait would
+         * let a student moved in the days after a year's last day keep that year's Bucks.
          */
         'expiry_grace_days' => (int) env('GROUP_BUCKS_EXPIRY_GRACE_DAYS', 7),
 

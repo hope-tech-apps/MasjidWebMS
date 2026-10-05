@@ -47,6 +47,7 @@ class ClassStoreSchemaTest extends TestCase
         'database/migrations/2026_10_04_100300_add_buck_settings_to_masjid_points_settings_table.php',
         'database/migrations/2026_10_04_100400_add_week_points_and_rate_to_prize_ledger_entries_table.php',
         'database/migrations/2026_10_04_100500_add_bucks_swept_at_to_masjid_points_settings_table.php',
+        'database/migrations/2026_10_13_100000_add_counts_from_to_prize_ledger_entries_table.php',
     ];
 
     protected function setUp(): void
@@ -89,6 +90,7 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertSame('datetime', Schema::getColumnType('masjid_points_settings', 'bucks_swept_at'));
         $this->assertSame('integer', Schema::getColumnType('prize_ledger_entries', 'week_points'));
         $this->assertSame('integer', Schema::getColumnType('prize_ledger_entries', 'week_rate'));
+        $this->assertSame('date', Schema::getColumnType('prize_ledger_entries', 'counts_from'));
 
         // The migrations declare the widths MySQL will enforce; SQLite cannot show them.
         $ledger = file_get_contents(base_path(self::MIGRATIONS[1]));
@@ -97,6 +99,10 @@ class ClassStoreSchemaTest extends TestCase
         $this->assertStringContainsString("string('note', 255)", $ledger);
         $this->assertStringContainsString("string('title', 120)", file_get_contents(base_path(self::MIGRATIONS[0])));
         $this->assertStringContainsString("unsignedSmallInteger('week_rate')", file_get_contents(base_path(self::MIGRATIONS[4])), 'a rate is at most 100, so a small integer');
+        // The two transfer kinds ride in the same string(16), and their date is a plain nullable DATE with no index.
+        $this->assertStringContainsString("date('counts_from')->nullable()->after('week_start')", file_get_contents(base_path(self::MIGRATIONS[6])));
+        $this->assertSame([], array_values(array_filter(Schema::getIndexes('prize_ledger_entries'), fn (array $i): bool => in_array('counts_from', $i['columns'], true))));
+        $this->assertLessThanOrEqual(16, max(array_map('strlen', PrizeLedgerEntry::KINDS)));
     }
 
     #[Test]
@@ -126,8 +132,8 @@ class ClassStoreSchemaTest extends TestCase
         // characters: proof the hand names are doing real work, not decoration.
         $this->assertSame(68, strlen('prize_ledger_entries_masjid_id_group_membership_id_occurred_at_index'));
 
-        // And the source: no index or unique in any of the four migrations without a name of
-        // its own, no enum, no partial index.
+        // And the source: no index or unique in any of the class-store migrations without a name
+        // of its own, no enum, no partial index.
         foreach (self::MIGRATIONS as $path) {
             $source = file_get_contents(base_path($path));
 
@@ -356,12 +362,19 @@ class ClassStoreSchemaTest extends TestCase
 
         $held = AcademicRecordsHeld::counts($this->amira);
         $this->assertSame(1, $held['Manara Bucks']);
-        $this->assertSame('1 Manara Bucks', AcademicRecordsHeld::describe(['Manara Bucks' => 1, 'marks' => 0]));
+        // Named, never counted: a count of ledger rows reads as a balance, and on a place a student
+        // was moved into it would say whether they held Bucks at the move. Every other kind keeps its count.
+        $this->assertSame('Manara Bucks history', AcademicRecordsHeld::describe(['Manara Bucks' => 1, 'marks' => 0]));
+        $this->assertSame('3 register marks, Manara Bucks history, 2 Arabic daily notes', AcademicRecordsHeld::describe(['register marks' => 3, 'Manara Bucks' => 41, 'Arabic daily notes' => 2]));
+        $this->assertSame('', AcademicRecordsHeld::describe(['Manara Bucks' => 0]));
+        $this->assertSame('3 register marks', AcademicRecordsHeld::describeForPeople(['register marks' => 3, 'Manara Bucks' => 41]), 'a move still leaves the ledger out altogether');
 
         $this->actAs($this->admin);
-        $this->deleteJson($this->adminUrl('/groups/'.$this->class->id.'/members/'.$this->amira->id))
+        $refusal = $this->deleteJson($this->adminUrl('/groups/'.$this->class->id.'/members/'.$this->amira->id))
             ->assertStatus(409)
-            ->assertJsonPath('status', 'failed');
+            ->assertJsonPath('status', 'failed')
+            ->json('data.membership.0');
+        $this->assertStringStartsWith('This child has school records in this class (Manara Bucks history), so they cannot be removed from the roster.', $refusal);
 
         $this->assertNotNull(GroupMembership::query()->find($this->amira->id));
 
@@ -500,8 +513,9 @@ class ClassStoreSchemaTest extends TestCase
         // 100400 (each week's rate and points) run BEFORE 100100 in a rollback, so without their
         // own guard they would drop what the rows were worked out from and only then reach the
         // ledger's refusal. 100500 (the swept-with-the-store-on mark) is guarded the same way (P4, the
-        // point's W5/W6 delta review): dropping it would let the next sweep pay out a pause.
-        foreach ([2 => ['behavior_weeks', 'prizes_converted_at'], 3 => ['masjid_points_settings', 'points_per_buck'], 4 => ['prize_ledger_entries', 'week_rate'], 5 => ['masjid_points_settings', 'bucks_swept_at']] as $i => [$table, $column]) {
+        // point's W5/W6 delta review): dropping it would let the next sweep pay out a pause. And the
+        // date a carried balance counts from: without it the next sweep would write that balance off.
+        foreach ([2 => ['behavior_weeks', 'prizes_converted_at'], 3 => ['masjid_points_settings', 'points_per_buck'], 4 => ['prize_ledger_entries', 'week_rate'], 5 => ['masjid_points_settings', 'bucks_swept_at'], 6 => ['prize_ledger_entries', 'counts_from']] as $i => [$table, $column]) {
             $migration = require base_path(self::MIGRATIONS[$i]);
 
             try {
@@ -530,6 +544,12 @@ class ClassStoreSchemaTest extends TestCase
         $settings->up();
         $swept->up();
         $this->assertTrue(Schema::hasColumn('masjid_points_settings', 'points_per_buck'));
+
+        $countsFrom = require base_path(self::MIGRATIONS[6]);
+        $countsFrom->down();
+        $this->assertFalse(Schema::hasColumn('prize_ledger_entries', 'counts_from'));
+        $countsFrom->up();
+        $this->assertTrue(Schema::hasColumn('prize_ledger_entries', 'counts_from'));
     }
 
     // ------------------------------------------ the dedupe key on MySQL (A1)

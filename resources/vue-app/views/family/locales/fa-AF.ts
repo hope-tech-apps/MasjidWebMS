@@ -303,6 +303,8 @@ export const FA_AF: Record<string, string> = {
     bucks_kind_reversal: "بازگردانده شد",
     bucks_kind_cashed_out: "به صورت کاغذی پرداخت شد",
     bucks_kind_expired: "منقضی شد",
+    bucks_kind_transfer_out: "به صنف جدید منتقل شد",
+    bucks_kind_transfer_in: "از صنف قبلی آورده شد",
     bucks_undone: "لغو شد",
     bucks_week_of: "هفتهٔ {x}",
     bucks_explain: "امتیازهای مثبت هر هفته به منارا بکس تبدیل می‌شود که فرزند شما می‌تواند در فروشگاه صنف خود خرج کند.",

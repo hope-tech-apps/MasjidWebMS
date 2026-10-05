@@ -303,6 +303,8 @@ export const PS: Record<string, string> = {
     bucks_kind_reversal: "بېرته ورکړل شوي",
     bucks_kind_cashed_out: "په کاغذي نوټونو کې ورکړل شوي",
     bucks_kind_expired: "موده پای ته رسېدلې",
+    bucks_kind_transfer_out: "نوي ټولګي ته لېږدول شوي",
+    bucks_kind_transfer_in: "له پخواني ټولګي څخه راوړل شوي",
     bucks_undone: "لغوه شوی",
     bucks_week_of: "د {x} اونۍ",
     bucks_explain: "د هرې اونۍ مثبتې نمرې د منارہ بکس ګرځي، چې ستاسو ماشوم یې د خپل ټولګي په پلورنځي کې لګولی شي.",

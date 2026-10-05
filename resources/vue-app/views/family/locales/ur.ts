@@ -303,6 +303,8 @@ export const UR: Record<string, string> = {
     bucks_kind_reversal: "واپس کیے گئے",
     bucks_kind_cashed_out: "کاغذی نوٹوں میں ادا",
     bucks_kind_expired: "میعاد ختم",
+    bucks_kind_transfer_out: "نئی کلاس میں منتقل کیے گئے",
+    bucks_kind_transfer_in: "پچھلی کلاس سے لائے گئے",
     bucks_undone: "منسوخ",
     bucks_week_of: "ہفتہ {x}",
     bucks_explain: "ہر ہفتے کے مثبت پوائنٹس منارہ بکس بن جاتے ہیں، جنہیں آپ کا بچہ اپنی کلاس کے اسٹور میں خرچ کر سکتا ہے۔",

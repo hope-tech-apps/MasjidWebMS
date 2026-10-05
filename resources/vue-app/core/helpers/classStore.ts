@@ -13,9 +13,9 @@
  * a 0 that says a child has nothing.
  */
 
-export type LedgerKind = 'earned' | 'adjusted' | 'redeemed' | 'reversal' | 'cashed_out' | 'expired';
+export type LedgerKind = 'earned' | 'adjusted' | 'redeemed' | 'reversal' | 'cashed_out' | 'expired' | 'transfer_out' | 'transfer_in';
 
-export const LEDGER_KINDS: LedgerKind[] = ['earned', 'adjusted', 'redeemed', 'reversal', 'cashed_out', 'expired'];
+export const LEDGER_KINDS: LedgerKind[] = ['earned', 'adjusted', 'redeemed', 'reversal', 'cashed_out', 'expired', 'transfer_out', 'transfer_in'];
 
 const KIND_LABEL: Record<LedgerKind, string> = {
     earned: 'Earned',
@@ -24,6 +24,9 @@ const KIND_LABEL: Record<LedgerKind, string> = {
     reversal: 'Given back',
     cashed_out: 'Paid out on paper',
     expired: 'Expired',
+    // The two lines of a student moved to another class: the balance leaves one class and arrives in the other.
+    transfer_out: 'Moved out',
+    transfer_in: 'Brought in',
 };
 
 /** The teacher's word for one ledger line; an unknown kind is shown as it came, never blank. */
@@ -266,6 +269,12 @@ export function entryText(e: { kind: string; prize_title?: string | null; week_s
             return `Paid out on paper (${breakdownLine(e.breakdown)})`;
         case 'expired':
             return 'Expired at the end of the class or year';
+        // Neither line names the other class: the row holds nothing of it, and a teacher reads
+        // their own class's ledger only.
+        case 'transfer_out':
+            return 'Moved with the student to another class';
+        case 'transfer_in':
+            return 'Brought from another class';
         default:
             return kindLabel(e.kind);
     }
