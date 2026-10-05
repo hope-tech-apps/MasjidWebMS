@@ -8089,3 +8089,82 @@ themselves still run only on the MySQL job.
   documents neither open nor widen that (they only ever write `.pdf` names), but `StorePageDocumentRequest`
   says every upload rule beside it pins the name, which is true only once that branch has landed. Both
   branches edit this file and `.claude/rules/section-types.md`: keep both additions when the second merges.
+- **Fix round 2, the same day** (after the re-review of the first fix round: the server lens said "ship", the
+  editors lens "ship after fixes" with one major). Additions only; what is above stands unless a line here
+  says it changed.
+  - **An edit abandoned with Cancel is gone (the major).** Link Buttons bound its fields onto the very link
+    objects the page list holds (it copied the list, not the links), and Cancel does not reload that list. So
+    an upload that was cancelled read as SAVED the next time the section was opened ("clear the address and
+    save", then "taken offline when you save", both false), and a saved address that was cleared and cancelled
+    went out, cleared, with the next save, and the server deleted a document the office believed it had kept.
+    Fixed in two places, each pinned on its own:
+    1. `SectionFormModal`'s form is a deep copy of the section's content, made when the modal opens (through
+       JSON: the object is reactive, and `structuredClone` throws on a proxy). A new section's default content
+       is copied the same way; it was the store's own object, handed to every new section of that type. No
+       editor can reach the object the list holds, and `sectionSavedDocuments` is read from that untouched
+       original. This replaces "read once, when it opens" above: it is now the list's own object that stays the
+       saved content, however often the section is opened and cancelled.
+    2. Ten editors shared rows with the content they were handed and now copy every row, when they open and in
+       their watch: Link Buttons, Admissions & Tuition (fees, payment plans, steps), Carousel, Grid Cards,
+       Impact Stats, Mission & Vision, Providers, Services & Eligibility, Staff Directory, Stats. (Mission &
+       Vision and Stats shared the list itself.) Programs already copied each programme. The other twenty-two
+       editors bind only top-level fields of an object they build and hold no rows. This was a defect in every
+       one of the ten, not only where a PDF can be uploaded: any abandoned row edit stayed in the list until
+       the page was reloaded.
+  - **A new section's type and mode wait for an upload.** Changing the Section Type, or switching to Attach
+    Existing, takes the editor away exactly as Cancel does and asked nothing. Both are held (disabled) while
+    the count of uploads is above zero, as Save is.
+  - **What Cancel says, and when it asks.** The question about an upload in flight ended "wait, then close",
+    which leaves the same file online; it says "then save". When the form holds a page document the saved
+    section does not (uploaded, or put in by hand), Cancel and the close button ask once: the file's name,
+    that it stays online if the section is not saved, and its address. It is read from the content when the
+    office closes (`sectionDocumentsNotSaved`); no new state. It says "linked from nowhere UNLESS another
+    saved section links it", because the page tool cannot know that of an address put in by hand (PD-10). The
+    note under an unsaved file names closing as well as clearing and replacing.
+  - **A label is said to come from the file's name only when it did.** A name with nothing to read gets the
+    editor's own word, and the note says what the field was filled in as.
+  - **THE OUT-OF-DATE RULE CHANGED (item 1 of the first fix round).** It was: a save is out of date when it
+    brings in ANY address of the page-document shape with none of the organisation's documents behind it. That
+    is far more than an old copy can hold, and keeping is not free: the kept document has left the section's
+    content, so no later save has it in its "before", and it stays public for good while the page tool said
+    "taken offline when you save". It fired for an ordinary replace by another organisation's document, by
+    the organisation's own PDF in another collection, and by another site's address. It is now: the address is
+    written as OURS (on the public disk's host, on the host the request came in on, or with no host) AND no
+    media row at all has that id and file name (the document it named has been deleted). Anything else is an
+    ordinary replace and what it drops is deleted. The test that pinned the old behaviour for another site's
+    address is rewritten to expect the deletion. Still kept, by this rule: one of our own addresses whose
+    document is gone, however it got there (typed, an id too large to be a row, or carried percent-encoded
+    inside a viewer's link). Still not covered, as before: a stale save that only DROPS a document.
+  - **"Still linked" reads the spellings a browser resolves.** Besides the address as written and
+    percent-decoded once, each string is read with backslashes and JSON-escaped slashes as slashes, a doubled
+    slash as one, and `.` and `..` segments resolved. For the KEEPING side only: what starts a deletion is
+    still the address as written, and the out-of-date check reads the address as it was given. The page
+    tool's "taken offline when you save" follows the same reading (not asked for by the brief; without it the
+    footer would promise a deletion the server no longer makes). Not seen, still: an address encoded twice, a
+    path or `.PDF` in upper case, HTML-entity slashes (PD-17). The doubled slash is a working link only where
+    the web server merges slashes, which is its default and was not checked on a server.
+  - **The upload limit counts REQUESTS, for each person in each organisation.** Thirty an hour, keyed by the
+    signed-in user and the organisation in the address, read as a number as the tenant gate reads it (the
+    route does not pin the spelling, so `7`, `07` and `7.0` are one count). It runs ahead of the tenant and
+    capability gates and of the upload's own rule, so it counts every signed-in request to that address:
+    stored, refused by the rule (422), or refused because the organisation is not the person's (403). The
+    sentence is "You have tried to upload a lot of documents in the last hour", true of all three. What this
+    gives up: a sign-in that may act for every organisation has thirty for EACH, so the ceiling on one stolen
+    token of that kind is thirty times the number of organisations, not thirty.
+  - **A disk that cannot be asked** has its own log line (the file could not be checked and may still be
+    online), in place of "the disk kept the file".
+- **Limits that stay after round 2** (each confirmed, none new behaviour).
+  1. A stalled upload holds Save, the Section Type and the mode, with no way out but Cancel, then Close
+     Anyway, which discards every edit in the modal. No request here has a timeout.
+  2. The notice about a replaced, never-saved file lives in the control: it goes when rows move, and it stays
+     under an empty control if the field is cleared by hand.
+  3. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024 bytes), so a computer that counts in
+     thousands shows a slightly larger number for the same file.
+  4. Anything that throws after the file is copied and before the row is committed leaves a file with no row
+     (PD-20).
+  5. In a NEW section, changing the Section Type after an upload has ENDED replaces the content, the address
+     with it, and asks nothing; Cancel then asks nothing either, since the form no longer holds it. (Driven
+     through the real modal.) And Attach Section, pressed after an upload in the Create New form, closes
+     without the question (read from the code, not run). Both leave the file online, linked from nowhere.
+  6. Clearing an unsaved file's address by hand and then closing asks nothing: the note under the field said
+     beforehand that clearing leaves it online.

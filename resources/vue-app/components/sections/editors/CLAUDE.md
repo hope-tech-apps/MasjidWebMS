@@ -123,6 +123,21 @@ not.)
   Buttons, "Program 2" in Programs): it goes into the accessible names of the button
   and the Open link. The button is never `disabled` while it uploads (that drops the keyboard's
   focus to the page); it is `aria-disabled`, and a press does nothing.
+- **"Taken offline when you save" follows the server's reading of "still linked".**
+  The server keeps a file while any section still carries its path, as written,
+  percent-encoded inside another address, or in a spelling a browser resolves to the
+  same file (a dot segment, a doubled slash, backslashes or JSON-escaped slashes).
+  `sectionDocumentsLeaving` reads content the same way, so the footer does not
+  promise a deletion the server will not make. Change one and change the other
+  (`App\Support\PageDocuments::spellings`).
+- **Limits that stay, so nobody "fixes" one by accident or promises otherwise.** A
+  stalled upload holds Save, the Section Type and the mode, and the only way out is
+  Cancel, then Close Anyway, which discards the session (no request here times out).
+  The notice about a replaced, never-saved file lives in the control: it goes when
+  rows move. A size is shown in the unit of the limit (25 MB is 25 x 1024 x 1024
+  bytes), so a computer that counts in thousands shows a slightly larger number for
+  the same file. In a NEW section, changing the type after an upload has ended
+  replaces the content, the address with it, and asks nothing.
 - Adding the control to another link field is a template line, an `onDocumentUploaded`
   and, in a list editor, the busy counter, the key and the label. The modal and the
   server need nothing.
