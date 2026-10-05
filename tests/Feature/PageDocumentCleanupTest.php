@@ -1068,6 +1068,30 @@ class PageDocumentCleanupTest extends TestCase
     }
 
     #[Test]
+    public function a_save_that_repeats_one_address_of_ours_five_thousand_times_asks_about_its_document_once(): void
+    {
+        // The out-of-date check asks the database whether the document behind each address a save
+        // brings in is still there. It asked every time the address was written, so one address of a
+        // document that exists, repeated, cost a query for each repeat, after the content was written.
+        $kept = $this->uploadDocument('Schedule.pdf');
+        $document = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveSection('text', ['content' => '<p><a href="' . $document['url'] . '">The calendar</a></p>']);
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $this->updateSection($section, ['content' => str_repeat($kept['url'] . ' ', 5000)]);
+        $asked = collect(DB::getQueryLog())
+            ->filter(fn (array $query) => str_contains($query['query'], 'media') && str_contains($query['query'], 'exists'))
+            ->count();
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual(2, $asked, "the save asked {$asked} times whether a document is still there");
+        // Its document exists, so this is an ordinary replace: the one it dropped is gone, the one it names stays.
+        $this->assertDocumentGone($document);
+        $this->assertDocumentKept($kept);
+    }
+
+    #[Test]
     public function an_address_after_more_unbroken_text_than_is_read_for_its_host_is_not_judged_and_nothing_is_deleted(): void
     {
         // The price of reading only what stands straight in front of each address: one that follows

@@ -378,6 +378,9 @@ final class PageDocuments
     {
         $had = self::addresses(self::decoded($before));
         $ours = null;
+        // A document found online is asked about once, however often the content repeats its
+        // address: each asking is a query, made after the content is written.
+        $online = [];
 
         foreach (self::decoded($after) as $string) {
             if (! preg_match_all(self::ADDRESS, $string, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
@@ -385,7 +388,7 @@ final class PageDocuments
             }
 
             foreach ($matches as [[$path, $at], [$mediaId], [$storedName]]) {
-                if (isset($had[$path])) {
+                if (isset($had[$path]) || isset($online[$path])) {
                     continue;
                 }
 
@@ -395,12 +398,14 @@ final class PageDocuments
                     continue;
                 }
 
-                $online = Media::query()->whereKey((int) $mediaId)->where('file_name', $storedName)
+                $exists = Media::query()->whereKey((int) $mediaId)->where('file_name', $storedName)
                     ->where('disk', self::disk())->exists();
 
-                if (! $online) {
+                if (! $exists) {
                     return true;
                 }
+
+                $online[$path] = true;
             }
         }
 
