@@ -29,8 +29,14 @@ use Illuminate\Support\Facades\Schema;
  *
  * DEPLOY ORDER. bin/deploy serves the new code before it runs this. Every read
  * is behind App\Support\StudentAge::givenColumnExists(), so for those seconds a
- * roster answers as before. Roll back by code only: `migrate:rollback` would
- * destroy every age that was recorded.
+ * roster answers as before.
+ *
+ * ROLLING BACK. By code only: `migrate:rollback` would destroy every age that
+ * was recorded. And NOT to a commit from before this one as it stands: older
+ * code does not hide `age_given` on Contact, and the staff contact endpoints
+ * serialise the model whole, so they would send this column's ciphertext in
+ * every contact they list. A revert must keep `age_given` in Contact::$hidden
+ * (and its cast), exactly as for `date_of_birth`.
  *
  * Blueprint only, so the same statement runs on MySQL and on the suite's SQLite.
  */

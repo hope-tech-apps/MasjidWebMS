@@ -7737,5 +7737,15 @@ themselves still run only on the MySQL job.
     exactly one current student has that first and last name. No request can set one.
 - **Not built.** A new registration does not carry its age onto the student by itself. No screen edits or
   clears the age given. The records export does not carry it.
-- **Tests.** `StudentAgeGivenTest` (19), the two SPA files, one MySQL case (CI only).
+- **From the pre-ship read (the session that owns the school rules), same day.**
+  - The clear of a date of birth answers the same constant for every contact. The first version answered with
+    the family's age, which told the office that a contact who is not a student held one. The date form now
+    re-reads the roster row after a clear and tells the roster what it shows.
+  - Rolling back: by code only, and a revert must keep `age_given` in `Contact::$hidden`. Older code would send
+    its ciphertext in every whole-contact answer.
+  - Still to do, next change: clear the age given together with the date once no class lists the contact, and
+    have Remove say when either is held. Until then a deletion request for a child who has left is a one-off
+    through the model's writer.
+  - A teacher now sees an age for these students too, with no mark that it may be one short.
+- **Tests.** `StudentAgeGivenTest` (20), the two SPA files, one MySQL case (CI only).
 

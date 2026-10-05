@@ -281,12 +281,31 @@ const save = async () => {
     }
 };
 
+/**
+ * After a date was removed: ask, by roster row, what the roster shows for this
+ * student now, and tell the roster when it is the age their family gave. Quiet:
+ * a failure here leaves a dash on the row until the roster is next read.
+ */
+const showTheFamilysAgeAgain = async (url: string, membershipId: number | string, tell?: (change: BirthDateChange) => void) => {
+    try {
+        const data = (await ApiService.get(url as any)).data?.data;
+
+        if (data?.age_given === true && typeof data?.age === 'number') {
+            tell?.({ membershipId, age: data.age, given: true, held: false });
+        }
+    } catch {
+        // Nothing to show.
+    }
+};
+
 const remove = async () => {
     if (busy.value) return;
 
     const mine = asked;
     const tell = props.afterChange;
     const membershipId = props.membershipId;
+    // The row's own address, taken now: the panel may be on another student by the time the clear answers.
+    const row = rowUrl();
 
     removing.value = true;
     error.value = '';
@@ -295,9 +314,13 @@ const remove = async () => {
     try {
         const res = await ApiService.delete(contactUrl());
 
-        // With the date gone the row shows the age the family gave again, when
-        // one is on file: the server says which.
-        tell?.({ membershipId, age: res.data?.data?.age ?? null, given: res.data?.data?.age_given === true, held: false });
+        // THE ROSTER IS TOLD FIRST: the date is gone from that row.
+        tell?.({ membershipId, age: null, given: false, held: false });
+
+        // The clear answers the same for every contact, so it cannot say what
+        // this row shows now. That is read by ROSTER ROW: when the family gave
+        // an age at registration, the row shows that again instead of a dash.
+        void showTheFamilysAgeAgain(row, membershipId, tell);
         if (mine !== asked) return;
 
         date.value = null;

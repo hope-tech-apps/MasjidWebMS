@@ -1846,12 +1846,28 @@ owner (2026-10-05): ages are to be there for every student. So a roster has a SE
   copy shows a dash until it is run again or a date is typed. The office cannot edit or clear the age given
   (typing a date of birth supersedes it). The school records export does not carry it (it is in the form
   responses export, where the family wrote it).
+- **The clear says nothing about it.** `DELETE …/contacts/{contact}/birth-date` takes any contact of the
+  organisation, so it answers the same constant for everyone (`age: null, age_given: false`): an answer that
+  carried the family's age would say that somebody who is not a student has one on file. What a student's row
+  shows after a clear is read by ROSTER ROW (`GET …/members/{row}/birth-date`, which answers for a student in a
+  class and nobody else); the date form does that read itself and tells the roster.
+- **KNOWN GAP, next change.** Nothing removes an age given: the clear takes the date of birth only, Remove on
+  the roster says nothing about it, and the writer's callers are the copy and a merge. It is to be cleared
+  together with the date once no class lists the contact, and Remove is to speak when either is held. Until
+  then, a family's request to delete what the school holds about a child who has left needs a one-off through
+  `recordAgeGiven(null, null, …)`.
 - **Deploy window.** Read only behind `StudentAge::givenColumnExists()`, asked separately from the date of
   birth's column, so between checkout and migrate a roster shows the ages dates of birth give and names no
-  missing column. Roll back by code only.
+  missing column.
+- **Rolling back.** By code only, never `migrate:rollback`. And never to a commit from before this one as it
+  stands: older code does not hide `age_given`, and the staff contact endpoints serialise the model whole, so
+  the ciphertext would ride every contact they list. A revert keeps `age_given` in `Contact::$hidden` and its
+  cast, the same standing rule as `date_of_birth`.
+- **What a teacher sees changed in content, not shape.** A teacher's `age` is now filled for a student whose
+  family gave one, with no mark that it may be one short.
 - **Classified.** Staging scrub: `encrypted_null`. Account deletion: `OFFICE_COLUMNS` (the school holds
   something about this person).
-- **Proven by** `StudentAgeGivenTest` (19; three guards were removed once each and a test went red: the date
+- **Proven by** `StudentAgeGivenTest` (20; three guards were removed once each and a test went red: the date
   wins, the age grows, the value is hidden), the screen tests in `student-age.test.ts` and
   `student-details.test.ts`, and on MySQL `tests/Mysql/ContactDateOfBirthMysqlTest.php` (CI only).
 

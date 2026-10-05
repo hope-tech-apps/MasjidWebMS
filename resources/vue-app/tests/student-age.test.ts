@@ -349,11 +349,15 @@ test('form: a date removed after the panel was closed still reaches the roster r
     assert.deepEqual(changed, [{ membershipId: 12, age: null, given: false, held: false }]);
 });
 
-test("form: with the date removed the roster is told the family's age again, when the server sends one", async () => {
-    const { api } = officeApi({
-        get: async () => ok(answer({ date_of_birth: '2017-03-09', age: 9 })),
-        delete: async () => ok({ date_of_birth: null, age: 6, age_given: true, unreadable: false }, 'Date of birth removed.'),
-        put: async () => ok(answer({ date_of_birth: '2017-03-09', age: 9, age_given: false }), 'Date of birth saved.'),
+test("form: after the date is removed the row re-reads itself, and shows the family's age again when there is one", async () => {
+    // The clear answers the same for every contact (it must not say what somebody who is not a
+    // student holds), so what the row shows now is read by ROSTER ROW.
+    let cleared = false;
+    const { api, calls } = officeApi({
+        get: async () => (cleared
+            ? ok(answer({ date_of_birth: null, age: 6, age_given: true }))
+            : ok(answer({ date_of_birth: '2017-03-09', age: 9 }))),
+        delete: async () => { cleared = true; return ok({ date_of_birth: null, age: null, age_given: false, unreadable: false }, 'Date of birth removed.'); },
     });
     const { screen, changed } = await mountForm(api);
 
@@ -361,9 +365,39 @@ test("form: with the date removed the roster is told the family's age again, whe
     await flush();
     click(screen.button('Yes, remove it'));
     await flush();
+    await flush();
 
-    // Not blank: the age the family gave, marked as that.
-    assert.deepEqual(changed, [{ membershipId: 12, age: 6, given: true, held: false }]);
+    // Told at once that the date is gone, then what the roster shows instead: not a dash.
+    assert.deepEqual(changed, [
+        { membershipId: 12, age: null, given: false, held: false },
+        { membershipId: 12, age: 6, given: true, held: false },
+    ]);
+    // By roster row, never by contact.
+    assert.deepEqual(calls.filter((c) => c.verb === 'get').map((c) => c.url), [ROW_URL, ROW_URL]);
+    screen.unmount();
+});
+
+test('form: after the date is removed a student with no age from their family keeps the dash, and a failed re-read is silent', async () => {
+    let cleared = false;
+    const { api } = officeApi({
+        get: async () => {
+            if (cleared) throw httpError(500, {});
+
+            return ok(answer({ date_of_birth: '2017-03-09', age: 9 }));
+        },
+        delete: async () => { cleared = true; return ok({ date_of_birth: null, age: null, age_given: false, unreadable: false }, 'Date of birth removed.'); },
+    });
+    const { screen, changed } = await mountForm(api);
+
+    click(screen.button('Remove'));
+    await flush();
+    click(screen.button('Yes, remove it'));
+    await flush();
+    await flush();
+
+    assert.deepEqual(changed, [{ membershipId: 12, age: null, given: false, held: false }]);
+    assert.match(screen.text(), /Date of birth removed\./);
+    assert.doesNotMatch(screen.text(), /could not/);
     screen.unmount();
 });
 

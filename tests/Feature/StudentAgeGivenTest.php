@@ -275,13 +275,48 @@ class StudentAgeGivenTest extends TestCase
         // The family's answer is still on the record, unread while a date is there.
         $this->assertSame(['age' => 6, 'on' => self::GIVEN_ON], Contact::findOrFail($this->child->id)->ageGivenOrNull());
 
-        // Removing the date does not blank the row: the answer says what it shows now.
+        // Removing the date: the clear answers what it answers for everybody, and the
+        // row's own route and the roster say what is shown now. Not a dash.
         $this->deleteJson($this->clearUrl())->assertOk()->assertExactJson([
             'status' => 'success',
             'message' => 'Date of birth removed.',
-            'data' => ['date_of_birth' => null, 'age' => 6, 'age_given' => true, 'unreadable' => false],
+            'data' => ['date_of_birth' => null, 'age' => null, 'age_given' => false, 'unreadable' => false],
         ]);
+        $this->getJson($this->birthDateUrl())->assertOk()
+            ->assertJsonPath('data.age', 6)
+            ->assertJsonPath('data.age_given', true);
         $this->assertSame(['age' => 6, 'age_given' => true], $this->onRoster());
+    }
+
+    /**
+     * The clear takes ANY contact of the organisation, so its answer must not
+     * depend on what that contact holds: an age in it would tell the office
+     * that somebody who is not a student, or is on no roster any more, has one
+     * on file.
+     */
+    #[Test]
+    public function clearing_a_date_answers_the_same_whoever_holds_an_age_given(): void
+    {
+        $expected = [
+            'status' => 'success',
+            'message' => 'Date of birth removed.',
+            'data' => ['date_of_birth' => null, 'age' => null, 'age_given' => false, 'unreadable' => false],
+        ];
+
+        // A student holding one; a guardian (not a student) holding one; a deleted contact on no roster holding one.
+        $this->child->recordAgeGiven(6, self::GIVEN_ON, $this->admin, 'registration');
+        $this->parent->recordAgeGiven(7, self::GIVEN_ON, $this->admin, 'registration');
+        $gone = Contact::factory()->create(['masjid_id' => $this->school->id, 'email' => null]);
+        $gone->recordAgeGiven(9, self::GIVEN_ON, $this->admin, 'registration');
+        $gone->delete();
+        $nothing = Contact::factory()->create(['masjid_id' => $this->school->id, 'email' => null]);
+
+        foreach ([$this->child, $this->parent, $gone, $nothing] as $contact) {
+            $this->deleteJson($this->adminBase()."/contacts/{$contact->id}/birth-date")->assertOk()->assertExactJson($expected);
+        }
+
+        // The row's own route answers for a student in a class and nobody else.
+        $this->getJson($this->rosterUrl().'/'.$this->guardianEntry->id.'/birth-date')->assertStatus(422);
     }
 
     #[Test]

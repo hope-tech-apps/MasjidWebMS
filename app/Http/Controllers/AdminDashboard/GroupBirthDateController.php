@@ -112,15 +112,16 @@ class GroupBirthDateController extends Controller
             $contact->recordDateOfBirth(null, $this->actor($request), 'contact');
         }
 
-        // With the date gone the roster falls back to the age the family gave,
-        // when one is on file, so the answer carries that and the row does not
-        // go blank until the next reload.
-        $shown = $this->shownWithoutADate($contact);
-
+        // THE SAME ANSWER FOR EVERY CONTACT, whatever they hold: this route
+        // takes any contact of the organisation, so an answer that carried the
+        // age a family gave would tell the caller that somebody who is not a
+        // student has one on file. What a student's row shows now (the family's
+        // age again, when there is one) is read by ROSTER ROW, through show(),
+        // which answers for a student in a class and nobody else.
         return response()->json([
             'status' => 'success',
             'message' => 'Date of birth removed.',
-            'data' => ['date_of_birth' => null, 'age' => $shown['age'], 'age_given' => $shown['given'], 'unreadable' => false],
+            'data' => ['date_of_birth' => null, 'age' => null, 'age_given' => false, 'unreadable' => false],
         ], Response::HTTP_OK);
     }
 
@@ -156,21 +157,6 @@ class GroupBirthDateController extends Controller
         // The whole row, so the writer saves one column of a complete model.
         // `date_of_birth` is hidden, and this model is never returned.
         return [Contact::findOrFail($membership->contact_id), null];
-    }
-
-    /**
-     * What the roster shows for a contact whose date of birth was just cleared:
-     * the age the family gave, brought up to today, or nothing.
-     *
-     * @return array{age: int|null, given: bool}
-     */
-    private function shownWithoutADate(Contact $contact): array
-    {
-        if (! StudentAge::givenColumnExists()) {
-            return ['age' => null, 'given' => false];
-        }
-
-        return StudentAge::shown($contact, SchoolCalendar::for((int) $contact->masjid_id)->today());
     }
 
     /**
