@@ -251,6 +251,13 @@ test('move: a 409 from the save is shown in the dialog, which stays open and che
     assert.match(screen.text(), /This changed while you were looking\. Nothing was moved\./);
     assert.equal(count('preview'), 2, 'the check did not run again after the refusal');
     assert.equal(closed, 0, 'the dialog closed on a refusal');
+    // THE REFUSAL IS THE FIRST THING IN THE BODY, above the choices and the lines, and it has
+    // the keyboard: the body scrolls now, and under a long "What will happen" a refusal drawn
+    // last could be below the fold.
+    const alert = screen.all((n) => n.props['data-part'] === 'refused')[0];
+    assert.equal(alert.parent!.children.filter((c) => c.kind === 'el')[0], alert, 'the refusal is not the first thing in the body');
+    assert.equal(String(alert.parent!.props.class).includes('modal-body'), true);
+    assert.equal(doc.activeElement.props['data-part'], 'refused', 'the refusal did not take the keyboard');
     // What the server would do now is on screen, and the office can try again.
     assert.match(screen.text(), /They start fresh in 2nd Grade\./);
     assert.equal(screen.button('Move to 2nd Grade').disabled, false);
@@ -583,6 +590,40 @@ test('put back: a row that simply left keeps the confirmation it always had', as
     await flush();
     assert.equal(count('putBack'), 1);
     screen.unmount();
+});
+
+test('put back: a row that simply left is not offered "Put back" over a carried consent withdrawn since, and otherwise says what comes back', async () => {
+    const left = { ...child, left_on: '2026-09-20' };
+    const state = (over: Record<string, any>) => ({ student_there: 'none', open_group: null, guardians_not_vouched: [],
+        consent_blocks: [], consent_lines: [], bucks_line: null, ...over });
+    const block = consentBlockKinds['the source was withdrawn'];
+
+    // The page drew the row before the family withdrew in the other class: the dialog reads
+    // again and is told. No "moved to" on this row: the student left the class, and was not moved.
+    const blocked = fakeStore({ readRoster: async () => ({
+        rows: [{ ...left, moved_to_state: state({ consent_blocks: [block, putBackRemedy] }) }, gamal], meta: {},
+    }) });
+    const first = await mountPutBack(blocked.store, left);
+    assert.match(first.text(), /Not yet: check consent first/);
+    assert.ok(first.text().includes(block), 'the server\'s sentence is printed whole');
+    assert.ok(first.text().includes(putBackRemedy));
+    assert.deepEqual(putBackButtons(first).map((b: any) => b.textContent), [], 'the blocked form offers a put-back button');
+    first.all((n) => n.tag === 'button').forEach((b) => press(b));
+    await flush();
+    assert.equal(blocked.count('putBack'), 0, 'the blocked form sent the undo');
+    first.unmount();
+
+    // Nothing withdrawn: the consent that comes back is named above the button, which works.
+    const named = fakeStore({ readRoster: async () => ({
+        rows: [{ ...left, moved_to_state: state({ consent_lines: [inForceAgain] }) }, gamal], meta: {},
+    }) });
+    const second = await mountPutBack(named.store, left);
+    assert.match(second.text(), /Put them back on the roster\?/);
+    assert.ok(second.text().includes(inForceAgain));
+    click(second.button('Yes, put them back'));
+    await flush();
+    assert.equal(named.count('putBack'), 1);
+    second.unmount();
 });
 
 test('put back: the keyboard comes into the dialog, Escape is Cancel and waits for a save, and the opener gets focus back', async () => {

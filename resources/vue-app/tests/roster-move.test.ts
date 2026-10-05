@@ -167,6 +167,20 @@ test('a consent a move carried is labelled by what the entry holds now, and a cl
         'Carried from 1st Grade when Maryam Student was moved. Saving records it for this class.');
     assert.equal(carriedConsentNote(withdrawn, 'Maryam Student'), null);
     assert.equal(carriedConsentNote(guardian(3, 'Own', { consent_scope: 'feed', consent_granted_at: '2026-09-05' }), 'Maryam Student'), null);
+
+    // CARRIED, AND NOW LESS THAN THE CLASS IT CAME FROM HOLDS (the server says so: it takes the
+    // other class's row). The label says what the two classes hold, not who changed what, and
+    // the dialog's line no longer promises that saving makes it this class's own.
+    const less = { ...carried, consent_scope: 'feed', consent_less_than_carried_from: true };
+    assert.equal(carriedConsentLabel(less), 'Carried from 1st Grade, which holds photograph consent');
+    assert.equal(carriedConsentNote(less, 'Maryam Student'),
+        'Carried from 1st Grade when Maryam Student was moved. 1st Grade holds photograph consent; here it is the class story only. '
+        + 'Saving photographs records it for this class.');
+    assert.equal(carriedConsentLabel({ ...less, consent_carried_from: null }), 'Carried from a class that was removed, which holds photograph consent');
+    assert.match(carriedConsentNote({ ...less, consent_carried_from: null }, 'Maryam Student')!, /That class holds photograph consent/);
+    // The flag means nothing without the mark, and nothing on a withdrawn entry.
+    assert.equal(carriedConsentLabel({ ...less, consent_carried_from_group_id: null }), null);
+    assert.equal(carriedConsentLabel({ ...withdrawn, consent_less_than_carried_from: true }), 'Withdrawn here after it was carried from 1st Grade');
 });
 
 test('the answer to a consent is written onto the row with its mark: a record clears it, a withdrawal keeps it', () => {
@@ -187,6 +201,19 @@ test('the answer to a consent is written onto the row with its mark: a record cl
     assert.deepEqual([withdrawn.consent_scope, withdrawn.consent_granted_at, withdrawn.consent_carried_from_group_id], [null, null, 1]);
     assert.deepEqual(withdrawn.consent_carried_from, first);
     assert.equal(carriedConsentLabel(withdrawn), 'Withdrawn here after it was carried from 1st Grade');
+
+    // REDUCED: the class story where the class it came from holds photographs. The mark is kept,
+    // and the cell says what the two classes hold at once.
+    const reduced = carried();
+    applyConsentAnswer(reduced, { consent_scope: 'feed', consent_granted_at: '2026-10-04T00:00:00.000000Z',
+        consent_carried_from_group_id: 1, consent_less_than_carried_from: true });
+    assert.deepEqual([reduced.consent_scope, reduced.consent_carried_from_group_id, reduced.consent_less_than_carried_from], ['feed', 1, true]);
+    assert.equal(carriedConsentLabel(reduced), 'Carried from 1st Grade, which holds photograph consent');
+    // ...and recorded again for as much: this class's own, and the flag goes with the mark.
+    applyConsentAnswer(reduced, { consent_scope: 'media', consent_granted_at: '2026-10-04T00:00:00.000000Z',
+        consent_carried_from_group_id: null, consent_less_than_carried_from: false });
+    assert.deepEqual([reduced.consent_carried_from_group_id, reduced.consent_less_than_carried_from], [null, false]);
+    assert.equal(carriedConsentLabel(reduced), null);
 
     // An answer without the key (the column is not there yet), or no row at all: nothing is carried.
     const before = carried();
@@ -288,6 +315,37 @@ test('put back: blocked while it would bring back a consent the family withdrew 
     assert.deepEqual(two.lines, [copyWithdrawn, sourceNarrowed, remedy]);
     assert.deepEqual(two.stops, [0, 1]);
     assert.equal(two.confirmLabel, null);
+});
+
+test('put back: a row that simply left is held to the same consent rule, and names what comes back', () => {
+    const roster = [guardian(1, 'Huda', { left_on: '2026-10-03' }), guardian(2, 'Nadia', { left_on: '2026-10-03' })];
+    const left = (state: any) => student({ left_on: '2026-10-03', moved_to_state: state });
+    const plain = 'Maryam Student will be back on the register and every class list, and their guardians will be back in the class with them.';
+
+    // Nothing to say (the server sends no state for such a row): the confirmation it always had.
+    const asBefore = putBackForm(left(null), roster);
+    assert.deepEqual([asBefore.form, asBefore.lines, asBefore.confirmLabel], ['unchanged', [plain], 'Yes, put them back']);
+
+    // A consent beside the row comes back with the student: named above the button.
+    const named = putBackForm(left({ student_there: 'none', open_group: null, guardians_not_vouched: [],
+        consent_blocks: [], consent_lines: [comesBack], bucks_line: null }), roster);
+    assert.deepEqual([named.form, named.lines, named.confirmLabel], ['unchanged', [plain, comesBack], 'Yes, put them back']);
+
+    // A carried consent beside it whose class of origin has withdrawn it since: NO button,
+    // exactly as on a row that a move left. (It used to get the plain confirmation and its
+    // button, with no word about consent.)
+    const blocked = putBackForm(left({ student_there: 'none', open_group: null, guardians_not_vouched: [],
+        consent_blocks: [sourceWithdrawn, remedy], consent_lines: [comesBack], bucks_line: null }), roster);
+    assert.equal(blocked.form, 'blocked');
+    assert.equal(blocked.title, 'Not yet: check consent first');
+    assert.equal(blocked.confirmLabel, null, 'a row that simply left was offered "Put back" over a withdrawn consent');
+    assert.deepEqual(blocked.lines, [sourceWithdrawn, remedy, comesBack]);
+    assert.deepEqual(blocked.stops, [0]);
+    assert.equal(blocked.openGroup, null);
+
+    const two = putBackForm(left({ student_there: 'none', open_group: null, guardians_not_vouched: [],
+        consent_blocks: [sourceWithdrawn, sourceNarrowed, remedy], consent_lines: [], bucks_line: null }), roster);
+    assert.deepEqual(two.stops, [0, 1]);
 });
 
 test('put back: a guardian who is not vouched for and a consent that would come back are both said, each with what to do', () => {

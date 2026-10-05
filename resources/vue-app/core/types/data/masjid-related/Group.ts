@@ -315,6 +315,13 @@ export type GroupMembership = {
     consent_carried_from_group_id?: number | null;
     consent_carried_from?: MovedClass | null;
     /**
+     * Worked out by the server, because it takes the other class's row: this
+     * entry is marked, holds consent, and holds LESS than the class it was
+     * carried from (the class story here, photographs there). A record of less
+     * keeps the mark, and a move back there is refused while this stands.
+     */
+    consent_less_than_carried_from?: boolean;
+    /**
      * ON WHOSE AUTHORITY THIS ROW EXISTS — mirrors `GroupMembership::PROVENANCES`.
      *
      * `confirmed` means a staff member stands behind it and it grants what a

@@ -27,6 +27,21 @@
 
                 <form v-else @submit.prevent="save">
                     <div class="modal-body">
+                        <!-- A refusal from the move itself. FIRST in the body, and it
+                             takes the keyboard: the body scrolls since a carried
+                             consent made "What will happen" long, and after the lines
+                             the refusal could sit below the fold, where the dialog
+                             looked as if the tap had done nothing. The check below
+                             runs again by itself. -->
+                        <div v-if="saveError" ref="refusalAlert" tabindex="-1" class="alert alert-danger mb-3" role="alert" data-part="refused">
+                            <i class="bi bi-x-octagon me-1"></i>
+                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
+                            <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
+                                    @click="openClass(saveOpenGroup)">
+                                Open {{ saveOpenGroup.name }}
+                            </button>
+                        </div>
+
                         <p class="mb-3">
                             <span class="fw-semibold">{{ studentName }}</span> is in
                             <span class="fw-semibold">{{ groupName }}</span>.
@@ -103,16 +118,6 @@
                             </ul>
                         </div>
 
-                        <!-- A refusal from the move itself: shown here, in the
-                             dialog, and the check above runs again by itself. -->
-                        <div v-if="saveError" class="alert alert-danger mt-3 mb-0" role="alert">
-                            <i class="bi bi-x-octagon me-1"></i>
-                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
-                            <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
-                                    @click="openClass(saveOpenGroup)">
-                                Open {{ saveOpenGroup.name }}
-                            </button>
-                        </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" :disabled="saving" @click="cancel">Cancel</button>
@@ -300,6 +305,11 @@ const save = async () => {
         saveError.value = apiErrorText(error, 'The move could not be saved. Nothing was moved.');
         saveOpenGroup.value = error?.response?.data?.open_group ?? null;
         await check();
+
+        // The view and the keyboard go to the refusal, at the top of the body.
+        await nextTick();
+        refusalAlert.value?.focus();
+        refusalAlert.value?.scrollIntoView?.({ block: 'start' });
     } finally {
         saving.value = false;
     }
@@ -327,6 +337,7 @@ const openClass = (group: OpenGroup) => emit('open-class', group.id, group.membe
 const root = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
 const okButton = ref<HTMLButtonElement | null>(null);
+const refusalAlert = ref<HTMLElement | null>(null);
 let opener: HTMLElement | null = null;
 let open = true;
 

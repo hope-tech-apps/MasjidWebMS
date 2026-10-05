@@ -69,14 +69,16 @@
  * was MOVED those are the entries the move left behind. One of them can belong to an adult the
  * office has since removed where the student is now, and one of them can hold a consent the
  * family has since withdrawn or narrowed in the class it was carried to or from, which would be
- * in force again. The server's undo is deliberately ungated (an undo that can be refused is the
+ * in force again. The second is as true of a row that simply LEFT: a consent carried into this
+ * class sits beside it all the same, and the class it came from may have withdrawn it while the
+ * child was in neither. The server's undo is deliberately ungated (an undo that can be refused is the
  * one direction that verb must never have), so the guard is here, on the only screen that offers
  * the action:
  *
  *   1. when the dialog opens it READS THE ROSTER AGAIN, quietly, into its own state, so what it
  *      decides from is seconds old and not as old as the page;
  *   2. the row is found again by id, and `putBackForm` picks one of four forms from the server's
- *      `moved_to_state`;
+ *      `moved_to_state` (served on a row that simply left too, when a consent would come back);
  *   3. in the `blocked` form (a guardian the server names, or a consent it says would come back)
  *      there is no button that puts the student back, and `putBack()` refuses whatever called it.
  *
