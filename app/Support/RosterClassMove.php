@@ -209,15 +209,18 @@ class RosterClassMove
             $plan = $this->blank($from, $to, $on, $today, $gradeChoice);
             $plan->run = $run;
 
+            // The named rows, looked up through THIS class only: a row of
+            // another class, or of another organisation, is simply not found.
+            $shown = array_column($students, null, 'membership_id');
+            $rows = $from->memberships()->whereIn('id', array_keys($shown))->get()->keyBy('id');
+
             // 5. Pre-flight, no lock, no write: every named row decided again,
             //    against what the dialog showed for it.
-            $plan->students = $this->preflight($plan, $from, $to, $on, $gradeChoice, $students, [
+            $plan->students = $this->preflight($plan, $from, $to, $on, $gradeChoice, $students, $rows, [
                 'today' => $today,
                 'standing_before_id' => $standingBefore,
             ]);
 
-            $shown = array_column($students, null, 'membership_id');
-            $rows = $from->memberships()->whereIn('id', array_keys($shown))->get()->keyBy('id');
             $stopped = false;
 
             // 6. Each named student, in the order of the request.
@@ -332,19 +335,15 @@ class RosterClassMove
      *
      * @param  array<string, mixed>  $gradeChoice
      * @param  list<array<string, mixed>>  $students
+     * @param  Collection<int, GroupMembership>  $rows  the named rows this class holds, by id
      * @param  array{today: string, standing_before_id: int}  $options
      * @return list<array<string, mixed>> the rows, in the order of the request
      *
      * @throws RosterClassMoveChanged
      */
-    private function preflight(RosterClassMovePlan $plan, Group $from, Group $to, string $on, array $gradeChoice, array $students, array $options): array
+    private function preflight(RosterClassMovePlan $plan, Group $from, Group $to, string $on, array $gradeChoice, array $students, Collection $rows, array $options): array
     {
-        $ids = array_column($students, 'membership_id');
-        $rows = $from->memberships()->whereIn('id', $ids)->get()->keyBy('id');
-
-        $decided = collect($this->decideEach(
-            $from, $to, collect($ids)->map(fn (int $id) => $rows->get($id))->filter()->values(), $on, $gradeChoice, $options,
-        ))->keyBy('membership_id');
+        $decided = collect($this->decideEach($from, $to, $rows->values(), $on, $gradeChoice, $options))->keyBy('membership_id');
 
         $inOrder = [];
         $differ = [];
