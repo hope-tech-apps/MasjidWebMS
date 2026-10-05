@@ -731,6 +731,10 @@ final class ClassStore
      * leaving date, so both are current again and earn again. No ledger row is consulted: a test
      * on "the newest transfer row" would stop a child put back after a mistaken move from ever
      * earning in that class again, and only if they had held Bucks.
+     *
+     * A row put back by hand that LATER SIMPLY LEAVES is not carried away either: leaving by
+     * hand clears "moved to" on a row that was current (GroupMembership::markLeftByStaff), so it
+     * is a row that left, and an undo on it is not refused "because the student was moved".
      */
     private static function carriedAway(GroupMembership $row): bool
     {
