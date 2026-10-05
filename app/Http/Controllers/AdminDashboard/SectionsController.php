@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Sections\StoreSectionRequest;
 use App\Http\Requests\Admin\Sections\UpdateSectionRequest;
 use App\Models\Masjid;
 use App\Models\Section;
+use App\Support\PageDocuments;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
@@ -106,12 +107,19 @@ class SectionsController extends Controller
                 $data['is_active'] = $section->is_active;
             }
 
+            // As it is before this save, for the page documents the save may stop linking (below).
+            $contentBefore = $section->content;
+
             $section->update($data);
 
             // Handle image uploads
             $this->handleImageUploads($request, $section);
 
             $section->refresh();
+
+            // The same as PageSectionsController::update: this route writes a section too, so a page
+            // document it stops linking is taken offline here as well.
+            PageDocuments::forgetUnlinked($masjid, $contentBefore, $section->content, (int) $section->id);
 
             return response()->json([
                 'status' => 'success',
@@ -135,8 +143,15 @@ class SectionsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $section = $masjid->sections()->findOrFail($section_id);
 
+            $contentBefore = $section->content;
+
             // Delete the section (will also remove pivot relationships due to cascade)
             $section->delete();
+
+            // The section is gone for good, so the page documents it linked go with it, unless
+            // another section of the organisation still links them. (Taking a section off a page is
+            // PageSectionsController::destroy, which keeps the section and so keeps its documents.)
+            PageDocuments::forgetUnlinked($masjid, $contentBefore, [], (int) $section->id);
 
             return response()->json([
                 'status' => 'success',

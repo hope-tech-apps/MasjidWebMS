@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\PageSections\StorePageSectionRequest;
 use App\Http\Requests\Admin\PageSections\UpdatePageSectionRequest;
 use App\Models\Masjid;
 use App\Models\Section;
+use App\Support\PageDocuments;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -170,6 +171,9 @@ class PageSectionsController extends Controller
                 }
             }
 
+            // As it is before this save, for the page documents the save may stop linking (below).
+            $contentBefore = $section->content;
+
             if (!empty($sectionData)) {
                 $section->update($sectionData);
             }
@@ -194,6 +198,10 @@ class PageSectionsController extends Controller
             $section->load(['pages' => function ($query) use ($page_id) {
                 $query->where('pages.id', $page_id);
             }]);
+
+            // A page document this save stopped linking is taken offline now, unless another section
+            // of the organisation still links it. Never fails the save (App\Support\PageDocuments).
+            PageDocuments::forgetUnlinked($masjid, $contentBefore, $section->content, (int) $section->id);
 
             $order = $validated['order'] ?? $currentOrder;
             $platforms = array_key_exists('platforms', $validated)

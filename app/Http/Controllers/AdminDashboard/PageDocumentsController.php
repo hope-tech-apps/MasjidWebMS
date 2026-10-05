@@ -13,7 +13,8 @@ use Symfony\Component\HttpFoundation\Response;
  * Upload a PDF for a web page and answer with its public address (App\Support\PageDocuments says why
  * a document is uploaded on its own rather than with a section's save).
  *
- * There is one action. Nothing lists the documents and nothing here deletes one.
+ * There is one action. Nothing lists the documents and nothing here deletes one: a document is taken
+ * offline by the save that stops linking it (PageDocuments::forgetUnlinked).
  */
 class PageDocumentsController extends Controller
 {

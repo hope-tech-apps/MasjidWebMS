@@ -4,9 +4,11 @@ namespace App\Support;
 
 use App\Models\Masjid;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Throwable;
 
 /**
  * PDFs an office attaches to its web pages (a curriculum, a calendar, a schedule).
@@ -24,6 +26,14 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  *    `.claude/rules/private-uploads.md`.
  *  - The organisation owns the file (collection `page_documents` on the Masjid), because a new section
  *    has no row to own it until it is saved.
+ *
+ * THE RULE THE OFFICE IS TOLD: a document stays online while a saved section links to it. Clear or
+ * replace its address and save, or delete the section from the library, and the file is deleted then
+ * (forgetUnlinked). Deliberately KEPT: a document whose section was only taken off a page, or whose
+ * page was deleted (the section is still in the library), and a document that was uploaded and never
+ * saved. Nothing scheduled removes anything: the only way to remove a never-saved upload is a job that
+ * deletes public files by inference, and this platform has an incident history with exactly that
+ * (App\Console\Commands\MediaVerify exists because of it).
  */
 final class PageDocuments
 {
@@ -35,6 +45,15 @@ final class PageDocuments
 
     /** The longest name kept for the office to read (media.name). */
     private const NAME_MAX = 120;
+
+    /**
+     * A page document's address as it appears inside page content, whatever host or scheme was
+     * written in front of it: `/storage/{media id}/{stored name}`. Matching the PATH means a change of
+     * host or of http to https can never make a live file look unlinked. The lookahead refuses a
+     * longer name that merely starts the same way (`calendar.pdf.html`, `calendar.pdfx`), and still
+     * takes an address followed by a full stop, a query or a fragment.
+     */
+    private const ADDRESS = '#/storage/(\d+)/([a-z0-9-]+\.pdf)(?![\w.-]*\w)#';
 
     /**
      * Store one PDF for this organisation and return its media row.
@@ -70,6 +89,149 @@ final class PageDocuments
         }
 
         return $media;
+    }
+
+    /**
+     * Delete the documents a section's save (or its deletion) just stopped linking.
+     *
+     * Called after the write, with the section's content as it was and as it now is (`[]` once the
+     * section is deleted). This DELETES PUBLIC FILES, so every step narrows what it may touch:
+     *
+     *  1. Only an address that was in THIS section before the write and is in it no longer.
+     *  2. Only a file that is this organisation's own page document, found through
+     *     Masjid::pageDocuments() by media id AND stored name. Another organisation's document whose
+     *     address was pasted here, a section image, a gallery photo: none of them can match.
+     *  3. Not while any other section of this organisation still carries the address, on a page or
+     *     only in the library, active or not. Looked for in the decoded content, because the stored
+     *     JSON writes each `/` as `\/`.
+     *
+     * It never fails the save it follows: whatever goes wrong here, the office's edit is already
+     * stored, and the worst outcome is a file left online, which is the state before this existed.
+     * Every removal, and every failure, leaves a line at WARNING (production's log level drops
+     * anything quieter), by ids alone.
+     */
+    public static function forgetUnlinked(Masjid $masjid, mixed $before, mixed $after, int $sectionId): void
+    {
+        $ids = ['masjid_id' => $masjid->id, 'section_id' => $sectionId];
+
+        try {
+            $afterStrings = self::strings($after);
+            $unlinked = array_filter(
+                self::addresses(self::strings($before)),
+                fn (string $path) => ! self::mentions($afterStrings, $path),
+                ARRAY_FILTER_USE_KEY
+            );
+
+            $documents = [];
+            foreach ($unlinked as $path => [$mediaId, $storedName]) {
+                $media = $masjid->pageDocuments()->whereKey($mediaId)->where('file_name', $storedName)->first();
+
+                if ($media !== null) {
+                    $documents[$path] = $media;
+                }
+            }
+
+            if ($documents === []) {
+                return;
+            }
+
+            // The raw column, decoded here: Section's `content` accessor would also look a page up
+            // for every row, and nothing below needs it.
+            $elsewhere = $masjid->sections()->whereKeyNot($sectionId)->toBase()->pluck('content');
+            foreach ($elsewhere as $content) {
+                $strings = self::strings($content);
+                $documents = array_filter(
+                    $documents,
+                    fn (string $path) => ! self::mentions($strings, $path),
+                    ARRAY_FILTER_USE_KEY
+                );
+            }
+
+            foreach ($documents as $media) {
+                // Through the model, so the row and the file go together. One at a time: a file that
+                // cannot be removed must not keep the others online.
+                try {
+                    $media->delete();
+
+                    Log::warning('Page document deleted: no saved section links it any more', $ids + ['media_id' => $media->id]);
+                } catch (Throwable $e) {
+                    Log::warning('Page document NOT deleted, and no saved section links it any more', $ids + [
+                        'media_id' => $media->id,
+                        'exception' => $e::class,
+                    ]);
+                }
+            }
+        } catch (Throwable $e) {
+            Log::warning('Page documents were not checked after a section was saved or deleted', $ids + [
+                'exception' => $e::class,
+            ]);
+        }
+    }
+
+    /**
+     * Every string anywhere in a section's content, which arrives as an array (the model's accessor),
+     * as the stored JSON, or as nothing.
+     *
+     * @return list<string>
+     */
+    private static function strings(mixed $content): array
+    {
+        if (is_string($content)) {
+            $decoded = json_decode($content, true);
+            $content = json_last_error() === JSON_ERROR_NONE ? $decoded : [$content];
+        }
+
+        $strings = [];
+        $walk = function (mixed $value) use (&$walk, &$strings): void {
+            if (is_string($value)) {
+                $strings[] = $value;
+            } elseif (is_array($value)) {
+                foreach ($value as $inner) {
+                    $walk($inner);
+                }
+            }
+        };
+        $walk($content);
+
+        return $strings;
+    }
+
+    /**
+     * The page-document addresses written in these strings, keyed by path.
+     *
+     * @param  list<string>  $strings
+     * @return array<string, array{int, string}> path => [media id, stored name]
+     */
+    private static function addresses(array $strings): array
+    {
+        $found = [];
+
+        foreach ($strings as $string) {
+            if (preg_match_all(self::ADDRESS, $string, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as [$path, $mediaId, $storedName]) {
+                    $found[$path] = [(int) $mediaId, $storedName];
+                }
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Whether any of these strings still carries this path. Looser than addresses() on purpose: when
+     * in doubt a file is kept.
+     *
+     * @param  list<string>  $strings
+     */
+    private static function mentions(array $strings, string $path): bool
+    {
+        foreach ($strings as $string) {
+            if (str_contains($string, $path)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
