@@ -21,7 +21,7 @@ use Tests\TestCase;
  * Every OTHER image upload that the media library keeps on the PUBLIC disk under the
  * client's own file name pins that name as well as the bytes. PublicUploadFileNameTest
  * holds the first two (a page's title background, the lunch flyer); this file holds the
- * thirteen uploads found beside them, one row of DOORS per rule line:
+ * thirteen uploads found beside them, at least one row of DOORS per rule line:
  *
  *   announcements, splash announcements, the gallery (one picture or a bag of them), the
  *   organisation logo on Details, the header and footer logos on General settings, the
@@ -36,8 +36,8 @@ use Tests\TestCase;
  *
  * What this file proves, door by door:
  *
- *  - image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.svg`, a name
- *    with no extension) are refused and nothing is stored;
+ *  - image bytes under a page-like name (`x.html`, `x.HTML`, `x.jpg.html`, `x.htm`,
+ *    `x.xhtml`, `x.svg`, a name with no extension) are refused and nothing is stored;
  *  - every kind of file an office may upload at that door is accepted, under a lower-case
  *    and an upper-case name, and kept under that name. The kinds are stated in DOORS, in
  *    this file, and are NOT read from the rule: a rule whose list loses `webp` turns that
@@ -48,6 +48,15 @@ use Tests\TestCase;
  * What it does not prove: that a list is not too WIDE, beyond the page-like names above.
  * A new upload to the public disk needs a new row in DOORS. UploadFileNameCoverageTest
  * catches the ordinary ways of writing its rule without a pin, and says which it cannot.
+ *
+ * The composer is five doors, because its picture has two guards. With the announcements
+ * feed ticked, the announcement's own rule (which the composer borrows) refuses a bad name
+ * whatever the composer's own rule says. So the composer is also sent through each other
+ * channel ALONE (push, the signage board, email, a text message: COMPOSER_ALONE), where
+ * its own rule is the only guard and the picture is kept on the public disk all the same.
+ * Those four doors are what turn red when that rule's list is widened or emptied. A send
+ * that ticks several of those four together is not a door of its own: the composer's
+ * picture rule does not look at the channels, and each channel keeps what it keeps alone.
  *
  * Every upload here is REAL bytes in a real UploadedFile sent through the real route, so
  * its type is what finfo reads from the file. UploadedFile::fake() answers getMimeType()
@@ -119,6 +128,28 @@ class PublicUploadFileNameDoorsTest extends TestCase
         'the donation link picture' => self::PHOTOS_OR_BITMAP,
         'a push notification picture' => self::PHOTOS_OR_BITMAP,
         'the publish composer picture' => self::PHOTOS,
+        'the publish composer picture, push alone' => self::PHOTOS,
+        'the publish composer picture, signage alone' => self::PHOTOS,
+        'the publish composer picture, email alone' => self::PHOTOS,
+        'the publish composer picture, a text message alone' => self::PHOTOS,
+    ];
+
+    /**
+     * The composer sent through ONE channel that is not the announcements feed: the channel,
+     * and every collection its picture is then kept in.
+     *
+     * The door above ticks the feed, whose borrowed announcement rule refuses a bad name
+     * whatever the composer's own rule says, so there the composer's rule is never the only
+     * guard. Here it is: with its list widened or emptied these rows are the ones that turn
+     * red. The composer keeps its own copy (`broadcasts`) whatever the channels are; push
+     * copies it onto the notification it makes; the board, the email and the text message
+     * make no copy (the board and the email show the composer's, a text message shows none).
+     */
+    private const COMPOSER_ALONE = [
+        'the publish composer picture, push alone' => ['push', ['broadcasts', 'notifications']],
+        'the publish composer picture, signage alone' => ['signage', ['broadcasts']],
+        'the publish composer picture, email alone' => ['email', ['broadcasts']],
+        'the publish composer picture, a text message alone' => ['sms', ['broadcasts']],
     ];
 
     /** The doors that take an icon, and the sentence each reads when a file is not an image. */
@@ -214,8 +245,9 @@ class PublicUploadFileNameDoorsTest extends TestCase
     /**
      * Image bytes under a name that is not an image's, through every door: a page, a page
      * in capitals (the rule lower-cases the name before it looks), an image's name with a
-     * page's after it (the LAST extension is the one that counts), a drawing that can
-     * carry script, and no extension at all.
+     * page's after it (the LAST extension is the one that counts), the two other endings a
+     * web server types as a page (`.htm`, `.xhtml`), a drawing that can carry script, and
+     * no extension at all.
      *
      * @return array<string, array{string, string}>
      */
@@ -223,7 +255,7 @@ class PublicUploadFileNameDoorsTest extends TestCase
     {
         $rows = [];
         foreach (array_keys(self::DOORS) as $door) {
-            foreach (['x.html', 'x.HTML', 'x.jpg.html', 'x.svg', 'x'] as $name) {
+            foreach (['x.html', 'x.HTML', 'x.jpg.html', 'x.htm', 'x.xhtml', 'x.svg', 'x'] as $name) {
                 $rows["{$door}: {$name}"] = [$door, $name];
             }
         }
@@ -284,6 +316,23 @@ class PublicUploadFileNameDoorsTest extends TestCase
         foreach (self::ICON_DOORS as $door => $sentence) {
             foreach (['ico', 'icns'] as $kind) {
                 $rows["{$door}: a real .{$kind}"] = [$door, $kind, $sentence];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The composer's doors: with the feed and push ticked together, and each other channel alone.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function composerDoors(): array
+    {
+        $rows = [];
+        foreach (array_keys(self::DOORS) as $door) {
+            if (str_starts_with($door, 'the publish composer picture')) {
+                $rows[$door] = [$door];
             }
         }
 
@@ -473,6 +522,27 @@ class PublicUploadFileNameDoorsTest extends TestCase
             ->assertExactJson(['status' => 'failed', 'data' => ['image' => ['Announcements feed: The image field is required.']]]);
     }
 
+    #[Test]
+    #[DataProvider('composerDoors')]
+    public function a_composer_picture_is_kept_once_in_each_place_its_channels_use_and_nowhere_else(string $key): void
+    {
+        $door = $this->door($key);
+
+        $this->send($door, $this->realImage('IMG_0001.JPG'))->assertStatus(202);
+
+        $expected = array_fill_keys($door['collections'], 'IMG_0001.JPG');
+        ksort($expected);
+
+        // Every media row there is, so a copy in a collection the door does not name fails too.
+        $this->assertSame(
+            $expected,
+            DB::table('media')->orderBy('collection_name')->pluck('file_name', 'collection_name')->all(),
+            "{$key}: the picture was kept somewhere other than " . implode(', ', $door['collections']),
+        );
+        $this->assertSame(count($expected), DB::table('media')->count());
+        $this->assertCount(count($expected), Storage::disk('public')->allFiles());
+    }
+
     /* ---------------------------------------------------------------- the doors */
 
     /**
@@ -631,17 +701,18 @@ class PublicUploadFileNameDoorsTest extends TestCase
             ],
             'the publish composer picture' => [
                 'url' => $org . '/broadcasts',
-                'payload' => [
-                    'title' => 'Snow closure',
-                    'body' => 'All programs are cancelled today because of the storm.',
-                    'starts_on' => Carbon::now()->toDateString(),
-                    'ends_on' => Carbon::now()->addDays(3)->toDateString(),
-                    'audience' => 'everyone',
-                    // The two channels that take a copy of the picture.
-                    'channels' => ['announcement', 'push'],
-                ],
+                // The two channels that take a copy of the picture.
+                'payload' => $this->composerFields(['announcement', 'push']),
                 // The composer's own copy, the announcement's and the notification's.
                 'collections' => ['broadcasts', 'announcements', 'notifications'],
+                'tables' => ['broadcasts', 'broadcast_deliveries', 'announcements', 'notifications'],
+                'sentence' => $photo('image'),
+            ],
+            'the publish composer picture, push alone', 'the publish composer picture, signage alone',
+            'the publish composer picture, email alone', 'the publish composer picture, a text message alone' => [
+                'url' => $org . '/broadcasts',
+                'payload' => $this->composerFields([self::COMPOSER_ALONE[$key][0]]),
+                'collections' => self::COMPOSER_ALONE[$key][1],
                 'tables' => ['broadcasts', 'broadcast_deliveries', 'announcements', 'notifications'],
                 'sentence' => $photo('image'),
             ],
@@ -738,6 +809,33 @@ class PublicUploadFileNameDoorsTest extends TestCase
         }
 
         return $state;
+    }
+
+    /**
+     * What the composer is sent beside its picture, for those channels.
+     *
+     * Email and text messages find their recipients in the contact directory, which is part
+     * of the CRM: without it the composer answers 403 before it looks at the picture. The
+     * organisation here has no contacts and no text-message sender, so nothing is sent
+     * either way; the picture is kept all the same, which is the whole of what is under test.
+     *
+     * @param  list<string>  $channels
+     * @return array<string, mixed>
+     */
+    private function composerFields(array $channels): array
+    {
+        if (array_intersect($channels, ['email', 'sms']) !== []) {
+            $this->masjid->forceFill(['crm_enabled' => true])->save();
+        }
+
+        return [
+            'title' => 'Snow closure',
+            'body' => 'All programs are cancelled today because of the storm.',
+            'starts_on' => Carbon::now()->toDateString(),
+            'ends_on' => Carbon::now()->addDays(3)->toDateString(),
+            'audience' => 'everyone',
+            'channels' => $channels,
+        ];
     }
 
     /** @return array<string, string> */

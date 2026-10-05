@@ -135,6 +135,8 @@ class PublicUploadFileNameTest extends TestCase
             'a page: x.html' => ['x.html'],
             'an image name with a page name after it: x.jpg.html' => ['x.jpg.html'],
             'a page in capitals: x.HTML' => ['x.HTML'],
+            'a page by its short name: x.htm' => ['x.htm'],
+            'a page by its other name: x.xhtml' => ['x.xhtml'],
             'a drawing that can carry script: x.svg' => ['x.svg'],
             'a script: x.php' => ['x.php'],
             'no extension at all: x' => ['x'],
