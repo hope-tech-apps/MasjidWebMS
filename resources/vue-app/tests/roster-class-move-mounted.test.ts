@@ -134,8 +134,10 @@ const items = (list: Node): string[] => list.children.filter((c) => c.kind === '
 /** Is this disclosure open? (The harness drops an attribute bound to `false`; a browser writes aria-expanded="false".) */
 const expanded = (button: Node): boolean => button.props['aria-expanded'] === true;
 const why = (screen: any): string => part(screen, 'why')[0].textContent;
-const moveButton = (screen: any): Node => screen.all((n: Node) => n.tag === 'button' && n.props.type === 'submit')[0];
+const moveButton = (screen: any): Node => part(screen, 'move')[0];
 const form = (screen: any): Node => screen.all((n: Node) => n.tag === 'form')[0];
+/** A tap on Move that lands whether or not the button was redrawn as off in time: the handler has to refuse too. */
+const tapMove = (screen: any): void => press(moveButton(screen));
 const byId = (screen: any, id: string): Node => screen.all((n: Node) => n.props.id === id)[0];
 const box = (screen: any, id: number): Node => byId(screen, `move-class-student-${id}`);
 const tickedOnScreen = (screen: any): number[] => screen
@@ -174,7 +176,7 @@ test('class move: Move is off, and says why, until a class and a grade choice ar
     assert.equal(count('preview'), 1);
     assert.match(screen.text(), /Checking…/);
     assert.equal(why(screen), 'Checking…');
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.equal(count('move'), 0, 'a move was sent while the check was running');
 
@@ -184,7 +186,7 @@ test('class move: Move is off, and says why, until a class and a grade choice ar
     assert.deepEqual(tickedOnScreen(screen), [11, 12, 13]);
     assert.equal(moveButton(screen).disabled, true);
     assert.equal(why(screen), 'Choose what happens to grades');
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.equal(count('move'), 0, 'a move was sent with no choice about grades');
 
@@ -228,7 +230,7 @@ test('class move: a refusal about the class, and a check that cannot be made, ar
     assert.equal(part(first, 'students').length, 0, 'a refusal about the class drew a list of students');
     assert.equal(moveButton(first).disabled, true);
     assert.equal(why(first), 'This class cannot be moved there yet');
-    submit(form(first));
+    tapMove(first);
     await flush();
     assert.equal(refused.count('move'), 0);
     first.unmount();
@@ -318,7 +320,7 @@ test('class move: from the tap to the answer everything is off, a second tap sen
     check(box(screen, 13), false);
     await flush();
 
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.equal(moveButton(screen).disabled, true);
     assert.equal(screen.button('Cancel').disabled, true);
@@ -327,7 +329,7 @@ test('class move: from the tap to the answer everything is off, a second tap sen
     assert.equal(check(box(screen, 13), true), false);
 
     // The double tap: the handler runs again although the button is off.
-    submit(form(screen));
+    tapMove(screen);
     press(moveButton(screen));
     await flush();
     assert.equal(count('move'), 1, 'a double tap sent two requests');
@@ -395,7 +397,7 @@ test('class move: a student who cannot move has an untickable box and the reason
     assert.deepEqual(opened, [[2, 77]]);
 
     // Only the student who can move is sent.
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.deepEqual(named(last('move')[1]), [11]);
     screen.unmount();
@@ -454,7 +456,7 @@ test('class move: the three buttons that tick in bulk', async () => {
 
     click(screen.button('Only the 2 students who came from 2nd Grade'));
     await flush();
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.deepEqual(named(last('move')[1]), [11, 14]);
     screen.unmount();
@@ -474,13 +476,31 @@ test('class move: more students than one request takes are cut to the limit, and
     await chooseClassAndGrades(screen);
 
     assert.equal(tickedOnScreen(screen).length, 61);
-    assert.equal(part(screen, 'too-many')[0].textContent, 'Move up to 60 at a time. The rest stay on this list for the next round.');
+    assert.equal(part(screen, 'too-many')[0].textContent,
+        'Move up to 60 at a time. The rest are marked "Next round" below: after this move, "Move the rest" ticks them again.');
     assert.equal(moveButton(screen).textContent, 'Move 60 students');
+    // WHICH sixty go is on the list: the one student past the limit is marked, on their own row.
+    const marks = part(screen, 'next-round');
+    assert.equal(marks.length, 1);
+    assert.equal(marks[0].textContent, 'Next round');
+    assert.equal(marks[0].parent!.children.some((c) => c.props?.id === 'move-class-student-160'), true);
 
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     // The first sixty of the list, in its order.
     assert.deepEqual(named(last('move')[1]), many.slice(0, 60).map((s) => s.membership_id));
+
+    // THE NEXT ROUND DOES NOT NEED THE WHOLE DIALOG AGAIN. Everybody sent was moved, so nobody was
+    // "not reached" or busy; "Move the rest" is still offered, for the student who was left, and
+    // ticks exactly that one.
+    assert.match(screen.text(), /What happened/);
+    click(screen.button('Move the rest'));
+    await flush();
+    assert.deepEqual(tickedOnScreen(screen), [160]);
+    assert.equal(part(screen, 'tick-note')[0].textContent,
+        'Only the 1 student who was not reached, was busy or was left for the next round is ticked.');
+    assert.equal(moveButton(screen).textContent, 'Move 1 student');
+    assert.equal(part(screen, 'too-many').length, 0);
 
     // At the limit there is nothing to say.
     const exact = fakeStore({ preview: async () => previewOf(many.slice(0, 60)) });
@@ -536,36 +556,39 @@ test('class move: the ticks are the office\'s. A re-check keeps them, unticks wh
 
     // 3. The grade typed. TYPING ASKS NOTHING PER KEYSTROKE: Move goes off at once (the list is
     //    for the grade typed before), and one check is made when the field loses focus.
+    //    The choice itself asks nothing either: the field opens only once it is ticked, so there
+    //    is no grade to ask about yet.
     choose(byId(screen, 'move-class-grade-set'));
-    await sameTicks('give everyone this grade', 4);
+    await flush();
+    assert.equal(count('preview'), 3, '"give everyone this grade" asked the server about a blank grade');
     const field = byId(screen, 'move-class-grade-label');
     for (const typed of ['L', 'Le', 'Lev', 'Level 2']) {
         type(field, typed);
         await flush();
     }
-    assert.equal(count('preview'), 4, 'a keystroke asked the server');
+    assert.equal(count('preview'), 3, 'a keystroke asked the server');
     assert.equal(moveButton(screen).disabled, true);
     assert.equal(why(screen), 'Checking…');
     blur(field);
-    await sameTicks('the grade typed', 5);
+    await sameTicks('the grade typed', 4);
     assert.deepEqual(calls.filter((c) => c.what === 'preview').at(-1)!.args, [1, 2, '2026-10-03', 'set', 'Level 2']);
     assert.equal(moveButton(screen).textContent, 'Move 1 student');
 
     // ...or after a pause of half a second, with the field still focused.
     type(field, 'Level 3');
     await flush();
-    assert.equal(count('preview'), 5);
+    assert.equal(count('preview'), 4);
     await new Promise((r) => setTimeout(r, 560));
-    await sameTicks('a pause in typing', 6);
+    await sameTicks('a pause in typing', 5);
     // Losing focus afterwards asks nothing more.
     blur(field);
     await flush();
-    assert.equal(count('preview'), 6);
+    assert.equal(count('preview'), 5);
 
     // ANOTHER CLASS starts again from everyone who can move, and the dialog says so.
     select(byId(screen, 'move-class-to'), 3);
     await flush();
-    assert.equal(count('preview'), 7);
+    assert.equal(count('preview'), 6);
     assert.deepEqual(tickedOnScreen(screen), [11, 12, 13, 15]);
     assert.equal(part(screen, 'tick-note')[0].textContent, 'The list was ticked again for 2nd Grade.');
     screen.unmount();
@@ -609,7 +632,7 @@ test('class move: "changed while you were looking" is shown, marks the students 
     await flush();
     const asked = count('preview');
 
-    submit(form(screen));
+    tapMove(screen);
     await flush();
 
     // The server's sentence, not a list of objects, and the dialog is still open.
@@ -623,13 +646,95 @@ test('class move: "changed while you were looking" is shown, marks the students 
     assert.equal(marked.length, 1);
     assert.equal(marked[0].parent!.children.some((c) => c.props?.id === 'move-class-student-12'), true);
 
-    // What the list says now can be sent.
+    // THE REFUSAL IS WHERE THE OFFICE IS LOOKING. It is the first thing in the body, before the
+    // choices and the list (under a class of twenty-five it was drawn thousands of pixels below
+    // the fold, after everything else), it has the keyboard, and its first line is beside the
+    // button, which stays OFF: a second tap now would send values nobody has read.
+    const alert = part(screen, 'refused')[0];
+    const body = alert.parent!;
+    assert.equal(String(body.props.class).includes('modal-body'), true);
+    assert.equal(body.children.filter((c) => c.kind === 'el')[0], alert, 'the refusal is not the first thing in the body');
+    const inOrder = screen.all((n) => n.props['data-part'] === 'refused' || n.props['data-part'] === 'students' || n.props.id === 'move-class-to')
+        .map((n) => n.props['data-part'] ?? n.props.id);
+    assert.deepEqual(inOrder, ['refused', 'move-class-to', 'students']);
+    assert.equal(alert.props.tabindex, '-1');
+    assert.equal(doc.activeElement.props['data-part'], 'refused', 'the refusal did not take the keyboard');
+    assert.equal(why(screen), 'This roster changed while you were looking. Nothing was moved. Look again.');
+    assert.equal(moveButton(screen).disabled, true);
+    tapMove(screen);
+    await flush();
+    assert.equal(count('move'), 1, 'a tap while the refusal was unread sent the list again');
+
+    // The office says it has read it: the refusal goes, the marks in the list stay, and what
+    // the list says now can be sent.
+    click(screen.button('OK, I have read this'));
+    await flush();
+    assert.equal(part(screen, 'refused').length, 0);
+    // The button went with the refusal: the keyboard is on the list it was about, inside the
+    // dialog, and not on Move (the next key press must not be the one that sends the class).
+    assert.equal(doc.activeElement.props['data-part'], 'check');
+    assert.equal(screen.all((n) => n.tag === 'span' && n.textContent === 'Changed').length, 1);
+    assert.equal(why(screen), '');
     assert.equal(moveButton(screen).disabled, false);
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.equal(count('move'), 2);
     assert.deepEqual(named(last('move')[1]), [12, 13]);
     screen.unmount();
+});
+
+test('class move: changing a tick after a refusal is reading it too, and the refusal is said once when the check repeats it', async () => {
+    const running = 'A move out of 1st Grade is still running (it may be yours). Wait two minutes, then reload this roster.';
+    const { store, count } = fakeStore({ move: () => Promise.reject(httpError(409, { status: 'error', message: `${running}\nSecond line.`, open_group: null })) });
+    const screen = await mountDialog(store);
+    await chooseClassAndGrades(screen);
+
+    tapMove(screen);
+    await flush();
+    // Beside the button: the first line only. In the body: all of it.
+    assert.equal(why(screen), running);
+    assert.match(part(screen, 'refused')[0].textContent, /Second line\./);
+    assert.equal(moveButton(screen).disabled, true);
+
+    // The office unticks somebody: it has moved on, and Move is on for the new selection.
+    check(box(screen, 12), false);
+    await flush();
+    assert.equal(part(screen, 'refused').length, 0);
+    assert.equal(moveButton(screen).disabled, false);
+    assert.equal(moveButton(screen).textContent, 'Move 2 students');
+    screen.unmount();
+
+    // THE MINUTE OF A DEPLOY refuses the run and then the fresh check, with one sentence. It is
+    // said ONCE, by the check, which is where "Try again" is.
+    const updating = 'Manara is being updated. Try this move again in a minute.';
+    let ready = true;
+    const deploy = fakeStore({
+        preview: async () => ready ? previewOf(three()) : previewOf([], { can_move: false, refusal: updating, to_group: null }),
+        move: () => { ready = false; return Promise.reject(httpError(409, { status: 'error', message: updating, open_group: null })); },
+    });
+    const other = await mountDialog(deploy.store);
+    await chooseClassAndGrades(other);
+    check(box(other, 11), false);
+    await flush();
+
+    tapMove(other);
+    await flush();
+    assert.equal(other.text().split(updating).length - 1, 1, 'the same refusal was printed twice');
+    assert.equal(part(other, 'refused').length, 0);
+    assert.equal(part(other, 'class-refusal').length, 1);
+    assert.equal(doc.activeElement.props['data-part'], 'check', 'the keyboard did not go to where the refusal is said');
+    assert.equal(why(other), 'This class cannot be moved there yet');
+
+    // A minute later "Try again" asks with the same choices, and the ticks are what they were.
+    ready = true;
+    const asked = deploy.count('preview');
+    click(other.button('Try again'));
+    await flush();
+    assert.equal(deploy.count('preview'), asked + 1);
+    assert.deepEqual(tickedOnScreen(other), [12, 13]);
+    assert.equal(moveButton(other).textContent, 'Move 2 students');
+    assert.equal(count('move'), 1);
+    other.unmount();
 });
 
 test('class move: every other refusal before the run is the server\'s sentence, in the dialog, with the ticks kept', async () => {
@@ -648,7 +753,7 @@ test('class move: every other refusal before the run is the server\'s sentence, 
         await flush();
         const asked = count('preview');
 
-        submit(form(screen));
+        tapMove(screen);
         await flush();
 
         assert.ok(screen.text().includes(body.message ?? body.data.students[0]), `the refusal was not shown: ${JSON.stringify(body)}`);
@@ -690,7 +795,7 @@ test('class move: the result names every student, says what to check, and stays 
     click(screen.button('Afterwards, check (2)'));
     await flush();
 
-    submit(form(screen));
+    tapMove(screen);
     await flush();
 
     // The server's lines, in their groups; "Afterwards, check" is open here, where it can be acted on.
@@ -761,7 +866,7 @@ test('class move: "Move the rest" checks afresh and ticks only the students who 
     // The office leaves Idris out.
     check(box(screen, 15), false);
     await flush();
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.deepEqual(named(last('move')[1]), [11, 12, 13, 14]);
 
@@ -778,7 +883,7 @@ test('class move: "Move the rest" checks afresh and ticks only the students who 
     assert.equal(part(screen, 'tick-note')[0].textContent, 'Only the 2 students who were not reached or were busy are ticked.');
     assert.equal(moveButton(screen).textContent, 'Move 2 students');
 
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     assert.equal(count('move'), 2);
     assert.deepEqual(named(last('move')[1]), [12, 14]);
@@ -795,7 +900,7 @@ test('class move: after a run that moved somebody, leaving the dialog any way te
     const { store } = fakeStore({ move: async () => answer });
     const screen = await mountDialog(store, { onClose: () => { closed += 1; }, onMoved: () => { moved += 1; } });
     await chooseClassAndGrades(screen);
-    submit(form(screen));
+    tapMove(screen);
     await flush();
 
     // Back on the form by "Move the rest", the office changes its mind and cancels.
@@ -815,7 +920,7 @@ test('class move: when the answer never arrives nothing is assumed, and the same
         await chooseClassAndGrades(screen);
         const asked = count('preview');
 
-        submit(form(screen));
+        tapMove(screen);
         await flush();
 
         assert.match(screen.text(), /The answer did not arrive\. Some students may have been moved, and the move may still be running\. Wait a minute, then close this and reload the roster: anyone not marked 'Moved to 2nd Grade' was not moved and can be moved again\./);
@@ -834,6 +939,266 @@ test('class move: when the answer never arrives nothing is assumed, and the same
     }
 });
 
+// ---------------------------------------------------- what the reviews found, each as the office met it
+
+test('class move: a refusal about the class as a whole leaves the ticks alone, on a first check and on a later one', async () => {
+    const future = 'The first day in the new class cannot be in the future.';
+    const updating = 'Manara is being updated. Try this move again in a minute.';
+    const refusedWith = (sentence: string) => previewOf([], { can_move: false, refusal: sentence, to_group: null });
+
+    // A LATER CHECK. The office has left two students out, types a later day (a date field's
+    // `max` does not stop typing), reads the refusal, and corrects the day.
+    let answer: () => any = () => previewOf(three());
+    const { store } = fakeStore({ preview: async () => answer() });
+    const screen = await mountDialog(store);
+    await chooseClassAndGrades(screen);
+    check(box(screen, 11), false);
+    check(box(screen, 12), false);
+    await flush();
+    assert.deepEqual(tickedOnScreen(screen), [13]);
+
+    answer = () => refusedWith(future);
+    type(byId(screen, 'move-class-first-day'), '2026-10-09');
+    await flush();
+    assert.match(part(screen, 'class-refusal')[0].textContent, /cannot be in the future/);
+    assert.equal(part(screen, 'students').length, 0);
+    assert.equal(why(screen), 'This class cannot be moved there yet');
+
+    answer = () => previewOf(three());
+    type(byId(screen, 'move-class-first-day'), '2026-10-04');
+    await flush();
+    // Exactly the ticks the office had made: not nobody (which is what "everyone on an empty
+    // list" came to), and not everybody.
+    assert.deepEqual(tickedOnScreen(screen), [13]);
+    assert.equal(moveButton(screen).textContent, 'Move 1 student');
+    assert.equal(part(screen, 'tick-note').length, 0);
+    screen.unmount();
+
+    // THE FIRST CHECK of a newly opened dialog lands in the minute of a deploy. The next good
+    // check is still the first one that carries a list, and it ticks everyone who can move.
+    answer = () => refusedWith(updating);
+    const fresh = fakeStore({ preview: async () => answer() });
+    const other = await mountDialog(fresh.store);
+    await chooseClassAndGrades(other);
+    assert.match(part(other, 'class-refusal')[0].textContent, /Manara is being updated/);
+
+    // The sentence says "try again in a minute", and there is a button for it: no choice has
+    // to be changed and the dialog does not have to be closed.
+    answer = () => previewOf(three());
+    const asked = fresh.count('preview');
+    click(other.button('Try again'));
+    await flush();
+    assert.equal(fresh.count('preview'), asked + 1);
+    assert.deepEqual(fresh.last('preview'), [1, 2, '2026-10-04', 'keep', '']);
+    assert.deepEqual(tickedOnScreen(other), [11, 12, 13]);
+    assert.equal(moveButton(other).textContent, 'Move 3 students');
+    // The button that had the keyboard is gone; the keyboard is still inside the dialog.
+    assert.equal(focused(), '#move-class-to');
+    other.unmount();
+});
+
+test('class move: Enter in the form sends nothing. Only the Move button moves a class', async () => {
+    const { store, count } = fakeStore();
+    const screen = await mountDialog(store);
+    await chooseClassAndGrades(screen);
+    assert.equal(moveButton(screen).disabled, false);
+
+    // What a browser does when Enter is pressed on a student's tick, a grade choice or the date:
+    // it submits the form. Seven ticked students were moved by one key before this.
+    submit(form(screen));
+    await flush();
+    assert.equal(count('move'), 0, 'submitting the form moved the class');
+    assert.equal(form(screen).props.onSubmit !== undefined, true, 'the form no longer stops the browser from navigating');
+    // No button in the dialog is a submit button, so no control submits by default either.
+    assert.deepEqual(screen.all((n) => n.tag === 'button' && n.props.type !== 'button').map((n) => n.textContent), []);
+
+    click(moveButton(screen));
+    await flush();
+    assert.equal(count('move'), 1);
+    screen.unmount();
+});
+
+test('class move: a click beside the box closes an untouched dialog, and never a changed list, a result or the lost-answer notice', async () => {
+    const events = () => {
+        const seen: string[] = [];
+        return { seen, on: { onClose: () => seen.push('close'), onMoved: () => seen.push('moved'), onReload: () => seen.push('reload') } };
+    };
+
+    // Nothing done: the backdrop is Cancel, as in every dialog of the app.
+    const untouched = events();
+    const first = await mountDialog(fakeStore().store, untouched.on);
+    await chooseClassAndGrades(first);
+    click(first.root.children[0]);
+    assert.deepEqual(untouched.seen, ['close']);
+    first.unmount();
+
+    // A tick was changed: one stray click must not drop the office's choices.
+    const changed = events();
+    const { store } = fakeStore();
+    const second = await mountDialog(store, changed.on);
+    await chooseClassAndGrades(second);
+    check(box(second, 12), false);
+    await flush();
+    click(second.root.children[0]);
+    assert.deepEqual(changed.seen, []);
+    assert.deepEqual(tickedOnScreen(second), [11, 13]);
+
+    // THE RESULT STAYS UNTIL OK. A drag that selects "To put this back: ..." and ends outside
+    // the box is a click on the backdrop, and the reasons, the consent count and the way back
+    // are kept nowhere else.
+    tapMove(second);
+    await flush();
+    assert.match(second.text(), /What happened/);
+    click(second.root.children[0]);
+    await flush();
+    assert.deepEqual(changed.seen, [], 'a click beside the box threw the result away');
+    assert.match(second.text(), /What happened/);
+    // OK, the close cross and Escape still leave.
+    click(second.button('OK'));
+    assert.deepEqual(changed.seen, ['moved']);
+    second.unmount();
+
+    // The answer never arrived: the notice says what to do, and stays too.
+    const lostAnswer = events();
+    const third = await mountDialog(fakeStore({ move: () => Promise.reject(new Error('Network Error')) }).store, lostAnswer.on);
+    await chooseClassAndGrades(third);
+    tapMove(third);
+    await flush();
+    assert.match(third.text(), /The answer did not arrive\./);
+    click(third.root.children[0]);
+    assert.deepEqual(lostAnswer.seen, []);
+    // THE KEYBOARD IS ON THE ONE BUTTON THAT IS LEFT, not on the page behind the dialog: the
+    // Move button that had it went with the form.
+    assert.equal(doc.activeElement.props['data-part'], 'lost-reload');
+    pressKey('Escape');
+    assert.deepEqual(lostAnswer.seen, ['moved']);
+    third.unmount();
+});
+
+test('class move: "Give everyone this grade" asks nothing until a grade is typed, and says what it is waiting for', async () => {
+    const { store, count, last } = fakeStore();
+    const screen = await mountDialog(store);
+    await chooseClassAndGrades(screen, 2, 'up');
+    check(box(screen, 11), false);
+    await flush();
+    const asked = count('preview');
+
+    // The field opens only once the choice is ticked, so this is the one order there is.
+    choose(byId(screen, 'move-class-grade-set'));
+    await flush();
+    assert.equal(count('preview'), asked, 'the server was asked what "give everyone no grade" would do');
+    assert.equal(part(screen, 'check')[0].textContent, 'Type the grade to give everyone.');
+    // The list that was on screen was for "up one": it is not left there to be read as this choice's.
+    assert.equal(part(screen, 'students').length, 0);
+    assert.doesNotMatch(screen.text(), /to no grade|becomes \./);
+    assert.equal(why(screen), 'Type the grade to give everyone');
+    assert.equal(moveButton(screen).disabled, true);
+
+    // Typed: one check, with the grade, and the ticks are what they were.
+    const field = byId(screen, 'move-class-grade-label');
+    type(field, '3rd');
+    await flush();
+    blur(field);
+    await flush();
+    assert.equal(count('preview'), asked + 1);
+    assert.deepEqual(last('preview'), [1, 2, '2026-10-04', 'set', '3rd']);
+    assert.deepEqual(tickedOnScreen(screen), [12, 13]);
+
+    // Emptied again: back to waiting, at once, with nothing asked.
+    type(field, '  ');
+    await flush();
+    assert.equal(count('preview'), asked + 1);
+    assert.equal(part(screen, 'check')[0].textContent, 'Type the grade to give everyone.');
+    screen.unmount();
+});
+
+test('class move: the first line counts the class as the server last listed it, not the roster the page drew before', async () => {
+    const five = () => [student(11, 'Maryam'), student(12, 'Yusuf'), student(13, 'Layla'), student(14, 'Zayd'), student(15, 'Idris')];
+    const fromKindergarten = { moved_from_group_id: 9, moved_from: { id: 9, name: 'Kindergarten', deleted_at: null } };
+    const roster = [
+        { id: 11, role: 'member', left_on: null, ...fromKindergarten },
+        ...rosterRows(4).slice(1),
+        { id: 15, role: 'member', left_on: null, ...fromKindergarten },
+        // On the page's roster, and moved away by somebody else since it was drawn.
+        { id: 16, role: 'member', left_on: null, moved_from_group_id: null, moved_from: null },
+    ];
+    let list = five();
+    const { store } = fakeStore({
+        preview: async () => previewOf(list),
+        // Four moved, one not reached: there is a rest to move.
+        move: async () => answerOf([...five().slice(0, 4).map(movedRow), { membership_id: 15, name: 'Idris Student', outcome: 'not_reached' }]),
+    });
+    const screen = await mountDialog(store, {}, roster);
+
+    // Before any check there is only the page's roster to count. Once the server has listed
+    // the class, its count is the one that is said.
+    assert.equal(part(screen, 'count')[0].textContent, '1st Grade has 6 current students.');
+    assert.match(part(screen, 'not-offered')[0].textContent, /^2 students here were moved from Kindergarten/);
+    await chooseClassAndGrades(screen);
+    assert.equal(part(screen, 'count')[0].textContent, '1st Grade has 5 current students.');
+
+    tapMove(screen);
+    await flush();
+    list = [student(15, 'Idris')];
+    click(screen.button('Move the rest'));
+    await flush();
+
+    // The page's roster still lists all five as current: it is re-read when the dialog shuts.
+    assert.equal(part(screen, 'count')[0].textContent, '1st Grade has 1 current student.');
+    assert.doesNotMatch(screen.text(), /has 5 current students/);
+    assert.deepEqual(tickedOnScreen(screen), [15]);
+
+    // The "moved from a class that is not on this list" note is read from the page's rows: one
+    // of its two students has just been moved by this dialog, and is no longer counted.
+    assert.equal(part(screen, 'not-offered').length, 1);
+    assert.match(part(screen, 'not-offered')[0].textContent, /^1 student here was moved from Kindergarten/);
+
+    // With no list to count from (another class is chosen and its check has not answered), the
+    // students this dialog moved are left out of the page's old rows too.
+    const pending = deferred<any>();
+    store.previewClassMove = () => pending.promise;
+    select(byId(screen, 'move-class-to'), 3);
+    await flush();
+    assert.match(screen.text(), /Checking…/);
+    assert.equal(part(screen, 'count')[0].textContent, '1st Grade has 2 current students.');
+    pending.resolve(previewOf(list));
+    await flush();
+    assert.equal(part(screen, 'count')[0].textContent, '1st Grade has 1 current student.');
+    screen.unmount();
+});
+
+test('class move: "Try again" after the class list or the check failed keeps the keyboard inside the dialog', async () => {
+    openerButton();
+
+    // The class list failed: its "Try again" has the keyboard, and is gone once the list arrives.
+    let fail = true;
+    const lists = fakeStore({ classes: async () => { if (fail) throw new Error('offline'); return classes; } });
+    const first = await mountDialog(lists.store);
+    assert.equal(focused(), '[Close]');
+    const again = first.button('Try again');
+    again.focus();
+    fail = false;
+    click(again);
+    await flush();
+    assert.equal(focused(), '#move-class-to', 'focus was left on a button that is no longer in the dialog');
+    first.unmount();
+
+    // The check failed: the same, with the picker still there.
+    let offline = true;
+    const checks = fakeStore({ preview: async () => { if (offline) throw new Error('Network Error'); return previewOf(three()); } });
+    const second = await mountDialog(checks.store);
+    await chooseClassAndGrades(second);
+    const retry = second.button('Try again');
+    retry.focus();
+    offline = false;
+    click(retry);
+    await flush();
+    assert.equal(focused(), '#move-class-to');
+    assert.deepEqual(tickedOnScreen(second), [11, 12, 13]);
+    second.unmount();
+    onPage.clear();
+});
+
 // ---------------------------------------------------------------------- the keyboard, and focus
 
 test('class move: the keyboard comes into the dialog, Escape closes it except while it saves, and focus goes to the result and back', async () => {
@@ -849,7 +1214,7 @@ test('class move: the keyboard comes into the dialog, Escape closes it except wh
     assert.equal(documentKeydown.size, 1);
 
     await chooseClassAndGrades(screen);
-    submit(form(screen));
+    tapMove(screen);
     await flush();
     pressKey('Escape');
     assert.deepEqual([closed, moved], [0, 0], 'Escape left the dialog while the class was being moved');

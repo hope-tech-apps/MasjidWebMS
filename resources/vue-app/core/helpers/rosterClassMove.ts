@@ -9,7 +9,8 @@
  *
  * THE TICKS BELONG TO THE OFFICE. They are kept by roster row id across every re-check and every
  * refusal: a re-check never ticks anybody, and only the three bulk buttons (and "Move the rest")
- * change ticks in bulk.
+ * change ticks in bulk. An answer that carries no list at all (a refusal about the class as a
+ * whole) is never run through these: the dialog leaves the ticks as they are.
  *
  * Pure functions, no imports to run: `npm run test:spa` loads this file as it stands.
  */
@@ -119,16 +120,32 @@ export function ticksAfterCheck(previous: number[] | null, students: ClassMoveSt
 
 /**
  * "Move the rest": ONLY the students of the last request that were not reached, or were not moved
- * only because the roster was busy or had changed, and of those only the ones the fresh check says
- * can still move. Nobody else: not a student the office had left out, and not one refused for a
- * reason that has since been cleared.
+ * only because the roster was busy or had changed, together with `heldOver`, the students who
+ * were ticked then and not sent because one request takes no more (`leftForTheNextRound`); and of
+ * all those only the ones the fresh check says can still move. Nobody else: not a student the
+ * office had left out, and not one refused for a reason that has since been cleared.
  */
-export function theRest(answer: Pick<ClassMoveAnswer, 'students'>, fresh: ClassMoveStudent[]): number[] {
+export function theRest(answer: Pick<ClassMoveAnswer, 'students'>, fresh: ClassMoveStudent[], heldOver: number[] = []): number[] {
     const again = answer.students
         .filter((s) => s.outcome === 'not_reached' || (s.outcome === 'not_moved' && s.retry === true))
         .map((s) => s.membership_id);
 
-    return everyoneWhoCanMove(fresh).filter((id) => again.includes(id));
+    return everyoneWhoCanMove(fresh).filter((id) => again.includes(id) || heldOver.includes(id));
+}
+
+/** What the dialog says above the list after "Move the rest" has ticked it. */
+export function restNote(n: number, someWereHeldOver: boolean): string {
+    const who = someWereHeldOver ? 'not reached, busy or left for the next round' : 'not reached or busy';
+
+    if (n === 0) {
+        return `None of the students who were ${who} can be moved now. Each row says why.`;
+    }
+
+    const were = n === 1 ? 'was' : 'were';
+
+    return someWereHeldOver
+        ? `Only the ${n} ${n === 1 ? 'student' : 'students'} who ${were} not reached, ${were} busy or ${were} left for the next round ${n === 1 ? 'is' : 'are'} ticked.`
+        : `Only the ${n} ${n === 1 ? 'student' : 'students'} who ${were} not reached or ${were} busy ${n === 1 ? 'is' : 'are'} ticked.`;
 }
 
 /** Is there anybody "Move the rest" could be about? */
@@ -138,6 +155,15 @@ export const someWereLeft = (answer: Pick<ClassMoveAnswer, 'students'>): boolean
 /** The ticked students one request carries: in the order of the list, and no more than the server takes. */
 export function toSend(ticked: number[], students: ClassMoveStudent[], max: number): ClassMoveStudent[] {
     return students.filter((s) => s.can_move && ticked.includes(s.membership_id)).slice(0, max);
+}
+
+/**
+ * The ticked students this request will NOT carry, because it is full: the ones after the first
+ * `max` in the order of the list. The list marks each of them "Next round", and after the run
+ * "Move the rest" ticks them again, so the office does not have to find them a second time.
+ */
+export function leftForTheNextRound(ticked: number[], students: ClassMoveStudent[], max: number): number[] {
+    return students.filter((s) => s.can_move && ticked.includes(s.membership_id)).slice(max).map((s) => s.membership_id);
 }
 
 // --------------------------------------------------------------------- what is sent
@@ -197,9 +223,15 @@ export const moveButtonLabel = (n: number): string => `Move ${n} ${n === 1 ? 'st
 /**
  * Why the Move button is off, in the words shown beside it; '' when it is on. One reason at a
  * time, the first thing the office has to do.
+ *
+ * `refused` is the server's refusal of the last tap, while the office has not acknowledged it or
+ * changed anything: its FIRST LINE is the reason, so it is read where the button is, whatever the
+ * length of the list above. "Give everyone this grade" with no grade typed is said before
+ * anything about the check, because no check is asked in that state.
  */
 export function whyNotYet(state: {
     saving: boolean;
+    refused?: string;
     toGroupId: number | null;
     movedOn: string;
     check: 'idle' | 'checking' | 'failed' | 'ready';
@@ -209,13 +241,14 @@ export function whyNotYet(state: {
     ticked: number;
 }): string {
     if (state.saving) return 'Moving…';
+    if (state.refused) return state.refused.split('\n')[0];
     if (!state.toGroupId) return 'Choose a class first';
     if (!state.movedOn) return 'Choose the first day in the new class';
+    if (state.gradeMode === 'set' && blank(state.gradeLabel)) return 'Type the grade to give everyone';
     if (state.check === 'checking' || state.check === 'idle') return 'Checking…';
     if (state.check === 'failed') return 'The check did not finish';
     if (!state.canMove) return 'This class cannot be moved there yet';
     if (!state.gradeMode) return 'Choose what happens to grades';
-    if (state.gradeMode === 'set' && blank(state.gradeLabel)) return 'Type the grade to give everyone';
     if (state.ticked === 0) return 'Nobody on this list is ticked';
 
     return '';

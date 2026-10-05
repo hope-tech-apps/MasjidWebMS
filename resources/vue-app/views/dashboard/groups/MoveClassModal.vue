@@ -1,7 +1,7 @@
 <template>
     <div ref="root" class="modal fade show d-block move-class" tabindex="-1" style="background:rgba(0,0,0,.5)"
          role="dialog" aria-modal="true" aria-labelledby="move-class-title"
-         @click.self="cancel">
+         @click.self="backdrop">
         <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
             <div class="modal-content">
                 <div class="modal-header">
@@ -12,7 +12,9 @@
                 </div>
 
                 <!-- AFTER THE RUN: every student by name, in the server's words. It
-                     stays until the office taps OK, because it carries things to do. -->
+                     stays until the office taps OK, because it carries things to do:
+                     a click beside the box, or a text selection that ends there, does
+                     not close it. -->
                 <template v-if="result">
                     <div class="modal-body" aria-live="polite">
                         <h6 id="move-class-result" ref="resultHeading" tabindex="-1" class="fw-semibold mb-2">What happened</h6>
@@ -88,15 +90,40 @@
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-primary" @click="reloadRoster">
+                        <button ref="lostButton" type="button" class="btn btn-primary" data-part="lost-reload" @click="reloadRoster">
                             <i class="bi bi-arrow-clockwise me-1"></i> Close and reload the roster
                         </button>
                     </div>
                 </template>
 
-                <form v-else @submit.prevent="save">
+                <!-- NOTHING IS SENT BY THE FORM. A browser submits a form when Enter is
+                     pressed in any of its fields, and this one holds a date, three
+                     radios, a text field and a checkbox per student: Enter on a
+                     student's tick would move the whole class. Only the Move button
+                     sends, from its own click. -->
+                <form v-else @submit.prevent>
                     <div class="modal-body">
-                        <p class="mb-3">
+                        <!-- A REFUSAL FROM THE RUN, before anything was written. FIRST in
+                             the body, above the list, and it takes the keyboard: under a
+                             class of twenty-five it was thousands of pixels below the
+                             fold, and the dialog looked as if the tap had done nothing.
+                             Move stays off until the office says it has read it, or
+                             changes a choice or a tick. -->
+                        <div v-if="saveError" ref="refusalAlert" tabindex="-1" class="alert alert-danger mb-3" role="alert" data-part="refused">
+                            <i class="bi bi-x-octagon me-1"></i>
+                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-danger" @click="haveRead">
+                                    <i class="bi bi-check2 me-1"></i> OK, I have read this
+                                </button>
+                                <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger"
+                                        @click="openClass(saveOpenGroup)">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i> Open {{ saveOpenGroup.name }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <p v-if="currentStudents !== null" class="mb-3" data-part="count">
                             <span class="fw-semibold">{{ groupName }}</span> has {{ currentStudents }}
                             current {{ currentStudents === 1 ? 'student' : 'students' }}.
                         </p>
@@ -106,7 +133,7 @@
                             <div v-if="classesState === 'loading'" class="form-text">Loading classes…</div>
                             <div v-else-if="classesState === 'failed'" class="text-danger small" role="alert">
                                 <i class="bi bi-exclamation-triangle me-1"></i> Could not load the classes.
-                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" @click="loadClasses">Try again</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" @click="retryClasses">Try again</button>
                             </div>
                             <div v-else-if="options.length === 0" class="form-text">
                                 This school has no other class that is running. Add the class first, on the Classes page.
@@ -142,31 +169,39 @@
                             <div class="form-check d-flex flex-wrap align-items-center gap-2">
                                 <input id="move-class-grade-set" class="form-check-input mt-0" type="radio" name="move-class-grades" value="set"
                                        :checked="form.gradeMode === 'set'" :disabled="saving" @change="chooseGrades('set')">
-                                <label class="form-check-label" for="move-class-grade-set">Give everyone this grade:</label>
+                                <label class="form-check-label move-class-label-short" for="move-class-grade-set">Give everyone this grade:</label>
                                 <input id="move-class-grade-label" type="text" class="form-control form-control-sm w-auto" maxlength="32"
                                        aria-label="The grade to give everyone" v-model="form.gradeLabel"
                                        :disabled="saving || form.gradeMode !== 'set'" @blur="gradeTextDone">
                             </div>
                         </fieldset>
 
-                        <div v-if="form.toGroupId" aria-live="polite">
-                            <div v-if="checkState === 'idle'" class="text-muted">Choose the first day in the new class.</div>
+                        <div v-if="form.toGroupId" ref="checkRegion" tabindex="-1" aria-live="polite" data-part="check">
+                            <!-- Nothing to ask yet: no day, or "give everyone this grade"
+                                 with no grade typed (the field opens only once that choice
+                                 is ticked, so asking then would ask about a blank grade). -->
+                            <div v-if="checkState === 'idle'" class="text-muted">{{ waitingFor }}</div>
 
                             <div v-else-if="checkState === 'checking'" class="text-muted">Checking…</div>
 
                             <div v-else-if="checkState === 'failed'" class="text-danger" role="alert">
                                 <i class="bi bi-exclamation-triangle me-1"></i> {{ checkError }}
                                 <button v-if="checkAction === 'retry'" type="button"
-                                        class="btn btn-sm btn-outline-secondary ms-2" @click="check">Try again</button>
+                                        class="btn btn-sm btn-outline-secondary ms-2" @click="retryCheck">Try again</button>
                                 <button v-else-if="checkAction === 'reload'" type="button"
                                         class="btn btn-sm btn-outline-secondary ms-2" @click="reloadRoster">Reload the roster</button>
                             </div>
 
-                            <!-- A refusal about the class as a whole: one sentence, no list. -->
-                            <div v-else-if="preview && !preview.can_move" class="text-danger" role="alert">
+                            <!-- A refusal about the class as a whole: one sentence, no list,
+                                 and a way to ask again without changing a choice ("try this
+                                 move again in a minute"). The ticks are not touched by it. -->
+                            <div v-else-if="preview && !preview.can_move" class="text-danger" role="alert" data-part="class-refusal">
                                 <div v-for="(line, i) in (preview.refusal ?? '').split('\n')" :key="i" class="mb-1">
                                     <i v-if="i === 0" class="bi bi-x-octagon me-1"></i>{{ line }}
                                 </div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary mt-1" @click="retryCheck">
+                                    <i class="bi bi-arrow-clockwise me-1"></i> Try again
+                                </button>
                             </div>
 
                             <template v-else-if="preview">
@@ -193,7 +228,8 @@
 
                                     <div v-if="tickNote" class="small text-muted mb-2" data-part="tick-note">{{ tickNote }}</div>
                                     <div v-if="tickedIds.length > preview.limits.max_students" class="small text-muted mb-2" data-part="too-many">
-                                        Move up to {{ preview.limits.max_students }} at a time. The rest stay on this list for the next round.
+                                        Move up to {{ preview.limits.max_students }} at a time. The rest are marked "Next round" below:
+                                        after this move, "Move the rest" ticks them again.
                                     </div>
 
                                     <ul class="list-unstyled mb-0" data-part="students">
@@ -208,6 +244,8 @@
                                                     {{ student.name ?? 'A student' }}
                                                 </label>
                                                 <span v-if="changedIds.includes(student.membership_id)" class="badge bg-warning text-dark">Changed</span>
+                                                <!-- Ticked, and past what one request takes. -->
+                                                <span v-if="nextRoundIds.includes(student.membership_id)" class="badge bg-secondary" data-part="next-round">Next round</span>
                                             </div>
 
                                             <div v-if="gradeChange(student)" class="small" data-part="grade">Grade: {{ gradeChange(student) }}</div>
@@ -274,25 +312,16 @@
                             </template>
                         </div>
 
-                        <!-- A refusal from the run, before anything was written: shown
-                             here, and the check above runs again with the ticks kept. -->
-                        <div v-if="saveError" class="alert alert-danger mt-3 mb-0" role="alert">
-                            <i class="bi bi-x-octagon me-1"></i>
-                            <span v-for="(line, i) in saveError.split('\n')" :key="i" class="d-block">{{ line }}</span>
-                            <button v-if="saveOpenGroup" type="button" class="btn btn-sm btn-outline-danger mt-2"
-                                    @click="openClass(saveOpenGroup)">
-                                Open {{ saveOpenGroup.name }}
-                            </button>
-                        </div>
-
                         <p class="small text-muted mt-3 mb-0">Nothing is saved until you press Move.</p>
                     </div>
                     <div class="modal-footer flex-column flex-sm-row align-items-stretch align-items-sm-center">
-                        <span class="small me-sm-auto" :class="saving ? 'fw-semibold' : 'text-muted'" aria-live="polite" data-part="why">
+                        <!-- Why Move is off, where the button is. After a refused run that
+                             is the refusal itself, so it is read without scrolling. -->
+                        <span class="small me-sm-auto" :class="saving ? 'fw-semibold' : saveError ? 'text-danger' : 'text-muted'" aria-live="polite" data-part="why">
                             {{ saving ? `Moving ${sending.length} ${sending.length === 1 ? 'student' : 'students'}. Keep this page open.` : notYet }}
                         </span>
                         <button type="button" class="btn btn-secondary" :disabled="saving" @click="cancel">Cancel</button>
-                        <button type="submit" class="btn btn-primary" :disabled="!canMove">
+                        <button type="button" class="btn btn-primary" data-part="move" :disabled="!canMove" @click="save">
                             <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
                             {{ sending.length ? moveButtonLabel(sending.length) : 'Move' }}
                         </button>
@@ -318,10 +347,21 @@
  *
  * THE TICKS ARE THE OFFICE'S, kept by roster row id across every re-check and every refusal
  * (core/helpers/rosterClassMove.ts). Only the first check for a class ticks everyone who can move.
+ * An answer with NO LIST (a refusal about the class as a whole: a day in the future, the minute of
+ * a deploy) says nothing about any student and leaves the ticks exactly as they were.
  *
  * THE BUTTON IS OFF, AND THE HANDLER REFUSES TOO: while the check runs, after a refusal, with no
  * choice about grades, with nobody ticked, and from the tap until the answer. A second tap that
  * lands before the button is redrawn sends nothing. Beside it, in words, why.
+ *
+ * ONLY THE MOVE BUTTON SENDS. The form has no submit: Enter in a field or on a tick does nothing.
+ *
+ * A REFUSED RUN IS SAID WHERE THE OFFICE IS LOOKING: first in the body, with the keyboard on it,
+ * and again beside the button, and Move stays off until it is acknowledged or a choice changes.
+ *
+ * THE BACKDROP CLOSES ONLY AN UNTOUCHED DIALOG. Once a tick was changed, and always once there is
+ * a result (or the notice that the answer did not arrive), a click beside the box does nothing:
+ * only OK, the close cross and Escape leave.
  *
  * WHEN THE ANSWER DOES NOT ARRIVE nothing is assumed about what happened, and the same body is
  * never sent again: the dialog says to wait and reload the roster, which shows who was moved.
@@ -335,8 +375,8 @@ import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { trapTab } from '@/core/helpers/focusTrap';
 import { classOptions } from '@/core/helpers/rosterMove';
 import {
-    classMoveFields, everyoneWhoCanMove, gradeChange, moveButtonLabel, movedFromClassesNotOffered, refusalOf, someWereLeft,
-    theRest, ticksAfterCheck, toSend, whoCameFromTarget, whyNotYet,
+    classMoveFields, everyoneWhoCanMove, gradeChange, leftForTheNextRound, moveButtonLabel, movedFromClassesNotOffered, refusalOf,
+    restNote, someWereLeft, theRest, ticksAfterCheck, toSend, whoCameFromTarget, whyNotYet,
 } from '@/core/helpers/rosterClassMove';
 import type {
     ClassMoveAnswer, ClassMoveOutcome, ClassMovePreview, GradeMode, OpenGroup,
@@ -363,7 +403,9 @@ const emit = defineEmits<{
 
 const groupsStore = useGroupsStore();
 
-const currentStudents = computed(() => props.roster.filter((r) => r.role === 'member' && !r.left_on).length);
+/** Roster rows this dialog has moved: the page's roster still lists them as current until it is re-read. */
+const movedIds = ref<number[]>([]);
+const stillHere = computed(() => props.roster.filter((r) => !movedIds.value.includes(r.id)));
 
 const form = ref<{ toGroupId: number | null; movedOn: string; gradeMode: GradeMode | null; gradeLabel: string }>({
     toGroupId: null,
@@ -380,7 +422,7 @@ const classesState = ref<'loading' | 'failed' | 'ready'>('loading');
 
 const options = computed(() => classOptions(classes.value, props.groupId, form.value.movedOn));
 const chosenName = computed(() => options.value.find((o) => o.id === form.value.toGroupId)?.name ?? 'the new class');
-const notOffered = computed(() => classesState.value === 'ready' ? movedFromClassesNotOffered(props.roster, options.value) : []);
+const notOffered = computed(() => classesState.value === 'ready' ? movedFromClassesNotOffered(stillHere.value, options.value) : []);
 
 const loadClasses = async () => {
     classesState.value = 'loading';
@@ -390,6 +432,13 @@ const loadClasses = async () => {
     } catch {
         classesState.value = 'failed';
     }
+};
+
+/** "Try again" was the focused control and is gone once the list is here: the picker takes over. */
+const retryClasses = async () => {
+    await loadClasses();
+    await nextTick();
+    focusInside('move-class-to');
 };
 
 // ------------------------------------------------------------------- the check
@@ -414,12 +463,29 @@ const cameIds = computed(() => whoCameFromTarget(preview.value?.students ?? []))
 const sending = computed(() => preview.value
     ? toSend(tickedIds.value, preview.value.students, preview.value.limits.max_students)
     : []);
+/** Ticked, able to move, and past what one request takes: marked in the list, and "Move the rest" ticks them again. */
+const nextRoundIds = computed(() => preview.value
+    ? leftForTheNextRound(tickedIds.value, preview.value.students, preview.value.limits.max_students)
+    : []);
+/** The students the last request left for the next round: ticked then, and not sent. */
+const heldOver = ref<number[]>([]);
+
+// THE FIRST LINE COUNTS THE CLASS AS THE SERVER LAST LISTED IT. The page's roster was drawn before
+// this dialog opened and is re-read only when it shuts, so after "Move the rest" it still counted
+// the students who had just gone, beside a server line that did not.
+const currentStudents = computed<number | null>(() => preview.value?.can_move
+    ? preview.value.counts.students
+    : stillHere.value.filter((r) => r.role === 'member' && !r.left_on).length);
+
+/** "Give everyone this grade" is ticked and no grade is typed yet: there is nothing to ask about. */
+const gradeNotTyped = computed(() => form.value.gradeMode === 'set' && form.value.gradeLabel.trim() === '');
+const waitingFor = computed(() => !form.value.movedOn ? 'Choose the first day in the new class.' : 'Type the grade to give everyone.');
 
 const check = async () => {
     cancelGradeText();
 
     const toGroupId = form.value.toGroupId;
-    if (!toGroupId || !form.value.movedOn) {
+    if (!toGroupId || !form.value.movedOn || gradeNotTyped.value) {
         asked += 1;
         preview.value = null;
         checkState.value = 'idle';
@@ -437,20 +503,25 @@ const check = async () => {
         );
         if (mine !== asked) return;   // a newer choice has been made since
 
-        if (restOf) {
+        if (!answer.can_move) {
+            // A refusal about the class as a whole carries NO LIST, so it says nothing about
+            // any student: the ticks, and a "Move the rest" still waiting for its list, stay
+            // exactly as they are until an answer with a list arrives. (Run through the same
+            // filter as a list, "nobody on it" unticked everyone for good.)
+        } else if (restOf) {
             // "Move the rest": only those students, and only those of them that can still move.
-            ticked.value = theRest(restOf, answer.students);
-            const n = ticked.value.length;
-            tickNote.value = n === 0
-                ? 'None of the students who were not reached or were busy can be moved now. Each row says why.'
-                : `Only the ${n} ${n === 1 ? 'student' : 'students'} who ${n === 1 ? 'was' : 'were'} not reached or ${n === 1 ? 'was' : 'were'} busy ${n === 1 ? 'is' : 'are'} ticked.`;
+            ticked.value = theRest(restOf, answer.students, heldOver.value);
+            tickNote.value = restNote(ticked.value.length, heldOver.value.length > 0);
             restOf = null;
+            heldOver.value = [];
+            touched.value = false;
+            reticked = false;
         } else {
             const first = ticked.value === null;
             ticked.value = ticksAfterCheck(ticked.value, answer.students);
             if (first && reticked) tickNote.value = `The list was ticked again for ${answer.to_group?.name ?? chosenName.value}.`;
+            reticked = false;
         }
-        reticked = false;
 
         preview.value = answer;
         checkState.value = 'ready';
@@ -480,11 +551,20 @@ const choiceChanged = () => {
     check();
 };
 
+/** "Try again": the same choices, asked again, and the keyboard stays inside (the button it was on is gone). */
+const retryCheck = async () => {
+    await check();
+    await nextTick();
+    focusInside('move-class-to', checkRegion.value);
+};
+
 // Another class starts again from "everyone who can move", and the dialog says so.
 watch(() => form.value.toGroupId, (_now, before) => {
     reticked = before !== null && ticked.value !== null;
     ticked.value = null;
     restOf = null;
+    heldOver.value = [];
+    touched.value = false;
     choiceChanged();
 });
 
@@ -517,6 +597,13 @@ watch(() => form.value.gradeLabel, () => {
     if (form.value.gradeMode !== 'set') return;
 
     cancelGradeText();
+
+    // Emptied: there is nothing to wait for, and nothing to ask.
+    if (gradeNotTyped.value) {
+        choiceChanged();
+        return;
+    }
+
     // Off at once: the list on screen is for the grade typed before.
     checkState.value = form.value.toGroupId && form.value.movedOn ? 'checking' : 'idle';
     asked += 1;
@@ -531,18 +618,28 @@ const gradeTextDone = () => {
 
 // ------------------------------------------------------------------- the ticks
 
+/** The office has changed a tick since the list was last ticked for it: a stray click must not drop that. */
+const touched = ref(false);
+
+/** A tick was changed by hand: the office is past the refusal it was shown, and has something to lose. */
+const ticksChanged = (now: number[]) => {
+    ticked.value = now;
+    tickNote.value = '';
+    touched.value = true;
+    acknowledge();
+};
+
 const toggle = (id: number, event: Event) => {
     if (saving.value || !ableIds.value.includes(id)) return;
 
     const on = (event.target as HTMLInputElement).checked;
     const rest = tickedIds.value.filter((t) => t !== id);
-    ticked.value = on ? [...rest, id] : rest;
-    tickNote.value = '';
+    ticksChanged(on ? [...rest, id] : rest);
 };
 
-const tickAll = () => { ticked.value = ableIds.value; tickNote.value = ''; };
-const tickNone = () => { ticked.value = []; tickNote.value = ''; };
-const tickCame = () => { ticked.value = cameIds.value; tickNote.value = ''; };
+const tickAll = () => ticksChanged(ableIds.value);
+const tickNone = () => ticksChanged([]);
+const tickCame = () => ticksChanged(cameIds.value);
 
 // --------------------------------------------- the three groups, and the details
 
@@ -578,6 +675,7 @@ let movedSomebody = false;
 
 const notYet = computed(() => whyNotYet({
     saving: saving.value,
+    refused: saveError.value,
     toGroupId: form.value.toGroupId,
     movedOn: form.value.movedOn,
     check: checkState.value,
@@ -588,7 +686,23 @@ const notYet = computed(() => whyNotYet({
 }));
 
 const canMove = computed(() => notYet.value === '');
-const canMoveTheRest = computed(() => result.value !== null && someWereLeft(result.value));
+const canMoveTheRest = computed(() => result.value !== null && (someWereLeft(result.value) || heldOver.value.length > 0));
+
+/** The office has read the refusal: Move may be pressed again. The "Changed" marks in the list stay. */
+const acknowledge = () => {
+    saveError.value = '';
+    saveOpenGroup.value = null;
+};
+
+/**
+ * "OK, I have read this". The button goes with the refusal, so the keyboard goes to the list it
+ * was about (never to Move itself: the next key press must not be the one that sends the class).
+ */
+const haveRead = async () => {
+    acknowledge();
+    await nextTick();
+    focusInside('', checkRegion.value);
+};
 
 const save = async () => {
     // The guard, not only the disabled button: a second tap before the redraw sends nothing.
@@ -600,14 +714,18 @@ const save = async () => {
     changedIds.value = [];
 
     try {
+        const sent = sending.value;
+        const later = nextRoundIds.value;
         const answer = await groupsStore.moveClass(props.groupId, classMoveFields({
             toGroupId: form.value.toGroupId,
             movedOn: form.value.movedOn,
             gradeMode: form.value.gradeMode,
             gradeLabel: form.value.gradeLabel,
-        }, preview.value, sending.value));
+        }, preview.value, sent));
 
         movedSomebody = movedSomebody || answer.moved > 0;
+        movedIds.value = [...movedIds.value, ...answer.students.filter((s) => s.outcome === 'moved').map((s) => s.membership_id)];
+        heldOver.value = later;
         details.value = [];
         result.value = answer;
     } catch (error: any) {
@@ -617,6 +735,9 @@ const save = async () => {
             // Some students may have been moved. The roster is the only thing that knows.
             movedSomebody = true;
             lost.value = true;
+            // The Move button, which had the keyboard, is gone with the form.
+            await nextTick();
+            if (open) lostButton.value?.focus();
             return;
         }
 
@@ -628,12 +749,27 @@ const save = async () => {
         changedIds.value = refusal.changed;
         saving.value = false;
         await check();
+
+        // When the fresh check refuses the class with the same sentence (the
+        // minute of a deploy), it is said once, by the check, which also
+        // offers "Try again".
+        if (preview.value && !preview.value.can_move && preview.value.refusal === refusal.message) {
+            acknowledge();
+        }
+
+        // The keyboard and the view go to the refusal: it is the first thing
+        // in the body, and nothing else on screen has changed.
+        await nextTick();
+        if (open) showRefusal();
     } finally {
         saving.value = false;
     }
 };
 
-/** A fresh check that ticks only the students who were not reached or were busy. Nothing is sent. */
+/**
+ * A fresh check that ticks only the students who were not reached, were busy, or were left for
+ * the next round. Nothing is sent.
+ */
 const moveTheRest = async () => {
     if (!result.value) return;
 
@@ -644,7 +780,7 @@ const moveTheRest = async () => {
     changedIds.value = [];
     await check();
     await nextTick();
-    if (open) document.getElementById('move-class-to')?.focus();
+    focusInside('move-class-to');
 };
 
 const outcomeWord = (outcome: ClassMoveOutcome): string =>
@@ -662,6 +798,18 @@ const cancel = () => {
     }
 };
 
+/**
+ * A click on the dimmed page beside the box. It closes a dialog nothing was done in. It does
+ * NOT close a result (which "stays until OK": a drag to select "To put this back: ..." that ends
+ * outside the box is a click here), nor the notice that the answer did not arrive, nor a list the
+ * office has changed a tick in.
+ */
+const backdrop = () => {
+    if (saving.value || result.value || lost.value || touched.value) return;
+
+    cancel();
+};
+
 const finish = () => emit('moved');
 const reloadRoster = () => emit('reload');
 const openClass = (group: OpenGroup | null | undefined) => {
@@ -674,9 +822,27 @@ const openClass = (group: OpenGroup | null | undefined) => {
 const root = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
 const okButton = ref<HTMLButtonElement | null>(null);
+const lostButton = ref<HTMLButtonElement | null>(null);
 const resultHeading = ref<HTMLElement | null>(null);
+const refusalAlert = ref<HTMLElement | null>(null);
+const checkRegion = ref<HTMLElement | null>(null);
 let opener: HTMLElement | null = null;
 let open = true;
+
+/** Focus the element with this id, else `fallback`, else Close: never the page behind the dialog. */
+const focusInside = (id: string, fallback: HTMLElement | null = null) => {
+    if (!open) return;
+
+    (document.getElementById(id) ?? fallback ?? closeButton.value)?.focus();
+};
+
+/** Bring the refusal into view and put the keyboard on it (or on the check, when the check says it). */
+const showRefusal = () => {
+    const target = refusalAlert.value ?? checkRegion.value;
+
+    target?.focus();
+    target?.scrollIntoView?.({ block: 'start' });
+};
 
 const onKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
@@ -704,7 +870,7 @@ onMounted(async () => {
     await loadClasses();
     await nextTick();
     // The class picker when there is one; otherwise focus stays on Close.
-    if (open) document.getElementById('move-class-to')?.focus();
+    focusInside('move-class-to');
 });
 
 onBeforeUnmount(() => {
@@ -723,6 +889,23 @@ onBeforeUnmount(() => {
 .move-class .form-select,
 .move-class .form-control {
     min-height: 44px;
+}
+
+/*
+ * A tick's LABEL is the target, not only the 16 px box: it takes the height of its row and the
+ * width that is left, so a tap anywhere on a student's name line, or on a grade choice, lands.
+ * (The row had the height; the label inside it was as tall as its text.)
+ */
+.move-class .form-check-label {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-height: 44px;
+}
+
+/* "Give everyone this grade:" keeps its own width, so the field for the grade sits beside it. */
+.move-class .move-class-label-short {
+    flex: 0 1 auto;
 }
 
 /*

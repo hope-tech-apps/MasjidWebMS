@@ -223,19 +223,36 @@ test('the wiring: the server\'s lines are printed as they come, the body is appe
         return i;
     };
     const order = ['id="move-class-to"', 'id="move-class-first-day"', 'name="move-class-grades"', 'data-part="students"',
-        'data-part="follows"', 'data-part="afterwards"', 'Nothing is saved until you press Move.', 'type="submit"'].map(at);
+        'data-part="follows"', 'data-part="afterwards"', 'Nothing is saved until you press Move.', 'data-part="move"'].map(at);
     assert.deepEqual(order, [...order].sort((a, b) => a - b));
+    // A REFUSED RUN IS SAID FIRST, above the choices and the list, never after them.
+    assert.ok(at('data-part="refused"') < at('id="move-class-to"'), 'the refusal of a run is drawn below the list again');
+
+    // ONLY THE MOVE BUTTON SENDS. A browser submits a form on Enter from any of its fields, and
+    // this one holds a checkbox per student: so the form has no submit handler and no submit
+    // button, and Move is a plain button with its own click.
+    assert.doesNotMatch(modal, /type="submit"/);
+    assert.doesNotMatch(modal, /@submit\.prevent="/);
+    assert.match(modal, /<button type="button" class="btn btn-primary" data-part="move" :disabled="!canMove" @click="save">/);
+
+    // THE BACKDROP: its own handler, which leaves a result, the lost-answer notice and a list
+    // the office has changed a tick in alone.
+    assert.match(modal, /@click\.self="backdrop"/);
+    assert.match(modal, /if \(saving\.value \|\| result\.value \|\| lost\.value \|\| touched\.value\) return;/);
 
     // Every control is a full touch target, by one rule for the whole dialog.
     assert.match(modal, /class="modal fade show d-block move-class"/);
     assert.match(modal, /\.move-class \.btn,\s+\.move-class \.form-check,[^}]*min-height: 44px;/);
+    // A tick's LABEL is the target: it takes the row's height and the width that is left.
+    // (Measured in a browser before this rule: a 16 px box and a label 24 px high in a 44 px row.)
+    assert.match(modal, /\.move-class \.form-check-label \{\s+display: flex;\s+align-items: center;\s+flex: 1 1 auto;\s+min-height: 44px;\s+\}/);
 
     // THE FORM MAY SHRINK, SO THE BODY SCROLLS AND THE FOOTER STAYS IN REACH. Seen in a browser
     // at 360 px without this rule: the body did not scroll and the box cut off everything below
     // the fold, the Move button with it. No test without a layout can see that, so the rule is
     // pinned where it is written.
     assert.match(modal, /\.move-class form \{\s+display: flex;\s+flex-direction: column;\s+flex: 1 1 auto;\s+min-height: 0;\s+\}/);
-    assert.match(modal, /<form v-else @submit\.prevent="save">\s+<div class="modal-body">/);
+    assert.match(modal, /<form v-else @submit\.prevent>\s+<div class="modal-body">/);
 
     // Nothing the office must read lives in a tooltip, and every action has a word.
     assert.doesNotMatch(modal, /\stitle="/);
