@@ -4,20 +4,30 @@
  * first, what the cancel question says, the optimistic save that puts the old status back
  * when the server refuses, and statusSelectController(), which decides when a status is
  * saved (chosen, never an arrow-key step) and holds the row lock from question to answer.
- * The last tests read FormResponsesView.vue and the store as text, as
- * newsletter-blocks.test.ts does, to pin that the view is wired to all of it: the SPA has no
- * DOM test harness.
+ * Then the row's Delete: which registrations it deletes, which it sends to be cancelled
+ * first and which it never deletes (deleteStep(), the mirror of
+ * FormResponsesController::destroy()), and what its question says.
+ * The last tests read FormResponsesView.vue, the store and the controller as text, as
+ * newsletter-blocks.test.ts does, to pin that the view is wired to all of it and says the
+ * server's own words: the SPA has no DOM test harness.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+    DELETE_CANCEL_FIRST,
+    DELETE_REFUSED,
     FALLBACK_STATUSES,
     asksBeforeStatusChange,
     cancelDialogOptions,
     cancelQuestion,
     decideInlineChange,
+    deleteBlocked,
+    deleteDialogOptions,
+    deleteFailure,
+    deleteQuestion,
+    deleteStep,
     movesWithoutCommitting,
     refreshesAfterStatusChange,
     registrationName,
@@ -27,6 +37,7 @@ import {
     statusSelectController,
     statusSelectLabel,
     type CancelFacts,
+    type DeleteFacts,
     type StatusRow
 } from '../views/dashboard/formResponseStatus.ts';
 import type { FormResponseStatus } from '../core/types/data/masjid-related/Form.ts';
@@ -43,7 +54,8 @@ const facts = (over: Partial<CancelFacts> = {}): CancelFacts => ({
     chargedThrough: null,
     refundedAmount: null,
     refundedInFull: false,
-    hasPayment: true,
+    // An unpaid card registration, the default here, is one Delete sends to be cancelled first.
+    deleteStep: 'cancel-first',
     checkedIn: false,
     reservesDates: false,
     capacity: null,
@@ -138,9 +150,25 @@ test('a registration already checked in says so, and does not say it can be chec
 });
 
 test('every cancel question ends by saying it stays listed and another status restores it', () => {
-    for (const over of [{}, { paymentEnabled: false, paymentMethod: null, hasPayment: false }, { reservesDates: true, capacity: 10 }] as Partial<CancelFacts>[]) {
+    const variants: Partial<CancelFacts>[] = [
+        { paymentState: 'paid', deleteStep: 'never' },
+        { paymentEnabled: false, paymentMethod: null, deleteStep: 'delete' },
+        { paymentMethod: 'cash', paymentState: 'paid', deleteStep: 'never', reservesDates: true, capacity: 10 }
+    ];
+
+    for (const over of variants) {
         const lines = cancelQuestion(facts(over)).lines;
         assert.equal(lines[lines.length - 1], 'It stays in this list, and choosing another status restores it.');
+    }
+});
+
+test('cancelling a registration that was never paid ends by saying the cancel is what lets it be deleted', () => {
+    for (const over of [{}, { paymentMethod: 'office' }, { cardPageOpened: true, reservesDates: true, capacity: 10 }] as Partial<CancelFacts>[]) {
+        const lines = cancelQuestion(facts(over)).lines;
+        assert.equal(
+            lines[lines.length - 1],
+            'It stays in this list, and choosing another status restores it. It was never paid, so once it is cancelled it can also be deleted.'
+        );
     }
 });
 
@@ -151,12 +179,19 @@ test('the cancel question\'s buttons say what they do, never a bare "Cancel" or 
     assert.equal(question.keepText, 'Keep it');
 });
 
-test('a registration with a payment is not told a delete would free its place, since it can never be deleted', () => {
-    const paying = cancelQuestion(facts({ capacity: 200, hasPayment: true })).lines.join(' ');
-    assert.match(paying, /still counts towards the form's limit of 200, and a registration with a payment cannot be deleted, so cancelling does not free a place\./);
-    assert.doesNotMatch(paying, /only deleting/);
+test('the capacity line says what frees the place: nothing for a paid registration, a delete after the cancel for one never paid', () => {
+    // A payment on record: never deleted, so it is not pointed at a delete the server refuses.
+    const paid = cancelQuestion(facts({ capacity: 200, paymentState: 'paid', deleteStep: 'never' })).lines.join(' ');
+    assert.match(paid, /still counts towards the form's limit of 200, and a registration with a payment cannot be deleted, so cancelling does not free a place\./);
+    assert.doesNotMatch(paid, /only deleting|after the cancel/);
 
-    const free = cancelQuestion(facts({ capacity: 200, hasPayment: false, paymentEnabled: false, paymentMethod: null })).lines.join(' ');
+    // Never paid: the cancel alone frees nothing, and the delete it makes possible does.
+    const neverPaid = cancelQuestion(facts({ capacity: 200, deleteStep: 'cancel-first' })).lines.join(' ');
+    assert.match(neverPaid, /still counts towards the form's limit of 200 while it is cancelled; deleting it after the cancel frees its place\./);
+    assert.doesNotMatch(neverPaid, /cannot be deleted|only deleting/);
+
+    // No payment method at all: as it always read.
+    const free = cancelQuestion(facts({ capacity: 200, deleteStep: 'delete', paymentEnabled: false, paymentMethod: null })).lines.join(' ');
     assert.match(free, /still counts towards the form's limit of 200; only deleting a registration frees a place\./);
 });
 
@@ -200,7 +235,8 @@ test('the date and capacity sentences appear only on forms that reserve dates or
 });
 
 test('a form that takes no payment is not told about check-in or payment', () => {
-    const text = cancelQuestion(facts({ paymentEnabled: false, paymentMethod: null })).lines.join(' ');
+    // No payment method, so Delete was always available: nothing about payment in any line.
+    const text = cancelQuestion(facts({ paymentEnabled: false, paymentMethod: null, deleteStep: 'delete' })).lines.join(' ');
 
     assert.doesNotMatch(text, /checked in|paid|refund/);
     assert.match(text, /Nobody is emailed/);
@@ -226,6 +262,144 @@ test('a refused save puts the old status back and passes the refusal on', async 
 
     await assert.rejects(saveStatusOptimistically(row, 'new', async () => { throw refusal; }), refusal);
     assert.equal(row.status, 'cancelled');
+});
+
+// --- Delete: deleteStep(), deleteBlocked(), deleteQuestion() ----------------------
+
+test('a registration with no payment method is deleted whatever its status, as it always was', () => {
+    for (const status of FALLBACK_STATUSES) {
+        assert.equal(deleteStep({ status, payment_method: null, payment_status: null }), 'delete', status);
+    }
+
+    // A Wix-fallback row reads "unpaid" on the badge (payment_state) and still has no method.
+    assert.equal(deleteStep({ status: 'new' }), 'delete');
+});
+
+test('a registration that was never paid is sent to be cancelled first, card or office, and deleted once it is', () => {
+    for (const payment_method of ['online', 'office']) {
+        for (const status of ['new', 'confirmed', 'waitlisted']) {
+            assert.equal(deleteStep({ status, payment_method, payment_status: 'unpaid' }), 'cancel-first', `${payment_method}, ${status}`);
+        }
+
+        assert.equal(deleteStep({ status: 'cancelled', payment_method, payment_status: 'unpaid' }), 'delete', payment_method);
+    }
+});
+
+test('a registration a payment was recorded on is never deleted, cancelled or not', () => {
+    for (const payment_method of ['online', 'cash', 'external']) {
+        for (const status of FALLBACK_STATUSES) {
+            assert.equal(deleteStep({ status, payment_method, payment_status: 'paid' }), 'never', `${payment_method}, ${status}`);
+        }
+    }
+});
+
+test('a state nothing writes is "never", not "delete": the rule names what it allows', () => {
+    // Cash or an external payment that reads unpaid, a method with no status, a method this
+    // screen does not know: each goes to a person, as FormResponse::neverRecordedAPayment() sends it.
+    assert.equal(deleteStep({ status: 'cancelled', payment_method: 'cash', payment_status: 'unpaid' }), 'never');
+    assert.equal(deleteStep({ status: 'cancelled', payment_method: 'external', payment_status: 'unpaid' }), 'never');
+    assert.equal(deleteStep({ status: 'cancelled', payment_method: 'online', payment_status: null }), 'never');
+    assert.equal(deleteStep({ status: 'cancelled', payment_method: 'online' }), 'never');
+    assert.equal(deleteStep({ status: 'cancelled', payment_method: 'voucher', payment_status: 'unpaid' }), 'never');
+});
+
+test('the rule reads payment_status, never payment_state: a form that lost its payment settings sends that null on every row', () => {
+    // As serialize() sends them once Form::hasPaymentSettings() is false.
+    const neverPaid = { status: 'cancelled', payment_method: 'online', payment_status: 'unpaid', payment_state: null };
+    const paid = { status: 'cancelled', payment_method: 'online', payment_status: 'paid', payment_state: null };
+
+    assert.equal(deleteStep(neverPaid), 'delete');
+    assert.equal(deleteStep({ ...neverPaid, status: 'new' }), 'cancel-first');
+    assert.equal(deleteStep(paid), 'never', 'a paid registration is never offered a delete because its badge went blank');
+});
+
+test('a dimmed Delete says why in the server\'s own words, and a live one says nothing', () => {
+    assert.deepEqual(deleteBlocked('never'), { title: 'This registration cannot be deleted', text: DELETE_REFUSED });
+    assert.deepEqual(deleteBlocked('cancel-first'), { title: 'Cancel it first', text: DELETE_CANCEL_FIRST });
+    assert.equal(deleteBlocked('delete'), null);
+});
+
+const deleteFacts = (over: Partial<DeleteFacts> = {}): DeleteFacts => ({
+    id: 121,
+    name: 'Test Registrant',
+    paymentMethod: 'online',
+    cardPageOpened: false,
+    reservesDates: false,
+    capacity: null,
+    ...over
+});
+
+test('the delete question for a never-paid registration names it, says it was never paid and that it cannot be undone', () => {
+    const question = deleteQuestion(deleteFacts());
+
+    assert.equal(question.title, 'Delete registration #121, Test Registrant?');
+    assert.deepEqual(question.lines, [
+        'It is cancelled and was never paid.',
+        'Its answers and any files uploaded with it are removed.',
+        'This cannot be undone.'
+    ]);
+    assert.equal(question.confirmText, 'Delete registration');
+    assert.equal(question.keepText, 'Keep it');
+});
+
+test('deleting an office registration asks that the office received no payment for it', () => {
+    const text = deleteQuestion(deleteFacts({ paymentMethod: 'office' })).lines.join(' ');
+
+    assert.match(text, /It was to be paid at the office\. Delete it only if the office received no payment for it\./);
+    assert.doesNotMatch(text, /card payment page/);
+});
+
+test('deleting a card registration whose page was opened says the page is checked first, and nothing is deleted if it was paid', () => {
+    const opened = deleteQuestion(deleteFacts({ cardPageOpened: true })).lines.join(' ');
+    assert.match(opened, /Its card payment page is checked first; if it was paid, nothing is deleted\./);
+
+    const never = deleteQuestion(deleteFacts({ cardPageOpened: false })).lines.join(' ');
+    assert.doesNotMatch(never, /card payment page/);
+});
+
+test('the delete question says what goes with the registration: its reserved date and its place, only where the form has them', () => {
+    const plain = deleteQuestion(deleteFacts()).lines.join(' ');
+    assert.doesNotMatch(plain, /date|limit/);
+
+    const both = deleteQuestion(deleteFacts({ reservesDates: true, capacity: 40 })).lines;
+    assert.ok(both.includes('If it reserved a date, that reservation is removed with it.'));
+    assert.ok(both.includes('Its place towards the form\'s limit of 40 is freed.'));
+    assert.equal(both[both.length - 1], 'This cannot be undone.');
+});
+
+test('a registration with no payment method is asked the question it always was', () => {
+    const question = deleteQuestion(deleteFacts({ paymentMethod: null, cardPageOpened: false, reservesDates: true, capacity: 40 }));
+
+    assert.equal(question.title, 'Are you sure?');
+    assert.deepEqual(question.lines, ['Delete the response from Test Registrant? This cannot be undone.']);
+    assert.equal(question.confirmText, 'Yes, delete it!');
+
+    assert.deepEqual(deleteQuestion(deleteFacts({ paymentMethod: null, name: '  ' })).lines, ['Delete the response from this respondent? This cannot be undone.']);
+});
+
+test('the delete dialog sets the title as text and starts on the button that deletes nothing', () => {
+    const question = deleteQuestion(deleteFacts({ name: '<img src=x onerror=alert(1)>' }));
+    const options = deleteDialogOptions(question, 'body') as Record<string, unknown>;
+
+    assert.equal(options.titleText, question.title);
+    assert.equal('title' in options, false);
+    assert.equal(options.html, 'body');
+    assert.equal(options.focusCancel, true);
+    assert.equal(options.confirmButtonText, 'Delete registration');
+    assert.equal(options.cancelButtonText, 'Keep it');
+});
+
+test('a refused delete shows the server\'s sentence, and a registration already gone says so instead of "Request failed."', () => {
+    const paidOnStripe = 'This registration was paid by card, so it was not deleted. It will show as paid once Stripe confirms it. Refund it in Stripe if it should not stand.';
+
+    assert.deepEqual(deleteFailure(422, paidOnStripe), { title: 'Not deleted', text: paidOnStripe });
+    assert.deepEqual(deleteFailure(503, 'Try again in a moment.'), { title: 'Not deleted', text: 'Try again in a moment.' });
+    assert.deepEqual(deleteFailure(undefined, 'Failed to delete the response.'), { title: 'Not deleted', text: 'Failed to delete the response.' });
+
+    const gone = deleteFailure(404, 'Request failed.');
+    assert.equal(gone.title, 'Already deleted');
+    assert.match(gone.text, /had already been deleted/);
+    assert.doesNotMatch(gone.text, /Request failed/);
 });
 
 // --- When the list saves: statusSelectController() --------------------------------
@@ -470,4 +644,72 @@ test('the store\'s fallback messages for the door say "check in", as the screen 
     assert.match(store, /'Could not check this registration in\.'/);
     assert.match(store, /'Could not undo the check-in\.'/);
     assert.doesNotMatch(store, /mark this registration collected|undo the collection/);
+});
+
+// --- The row's Delete is wired to deleteStep(), and says the server's words -------
+
+const controller = readFileSync(new URL('../../../app/Http/Controllers/AdminDashboard/FormResponsesController.php', import.meta.url), 'utf8');
+const deleteButtonTag = view.match(/<button\s+class="btn btn-outline-danger"[\s\S]*?>/)?.[0] ?? '';
+const confirmDeleteBody = view.match(/const confirmDelete = async[\s\S]*?\n};\n/)?.[0] ?? '';
+
+test('the two refusals the screen shows without asking are the controller\'s own, word for word', () => {
+    assert.ok(controller.includes(`private const DELETE_PAID = '${DELETE_REFUSED}';`), 'the paid sentence');
+    assert.ok(controller.includes(`private const DELETE_CANCEL_FIRST = '${DELETE_CANCEL_FIRST}';`), 'the cancel-first sentence');
+
+    // And the view carries no copy of either: one place to change, beside the pin above.
+    assert.equal(view.includes(DELETE_REFUSED), false);
+    assert.equal(view.includes(DELETE_CANCEL_FIRST), false);
+});
+
+test('the Delete button is dimmed, named and explained by deleteStep(), and stays clickable so the reason can be read', () => {
+    assert.notEqual(deleteButtonTag, '', 'the row Delete button is where the test expects it');
+    assert.match(view, /const deleteBlockedFor = \(row: FormResponseRow\) => deleteBlocked\(deleteStep\(row\)\);/);
+    assert.match(deleteButtonTag, /:class="\{ 'opacity-50': deleteBlockedFor\(response\) !== null \}"/);
+    assert.match(deleteButtonTag, /:aria-disabled="deleteBlockedFor\(response\) !== null \? 'true' : undefined"/);
+    assert.match(deleteButtonTag, /:title="deleteBlockedFor\(response\)\?\.text \?\? 'Delete'"/);
+    assert.match(deleteButtonTag, /@click="confirmDelete\(response\)"/);
+    assert.doesNotMatch(deleteButtonTag, /:disabled=/);
+
+    // The old rule, "any payment method at all", is gone from the view.
+    assert.doesNotMatch(view, /isMoneyRow/);
+});
+
+test('confirmDelete asks nothing of a dimmed row, and holds the row lock from its question to the answer', () => {
+    assert.notEqual(confirmDeleteBody, '', 'confirmDelete is where the test expects it');
+
+    const at = (needle: string): number => {
+        const index = confirmDeleteBody.indexOf(needle);
+        assert.notEqual(index, -1, `confirmDelete has: ${needle}`);
+        return index;
+    };
+
+    const guard = at('if (busyRowId.value !== null) return;');
+    const blocked = at('const blocked = deleteBlockedFor(response);');
+    const lock = at('busyRowId.value = response.id;');
+    const question = at('Swal.fire(deleteDialogOptions(question, questionBody(question.lines)))');
+    const request = at('formResponsesStore.deleteResponse(selectedFormId.value, response.id)');
+    const release = at('busyRowId.value = null;');
+
+    assert.ok(guard < blocked && blocked < lock && lock < question && question < request && request < release);
+    assert.match(confirmDeleteBody, /\} finally \{\s*busyRowId\.value = null;\s*\}/);
+});
+
+test('after a delete the list is re-read, and the reserved dates on a form that reserves them', () => {
+    const request = confirmDeleteBody.indexOf('formResponsesStore.deleteResponse(');
+    const after = confirmDeleteBody.slice(confirmDeleteBody.lastIndexOf('await loadData(paginationOptions.value?.currentPage || 1);'));
+
+    assert.ok(request !== -1 && confirmDeleteBody.lastIndexOf('await loadData(') > request);
+    assert.match(after, /if \(meta\.value\?\.reservations === true\) loadReservations\(\);/);
+    assert.match(after, /title: 'Deleted!'/);
+});
+
+test('a refused delete re-reads the row and shows the server\'s sentence through deleteFailure()', () => {
+    assert.match(confirmDeleteBody, /if \(status === 404\) \{\s*await loadData\(/);
+    assert.match(confirmDeleteBody, /else if \(status === 422 \|\| status === 409 \|\| status === 503\) \{\s*await refreshRow\(response\.id\);/);
+    assert.match(confirmDeleteBody, /Swal\.fire\(\{ icon: 'error', \.\.\.deleteFailure\(status, serverMessage\(error, 'Failed to delete the response\.'\)\) \}\);/);
+});
+
+test('the cancel question is told what Delete does for the row, and the detail\'s payment hint shows only for a paid one', () => {
+    assert.match(view, /deleteStep: deleteStep\(row\),/);
+    assert.match(view, /v-if="paymentEnabled && selectedResponse\.payment_state === 'paid' && editStatus === 'cancelled' && selectedResponse\.status !== 'cancelled'"/);
 });
