@@ -14,10 +14,11 @@ class UpdateServiceRequest extends BaseFormRequest
             'description' => 'required|string',
             'text' => 'required|string',
             // The name is pinned as well as the bytes, and `bail` stops at the first failure:
-            // see StoreServiceRequest. Each `extensions` list mirrors the `mimes` list beside
-            // it, and this icon rule has always named two kinds the create rule does not.
+            // see StoreServiceRequest. This icon rule has always taken a GIF, which the create
+            // rule does not. Its `mimes` also names `ico` and `icns`; `image` refuses those
+            // bytes first, so the name list leaves both out, as on create.
             'image' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
-            'icon' => 'bail|nullable|image|mimes:png,gif,ico,icns,webp|extensions:png,gif,ico,icns,webp|max:25600',
+            'icon' => 'bail|nullable|image|mimes:png,gif,ico,icns,webp|extensions:png,gif,webp|max:25600',
         ];
     }
 
@@ -25,7 +26,7 @@ class UpdateServiceRequest extends BaseFormRequest
     {
         return [
             'image.extensions' => 'The service image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
-            'icon.extensions' => 'The service icon\'s file name must end in .png, .gif, .ico, .icns or .webp. Rename the file and upload it again.',
+            'icon.extensions' => 'The service icon\'s file name must end in .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

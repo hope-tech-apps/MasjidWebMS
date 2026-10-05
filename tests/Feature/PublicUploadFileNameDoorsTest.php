@@ -78,7 +78,11 @@ class PublicUploadFileNameDoorsTest extends TestCase
     /** The two doors whose rule is a bare `image` have always taken a bitmap as well. */
     private const PHOTOS_OR_BITMAP = self::PHOTOS + ['bmp' => ['bmp']];
 
-    /** An icon is a PNG or a WebP: the only bytes the icon rules let through. */
+    /**
+     * An icon is a PNG or a WebP. The icon rules' `mimes:` lists also name `ico` (and
+     * `icns` on the edit form), but `image` beside them refuses those bytes first, so no
+     * real file can be an icon under those names and the name lists leave them out.
+     */
     private const ICONS = ['png' => ['png'], 'webp' => ['webp']];
 
     /** The service EDIT form's icon has always taken a GIF too; the create form's has not. */
@@ -115,6 +119,16 @@ class PublicUploadFileNameDoorsTest extends TestCase
         'the donation link picture' => self::PHOTOS_OR_BITMAP,
         'a push notification picture' => self::PHOTOS_OR_BITMAP,
         'the publish composer picture' => self::PHOTOS,
+    ];
+
+    /** The doors that take an icon, and the sentence each reads when a file is not an image. */
+    private const ICON_DOORS = [
+        'a new service: icon' => 'The icon field must be an image.',
+        'an edited service: icon' => 'The icon field must be an image.',
+        'About, first save: mission icon' => 'The mission icon field must be an image.',
+        'About, first save: vision icon' => 'The vision icon field must be an image.',
+        'About, edited: mission icon' => 'The mission icon field must be an image.',
+        'About, edited: vision icon' => 'The vision icon field must be an image.',
     ];
 
     private Masjid $masjid;
@@ -240,6 +254,42 @@ class PublicUploadFileNameDoorsTest extends TestCase
         return $rows;
     }
 
+    /**
+     * PNG bytes under an icon's name that no real icon file can use: `.ico` at every icon
+     * door, `.icns` too (the service edit form's `mimes:` names it).
+     *
+     * @return array<string, array{string, string}>
+     */
+    public static function iconNamesNoRealFileCanUse(): array
+    {
+        $rows = [];
+        foreach (array_keys(self::ICON_DOORS) as $door) {
+            foreach (['icon.ico', 'icon.icns'] as $name) {
+                $rows["{$door}: {$name}"] = [$door, $name];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * A REAL icon file of each kind the icon rules' `mimes:` lists name and `image` refuses,
+     * at every icon door, with the sentence that door reads for a file that is not an image.
+     *
+     * @return array<string, array{string, string, string}>
+     */
+    public static function realIconFiles(): array
+    {
+        $rows = [];
+        foreach (self::ICON_DOORS as $door => $sentence) {
+            foreach (['ico', 'icns'] as $kind) {
+                $rows["{$door}: a real .{$kind}"] = [$door, $kind, $sentence];
+            }
+        }
+
+        return $rows;
+    }
+
     /* ---------------------------------------------------------------- refusals */
 
     #[Test]
@@ -285,6 +335,50 @@ class PublicUploadFileNameDoorsTest extends TestCase
             $this->assertSame('public', $media->disk);
             Storage::disk('public')->assertExists($media->id . '/' . $name);
         }
+    }
+
+    /* ------------------------------------------------------------------- icons */
+
+    #[Test]
+    #[DataProvider('iconNamesNoRealFileCanUse')]
+    public function png_bytes_under_an_icon_name_no_real_icon_can_use_are_refused_and_nothing_is_stored(string $key, string $name): void
+    {
+        $door = $this->door($key);
+        $before = $this->state($door['tables']);
+
+        // The bytes are a PNG, which the field takes, so the name is the only thing wrong
+        // and the field's own sentence is the whole answer.
+        $this->send($door, $this->realImage($name, 'png'))
+            ->assertStatus(422)
+            ->assertExactJson([
+                'status' => 'failed',
+                'data' => [$door['error'] => [$door['sentence']]],
+            ]);
+
+        $this->assertSame($before, $this->state($door['tables']), "{$key}: a refused icon still wrote something");
+    }
+
+    #[Test]
+    #[DataProvider('realIconFiles')]
+    public function a_real_icon_file_is_not_an_image_to_this_application_and_is_told_so(string $key, string $kind, string $notAnImage): void
+    {
+        $door = $this->door($key);
+        $before = $this->state($door['tables']);
+
+        $icon = $this->realUpload('icon.' . $kind, $this->iconBytes($kind));
+        $this->assertSame($kind, $icon->guessExtension(), "PREMISE: finfo reads these bytes as a .{$kind} ({$icon->getMimeType()}).");
+
+        // `image` refuses these bytes before `mimes:` (which names `ico`, and `icns` on the
+        // edit form) is ever asked, and did so before any name was pinned. So the answer is
+        // "not an image", once, and never "rename it".
+        $this->send($door, $icon)
+            ->assertStatus(422)
+            ->assertExactJson([
+                'status' => 'failed',
+                'data' => [$door['error'] => [$notAnImage]],
+            ]);
+
+        $this->assertSame($before, $this->state($door['tables']), "{$key}: a refused icon still wrote something");
     }
 
     /* --------------------------------------------------- what the person is told */
@@ -490,7 +584,7 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'bytes' => 'png',
                 'collections' => ['servicesIcons'],
                 'tables' => ['services'],
-                'sentence' => 'The service icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
+                'sentence' => 'The service icon\'s file name must end in .png or .webp. Rename the file and upload it again.',
             ],
             'an edited service: icon' => [
                 'url' => $org . '/services',
@@ -499,8 +593,8 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'bytes' => 'png',
                 'collections' => ['servicesIcons'],
                 'tables' => ['services'],
-                // The edit rule has always taken two kinds the create rule does not name.
-                'sentence' => 'The service icon\'s file name must end in .png, .gif, .ico, .icns or .webp. Rename the file and upload it again.',
+                // The edit rule has always taken a GIF, which the create rule does not.
+                'sentence' => 'The service icon\'s file name must end in .png, .gif or .webp. Rename the file and upload it again.',
             ],
             'About, first save: picture', 'About, edited: picture' => [
                 'url' => $org . '/about',
@@ -519,7 +613,7 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'collections' => [str_contains($key, 'mission') ? 'missionIcons' : 'visionIcons'],
                 'tables' => ['masjid_abouts'],
                 'sentence' => 'The ' . (str_contains($key, 'mission') ? 'mission' : 'vision')
-                    . ' icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
+                    . ' icon\'s file name must end in .png or .webp. Rename the file and upload it again.',
             ],
             'the donation link picture' => [
                 'url' => $org . '/donation-link',
@@ -726,6 +820,25 @@ class PublicUploadFileNameDoorsTest extends TestCase
         $write(imagecreatetruecolor(8, 8));
 
         return (string) ob_get_clean();
+    }
+
+    /**
+     * A real icon file holding one 8 by 8 PNG as its picture, which both formats allow.
+     * `ico` is a Windows icon (the six-byte header and one directory entry), which finfo
+     * reads as `image/vnd.microsoft.icon`. `icns` is an Apple icon (the `icns` header and
+     * one `icp4` element), which finfo reads as `image/x-icns`.
+     */
+    private function iconBytes(string $kind): string
+    {
+        $png = $this->imageBytes('png');
+
+        if ($kind === 'ico') {
+            return pack('vvv', 0, 1, 1) . pack('CCCCvvVV', 8, 8, 0, 0, 1, 32, strlen($png), 22) . $png;
+        }
+
+        $element = 'icp4' . pack('N', 8 + strlen($png)) . $png;
+
+        return 'icns' . pack('N', 8 + strlen($element)) . $element;
     }
 
     /** The smallest file finfo reads as a PDF. */

@@ -23,17 +23,18 @@ class SaveMasjidAboutRequest extends BaseFormRequest
 
         // Each field's rule is written whole, so `image`, `mimes` and `extensions` can be
         // read together (UploadFileNameCoverageTest reads them that way). `extensions`
-        // pins the file's NAME to the kinds `mimes` holds its BYTES to, an icon's list
-        // mirroring the icon's own `mimes`: the media library keeps the client's file name
-        // on the public disk, where `x.html` would be served as a page
-        // (Concerns\ValidatesVideoSection::sectionUploadRules).
+        // pins the file's NAME to what a real file of that field can be called: the media
+        // library keeps the client's file name on the public disk, where `x.html` would be
+        // served as a page (Concerns\ValidatesVideoSection::sectionUploadRules). An icon's
+        // `mimes` names `ico`, but `image` beside it refuses ICO bytes first, so its name
+        // list is `png,webp` only (StoreServiceRequest says the same of its icon).
         return [
             'about' => 'required|string|max:5000',
             'mission' => 'required|string|max:5000',
             'vision' => 'required|string|max:5000',
             'about_image' => $presence . '|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
-            'mission_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,ico,webp|max:25600',
-            'vision_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,ico,webp|max:25600',
+            'mission_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,webp|max:25600',
+            'vision_icon' => $presence . '|image|mimes:png,ico,webp|extensions:png,webp|max:25600',
         ];
     }
 
@@ -41,8 +42,8 @@ class SaveMasjidAboutRequest extends BaseFormRequest
     {
         return [
             'about_image.extensions' => 'The About Us image\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
-            'mission_icon.extensions' => 'The mission icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
-            'vision_icon.extensions' => 'The vision icon\'s file name must end in .png, .ico or .webp. Rename the file and upload it again.',
+            'mission_icon.extensions' => 'The mission icon\'s file name must end in .png or .webp. Rename the file and upload it again.',
+            'vision_icon.extensions' => 'The vision icon\'s file name must end in .png or .webp. Rename the file and upload it again.',
         ];
     }
 }
