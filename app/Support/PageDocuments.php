@@ -48,6 +48,18 @@ final class PageDocuments
     private const NAME_MAX = 120;
 
     /**
+     * The most addresses ONE save may let go of and still be cleaned up. Each is looked for in
+     * everything the section holds now and then asked of the database, so the cost is their number
+     * times the text: 20,000 of them against a text as long (1.2 MB) held a save for six seconds,
+     * and it grew faster than the text. No section links a thousand documents (a person may upload
+     * thirty an hour), and at a thousand the save takes a tenth to a fifth of a second for a text of
+     * up to 600 KB. Past it forgetUnlinked() THROWS, which its own catch writes down as "not
+     * checked", and nothing is deleted. A limit on what a save lets go of, not on what a section
+     * holds.
+     */
+    private const LET_GO_MAX = 1000;
+
+    /**
      * A page document's address as it appears inside page content, whatever host or scheme was
      * written in front of it: `/storage/{media id}/{stored name}`. Matching the PATH means a change of
      * host or of http to https can never make a live file look unlinked. The lookahead refuses a
@@ -139,8 +151,17 @@ final class PageDocuments
             $afterStrings = self::strings($after);
             $afterSpellings = self::spellings($afterStrings);
 
+            // An address that is still there as it was written is still linked, and is found by
+            // one pass over the new content. Only the rest are looked for one by one, in every
+            // spelling (mentions()), and there may be no more of them than LET_GO_MAX.
+            $letGo = array_diff_key(self::addresses($beforeStrings), self::addresses($afterStrings));
+
+            if (count($letGo) > self::LET_GO_MAX) {
+                throw new RuntimeException('The save let go of more page-document addresses than are checked at once.');
+            }
+
             $unlinked = array_filter(
-                self::addresses($beforeStrings),
+                $letGo,
                 fn (string $path) => ! self::mentions($afterSpellings, $path),
                 ARRAY_FILTER_USE_KEY
             );

@@ -8172,9 +8172,10 @@ themselves still run only on the MySQL job.
 - **Fix round 3, the same day** (after the check of round 2: the server lens said "ship after fixes", the
   page-tool lens "ship"; nothing major). Additions only; what is above stands unless a line here says it
   changed. Nothing was run against a server and no browser was driven.
-  - **The cleanup takes one pass over a text, in both of its readers.** A section's text has no size limit,
-    and the cleanup reads every string of the saved section on every save, and every other section's when a
-    save drops a document. Two readers cost the SQUARE of what an administrator can write:
+  - **The cleanup takes one pass over a text, in both of its readers, and bounds the one cost that is left.**
+    A section's text has no size limit, and the cleanup reads every string of the saved section on every
+    save, and every other section's when a save drops a document. Two readers cost the SQUARE of what an
+    administrator can write, and a third thing grew faster than the text:
     1. `resolved()` (round 2's spelling reader) removed one `/name/..` per pass over the whole text. 40,000
        steps (195 KB) took 11.2 s on the server and 9.1 s in the page tool; they take 0.011 s and 0.008 s.
        The text is cut at its slashes once and its segments walked once.
@@ -8189,8 +8190,18 @@ themselves still run only on the MySQL job.
        which would let a deletion through, and over a larger limit, which would let the cost grow with it.
        What it gives up is PD-28: an address that follows more than 2,048 characters with no space, quote,
        tag, `?`, `#`, `=` or `&` among them is not judged, and the document that save drops stays online.
-    Not changed, and linear: one database question for each address a save brings in that is written as
-    ours and has a row.
+    3. Every address a save LETS GO OF is looked for in all the section holds now, in every spelling, and
+       then asked of the database. Also found by timing, not in the check's findings: 10,000 addresses let
+       go of for a text as long (615 KB) took 2.0 s, and 20,000 (1.2 MB) 6.4 s. An address that is still
+       there as it was written is now found by one pass over the new content, and only the rest are looked
+       for one by one; A SAVE THAT LETS GO OF MORE THAN 1,000 AT ONCE THROWS, is logged "were not checked",
+       and deletes nothing. At 1,000 the save takes 0.1 to 0.2 s for a text of up to 615 KB (1.2 s for
+       5 MB); past it, 0.04 s. No section links a thousand documents (thirty an hour for each person). The
+       limit is on what one save lets go of, not on what a section holds.
+    Not changed, and linear in the text: one database question for each address a save brings in that is
+    written as ours and has a row, repeated if the address is. One real address written 40,000 times in a
+    save that drops another document (2 MB) is 40,000 questions and took 2.1 s on the test database. Asking
+    once for each distinct address would end that; it is left as found and written down here.
   - **Round 2's three unpinned readings are pinned** (the percent-decoded reading of the new content in the
     out-of-date check; the percent-decoded reading resolved as well as the text as written; more than one
     `..` step). Tests only; each fails with its reading taken out.
@@ -8260,7 +8271,7 @@ themselves still run only on the MySQL job.
      afterwards: it was not uploaded here, the page tool cannot know whose file it is (PD-10), and the note
      under the field said beforehand that letting go of it leaves it online. Round 2's control named it
      after a replace; the footer does not.
-  6. A save whose content holds an address after more than 2,048 characters of unbroken text has its
-     cleanup given up, out loud (PD-28).
+  6. A save whose content holds an address after more than 2,048 characters of unbroken text, or that lets
+     go of more than a thousand addresses at once, has its cleanup given up, out loud (PD-28).
   7. The footer's new line, the Attach question and the longer close question were mounted in the test
      harness and built; they were not seen in a browser (PD-23, PD-15).

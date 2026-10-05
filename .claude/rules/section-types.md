@@ -137,9 +137,12 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
     after its content was written. `resolved()` cuts the text at its slashes
     once; the out-of-date check reads back from each address to the nearest
     character a host cannot hold, at most 2,048 characters, and past that it
-    THROWS (the caller logs "were not checked" and deletes nothing). A bound
-    that gives up silently is not the safe side here: it would stop keeping a
-    file, or call an address "not ours" unread.
+    THROWS (the caller logs "were not checked" and deletes nothing). One cost
+    is bounded instead: each address a save lets go of is looked for in all the
+    new content and asked of the database, so a save that lets go of more than
+    1,000 at once THROWS the same way (20,000 took six seconds). A bound that
+    gives up silently is not the safe side here: it would stop keeping a file,
+    or call an address "not ours" unread.
   - **A save from an out-of-date editor deletes nothing, and ONLY such a save.**
     If the content after the save brings in an address the section did not have
     before, that is written as OURS (on the public disk's host, on the host the
@@ -230,8 +233,9 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   (1024s), so a computer that counts in thousands shows a slightly larger
   number for the same file; anything that throws after the file is copied and
   before the row is committed leaves a file with no row; a save whose content
-  holds an address after more than 2,048 characters of unbroken text has its
-  cleanup given up, out loud.
+  holds an address after more than 2,048 characters of unbroken text, or that
+  lets go of more than a thousand addresses at once, has its cleanup given up,
+  out loud.
 - `PageDocumentUploadTest` and `PageDocumentCleanupTest` pin all of it; the SPA's
   `section-document-file.test.ts`, `section-document-upload.test.ts`,
   `section-form-modal-documents.test.ts` and `section-editors-own-copy.test.ts`

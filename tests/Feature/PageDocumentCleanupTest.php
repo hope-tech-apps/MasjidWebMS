@@ -1096,6 +1096,67 @@ class PageDocumentCleanupTest extends TestCase
         $this->assertDocumentGone($other);
     }
 
+    /** `$count` addresses of our shape with no document behind them, one to a line. */
+    private function addressesOfNoDocument(int $count): string
+    {
+        $many = '';
+        for ($number = 1; $number <= $count; $number++) {
+            $many .= self::PUBLIC_DISK_URL . '/' . (900000 + $number) . "/annual-report.pdf\n";
+        }
+
+        return $many;
+    }
+
+    #[Test]
+    public function a_save_that_lets_go_of_twenty_thousand_addresses_at_once_returns_promptly(): void
+    {
+        // Every address a save lets go of is looked for in everything the section holds now, and
+        // asked of the database. Twenty thousand of them against a text as long (1.2 MB) held the
+        // save for seconds, and the cost grew faster than the text.
+        $many = $this->addressesOfNoDocument(20000);
+        $section = $this->saveSection('text', ['content' => $many]);
+        $text = str_repeat('Nothing to download here. ', (int) (strlen($many) / 26));
+
+        $started = microtime(true);
+        $this->updateSection($section, ['content' => $text]);
+        $took = microtime(true) - $started;
+
+        $this->assertLessThan(self::PROMPTLY, $took, sprintf('a save that let go of 20,000 addresses took %.2f seconds', $took));
+    }
+
+    #[Test]
+    public function a_save_that_lets_go_of_more_than_a_thousand_addresses_at_once_is_not_cleaned_up_and_says_so(): void
+    {
+        // The limit that keeps the cost in hand. Past it the cleanup gives up out loud and deletes
+        // nothing: a document among them stays online. Up to it, the save is cleaned up as any other.
+        $over = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveSection('text', ['content' => $this->addressesOfNoDocument(1000) . $over['url']]);
+
+        Log::spy();
+        $this->updateSection($section, ['content' => '<p>Nothing to download.</p>']);
+
+        $this->assertDocumentKept($over);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'Page documents were not checked')
+                && $context === ['masjid_id' => $this->masjid->id, 'section_id' => $section, 'exception' => \RuntimeException::class])
+            ->once();
+        Log::shouldNotHaveReceived('warning', fn (string $message) => $message === self::DELETED_LOG);
+
+        // Exactly a thousand let go of at once, a real document among them.
+        $within = $this->uploadDocument('Schedule.pdf');
+        $other = $this->saveSection('text', ['content' => $this->addressesOfNoDocument(999) . $within['url']]);
+        $this->updateSection($other, ['content' => '<p>Nothing to download.</p>']);
+        $this->assertDocumentGone($within);
+
+        // And the limit is on what a save LETS GO OF, not on what a section holds: one that keeps
+        // its two thousand addresses and drops one document is cleaned up.
+        $dropped = $this->uploadDocument('Fees.pdf');
+        $kept = $this->addressesOfNoDocument(2000);
+        $large = $this->saveSection('text', ['content' => $kept . $dropped['url']]);
+        $this->updateSection($large, ['content' => $kept]);
+        $this->assertDocumentGone($dropped);
+    }
+
     #[Test]
     public function another_sites_address_with_a_line_feed_before_its_path_is_still_another_sites(): void
     {
