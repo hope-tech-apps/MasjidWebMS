@@ -230,6 +230,13 @@ test('the wiring: the server\'s lines are printed as they come, the body is appe
     assert.match(modal, /class="modal fade show d-block move-class"/);
     assert.match(modal, /\.move-class \.btn,\s+\.move-class \.form-check,[^}]*min-height: 44px;/);
 
+    // THE FORM MAY SHRINK, SO THE BODY SCROLLS AND THE FOOTER STAYS IN REACH. Seen in a browser
+    // at 360 px without this rule: the body did not scroll and the box cut off everything below
+    // the fold, the Move button with it. No test without a layout can see that, so the rule is
+    // pinned where it is written.
+    assert.match(modal, /\.move-class form \{\s+display: flex;\s+flex-direction: column;\s+flex: 1 1 auto;\s+min-height: 0;\s+\}/);
+    assert.match(modal, /<form v-else @submit\.prevent="save">\s+<div class="modal-body">/);
+
     // Nothing the office must read lives in a tooltip, and every action has a word.
     assert.doesNotMatch(modal, /\stitle="/);
     assert.doesNotMatch(modal, /v-tooltip|data-bs-toggle="tooltip"/);

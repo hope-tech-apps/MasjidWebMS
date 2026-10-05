@@ -725,6 +725,18 @@ onBeforeUnmount(() => {
     min-height: 44px;
 }
 
+/*
+ * The form stands between the dialog's box and its body and footer. Unless it is itself a
+ * column that may shrink, the body never scrolls and the box cuts off everything below the
+ * fold, the Move button with it: on a phone the office could not reach it.
+ */
+.move-class form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
 /* A long class name wraps inside its button instead of pushing the dialog sideways. */
 .move-class .btn {
     white-space: normal;
