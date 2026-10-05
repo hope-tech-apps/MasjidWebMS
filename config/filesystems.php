@@ -33,7 +33,18 @@ return [
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
-            'serve' => true,
+            // OFF on purpose. `true` makes the framework register `GET|PUT storage/{path}`
+            // over this disk with no login, trusting only an address signed with APP_KEY
+            // (or a key still listed in APP_PREVIOUS_KEYS), and the PUT writes its body to
+            // the path it names. This disk holds every private upload. Those leave only
+            // through the application's own routes, which re-resolve the ownership chain on
+            // every request (the authenticated downloads, and the viewer-bound playback
+            // ticket for video), and nothing here ever made an address the framework signs.
+            // With it off the real disk also refuses to make one, so a later caller fails
+            // loudly instead of re-opening the door. Leave this entry in place: without a
+            // `local` entry the framework's own default takes over, and that one has serve
+            // on. Kept off by tests/Feature/NoSignedLocalDiskRoutesTest.php.
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],
