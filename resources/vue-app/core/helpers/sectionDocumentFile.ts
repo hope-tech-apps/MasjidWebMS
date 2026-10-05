@@ -164,6 +164,38 @@ function resolved(value: string): string {
 }
 
 /**
+ * Every way one string of a section's content is read when the question is "does this STILL LINK the
+ * document?": as written, percent-decoded, and each of those with the spellings a browser resolves
+ * made plain (PageDocuments::spellings on the server).
+ *
+ * The footer asks that of the whole content on every edit, so two readings are not made at all:
+ *
+ *  - none of a string that starts `data:`. That is a pending picture, megabytes of it sitting in the
+ *    content until the save, and it cannot carry a link;
+ *  - no second copy of a string that reads the same percent-decoded, or the same resolved, as the
+ *    server makes none.
+ */
+export function sectionDocumentReadings(text: string): string[] {
+    if (text.startsWith('data:')) {
+        return [];
+    }
+
+    const readings = [text];
+    const decoded = text.includes('%') ? percentDecoded(text) : text;
+    if (decoded !== text) {
+        readings.push(decoded);
+    }
+    for (const reading of [...readings]) {
+        const plain = resolved(reading);
+        if (plain !== reading) {
+            readings.push(plain);
+        }
+    }
+
+    return readings;
+}
+
+/**
  * The page documents written anywhere in a section's content, in any field of any section type.
  *
  * This is the page tool's reading of what the server reads when a section is saved
@@ -200,15 +232,13 @@ export function sectionDocumentsNotSaved(saved: readonly SectionDocument[], cont
  * the files the next save takes offline (unless another saved section still links them, which only
  * the server knows). "Links" as the server reads it when it decides whether to KEEP a file: the path
  * anywhere in any text, plain or percent-encoded inside another address, and either of those in a
- * spelling a browser resolves to the same file (resolved()).
+ * spelling a browser resolves to the same file (sectionDocumentReadings()).
  */
 export function sectionDocumentsLeaving(saved: readonly SectionDocument[], content: unknown): SectionDocument[] {
     if (saved.length === 0) {
         return [];
     }
-    const texts = stringsIn(content)
-        .flatMap((text) => [text, percentDecoded(text)])
-        .flatMap((text) => [text, resolved(text)]);
+    const texts = stringsIn(content).flatMap(sectionDocumentReadings);
 
     return saved.filter((document) => !texts.some((text) => text.includes(document.path)));
 }

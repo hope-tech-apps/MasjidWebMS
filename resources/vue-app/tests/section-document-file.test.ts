@@ -13,8 +13,8 @@ import { httpError, loadTs } from './support/mountSfc.ts';
 const {
     SECTION_DOCUMENT_ACCEPT, SECTION_DOCUMENT_ICON, SECTION_DOCUMENT_MAX_BYTES, SECTION_DOCUMENT_MIME,
     SECTION_DOCUMENT_TOO_MANY, SECTION_DOCUMENT_UPLOAD_FAILED, sectionDocumentFileProblem, sectionDocumentLabel,
-    sectionDocumentName, sectionDocumentPath, sectionDocumentsIn, sectionDocumentsLeaving, sectionDocumentsNotSaved,
-    sectionDocumentUploadProblem,
+    sectionDocumentName, sectionDocumentPath, sectionDocumentReadings, sectionDocumentsIn, sectionDocumentsLeaving,
+    sectionDocumentsNotSaved, sectionDocumentUploadProblem,
 } = documentFile;
 
 // The server's own two sentences (StorePageDocumentRequest), so the office reads the same words
@@ -250,6 +250,32 @@ test('a link with forty thousand dot-dot steps is read in well under a second, a
     assert.ok(took < 1000, `reading it took ${Math.round(took)} ms`);
     // The one the long link reaches is still linked; the other is leaving.
     assert.deepEqual(leaving, [handbook]);
+});
+
+test('a pending picture is not read at all, and a string that reads the same decoded or resolved is read once', () => {
+    // The footer reads the whole content on every edit. A picture chosen and not yet saved is a
+    // `data:` URL in it, megabytes long: it is skipped, because it cannot carry a link.
+    const picture = 'data:image/png;base64,iVBORw0KGgo/storage/412/calendar.pdf';
+    const calendar = { path: '/storage/412/calendar.pdf', name: 'calendar.pdf' };
+    assert.deepEqual(sectionDocumentReadings(picture), []);
+    assert.deepEqual(
+        sectionDocumentsLeaving([calendar], { programs: [{ image_url: picture, link_url: '' }] }),
+        [calendar],
+        'a pending picture was read for a link',
+    );
+    // Only a string that STARTS that way: a text that merely mentions it is read as any other.
+    assert.deepEqual(sectionDocumentsLeaving([calendar], { body: 'see data:x and /storage/412/calendar.pdf' }), []);
+
+    // No second copy of a text that reads the same percent-decoded, and none of one that reads the
+    // same resolved: the server makes neither.
+    assert.deepEqual(sectionDocumentReadings('Downloads'), ['Downloads']);
+    assert.deepEqual(sectionDocumentReadings('100% of the fees, 5%off'), ['100% of the fees, 5%off']);
+    assert.deepEqual(sectionDocumentReadings('a%2Fb'), ['a%2Fb', 'a/b']);
+    assert.deepEqual(sectionDocumentReadings('/storage/./412/x.pdf'), ['/storage/./412/x.pdf', '/storage/412/x.pdf']);
+    // All four readings, when each of them differs: written, decoded, and each of those resolved.
+    assert.deepEqual(sectionDocumentReadings('/storage//.%2F412/x.pdf'), [
+        '/storage//.%2F412/x.pdf', '/storage//./412/x.pdf', '/storage/.%2F412/x.pdf', '/storage/412/x.pdf',
+    ]);
 });
 
 test('the documents a form holds that the saved section does not are the ones no save has linked', () => {
