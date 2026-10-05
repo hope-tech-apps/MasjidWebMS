@@ -118,9 +118,10 @@ final class PageDocuments
      *  3. Not while this section, or any other section of this organisation (on a page or only in
      *     the library, active or not), still LINKS the file. "Links" is read widely, because a wrong
      *     answer here deletes a file a page still uses: the address as it was written, the
-     *     document's own path (`/storage/{id}/{stored name}`), and either of them percent-encoded
-     *     inside another address (linked()). Looked for in the decoded content, because the stored
-     *     JSON writes each `/` as `\/`.
+     *     document's own path (`/storage/{id}/{stored name}`), either of them percent-encoded
+     *     inside another address, and any of those in a spelling a browser resolves to the same
+     *     file (spellings()). Looked for in the decoded content, because the stored JSON writes
+     *     each `/` as `\/`.
      *  4. Not on a save that looks OUT OF DATE (linksADocumentThatIsGone()): then nothing is deleted.
      *
      * It never fails the save it follows: whatever goes wrong here, the office's edit is already
@@ -310,16 +311,19 @@ final class PageDocuments
      *     of another organisation, or in another collection, is a file that exists, and putting its
      *     address in is an ordinary edit.
      *
-     * Anything else is an ordinary replace, and what it drops is cleaned up as usual.
+     * Anything else is an ordinary replace, and what it drops is cleaned up as usual. Read from the
+     * content as written and percent-decoded once (decoded()), not in the wider spellings of
+     * "still linked": an old copy holds the address as it was given, and reading `$before` more
+     * widely would let a deletion through that this check stops today.
      *
      * @param  list<string>  $before
      * @param  list<string>  $after
      */
     private static function linksADocumentThatIsGone(array $before, array $after): bool
     {
-        $had = self::addresses(self::spellings($before));
+        $had = self::addresses(self::decoded($before));
 
-        foreach (self::spellings($after) as $string) {
+        foreach (self::decoded($after) as $string) {
             if (! preg_match_all(self::ADDRESS, $string, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
                 continue;
             }
@@ -446,6 +450,33 @@ final class PageDocuments
     }
 
     /**
+     * Every way these strings are read when the question is "does this STILL LINK the file?": as
+     * written, percent-decoded (decoded()), and each of those with the spellings a browser resolves
+     * made plain (resolved()).
+     *
+     * For the KEEPING side only. A wrong "yes" here keeps a file online; a wrong "no" deletes one a
+     * page still uses. What STARTS a deletion is read from the content as it was written
+     * (addresses() of the strings themselves), and nothing here widens that.
+     *
+     * @param  list<string>  $strings
+     * @return list<string>
+     */
+    private static function spellings(array $strings): array
+    {
+        $spellings = self::decoded($strings);
+
+        foreach ($spellings as $string) {
+            $resolved = self::resolved($string);
+
+            if ($resolved !== $string) {
+                $spellings[] = $resolved;
+            }
+        }
+
+        return $spellings;
+    }
+
+    /**
      * These strings, and each of them percent-decoded where that reads differently.
      *
      * A link to a document viewer carries the document's address inside its own, encoded
@@ -456,7 +487,7 @@ final class PageDocuments
      * @param  list<string>  $strings
      * @return list<string>
      */
-    private static function spellings(array $strings): array
+    private static function decoded(array $strings): array
     {
         $spellings = $strings;
 
@@ -469,6 +500,37 @@ final class PageDocuments
         }
 
         return $spellings;
+    }
+
+    /**
+     * A string with the spellings a browser resolves before it asks for a file made plain, so that
+     * a link written any of these ways is seen to carry `/storage/{id}/{name}.pdf`:
+     *
+     *  - backslashes written for slashes (`https:\\host\storage\3\x.pdf`), which a browser reads as
+     *    slashes, and JSON-escaped slashes copied out of a raw API answer (`https:\/\/host\/storage\/3\/x.pdf`);
+     *  - a doubled slash (`/storage//3/x.pdf`), which the web server merges (its default; not seen on
+     *    a server). The two after a scheme's colon are left;
+     *  - `.` and `..` segments (`/storage/./3/x.pdf`, `/storage/old/../3/x.pdf`).
+     *
+     * Done to the whole text, which may be a paragraph: it is only ever SEARCHED for a path, never
+     * shown or stored, and anything odd it does to prose can only keep a file.
+     *
+     * Not seen, still: an address percent-encoded twice, a path or `.PDF` in upper case (not the same
+     * file on these servers), and slashes written as HTML entities (ASSUMPTIONS.md PD-17).
+     */
+    private static function resolved(string $string): string
+    {
+        $plain = str_replace(['\\/', '\\'], '/', $string);
+        $plain = preg_replace('~(?<!:)/{2,}~', '/', $plain) ?? $plain;
+
+        do {
+            $before = $plain;
+            // `/./` is where it stands; `/name/../` is one step back.
+            $plain = preg_replace('~/\.(?=/)~', '', $plain) ?? $plain;
+            $plain = preg_replace('~/(?!\.\.?/)[^/\s"\'<>?\#]+/\.\.(?=/)~', '', $plain, 1) ?? $plain;
+        } while ($plain !== $before);
+
+        return $plain;
     }
 
     /**

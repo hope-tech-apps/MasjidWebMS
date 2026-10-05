@@ -185,6 +185,38 @@ test('a saved document the content no longer links is leaving; one still linked 
     assert.deepEqual(sectionDocumentsLeaving([], { links: [] }), []);
 });
 
+test('a saved document still linked in a spelling a browser resolves to the file is not leaving, as the server keeps it', () => {
+    const calendar = { path: '/storage/412/calendar.pdf', name: 'calendar.pdf' };
+    const leaving = (url: string) => sectionDocumentsLeaving([calendar], { links: [{ url }] });
+
+    // The server keeps a file that is still linked any of these ways (PageDocuments::resolved), so
+    // "taken offline when you save" would be false of it.
+    for (const [what, url] of Object.entries({
+        'a dot segment': 'https://platform.example.test/storage/./412/calendar.pdf',
+        'a dot-dot segment': 'https://platform.example.test/storage/old/../412/calendar.pdf',
+        'two of them': 'https://platform.example.test/storage/a/b/../../412/calendar.pdf',
+        'a doubled slash': 'https://platform.example.test/storage//412/calendar.pdf',
+        'backslashes for slashes': 'https:\\\\platform.example.test\\storage\\412\\calendar.pdf',
+        'JSON-escaped slashes': 'https:\\/\\/platform.example.test\\/storage\\/412\\/calendar.pdf',
+        'a dot segment, percent-encoded in a viewer\'s link': 'https://viewer.example.test/view?url=https%3A%2F%2Fplatform.example.test%2Fstorage%2F.%2F412%2Fcalendar.pdf',
+    })) {
+        assert.deepEqual(leaving(url), [], what);
+    }
+
+    // What is still not the same document: another number reached by a dot-dot, another name, and
+    // the spellings the server does not see either (ASSUMPTIONS.md PD-17).
+    for (const url of [
+        'https://platform.example.test/storage/412/../413/calendar.pdf',
+        'https://platform.example.test/storage/412/./calendar-2027.pdf',
+        'https://platform.example.test/STORAGE/412/calendar.pdf',
+        'https://platform.example.test/storage/412/calendar.PDF',
+        'https:&#x2F;&#x2F;platform.example.test&#x2F;storage&#x2F;412&#x2F;calendar.pdf',
+        'https://viewer.example.test/view?url=https%253A%252F%252Fplatform.example.test%252Fstorage%252F412%252Fcalendar.pdf',
+    ]) {
+        assert.deepEqual(leaving(url), [calendar], url);
+    }
+});
+
 test('the documents a form holds that the saved section does not are the ones no save has linked', () => {
     const calendar = 'https://platform.example.test/storage/412/calendar.pdf';
     const schedule = 'https://platform.example.test/storage/413/schedule.pdf';

@@ -126,6 +126,26 @@ function percentDecoded(value: string): string {
 }
 
 /**
+ * A text with the spellings a browser resolves before it asks for a file made plain: backslashes and
+ * JSON-escaped slashes read as slashes, a doubled slash as one (the two after a scheme's colon are
+ * left), and `.` and `..` segments resolved. The server reads a section's content this way when it
+ * asks whether the section STILL LINKS a document (PageDocuments::resolved), and keeps the file if
+ * so. Only ever searched for a path, never shown or stored.
+ */
+function resolved(value: string): string {
+    // No lookbehind: a browser that cannot parse one would refuse the whole script.
+    let plain = value.replace(/\\\//g, '/').replace(/\\/g, '/').replace(/(^|[^:])\/{2,}/g, '$1/');
+
+    for (;;) {
+        const before = plain;
+        plain = plain.replace(/\/\.(?=\/)/g, '').replace(/\/(?!\.\.?\/)[^/\s"'<>?#]+\/\.\.(?=\/)/, '');
+        if (plain === before) {
+            return plain;
+        }
+    }
+}
+
+/**
  * The page documents written anywhere in a section's content, in any field of any section type.
  *
  * This is the page tool's reading of what the server reads when a section is saved
@@ -160,14 +180,17 @@ export function sectionDocumentsNotSaved(saved: readonly SectionDocument[], cont
 /**
  * Of the documents a section linked when it was last saved, the ones its content no longer links:
  * the files the next save takes offline (unless another saved section still links them, which only
- * the server knows). "Links" as the server reads it: the path anywhere in any text, plain or
- * percent-encoded inside another address.
+ * the server knows). "Links" as the server reads it when it decides whether to KEEP a file: the path
+ * anywhere in any text, plain or percent-encoded inside another address, and either of those in a
+ * spelling a browser resolves to the same file (resolved()).
  */
 export function sectionDocumentsLeaving(saved: readonly SectionDocument[], content: unknown): SectionDocument[] {
     if (saved.length === 0) {
         return [];
     }
-    const texts = stringsIn(content).flatMap((text) => [text, percentDecoded(text)]);
+    const texts = stringsIn(content)
+        .flatMap((text) => [text, percentDecoded(text)])
+        .flatMap((text) => [text, resolved(text)]);
 
     return saved.filter((document) => !texts.some((text) => text.includes(document.path)));
 }

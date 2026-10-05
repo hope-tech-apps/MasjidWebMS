@@ -372,6 +372,15 @@ test('letting go of a saved document says, beside Save, that the file is taken o
     await flush();
     assert.equal(modal.notes(), '');
 
+    // Cleared again, then put back in a spelling a browser resolves to the same file: the server
+    // keeps a file that is still linked that way, so nothing is going anywhere either.
+    type(modal.linkFields()[0], '');
+    await flush();
+    assert.equal(modal.notes(), LEAVING);
+    type(modal.linkFields()[0], 'https://platform.example.test/storage/./400/calendar-2025.pdf');
+    await flush();
+    assert.equal(modal.notes(), '');
+
     // Replaced by a new upload.
     await modal.choose(0, pdf());
     assert.equal(modal.notes(), LEAVING);

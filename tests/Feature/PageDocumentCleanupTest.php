@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\TestCase;
@@ -719,6 +720,53 @@ class PageDocumentCleanupTest extends TestCase
         // deletion: when it goes too, the file is left online. Kept, not wrongly deleted.
         $this->updateSection($cta, $this->cta(''));
         $this->assertDocumentKept($other);
+    }
+
+    /**
+     * Other ways of writing a document's address that a browser resolves to the same file before it
+     * asks for it. Nobody is handed these: the page tool and the upload answer always give the plain
+     * address. They are typed, or copied out of something that escaped them.
+     *
+     * @return array<string, array{\Closure(string): string}>
+     */
+    public static function spellingsABrowserResolves(): array
+    {
+        return [
+            'a dot segment' => [fn (string $plain) => str_replace('/storage/', '/storage/./', $plain)],
+            'a dot-dot segment' => [fn (string $plain) => str_replace('/storage/', '/storage/old/../', $plain)],
+            'a doubled slash' => [fn (string $plain) => str_replace('/storage/', '/storage//', $plain)],
+            'backslashes for slashes' => [fn (string $plain) => str_replace('/', '\\', $plain)],
+            'JSON-escaped slashes' => [fn (string $plain) => str_replace('/', '\\/', $plain)],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('spellingsABrowserResolves')]
+    public function a_link_written_in_a_spelling_a_browser_resolves_to_the_file_keeps_it(\Closure $spelt): void
+    {
+        // ANOTHER section holds only the spelling, and the buttons that carried the plain address
+        // let go.
+        $other = $this->uploadDocument('Schedule.pdf');
+        $this->assertStringNotContainsString(parse_url($other['url'], PHP_URL_PATH), $spelt($other['url']), 'the plain path is not in the spelling');
+        $cta = $this->saveSection('cta', $this->cta($spelt($other['url'])));
+        $this->assertSame($spelt($other['url']), Section::findOrFail($cta)->content['button_link'], 'the spelling was not stored as it was written');
+        $buttons = $this->saveLinkList([$other['url']]);
+        $this->updateLinkList($buttons, ['']);
+        $this->assertDocumentKept($other);
+
+        // The SAME section swaps the plain address for the spelling.
+        $same = $this->uploadDocument('Calendar.pdf');
+        $section = $this->saveLinkList([$same['url']]);
+        $saved = $this->updateLinkList($section, [$spelt($same['url'])]);
+        $this->assertSame($spelt($same['url']), $saved['content']['links'][0]['url']);
+        $this->assertDocumentKept($same);
+
+        // A spelling keeps a file and never STARTS a deletion: when the link that only ever carried
+        // it goes too, the file is left online. Kept, not wrongly deleted.
+        $this->updateSection($cta, $this->cta(''));
+        $this->assertDocumentKept($other);
+        $this->updateLinkList($section, ['']);
+        $this->assertDocumentKept($same);
     }
 
     #[Test]
