@@ -1,5 +1,7 @@
 <template>
-    <div>
+    <!-- The capture listener takes the outline off a row that a link asked
+         for (`?focus=`): it stays until the next tap anywhere on the roster. -->
+    <div @click.capture="unfocusRow">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0 text-muted">Roster</h6>
             <button class="btn btn-sm btn-success" @click="openAddModal">
@@ -111,7 +113,7 @@
                     <tbody>
                         <tr v-for="membership in participants" :key="membership.id"
                             :id="`roster-row-${membership.id}`"
-                            :class="{ 'opacity-75': membership.left_on }">
+                            :class="{ 'opacity-75': membership.left_on, 'roster-row-focus': focusedRow === membership.id }">
                             <td class="fw-semibold">
                                 <!-- The student's own face, so a roster reads as
                                      thirty children rather than thirty rows. -->
@@ -279,7 +281,7 @@
                     <tbody>
                         <tr v-for="membership in guardians" :key="membership.id"
                             :id="`roster-row-${membership.id}`"
-                            :class="{ 'table-danger': isContested(membership) }">
+                            :class="{ 'table-danger': isContested(membership), 'roster-row-focus': focusedRow === membership.id }">
                             <td class="fw-semibold">
                                 {{ fullName(membership.contact) }}
                                 <!--
@@ -764,7 +766,7 @@
     </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
 import { AxiosResponse } from 'axios';
 import ApiService from '@/core/services/ApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
@@ -778,11 +780,12 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { isStudentRow, studentRowFor } from '@/core/helpers/studentDetails';
 import Swal from 'sweetalert2';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import MoveStudentModal from './MoveStudentModal.vue';
 import PutBackDialog from './PutBackDialog.vue';
 import {
-    applyConsentAnswer, carriedConsentLabel, carriedConsentNote, consentBannerCount, consentBannerText, movedLabels,
+    applyConsentAnswer, carriedConsentLabel, carriedConsentNote, consentBannerCount, consentBannerText, focusIdFromQuery,
+    focusQuery, movedLabels,
 } from '@/core/helpers/rosterMove';
 import StudentBirthDateForm from './StudentBirthDateForm.vue';
 import { AGE_GIVEN_MARK, AGE_GIVEN_TITLE, ageCell, ageLabel, ageWasGiven, missingBirthDatesLine } from '@/core/helpers/studentAge';
@@ -1076,10 +1079,49 @@ const afterMoveDialog = async () => {
     await reloadQuietly();
 };
 
-/** Another class's page. A full load: the class page reads its id once. */
-const openClass = (groupId: number) => {
-    window.location.assign(router.resolve({ name: 'masjid.groupDetail', params: { groupId } }).href);
+/**
+ * Another class's page. A full load: the class page reads its id once. When a
+ * refusal named the roster row its remedy is about (a guardian's entry whose
+ * consent has to be withdrawn there first), the link asks that roster for it.
+ */
+const openClass = (groupId: number, membershipId?: number | null) => {
+    window.location.assign(router.resolve({
+        name: 'masjid.groupDetail', params: { groupId }, query: focusQuery(membershipId),
+    }).href);
 };
+
+/**
+ * THE ROW A LINK ASKED FOR (`?focus={roster row id}`): brought into view and
+ * outlined until the next tap, so "open that class and use the Consent button
+ * on the guardian's row" lands on the row it means.
+ *
+ * Read once. An id that is not on this roster is ignored, and either way the
+ * value is taken off the address: the tabs of this page mount this component
+ * again each time Roster is chosen, and the roster must not jump back to the
+ * row every time.
+ */
+const route = useRoute();
+const focusedRow = ref<number | null>(null);
+let focusAsked = focusIdFromQuery(route.query.focus);
+
+const unfocusRow = () => { focusedRow.value = null; };
+
+watch(() => [props.loading, props.loadError, props.memberships.length], async () => {
+    // Not before the roster is here: an empty list cannot say the row is missing.
+    if (focusAsked === null || props.loading || props.loadError || props.memberships.length === 0) return;
+
+    const id = focusAsked;
+    focusAsked = null;
+
+    const { focus: _used, ...rest } = route.query;
+    router.replace({ query: rest }).catch(() => {});
+
+    if (!props.memberships.some((m) => m.id === id)) return;
+
+    focusedRow.value = id;
+    await nextTick();
+    document.getElementById(`roster-row-${id}`)?.scrollIntoView({ block: 'center' });
+}, { immediate: true });
 
 const consentFor = ref<GroupMembership | null>(null);
 const consentForm = ref<{ scope: ConsentScope | null; granted_at: string }>({ scope: null, granted_at: '' });
@@ -1778,6 +1820,17 @@ onBeforeUnmount(() => { document.body.style.overflow = ''; });
 
 .modal-dialog {
     margin: 1.75rem auto;
+}
+
+/* The row a link asked for. Drawn on the row and on its cells: not every
+   browser draws an outline on a table row. */
+.roster-row-focus {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: -2px;
+}
+
+.roster-row-focus > td {
+    --bs-table-bg-state: var(--bs-primary-bg-subtle);
 }
 
 /* A name that opens something: link colour, underlined, and a full touch target. */

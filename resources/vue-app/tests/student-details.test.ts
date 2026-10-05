@@ -531,7 +531,11 @@ test('panel: the mount points for Move and for the date of birth are named slots
 /** What the roster's server answer says about the group: a class, or not. */
 const CLASS_META = { teaches_students: true, move_note: null, school_today: '2026-10-04', group_name: 'Third Grade' };
 
-async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o: any) => Promise<any>; api?: any; store?: any; onChanged?: () => void } = {}) {
+async function mountRoster(memberships: any[], options: {
+    meta?: any; swal?: (o: any) => Promise<any>; api?: any; store?: any; onChanged?: () => void;
+    /** The page's address query, as the router hands it over (`?focus=` names a roster row). */
+    query?: Record<string, any>;
+} = {}) {
     const panel: { student: any; memberships: any[]; emit: any } = { student: null, memberships: [], emit: null };
     // The panel, standing in: it records what it was given and draws the five mount points the
     // real one has, each handed the student, so what the roster puts in them is on the screen.
@@ -597,13 +601,23 @@ async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o:
         ...(options.store ?? {}),
     };
     const api = { put: async () => ({ data: { status: 'success' } }), get: async () => ({ data: { data: [] } }), ...(options.api ?? {}) };
+    // The router, standing in: where the screen asked to go, and what it took off the address.
+    const routed: { resolved: any[]; replaced: any[] } = { resolved: [], replaced: [] };
+    const router = {
+        resolve: (to: any) => {
+            routed.resolved.push(to);
+            const query = new URLSearchParams(to?.query ?? {}).toString();
+            return { href: `/groups/${to?.params?.groupId ?? ''}${query ? `?${query}` : ''}` };
+        },
+        replace: async (to: any) => { routed.replaced.push(to); },
+    };
 
     const screen = await mountSfc('views/dashboard/groups/GroupRosterTab.vue', {
         groupId: CLASS, memberships, loading: false, loadError: '', ...(options.onChanged ? { onChanged: options.onChanged } : {}),
     }, {
         vue: vueInPlace,
         axios: {},
-        'vue-router': { useRouter: () => ({ resolve: () => ({ href: '' }) }) },
+        'vue-router': { useRouter: () => router, useRoute: () => ({ query: options.query ?? {} }) },
         '@/core/services/ApiService': { default: api },
         '@/components/common/PersonAvatar.vue': { default: avatarStub },
         '@/components/common/AvatarPicker.vue': { default: avatarStub },
@@ -627,7 +641,7 @@ async function mountRoster(memberships: any[], options: { meta?: any; swal?: (o:
     const nameButtons = () => screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Open student details');
     const slot = (name: string): Node | null => screen.all((n: Node) => n.props['data-slot'] === name)[0] ?? null;
 
-    return { screen, panel, nameButtons, slot, moveDialog, putBackDialog, birthForm, rereads };
+    return { screen, panel, nameButtons, slot, moveDialog, putBackDialog, birthForm, rereads, routed };
 }
 
 test('roster: a student\'s name is a button that opens their details; a teacher row\'s name is not', async () => {
@@ -1239,7 +1253,7 @@ test('roster: a school is told, in the server\'s words, when a group holding stu
 // A moved student's guardians keep their consent as it was recorded: the entry the move makes holds
 // the same scope and day and is marked with the class it came from. What is proved here is what the
 // roster then shows and does: the cell's line, the dialog's line, the button's word, the answer
-// written back with its mark, and the server's notes left on screen.
+// written back with its mark, the server's notes left on screen, and the row a link asks for.
 
 const SECOND = { id: 8, name: 'Second Grade', deleted_at: null };
 const guardianRowOf = (screen: any, m: any): Node => screen.all((n: Node) => n.tag === 'tr' && n.props.id === `roster-row-${m.id}`)[0];
@@ -1405,6 +1419,116 @@ test('roster: a record that narrows is answered with notes too, and they stay up
     assert.equal(boxes.at(-1).timer, undefined);
     assert.match(boxes.at(-1).html, /still receives Third Grade&#39;s class story through their entry for Yahya Testwood/);
     screen.unmount();
+});
+
+test('roster: a link that names a row brings it into view and outlines it until the next tap', async () => {
+    const scrolled: any[] = [];
+    (Node.prototype as any).scrollIntoView = function (how: any) { scrolled.push([this.props.id, how]); };
+    const outlined = (screen: any): string[] => screen.all((n: Node) => n.tag === 'tr' && String(n.props.class ?? '').split(/\s+/).includes('roster-row-focus'))
+        .map((n: Node) => String(n.props.id));
+
+    try {
+        // "Open {class}" on a refusal named the father's entry: the roster opens on it.
+        const r = roster();
+        const { screen, routed } = await mountRoster(vue.reactive([...r.rows]), {
+            meta: CLASS_META, query: { focus: String(r.father.id), tab: 'kept' },
+        });
+        assert.deepEqual(outlined(screen), [`roster-row-${r.father.id}`]);
+        assert.deepEqual(scrolled, [[`roster-row-${r.father.id}`, { block: 'center' }]]);
+        // Used once: the value is taken off the address and everything else on it is kept.
+        assert.deepEqual(routed.replaced, [{ query: { tab: 'kept' } }]);
+
+        // The next tap anywhere on the roster takes the outline off, and nothing scrolls again.
+        screen.all((n: Node) => typeof n.props.onClickCapture === 'function')[0].props.onClickCapture({});
+        await flush();
+        assert.deepEqual(outlined(screen), []);
+        assert.equal(scrolled.length, 1);
+        screen.unmount();
+
+        // A student's own row can be asked for as well.
+        const s = roster();
+        const own = await mountRoster(vue.reactive([...s.rows]), { meta: CLASS_META, query: { focus: String(s.sibling.id) } });
+        assert.deepEqual(outlined(own.screen), [`roster-row-${s.sibling.id}`]);
+        own.screen.unmount();
+    } finally {
+        delete (Node.prototype as any).scrollIntoView;
+    }
+});
+
+test('roster: a row that is not on this roster, or a value that is not a row, is ignored', async () => {
+    const scrolled: any[] = [];
+    (Node.prototype as any).scrollIntoView = function () { scrolled.push(this.props.id); };
+    const outlined = (screen: any): number => screen.all((n: Node) => String(n.props.class ?? '').split(/\s+/).includes('roster-row-focus')).length;
+
+    try {
+        // Removed since, or another class's row: nothing is outlined, nothing scrolls, and the value goes.
+        const rows = vue.reactive([...roster().rows]);
+        const gone = await mountRoster(rows, { meta: CLASS_META, query: { focus: '999999' } });
+        assert.equal(outlined(gone.screen), 0);
+        assert.deepEqual(gone.routed.replaced, [{ query: {} }]);
+        // Ignored for good: a row that turns up under that id later is an ordinary row.
+        rows.push(row({ contact: person(40, 'Later', 'Arrival'), id: 999999 } as any));
+        await flush();
+        assert.equal(outlined(gone.screen), 0);
+        assert.deepEqual(scrolled, []);
+        gone.screen.unmount();
+
+        // Not a row id at all: the address is left as it is.
+        for (const focus of ['abc', '0', '-4', '1.5', ['7'], undefined]) {
+            const not = await mountRoster(vue.reactive([...roster().rows]), { meta: CLASS_META, query: focus === undefined ? {} : { focus } });
+            assert.equal(outlined(not.screen), 0, JSON.stringify(focus));
+            assert.deepEqual(not.routed.replaced, [], JSON.stringify(focus));
+            not.screen.unmount();
+        }
+        assert.deepEqual(scrolled, []);
+
+        // A roster that arrives after the screen: the row is found when the rows are there.
+        const r = roster();
+        const memberships = vue.reactive([] as any[]);
+        const late = await mountRoster(memberships, { meta: CLASS_META, query: { focus: String(r.mother.id) } });
+        assert.equal(outlined(late.screen), 0);
+        assert.deepEqual(late.routed.replaced, [], 'the value was used up before the roster was read');
+        memberships.push(...r.rows);
+        await flush();
+        assert.equal(outlined(late.screen), 1);
+        assert.deepEqual(scrolled, [`roster-row-${r.mother.id}`]);
+        late.screen.unmount();
+    } finally {
+        delete (Node.prototype as any).scrollIntoView;
+    }
+});
+
+test('roster: "Open {class}" from a refusal asks that class\'s roster for the row the remedy is about, and for nothing when none was named', async () => {
+    const went: string[] = [];
+    const before = (globalThis as any).window;
+    (globalThis as any).window = { location: { assign: (href: string) => went.push(href) } };
+
+    try {
+        const r = movedOut();
+        const { screen, moveDialog, putBackDialog, routed } = await mountRoster(vue.reactive([...r.rows]), { meta: CLASS_META });
+
+        // The move dialog: a refusal over a consent names the guardian's entry in the other class.
+        click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Move this student to another class')[0]);
+        await flush();
+        moveDialog.emit('open-class', 9, 77);
+        assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: { focus: '77' } });
+        assert.equal(went.at(-1), '/groups/9?focus=77');
+
+        // A refusal that names no row, and Put back's "Open {class}": the class alone.
+        moveDialog.emit('open-class', 9, null);
+        assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: {} });
+        moveDialog.emit('close');
+        await flush();
+
+        click(screen.all((n: Node) => n.tag === 'button' && n.props.title === 'Put this student back on the roster')[0]);
+        await flush();
+        putBackDialog.emit('open-class', 9);
+        assert.deepEqual(routed.resolved.at(-1), { name: 'masjid.groupDetail', params: { groupId: 9 }, query: {} });
+        assert.deepEqual(went, ['/groups/9?focus=77', '/groups/9', '/groups/9']);
+        screen.unmount();
+    } finally {
+        (globalThis as any).window = before;
+    }
 });
 
 // =================================================================== the store: what a roster read keeps
