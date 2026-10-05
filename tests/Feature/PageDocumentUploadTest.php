@@ -627,9 +627,10 @@ class PageDocumentUploadTest extends TestCase
         $this->get('/storage/999999/academic-calendar-2026.pdf')->assertStatus(404);
         $this->get('/storage/lunch-flyers/gone.jpg')->assertStatus(404);
 
-        // Control: what answered is the route in routes/web.php. The framework's own
-        // `storage/{path}` (signed links to the private disk) is still behind the catch-all: a route
-        // of the same address would have been replaced by it, here, ahead of the catch-all.
+        // Control: what answered is the route in routes/web.php, under its own parameter name. The
+        // framework's `storage/{path}` (signed links to a disk with 'serve' on) is not registered
+        // (NoSignedLocalDiskRoutesTest); were it ever, a route of the same address would be replaced
+        // by it, here, ahead of the catch-all.
         $route = Route::getRoutes()->match(\Illuminate\Http\Request::create('/storage/999999/academic-calendar-2026.pdf'));
         $this->assertSame('storage/{missing}', $route->uri());
         $this->assertNull($route->getName());

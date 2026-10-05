@@ -8025,10 +8025,9 @@ themselves still run only on the MySQL job.
   3. The addresses are short-lived, and what happens when consent is withdrawn or access is lost while one is
      still valid has been reasoned through and written down.
   4. `tests/Feature/NoSignedLocalDiskRoutesTest.php` is changed in the same commit, saying why.
-- **Not done here.** No `/storage/...` route of this change's own. Another branch, not yet on main
-  (`feat/page-documents`), adds a GET that answers 404 on `/storage/{missing}` with a comment about the
-  framework's route; once this change is on main that comment describes a route that no longer exists, and
-  whoever combines the branches should fix the comment.
+- **Not done here.** No `/storage/...` route of this change's own. `feat/page-documents`, which went out in the
+  same release, adds a GET that answers 404 on `/storage/{missing}` ahead of the catch-all; its comment, its
+  test's comment and its rule were brought in line with this change when the two were combined.
 - **Tests.** `NoSignedLocalDiskRoutesTest` (7). Red at 9e026457: no disk has serve on, no route named for a disk,
   no write verb matched on a storage path, a local disk refuses a temporary address, a correctly signed PUT
   writes nothing. Green at 9e026457 as controls: an unsigned PUT and a badly signed PUT write nothing (the
@@ -8314,10 +8313,12 @@ themselves still run only on the MySQL job.
      (`PageDocumentUploadTest`, "a web page with a PDF after it").
   2. **A path under `/storage` with no file behind it answered the admin screen with a 200**, from the SPA's
      catch-all route, so a removed document would still "open". `routes/web.php` now answers such a path 404,
-     ahead of the catch-all. The route's parameter is deliberately not `path`: the framework registers
-     `storage/{path}` (signed links to the private disk) after the catch-all, where a GET has never reached it,
-     and a route of the same address is replaced by it in the earlier place. This changes the answer for EVERY
-     missing file under `/storage`, not only documents. Checked with routes cached and uncached.
+     ahead of the catch-all. The route's parameter is deliberately not `path`: when this was written the
+     framework registered `storage/{path}` (signed links to the private disk) after the catch-all, where a GET
+     had never reached it, and a route of the same address is replaced by it in the earlier place. That
+     framework route is switched off in the same release (the entry above, `'serve' => false`); the name stays
+     different in case it is ever switched back on. This changes the answer for EVERY missing file under
+     `/storage`, not only documents. Checked with routes cached and uncached.
   3. **A Teacher is answered 401, not 403:** the `admin` middleware has always answered 401 for a signed-in
      account that is not an administrator. Pinned as it is.
   4. **A public disk with no absolute `url` refuses the upload** (500, nothing kept) rather than answering a

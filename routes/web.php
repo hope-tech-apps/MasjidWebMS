@@ -142,11 +142,12 @@ Route::get('/', function () {
  * address, as a sign-in screen, for a visitor, a link checker and a search engine alike. Registered
  * before the catch-all, so such a path is the 404 it is.
  *
- * The parameter is NOT called `path`, on purpose. The framework registers its own `storage/{path}`
- * (signed links to the PRIVATE disk) after this file's routes; a route with the same address would be
- * replaced by it IN THIS PLACE, ahead of the catch-all, and a GET would reach it for the first time.
- * Under another name this route keeps its place and the framework's stays behind the catch-all, as
- * it always was. Nothing in this application makes such a link (see GroupResource).
+ * The parameter is NOT called `path`, on purpose. For a local disk with `'serve' => true` the framework
+ * registers its own `storage/{path}` (signed links to that disk) after this file's routes, and a route
+ * with the same address would be replaced by it IN THIS PLACE, ahead of the catch-all, where a GET
+ * would reach it. That flag is off on every disk (config/filesystems.php; NoSignedLocalDiskRoutesTest
+ * keeps it off), so no such route exists. The name stays different so that this route would keep its
+ * place, and the framework's would stay behind the catch-all, if one ever did.
  */
 Route::get('/storage/{missing}', fn () => abort(404))->where('missing', '.*');
 

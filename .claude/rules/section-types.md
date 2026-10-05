@@ -277,8 +277,10 @@ is still a 422 (`PageDocumentUploadTest` pins it on both routes).
   is the detector working.
 - **A removed file's address is a 404**, not the admin screen: `routes/web.php`
   answers `/storage/{missing}` ahead of the SPA catch-all. Keep the parameter's
-  name: a route spelt `storage/{path}` is replaced, in that place, by the
-  framework's signed route to the PRIVATE disk.
+  name: a route spelt `storage/{path}` would be replaced, in that place, by the
+  framework's signed route to a disk if `'serve'` were ever switched on for one.
+  It is off on every disk (`config/filesystems.php`), and
+  `NoSignedLocalDiskRoutesTest` keeps it off.
 - **The control** is `components/form/SectionDocumentUpload.vue`, under the link
   field of Link Buttons, Programs & Curriculum and Call to Action only (the local
   rules are in `components/sections/editors/CLAUDE.md`). The address can be
