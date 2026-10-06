@@ -75,7 +75,7 @@
                             Create a form
                         </router-link>
                     </template>
-                    <p v-else class="small mb-0">Add a form section to a page to start collecting responses.</p>
+                    <p v-else class="small mb-0">Add a Sign-up Form section to a page to start collecting responses.</p>
                 </div>
 
                 <template v-else>

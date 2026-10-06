@@ -30,7 +30,7 @@
                 </p>
                 <p v-else-if="webPagesAllowed" class="small text-muted">
                     A new form collects nothing until it is placed on a page: add a
-                    <strong>Form</strong> section in Web Pages Management and choose it there.
+                    <strong>Sign-up Form</strong> section in Web Pages Management and choose it there.
                 </p>
                 <!-- No Web Pages Management here (website off, or no web_pages grant): name who places it. -->
                 <p v-else class="small text-muted">

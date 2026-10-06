@@ -375,7 +375,7 @@
                                                 offering can be created. Build one from
                                                 <strong>Form Responses</strong> with <strong>Create a form</strong>,
                                                 or under <strong>Web Pages Management</strong>: open or add a page,
-                                                add a <strong>Form</strong> section, and save. It will appear here.
+                                                add a <strong>Sign-up Form</strong> section, and save. It will appear here.
                                             </template>
                                             <template v-else-if="formEditingAllowed">
                                                 You do not have a sign-up form yet, and one is required before an
@@ -387,7 +387,7 @@
                                                 You do not have a sign-up form yet, and one is required before an
                                                 offering can be created. Build one under
                                                 <strong>Web Pages Management</strong>: open or add a page, add a
-                                                <strong>Form</strong> section, and save. It will appear here.
+                                                <strong>Sign-up Form</strong> section, and save. It will appear here.
                                             </template>
                                         </div>
 
