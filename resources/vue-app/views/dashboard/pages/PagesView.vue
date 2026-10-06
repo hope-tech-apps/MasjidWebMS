@@ -203,13 +203,14 @@ const closeModal = () => {
 };
 
 const handlePageSaved = async () => {
+    const wasEdit = !!selectedPage.value;
     closeModal();
     await pagesStore.fetchMasjidPagesPaginated(paginationOptions.value.currentPage || 1);
 
     Swal.fire({
         icon: 'success',
         title: 'Success!',
-        text: selectedPage.value ? 'Page updated successfully' : 'Page created successfully',
+        text: wasEdit ? 'Page updated successfully' : 'Page created successfully',
         timer: 2000,
         showConfirmButton: false
     });
