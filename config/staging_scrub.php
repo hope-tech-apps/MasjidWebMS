@@ -485,6 +485,9 @@ return [
         'form_responses' => [
             'data' => 'json_replace', // arbitrary tenant-authored answers: names, DOBs, medical notes. A per-key scrub is impossible because tenants author the schema.
             'respondent_name' => 'full_name',
+            // The staff member whose code set this registration's price, copied from
+            // form_staff_codes.holder_name when the row was written. Same treatment as there.
+            'staff_holder_name' => 'label:Staff',
             'respondent_email' => 'email',
             'respondent_phone' => 'phone',
         ],
