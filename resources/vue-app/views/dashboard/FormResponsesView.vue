@@ -343,8 +343,8 @@
                                 </p>
                                 <p class="small text-muted">
                                     Cash held is what each person should hand in. Cash taken and then cancelled is shown
-                                    apart and is not in "Cash held". Code uses are the code's lifetime count and ignore
-                                    the filters.
+                                    apart and is not in "Cash held". Code entries are the code's lifetime count, including pending card and complimentary
+                                    registrations, and ignore the filters.
                                 </p>
 
                                 <div v-if="!cashTotals.holders.length" class="text-muted small">No cash has been taken.</div>
@@ -356,7 +356,7 @@
                                             <tr>
                                                 <th scope="col">Staff member</th>
                                                 <th scope="col" class="text-end">Entries</th>
-                                                <th scope="col" class="text-end">Code uses</th>
+                                                <th scope="col" class="text-end">Code entries</th>
                                                 <th scope="col" class="text-end">Cash held</th>
                                                 <th scope="col" class="text-end">Taken, then cancelled</th>
                                                 <th scope="col" class="text-end">Total taken</th>
@@ -380,8 +380,8 @@
                                                 <td class="text-end">
                                                     <template v-if="holder.use_count !== null">
                                                         {{ holder.use_count }}
-                                                        <div v-if="usesDiffer(holder)" class="small text-warning-emphasis">
-                                                            <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>Differs from entries
+                                                        <div v-if="usesDiffer(holder)" class="small text-muted">
+                                                            Includes entries outside these cash totals
                                                         </div>
                                                     </template>
                                                     <span v-else class="text-muted">—</span>
@@ -549,12 +549,12 @@
                                             class="sort-header"
                                             :class="{ active: sort === column.sort }"
                                             @click="toggleSort(column.sort as FormResponseSortColumn)"
-                                            :title="`Sort by ${column.label}`"
+                                            :title="`Sort by ${tableColumnLabel(column)}`"
                                         >
-                                            <span>{{ column.label }}</span>
+                                            <span>{{ tableColumnLabel(column) }}</span>
                                             <i class="bi sort-icon" :class="sortIcon(column.sort)"></i>
                                         </button>
-                                        <span v-else>{{ column.label }}</span>
+                                        <span v-else>{{ tableColumnLabel(column) }}</span>
                                     </th>
                                     <th v-if="paymentEnabled">Payment</th>
                                     <th v-if="paymentEnabled">Checked in</th>
@@ -586,9 +586,13 @@
                                     </td>
                                     <td class="text-center">{{ response.entry_count }}</td>
                                     <td class="text-end">
+                                        <div v-if="hasPriceContext(response)" class="small text-muted">{{ priceHeading(response) }}</div>
                                         {{ formatAmount(response.amount_due) }}
+                                        <div v-if="isComplimentary(response)" class="fw-semibold">Complimentary entry</div>
+                                        <div v-if="listPriceText(response)" class="small text-muted">{{ listPriceText(response) }}</div>
+                                        <div v-if="staffPriceText(response)" class="small text-muted">{{ staffPriceText(response) }}</div>
                                         <!-- Priced per quantity or by answer: how many, as the form lists no people. -->
-                                        <div v-if="showsBreakdown && breakdownText(response)" class="small text-muted" data-test="list-price-breakdown">
+                                        <div v-if="(showsBreakdown || hasPriceContext(response)) && breakdownText(response)" class="small text-muted" data-test="list-price-breakdown">
                                             {{ breakdownText(response) }}
                                         </div>
                                     </td>
@@ -626,9 +630,10 @@
                                     <!-- Payment: the badge, who holds cash, and the two ways to settle by hand -->
                                     <td v-if="paymentEnabled" class="payment-cell">
                                         <span class="badge" :class="paymentBadgeClass(response)">{{ paymentLabel(response) }}</span>
+                                        <div v-if="response.staff_payment_method" class="small text-muted">Staff payment choice: {{ response.staff_payment_method === 'card' ? 'Card' : 'Cash' }}</div>
                                         <div v-if="paymentDetail(response)" class="small text-muted">{{ paymentDetail(response) }}</div>
-                                        <div v-if="response.payment_state === 'paid' && response.total_minor !== null && response.total_minor !== undefined" class="small text-muted">
-                                            {{ money(response.total_minor, response.currency) }}
+                                        <div v-if="response.payment_state === 'paid' && response.total_minor !== null && response.total_minor !== undefined" :class="hasPriceContext(response) ? 'fw-semibold' : 'small text-muted'">
+                                            <template v-if="hasPriceContext(response)">Total paid: </template>{{ money(response.total_minor, response.currency) }}
                                         </div>
                                         <div v-else-if="unpaidButOwesNothing(response)" class="small text-muted">
                                             Owed nothing when submitted: cancel it and register again at the current price.
@@ -815,7 +820,16 @@
                                     <td>
                                         <span class="badge text-capitalize" :class="statusClass(row.status)">{{ row.status }}</span>
                                     </td>
-                                    <td v-if="paymentEnabled" class="small">{{ row.payment || '—' }}</td>
+                                    <td v-if="paymentEnabled" class="small">
+                                        {{ row.payment || '—' }}
+                                        <template v-if="hasPriceContext(rosterPriceContext(row))">
+                                            <div v-if="row.total_minor != null" class="fw-semibold">{{ row.payment_status === 'paid' ? 'Total paid' : 'Amount due' }}: {{ money(row.total_minor, row.price_breakdown?.currency) }}</div>
+                                            <div v-if="isComplimentary(rosterPriceContext(row))" class="fw-semibold">Complimentary entry</div>
+                                            <div v-if="listPriceText(rosterPriceContext(row))" class="text-muted">{{ listPriceText(rosterPriceContext(row)) }}</div>
+                                            <div v-if="staffPriceText(rosterPriceContext(row))" class="text-muted">{{ staffPriceText(rosterPriceContext(row)) }}</div>
+                                            <div v-if="row.payment_status === 'paid' && row.payment_method === 'cash' && row.holder && !isComplimentary(rosterPriceContext(row))" class="text-muted">Cash collector: {{ row.holder }}</div>
+                                        </template>
+                                    </td>
                                     <td v-if="paymentEnabled" class="small">{{ row.collected_at ? formatDateTime(row.collected_at) : 'Not yet' }}</td>
                                 </tr>
                             </tbody>
@@ -1207,9 +1221,12 @@
                                     <p class="mb-0">{{ selectedResponse.entry_count }}</p>
                                 </div>
                                 <div class="col-md-3">
-                                    <h6 class="text-muted mb-1">Amount due</h6>
+                                    <h6 class="text-muted mb-1">{{ priceHeading(selectedResponse) }}</h6>
                                     <p class="mb-0">{{ formatAmount(selectedResponse.amount_due) }}</p>
-                                    <p v-if="showsBreakdown && breakdownText(selectedResponse)" class="small text-muted mb-0" data-test="price-breakdown">
+                                    <p v-if="isComplimentary(selectedResponse)" class="fw-semibold mb-0">Complimentary entry</p>
+                                    <p v-if="listPriceText(selectedResponse)" class="small text-muted mb-0">{{ listPriceText(selectedResponse) }}</p>
+                                    <p v-if="staffPriceText(selectedResponse)" class="small text-muted mb-0">{{ staffPriceText(selectedResponse) }}</p>
+                                    <p v-if="(showsBreakdown || hasPriceContext(selectedResponse)) && breakdownText(selectedResponse)" class="small text-muted mb-0" data-test="price-breakdown">
                                         {{ breakdownText(selectedResponse) }}
                                     </p>
                                 </div>
@@ -1298,6 +1315,11 @@
                                         </div>
                                     </dd>
 
+                                    <template v-if="selectedResponse.staff_payment_method">
+                                        <dt class="col-sm-4 text-muted fw-normal small">Staff payment choice</dt>
+                                        <dd class="col-sm-8">{{ selectedResponse.staff_payment_method === 'card' ? 'Card' : 'Cash' }}</dd>
+                                    </template>
+
                                     <template v-if="isOfficeRow(selectedResponse)">
                                         <dt class="col-sm-4 text-muted fw-normal small">Chose to pay</dt>
                                         <dd class="col-sm-8">The office, not by card</dd>
@@ -1341,7 +1363,7 @@
 
                                     <template v-if="selectedResponse.payment_state === 'paid' && selectedResponse.total_minor !== null && selectedResponse.total_minor !== undefined">
                                         <dt class="col-sm-4 text-muted fw-normal small">Total paid</dt>
-                                        <dd class="col-sm-8">{{ money(selectedResponse.total_minor, selectedResponse.currency) }}</dd>
+                                        <dd class="col-sm-8" :class="{ 'fs-5 fw-semibold': hasPriceContext(selectedResponse) }">{{ money(selectedResponse.total_minor, selectedResponse.currency) }}</dd>
                                     </template>
 
                                     <template v-if="selectedResponse.paid_at">
@@ -1744,6 +1766,7 @@
 import { ref, onBeforeMount, onBeforeUnmount, computed, watch, nextTick } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
+import { cashCollectorText, hasPriceContext, isComplimentary, listPriceText, priceHeading, rosterPriceContext, staffPriceText } from './formResponsePricing';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     FormCashHolder,
@@ -1769,6 +1792,7 @@ import {
     FormReservationState,
     FormResponseReservation,
     FormRosterColumn,
+    FormRosterRow,
     FormRosterMeta,
     FormRosterSummary,
     FormPageUnreachable,
@@ -1944,6 +1968,11 @@ const viewMode = ref<'submissions' | 'attendees' | 'summary'>('submissions');
 const formOptions = computed<FormOption[]>(() => formResponsesStore.formOptions);
 const meta = computed<FormResponsesMeta | undefined>(() => formResponsesStore.responsesMeta);
 const responses = computed<FormResponseRow[]>(() => (formResponsesStore.responsesPaginated?.data as FormResponseRow[]) || []);
+const tableColumnLabel = (column: typeof TABLE_COLUMNS[number]): string => {
+    if (column.sort !== 'amount_due' || !responses.value.some(row => row.payment_state === 'paid')) return column.label;
+    return responses.value.every(row => row.payment_state === 'paid')
+        ? 'Registration price' : 'Registration price / Amount due';
+};
 const statuses = computed<FormResponseStatus[]>(() => meta.value?.statuses ?? FALLBACK_STATUSES);
 /** The status filter, the list's selects and the detail's, all in one order and one set of words. */
 const statusOptions = computed(() => statusChoices(statuses.value));
@@ -1975,7 +2004,7 @@ const paymentFilterOptions = computed<FormPaymentFilter[]>(() => formMeta.value?
 const staffCodeOptions = computed(() => paymentMeta.value?.codes ?? []);
 
 // --- attendee roster ---
-const rosterRows = computed<any[]>(() => (formResponsesStore.rosterPaginated?.data as any[]) || []);
+const rosterRows = computed<FormRosterRow[]>(() => (formResponsesStore.rosterPaginated?.data as FormRosterRow[]) || []);
 const rosterColumns = computed<FormRosterColumn[]>(() => rosterMeta.value?.columns ?? []);
 const rosterSummary = computed<FormRosterSummary | undefined>(() => rosterMeta.value?.summary);
 /** Roster columns are sortable too — the server orders the flattened rows. */
@@ -2431,6 +2460,7 @@ const paymentLabel = (row: FormResponseRow): string => {
     if (row.payment_state === 'unpaid') return isOfficeRow(row) ? 'Owed — paying the office' : 'Unpaid';
     if (row.payment_state !== 'paid') return 'Nothing to pay';
 
+    if (isComplimentary(row)) return 'Complimentary entry';
     if (row.paid_via === 'cash') return 'Paid in cash';
     if (row.paid_via) return `Paid by ${paidViaLabel(row.paid_via)}`;
 
@@ -2447,9 +2477,7 @@ const paymentDetail = (row: FormResponseRow): string | null => {
     if (row.payment_state !== 'paid') return null;
 
     if (row.payment_method === 'cash' || row.paid_via === 'cash') {
-        if (row.staff_code?.holder_name) return `held by ${row.staff_code.holder_name}`;
-        if (row.marked_paid_by?.name) return `taken at the table by ${row.marked_paid_by.name}`;
-        return null;
+        return isComplimentary(row) ? null : cashCollectorText(row);
     }
 
     if ((row.payment_method === 'external' || isOfficeRow(row) || row.paid_via) && row.marked_paid_by?.name) {
@@ -3188,10 +3216,6 @@ const refreshCashIfOpen = () => {
 };
 
 /**
- * Counted over no filters, every cash entry a code made is in the totals, cancelled or
- * not, so its lifetime use count should equal its entries. A difference is worth a look.
- */
-/**
  * The external money split by how it came, for the line under "paid elsewhere". Shown only
  * once some payment says how it came, so a form marked paid only the old way (MEC's Wix
  * payers) keeps the panel it had.
@@ -3212,6 +3236,7 @@ const externalByVia = computed<{ via: string; label: string; total_minor: number
     return parts.some(part => part.via !== 'unrecorded') ? parts : [];
 });
 
+/** A lifetime code count may also include card entries, which owe no cash to the holder. */
 const usesDiffer = (holder: FormCashHolder): boolean =>
     !cashFiltersApplied.value &&
     holder.kind === 'code' &&
@@ -3667,6 +3692,8 @@ const breakdownText = (row: FormResponseRow | FormResponseDetail): string => {
     if (!breakdown) return '';
 
     const line = `${money(breakdown.unit_minor, breakdown.currency)} × ${breakdown.quantity}`;
+    // A tier name belongs to the original list price when staff changed the unit.
+    if (listPriceText(row)) return `Registration price: ${line}`;
     return breakdown.label ? `${breakdown.label}: ${line}` : line;
 };
 

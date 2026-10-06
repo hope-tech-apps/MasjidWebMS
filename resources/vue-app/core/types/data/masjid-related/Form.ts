@@ -173,8 +173,12 @@ export type FormResponseRow = {
     charge_refunded_minor?: number | null;
     /** The card page is on an account Stripe no longer lets Manara check. True only when known. */
     page_unreachable?: boolean;
-    /** Whose cash this is. Never the code itself. */
+    /** Staff creator with the captured holder name; marked_paid_by wins for cash collection. */
     staff_code?: { id: number; holder_name: string; code_hint: string } | null;
+    /** Initial staff choice; settlement may later change payment_method. Absent on legacy rows. */
+    staff_payment_method?: 'cash' | 'card' | null;
+    /** Captured setter name, unaffected by later code renames. */
+    price_set_by?: string | null;
     marked_paid_by?: FormResponsePerson | null;
     collected_at?: string | null;
     collected_by?: FormResponsePerson | null;
@@ -189,6 +193,9 @@ export type FormResponseRow = {
 };
 
 export type FormPriceBreakdown = {
+    /** Historical list and explicit staff unit prices; absent/null on legacy snapshots. */
+    list_unit_minor?: number | null;
+    staff_unit_minor?: number | null;
     unit_minor: number;
     quantity: number;
     label: string | null;
@@ -306,6 +313,29 @@ export type FormResponsesPaymentMeta = {
 
 /** One column of the attendee roster (FormRoster::columns()). */
 export type FormRosterColumn = { key: string; label: string; type: string };
+
+/** One attendee plus the submission's payment context (FormRoster::rows()). */
+export type FormRosterRow = {
+    response_id: number;
+    entry_index: number;
+    values: Record<string, string | number | null>;
+    incomplete?: boolean;
+    registered_by: string | null;
+    registrant_email: string | null;
+    registrant_phone: string | null;
+    status: FormResponseStatus;
+    payment: string;
+    payment_status: FormPaymentStatus | null;
+    payment_method: FormPaymentMethod | null;
+    holder: string | null;
+    collected_at: string | null;
+    /** Additive saved price context; absent on older roster payloads. */
+    price_breakdown?: FormPriceBreakdown | null;
+    staff_payment_method?: 'cash' | 'card' | null;
+    price_set_by?: string | null;
+    amount_due_minor?: number | null;
+    total_minor?: number | null;
+};
 
 /** The roster's head count (FormRoster::summary()). */
 export type FormRosterSummary = {
@@ -600,6 +630,7 @@ export type FormStaffCode = {
     binding_count: number;
     binding_released_at: string | null;
     binding_released_by: FormResponsePerson | null;
+    /** Lifetime staff entries, including pending card and complimentary entries. */
     use_count: number;
     last_used_at: string | null;
     created_at: string | null;
@@ -882,6 +913,8 @@ export type FormFeeRule = {
 export type FormPaymentSettings = {
     online?: boolean;
     staffCodes?: boolean;
+    /** Per-form opt-in for an attributed staff unit price, including complimentary cash. */
+    staffPriceOverride?: boolean;
     /** A card payer MAY tick a box to add the card processing fee. */
     allowFeeCoverage?: boolean;
     /** Every card payer pays the card processing fee; the server adds it whatever the browser sends. */
