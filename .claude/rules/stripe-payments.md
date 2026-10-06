@@ -185,7 +185,7 @@ persisted before the call, webhook-only advancement). On top of them:
   masjid comes from `event.account` and the uuid is looked up within it
   (`FormResponse::findByUuidForMasjid`). `FormResponse::markPaid()` is true on the
   unpaid→paid transition only, and that is when the receipt and the coordinator
-  email go. **A form row is never emailed while it is unpaid.**
+  email go. **A CARD form row is never emailed while it is unpaid.**
 - **The row is written by `App\Services\Forms\FormResponseWriter`, and it asks no
   question.** The public submit asks its gates (open, window, capacity, date claim, staff
   code, replay) under the form's row lock and then calls the writer; the cart calls ONLY
@@ -197,7 +197,8 @@ persisted before the call, webhook-only advancement). On top of them:
   `total_minor`), written at submit by `App\Support\FormPayment`, the only
   float-to-cents conversion. Never recomputed at call time, and the lines are
   asserted to sum to `total_minor` before the call. A paying form whose total comes
-  to 0 is a 422 at submit: **never** the free path, never a $0 session.
+  to 0 is a 422 at submit except the explicitly authorised complimentary STAFF CASH
+  entry described below: **never** an accidental free path, never a $0 session.
 - **Everything that could stop the page opening is asked BEFORE the row is
   written**: `canAcceptDonations()`, Stripe's charge bounds, and the return address.
 - **Return URLs** are built only from an Origin that exactly matches
@@ -296,7 +297,9 @@ persisted before the call, webhook-only advancement). On top of them:
     event that can never succeed): no account, an unknown account, or a uuid outside
     that account's masjid. Nothing is recorded.
   - **A card payment never flips a row that was not waiting for one** (cash at the
-    gate, paid by staff or elsewhere, no money leg). Its payment intent id is
+    gate, paid by staff or elsewhere, no money leg). An unpaid ONLINE row attributed
+    to a staff code IS waiting for a card. Staff attribution alone never blocks its
+    settlement; a later hand settlement still does. Its payment intent id is
     recorded so the organisation can find the charge and refund it. A **second**
     payment intent on a card-paid row is logged as a double charge and never
     recorded over the first.
@@ -317,7 +320,8 @@ BISS Sunday School's registration adds two switches to a form's single payment:
 
 - **`payment.requireFeeCoverage`.** `FormPayment::feeCoveredMinor()` adds
   `StripeFees::coverage()` to every CARD payment on the form, and `cover_fees` cannot
-  turn it off. `$online` is false for staff codes and office rows, so their fee is 0.
+  turn it off. `$online` is false for staff CASH and office rows, so their fee is 0.
+  Staff CARD entries follow the ordinary required/optional fee rules.
   A card row settled by hand drops the fee (`FormResponse::paidAs()`). It never turns
   `allowsFeeCoverage()` on; the payload publishes `requireFeeCoverage` as its own key.
 - **"Nets the full price" is conditional.** `application_fee_amount` is taken on the
@@ -343,13 +347,54 @@ BISS Sunday School's registration adds two switches to a form's single payment:
   - `paidAs()` writes `paid_via` `cash` for every cash settlement, gate or table.
   - `FormCashTotals` adds `external_by_via` (a detail, never a second total) and
     `owed_office`.
-- **Routing (`FormSubmissionsController`).** A staff credential is always cash.
-  Otherwise the row is `office` when chosen, or when `pay_with` is absent and
+- **Routing (`FormSubmissionsController`).** A staff credential defaults to cash;
+  explicit `staff_pay_with: card` uses ordinary hosted Checkout (2026-10-06).
+  Without a staff credential the row is `office` when chosen, or when `pay_with` is absent and
   `!Form::canTakeCardNow()`; otherwise it is a card payment.
   - A choice the form does not offer is a 422 on `pay_with`, never swapped for the
     other.
   - The replay fingerprint adds `pay_with: office` for office rows only, so card
     fingerprints written before the deploy still match their replays.
+
+## Forms: staff pricing and payment choice (DECISIONS.md 2026-10-06)
+
+- `payment.staffPriceOverride` defaults OFF and requires staff codes. Only an accepted
+  credential can submit `staff_unit_price_minor` (nullable integer minor units; digit-only
+  form strings accepted) or `staff_pay_with` (`cash | card`, omission means cash).
+  Invalid credentials retain the uniform refusal; controls without one are 422.
+  Explicit conflicting staff/public payment choices are refused.
+- The override changes the existing priced UNIT, never the quantity: per entry or the
+  whole count-tier registration. It is 0..list, never above list. Answer/quantity-priced
+  forms still refuse staff codes. Omission/blank uses list; an override on a disabled
+  form is refused. Recheck pricing, capability and code under form then code locks.
+- Explicit zero is CASH only, with positive list price and quantity and the switch on.
+  `FormStaffEntry::allowsComplimentaryCash()` is the single zero-policy decision, pending
+  the owner's ruling. `isComplimentaryCash()` recognises the trusted persisted marker;
+  settlement never interprets an empty/unmarked zero as a comp. Card base zero is refused
+  even if fee coverage would make the total positive; card totals also meet Stripe's minimum.
+- New controlled staff entries snapshot `list_unit_price_minor`, nullable explicit
+  `staff_unit_price_minor`, `staff_holder_name` and `staff_payment_method`. The effective
+  `unit_price_minor * price_quantity` is both `amount_due_minor` and decimal `amount_due`.
+  The original tier label is retained. Existing rows get NULL audit fields, no backfill.
+  An untouched form with omitted controls retains its old write/payload path.
+- A staff CARD row is online/unpaid, with staff attribution, no `paid_via`, and no mail at
+  submit. Verified webhooks alone settle it. Its holder owes no cash. A staff CASH row is
+  paid/cash with `paid_via: cash`, fee zero and total equal to the effective base.
+  Code use_count advances once when either type is written, including unpaid cards.
+- Retry fingerprints keep the old digest when controls are omitted. Explicit controls
+  add canonical unit/payment choice; staff card records the submitted fee choice.
+  Replays use their original snapshot before today's price/switch/bounds/window checks;
+  changed controls are 409. Hosted-page replacement uses the stored unit/quantity/label,
+  existing page/account pin/idempotency/30-minute rules unchanged.
+- Cash totals exclude online rows even with a code. If an admin later takes cash for a
+  staff card entry, `marked_paid_by_user_id` wins cash attribution; the original staff
+  setter remains audit. Comp entries count but add zero liability. Receipts/insights read
+  effective amounts; insights keep their workflow-based outstanding semantics.
+- Public submit/status add safe `price_breakdown` context on audited rows. Staff-enabled
+  form payloads add `payment.staffControls: {version: 1, priceOverride: boolean}`.
+  Holder names NEVER go to public payloads/customer mail. Coordinator mail, admin API,
+  roster and appended CSV columns retain the captured setter; CSV names are formula-safe.
+  Do not reinterpret old cash rows as discounted or backfill today's list price.
 
 ## Forms may charge through a parent's account (DECISIONS.md 2026-09-15)
 

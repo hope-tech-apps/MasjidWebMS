@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Support\FormAnswersText;
+use App\Support\FormStaffEntry;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -107,6 +108,8 @@ class FormResponse extends Model
         'charge_refunded_minor' => 'integer',
         'external_synced_at' => 'datetime',
         'unit_price_minor' => 'integer',
+        'list_unit_price_minor' => 'integer',
+        'staff_unit_price_minor' => 'integer',
         'price_quantity' => 'integer',
     ];
 
@@ -131,6 +134,7 @@ class FormResponse extends Model
         'charge_account_id',
         'external_ref',
         'answers_text',
+        'staff_holder_name',
     ];
 
     /**
@@ -144,8 +148,11 @@ class FormResponse extends Model
 
     /** How a money leg was (or is to be) paid. NULL: this row has none. */
     public const METHOD_ONLINE = 'online';     // hosted Stripe Checkout; only the webhook marks it paid
+
     public const METHOD_CASH = 'cash';         // a staff code at the gate, or an admin taking cash
+
     public const METHOD_EXTERNAL = 'external'; // paid elsewhere (the Wix fallback), marked by an admin
+
     public const METHOD_OFFICE = 'office';     // the family chose to pay the office; unpaid until staff record it
 
     public const METHODS = [
@@ -166,9 +173,13 @@ class FormResponse extends Model
      * payment, and on every row settled before the column existed.
      */
     public const PAID_VIA_CASH = 'cash';
+
     public const PAID_VIA_ZELLE = 'zelle';
+
     public const PAID_VIA_CASHAPP = 'cashapp';
+
     public const PAID_VIA_VENMO = 'venmo';
+
     public const PAID_VIA_CHECK = 'check';
 
     /**
@@ -189,6 +200,7 @@ class FormResponse extends Model
      * changes meaning.
      */
     public const PAID_VIA_BANK_TRANSFER = 'bank_transfer';
+
     public const PAID_VIA_OTHER = 'other';
 
     public const PAID_VIA = [
@@ -226,6 +238,7 @@ class FormResponse extends Model
     ];
 
     public const PAYMENT_UNPAID = 'unpaid';
+
     public const PAYMENT_PAID = 'paid';
 
     public const PAYMENT_STATUSES = [
@@ -558,6 +571,10 @@ class FormResponse extends Model
             && $this->paid_via === null
             && $this->marked_paid_by_user_id === null
             && $this->staff_code_id === null
+            && $this->list_unit_price_minor === null
+            && $this->staff_unit_price_minor === null
+            && $this->staff_holder_name === null
+            && $this->staff_payment_method === null
             && $this->collected_at === null
             && $this->charge_flagged_at === null
             && (int) $this->charge_refunded_minor === 0;
@@ -597,7 +614,10 @@ class FormResponse extends Model
             'quantity' => (int) $this->price_quantity,
             'label' => $this->price_label,
             'currency' => $this->currency,
-        ];
+        ] + ($this->list_unit_price_minor !== null ? [
+            'list_unit_minor' => $this->list_unit_price_minor,
+            'staff_unit_minor' => $this->staff_unit_price_minor,
+        ] : []);
     }
 
     public function isPaid(): bool
@@ -745,8 +765,8 @@ class FormResponse extends Model
      * use_count moves in the same transaction.
      *
      * Throws on what no request should be able to cause: a code from another
-     * form or masjid, and nothing to collect. Cash for $0 is how a paid event
-     * becomes free by accident, so it is loud, never a quiet no-op.
+     * form or masjid, and nothing to collect without an explicit complimentary
+     * authorisation. An empty registration must never become free by accident.
      */
     public function settleCash(FormStaffCode $code): bool
     {
@@ -759,7 +779,7 @@ class FormResponse extends Model
                 return false;
             }
 
-            $owed = $row->requireOwedMinor();
+            $owed = FormStaffEntry::isComplimentaryCash($row) ? 0 : $row->requireOwedMinor();
 
             $live = FormStaffCode::withoutMasjidScope()->whereKey($code->getKey())->lockForUpdate()->first();
 

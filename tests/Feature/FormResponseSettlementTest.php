@@ -35,6 +35,7 @@ class FormResponseSettlementTest extends TestCase
     use RefreshDatabase;
 
     private Masjid $masjid;
+
     private Form $form;
 
     protected function setUp(): void
@@ -290,7 +291,7 @@ class FormResponseSettlementTest extends TestCase
     // ------------------------------------------------------------- staff codes
 
     #[Test]
-    public function a_staff_code_settles_the_row_as_cash_its_holder_owes(): void
+    public function a_default_staff_cash_row_settles_as_cash_its_holder_owes(): void
     {
         [$code] = FormStaffCode::issue($this->form, 'Hamza Ali', now()->addDay());
         $row = $this->freshRow();
@@ -343,7 +344,7 @@ class FormResponseSettlementTest extends TestCase
     }
 
     #[Test]
-    public function cash_for_nothing_is_refused_loudly(): void
+    public function cash_for_nothing_without_complimentary_authorisation_is_refused_loudly(): void
     {
         [$code] = FormStaffCode::issue($this->form, 'Hamza Ali', now()->addDay());
 

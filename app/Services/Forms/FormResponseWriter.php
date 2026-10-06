@@ -5,6 +5,7 @@ namespace App\Services\Forms;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Support\FormAttachments;
+use App\Support\FormDateTaken;
 use App\Support\FormReservations;
 use App\Support\FormSchema;
 use Illuminate\Support\Facades\DB;
@@ -55,7 +56,7 @@ use LogicException;
  *    FormResponse::markPaid().
  *  - No email and no notification. A form row is never emailed while it is unpaid
  *    (.claude/rules/stripe-payments.md); the caller sends after `markPaid()` returns true.
- *  - No cash settlement. A staff entry is settled by the door (`settleCash()`) after
+ *  - No cash settlement. A staff cash entry is settled by the door (`settleCash()`) after
  *    this returns, because it moves the staff code's use_count under the code's own lock.
  *
  * Pinned by tests/Feature/Cart/FormResponseWriterTest.php (the cart's call) and, for
@@ -67,7 +68,7 @@ final class FormResponseWriter
     /** No money leg: a form that takes no payment (payment_method stays NULL). */
     public const LEG_NONE = 'none';
 
-    /** A staff entry: cash its holder owes. The door settles it after the write. */
+    /** The staff CASH leg: cash its holder owes. The door settles it after the write. */
     public const LEG_STAFF = 'staff';
 
     /** A card registration: written UNPAID, snapshot Stripe is charged from. */
@@ -90,7 +91,7 @@ final class FormResponseWriter
      * @param  string|null  $reserveOn  a date already claimed by the caller (FormReservations::claim()); null for none
      * @param  array<string,mixed>  $uploads  FormSchema::uploads(); empty for the cart
      *
-     * @throws \App\Support\FormDateTaken when `$reserveOn` is given and the unique index refuses the hold
+     * @throws FormDateTaken when `$reserveOn` is given and the unique index refuses the hold
      * @throws LogicException when called outside a transaction, or with a money leg and no quote
      */
     public function write(
@@ -104,6 +105,7 @@ final class FormResponseWriter
         array $fingerprint = [],
         ?string $reserveOn = null,
         array $uploads = [],
+        array $staffEntry = [],
     ): FormResponse {
         if (DB::transactionLevel() < 1) {
             throw new LogicException('FormResponseWriter::write() must run inside the transaction that holds the form lock.');
@@ -179,6 +181,12 @@ final class FormResponseWriter
                 'fee_covered_minor' => 0,
                 'total_minor' => $quote['amount_due_minor'],
             ];
+        }
+
+        if ($staffEntry !== []) {
+            $guarded += $staffEntry;
+            // The decimal powers older clients and insights; it must agree with the cents.
+            $guarded['amount_due'] = intdiv($quote['amount_due_minor'], 100).'.'.str_pad((string) ($quote['amount_due_minor'] % 100), 2, '0', STR_PAD_LEFT);
         }
 
         $created->forceFill($guarded)->save();

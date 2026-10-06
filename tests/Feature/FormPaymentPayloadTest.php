@@ -94,6 +94,7 @@ class FormPaymentPayloadTest extends TestCase
             'officePayment' => false,
             'officeInstructions' => null,
             'countTiers' => null,
+            'staffControls' => ['version' => 1, 'priceOverride' => false],
         ], $settings['payment']);
 
         // A unit-priced fee is published exactly as feeRule() always was: these keys, in

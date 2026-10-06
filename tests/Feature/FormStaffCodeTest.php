@@ -29,6 +29,9 @@ use Tests\TestCase;
  * Cash at the gate, through the public form, on a staff member's own code
  * (DECISIONS.md 2026-09-11; festival brief, blocker 3 and the replay guard).
  *
+ * Legacy clients omit staff payment controls, so their original cash behaviour stays
+ * pinned here. Controlled pricing/card entry is covered by FormStaffPricingTest.
+ *
  * What is pinned here, end to end through the HTTP layer a phone at the gate uses:
  *
  *  - a code, or the signed token it is exchanged for, settles a walk-up as cash its
@@ -100,7 +103,7 @@ class FormStaffCodeTest extends TestCase
     // ------------------------------------------------------------ settlement
 
     #[Test]
-    public function a_code_records_a_walk_up_as_cash_its_holder_owes_with_no_card_leg(): void
+    public function a_code_without_staff_controls_records_list_price_cash_with_no_card_leg(): void
     {
         $code = $this->issue();
         $token = $this->tokenFor();
@@ -869,13 +872,12 @@ class FormStaffCodeTest extends TestCase
         // Opens the window between the replay lookup and the insert: the second tap's
         // lookup runs before the first tap's row is visible to it, so the unique index
         // is what catches it.
-        $gate = new stdClass();
+        $gate = new stdClass;
         $gate->misses = 0;
 
-        $this->app->bind(FormSubmissionsController::class, fn () => new class($gate) extends FormSubmissionsController {
-            public function __construct(private stdClass $gate)
+        $this->app->bind(FormSubmissionsController::class, fn () => new class($gate) extends FormSubmissionsController
             {
-            }
+            public function __construct(private stdClass $gate) {}
 
             protected function earlierSubmission(int $formId, string $clientKey): ?FormResponse
             {

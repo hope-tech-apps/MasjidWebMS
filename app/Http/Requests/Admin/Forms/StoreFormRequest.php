@@ -17,7 +17,7 @@ class StoreFormRequest extends BaseFormRequest
      * The `settings.payment` switches (DECISIONS.md 2026-09-11; the required card fee and
      * paying the office, 2026-09-13), coerced alike on every door.
      */
-    public const PAYMENT_FLAGS = ['online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment'];
+    public const PAYMENT_FLAGS = ['online', 'staffCodes', 'staffPriceOverride', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment'];
 
     /**
      * The builder may post either JSON or FormData depending on the SPA screen, so
@@ -145,7 +145,7 @@ class StoreFormRequest extends BaseFormRequest
         return [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:2000',
-            'schema' => ['required', 'array', new ValidFormSchema()],
+            'schema' => ['required', 'array', new ValidFormSchema],
             'is_active' => 'boolean',
             'opens_at' => 'nullable|date',
             'closes_at' => 'nullable|date|after_or_equal:opens_at',
@@ -232,7 +232,7 @@ class StoreFormRequest extends BaseFormRequest
             // read half and FormDoorEquivalenceTest pins that every door applies it.
             'settings.fee.tiers' => 'nullable|array|max:10',
             'settings.fee.tiers.*.amount' => 'required|numeric|min:0|max:1000000',
-            'settings.fee.tiers.*.until' => [new TierCutoff()],
+            'settings.fee.tiers.*.until' => [new TierCutoff],
             'settings.fee.tiers.*.label' => 'nullable|string|max:60',
             'settings.fee.currency' => 'nullable|string|size:3',
             'settings.fee.perEntryOfSection' => 'nullable|string|max:255',
@@ -280,6 +280,7 @@ class StoreFormRequest extends BaseFormRequest
             'settings.payment' => 'nullable|array',
             'settings.payment.online' => 'nullable|boolean',
             'settings.payment.staffCodes' => 'nullable|boolean',
+            'settings.payment.staffPriceOverride' => 'nullable|boolean',
             'settings.payment.allowFeeCoverage' => 'nullable|boolean',
             // Every card payer covers the card fee; the browser cannot turn it off
             // (FormPayment::feeCoveredMinor()). A separate key, so allowFeeCoverage
@@ -860,6 +861,10 @@ class StoreFormRequest extends BaseFormRequest
     {
         $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
         $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
+
+        if (self::switchedOn($payment['staffPriceOverride'] ?? null) && ! self::switchedOn($payment['staffCodes'] ?? null)) {
+            return ['settings.payment.staffPriceOverride' => 'Enable staff codes before enabling staff price overrides.'];
+        }
 
         if (! self::switchedOn($payment['staffCodes'] ?? null)
             || (! self::given($fee['perQuantityOf'] ?? null) && ! self::given($fee['byChoice'] ?? null))) {

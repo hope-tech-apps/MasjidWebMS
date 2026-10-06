@@ -140,9 +140,7 @@ class FormResponseCheckoutService
      */
     private array $unreachableAccounts = [];
 
-    public function __construct(private StripeClient $stripe)
-    {
-    }
+    public function __construct(private StripeClient $stripe) {}
 
     /** The platform's application fee on a charge, integer minor units (the meal-order rule). */
     public static function applicationFee(int $chargedMinor, ?float $platformPct = null): int
@@ -535,6 +533,10 @@ class FormResponseCheckoutService
             throw new FormCheckoutRefused('This registration is not paid by card.');
         }
 
+        if ($row->staff_payment_method === 'card' && (int) $row->amount_due_minor <= 0) {
+            throw new FormCheckoutRefused('This registration has nothing to pay.');
+        }
+
         $reason = self::amountRefusal((int) $row->total_minor);
 
         if ($reason !== null) {
@@ -571,6 +573,10 @@ class FormResponseCheckoutService
     {
         if ($totalMinor <= 0) {
             return 'This registration has nothing to pay.';
+        }
+
+        if ($totalMinor < FormPayment::MIN_CHARGE_MINOR) {
+            return 'This registration is below the minimum card charge. Please choose cash.';
         }
 
         if ($totalMinor > FormPayment::MAX_CHARGE_MINOR) {
@@ -901,6 +907,10 @@ class FormResponseCheckoutService
         $lines = [];
 
         if ($amountDue > 0) {
+            $snapshot = $row->list_unit_price_minor !== null ? $row->priceBreakdown() : null;
+            if ($snapshot !== null) {
+                $lines[] = self::line($currency, $snapshot['unit_minor'], $snapshot['quantity'], FormPayment::lineName($form, $snapshot['label']));
+            } else {
             try {
                 $quote = FormPayment::quote($form, is_array($row->data) ? $row->data : [], false, false, $row->submitted_at);
             } catch (LogicException) {
@@ -910,6 +920,7 @@ class FormResponseCheckoutService
             $lines[] = $quote !== null && $quote['amount_due_minor'] === $amountDue && $quote['line_items'] !== []
                 ? self::line($currency, $quote['unit_minor'], $quote['quantity'], $quote['line_items'][0]['price_data']['product_data']['name'])
                 : self::line($currency, $amountDue, 1, trim((string) $form->name) !== '' ? trim((string) $form->name) : 'Registration');
+        }
         }
 
         if ((int) $row->fee_covered_minor > 0) {

@@ -8826,3 +8826,31 @@ None found a blocker; five findings were major. What was decided in answering th
 Decision: on `fix/queue-retry-after-trial`, raise the database queue's default retry_after from 90 to 360 seconds, preserving DB_QUEUE_RETRY_AFTER overrides and existing job timeout budgets. 360 = SendBroadcastJob's default 300-second budget + 60 seconds chosen operational headroom. Alternatives: reduce fan-out budgets (would truncate existing sends), increase the service fallback (does not fix reservation expiry), or rely on one worker forever (leaves another consumer able to take a live reservation). Verified locally on locked Laravel 12.64.0: payload timeout overrides worker --timeout=90; reservation expiry alone does not interrupt or repeat a job on one worker. A second consumer can pop at 90; tries=1 on these fan-outs makes that consumer fail/delete the job before handle(), rather than necessarily double-send. Tests: old default 4 failed/4 passed; fixed 8 passed; related 182 passed. Evidence and limits: HANDOFF.md and artifacts/queue-retry-{before,after,related}.log. No server operation or commit; Claude reviews before shipping.
 
 Not done, and why (2026-10-06): no separate connection or second queue unit for the two long jobs. It would keep a 90-second recovery for short jobs, but it is a production infrastructure change, and the cost it avoids is small: a job whose worker dies mid-run now becomes available after 6 minutes instead of 90 seconds. Deploy restarts let a running job finish, the adhan and iqama pushes at prayer time are sent inline by the scheduler and never ride the queue, and sign-in code mail is deliberately not queued. The 6-minute recovery is accepted. The guard test covers every queued class under app/, not a list.
+
+
+## 2026-10-06 — Staff entry may choose hosted card and an enabled unit override
+
+Decision: a valid staff credential defaults to cash at list price, preserving existing
+clients. Explicit `staff_pay_with` chooses cash or card; card remains an ordinary unpaid
+online row until the verified webhook settles it. The owner deliberately reverses the
+2026-09-11/2026-09-13 universal rules that a staff credential always means cash and always
+uses list price. Hosted Checkout, direct charges, integer minor units, row locks,
+idempotency, account pins and the 30-minute page remain binding.
+
+`payment.staffPriceOverride` defaults off. When enabled, an explicit
+`staff_unit_price_minor` overrides the existing priced unit, bounded from zero to list:
+per entry on an entry-priced form, the whole registration on a count tier. Omission uses
+list price. Answer/quantity-priced forms still refuse staff credentials. List and effective
+units, initial payment choice and the holder's name are snapshotted on new controlled
+entries. Public responses and customer mail never disclose the holder. Cash totals exclude
+card entries and charge a subsequent admin cash settlement to its actual collector.
+
+The recommendation, pending the owner's final zero-price ruling, permits an explicitly
+complimentary cash entry only with the override switch enabled and a positive list unit
+and quantity. It is paid with zero liability, never a card session. The sole policy switch
+is `FormStaffEntry::allowsComplimentaryCash()`. Accidental zero/empty entries remain refused.
+
+Alternatives: universal price overrides would give every existing code new discounting
+power; changing list-price fields alone would destroy the original price audit. Retain
+nullable audit columns without backfilling or repricing old rows. No frontend or native
+app work, production data repair, Stripe coupons, refunds or deployment is included here.

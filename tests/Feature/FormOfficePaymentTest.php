@@ -225,7 +225,7 @@ class FormOfficePaymentTest extends TestCase
      * that says nothing would otherwise be sent to the office.
      */
     #[Test]
-    public function a_staff_code_entry_is_cash_at_the_gate_never_an_office_registration(): void
+    public function a_staff_code_entry_without_staff_controls_is_cash_never_an_office_registration(): void
     {
         $form = $this->familyForm(['online' => true, 'staffCodes' => true, 'officePayment' => true, 'officeInstructions' => self::INSTRUCTIONS]);
         $this->masjid->forceFill(['stripe_charges_enabled' => false])->save();
@@ -829,9 +829,7 @@ class FormOfficePaymentTest extends TestCase
                     return ['status' => 'open', 'url' => "https://checkout.stripe.test/pay/{$sessionId}"];
                 }
 
-                protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void
-                {
-                }
+                protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void {}
             };
         });
     }

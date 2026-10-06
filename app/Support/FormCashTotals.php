@@ -116,10 +116,10 @@ final class FormCashTotals
             ->select($groupBy)
             ->selectRaw(
                 "SUM(CASE WHEN {$status} = ? THEN 0 ELSE 1 END) AS submissions, "
-                . "SUM(CASE WHEN {$status} = ? THEN 0 ELSE {$entries} END) AS people, "
-                . "SUM(CASE WHEN {$status} = ? THEN 0 ELSE {$total} END) AS total_minor, "
-                . "SUM(CASE WHEN {$status} = ? THEN 1 ELSE 0 END) AS cancelled_submissions, "
-                . "SUM(CASE WHEN {$status} = ? THEN {$total} ELSE 0 END) AS cancelled_total_minor",
+                ."SUM(CASE WHEN {$status} = ? THEN 0 ELSE {$entries} END) AS people, "
+                ."SUM(CASE WHEN {$status} = ? THEN 0 ELSE {$total} END) AS total_minor, "
+                ."SUM(CASE WHEN {$status} = ? THEN 1 ELSE 0 END) AS cancelled_submissions, "
+                ."SUM(CASE WHEN {$status} = ? THEN {$total} ELSE 0 END) AS cancelled_total_minor",
                 array_fill(0, 5, FormResponse::STATUS_CANCELLED)
             )
             ->get();
@@ -138,7 +138,7 @@ final class FormCashTotals
         $holders = [];
 
         foreach ($codes as $code) {
-            $holders['code:' . $code->id] = self::holder('code', (int) $code->id, null, (string) $code->holder_name, $code);
+            $holders['code:'.$code->id] = self::holder('code', (int) $code->id, null, (string) $code->holder_name, $code);
         }
 
         // withTrashed: a removed admin still owes the cash they took.
@@ -151,15 +151,15 @@ final class FormCashTotals
             $userId = $row->marked_paid_by_user_id !== null ? (int) $row->marked_paid_by_user_id : null;
 
             $key = match (true) {
-                $codeId !== null => 'code:' . $codeId,
-                $userId !== null => 'admin:' . $userId,
+                $userId !== null => 'admin:'.$userId,
+                $codeId !== null => 'code:'.$codeId,
                 default => 'unattributed',
             };
 
             $holders[$key] ??= match (true) {
                 // A code this form's list does not hold: still somebody's cash.
-                $codeId !== null => self::holder('code', $codeId, null, 'Code #' . $codeId, null),
-                $userId !== null => self::holder('admin', null, $userId, (string) ($names[$userId] ?? 'User #' . $userId), null),
+                $userId !== null => self::holder('admin', null, $userId, (string) ($names[$userId] ?? 'User #'.$userId), null),
+                $codeId !== null => self::holder('code', $codeId, null, 'Code #'.$codeId, null),
                 default => self::holder('unattributed', null, null, 'Not attributed', null),
             };
 

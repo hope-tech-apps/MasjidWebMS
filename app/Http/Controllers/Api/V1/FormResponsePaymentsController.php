@@ -14,6 +14,7 @@ use App\Support\FormReservations;
 use App\Support\PublicTenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Stripe\Exception\ExceptionInterface;
 
 /**
  * A card registration after its submit (DECISIONS.md 2026-09-11). The page Stripe
@@ -100,7 +101,7 @@ class FormResponsePaymentsController extends Controller
                 $page = app(FormResponseCheckoutService::class)->reopen($row, $returnTo);
             } catch (FormCheckoutRefused $e) {
                 return response()->api(422, $e->getMessage(), $e->answer($this->status($row, $form)));
-            } catch (\Stripe\Exception\ExceptionInterface $e) {
+            } catch (ExceptionInterface $e) {
                 FormResponseCheckoutService::reportFailure($e, $row);
 
                 return response()->api(422, FormResponseCheckoutService::COULD_NOT_OPEN, $this->status($row, $form));
@@ -170,6 +171,10 @@ class FormResponsePaymentsController extends Controller
             'success_body' => $settings['successBody'] ?? null,
             'success_next_steps' => $settings['successNextSteps'] ?? [],
         ];
+
+        if ($row->list_unit_price_minor !== null) {
+            $data['price_breakdown'] = $row->priceBreakdown();
+        }
 
         $whatsapp = $form->whatsappUrl();
 

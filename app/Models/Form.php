@@ -228,9 +228,8 @@ class Form extends Model
     }
 
     /**
-     * Staff codes are switched on AND there is a price. A code settles an entry
-     * as cash its holder owes at the list price; with no price there is nothing
-     * to owe, and cash for $0 is not a settlement.
+     * Staff codes require a list price. Forms priced by answers remain excluded
+     * until their staff entry screen can explain the amount being collected.
      */
     public function takesStaffCodes(): bool
     {
@@ -240,6 +239,11 @@ class Form extends Model
         // $0.00" while the server records the real amount. The save refuses the pair
         // (StoreFormRequest::quantityProblems() / choiceProblems()); this is the read half.
         return $this->paymentFlag('staffCodes') && $this->chargesFee() && ! $this->pricesByQuantityOrChoice();
+    }
+
+    public function allowsStaffPriceOverride(): bool
+    {
+        return $this->takesStaffCodes() && $this->paymentFlag('staffPriceOverride');
     }
 
     /**

@@ -112,6 +112,9 @@ class FormNotifier
         // Drawn as owed, never in the paid green, with the amount labelled "Amount owed".
         $owedAtOffice = $paymentLine === null && self::owesTheOffice($response);
         $coordinatorPaymentLine = $paymentLine ?? ($owedAtOffice ? self::OWED_AT_THE_OFFICE : null);
+        if ($response->staff_holder_name !== null && $response->staff_unit_price_minor !== null) {
+            $coordinatorPaymentLine = ($coordinatorPaymentLine ?? '').' — price set by '.$response->staff_holder_name;
+        }
 
         self::attempt('coordinators', $form, $response, function () use ($form, $response, $masjid, $people, $coordinatorPaymentLine, $owedAtOffice, $toCoordinators) {
             if (! $toCoordinators) {
@@ -298,7 +301,7 @@ class FormNotifier
                         // read the label they wrote on the form ("Brothers").
                         $value = $optionLabels[$column['key']][$value] ?? $value;
 
-                        return $column['label'] . ' ' . $value;
+                        return $column['label'].' '.$value;
                     })
                     ->filter()
                     ->implode(' · ');
@@ -359,10 +362,19 @@ class FormNotifier
             return null;
         }
 
+        if ($response->list_unit_price_minor !== null) {
+            $amount = self::money((int) $response->amount_due_minor, $response->currency);
+            if ($response->staff_unit_price_minor !== null) {
+                $amount .= ' (list '.self::money($response->list_unit_price_minor * $response->price_quantity, $response->currency).')';
+            }
+
+            return $amount;
+        }
+
         $currency = self::feeAtSubmit($form, $response)['currency'] ?? 'USD';
         $amount = number_format((float) $response->amount_due, 2);
 
-        return $currency === 'USD' ? '$' . $amount : $amount . ' ' . $currency;
+        return $currency === 'USD' ? '$'.$amount : $amount.' '.$currency;
     }
 
     /**
@@ -393,9 +405,11 @@ class FormNotifier
 
         return match ($response->payment_method) {
             FormResponse::METHOD_ONLINE => ($response->total_minor !== null
-                ? 'Paid ' . self::money((int) $response->total_minor, $response->currency) . ' by card'
-                : 'Paid by card') . $processedBy,
-            FormResponse::METHOD_CASH => 'Paid in cash',
+                ? 'Paid '.self::money((int) $response->total_minor, $response->currency).' by card'
+                : 'Paid by card').$processedBy,
+            FormResponse::METHOD_CASH => $response->staff_unit_price_minor !== null
+                ? ((int) $response->amount_due_minor === 0 ? 'Complimentary entry (nothing owed)' : 'Paid '.self::money((int) $response->amount_due_minor, $response->currency).' in cash')
+                : 'Paid in cash',
             FormResponse::METHOD_EXTERNAL => $via !== null ? "Paid by {$via} (recorded by staff)" : 'Paid (recorded by staff)',
             default => null,
         };
@@ -416,14 +430,12 @@ class FormNotifier
      * "$17.00 × 4", from the snapshot the row was written at (FormResponse::priceBreakdown()),
      * when more than one unit was charged. Null otherwise: one unit is the amount itself.
      *
-     * Only on a form priced by a quantity question or by answer, where the emails list no
-     * people and this line is the only place "how many" appears. Every other paying form
-     * (a festival charged per attendee) sends exactly the emails it always did: its people
-     * are listed, and the row's snapshot is for the admin screens.
+     * Answer-priced forms need this because they list no people. A staff override
+     * also needs it so the payer can distinguish the changed unit from the total.
      */
     private static function breakdownLine(Form $form, FormResponse $response): ?string
     {
-        if (! $form->pricesByQuantityOrChoice($response->submitted_at)) {
+        if ($response->staff_unit_price_minor === null && ! $form->pricesByQuantityOrChoice($response->submitted_at)) {
             return null;
         }
 
@@ -433,7 +445,7 @@ class FormNotifier
             return null;
         }
 
-        return self::money($breakdown['unit_minor'], $breakdown['currency']) . ' × ' . $breakdown['quantity'];
+        return self::money($breakdown['unit_minor'], $breakdown['currency']).' × '.$breakdown['quantity'];
     }
 
     /**
@@ -497,9 +509,9 @@ class FormNotifier
     public static function money(int $minor, ?string $currency): string
     {
         $code = strtoupper(trim((string) $currency)) ?: 'USD';
-        $amount = number_format(intdiv($minor, 100)) . '.' . str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
+        $amount = number_format(intdiv($minor, 100)).'.'.str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
 
-        return $code === 'USD' ? '$' . $amount : $amount . ' ' . $code;
+        return $code === 'USD' ? '$'.$amount : $amount.' '.$code;
     }
 
     /**
@@ -514,6 +526,10 @@ class FormNotifier
      */
     private static function tierLabel(Form $form, FormResponse $response): ?string
     {
+        if ($response->list_unit_price_minor !== null) {
+            return $response->price_label;
+        }
+
         $data = is_array($response->data) ? $response->data : [];
 
         try {
@@ -546,7 +562,7 @@ class FormNotifier
 
     private static function adminUrl(): string
     {
-        return rtrim((string) config('app.url'), '/') . '/masjid/form-responses';
+        return rtrim((string) config('app.url'), '/').'/masjid/form-responses';
     }
 
     /** Runs a send, converting any failure into a log line. @param callable():void $send */

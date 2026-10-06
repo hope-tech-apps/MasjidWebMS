@@ -320,6 +320,10 @@ class SectionContentBinder
             }
         }
 
+        if ($staffCodes) {
+            $payment['staffControls'] = ['version' => 1, 'priceOverride' => $form->allowsStaffPriceOverride()];
+        }
+
         return $payment;
     }
 

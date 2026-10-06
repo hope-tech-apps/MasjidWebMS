@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
+use Stripe\Exception\ApiConnectionException;
+use Stripe\Exception\InvalidRequestException;
 use Stripe\StripeClient;
 use Tests\TestCase;
 
@@ -576,7 +578,7 @@ class FormPaymentCheckoutTest extends TestCase
     }
 
     #[Test]
-    public function a_staff_entry_on_a_card_form_is_cash_and_opens_no_page(): void
+    public function a_staff_entry_without_staff_controls_on_a_card_form_is_cash_and_opens_no_page(): void
     {
         $form = $this->makeForm($this->masjid, [], ['payment' => ['online' => true, 'staffCodes' => true, 'allowFeeCoverage' => true]]);
 
@@ -673,7 +675,7 @@ class FormPaymentCheckoutTest extends TestCase
     }
 
     #[Test]
-    public function a_staff_entry_on_a_required_fee_form_is_cash_at_the_tier_price_with_no_fee(): void
+    public function a_staff_entry_without_staff_controls_on_a_required_fee_form_is_cash_at_the_tier_price_with_no_fee(): void
     {
         $form = $this->familyForm(['online' => true, 'staffCodes' => true, 'requireFeeCoverage' => true]);
 
@@ -1554,11 +1556,11 @@ class FormPaymentCheckoutTest extends TestCase
                     ];
 
                     if (FormPaymentCheckoutTest::$stripeDown) {
-                        throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
+                        throw ApiConnectionException::factory('Could not connect to Stripe.');
                     }
 
                     if (FormPaymentCheckoutTest::$refuseEmail && isset($params['customer_email'])) {
-                        throw \Stripe\Exception\InvalidRequestException::factory('Invalid email address: ' . $params['customer_email'], 400);
+                        throw InvalidRequestException::factory('Invalid email address: '.$params['customer_email'], 400);
                     }
 
                     FormPaymentCheckoutTest::$pages["cs_test_{$n}"] = 'open';
@@ -1581,9 +1583,9 @@ class FormPaymentCheckoutTest extends TestCase
                         case 'paid':
                             FormPaymentCheckoutTest::$pages[$sessionId] = 'complete';
 
-                            throw \Stripe\Exception\InvalidRequestException::factory('This Checkout Session is not in an expirable state.');
+                            throw InvalidRequestException::factory('This Checkout Session is not in an expirable state.');
                         case 'still-open':
-                            throw \Stripe\Exception\InvalidRequestException::factory('Refused.');
+                            throw InvalidRequestException::factory('Refused.');
                     }
 
                     FormPaymentCheckoutTest::$expired[] = $sessionId;

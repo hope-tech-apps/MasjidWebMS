@@ -26,9 +26,7 @@ use Illuminate\Support\Collection;
  */
 class FormRoster
 {
-    public function __construct(private readonly Form $form)
-    {
-    }
+    public function __construct(private readonly Form $form) {}
 
     public static function for(Form $form): self
     {
@@ -118,6 +116,14 @@ class FormRoster
                 'holder' => self::holder($response),
                 'collected_at' => optional($response->collected_at)->toIso8601String(),
             ];
+
+            if ($response->list_unit_price_minor !== null) {
+                $context['price_breakdown'] = $response->priceBreakdown();
+                $context['staff_payment_method'] = $response->staff_payment_method;
+                $context['price_set_by'] = $response->staff_holder_name;
+                $context['amount_due_minor'] = $response->amount_due_minor;
+                $context['total_minor'] = $response->total_minor;
+            }
 
             if (! $sectionId) {
                 $rows->push(array_merge($context, [
@@ -246,7 +252,7 @@ class FormRoster
             return null;
         }
 
-        return $response->staffCode?->holder_name ?? $response->markedPaidBy?->name;
+        return $response->markedPaidBy?->name ?? $response->staff_holder_name ?? $response->staffCode?->holder_name;
     }
 
     /** JSON can hold arrays (checkbox groups) and booleans; a table cell needs a string. */

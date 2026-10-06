@@ -273,6 +273,8 @@ class FormResponsePaymentService
      */
     private function settle(FormResponse $row, Masjid $masjid, ?string $paymentIntentId): void
     {
+        // Staff attribution does not make a card row cash; the locked method/status
+        // guard also protects entries subsequently settled by hand.
         if (! $row->markPaid($paymentIntentId)) {
             $this->explainNoTransition($row, $paymentIntentId);
 

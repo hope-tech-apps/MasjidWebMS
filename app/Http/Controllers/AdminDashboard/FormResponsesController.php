@@ -20,10 +20,10 @@ use App\Support\FormDateTaken;
 use App\Support\FormNotifier;
 use App\Support\FormReservations;
 use App\Support\FormRoster;
-use App\Support\FormSchema;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Stripe\Exception\ApiErrorException;
@@ -90,6 +90,8 @@ class FormResponsesController extends Controller
      * per row. The user relations are withTrashed, so a removed admin's name still shows.
      */
     private const EAGER = ['staffCode', 'collectedBy:id,name', 'markedPaidBy:id,name', 'statusChangedBy:id,name'];
+
+    private const STAFF_PRICE_COLUMNS = ['List unit price', 'Staff unit price', 'Staff payment choice', 'Price set by'];
 
     /*
      * update()'s `card_page`, on every answer to a request saying "cancelled": what that did
@@ -311,13 +313,15 @@ class FormResponsesController extends Controller
         $columns = $roster->columns();
         $rows = $this->sortRoster($roster->rows($this->query($request, $masjid, $form)->get()), $request);
 
-        $filename = $form->slug . '-roster-' . now()->format('Y-m-d') . '.csv';
+        $filename = $form->slug.'-roster-'.now()->format('Y-m-d').'.csv';
 
         // Payment and Collected only on a form set up to take payment: every other roster
         // is the sheet it always was (Form::hasPaymentSettings()).
         $money = $form->hasPaymentSettings();
 
-        return response()->stream(function () use ($rows, $columns, $money) {
+        $staffPricing = $rows->contains(fn (array $row) => isset($row['price_breakdown']['list_unit_minor']));
+
+        return response()->stream(function () use ($rows, $columns, $money, $staffPricing) {
             $out = fopen('php://output', 'w');
 
             $header = [];
@@ -330,6 +334,9 @@ class FormResponsesController extends Controller
                 array_push($header, 'Payment', 'Collected');
             }
 
+            if ($staffPricing) {
+                array_push($header, ...self::STAFF_PRICE_COLUMNS);
+            }
             fputcsv($out, $header);
 
             foreach ($rows as $row) {
@@ -349,13 +356,16 @@ class FormResponsesController extends Controller
                     $line[] = ! empty($row['collected_at']) ? date('Y-m-d H:i', strtotime($row['collected_at'])) : '';
                 }
 
+                if ($staffPricing) {
+                    array_push($line, ...$this->staffPriceCells($row['price_breakdown'] ?? null, $row['staff_payment_method'] ?? null, $row['price_set_by'] ?? null));
+                }
                 fputcsv($out, $line);
             }
 
             fclose($out);
         }, Response::HTTP_OK, [
             'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
         ]);
     }
 
@@ -363,7 +373,7 @@ class FormResponsesController extends Controller
      * Roster sorting is applied to the flattened collection, because the sort keys live
      * inside the JSON entries and cannot be expressed in the SQL that produced them.
      *
-     * @param  \Illuminate\Support\Collection<int,array<string,mixed>>  $rows
+     * @param  Collection<int,array<string,mixed>>  $rows
      */
     private function sortRoster($rows, IndexFormResponsesRequest $request)
     {
@@ -605,7 +615,7 @@ class FormResponsesController extends Controller
      * cancelled earlier (the close failed and the payer finished the page), and the next
      * "cancelled" is where the admin first sees it.
      *
-     * @return array{0: ?string, 1: bool, 2: string}  the message, whether the admin must act, `card_page`
+     * @return array{0: ?string, 1: bool, 2: string} the message, whether the admin must act, `card_page`
      */
     private function closePageOfCancelled(FormResponse $row, bool $justCancelled): array
     {
@@ -667,8 +677,8 @@ class FormResponsesController extends Controller
             // The page is pinned to an account Stripe no longer lets the platform act on.
             // Retrying cannot help; the page takes no payment once charge_expires_at passes.
             FormResponseCheckoutService::UNREACHABLE => [
-                'Cancelled. Its card payment page is on ' . ($this->holderName($row) ?? 'another organisation') . '\'s Stripe account, which no longer lets us check or close it, '
-                . 'so it can take a payment until it expires. If one lands, ' . $refund,
+                'Cancelled. Its card payment page is on '.($this->holderName($row) ?? 'another organisation').'\'s Stripe account, which no longer lets us check or close it, '
+                .'so it can take a payment until it expires. If one lands, '.$refund,
                 true,
                 FormResponseCheckoutService::UNREACHABLE,
             ],
@@ -696,7 +706,7 @@ class FormResponsesController extends Controller
     {
         if ($justCancelled) {
             Log::warning('A form registration already paid by card was cancelled; cancelling does not refund it. The organisation '
-                . 'should refund it in its Stripe dashboard if it should not stand.', [
+                .'should refund it in its Stripe dashboard if it should not stand.', [
                     'masjid_id' => $row->masjid_id,
                     'form_id' => $row->form_id,
                     'form_response_id' => $row->id,
@@ -704,7 +714,7 @@ class FormResponsesController extends Controller
                 ]);
         }
 
-        $amount = $row->total_minor !== null ? ' (' . FormNotifier::money((int) $row->total_minor, $row->currency) . ')' : '';
+        $amount = $row->total_minor !== null ? ' ('.FormNotifier::money((int) $row->total_minor, $row->currency).')' : '';
 
         // Charged through another organisation's account (DECISIONS.md 2026-09-15): only it
         // can refund, and the payment intent is how it finds the charge.
@@ -1019,7 +1029,7 @@ class FormResponsesController extends Controller
             // organisation's to refund.
             'complete' => [
                 Response::HTTP_UNPROCESSABLE_ENTITY,
-                self::DELETE_PAID_ON_STRIPE . ' ' . (FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.'),
+                self::DELETE_PAID_ON_STRIPE.' '.(FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.'),
             ],
             // Pinned to an account Stripe no longer lets the platform act on (DECISIONS.md
             // 2026-09-15). closeOpenSession() has switched that holder's card payments
@@ -1207,7 +1217,7 @@ class FormResponsesController extends Controller
                 $announced = $row->payment_method !== FormResponse::METHOD_ONLINE;
 
                 if ($row->isPaid()) {
-                    return ['paid:' . $row->payment_method, $announced];
+                    return ['paid:'.$row->payment_method, $announced];
                 }
 
                 if ($row->status === FormResponse::STATUS_CANCELLED) {
@@ -1259,7 +1269,7 @@ class FormResponsesController extends Controller
                     ? $row->settleCashBy($operator)
                     : $row->markExternalPaid($operator, $via);
 
-                return [$settled ? 'settled' : 'paid:' . $row->payment_method, $announced];
+                return [$settled ? 'settled' : 'paid:'.$row->payment_method, $announced];
             });
         } catch (FormCheckoutRefused $e) {
             return $this->refused($e->getMessage());
@@ -1296,8 +1306,8 @@ class FormResponsesController extends Controller
                 'nothing' => 'This registration has nothing to pay.',
                 'via-required' => MarkFormResponsePaidRequest::refusal(),
                 'paid-on-stripe' => 'This registration has just been paid by card, and Stripe is confirming it. Do not take a second payment.',
-                'paid:' . FormResponse::METHOD_ONLINE => 'This registration has already been paid by card. Do not take a second payment.',
-                'paid:' . FormResponse::METHOD_CASH => 'Cash has already been recorded for this registration.',
+                'paid:'.FormResponse::METHOD_ONLINE => 'This registration has already been paid by card. Do not take a second payment.',
+                'paid:'.FormResponse::METHOD_CASH => 'Cash has already been recorded for this registration.',
                 default => 'This registration is already marked paid.',
             });
         }
@@ -1322,7 +1332,7 @@ class FormResponsesController extends Controller
         $form = $masjid->forms()->findOrFail($form_id);
 
         $columns = $this->columns($form);
-        $filename = $form->slug . '-responses-' . now()->format('Y-m-d') . '.csv';
+        $filename = $form->slug.'-responses-'.now()->format('Y-m-d').'.csv';
 
         $query = $this->query($request, $masjid, $form);
 
@@ -1331,7 +1341,9 @@ class FormResponsesController extends Controller
         // "confirmed"), exports exactly the columns it always did (Form::hasPaymentSettings()).
         $money = $form->hasPaymentSettings();
 
-        return response()->stream(function () use ($query, $columns, $form, $money) {
+        $staffPricing = (clone $query)->whereNotNull('staff_payment_method')->exists();
+
+        return response()->stream(function () use ($query, $columns, $form, $money, $staffPricing) {
             $out = fopen('php://output', 'w');
 
             // The first four columns are as they always were. The money leg follows them
@@ -1354,10 +1366,13 @@ class FormResponsesController extends Controller
             foreach ($columns as $column) {
                 $header[] = $column['label'];
             }
+            if ($staffPricing) {
+                array_push($header, ...self::STAFF_PRICE_COLUMNS);
+            }
             fputcsv($out, $header);
 
             // chunkById keeps memory flat on a large registration list.
-            $query->chunkById(200, function ($chunk) use ($out, $columns, $form, $money) {
+            $query->chunkById(200, function ($chunk) use ($out, $columns, $form, $money, $staffPricing) {
                 foreach ($chunk as $response) {
                     $row = [
                         optional($response->submitted_at)->format('Y-m-d H:i'),
@@ -1377,7 +1392,7 @@ class FormResponsesController extends Controller
                             (string) $response->paymentState(),
                             optional($response->paid_at)->format('Y-m-d H:i'),
                             // Typed by an admin, so as open to formula injection as any answer.
-                            $this->csvCell((string) $response->staffCode?->holder_name),
+                            $this->csvCell((string) ($response->staff_holder_name ?? $response->staffCode?->holder_name)),
                             $this->csvCell((string) $response->markedPaidBy?->name),
                             $response->hasMoneyLeg() ? $this->minor((int) $response->fee_covered_minor) : '',
                             $response->isPaid() && $response->total_minor !== null ? $this->minor((int) $response->total_minor) : '',
@@ -1392,6 +1407,9 @@ class FormResponsesController extends Controller
                         $row[] = $this->csvCell($this->valueFor($response, $column));
                     }
 
+                    if ($staffPricing) {
+                        array_push($row, ...$this->staffPriceCells($response->priceBreakdown(), $response->staff_payment_method, $response->staff_holder_name));
+                    }
                     fputcsv($out, $row);
                 }
             });
@@ -1399,7 +1417,7 @@ class FormResponsesController extends Controller
             fclose($out);
         }, Response::HTTP_OK, [
             'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
         ]);
     }
 
@@ -1629,7 +1647,7 @@ class FormResponsesController extends Controller
                 }
 
                 $columns[] = [
-                    'key' => $repeatable ? $sectionId . '.' . $field['name'] : $field['name'],
+                    'key' => $repeatable ? $sectionId.'.'.$field['name'] : $field['name'],
                     'label' => $field['label'] ?? $field['name'],
                     'section' => $repeatable ? ($section['title'] ?? $sectionId) : null,
                     'repeatable' => $repeatable,
@@ -1687,7 +1705,7 @@ class FormResponsesController extends Controller
     private function csvCell(string $value): string
     {
         if ($value !== '' && in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
-            return "'" . $value;
+            return "'".$value;
         }
 
         return $value;
@@ -1757,7 +1775,7 @@ class FormResponsesController extends Controller
             // Whose cash this is, at the gate. Never the code, and never its digest.
             'staff_code' => $response->staffCode !== null ? [
                 'id' => $response->staffCode->id,
-                'holder_name' => $response->staffCode->holder_name,
+                'holder_name' => $response->staff_holder_name ?? $response->staffCode->holder_name,
                 'code_hint' => $response->staffCode->code_hint,
             ] : null,
             'marked_paid_by' => $this->person($response->markedPaidBy),
@@ -1770,6 +1788,10 @@ class FormResponsesController extends Controller
         // What the money leg was priced at: unit x quantity and the tier or level
         // (FormResponse::priceBreakdown()), or null on a row without a snapshot.
         $row['price_breakdown'] = $response->priceBreakdown();
+        if ($response->list_unit_price_minor !== null) {
+            $row['staff_payment_method'] = $response->staff_payment_method;
+            $row['price_set_by'] = $response->staff_holder_name;
+        }
 
         if ($withData) {
             // The date this registration reserved and whether it still holds it
@@ -1801,10 +1823,20 @@ class FormResponsesController extends Controller
         return $user !== null ? ['id' => $user->id, 'name' => $user->name] : null;
     }
 
-    /** Integer cents as a plain decimal for a spreadsheet ("30.00"), with no float in between. */
+    private function staffPriceCells(?array $price, ?string $method, ?string $holder): array
+    {
+        return [
+            isset($price['list_unit_minor']) ? $this->minor($price['list_unit_minor']) : '',
+            isset($price['staff_unit_minor']) ? $this->minor($price['staff_unit_minor']) : '',
+            $this->csvCell((string) $method),
+            $this->csvCell((string) $holder),
+        ];
+    }
+
+    /** Integer cents as a plain decimal for a spreadsheet, with no float in between. */
     private function minor(int $minor): string
     {
-        return intdiv($minor, 100) . '.' . str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
+        return intdiv($minor, 100).'.'.str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
     }
 
     /**

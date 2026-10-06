@@ -19,11 +19,14 @@ use App\Support\FormPaymentReturn;
 use App\Support\FormReservations;
 use App\Support\FormSchema;
 use App\Support\FormStaffCodes;
+use App\Support\FormStaffEntry;
 use App\Support\PublicTenant;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Validation\ValidationException;
 use LogicException;
+use Stripe\Exception\ExceptionInterface;
 
 /**
  * The public form-submission endpoint.
@@ -58,22 +61,20 @@ use LogicException;
  * submitter a receipt (App\Support\FormNotifier) — a registration nobody is told about is
  * only half-accepted.
  *
- * ## Cash at the gate (DECISIONS.md 2026-09-11)
+ * ## Staff entry (DECISIONS.md 2026-10-06)
  *
- * A submission carrying a staff credential — the token a staff member's phone got for
- * its code (FormStaffSessionsController), or the code itself — is a walk-up who has
- * handed that staff member cash. It is settled as cash in the SAME transaction that
- * writes it, at the list price, stamped with the code, so the holder owes it
- * (FormResponse::settleCash()). There is no Stripe call, so never a $0 session. The
- * credential is checked BEFORE the answers (App\Support\FormStaffCodes), and every way
- * it can fail is one uniform 422. A staff entry ignores the registration window —
- * walk-ups arrive after online sales close — but not an inactive or full form. The
- * answer never names the holder.
+ * The credential is checked before answers and controls, retaining one refusal for
+ * every invalid code. Missing controls preserve list-price cash. Explicit controls
+ * permit a bounded unit override when enabled and a hosted card choice. Cash settles
+ * in the write transaction; card waits for the verified webhook. Form and code locks
+ * protect both pricing and attribution. Staff ignore the registration window because
+ * walk-ups arrive after online sales close; capacity and active-state checks still bind.
+ * Public answers never name the holder.
  *
  * ## Card payment (DECISIONS.md 2026-09-11)
  *
- * On a form that takes cards, a submission without a staff credential is a card
- * registration. Everything that could stop Stripe's page opening is asked BEFORE
+ * On a form that takes cards, a public card choice or an explicit staff card
+ * choice uses the same payment path. Everything that could stop Stripe's page opening is asked BEFORE
  * anything is written: the organisation can take a card (Connect live), the total is
  * chargeable, the request's Origin is on config('forms.payment_return_origins') and
  * its return_path is a relative path (App\Support\FormPaymentReturn). A refusal
@@ -263,6 +264,8 @@ class FormSubmissionsController extends Controller
                 $staffCode = $check->code;
             }
 
+            $staffEntry = FormStaffEntry::read($request, $staffCode);
+
             $submitted = $request->input('data');
 
             if (! is_array($submitted)) {
@@ -304,6 +307,20 @@ class FormSubmissionsController extends Controller
             // (App\Support\FormReservations). Claimed under the form lock below.
             $reserveOn = $form->reservedDateIn($clean);
 
+            // Staff retries use their first snapshot even after prices or controls change.
+            if ($staffCode !== null && ($earlier = $this->earlierSubmission((int) $form->id, $request->input('client_submission_key')))) {
+                $replayFingerprint = $this->fingerprint($form, $clean, $staffCode, null, $request->boolean('cover_fees'), $payWith, $staffEntry);
+                $returnTo = null;
+                if ($earlier->matchesPayload($replayFingerprint) && $earlier->payment_method === FormResponse::METHOD_ONLINE && ! $earlier->isPaid()) {
+                    $returnTo = FormPaymentReturn::base($request, (int) $form->masjid_id, ['masjid_id' => $masjidId, 'form_id' => $form->id]);
+                    if ($returnTo === null) {
+                        return response()->api(422, FormPaymentReturn::REFUSED, null);
+                    }
+                }
+
+                return $this->replayOf($form, $earlier, $replayFingerprint, $returnTo);
+            }
+
             // A retry of a card registration whose page was PINNED to an account
             // (DECISIONS.md 2026-09-15), arriving after card payment became unavailable
             // (unlinked, or the holder disconnected): it gets its own row's answer, never
@@ -321,10 +338,8 @@ class FormSubmissionsController extends Controller
                 && $form->takesOfficePayment()
                 && ($payWith === SubmitFormResponseRequest::PAY_WITH_OFFICE || ($payWith === null && ! $form->canTakeCardNow() && $pinnedReplay === null));
 
-            // A card registration: no staff credential and not the office, on a form that
-            // takes cards. A staff entry on the same form is cash, whatever the card
-            // switch says.
-            $online = $staffCode === null && ! $office && $form->takesOnlinePayment();
+            // Missing staff controls preserve cash; an explicit card choice waits for Stripe.
+            $online = $staffCode !== null ? $staffEntry['route'] === 'card' : (! $office && $form->takesOnlinePayment());
 
             // Never free by accident. Only a form that takes payment is asked, so every
             // other form keeps exactly the behaviour it had. The card fee is priced here,
@@ -333,9 +348,11 @@ class FormSubmissionsController extends Controller
             $quote = null;
 
             if ($form->takesPayment()) {
-                $quote = FormPayment::quote($form, $clean, $online && $request->boolean('cover_fees'), $online);
+                $quote = $staffCode !== null
+                    ? FormStaffEntry::quote($form, $clean, $staffEntry, $request->boolean('cover_fees'))
+                    : FormPayment::quote($form, $clean, $online && $request->boolean('cover_fees'), $online);
 
-                if ($quote === null || $quote['total_minor'] <= 0) {
+                if ($quote === null || ($quote['amount_due_minor'] <= 0 && ! ($staffCode !== null && $staffEntry['unit'] === 0 && ! $online))) {
                     return $this->owesNothing($form, $quote);
                 }
             } elseif ($form->pricesByCount() && $form->priceFor($clean) === null) {
@@ -378,10 +395,10 @@ class FormSubmissionsController extends Controller
                 }
             }
 
-            $fingerprint = $this->fingerprint($form, $clean, $staffCode, $quote, $request->boolean('cover_fees'), $payWith);
+            $fingerprint = $this->fingerprint($form, $clean, $staffCode, $quote, $request->boolean('cover_fees'), $payWith, $staffCode !== null ? $staffEntry : []);
 
             try {
-                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office, $reserveOn): array {
+                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office, $reserveOn, $staffEntry): array {
                     // Re-read inside the transaction and lock, so two submissions racing for
                     // the last place cannot both pass the capacity check. The counter is the
                     // thing capacity is enforced against, so it must be read under the lock
@@ -414,6 +431,14 @@ class FormSubmissionsController extends Controller
                         if ($live === null || ! $live->isUsable()) {
                             return ['refused', null];
                         }
+
+                        $quote = FormStaffEntry::quote($locked, $clean, $staffEntry, $request->boolean('cover_fees'));
+                        if ($quote === null || ($quote['amount_due_minor'] <= 0 && ! ($staffEntry['unit'] === 0 && ! $online))) {
+                            return ['nothing', null];
+                        }
+                        if ($online && ($refusal = FormResponseCheckoutService::refusal(Masjid::find($masjidId), $quote['total_minor'])) !== null) {
+                            throw ValidationException::withMessages(['staff_pay_with' => $refusal]);
+                        }
                     }
 
                     // The date, under the form lock every submission for it queues on: held by
@@ -432,7 +457,7 @@ class FormSubmissionsController extends Controller
                         $schema,
                         $clean,
                         match (true) {
-                            $staffCode !== null => FormResponseWriter::LEG_STAFF,
+                            $staffCode !== null && ! $online => FormResponseWriter::LEG_STAFF,
                             $online => FormResponseWriter::LEG_ONLINE,
                             $office => FormResponseWriter::LEG_OFFICE,
                             default => FormResponseWriter::LEG_NONE,
@@ -447,14 +472,25 @@ class FormSubmissionsController extends Controller
                         $fingerprint,
                         $reserveOn,
                         $uploads,
+                        $staffCode !== null && ($staffEntry['unit'] !== null || $staffEntry['explicit_route'] || $locked->allowsStaffPriceOverride()) ? [
+                            'staff_code_id' => $live->getKey(),
+                            'list_unit_price_minor' => $quote['list_unit_minor'],
+                            'staff_unit_price_minor' => $staffEntry['unit'],
+                            'staff_holder_name' => $live->holder_name,
+                            'staff_payment_method' => $staffEntry['route'],
+                        ] : [],
                     );
 
                     // Cash its holder owes, in the transaction that wrote the row: the row
                     // never exists unpaid, and use_count moves with it.
-                    if ($staffCode !== null && ! $created->settleCash($staffCode)) {
+                    if ($staffCode !== null && ! $online && ! $created->settleCash($staffCode)) {
                         // Unreachable — the code is locked above and the row is new — so
                         // a false here is a bug: loud, and the row rolls back with it.
                         throw new LogicException("Staff code {$staffCode->getKey()} did not settle the entry it was checked for.");
+                    }
+
+                    if ($staffCode !== null && $online) {
+                        $live->recordUse();
                     }
 
                     return ['created', $created];
@@ -481,6 +517,10 @@ class FormSubmissionsController extends Controller
 
             if ($outcome === 'refused') {
                 return FormStaffCodes::refusedResponse();
+            }
+
+            if ($outcome === 'nothing') {
+                return $this->owesNothing($form, null);
             }
 
             if ($outcome === 'date_taken') {
@@ -519,6 +559,8 @@ class FormSubmissionsController extends Controller
             FormNotifier::submitted($form, $response);
 
             return $this->accepted($form, $response);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'failed', 'data' => $e->errors()], 422);
         } catch (\Exception $e) {
             return response()->api(500, Errors::publicMessage($e), null);
         }
@@ -582,7 +624,7 @@ class FormSubmissionsController extends Controller
      * @param  array<string,mixed>|null  $quote  FormPayment::quote()
      * @return array<string,mixed>
      */
-    private function fingerprint(Form $form, array $clean, ?FormStaffCode $staffCode, ?array $quote, bool $coverFees, ?string $payWith): array
+    private function fingerprint(Form $form, array $clean, ?FormStaffCode $staffCode, ?array $quote, bool $coverFees, ?string $payWith, array $staffEntry = []): array
     {
         $fingerprint = [
             'data' => $clean,
@@ -596,7 +638,7 @@ class FormSubmissionsController extends Controller
             $fingerprint['pay_with'] = $payWith;
         }
 
-        return $fingerprint;
+        return $staffEntry !== [] ? array_replace($fingerprint, FormStaffEntry::fingerprint($staffEntry, $coverFees)) : $fingerprint;
     }
 
     /**
@@ -643,7 +685,7 @@ class FormSubmissionsController extends Controller
             $page = $fresh ? $checkout->checkout($response, $returnTo) : $checkout->reopen($response, $returnTo);
         } catch (FormCheckoutRefused $e) {
             return response()->api(422, $e->getMessage(), $e->answer($this->answerFor($form, $response)));
-        } catch (\Stripe\Exception\ExceptionInterface $e) {
+        } catch (ExceptionInterface $e) {
             FormResponseCheckoutService::reportFailure($e, $response);
 
             return response()->api(422, FormResponseCheckoutService::COULD_NOT_OPEN, $this->answerFor($form, $response));
@@ -705,6 +747,10 @@ class FormSubmissionsController extends Controller
                 'total_minor' => $response->total_minor,
                 'currency' => $response->currency,
             ];
+        }
+
+        if ($response->list_unit_price_minor !== null) {
+            $data['price_breakdown'] = $response->priceBreakdown();
         }
 
         $whatsapp = $form->whatsappUrl();

@@ -178,6 +178,7 @@ final class FormPayment
      * @return array{
      *     currency: string,
      *     unit_minor: int,
+     *     list_unit_minor: int,
      *     quantity: int,
      *     amount_due_minor: int,
      *     fee_covered_minor: int,
@@ -193,7 +194,8 @@ final class FormPayment
         array $data,
         bool $coverFees = false,
         bool $online = false,
-        ?CarbonInterface $at = null
+        ?CarbonInterface $at = null,
+        ?int $staffUnitMinor = null
     ): ?array {
         $price = $form->priceFor($data, $at);
 
@@ -207,6 +209,14 @@ final class FormPayment
         // row written some other way. A negative line is a refund nobody asked for.
         if ($unit < 0) {
             throw new LogicException("Form {$form->id} has a negative price, so nothing can be charged for it.");
+        }
+
+        $listUnit = $unit;
+        if ($staffUnitMinor !== null) {
+            if ($staffUnitMinor < 0 || $staffUnitMinor > $listUnit) {
+                throw new LogicException('A staff unit price must stay within the list price.');
+            }
+            $unit = $staffUnitMinor;
         }
 
         $quantity = $price['quantity'];
@@ -231,6 +241,7 @@ final class FormPayment
         return [
             'currency' => $currency,
             'unit_minor' => $unit,
+            'list_unit_minor' => $listUnit,
             'quantity' => $quantity,
             'amount_due_minor' => $amountDue,
             'fee_covered_minor' => $feeCovered,
@@ -281,7 +292,7 @@ final class FormPayment
         return $currency !== '' ? $currency : 'usd';
     }
 
-    private static function lineName(Form $form, ?string $tierLabel): string
+    public static function lineName(Form $form, ?string $tierLabel): string
     {
         $name = trim((string) $form->name);
         $name = $name !== '' ? $name : 'Registration';
