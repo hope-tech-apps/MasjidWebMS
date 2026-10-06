@@ -205,7 +205,7 @@ watch([() => event.value, () => end_time.value], () => {
         title.value = event.value.title,
             details.value = event.value.details,
             place.value = event.value.place,
-            link.value = event.value.link,
+            link.value = event.value.link ?? '',
             start_date.value = event.value.start.split(' ')[0],
             end_date.value = event.value.end.split(' ')[0],
             start_time.value = event.value.start.split(' ')[1].slice(0, 5),
