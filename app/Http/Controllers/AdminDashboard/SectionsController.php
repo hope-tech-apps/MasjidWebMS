@@ -15,7 +15,7 @@ use Illuminate\Http\Response;
 class SectionsController extends Controller
 {
     /**
-     * Get all sections for a masjid (sections library)
+     * Get all sections for a masjid, including the section picker's type labels.
      */
     public function index($masjid_id)
     {
@@ -26,6 +26,8 @@ class SectionsController extends Controller
                 ->with('pages')
                 ->orderBy('created_at', 'desc')
                 ->get();
+
+            $sections->each(fn($section) => $section->setAttribute('section_type_label', $section->type_label));
 
             return response()->json([
                 'status' => 'success',
