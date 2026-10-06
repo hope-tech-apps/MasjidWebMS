@@ -83,6 +83,31 @@ class FormResponseWriterTest extends TestCase
     }
 
     #[Test]
+    public function a_staff_cash_row_without_audit_fields_keeps_the_quoted_decimal_despite_a_stale_schema(): void
+    {
+        $form = $this->festivalForm();
+        $schema = FormSchema::for($form);
+        $clean = $schema->only($this->twoTickets());
+        $this->assertSame(30.0, $schema->amountDue($clean));
+
+        $settings = $form->settings;
+        $settings['fee']['amount'] = 17.35;
+        Form::whereKey($form->id)->update(['settings' => json_encode($settings)]);
+
+        $row = DB::transaction(function () use ($form, $schema, $clean): FormResponse {
+            $locked = Form::whereKey($form->id)->lockForUpdate()->firstOrFail();
+            $quote = FormPayment::quote($locked, $clean, false, false);
+            $this->assertSame(3470, $quote['amount_due_minor']);
+
+            return (new FormResponseWriter)->write($locked, $schema, $clean, FormResponseWriter::LEG_STAFF, $quote);
+        })->fresh();
+
+        $this->assertSame(3470, $row->amount_due_minor);
+        $this->assertNull($row->staff_payment_method);
+        $this->assertSame('34.70', $row->amount_due);
+    }
+
+    #[Test]
     public function it_writes_an_unpaid_card_row_from_the_price_snapshot(): void
     {
         $form = $this->festivalForm();

@@ -16,7 +16,9 @@ use App\Support\FormCashTotals;
 use App\Support\FormInsights;
 use App\Support\FormNotifier;
 use App\Support\FormStaffCodes;
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -134,6 +136,50 @@ class FormStaffPricingTest extends TestCase
         $this->assertSame(1, $this->code->fresh()->use_count);
         $this->assertStringNotContainsString('Staff member', $answer->getContent());
         $this->assertSame([], self::$pages);
+    }
+
+    #[Test]
+    public function plain_staff_cash_uses_the_locked_price_for_the_decimal_with_the_override_switch_off(): void
+    {
+        $this->payment(['staffPriceOverride' => false]);
+        $settings = $this->form->settings;
+        $settings['fee']['amount'] = 17.35;
+
+        // Save a price change at the transaction boundary, before the locked re-read.
+        $changed = false;
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+        $events = clone $dispatcher;
+        $connection->setEventDispatcher($events);
+        $events->listen(TransactionBeginning::class, function () use ($settings, &$changed): void {
+            if ($changed) {
+                return;
+            }
+
+            $changed = true;
+            Form::whereKey($this->form->id)->update(['settings' => json_encode($settings)]);
+        });
+
+        try {
+            $answer = $this->submit(formEncoded: true)->assertOk()
+                ->assertJsonPath('data.amount_due_minor', 3470)
+                ->assertJsonPath('data.total_minor', 3470);
+        } finally {
+            $connection->setEventDispatcher($dispatcher);
+        }
+
+        $this->assertTrue($changed, 'The price changed after the initial form read.');
+        $row = FormResponse::sole();
+        $this->assertSame('cash', $row->paid_via);
+        $this->assertSame('paid', $row->payment_status);
+        $this->assertSame(3470, $row->amount_due_minor);
+        $this->assertSame(3470, $row->total_minor);
+        $this->assertSame(1735, $row->unit_price_minor);
+        $this->assertNull($row->staff_payment_method);
+        $this->assertNull($row->list_unit_price_minor);
+        $this->assertSame(1, $this->code->fresh()->use_count);
+        $this->assertSame('34.70', $row->amount_due);
+        $this->assertEquals(34.70, $answer->json('data.amount_due'));
     }
 
     #[Test]

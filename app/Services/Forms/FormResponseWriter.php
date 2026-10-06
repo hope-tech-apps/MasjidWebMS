@@ -183,9 +183,9 @@ final class FormResponseWriter
             ];
         }
 
-        if ($staffEntry !== []) {
+        if ($leg === self::LEG_STAFF || $staffEntry !== []) {
             $guarded += $staffEntry;
-            // The decimal powers older clients and insights; it must agree with the cents.
+            // Staff quotes are refreshed under the lock, even without audit fields; the decimal must agree.
             $guarded['amount_due'] = intdiv($quote['amount_due_minor'], 100).'.'.str_pad((string) ($quote['amount_due_minor'] % 100), 2, '0', STR_PAD_LEFT);
         }
 
