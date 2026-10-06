@@ -150,21 +150,34 @@ class QueueRetryWindowTest extends TestCase
         $retryAfter = (int) config('queue.connections.database.retry_after');
         $this->assertGreaterThan($this->workerOptions()->timeout, $retryAfter);
 
-        foreach (['Jobs', 'Mail'] as $directory) {
-            foreach (File::allFiles(app_path($directory)) as $file) {
-                $class = 'App\\'.$directory.'\\'.str_replace('/', '\\', substr($file->getRelativePathname(), 0, -4));
-                $reflection = new ReflectionClass($class);
-                if (! $reflection->implementsInterface(ShouldQueue::class)) {
-                    continue;
-                }
+        // Every queued class under app/, wherever it lives: the next long job
+        // will not necessarily be added to Jobs/ or Mail/.
+        $checked = 0;
+        foreach (File::allFiles(app_path()) as $file) {
+            if ($file->getExtension() !== 'php' || ! str_contains($file->getContents(), 'ShouldQueue')) {
+                continue;
+            }
 
-                $timeout = $reflection->getDefaultProperties()['timeout'] ?? null;
-                if ($timeout !== null) {
-                    $this->assertGreaterThan(0, $timeout, "{$class} must have a finite timeout.");
-                    $this->assertGreaterThan($timeout, $retryAfter, "{$class} timeout must be below database retry_after.");
-                }
+            $class = 'App\\'.str_replace('/', '\\', substr($file->getRelativePathname(), 0, -4));
+            if (! class_exists($class)) {
+                continue;
+            }
+
+            $reflection = new ReflectionClass($class);
+            if (! $reflection->implementsInterface(ShouldQueue::class)) {
+                continue;
+            }
+
+            $checked++;
+            $timeout = $reflection->getDefaultProperties()['timeout'] ?? null;
+            if ($timeout !== null) {
+                $this->assertGreaterThan(0, $timeout, "{$class} must have a finite timeout.");
+                $this->assertGreaterThan($timeout, $retryAfter, "{$class} timeout must be below database retry_after.");
             }
         }
+
+        // A scan that finds nothing passes for the wrong reason.
+        $this->assertGreaterThan(5, $checked, 'The scan found too few queued classes to be believed.');
     }
 
     private function job(string $class): ShouldQueue
