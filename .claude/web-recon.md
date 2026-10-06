@@ -6,6 +6,14 @@ dirty: 2
 mode: full
 kit: /Users/moneebsayed/.claude/engineering-excellence
 
+> **This recon stops at cf7bc9b5.** Two ships reached `main` after it (984885cc and 95e9e70a,
+> 2026-10-05) and nothing below describes them: the private disk no longer serves files
+> (`config/filesystems.php`), `GET /storage/{missing}` answers 404 ahead of the SPA catch-all
+> (`routes/web.php`), page documents (`PageDocumentsController`, `app/Support/PageDocuments.php`),
+> file-name rules on every public picture upload, and nginx answering `/storage` from an
+> allowlist (`deploy/nginx/manara-storage.conf`). That list is from the shipping session's note
+> and the changed-file list (98 files), not from a re-read. Read those areas at `HEAD`.
+
 # Recon: MasjidWebMS web platform
 
 ## Evidence and binding instructions
