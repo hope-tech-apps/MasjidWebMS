@@ -1,320 +1,210 @@
-commit: 4df524216d429457727b115c2cadecfa71158815
+commit: cf7bc9b54af6bd04ed1038cf6139de3a720e38ca
 platform: web
-scope: resources/vue-app (plus the Blade shell, SecurityHeaders and the admin routes it calls)
-generated: 2026-09-23
-dirty: clean
-mode: quick (the five quick axes plus the nine briefed live-preview questions; stopped early at the coordinator's request)
+scope: .
+generated: 2026-10-05
+dirty: 2
+mode: full
 kit: /Users/moneebsayed/.claude/engineering-excellence
 
-# Recon: MasjidWebMS admin SPA, web
+> **This recon stops at cf7bc9b5.** Two ships reached `main` after it (984885cc and 95e9e70a,
+> 2026-10-05) and nothing below describes them: the private disk no longer serves files
+> (`config/filesystems.php`), `GET /storage/{missing}` answers 404 ahead of the SPA catch-all
+> (`routes/web.php`), page documents (`PageDocumentsController`, `app/Support/PageDocuments.php`),
+> file-name rules on every public picture upload, and nginx answering `/storage` from an
+> allowlist (`deploy/nginx/manara-storage.conf`). That list is from the shipping session's note
+> and the changed-file list (98 files), not from a re-read. Read those areas at `HEAD`.
 
-## Stacks
-- The kit's detectors (run from the root) matched **web, backend**.
-- **Web: a Vite SPA with Vue and no meta-framework.** Declared ranges: `vite ^6.0.11`, `@vitejs/plugin-vue ^5.2.1`, `vue ^3.5.13`, `vue-router ^4.5.0`, `pinia ^2.3.1`, `axios ^1.7.9`, `bootstrap ^5.3.3`, `vuedraggable ^4.1.0`, `vee-validate ^4.15.0` + `yup`, `sweetalert2`, `dompurify`, `typescript ^5.7.3` (package.json:9-48).
-  - Lockfile: `package-lock.json` (npm). The lockfile-resolved versions were **not verified**.
-  - Loaded `platforms/web/stacks/vite-spa.md` (Version policy and checklist only).
-- Entry chain: `vite.config.js:11` input `resources/js/app.js`, which imports `../vue-app/main` (resources/js/app.js:17). The `@` alias points at `resources/vue-app` (vite.config.js:18).
-- Backend: Laravel. The version comes from CLAUDE.md ("Laravel 11 + PHP 8.2") and was **not verified** against composer.lock.
-- **Stack that is absent but matters:** the public site is a separate Nuxt repo (`~/Developer/burlington-masjid-site`, per docs/live-preview-brief.md:42-48). It is not in this tree and was not read.
+# Recon: MasjidWebMS web platform
 
-## Binding instructions
-- **`CLAUDE.md`** (root): tenancy by `masjid_id`, app-layer only.
-- **`.claude/rules/shipping.md`**: booleans are sent as `"1"`/`"0"`. Adding a form field means two edits, the template and the serialiser. Drive the real page before calling it shipped.
-- **`.claude/rules/environments.md`**:
-  - `npm run build:prod` is **forbidden**; `VITE_APP_URL` must be empty.
-  - Ship only with `scripts/ship.sh`.
-  - Everything goes to staging first.
-- **`.claude/rules/section-types.md`**: a section type lands in 7 places. Enforced by the lint `OfferingSectionTypeTest::every_section_type_is_wired_into_the_spa`.
-- **`.claude/rules/generated-urls.md`**: no URL that outlives its request may be built from the request. Use `SiteUrl`. Enforced by `HostHeaderUrlIntegrityTest`.
-- **`.claude/rules/auth-permissions.md`**:
-  - Modules are read through `moduleIsOff` (fails open).
-  - Never put a module key on `requiresCapability`.
-  - SuperAdmins pass every `capability:` gate.
-- **`resources/vue-app/components/sections/editors/CLAUDE.md:9-19`**: the editor contract is `modelValue`/`update:modelValue` only. The modal owns saving.
-- **`docs/live-preview-brief.md:54-81`**: eight hard requirements for this feature. The ones that bind the SPA:
-  - rule 4: the admin CSP must allow the renderer as a frame source;
-  - rule 3: postMessage only from the admin origin;
-  - rule 5: the tenant comes from the token, not the Host header.
+## Evidence and binding instructions
 
-## Shape and entry
-- `main.ts` does three things in order:
-  - `ApiService.init(app, API_CONFIG.base_url)` (main.ts:23);
-  - reads the token and dashboard masjid id from localStorage (main.ts:32-33) and fetches the auth user, then `masjidStore.fetchMasjid()` (main.ts:42-72);
-  - only then installs the router and mounts `#app` (main.ts:86-96).
-- Shell: `resources/views/vue-app-index.blade.php:90-91` (`<body id="app"><admin-dashboard>`).
+This report describes the requested commit in `MasjidWebMS-docs`. Verification consisted of source reads, manifest and lockfile inspection, pruned searches and read-only Git inspection. No dependencies were installed; no builds, tests, project scripts or network commands were run. Runtime behavior and deployment state are **not verified**. The report is returned as Markdown; saving `.claude/web-recon.md` was not performed under the read-only filesystem restriction.
 
-## Toolchain and floor
-| Axis | Value | Source |
+The worktree was initially clean. At the final inspection, another writer had modified `CLAUDE.md` and `.claude/backend-recon.md`; `HEAD` remained the requested commit. Root instruction references below use `git show HEAD:CLAUDE.md`, while the inspected application sources remained unchanged. The locally stored `origin/main` reference advanced during reconnaissance and was not used to change this report’s source snapshot.
+
+The committed root instructions identify a tenant-based Laravel application, require tenant isolation in application code, and explicitly state that MySQL provides no row-level security. They require tenant-owned CRM models to use `BelongsToMasjid`, server-derived tenant identity, and cross-tenant feature tests. Enforcement combines written rules, model scopes, middleware and tests; the instructions themselves are not an executable security boundary. (`CLAUDE.md:3`, `CLAUDE.md:5`, `CLAUDE.md:364`, `CLAUDE.md:367`.)
+
+Path rules further separate staff authentication guards, tenant scoping, private uploads and minors’ data. Private uploads must follow an authenticated parent chain; a guardian relationship does not itself establish consent. Section editors emit model updates, while their containing modal owns validation, uploads and saving. These are binding conventions for changes in their respective areas. (`.claude/rules/auth-permissions.md:12`, `.claude/rules/tenant-scoping.md:13`, `.claude/rules/private-uploads.md:38`, `.claude/rules/groups.md:447`, `resources/vue-app/components/sections/editors/CLAUDE.md:9`.)
+
+Shipping rules identify `scripts/ship.sh` as the sanctioned path, separate frontend publication from PHP deployment, forbid `build:prod`, and require an empty frontend API base for the shared bundle. Production work still requires the owner’s approval under the supplied instructions. No shipping operation was performed. (`.claude/rules/environments.md:55`, `.claude/rules/environments.md:62`, `.claude/rules/environments.md:87`, `.claude/rules/environments.md:96`.)
+
+`STATE.md` and `PLAN.md` were absent in this worktree. `DECISIONS.md` and `ASSUMPTIONS.md` were read. Recorded decisions include preview-fingerprint echoing and per-student transactions for whole-class moves; they remain accepted decisions. Historical renderer measurements in `ASSUMPTIONS.md` are recorded assumptions or past observations, not current runtime evidence. (`CLAUDE.md:19`, `DECISIONS.md:7783`, `DECISIONS.md:7785`, `ASSUMPTIONS.md:11`.)
+
+## Project shape and detected stacks
+
+The web platform is a Laravel-hosted Vue 3 SPA with several authentication and navigation realms: staff administration, SuperAdmin/Studio, family, teacher, lunch and public organisation portals. The public website renderer is an external integration; its implementation was not inspected. This repository contains the SPA and its Laravel endpoints, rather than a Nuxt application. (`resources/vue-app/router/routes/routes.ts:18`, `resources/vue-app/router/routes/routes.ts:25`, `resources/vue-app/router/routes/routes.ts:30`, `config/services.php:310`.)
+
+The matching web addendum is `vite-spa.md`: Vite bundles Vue directly, with Laravel integration and no meta-framework dependency in the manifest. PHP/Laravel is also a detected backend stack, surveyed here where it defines web behavior. The selected root is this worktree, not the older shared checkout or another Manara repository. (`package.json:15`, `package.json:21`, `package.json:40`, `composer.json:16`, `vite.config.js:8`.)
+
+The tracked-file census was **pruned** before counting: dependency, build, cache and generated-source trees were excluded. `resources/vue-app` contains 599 files, including 263 Vue files; its `views` subtree contains 141 Vue files and `components` contains 116. The stores subtree contains 53 TypeScript files, which is a file count, not a count of instantiated stores. Representative directory anchors are the root component, page view, section modal and store registration. (`resources/vue-app/AdminDashboardApp.vue:9`, `resources/vue-app/views/dashboard/pages/PagesView.vue:159`, `resources/vue-app/components/modals/SectionFormModal.vue:298`, `resources/vue-app/stores/index.ts:4`.)
+
+The Vue generation is overwhelmingly Composition API: 262 of the 263 Vue files use `<script setup>`. The remaining dashboard view is a template-only stub whose route is commented out. This census does not establish a substantial Options API UI migration. Pinia does contain both setup stores and an object-style family store. (`resources/vue-app/views/dashboard/DashboardView.vue:1`, `resources/vue-app/router/routes/dashboardLayoutRoutes.ts:24`, `resources/vue-app/stores/masjid/pagesStore.ts:10`, `resources/vue-app/stores/familyStore.ts:23`.)
+
+## Toolchain versions and target floor
+
+Manifest ranges describe allowed versions; lockfiles describe the resolved dependency graph. CI establishes the configured validation runtime. None establishes the currently deployed runtime without an environment check.
+
+| Axis | Declared requirement | Resolved or configured authority |
 |---|---|---|
-| Vite | ^6.0.11 declared | package.json:26 |
-| Vue | ^3.5.13 declared | package.json:44 |
-| TypeScript | strict: true | tsconfig.json:5 |
-| Typecheck | **none runs**; no `vue-tsc` dependency | package.json:4-8 |
-| Build-time env | only `VITE_APP_URL`, optional, empty when deployed | env.d.ts:17-24, appConfigConstants.ts:11 |
-| Browsers | autoprefixer "last 2 versions, >1%, iOS>=12, Safari>=12" | vite.config.js:38-43 |
-| Node engines | none declared | package.json |
+| PHP | `^8.2` | Laravel’s locked requirement also permits PHP 8.2; CI uses PHP 8.3. (`composer.json:12`, `composer.lock:1535`, `.github/workflows/tests.yml:28`.) |
+| Laravel | `^12.0` | **12.64.0** in the lockfile; this wins over root documentation saying Laravel 11. (`composer.json:16`, `composer.lock:1535`, `CLAUDE.md:3`.) |
+| Sanctum | `^4.0` | **4.3.3**. (`composer.json:17`, `composer.lock:1816`.) |
+| Vue | `^3.5.13` | **3.5.13**; source generation is Composition API. (`package.json:40`, `package-lock.json:4779`, `resources/vue-app/AdminDashboardApp.vue:13`.) |
+| Vite | `^6.0.11` | **6.4.2**; locked engines allow Node 18, 20 or 22+. (`package.json:26`, `package-lock.json:4663`.) |
+| Vue Vite plugin / Laravel Vite plugin | `^5.2.1` / `^1.2.0` | **5.2.1 / 1.2.0**, with Vite 5/6 peer compatibility. (`package.json:15`, `package.json:21`, `package-lock.json:1512`, `package-lock.json:3329`.) |
+| TypeScript | `^5.7.3` | **5.7.3**. (`package.json:25`, `package-lock.json:4577`.) |
+| Pinia / Vue Router | `^2.3.1` / `^4.5.0` | **2.3.1 / 4.5.0**. (`package.json:37`, `package.json:42`, `package-lock.json:3737`, `package-lock.json:4833`.) |
+| Axios / Bootstrap / DOMPurify | Manifest ranges | **1.16.1 / 5.3.3 / 3.4.4**. (`package-lock.json:1881`, `package-lock.json:1920`, `package-lock.json:2367`.) |
+| Vee Validate | `^4.15.0` | **4.15.0**. (`package.json:39`, `package-lock.json:4643`.) |
+| Pest / PHPUnit / Pint | Pest and Pint ranges | **3.8.7 / 11.5.56 / 1.29.3**. (`composer.json:30`, `composer.json:34`, `composer.lock:8948`, `composer.lock:10034`, `composer.lock:8638`.) |
+| Node / package manager | No root `engines` or `packageManager`; `.nvmrc` absent | CI uses **Node 22** and `npm ci`; npm lockfile is authoritative. Echo 2 independently requires Node 20+. (`package.json:1`, `.github/workflows/tests.yml:35`, `.github/workflows/tests.yml:56`, `package-lock.json:3320`.) |
 
-- Because nothing typechecks, `strict: true` does nothing in practice.
-- CI runs only `npm ci && npm run build` (.github/workflows/tests.yml:56-62).
+TypeScript is configured with `strict: true`, ESNext target/module and the `@` alias. Frontend tests are excluded from the project TypeScript include. There is no typecheck script among the declared npm scripts, and the inspected CI runs build and SPA tests without `vue-tsc` or `tsc`. Consequently, strict configuration does not establish an enforced type gate. (`tsconfig.json:3`, `tsconfig.json:5`, `tsconfig.json:15`, `tsconfig.json:29`, `package.json:4`, `.github/workflows/tests.yml:56`.)
 
-## Architecture
-- Pinia **setup stores**, one per domain (e.g. `stores/masjid/pagesStore.ts:10`). Each store calls a static `ApiService` and builds its URLs from `useMasjidStore().masjid.id`.
-- Views use Bootstrap 5 markup. Modals are hand-rolled overlays (`modal fade show d-block`, SectionFormModal.vue:2-3), not Bootstrap's JS modal.
-- Confirmations and toasts use SweetAlert (`Swal`, or `QSwal` from `core/plugins/SweetAlerts2`).
-- Some screens skip the store and call `ApiService` directly: ThemeSettingsView.vue:287,305 and SplashAnnouncementFormView.vue:225.
+The explicit browser list belongs to Autoprefixer: last two versions, greater than 1% usage, iOS 12+ and Safari 12+. It controls CSS prefixing, not JavaScript compatibility. Vite configuration does not specify an application `build.target`. An agreed and tested browser support floor is **not verified**. (`vite.config.js:34`, `vite.config.js:39`.)
 
-## State, navigation, data, persistence
-- **Router guard** (router.ts:16):
-  - `meta.requiresCapability` is checked against `masjid.capabilities[key] === true` for non-SuperAdmins (router.ts:73-75).
-  - `meta.requiresModule` goes through `moduleIsOff()` for non-SuperAdmins (router.ts:86-87).
-- **Persistence:** localStorage holds only `MASJID_APP_AUTH_TOKEN` and `MASJID_APP_DASHBOARD_MASJID_ID` (appConfigConstants.ts:1-4).
-- **Organisation switching:** request/response interceptors stamp and drop responses from a superseded tenant epoch (ApiService.ts:79-105).
+## Entry points and render strategy
 
-## 1. Page builder
-**Screens and routes** (pagesManagementRoutes.ts):
+Laravel configures ordinary web routes, API routes and separate admin, family, teacher and lunch route files. Middleware establishes trusted hosts, security headers, dynamic CORS and tenant/authentication aliases. The health endpoint is `/up`. (`bootstrap/app.php:31`, `bootstrap/app.php:37`, `bootstrap/app.php:39`, `bootstrap/app.php:49`, `bootstrap/app.php:87`, `bootstrap/app.php:120`.)
 
-| Path | View | Meta |
-|---|---|---|
-| `/masjid/pages` | PagesView.vue | `requiresCapability:'web_pages'`, `requiresModule:'website'`, allowedUsers SuperAdmin/MasjidAdmin (:4-18) |
-| `/masjid/sections-library` | SectionsLibraryView.vue | same (:19-33) |
-| `/masjid/pages/:pageId/sections` | PageSectionsView.vue | same (:34-48) |
+The web root returns the Vue shell or redirects a mapped portal host. A catch-all serves the shell for paths outside the API namespace. Therefore, an HTTP 200 shell response alone does not verify that a client route exists or renders successfully. Unsubscribe and account-deletion routes also have server-handled web endpoints outside the SPA. (`routes/web.php:82`, `routes/web.php:110`, `routes/web.php:130`, `routes/web.php:136`.)
 
-- Sidebar entry: `dashboardAsideMenuItems.ts:162-175`.
-- Backend mirror: `Route::middleware(['capability:web_pages','capability:website'])` (routes/admin.php:456). It sits inside `auth:sanctum` + `admin` + `tenant` (routes/admin.php:110).
+The Blade shell provides the Manara title, runtime environment and portal-tenant globals, Vite assets, and the `<admin-dashboard>` mount element. `resources/js/app.js` imports Vue startup; startup installs Bootstrap assets, custom styles, Pinia, API configuration, router and plugins before mounting `#app`. The root component renders the environment ribbon and `RouterView`. (`resources/views/vue-app-index.blade.php:8`, `resources/views/vue-app-index.blade.php:64`, `resources/views/vue-app-index.blade.php:84`, `resources/views/vue-app-index.blade.php:90`, `resources/js/app.js:17`, `resources/vue-app/main.ts:28`, `resources/vue-app/main.ts:105`, `resources/vue-app/AdminDashboardApp.vue:9`.)
 
-**Where a page's sections live while editing**
-- PageSectionsView keeps a component-local `sections = ref<PageSection[]>` (PageSectionsView.vue:139). It is filled from `pagesStore.fetchPageSections` and sorted by `order` (:163-165).
-- `pagesStore.currentPage` holds the page row (pagesStore.ts:14, :51).
-- There is no store-level draft of the sections.
+The audited administration, Studio and family screens use **client-side rendering and client-side loading**. Laravel supplies their shell and JSON endpoints; the inspected Vite entry does not establish Vue SSR, hydration, streaming or SSG. SSR/SSG and caching behavior of the external public renderer are **not verified**. (`resources/vue-app/main.ts:28`, `resources/vue-app/views/dashboard/pages/PagesView.vue:181`, `resources/vue-app/views/dashboard/super/studio/StudioView.vue:225`, `resources/vue-app/views/family/FamilyClass.vue:2174`.)
 
-**Edit flow**
-- Clicking Edit opens `SectionFormModal` with the section as a prop (PageSectionsView.vue:111-117, :183-186).
-- The modal keeps its own `formData` ref: `{section_type, title, content, order, platforms, is_active, settings}` (SectionFormModal.vue:388-397), seeded from the prop (:481-494).
-- The type's editor is bound with `<component :is="currentEditor" v-model="formData.content">` (:282-285).
-- **Unsaved data exists only in this modal's `formData.value`**, plus the pending image `File`s in the `useSectionImages()` instance the modal `provide`s (SectionFormModal.vue:377-380; useSectionImages.ts:9).
-- Closing the modal discards both.
+## Architecture and complete feature paths
 
-**editorMap**
-- `SectionFormModal.vue:424-468`, typed `Record<SectionType, any>`, with 27 entries matching the `SectionType` union (PageSection.ts:9-41).
-- Palette metadata comes from `GET /api/admin/masjids/{id}/section-types` (pagesStore.ts:255-268). Each entry is a `SectionTypeInfo` carrying `default_content`, `has_renderer`, `renderer_note` and `module_off_note` (PageSection.ts:278-310).
+The observed architecture is Vue views and composables over Pinia stores or dedicated HTTP clients, backed by Laravel middleware, request validation, controllers, models and resources. It is not one uniform frontend repository abstraction: page authoring uses a store, Studio adds domain helpers, and family class detail performs guarded requests from the view. (`resources/vue-app/stores/masjid/pagesStore.ts:24`, `resources/vue-app/core/studio/autosave.ts:71`, `resources/vue-app/views/family/FamilyClass.vue:2180`.)
 
-**Save: one section at a time, never the whole page**
-- The request body is **multipart `FormData`** (SectionFormModal.vue:583-605):
-  - `section_type`, `title`;
-  - `content` as a JSON string;
-  - `order`;
-  - `platforms` as a JSON string;
-  - `is_active` as `'1'`/`'0'`;
-  - `settings`, only when not empty;
-  - one file per pending image, keyed by its content path (e.g. `image_url`, `members.0.photo_url`).
-- Before sending, `stripBase64Images` replaces every `data:image/…` string in `content` with `null` (:554-576).
-- Update: `_method=PUT` plus a POST to `/api/admin/masjids/{id}/pages/{pageId}/sections/{sectionId}` (:607-610 → pagesStore.ts:211-232).
-- Create: a POST to `.../pages/{pageId}/sections` (pagesStore.ts:185-206).
-- After success, the parent reloads the whole list (PageSectionsView.vue:193-195).
-- Server side (PageSectionsController.php):
-  - it **merges** top-level content keys into the stored ones (:140-155);
-  - it writes `order`/`platforms` to the pivot (:161-171);
-  - it attaches uploads through the media library and writes the URL back into `content` (:372-418).
+**Page list and editing:** `PagesView` reads store pagination, refetches on page changes and after saves, and sends drag ordering to the store. The store calls tenant-addressed admin endpoints. The controller paginates 15 records and creates through the organisation relationship using a validated request. Tests exercise the real section serialization and Laravel method-override path. (`resources/vue-app/views/dashboard/pages/PagesView.vue:175`, `resources/vue-app/views/dashboard/pages/PagesView.vue:205`, `resources/vue-app/stores/masjid/pagesStore.ts:29`, `app/Http/Controllers/AdminDashboard/PagesController.php:29`, `app/Http/Controllers/AdminDashboard/PagesController.php:51`, `tests/Feature/OfferingSectionTypeTest.php:269`.)
 
-**How images are uploaded**
-- `ImageDraggableInput` reads the file as a data URL (ImageDraggableInput.vue:322,379).
-- The editor puts that data URL into `content` and queues the `File` (e.g. ImageSectionEditor.vue:104-114).
-- So **before save, an image in `formData.content` is a `data:` URL.**
+**Section detail and mutation:** `PageSectionsView` fetches the page and its sections, sorts local placement order, and reloads preview state. `SectionFormModal` selects an editor from a typed map, serializes content and platforms as JSON inside `FormData`, appends queued files, and uses `_method=PUT` for updates. Laravel resolves the section through its parent page, updates section content, then updates placement attributes. (`resources/vue-app/views/dashboard/pages/PageSectionsView.vue:194`, `resources/vue-app/components/modals/SectionFormModal.vue:480`, `resources/vue-app/components/modals/SectionFormModal.vue:703`, `resources/vue-app/components/modals/SectionFormModal.vue:729`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:136`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:177`.)
 
-**Other calls**
-- Reorder: drag-end fires **one JSON `PUT {order}` per section** in `Promise.all` (PageSectionsView.vue:206-214 → pagesStore.ts:164-180).
-- Detach: `DELETE .../pages/{p}/sections/{s}` (pagesStore.ts:237-250).
-- Attach from the library: JSON `POST .../sections/attach {section_id, order, platforms}` (pagesStore.ts:353-369).
+Sections are reusable records attached through `page_section`; order and platforms are pivot attributes. Editing shared section content can therefore affect other attached pages—**inferred from** the many-to-many relationship and section update, rather than verified in a browser. Same-type updates merge incoming content with stored content at the top level. (`app/Models/Page.php:47`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:153`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:162`.)
 
-**Sections are shared library rows**
-- Content lives on the `Section`; only `order`/`platforms` are per page (pagesStore.ts:311-313; PageSectionsController.php:129,158-171).
-- **Editing a section on one page changes every page that uses it.**
+**Studio provisioning:** the four-step view coordinates a draft store, options loading, autosave, navigation warnings and provisioning. The store carries `lock_version`, flushes edits before provisioning, and distinguishes conflict outcomes. The Laravel service locks the draft inside a transaction, rechecks version and logo state, provisions the organisation, marks the draft provisioned, cleans files on rollback, and reports post-commit invitation outcomes separately. (`resources/vue-app/views/dashboard/super/studio/StudioView.vue:148`, `resources/vue-app/views/dashboard/super/studio/StudioView.vue:244`, `resources/vue-app/stores/super/studioDraftStore.ts:324`, `resources/vue-app/stores/super/studioDraftStore.ts:607`, `app/Support/Studio/StudioProvisioning.php:105`, `app/Support/Studio/StudioProvisioning.php:147`, `app/Support/Studio/StudioProvisioning.php:170`.)
 
-**SectionsLibraryView**
-- It lists sections (`fetchSectionsLibrary`, SectionsLibraryView.vue:260), shows which pages use each one (:162-205), and deletes (:309).
-- It has no editor.
-- Whether `createSectionInLibrary`/`updateSectionInLibrary` (pagesStore.ts:293-330) have any caller is **not verified**.
+**Family class detail:** the family store establishes a per-school authenticated session; the dedicated client selects credentials for the request’s school. Class loading captures a run identity and rejects stale results before loading permitted feeds and child records. The controller filters membership/standing and computes disclosure permissions. Tenant-binding tests assert refusal when the bearer session is used for another organisation. (`resources/vue-app/stores/familyStore.ts:114`, `resources/vue-app/core/services/FamilyApiService.ts:82`, `resources/vue-app/views/family/FamilyClass.vue:1422`, `resources/vue-app/views/family/FamilyClass.vue:2181`, `app/Http/Controllers/Family/GroupsController.php:67`, `tests/Feature/FamilyTenantBindingTest.php:113`.)
 
-## 2. Theme editing
-- **Screen:** `ThemeSettingsView.vue`, titled "Brand Studio" (:6).
-  - It is a **tab** inside `MosqueDetailsTabsView.vue:53,95-96`, at route `/masjid/details` (dashboardLayoutRoutes.ts:32-39).
-  - That route has **no** `requiresCapability`/`requiresModule`.
-  - The backend `/theme` routes carry no capability gate either (routes/admin.php:407-410).
-- **No store.** Local `settingsModel = {primary_color, secondary_color, accent_color, background_color}` (:161-166).
-- **Calls:**
-  - `GET /api/admin/masjids/{id}/theme` (:287);
-  - `POST` to the same URL with that plain object, which the interceptor sends as **JSON** (:305; ApiService.ts:134-135).
-- **Payload:** four hex strings (#RGB, #RRGGBB or #RRGGBBAA) or `''` (:168-176; SaveThemeSettingsRequest.php:14-20).
-- **A client-side preview already exists.** `derived` is a TS port of `App\Support\DesignTokens` (:179-252), rendered as swatches and a mock card (:78-123).
-- **`tokens` JSON:** the backend accepts it (SaveThemeSettingsRequest.php:21-24; ThemeSettingsController.php:30-36).
-  - The SPA **never sends it**.
-  - `ThemeSetting.ts:1-10` has no `tokens` field.
-- **Fonts and header/footer *style* are not editable anywhere in the SPA.** A grep for `header_style|footer_style|font_family|heading_font|body_font` matched only flyer files.
-- **What does exist for header/footer:** header logo, footer logo, copyright text and app links, in the `GeneralSettingsView` tab (GeneralSettingsView.vue:17-65). It saves as multipart `POST .../general-settings` (:163-177).
-- Theme save flushes the mobile cache family (ThemeSettingsController.php:53).
+## State, persistence, data and concurrency
 
-## 3. Menu and page settings
-- **`PageFormModal.vue` fields:** `title, slug, order, is_active, show_in_menu, show_as_button, meta_description` (:168-176, :184-192).
-  - The slug is auto-generated on create only (:197-205).
-  - Save is JSON `PUT .../pages/{id}` or `POST .../pages` (:211-216 → pagesStore.ts:64-101).
-- **SEO:** `meta_description` only (the counter shows /160 characters, :115-121).
-- The backend also accepts `page_title` and a `page_title_background_image` file (UpdatePageRequest.php:38-45; Page.ts:8-9). The modal sends neither.
-- **Menu:** there is no separate menu editor.
-  - The menu is `show_in_menu` / `show_as_button` / `order` on pages.
-  - Reorder: drag in PagesView → JSON `POST .../pages/reorder {pages:[{id,order}]}` (PagesView.vue:219-227 → pagesStore.ts:374-388).
-  - `PageMenuItem` (Page.ts:21-26) has no reader in the SPA.
-  - Public read: `GET /api/v1/pages/menu` (routes/api_v1.php:168). The tenant is taken from the `masjid-id` request header (app/Traits/SearchableTrait.php:86).
+Pinia is installed with a tenant-reset plugin before stores are used. The plugin registers live stores, captures initial state and supplies reset behavior; selected identity/chrome stores are retained during tenant switching. It also checks for instantiated stores missing from its registration map. This is an application-level isolation mechanism, not a database boundary. (`resources/vue-app/stores/index.ts:15`, `resources/vue-app/stores/plugins/tenantStoreReset.ts:61`, `resources/vue-app/stores/plugins/tenantStoreReset.ts:80`, `resources/vue-app/stores/plugins/tenantStoreReset.ts:140`.)
 
-## 4. Splash pop-up
-- **Routes:** `/masjid/splash-announcements[/create|/:id/edit|/:id]`, all with `requiresModule:'splash'` (splashAnnouncementsManagementRoutes.ts:3-47). Backend: `capability:splash` (routes/admin.php:251-258).
-- **Store:** list, show and delete only (splashAnnouncementsStore.ts:19-58).
-- **Form** (SplashAnnouncementFormView.vue):
-  - Local `form` ref (`title, body, cta_label, cta_url, starts_at, ends_at, priority, is_active`) plus `imageFile` (:121-131).
-  - Save is **multipart** `POST` to `.../splash-announcements` on create, or `.../splash-announcements/{id}` on update (POST, not PUT) (:205-225).
-  - Dates are sent as ISO strings and `is_active` as `'1'`/`'0'` (:211-214).
-- **Type:** `SplashAnnouncement.ts:3-19`.
-- **Model:** many rows, each with a time window and a priority.
-- **Server:** each mutation flushes `MobileCache` SPLASH (SplashAnnouncementsController.php:80,130,155,182). The public current splash is served at `/{masjid_id}/splash` (routes/api.php:99).
+Staff startup reads a local bearer token and organisation selection, loads the authenticated user, then restores an allowed organisation. Switching increments the request epoch, resets tenant stores, loads the target organisation and increments the view generation. The dashboard keys `RouterView` by that generation, disposing component-local state as well as store state. (`resources/vue-app/main.ts:41`, `resources/vue-app/main.ts:51`, `resources/vue-app/main.ts:78`, `resources/vue-app/stores/tenantSwitchStore.ts:264`, `resources/vue-app/stores/tenantSwitchStore.ts:286`, `resources/vue-app/layouts/DashboardLayout.vue:40`.)
 
-## 5. ApiService and axios
-- **Base URL:** `import.meta.env.VITE_APP_URL ?? ''` (appConfigConstants.ts:11). It is empty in deployed builds (env.d.ts:4-6), so every call is **same-origin relative**.
-  - Separately, `vite.config.js:20-24` still defines `process.env.APP_URL`.
-- **Global defaults** (ApiService.ts):
-  - `withCredentials=true` (:28);
-  - `X-Requested-With` (:29);
-  - `Accept: application/json` and `Authorization: Bearer <token>` on `axios.defaults.headers.common` (:109-112);
-  - a default **`Content-Type: multipart/form-data` with no boundary** (:112, :116-118);
-  - `put`/`patch` rewrite that global default to `application/x-www-form-urlencoded` (:141-150).
-- **The interceptor decides the real encoding from the body type** (:40-64), and `post()` repeats the same logic per request (:126-138):
-  - `FormData`: the header is deleted so the browser adds a boundary;
-  - `URLSearchParams`: urlencoded;
-  - plain object: `application/json`.
-- **Bearer token:** read from localStorage, then `ApiService.setHeader(TOKEN)` (main.ts:32,41).
-- **Current masjid:** `useMasjidStore().masjid` (masjidStore.ts:21). `fetchMasjid` GETs `/api/admin/masjids/{id}/`, taking the id from `authStore.dashboardMasjidId` or localStorage (:70-93).
-- **Public site URL for a masjid: there is no reliable field.**
-  - The only candidate is `website_link` (Masjid.ts:47), typed by hand in MosqueDetailsView (:31-32, :284).
-  - It is validated as just `nullable|string` (UpdateMasjidDetailsRequest.php:14) and is a unique nullable column (2025_02_06_092023_create_masjids_table.php:39).
-  - There is no domain or host field. The renderer's host-to-organisation map lives in Cloudflare Pages `NUXT_TENANT_HOSTS` (docs/tenant-host-map.md:93-100,140).
-  - A planned `masjid_domains` table (live-preview-brief.md:85-86): whether it exists at this commit is **not verified**.
+Persistence includes staff token/tenant browser keys and separate family school slots. Family sign-out removes one school’s session; storage events synchronize other tabs. The audited sources do not establish a general offline database, service worker or durable mutation queue; those capabilities are **not verified**. (`resources/vue-app/core/constants/appConfigConstants.ts:1`, `resources/vue-app/stores/familyStore.ts:126`, `resources/vue-app/stores/familyStore.ts:132`, `resources/vue-app/layouts/FamilyLayout.vue:170`.)
 
-## 6. SPA shell and CSP
-**Blade shell** (`vue-app-index.blade.php`):
-- Figtree loaded from fonts.bunny.net (:11-12).
-- Montserrat self-hosted through `asset()` (:29-39).
-- Icons (:41-43).
-- **Inline scripts:** `window.__PORTAL_MASJID__` on hosts mapped in `config/portal.php` (:62-65), and `window.__APP_ENV__ = Environment::name()`, always (:84).
-- `@vite('resources/js/app.js')` (:86).
-- Both globals are declared in env.d.ts:39-45. There is no global for the admin's own origin or the renderer's URL.
+The staff API service uses global Axios defaults with credentials enabled. A request interceptor chooses encoding from the actual body: multipart boundaries are browser-generated for `FormData`, `URLSearchParams` is URL-encoded, and plain objects become JSON. Thus the older blanket “all writes are URL-encoded” rule is inaccurate. Responses and exception handling remain feature-specific; page list failures are logged, while section-fetch failure can return an empty array. (`resources/vue-app/core/services/ApiService.ts:24`, `resources/vue-app/core/services/ApiService.ts:40`, `.claude/rules/shipping.md:17`, `resources/vue-app/stores/masjid/pagesStore.ts:35`, `resources/vue-app/stores/masjid/pagesStore.ts:133`.)
 
-**Headers.** `SecurityHeaders` is appended to both the web and api stacks (bootstrap/app.php:89). It sets its headers with `replace=false` (SecurityHeaders.php:135). It sends:
-- `X-Frame-Options: DENY` (:36);
-- `Cross-Origin-Opener-Policy: same-origin` (:43);
-- the CSP (:114-134), exactly:
-  - `default-src 'self'`
-  - `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com[+app.url]`
-  - `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.bunny.net https://cdn.jsdelivr.net[+app.url]`
-  - `font-src 'self' https://fonts.gstatic.com https://fonts.bunny.net data:[+app.url]`
-  - `img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com[+app.url]`
-  - `connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com[+app.url]`
-  - **`frame-src 'self' https://www.google.com https://maps.google.com`** (never widened)
-  - **`frame-ancestors 'none'`**
-  - `form-action 'self'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests`
-  - There is **no `child-src`**.
+Family and teacher clients use their own Axios instances. Family removes inherited staff authorization and selects its token per URL; teacher requests also participate in tenant epochs. These are deliberate realm boundaries. The staff service comment saying teachers cannot switch organisations conflicts with the teacher client’s implementation. (`resources/vue-app/core/services/FamilyApiService.ts:62`, `resources/vue-app/core/services/FamilyApiService.ts:82`, `resources/vue-app/core/services/TeacherApiService.ts:59`, `resources/vue-app/core/services/TeacherApiService.ts:64`, `resources/vue-app/core/services/ApiService.ts:69`.)
 
-**Widened paths**
-- Only paths that start with `jummah-lunch` or `portal` (:93-103).
-- The widening appends `config('app.url')` to script, style, font, img and connect only (:105-112). **Never to frame-src.**
-- nginx adds no `X-Frame-Options` (deploy/TRUSTED-HOSTS-ENFORCEMENT.md:136-138).
+Concurrency uses promises, abort signals, epochs, debounce timers and local generation checks. A tenant switch replaces and aborts the preceding controller; stamped responses from an older epoch are dropped through an intentionally never-settling promise. That design protects abandoned views, but code awaiting such requests cannot rely on eventual settlement. Unstamped requests are explicitly outside this protection. (`resources/vue-app/core/tenancy/tenantRequests.ts:112`, `resources/vue-app/core/tenancy/tenantRequests.ts:134`, `resources/vue-app/core/tenancy/tenantRequests.ts:152`, `resources/vue-app/core/tenancy/tenantRequests.ts:162`.)
 
-## 7. Hosts serving the admin SPA
-**Production** (docs/tenant-host-map.md:31-33; environments.md table):
-- `masjid.hopetechapps.com`: DNS-only, `APP_URL`, the admin SPA.
-- `manara.hopetechapps.com`: proxied. It has no vhost of its own and reaches Laravel through `default_server`. It carries `/auth/sign-in` and the SPA. The Worker takes only `/`, `/masjids`, `/schools` and `/community`.
-- `portal.alrazischool.org`: same document root, own vhost, maps to organisation 14.
+Studio autosave serializes outstanding saves and checks its own epoch. A 409 disarms autosaving; other failures enter an error state. Page-section drag ordering instead issues parallel individual updates, so a failed batch can leave a partially applied order—**inferred from** `Promise.all` over separate requests. (`resources/vue-app/core/studio/autosave.ts:101`, `resources/vue-app/core/studio/autosave.ts:132`, `resources/vue-app/core/studio/autosave.ts:140`, `resources/vue-app/views/dashboard/pages/PageSectionsView.vue:241`.)
 
-**Staging** (docs/tenant-host-map.md:39-41): `masjid-staging.`, `manara-staging.` and `portal-staging.hopetechapps.com`, all proxied.
+## Navigation and endpoint families
 
-The same bundle is also proxied onto organisation domains for `/portal` and `/jummah-lunch` only (SecurityHeaders.php:77-86).
+Vue Router uses HTML5 history with handwritten route tables. A pruned lexical census found **125 active `path:` declarations**, excluding block comments and standalone commented lines. This is neither a runtime route enumeration nor 125 distinct screens: redirects, layouts and nested records participate. Route/API string unions are handwritten, and their compile-time protection is limited by the missing typecheck gate. (`resources/vue-app/router/router.ts:11`, `resources/vue-app/router/routes/routes.ts:11`, `resources/vue-app/core/types/config/SystemRoutes.ts:16`, `resources/vue-app/core/types/config/BackendApiRoutes.ts:2`, `package.json:4`.)
 
-## 8. Types, build, existing preview code
-- **Types:**
-  - `Page.ts:3-26`;
-  - `PageSection.ts` (union :9-41, `PageSection` :44-59, `SectionContent` :62+, `SectionTypeInfo` :278-310);
-  - `ThemeSetting.ts:1-10`;
-  - `SplashAnnouncement.ts:3-19`;
-  - `Masjid.ts:7-76`;
-  - `Vertical.ts`, `Capability.ts`.
-- **Build:** `npm run build` (vite build). `npm run dev` (vite). `build:prod` is forbidden (package.json:4-8; environments.md).
-  - There is no tsc script. CLAUDE.md records a manual `tsc --noEmit` at 29 pre-existing errors; plain `tsc` does not check `.vue` files.
-- **No iframe, postMessage or preview-mode code exists in the SPA.**
-  - A grep for `<iframe|postMessage|addEventListener('message'|srcdoc` found only an unrelated chat method (groupThreadsStore.ts:116) and comments (SafeHtml.vue:24; ContactCredentialsPanel.vue:170,698).
-  - "Preview" hits are local mocks only: the Brand Studio palette, FlyerPreview, and the attach-mode "Section Preview" alert (SectionFormModal.vue:71-84).
+The global guard handles authentication, user roles, CRM availability, capabilities, modules and assistant access. Authenticated users visiting sign-in are redirected according to their realm. SuperAdmin bypass applies to several frontend gates; it is not evidence that every screen or backend endpoint has identical bypass semantics. (`resources/vue-app/router/router.ts:29`, `resources/vue-app/router/router.ts:64`, `resources/vue-app/router/router.ts:71`, `resources/vue-app/router/router.ts:80`, `resources/vue-app/router/router.ts:93`.)
 
-## 9. Patterns to reuse
-- **FlyerStudioView.vue** is the closest parallel:
-  - a `col-lg-5` form beside a `col-lg-7` preview (:64, :107);
-  - `.preview-column { position: sticky; top: 1rem }` (:418-421);
-  - a props-driven `<FlyerPreview :content :cssVars @overflow>` (:134-140);
-  - warning alerts stacked above the preview (:109-132).
-- **ThemeSettingsView.vue:** a `col-lg-6` editor beside a "Derived Palette (live preview)" column (:18, :79-80).
-- **Segmented toggle** (for desktop/tablet/phone): a Bootstrap `btn-group` of `btn-check` radios (SectionFormModal.vue:15-43, with styling at :652-655).
-- **Editor contract:** v-model only (editors/CLAUDE.md:9-12). The pane can watch `formData.content` deeply without touching any editor.
-- **Recency** of these candidates (`git log`) was not checked.
+| Route or endpoint family | Purpose and notable boundary |
+|---|---|
+| `/masjid/...` | Staff organisation administration: details, contacts/groups, school operations, giving, properties and responses. (`resources/vue-app/router/routes/dashboardLayoutRoutes.ts:16`, `resources/vue-app/router/routes/dashboardLayoutRoutes.ts:170`, `resources/vue-app/router/routes/dashboardLayoutRoutes.ts:238`, `resources/vue-app/router/routes/dashboardLayoutRoutes.ts:372`.) |
+| Pages and section library | Page authoring and reusable content; frontend requires web-pages and website access. (`resources/vue-app/router/routes/pagesManagementRoutes.ts:5`, `resources/vue-app/router/routes/pagesManagementRoutes.ts:13`, `resources/vue-app/router/routes/pagesManagementRoutes.ts:20`.) |
+| SuperAdmin dashboard / Studio | Organisation/user management and provisioning drafts; draft detail has a numeric dynamic identifier. (`resources/vue-app/router/routes/superDashboardRoutes.ts:14`, `resources/vue-app/router/routes/superDashboardRoutes.ts:58`, `resources/vue-app/router/routes/superDashboardRoutes.ts:117`, `resources/vue-app/router/routes/superDashboardRoutes.ts:128`.) |
+| `/family/:masjidId/...` | School-specific sign-in, invitation, class/student records and calendar under a family layout. (`resources/vue-app/router/routes/familyRoutes.ts:22`, `resources/vue-app/router/routes/familyRoutes.ts:41`, `resources/vue-app/router/routes/familyRoutes.ts:57`, `resources/vue-app/router/routes/familyRoutes.ts:81`.) |
+| `/teacher/...` | Authenticated teacher class lists, detail and calendar. (`resources/vue-app/router/routes/teacherRoutes.ts:20`, `resources/vue-app/router/routes/teacherRoutes.ts:35`, `resources/vue-app/router/routes/teacherRoutes.ts:41`.) |
+| `/portal` and organisation portal | Public organisation entry, with a numeric tenant route or shell-provided host mapping. (`resources/vue-app/router/routes/portalRoutes.ts:23`, `resources/vue-app/router/routes/portalRoutes.ts:44`, `resources/views/vue-app-index.blade.php:62`.) |
+| Shop / broadcasts | Product authoring and pickup use shop capability; broadcast composition uses its module gate. (`resources/vue-app/router/routes/shopManagementRoutes.ts:27`, `resources/vue-app/router/routes/shopManagementRoutes.ts:61`, `resources/vue-app/router/routes/broadcastsManagementRoutes.ts:22`.) |
+| Admin theme / preview / pages | Theme reads/writes, preview sessions, page CRUD, library CRUD and page placements; page endpoints apply separate capability middleware. (`routes/admin.php:505`, `routes/admin.php:512`, `routes/admin.php:574`, `routes/admin.php:584`, `routes/admin.php:594`, `routes/admin.php:603`.) |
+| Public pages | Active page index, slug lookup and navigation menu; tenant filtering uses the public masjid-id header. (`app/Http/Controllers/Api/V1/PagesController.php:34`, `app/Http/Controllers/Api/V1/PagesController.php:58`, `app/Http/Controllers/Api/V1/PagesController.php:82`, `app/Traits/SearchableTrait.php:86`.) |
+| Public organisation-by-host | Resolves a served domain to public identity; success and failure are non-cacheable. (`app/Http/Controllers/Api/V1/OrganizationByHostController.php:42`, `app/Http/Controllers/Api/V1/OrganizationByHostController.php:50`, `app/Http/Controllers/Api/V1/OrganizationByHostController.php:68`.) |
+
+This is an endpoint-family map, not an exhaustive authorization audit. Family authentication endpoints have named throttles; authenticated parent routes combine family guard, activity/ability checks, tenant binding, CRM and throttling. Exact limits and every endpoint’s authorization were **not verified**. (`routes/family.php:146`, `routes/family.php:160`, `routes/family.php:203`.)
+
+## Boundaries, module visibility and dependency injection
+
+Tenant enforcement is application-level. `BelongsToMasjid` adds a global scope only when a tenant is bound and overwrites ownership during creation. An unbound context intentionally adds no tenant filter. Middleware, relationship queries and guard selection therefore carry security significance; the trait alone cannot guarantee isolation. (`app/Models/Concerns/BelongsToMasjid.php:45`, `app/Models/Concerns/BelongsToMasjid.php:57`, `app/Http/Middleware/ResolveMasjidTenant.php:126`, `CLAUDE.md:366`.)
+
+Laravel registers `TenantContext` as scoped and resets context at queue-job processing. Other dependency registrations use different lifetimes: Stripe is a singleton, while the translator interface is bound to an implementation. Browser module-level state—request epochs, live-store registration and preview availability—is shared within a tab, not demonstrated to be server-request state. (`app/Providers/AppServiceProvider.php:48`, `app/Providers/AppServiceProvider.php:54`, `app/Providers/AppServiceProvider.php:77`, `app/Providers/AppServiceProvider.php:105`, `resources/vue-app/core/tenancy/tenantRequests.ts:93`, `resources/vue-app/composables/useLivePreview.ts:58`.)
+
+Frontend dependency injection consists principally of Pinia, Vue plugins and editor upload injection. Editors must receive data and emit updates; their modal provides the persistence boundary. Adding a section type crosses several explicit registries: server type definitions/upload handling, frontend type/content declarations, editor mapping and compatibility tests. (`resources/vue-app/main.ts:35`, `resources/vue-app/components/sections/editors/CLAUDE.md:13`, `resources/vue-app/components/sections/editors/CLAUDE.md:17`, `.claude/rules/section-types.md:27`.)
+
+The root npm package is private and ESM, with an `@` source alias rather than independently published frontend modules. Composer exposes application/test namespaces through PSR-4. No enforceable frontend layer-import policy was established; server/client separation here is mainly the PHP/browser build boundary and API contracts. (`package.json:2`, `package.json:3`, `vite.config.js:18`, `composer.json:39`, `composer.json:46`.)
+
+## Testing, build, CI, lint and performance
+
+The pruned test census contains **77 frontend `*.test.ts` files**, plus a support helper; PHP contains **583 feature-test files and 36 unit-test files**. These are source-file counts, not executed tests or assertions. Frontend execution uses Node’s built-in test runner and experimental TypeScript stripping; PHP uses Pest/PHPUnit configuration. No passing result was produced during this recon. (`package.json:8`, `resources/vue-app/tests/support/mountSfc.ts:1`, `phpunit.xml:8`, `phpunit.xml:11`, `tests/Pest.php:16`.)
+
+Mounted frontend tests compile SFCs and use a custom Vue renderer with plain objects and document stubs. They can exercise component behavior and emitted/requested actions, but do not establish browser layout, CSS, focus behavior or accessibility. Some tests inspect source strings. Preview tests also assert foreign-window rejection, exact target origins and sandbox behavior; Studio autosave tests exercise conflicts. (`resources/vue-app/tests/support/mountSfc.ts:15`, `resources/vue-app/tests/support/mountSfc.ts:148`, `resources/vue-app/tests/preview-frame.test.ts:32`, `resources/vue-app/tests/preview-frame.test.ts:55`, `resources/vue-app/tests/studio-autosave.test.ts:66`.)
+
+Backend tests provide substantive examples: cross-tenant family refusal, actual section write/read encoding, and Studio fault injection asserting database/file/mail rollback before retry. Default PHPUnit configuration uses in-memory SQLite, array services and synchronous queues; MySQL groups have separate setup and safeguards. (`tests/Feature/FamilyTenantBindingTest.php:120`, `tests/Feature/OfferingSectionTypeTest.php:293`, `tests/Feature/Studio/StudioProvisionRollbackTest.php:48`, `phpunit.xml:41`, `phpunit.xml:54`, `tests/Pest.php:23`.)
+
+CI triggers on main pushes, pull requests and manual dispatch. It installs locked dependencies, builds Vite and runs SPA tests. Pest initially writes JUnit despite process failure; later checks reject boot failures, fewer than 150 tests, zero assertions, or reported failures/errors. The initial `|| true` is therefore not a blanket passing policy. (`.github/workflows/tests.yml:11`, `.github/workflows/tests.yml:45`, `.github/workflows/tests.yml:56`, `.github/workflows/tests.yml:69`, `.github/workflows/tests.yml:98`, `.github/workflows/tests.yml:111`.)
+
+A separate job uses MySQL 8.4, migrates, performs a one-step rollback/re-migration and runs MySQL-group tests. That checks the configured rollback step, not every historical migration individually. Another step scans added public-repository material. (`.github/workflows/tests.yml:142`, `.github/workflows/tests.yml:171`, `.github/workflows/tests.yml:196`, `.github/workflows/tests.yml:212`, `.github/workflows/tests.yml:116`.)
+
+TypeScript-eslint dependencies and Pint are present, but no lint/typecheck npm scripts or corresponding steps were found in the inspected workflow. Formatting enforcement beyond the inspected configuration is **not verified**. Browser E2E, axe/Lighthouse enforcement, bundle budgets and measured Web Vitals are also **not verified**; the build command establishes compilation, not those quality properties. (`package.json:4`, `package.json:13`, `composer.json:30`, `.github/workflows/tests.yml:56`.)
+
+## Feature flags, analytics, localization and accessibility
+
+Capabilities and modules have different defaults: capability grants are opt-in; modules can default on according to organisation type. CRM and assistant availability use separate columns. Web-pages and school-calendar defaults are false; lunch has an organisation-specific default. Multi-membership defaults false in configuration, which is not evidence of its production value. (`config/capabilities.php:16`, `config/capabilities.php:25`, `config/capabilities.php:106`, `config/capabilities.php:119`, `config/capabilities.php:128`, `config/capabilities.php:140`, `config/tenancy.php:41`.)
+
+Capability middleware accepts multiple keys with **any-of** semantics and allows SuperAdmin. Page routes instead stack two middleware gates, producing combined requirements. Frontend helpers separately interpret explicit module-off settings. Group story reads default off; scheduling has configurable limits and worker timings. Flag retirement procedures and deployed overrides are **not verified**. (`app/Http/Middleware/EnsureOrgCapability.php:46`, `app/Http/Middleware/EnsureOrgCapability.php:63`, `routes/admin.php:574`, `resources/vue-app/core/access/orgAccess.ts:30`, `config/groups.php:89`, `config/groups.php:128`.)
+
+No general client analytics SDK or event catalog was identified in the inspected frontend manifest and startup. Event naming, consent integration and production telemetry are **Unknown, needs investigation — not verified**. Echo/Pusher dependencies and a bootstrap file exist, but their presence does not establish an active realtime integration from the audited entry point. (`package.json:20`, `package.json:38`, `resources/vue-app/main.ts:9`, `resources/js/echo.js:16`.)
+
+Family localization supports English, Arabic, Urdu, Pashto, Afghan Persian and Spanish; metadata marks English/Arabic reviewed and the other four unreviewed. Helpers persist language choice, fall back to English, interpolate keys and implement plural categories including Arabic forms. RTL support includes layout adjustments for Bootstrap physical-direction utilities. Lunch has a separate English/Arabic dictionary; a unified admin localization system was **not verified**. (`resources/vue-app/views/family/familyI18n.ts:41`, `resources/vue-app/views/family/familyI18n.ts:78`, `resources/vue-app/views/family/familyI18n.ts:847`, `resources/vue-app/views/family/familyI18n.ts:878`, `resources/vue-app/views/family/familyI18n.ts:891`, `resources/vue-app/layouts/FamilyLayout.vue:217`, `resources/vue-app/views/lunch/lunchI18n.ts:20`.)
+
+Accessibility mechanisms include a focus-trap helper, Studio heading focus after step changes, keyboard-operated draft tabs, and labeled preview device controls. These are local implementations, not a verified platform-wide baseline. Keyboard, screen-reader, contrast and real-browser behavior remain **not verified**. (`resources/vue-app/core/helpers/focusTrap.ts:29`, `resources/vue-app/views/dashboard/super/studio/StudioView.vue:215`, `resources/vue-app/views/dashboard/super/studio/StudioDraftsView.vue:169`, `resources/vue-app/components/preview/LivePreviewPane.vue:9`.)
+
+## Environment split, security and media
+
+The inspected application/frontend configuration has **three distinct active named `VITE_` inputs**: `VITE_APP_URL`, `VITE_PUSHER_APP_KEY` and `VITE_PUSHER_APP_CLUSTER`. Commented Reverb settings were excluded. These are build-time public inputs; the Pusher `KEY` name denotes client broadcaster configuration, not evidence of a leaked private credential. Reachability of the Echo module in the production bundle is **not verified**. (`resources/vue-app/core/constants/appConfigConstants.ts:11`, `resources/js/echo.js:18`, `resources/js/echo.js:19`, `vite.config.js:23`.)
+
+Environment and mapped portal identity also arrive dynamically through Blade globals. Renderer signing secrets stay in PHP configuration and are used server-side to mint preview tokens. A complete census of private backend environment variables was outside this web walk and is **not verified**. (`resources/views/vue-app-index.blade.php:64`, `resources/views/vue-app-index.blade.php:84`, `config/services.php:317`, `app/Support/Renderer/PreviewToken.php:51`.)
+
+Security middleware supplies nosniff, frame denial, referrer/permissions policies and HTTPS-dependent HSTS. CSP is explicit but permits inline scripts and evaluation, plus selected external origins. Session defaults are secure, HTTP-only and SameSite=Lax. CORS defaults include wildcard origins and no credential support, with dynamic domain additions; deployed values and cross-origin browser behavior are **not verified**. (`app/Http/Middleware/SecurityHeaders.php:36`, `app/Http/Middleware/SecurityHeaders.php:65`, `app/Http/Middleware/SecurityHeaders.php:137`, `config/session.php:176`, `config/session.php:189`, `config/session.php:206`, `config/cors.php:27`, `config/cors.php:39`, `app/Http/Middleware/HandleCorsWithDomains.php:54`.)
+
+HTML rendering has explicit sanitization paths: `SafeHtml` uses DOMPurify allowlists and forbids scripts, iframes and selected active markup; global SweetAlert sanitization is installed at startup. This verifies those paths, not every potential HTML sink. CSRF excludes unsubscribe paths; the broader token/session request model must be read per endpoint. (`resources/vue-app/components/common/SafeHtml.vue:26`, `resources/vue-app/components/common/SafeHtml.vue:45`, `resources/vue-app/components/common/SafeHtml.vue:50`, `resources/vue-app/main.ts:26`, `bootstrap/app.php:116`.)
+
+Storage distinguishes a private local root and public disk/link. Form attachments default to local storage with configured types and size limits. Browser photo preparation resizes and JPEG-encodes when supported, but returns the original file on unsupported/decode-failure paths; metadata stripping is consequently best effort. (`config/filesystems.php:33`, `config/filesystems.php:41`, `config/filesystems.php:76`, `config/forms.php:32`, `config/forms.php:55`, `config/forms.php:73`, `resources/vue-app/core/helpers/preparePhoto.ts:37`, `resources/vue-app/core/helpers/preparePhoto.ts:66`.)
+
+## Preview, publication and release identity
+
+Live preview is a cross-origin renderer protocol. Sessions are disabled without valid secret/origin configuration. Tokens include tenant, surface, path, admin origin and expiry, with a five-minute TTL and HMAC signature. Theme preview replicates a model and serializes proposed colors/tokens without saving that model. Unsaved data can therefore reach a preview API even though it is not persisted as a theme change. (`app/Http/Controllers/AdminDashboard/LivePreviewController.php:58`, `app/Http/Controllers/AdminDashboard/LivePreviewController.php:77`, `app/Support/Renderer/PreviewToken.php:26`, `app/Support/Renderer/PreviewToken.php:43`, `app/Support/Renderer/PreviewToken.php:51`.)
+
+The pane offers 1280/834/390-pixel device widths, debounces overrides, checks the sending window and exact origin, and cleans listeners/timers on unmount. Sandbox permissions omit top navigation. Availability is cached by tenant/surface; probe failures become unavailable state. Browser rendering, renderer compatibility and recovery after transient failures are **not verified**. (`resources/vue-app/components/preview/LivePreviewPane.vue:103`, `resources/vue-app/components/preview/LivePreviewPane.vue:204`, `resources/vue-app/components/preview/LivePreviewPane.vue:213`, `resources/vue-app/components/preview/LivePreviewPane.vue:232`, `resources/vue-app/core/helpers/previewFrame.ts:19`, `resources/vue-app/composables/useLivePreview.ts:63`.)
+
+Theme editing preserves existing token trees and emits new font/layout tokens only after those controls are touched. Font/layout controls depend on preview availability, tying configuration usability to that integration. Successful tenant-bound writes schedule renderer purges; jobs coalesce saves and limit calls. Immediate publication and external cache convergence are **not verified**. (`resources/vue-app/core/helpers/themeTokens.ts:131`, `resources/vue-app/views/dashboard/ThemeSettingsView.vue:77`, `app/Http/Middleware/PurgeRendererCacheAfterWrite.php:36`, `app/Http/Middleware/PurgeRendererCacheAfterWrite.php:49`, `app/Support/Renderer/RendererPurgeScheduler.php:27`, `app/Support/Renderer/RendererCachePurge.php:35`.)
+
+Brand/environment identity is runtime-oriented: a shared Manara shell can resolve portal tenants by host. `masjid_domains` exists in source with unique host, status and serving-confirmation fields; its deployed schema was not checked. Deployment scripts separately build/sync frontend assets and install PHP dependencies, migrate, rebuild caches and restart queues. Actual hosts, process topology and runtime versions are **not verified**. (`config/portal.php:31`, `database/migrations/2026_09_24_140000_create_masjid_domains_table.php:35`, `database/migrations/2026_09_24_140000_create_masjid_domains_table.php:38`, `scripts/ship.sh:369`, `scripts/ship.sh:387`, `bin/deploy:201`, `bin/deploy:213`, `bin/deploy:225`.)
 
 ## Closest parallel features
-1. `views/dashboard/FlyerStudioView.vue` + `components/flyer/FlyerPreview.vue`. Use for the split pane and a sticky, props-fed preview.
-2. `components/modals/SectionFormModal.vue`. Use for where live content comes from (`formData`, `sectionImages`) and the save sequence the preview must mirror.
-3. `views/dashboard/ThemeSettingsView.vue`. Use for the theme source of truth (`settingsModel`) and the existing token derivation.
+
+For list/detail CRUD, use pages and their store/controller/tests. For typed modular authoring, use section editors plus the modal and section compatibility test. For autosaved, conflict-sensitive workflows, use Studio’s draft store, autosave helper and rollback test. For tenant-bound family detail, use `FamilyClass`, its dedicated client and tenant-binding tests. These parallels have different persistence and concurrency contracts; none is a universal screen template. (`resources/vue-app/stores/masjid/pagesStore.ts:24`, `resources/vue-app/components/modals/SectionFormModal.vue:480`, `tests/Feature/OfferingSectionTypeTest.php:269`, `resources/vue-app/core/studio/autosave.ts:71`, `tests/Feature/Studio/StudioProvisionRollbackTest.php:35`, `tests/Feature/FamilyTenantBindingTest.php:92`.)
 
 ## Inconsistencies and risks
-- **High (for this feature):** the SPA CSP `frame-src` allows only `'self'` and Google (SecurityHeaders.php:128), so any iframe of the Nuxt site is blocked today.
-- **Medium:** section content is shared across pages (pagesStore.ts:311-313). A preview of page A shows nothing about the same edit's effect on page B.
-- **Medium:** section reorder is N separate PUTs (PageSectionsView.vue:209-213). A partial failure leaves a mixed order.
-- **Medium (inferred from PagesView.vue:222-225):** page reorder numbers the current *pagination* page 1..n, so reordering on page 2 collides with page 1's orders.
-- **Medium:** the `tokens` comment says "The Brand Studio sends a structured tree" (SaveThemeSettingsRequest.php:22-23). The SPA never sends one (ThemeSettingsView.vue:305), and the type lacks it.
-- **Medium:** the theme screen and theme API are ungated (dashboardLayoutRoutes.ts:32-39; routes/admin.php:407-410), while pages need `web_pages` + `website`. "Who may preview" differs per surface.
-- **Low:** a route comment says SuperAdmins are blocked when `website` is off (pagesManagementRoutes.ts:10-12). The guard exempts them (router.ts:86-87), and so does the backend (auth-permissions.md).
-- **Low:** shipping.md says ApiService pins a global urlencoded default. The code pins boundary-less multipart (ApiService.ts:112,116) and then rewrites per body type (:40-64). The service also mutates `axios.defaults` on every put/patch (:142,148), which the kit's checklist forbids. `pagesStore.ts:193,219` hand-set a multipart header that the interceptor removes again.
-- **Low:** there is no typecheck in CI (tests.yml:56-62). `editorMap` exhaustiveness is enforced only by the PHP lint test.
+
+- **Tenant isolation depends on binding.** Unbound model scopes expose unrestricted rows by design, without MySQL RLS. Missing middleware or an incorrectly scoped background path is a structural isolation risk, not a demonstrated exploit in this recon. (`app/Models/Concerns/BelongsToMasjid.php:45`, `CLAUDE.md:5`.)
+- **Documentation version drift.** Committed root rules and test instructions say Laravel 11; the authoritative lockfile resolves Laravel 12.64.0. Existing advice must be checked against source and dependency resolution. (`CLAUDE.md:3`, `tests/CLAUDE.md:11`, `composer.lock:1535`.)
+- **Unenforced TypeScript hides contract drift.** Section-upload calls pass three arguments to a two-argument `ApiService.post`. JavaScript ignores the extra options object; body normalization currently supplies multipart handling. The mismatch remains unchecked by the build’s type system. (`resources/vue-app/stores/masjid/pagesStore.ts:188`, `resources/vue-app/core/services/ApiService.ts:126`, `package.json:4`.)
+- **Ordering can partially apply.** Section reorder uses separate parallel mutations. Page reorder also updates rows individually; the paginated UI constructs positions from the displayed subset. Partial ordering and page-relative collisions are risks **inferred from** those paths, not browser-confirmed failures. (`resources/vue-app/views/dashboard/pages/PageSectionsView.vue:241`, `resources/vue-app/views/dashboard/pages/PagesView.vue:219`, `app/Http/Controllers/AdminDashboard/PagesController.php:142`.)
+- **Shared content has wider effects than placement editing.** A section attached to multiple pages is updated as one shared record, while placement attributes remain pivot-local. UI expectations require verification for that distinction. (`app/Models/Page.php:47`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:173`, `app/Http/Controllers/AdminDashboard/PageSectionsController.php:177`.)
+- **Comments and gate semantics drift.** The teacher switching comment is stale; page-route comments also overstate SuperAdmin blocking relative to the global guard’s bypass. Middleware any-of semantics differ from stacked page gates. (`resources/vue-app/core/services/ApiService.ts:69`, `resources/vue-app/core/services/TeacherApiService.ts:59`, `resources/vue-app/router/routes/pagesManagementRoutes.ts:10`, `resources/vue-app/router/router.ts:73`, `routes/admin.php:574`.)
+- **Configured browser/CSP policy is not runtime assurance.** CSS browser targets do not establish JavaScript support; CSP permits inline/eval execution; browser testing was not run. (`vite.config.js:39`, `app/Http/Middleware/SecurityHeaders.php:137`.)
+- **Preview and publication are separate failure domains.** Preview availability can hide theme controls, and publication uses queued cache purges. Source does not establish renderer uptime or immediate cache convergence. (`resources/vue-app/views/dashboard/ThemeSettingsView.vue:77`, `resources/vue-app/composables/useLivePreview.ts:70`, `app/Support/Renderer/RendererPurgeScheduler.php:27`.)
 
 ## Open questions
-- **The public site URL per organisation:** no DB field exists; `website_link` is free text. Checked: Masjid.ts, masjids migrations, UpdateMasjidDetailsRequest. Whether `masjid_domains` exists: **not verified**.
-- **Lockfile-resolved versions:** not verified.
-- **Callers of `createSectionInLibrary`/`updateSectionInLibrary`:** not verified.
-- **Whether axios 1.x runs request interceptors before `transformRequest`:** inferred, not verified. This decides that plain objects really go as JSON.
-- **Renderer CSP and `img-src` for the `data:` image URLs a preview would carry:** separate repo, not read.
+
+- **Unknown, needs investigation — not verified:** production PHP/Node versions, capability overrides, cookie/CORS/CSP values, renderer origins and signing configuration. Checked manifests, CI and configuration defaults; no environment was queried.
+- **Unknown, needs investigation — not verified:** public renderer SSR/SSG strategy, complete content compatibility, cache keys, purge delivery and convergence. Checked this repository’s session/purge contracts; the renderer repository was not read.
+- **Unknown, needs investigation — not verified:** passing test/build status at this commit, strict TypeScript diagnostics and full historical migration reversibility. Read CI and tests; executed none.
+- **Unknown, needs investigation — not verified:** supported browser/device matrix, real keyboard/screen-reader behavior, Web Vitals and bundle budgets. Read CSS targets and local accessibility helpers; no browser inspection occurred.
+- **Unknown, needs investigation — not verified:** analytics taxonomy, flag retirement policy and exhaustive endpoint authorization coverage. No governing implementation was established in the inspected paths.
 
 ## Elided
-Analytics, localization, accessibility, feature flags (beyond capabilities and modules), concurrency, DI, module visibility, release identity, device reality: not walked, because the coordinator asked me to stop. Testing is covered only for CI and typecheck.
 
-## Facts for preview design
-1. **Where live data comes from:**
-   - Sections: `SectionFormModal`'s `formData.value` (`content`, `title`, `is_active`, `platforms`, `order`), SectionFormModal.vue:388-397.
-   - Pending images: `data:` URLs inside `content` (ImageDraggableInput.vue:322).
-   - Theme: `settingsModel` (ThemeSettingsView.vue:161-166).
-   - Page settings: `PageFormModal` `formData` (:168-176).
-   - Splash: the `form` ref plus `imageFile` (SplashAnnouncementFormView.vue:121-131).
-   - All four are component-local; **no store holds a draft.**
-2. **Save paths the "Save publishes" step must follow:**
-   - sections: multipart POST with `_method=PUT`, one section per request;
-   - theme: JSON POST;
-   - page: JSON PUT;
-   - reorder: JSON POST;
-   - splash: multipart POST.
-   - The server merges section content keys (PageSectionsController.php:140-155), so a preview should render **stored content merged with the edits**, not the edits alone.
-3. **The editor is a modal overlay** (`modal-xl`, SectionFormModal.vue:2-3). A side-by-side pane means turning it into an in-page panel (the FlyerStudio layout), or putting the iframe inside the modal body.
-4. **The admin CSP must gain the renderer origin(s) in `frame-src`** (SecurityHeaders.php:128). That middleware runs on every response, so scope the widening to the admin shell (the pattern at :93-112).
-   - The SPA's own `frame-ancestors 'none'` and XFO DENY do not stop it framing others.
-   - COOP `same-origin` does not block iframe postMessage (inferred).
-5. **The admin origin is plural:** `masjid.hopetechapps.com` and `manara.hopetechapps.com` in production, and their `-staging` twins. The renderer's `frame-ancestors` and postMessage origin allowlist must name each one (tenant-host-map.md:31-41).
-6. **The SPA cannot work out the renderer URL for an organisation.** The token-issuing endpoint, or a new admin payload field, must supply the preview URL.
-   - Build it with `SiteUrl`, not from the request (generated-urls.md).
-   - Do not bake it into the bundle: `VITE_*` must stay empty (environments.md).
-7. **The token is a Sanctum bearer in localStorage**, sent as a global Authorization header (ApiService.ts:111). A preview token must come from a new admin endpoint and must never ride in the iframe URL beyond its short TTL.
-8. **Gates to mirror:**
-   - pages: route meta `requiresCapability:'web_pages'` + `requiresModule:'website'`; server `capability:web_pages,website` separately (admin.php:456);
-   - splash: `requiresModule:'splash'`;
-   - theme and general settings: ungated.
-9. **Scope gaps:** fonts and header/footer style have no editor and no field in the SPA. Theme `tokens` are never sent. Menu = page `order`/`show_in_menu`/`show_as_button`.
-10. **Nothing to extend:** no iframe, postMessage or preview code exists. Reuse the FlyerStudio sticky preview column and the `btn-check` segmented group for the device toggle.
-11. **Verification:** build is `npm run build` only, with no typecheck in CI. Admin screens must be driven on staging with the QA sandbox organisation before calling them done (shipping.md).
+Native application toolchains and release identities were excluded by the web scope. Independent backend recon, exhaustive controller tracing, external integrations’ implementations and the Nuxt renderer require separate walks. Mobile version parity, production data, infrastructure state and historical live measurements were not inferred from this repository.

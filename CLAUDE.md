@@ -1,13 +1,16 @@
 # MasjidWebMS — working memory
 
-Laravel 11 + PHP 8.2 backend (Vue admin SPA), branded **Manara**. Multi-tenant
+Laravel 12 backend (`composer.lock` pins `laravel/framework` 12.64; `composer.json`
+floor is PHP `^8.2`) with a Vue admin SPA, branded **Manara**. Multi-tenant
 by `masjid_id` over one managed MySQL DB (utf8mb4_bin). Auth = Laravel Sanctum.
 **MySQL has NO row-level security** — tenant isolation is app-layer only.
 
 **Production is DigitalOcean droplet 586894889 (`masjid-backend-24-04`,
-159.65.239.51, reserved IP 164.90.253.138).** Droplet 480119186 is STALE and
-serves no traffic despite older docs naming it; both share the same database, so
-a mistake is invisible from the data. Verify with
+159.65.239.51, reserved IP 164.90.253.138); staging is droplet 599239838
+(`masjid-staging`, 157.230.212.38).** The old droplet 480119186
+(`masjid-backend-service`, 147.182.210.42) that older docs name was DESTROYED on
+2026-09-17; the account lists only the two above (DigitalOcean API, checked
+2026-10-05). Verify which box serves the domain with
 `getent hosts masjid.hopetechapps.com`. See `NOTES.md`.
 
 Manara is a **three-vertical platform on one core** — Masjids · Schools ·
@@ -50,7 +53,8 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   <env> [ref]`, `deploy/staging/{provision.sh,cloudflare-dns.sh,...}`. Deploy with
   `scripts/ship.sh staging <ref>`; refresh data per
   `deploy/staging/DATA-REFRESH.md`. Stale droplet 480119186's queue +
-  cron were found LIVE against prod and disabled the same day.
+  cron were found LIVE against prod and disabled the same day (2026-09-10); the
+  droplet itself was destroyed 2026-09-17.
 - **Manara verticals — `org_type` foundation DONE** (T-001). `masjids.org_type`
   (`masjid`|`school`|`community`, default `masjid`, indexed) + `config/verticals.php`
   (per-vertical default feature bundle + terminology pack) + `Masjid::ORG_TYPES`,
