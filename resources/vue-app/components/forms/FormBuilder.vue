@@ -779,7 +779,7 @@
                             role="switch"
                             v-model="draft.settings.paymentStaffCodes"
                             aria-describedby="formPaymentStaffCodesHelp"
-                            @change="clearServerError('settings.payment.staffCodes')"
+                            @change="clearServerError('settings.payment.staffCodes'); clearServerError('settings.payment.staffPriceOverride')"
                         />
                         <label class="form-check-label" for="formPaymentStaffCodes">Staff cash codes</label>
                     </div>
@@ -790,6 +790,29 @@
                     </div>
                     <div v-if="fieldIssue('settings.payment.staffCodes')" class="invalid-feedback d-block mb-2">
                         {{ fieldIssue('settings.payment.staffCodes') }}
+                    </div>
+
+                    <div v-if="draft.settings.paymentStaffCodes" class="ms-md-4 mb-3">
+                        <div class="form-check form-switch">
+                            <input
+                                id="formPaymentStaffPriceOverride"
+                                class="form-check-input"
+                                type="checkbox"
+                                role="switch"
+                                v-model="draft.settings.paymentStaffPriceOverride"
+                                aria-describedby="formPaymentStaffPriceOverrideHelp"
+                                @change="clearServerError('settings.payment.staffPriceOverride')"
+                            />
+                            <label class="form-check-label" for="formPaymentStaffPriceOverride">Staff can set the price</label>
+                        </div>
+                        <div id="formPaymentStaffPriceOverrideHelp" class="form-text">
+                            Off by default. Staff with a valid code can reduce the priced unit, including a
+                            complimentary cash entry. The original list price and who set the price stay on record.
+                            Card entries still require online card payment to be switched on.
+                        </div>
+                        <div v-if="fieldIssue('settings.payment.staffPriceOverride')" class="invalid-feedback d-block">
+                            {{ fieldIssue('settings.payment.staffPriceOverride') }}
+                        </div>
                     </div>
 
                     <!-- Pay the office (officePayment / officeInstructions): chosen on the form instead of
@@ -1267,6 +1290,7 @@ type DraftSettings = {
     // settings.payment, flattened like identity and fee.
     paymentOnline: boolean;
     paymentStaffCodes: boolean;
+    paymentStaffPriceOverride: boolean;
     /** allowFeeCoverage ('optional') and requireFeeCoverage ('required') as one choice. */
     paymentFeeCoverage: FeeCoverage;
     paymentOfficePayment: boolean;
@@ -1306,7 +1330,7 @@ const MANAGED_SETTINGS_KEYS = [
 ] as const;
 // The managed fee keys, and what a save carries through, live in ./formFeePricing.ts (tested).
 const MANAGED_PAYMENT_KEYS = [
-    'online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment', 'officeInstructions', 'eventDate'
+    'online', 'staffCodes', 'staffPriceOverride', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment', 'officeInstructions', 'eventDate'
 ] as const;
 
 const IDENTITY_SLOTS = [
@@ -1465,6 +1489,7 @@ const blankSettings = (): DraftSettings => ({
     feeCountTiers: [],
     paymentOnline: false,
     paymentStaffCodes: false,
+    paymentStaffPriceOverride: false,
     paymentFeeCoverage: 'absorb',
     paymentOfficePayment: false,
     paymentOfficeInstructions: '',
@@ -1507,6 +1532,11 @@ const blankDraft = (): Draft => ({
 });
 
 const draft = ref<Draft>(blankDraft());
+
+// Switching codes off also removes their price-setting permission before the next save.
+watch(() => draft.value.settings.paymentStaffCodes, enabled => {
+    if (!enabled) draft.value.settings.paymentStaffPriceOverride = false;
+});
 
 const blankPreserved = (): Preserved => ({ settings: {}, fee: {}, payment: {}, hadPaymentBlock: false, loadedPaymentKeys: [] });
 
@@ -1654,6 +1684,8 @@ const buildPaymentBlock = (): FormPaymentSettings | null => {
     const had = (key: string): boolean => preserved.value.loadedPaymentKeys.includes(key);
     // One choice, so never both on: the server refuses allowFeeCoverage with requireFeeCoverage.
     const requireFee = s.paymentFeeCoverage === 'required';
+    const staffPriceOverride = s.paymentStaffCodes && s.paymentStaffPriceOverride;
+    if (s.paymentStaffPriceOverride || had('staffPriceOverride')) payment.staffPriceOverride = staffPriceOverride;
     if (requireFee || had('requireFeeCoverage')) payment.requireFeeCoverage = requireFee;
     if (s.paymentOfficePayment || had('officePayment')) payment.officePayment = s.paymentOfficePayment;
 
@@ -1778,6 +1810,7 @@ const load = async () => {
                 feeCountTiers: (Array.isArray(fee.countTiers) ? fee.countTiers : []).map(toDraftCountTier),
                 paymentOnline: readFlag(payment.online),
                 paymentStaffCodes: readFlag(payment.staffCodes),
+                paymentStaffPriceOverride: readFlag(payment.staffPriceOverride),
                 paymentFeeCoverage: readFlag(payment.requireFeeCoverage)
                     ? 'required'
                     : (readFlag(payment.allowFeeCoverage) ? 'optional' : 'absorb'),
@@ -2659,6 +2692,9 @@ const notifyEmailIssues = (s: DraftSettings): Record<string, string> => {
 const paymentIssues = computed<Record<string, string>>(() => {
     const issues: Record<string, string> = {};
     const s = draft.value.settings;
+    if (s.paymentStaffPriceOverride && !s.paymentStaffCodes) {
+        issues['settings.payment.staffPriceOverride'] = 'Enable staff codes before enabling staff price overrides.';
+    }
 
     const pricing = s.feePricing;
 

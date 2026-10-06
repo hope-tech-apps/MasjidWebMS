@@ -109,7 +109,7 @@
                         <tr>
                             <th scope="col">Holder</th>
                             <th scope="col">Expires</th>
-                            <th scope="col" class="text-end">Uses</th>
+                            <th scope="col" class="text-end">Entries</th>
                             <th scope="col">Last used</th>
                             <th scope="col">Phone</th>
                             <th scope="col" class="text-end">Cash</th>
@@ -149,7 +149,7 @@
                             </td>
                             <td class="text-end small">
                                 <strong>{{ money(code.cash_minor) }}</strong>
-                                <div class="text-muted">{{ code.submissions }} {{ code.submissions === 1 ? 'entry' : 'entries' }}</div>
+                                <div class="text-muted">{{ code.submissions }} {{ code.submissions === 1 ? 'cash entry' : 'cash entries' }}</div>
                                 <div v-if="code.cancelled_submissions" class="text-muted">
                                     plus {{ money(code.cancelled_cash_minor) }} cancelled ({{ code.cancelled_submissions }})
                                 </div>
