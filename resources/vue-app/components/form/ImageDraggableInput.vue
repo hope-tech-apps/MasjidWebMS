@@ -109,6 +109,11 @@ const props = defineProps({
         required: false,
         default: 'image'
     },
+    // Some endpoints differ: a service icon accepts GIF only on update.
+    acceptedTypes: {
+        type: Array as PropType<string[]>,
+        required: false
+    },
     // Opt-in multi-image mode. Defaults to false so every existing single-image
     // form keeps its current behaviour unchanged.
     multiple: {
@@ -165,6 +170,9 @@ const imageUploaded = computed(() => {
     return uploadedImageSrc.value ? true : false;
 });
 const allowedTypes = computed(() => {
+    if (props.acceptedTypes) {
+        return props.acceptedTypes;
+    }
     if(type.value === 'photo') {
         return ALLOWED_IMAGE_TYPES;
     } else if (type.value === 'icon') {

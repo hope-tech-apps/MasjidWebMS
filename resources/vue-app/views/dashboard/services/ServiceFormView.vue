@@ -15,7 +15,8 @@
             <div class="d-flex flex-column gap-5 flex-md-row justify-content-md-between">
                 <div class="w-100 w-md-75 w-lg-50">
                     <ImageDraggableInput label="Service Icon" @imageChange="onIconInputChange"
-                        :current-image-src="oldIcon" type="icon" />
+                        :current-image-src="oldIcon" type="icon"
+                        :accepted-types="isEditForm ? ['image/png', 'image/gif', 'image/webp'] : undefined" />
                     <Field type="file" v-model="iconSrc" name="service_icon" class="d-none"></Field>
                     <div class="error-message">
                         <ErrorMessage name="service_icon" />
