@@ -297,30 +297,29 @@ export const DELETE_CANCEL_FIRST = 'This registration has not been paid, but it 
  */
 export type DeleteStep = 'delete' | 'cancel-first' | 'never';
 
-/** The three columns of a row deleteStep() reads. */
-export type DeleteRow = { status: string; payment_method?: string | null; payment_status?: string | null };
+/** The server's local Delete hint, with legacy columns for older API responses. */
+export type DeleteRow = {
+    status: string;
+    payment_method?: string | null;
+    payment_status?: string | null;
+    delete_refusal?: string | null;
+};
 
 /**
- * The mirror of the server's rule (FormResponsesController::deleteRefusal()): a
- * registration is deleted only when it never held money and can no longer take any.
+ * The server's local refusal controls the button and its sentence. It includes staff
+ * routing, every payment trace, imported rows and a page key without its reference,
+ * through the same guard destroy() reads (FormResponsesController::localDeleteRefusal()).
+ * Null allows a delete question; Stripe and changes since loading can still refuse it.
  *
- * It reads `payment_status`, the column, and never `payment_state`: that reading is null
- * on every row of a form that no longer has payment settings, and a paid registration on
- * such a form would be offered a delete the server refuses. "Never paid" is the same
- * allowlist as FormResponse::neverRecordedAPayment(): chosen to be paid by card or at the
- * office, and exactly 'unpaid'. Anything else with a payment method is 'never'.
- *
- * It reads these three columns and no more, by choice. The row also carries `paid_at`,
- * the payment intent, the charge flag and the other traces of a payment the server's
- * allowlist requires to be absent, so the screen could mirror it in full. It does not: an
- * unpaid row carrying one of them is a state nothing writes, the server refuses it on the
- * locked row with the paid sentence, and the screen shows that sentence. A second copy of
- * the whole list here would only be a second thing to keep in step.
- *
- * What the screen cannot know: that a row was imported from another system, and what
- * Stripe says about its card page. The server decides both.
+ * Older API responses lack the hint: retain their status/method/payment-status rule,
+ * never payment_state (which is null when the form loses its payment settings).
  */
 export function deleteStep(row: DeleteRow): DeleteStep {
+    if (row.delete_refusal !== undefined) {
+        if (row.delete_refusal === null) return 'delete';
+        return row.delete_refusal === DELETE_CANCEL_FIRST ? 'cancel-first' : 'never';
+    }
+
     if (!row.payment_method) return 'delete';
 
     const neverPaid = (row.payment_method === 'online' || row.payment_method === 'office') && row.payment_status === 'unpaid';
@@ -334,9 +333,9 @@ export function deleteStep(row: DeleteRow): DeleteStep {
  * or null when it is. The button stays focusable and clickable while dimmed, so the reason
  * can be read rather than guessed; the sentence is also its tooltip and accessible name.
  */
-export function deleteBlocked(step: DeleteStep): { title: string; text: string } | null {
-    if (step === 'never') return { title: 'This registration cannot be deleted', text: DELETE_REFUSED };
-    if (step === 'cancel-first') return { title: 'Cancel it first', text: DELETE_CANCEL_FIRST };
+export function deleteBlocked(step: DeleteStep, refusal?: string | null): { title: string; text: string } | null {
+    if (step === 'never') return { title: 'This registration cannot be deleted', text: refusal ?? DELETE_REFUSED };
+    if (step === 'cancel-first') return { title: 'Cancel it first', text: refusal ?? DELETE_CANCEL_FIRST };
     return null;
 }
 

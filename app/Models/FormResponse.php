@@ -548,13 +548,18 @@ class FormResponse extends Model
      *
      * The same goes for every other column only a payment writes: how it came
      * (`paid_via`), who recorded it by hand or at the gate
-     * (`marked_paid_by_user_id`, `staff_code_id`), a check-in, which is refused
+     * (`marked_paid_by_user_id`), a check-in, which is refused
      * to a registration that is not settled (`collected_at`), and when and how
      * much of a charge its holder gave back (`charge_flagged_at`,
      * `charge_refunded_minor`). The application writes each of them together
      * with `paid` or with the flag (paidAs(), settleByHand(), settleCash(),
      * markCollected(), flagCharge()), so on a row this allows they are all
      * empty, and a row carrying one of them alone is a state nothing writes.
+     *
+     * Staff audit fields may be present ONLY on a staff card entry: submit writes
+     * those before payment (DECISIONS.md 2026-10-06). Cash, including complimentary
+     * cash, is settled in the submitting transaction and never qualifies. A staff
+     * route without its code, or an office row with staff fields, remains refused.
      *
      * NOT proof that no money moved. A card page can be complete at Stripe while
      * the row still reads unpaid (the webhook is late, or refused the event and
@@ -563,6 +568,16 @@ class FormResponse extends Model
      */
     public function neverRecordedAPayment(): bool
     {
+        // The only exception to empty staff audit fields; keep this policy together.
+        $staffCard = $this->payment_method === self::METHOD_ONLINE
+            && $this->staff_code_id !== null
+            && $this->staff_payment_method === 'card';
+        $noStaffEntry = $this->staff_code_id === null
+            && $this->list_unit_price_minor === null
+            && $this->staff_unit_price_minor === null
+            && $this->staff_holder_name === null
+            && $this->staff_payment_method === null;
+
         return in_array($this->payment_method, [self::METHOD_ONLINE, self::METHOD_OFFICE], true)
             && $this->payment_status === self::PAYMENT_UNPAID
             && $this->paid_at === null
@@ -570,11 +585,7 @@ class FormResponse extends Model
             && $this->charge_flag === null
             && $this->paid_via === null
             && $this->marked_paid_by_user_id === null
-            && $this->staff_code_id === null
-            && $this->list_unit_price_minor === null
-            && $this->staff_unit_price_minor === null
-            && $this->staff_holder_name === null
-            && $this->staff_payment_method === null
+            && ($noStaffEntry || $staffCard)
             && $this->collected_at === null
             && $this->charge_flagged_at === null
             && (int) $this->charge_refunded_minor === 0;

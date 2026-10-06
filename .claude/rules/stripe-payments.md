@@ -244,8 +244,13 @@ persisted before the call, webhook-only advancement). On top of them:
   disputed. "Never paid" is an allowlist, `FormResponse::neverRecordedAPayment()` (method
   `online` or `office`, `payment_status` exactly `unpaid`, no `paid_at`, no payment intent, no
   charge flag, and every other column only a payment writes empty: `paid_via`,
-  `marked_paid_by_user_id`, `staff_code_id`, `collected_at`, `charge_flagged_at`,
-  `charge_refunded_minor`), so a state nothing writes goes to a person, never to the delete. A
+  `marked_paid_by_user_id`, `collected_at`, `charge_flagged_at`, `charge_refunded_minor`).
+  Staff audit fields (`staff_code_id` and the four staff-price columns) must be empty,
+  except for an `online` row with a code id and `staff_payment_method` exactly `card`
+  (extension dated 2026-10-06). That route snapshots the code and prices before any payment;
+  cash, including `FormStaffEntry::isComplimentaryCash()`, never qualifies. The single staff
+  allowance lives in `neverRecordedAPayment()`; all payment-trace checks still apply.
+  A state nothing writes goes to a person, never to the delete. A
   new column that only a payment writes joins that list. Do not widen `hasMoneyLeg()` or test
   "not paid" instead. A never-paid registration that is not cancelled is
   refused ("cancel it first") without asking Stripe: until it is cancelled it can still be paid.
@@ -263,11 +268,18 @@ persisted before the call, webhook-only advancement). On top of them:
   unreachable holder off inside it. The rule is read from the row as LOCKED, never from the
   copy the request first found: a registration restored or paid in between is kept. One
   warning line, ids only, is written before the delete and worded in the present ("is being
-  deleted"), so a delete that then rolls back has not been called done; a page Stripe says was
+  deleted"), including `staff_code_id` but never the holder's name, so a delete that then
+  rolls back has not been called done; a page Stripe says was
   paid leaves its own warning line, and its sentence promises nothing about the row.
   `$row->delete()` comes after everything that can refuse, because the uploaded files leave the
   disk in its hook and no rollback puts them back.
   On a form that reserves dates the form row is locked first, as `update()` locks it.
+  The reservation cascades on delete, as for an ordinary card row. Staff card submit counts
+  a use at submit (`FormStaffCode::recordUse()`); deletion does not return that lifetime use.
+  The admin row's `delete_refusal` shares `localDeleteRefusal()` with the locked delete;
+  `deleteStep()` and the dimmed button use that sentence, including money traces and a page
+  key without its id. Null is only a local hint: Stripe's result and later row changes are
+  still checked on delete. Older API payloads retain the SPA's previous fallback.
 - **`customer_email`** is prefilled only when `FILTER_VALIDATE_EMAIL` passes and the
   domain has a dot. A Stripe `InvalidRequestException` is retried ONCE without it,
   on a new key. Stripe's error messages quote the address, so they are never logged.

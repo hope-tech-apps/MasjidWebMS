@@ -877,6 +877,7 @@ class FormResponsesController extends Controller
                     'form_response_id' => $row->id,
                     'form_response_uuid' => $row->uuid,
                     'payment_method' => $row->payment_method,
+                    'staff_code_id' => $row->staff_code_id,
                     'checkout_session_id' => $row->stripe_checkout_session_id,
                     'charge_masjid_id' => $row->charge_masjid_id,
                     'charge_ref' => $row->charge_ref,
@@ -923,6 +924,27 @@ class FormResponsesController extends Controller
      */
     private function deleteRefusal(FormResponse $row): ?array
     {
+        $refusal = $this->localDeleteRefusal($row);
+
+        if ($refusal !== null) {
+            return $refusal;
+        }
+
+        if (! $row->hasMoneyLeg() || ! $row->stripe_checkout_session_id) {
+            return null;
+        }
+
+        return $this->cardPageRefusal($row);
+    }
+
+    /**
+     * Refusals known from the row alone, shared with the admin payload's Delete hint.
+     * No Stripe call here: an allowed hint still needs the locked check in destroy().
+     *
+     * @return array{0: int, 1: string}|null
+     */
+    private function localDeleteRefusal(FormResponse $row): ?array
+    {
         if ($row->hasMoneyLeg() && ! $row->neverRecordedAPayment()) {
             return [Response::HTTP_UNPROCESSABLE_ENTITY, self::DELETE_PAID];
         }
@@ -960,7 +982,7 @@ class FormResponsesController extends Controller
             return null;
         }
 
-        return $this->cardPageRefusal($row);
+        return null;
     }
 
     /**
@@ -1744,6 +1766,8 @@ class FormResponsesController extends Controller
             'uuid' => $response->uuid,
             'payment_method' => $response->payment_method,
             'payment_status' => $response->payment_status,
+            // A local hint only; destroy() repeats it on the locked row and checks Stripe.
+            'delete_refusal' => $this->localDeleteRefusal($response)[1] ?? null,
             'payment_state' => $state,
             'settled' => $money ? $state !== FormResponse::PAYMENT_UNPAID : null,
             'currency' => $response->currency,

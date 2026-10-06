@@ -2442,7 +2442,7 @@ const isCancelled = (row: FormResponseRow): boolean => row.status === 'cancelled
  * Why a row's Delete is dimmed (the popup's title and the server's sentence), or null when
  * it is live. The rule is deleteStep()'s, the mirror of the server's.
  */
-const deleteBlockedFor = (row: FormResponseRow) => deleteBlocked(deleteStep(row));
+const deleteBlockedFor = (row: FormResponseRow) => deleteBlocked(deleteStep(row), row.delete_refusal);
 
 /** A registration whose family chose to pay the office (settings.payment.officePayment). */
 const isOfficeRow = (row: FormResponseRow): boolean => row.payment_method === 'office';

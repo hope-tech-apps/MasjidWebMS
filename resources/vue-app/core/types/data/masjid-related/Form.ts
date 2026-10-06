@@ -144,6 +144,8 @@ export type FormResponseRow = {
     /** How the money came, on a row settled by hand. Absent from an API older than office payment. */
     paid_via?: FormPaidVia | null;
     payment_status?: FormPaymentStatus | null;
+    /** Local Delete refusal, or null; the server still rechecks under lock and asks Stripe. */
+    delete_refusal?: string | null;
     /** 'paid'; 'unpaid' (a Wix-fallback row with no money leg included); null when nothing was owed. */
     payment_state?: FormPaymentStatus | null;
     /** Paid, or nothing was ever owed: what "Mark collected" needs. */

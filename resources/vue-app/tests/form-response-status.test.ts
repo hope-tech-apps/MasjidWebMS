@@ -338,15 +338,16 @@ test('the rule reads payment_status, never payment_state: a form that lost its p
     assert.equal(deleteStep(paid), 'never', 'a paid registration is never offered a delete because its badge went blank');
 });
 
-test('the rule reads status, method and payment status alone, by choice: the row carries more, and the server refuses on it', () => {
-    // An unpaid row carrying a trace of a payment is a state nothing writes. The screen
-    // offers its delete; FormResponse::neverRecordedAPayment() refuses it on the locked
-    // row, and the screen shows that sentence.
+test('the server local refusal controls Delete for staff cards and every money trace', () => {
     const row = { status: 'cancelled', payment_method: 'online', payment_status: 'unpaid' };
-
-    for (const trace of [{ paid_at: '2027-01-01T00:00:00+00:00' }, { stripe_payment_intent_id: 'pi_test_stray_0001' }, { charge_flag: 'refunded' }]) {
-        assert.equal(deleteStep({ ...row, ...trace }), 'delete', Object.keys(trace)[0]);
+    assert.equal(deleteStep({ ...row, delete_refusal: null }), 'delete', 'staff card or ordinary card');
+    assert.equal(deleteStep({ ...row, status: 'new', delete_refusal: DELETE_CANCEL_FIRST }), 'cancel-first');
+    for (const kind of ['staff cash', 'complimentary', 'paid', 'flagged', 'refunded', 'payment intent', 'paid at', 'paid via', 'collected']) {
+        assert.equal(deleteStep({ ...row, delete_refusal: DELETE_REFUSED }), 'never', kind);
     }
+    const unknown = 'A card payment page was requested but its reference was not saved.';
+    assert.equal(deleteStep({ ...row, delete_refusal: unknown }), 'never', 'key without page id');
+    assert.deepEqual(deleteBlocked('never', unknown), { title: 'This registration cannot be deleted', text: unknown });
 });
 
 test('a dimmed Delete says why in the server\'s own words, and a live one says nothing', () => {
@@ -730,7 +731,7 @@ test('the two refusals the screen shows without asking are the controller\'s own
 
 test('the Delete button is dimmed, named and explained by deleteStep(), and stays clickable so the reason can be read', () => {
     assert.notEqual(deleteButtonTag, '', 'the row Delete button is where the test expects it');
-    assert.match(view, /const deleteBlockedFor = \(row: FormResponseRow\) => deleteBlocked\(deleteStep\(row\)\);/);
+    assert.match(view, /const deleteBlockedFor = \(row: FormResponseRow\) => deleteBlocked\(deleteStep\(row\), row\.delete_refusal\);/);
     assert.match(deleteButtonTag, /:class="\{ 'opacity-50': deleteBlockedFor\(response\) !== null \}"/);
     assert.match(deleteButtonTag, /:aria-disabled="deleteBlockedFor\(response\) !== null \? 'true' : undefined"/);
     assert.match(deleteButtonTag, /:title="deleteBlockedFor\(response\)\?\.text \?\? 'Delete'"/);
@@ -789,7 +790,7 @@ test('the delete question takes what the row itself says about a card page, neve
     assert.match(confirmDeleteBody, /cardPageOpened: cardPageOnRecord\(response\),/);
     assert.doesNotMatch(confirmDeleteBody, /payment_state|cardPageStarted/);
 
-    // And the row does carry what deleteStep() chooses not to read (its doc comment says so).
+    // The row carries payment evidence, but eligibility comes from the shared server guard.
     for (const column of ['paid_at', 'stripe_payment_intent_id', 'charge_flag']) {
         assert.match(controller, new RegExp(`'${column}' => `), `serialize() sends ${column}`);
     }

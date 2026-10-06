@@ -7946,6 +7946,10 @@ None found a blocker; five findings were major. What was decided in answering th
 
 ## 2026-10-05 — A registration that was never paid can be deleted once it is cancelled (narrows the rule that a registration with a money leg is never deleted; branch `fix/delete-unpaid-registration`)
 
+**Extended 2026-10-06:** staff card audit fields may be present under the same money and
+Stripe guards. See "A cancelled staff card registration that was never paid can be deleted"
+below; the original rule and its remaining refusals still apply.
+
 - **Asked.** An organisation's office reported that it could not delete registrations: people start a
   registration, reach the card payment page and never pay, and what they leave behind stays in the list for good.
 - **The rule until today, written down here for the first time.** `FormResponsesController::destroy()` refused
@@ -8845,6 +8849,10 @@ units, initial payment choice and the holder's name are snapshotted on new contr
 entries. Public responses and customer mail never disclose the holder. Cash totals exclude
 card entries and charge a subsequent admin cash settlement to its actual collector.
 
+Deletion of an abandoned staff card entry follows the extension below, "A cancelled
+staff card registration that was never paid can be deleted". Its submit-time code use
+remains counted after deletion.
+
 The recommendation, pending the owner's final zero-price ruling, permits an explicitly
 complimentary cash entry only with the override switch enabled and a positive list unit
 and quantity. It is paid with zero liability, never a card session. The sole policy switch
@@ -8854,3 +8862,42 @@ Alternatives: universal price overrides would give every existing code new disco
 power; changing list-price fields alone would destroy the original price audit. Retain
 nullable audit columns without backfilling or repricing old rows. No frontend or native
 app work, production data repair, Stripe coupons, refunds or deployment is included here.
+
+
+## 2026-10-06 — A cancelled staff card registration that was never paid can be deleted
+
+Extends the 2026-10-05 never-paid deletion rule and the staff-price decision above.
+`FormResponse::neverRecordedAPayment()` has one staff allowance: method `online`, a
+non-null `staff_code_id`, and `staff_payment_method` exactly `card`. Its four audit
+columns may then be present. Payment status must still be exactly `unpaid`, with no
+`paid_at`, payment intent, charge flag, `paid_via`, `marked_paid_by_user_id`,
+`collected_at`, `charge_flagged_at`, or nonzero refunded amount. Staff cash and
+complimentary cash (`FormStaffEntry::isComplimentaryCash()`) stay refused, including
+in a damaged unpaid state. An office entry with staff fields or a staff route without
+its code remains refused. `hasMoneyLeg()` is unchanged.
+
+The decision is still on the locked row, cancelled first. A page id still goes through
+the unchanged close/check service, and exactly `expired` is required. A key without a
+page id, an imported row, every other Stripe result, and every Stripe failure refuse.
+Refusals still return from the transaction so a holder's fail-closed switch commits.
+
+What goes back, verified in code and local tests:
+- Staff card submit calls `FormStaffCode::recordUse()` in the submitting transaction,
+  before payment. There is no limit keyed on `use_count`. **Do not decrement it:** it
+  counts lifetime entries made with the code, including entries later deleted.
+- A date reservation cascades on the response's delete, exactly as for an ordinary
+  never-paid card row. The form's response counter drops and attachments are removed.
+- The open card page uses the existing `closeOpenSession()` path; cancellation's
+  `closePageOfCancelled()` is unchanged and never substitutes for the delete-time check.
+
+The warning "is being deleted" now includes `staff_code_id` (null on an ordinary row),
+never the holder's name. The SPA receives `delete_refusal` from the same local guard
+`destroy()` uses, so staff cash, complimentary, paid, flagged, refunded, other payment
+traces, imports and a page key without its id are dimmed with the server's sentence.
+Null allows the question, never bypasses the locked or Stripe checks. Older API
+payloads keep the SPA's previous three-column fallback. This supersedes the deliberate
+three-column-only SPA choice recorded on 2026-10-05.
+
+No migration, network call, commit or deployment. Stripe seams are faked; Stripe's
+expired-page finality, provider behavior, MySQL lock scheduling and the deployed browser
+remain unverified by this change. Evidence and counts: artifacts/staff-delete-evidence.md.

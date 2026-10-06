@@ -11,6 +11,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\FormAttachments;
+use App\Support\FormStaffEntry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -21,6 +22,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
 use Tests\Support\MakesRamadanGivingForms;
@@ -679,6 +681,7 @@ class FormResponseNeverPaidDeleteTest extends TestCase
                     'form_response_id' => $row->id,
                     'form_response_uuid' => $row->uuid,
                     'payment_method' => FormResponse::METHOD_ONLINE,
+                    'staff_code_id' => null,
                     'checkout_session_id' => $session,
                     'charge_masjid_id' => null,
                     'charge_ref' => 'fcr_test_delete_0001',
@@ -941,6 +944,168 @@ class FormResponseNeverPaidDeleteTest extends TestCase
             ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'NOTHING was recorded')
                 && ($context['form_response_uuid'] ?? null) === $row->uuid)
             ->once();
+    }
+
+    // ----------------------------------------------- staff card, never settled
+
+    #[Test]
+    public function a_staff_card_submit_counts_once_and_its_delete_releases_the_date_without_returning_the_use(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2027-01-31 17:00:00', 'UTC'));
+        $form = $this->makeIftarForm($this->org, ['2027-02-10']);
+        $settings = $form->settings;
+        $settings['payment'] += ['staffCodes' => true, 'staffPriceOverride' => true];
+        // A date list can also reserve a flat-price registration (Form::reservedDateIn()).
+        $settings['fee'] = ['amount' => 950, 'currency' => 'USD'];
+        $form->update(['settings' => $settings, 'capacity' => 1]);
+        [$code, $plain] = FormStaffCode::issue($form, 'Test Holder', now()->addDay());
+
+        $this->submitTo($form, ['sponsorship' => 'half', 'iftar_date' => '2027-02-10'], [
+            'staff_code' => $plain, 'staff_pay_with' => 'card', 'staff_unit_price_minor' => 50000,
+            'device_id' => 'test-staff-device',
+        ])->assertOk();
+        $row = FormResponse::where('form_id', $form->id)->sole();
+        $file = $this->withFile($row);
+        $this->assertSame('unpaid', $row->payment_status);
+        $this->assertSame('card', $row->staff_payment_method);
+        $this->assertSame(1, $code->fresh()->use_count, 'counted before payment');
+        $this->assertSame(1, FormDateReservation::withoutMasjidScope()->where('form_response_id', $row->id)->count());
+
+        $this->deleteJson($this->url("/{$row->id}", $form))->assertStatus(422)->assertJsonPath('message', self::CANCEL_FIRST);
+        $this->getJson($this->url("/{$row->id}", $form))->assertOk()->assertJsonPath('data.delete_refusal', self::CANCEL_FIRST);
+        $this->putJson($this->url("/{$row->id}", $form), ['status' => 'cancelled'])->assertOk()->assertJsonPath('data.delete_refusal', null);
+        // Cancel keeps the reservation row. Delete must remove it, just as for ordinary cards.
+        $this->assertSame(1, FormDateReservation::withoutMasjidScope()->where('form_response_id', $row->id)->count());
+        $totals = $this->getJson($this->url('/cash-totals', $form))->assertOk()->json('data');
+        Log::spy();
+        $this->deleteJson($this->url("/{$row->id}", $form))->assertOk();
+
+        $this->assertDatabaseMissing('form_responses', ['id' => $row->id]);
+        $this->assertDatabaseMissing('form_date_reservations', ['form_response_id' => $row->id]);
+        $this->assertDatabaseMissing('form_response_attachments', ['id' => $file->id]);
+        Storage::disk($this->disk())->assertMissing($file->path);
+        $this->assertSame(0, $form->fresh()->response_count);
+        $this->assertSame(1, $code->fresh()->use_count, 'lifetime entries, not retained registrations');
+        $this->assertSame($totals, $this->getJson($this->url('/cash-totals', $form))->assertOk()->json('data'));
+        $board = $this->getJson($this->url('/reservations', $form))->assertOk()->json('data.dates');
+        $this->assertSame('open', collect($board)->firstWhere('date', '2027-02-10')['state']);
+        Log::shouldHaveReceived('warning')->withArgs(fn (string $message, array $context = []) =>
+            str_contains($message, self::DELETED_LOG) && ($context['staff_code_id'] ?? null) === $code->id
+            && ! str_contains($message.json_encode($context), 'Test Holder'))->once();
+    }
+
+    public static function staffDeleteCases(): array
+    {
+        return [
+            'ordinary card unchanged' => [[], false, 200],
+            'ordinary card with only list audit' => [['list_unit_price_minor' => 1500], false, 422],
+            'ordinary card with only staff price audit' => [['staff_unit_price_minor' => 1000], false, 422],
+            'ordinary card with only holder audit' => [['staff_holder_name' => 'Test Holder'], false, 422],
+            'ordinary card with only route audit' => [['staff_payment_method' => 'card'], false, 422],
+            'settled staff cash' => [['payment_method' => 'cash', 'staff_payment_method' => 'cash', 'payment_status' => 'paid', 'paid_via' => 'cash'], true, 422],
+            'staff card expired' => [[], true, 200],
+            'staff card with no page or key' => [['stripe_checkout_session_id' => null, 'idempotency_key' => null], true, 200],
+            'staff card without override' => [['staff_unit_price_minor' => null], true, 200],
+            'staff cash even if damaged unpaid' => [['staff_payment_method' => 'cash'], true, 422],
+            'staff route absent' => [['staff_payment_method' => null], true, 422],
+            'staff card missing code' => [['staff_code_id' => null], true, 422],
+            'staff office route' => [['payment_method' => 'office'], true, 422],
+            'paid' => [['payment_status' => 'paid'], true, 422],
+            'unknown payment status' => [['payment_status' => null], true, 422],
+            'paid at' => [['paid_at' => '2027-01-01 00:00:00'], true, 422],
+            'payment intent' => [['stripe_payment_intent_id' => 'pi_test_staff_delete'], true, 422],
+            'paid via' => [['paid_via' => 'cash'], true, 422],
+            'marked paid by' => [['marked_paid_by_user_id' => 'operator'], true, 422],
+            'collected at' => [['collected_at' => '2027-01-01 00:00:00'], true, 422],
+            'flagged' => [['charge_flag' => 'disputed'], true, 422],
+            'refunded' => [['charge_flag' => 'refunded'], true, 422],
+            'flag time' => [['charge_flagged_at' => '2027-01-01 00:00:00'], true, 422],
+            'refund amount' => [['charge_refunded_minor' => 1], true, 422],
+            'key without page id' => [['stripe_checkout_session_id' => null], true, 422],
+            'imported' => [['external_ref' => 'test-staff-external'], true, 422],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('staffDeleteCases')]
+    public function staff_card_deletion_preserves_every_money_refusal_and_reports_it_to_the_spa(array $changes, bool $staff, int $status): void
+    {
+        if (($changes['marked_paid_by_user_id'] ?? null) === 'operator') {
+            $changes['marked_paid_by_user_id'] = $this->admin->id;
+        }
+        $row = $staff ? $this->staffCardRow($changes) : $this->cardRow($changes, ['status' => 'cancelled']);
+        $file = $this->withFile($row);
+        $hint = $this->getJson($this->url("/{$row->id}"))->assertOk();
+        $answer = $this->deleteJson($this->url("/{$row->id}"))->assertStatus($status);
+        $hint->assertJsonPath('data.delete_refusal', $status === 200 ? null : $answer->json('message'));
+        if ($status === 200) {
+            $this->assertDatabaseMissing('form_responses', ['id' => $row->id]);
+            Storage::disk($this->disk())->assertMissing($file->path);
+        } else {
+            $this->assertStillThereWithItsFile($row, $file, 'refused');
+            $this->assertSame([], self::$asked, 'local refusal must never ask Stripe');
+            $this->getJson($this->url("/{$row->id}"))->assertOk()->assertJsonPath('data.delete_refusal', $answer->json('message'));
+        }
+    }
+
+    #[Test]
+    public function complimentary_staff_cash_remains_refused_even_if_its_payment_status_is_damaged(): void
+    {
+        $row = $this->staffCardRow([
+            'payment_method' => 'cash', 'payment_status' => 'unpaid', 'staff_payment_method' => 'cash',
+            'staff_unit_price_minor' => 0, 'unit_price_minor' => 0, 'price_quantity' => 2, 'amount_due_minor' => 0,
+        ]);
+        $this->assertTrue(FormStaffEntry::isComplimentaryCash($row));
+        $this->deleteJson($this->url("/{$row->id}"))->assertStatus(422)->assertJsonPath('message', self::PAID_SENTENCE);
+        $this->getJson($this->url("/{$row->id}"))->assertOk()->assertJsonPath('data.delete_refusal', self::PAID_SENTENCE);
+        $this->assertNotNull($row->fresh());
+        $this->assertSame([], self::$asked);
+    }
+
+    #[Test]
+    public function a_staff_card_page_still_requires_stripes_expired_answer(): void
+    {
+        foreach (['open', 'expired', 'complete', 'unknown', 'paid', 'still-open', 'down', 'garbled', 'missing', 'authentication', 'unreachable'] as $outcome) {
+            $row = $this->staffCardRow();
+            $file = $this->withFile($row);
+            self::$pages[$row->stripe_checkout_session_id] = in_array($outcome, ['open', 'expired', 'complete', 'unknown'], true) ? $outcome : 'open';
+            self::$stripe = in_array($outcome, ['open', 'expired', 'complete', 'unknown'], true) ? null : $outcome;
+            if ($outcome === 'unreachable') {
+                $row->forceFill(['charge_account_id' => self::ACCOUNT, 'charge_masjid_id' => $this->org->id,
+                    'charge_ref' => 'fcr_test_staff_delete', 'charge_expires_at' => now()->subDay()])->save();
+            }
+            $answer = $this->deleteJson($this->url("/{$row->id}"));
+            if (in_array($outcome, ['open', 'expired'], true)) {
+                $answer->assertOk();
+                $this->assertDatabaseMissing('form_responses', ['id' => $row->id]);
+            } else {
+                $answer->assertStatus(in_array($outcome, ['down', 'garbled', 'missing', 'authentication', 'unknown'], true) ? 503 : 422);
+                $this->assertStillThereWithItsFile($row, $file, $outcome);
+            }
+        }
+    }
+
+    #[Test]
+    public function staff_routing_and_payment_are_rechecked_on_the_locked_row(): void
+    {
+        foreach ([['staff_payment_method' => 'cash'], ['payment_status' => 'paid', 'paid_at' => now()], ['status' => 'new']] as $change) {
+            $row = $this->staffCardRow();
+            $this->changesAfterTheFirstRead($row, $change);
+            $this->deleteJson($this->url("/{$row->id}"))->assertStatus(422)
+                ->assertJsonPath('message', isset($change['status']) ? self::CANCEL_FIRST : self::PAID_SENTENCE);
+            $this->assertNotNull($row->fresh());
+            $this->assertSame([], self::$asked);
+        }
+    }
+
+    private function staffCardRow(array $changes = []): FormResponse
+    {
+        [$code] = FormStaffCode::issue($this->form, 'Test Holder', now()->addDay());
+
+        return $this->cardRow(array_replace([
+            'staff_code_id' => $code->id, 'list_unit_price_minor' => 1500,
+            'staff_unit_price_minor' => 1000, 'staff_holder_name' => 'Test Holder', 'staff_payment_method' => 'card',
+        ], $changes), ['status' => 'cancelled']);
     }
 
     // ---------------------------------------------------------------- helpers
