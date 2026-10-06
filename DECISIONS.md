@@ -8819,3 +8819,8 @@ None found a blocker; five findings were major. What was decided in answering th
 - **Not done.** No change to `/build`, `/fonts` or any other path. No `Content-Security-Policy` on pictures or
   PDFs (a sandbox policy breaks the browser's own PDF viewer). The renderer's hosts (Cloudflare Pages) serve no
   uploads and are untouched.
+
+
+## 2026-10-06 — Database queue reservation must outlast job timeout budgets
+
+Decision: on `fix/queue-retry-after-trial`, raise the database queue's default retry_after from 90 to 360 seconds, preserving DB_QUEUE_RETRY_AFTER overrides and existing job timeout budgets. 360 = SendBroadcastJob's default 300-second budget + 60 seconds chosen operational headroom. Alternatives: reduce fan-out budgets (would truncate existing sends), increase the service fallback (does not fix reservation expiry), or rely on one worker forever (leaves another consumer able to take a live reservation). Verified locally on locked Laravel 12.64.0: payload timeout overrides worker --timeout=90; reservation expiry alone does not interrupt or repeat a job on one worker. A second consumer can pop at 90; tries=1 on these fan-outs makes that consumer fail/delete the job before handle(), rather than necessarily double-send. Tests: old default 4 failed/4 passed; fixed 8 passed; related 182 passed. Evidence and limits: HANDOFF.md and artifacts/queue-retry-{before,after,related}.log. No server operation or commit; Claude reviews before shipping.

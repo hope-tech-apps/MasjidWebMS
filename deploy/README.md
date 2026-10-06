@@ -70,6 +70,33 @@ jobs sit in the `jobs` table forever and notifications never send.** This system
 unit runs the worker as a daemon: auto-restart on crash (`Restart=always`),
 start on boot (`WantedBy=multi-user.target`), recycle hourly (`--max-time=3600`).
 
+### Reservation window and timeouts
+
+`--timeout=90` is the fallback for jobs without their own timeout. Laravel uses
+the serialized job timeout when present: `SendBroadcastJob` allows 300 seconds
+and `SendGroupNotificationJob` 120. With PCNTL enabled, the worker terminates at
+that effective timeout; the connection's `retry_after` does not stop the worker.
+
+The database queue defaults to `retry_after=360`: the longest default job budget
+(300 seconds) plus a 60-second operational margin. Keep `DB_QUEUE_RETRY_AFTER`
+strictly greater than every effective job timeout, including the worker fallback.
+An explicit environment value overrides the default. Rebuild the Laravel config
+cache and restart the worker when applying a queue config change through the
+normal approved deployment.
+
+The previous 90-second reservation became eligible for another consumer while
+a long fan-out could still be running. Reservation expiry alone does not repeat
+a job with one worker: that worker completes and deletes it before polling again.
+With another consumer, an expired reservation can be taken concurrently. The two
+fan-out jobs declare `tries=1`, so the second consumer fails and deletes the job
+before calling its handler; jobs allowing retries can execute again. This change
+protects the reservation window; it does not make queue delivery exactly once.
+
+`tests/Feature/QueueRetryWindowTest.php` exercises real database reservations,
+serialized job timeouts, single-consumer completion, the old-window second
+attempt failure, and recovery after the configured window. See
+[Laravel's timeout guidance](https://laravel.com/docs/12.x/queues#timeout).
+
 ### Install (one-time, as root on the Droplet)
 
 ```sh

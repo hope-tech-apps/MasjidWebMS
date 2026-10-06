@@ -58,9 +58,8 @@ class ProcessFlyerCutout implements ShouldQueue
 
     /**
      * Overridden from config in the constructor (see resolveTimeout); declared so
-     * it is a real property. 80 is what the shipped config resolves to — kept off
-     * 90 so the declaration itself never states the value that collides with the
-     * database queue's default retry_after.
+     * it is a real property. 80 is what the shipped process config resolves to:
+     * its 60-second process ceiling plus the 20-second cleanup allowance.
      */
     public int $timeout = 80;
 
@@ -84,7 +83,7 @@ class ProcessFlyerCutout implements ShouldQueue
      *    rather than by the worker (which yields none).
      *  - It must sit STRICTLY BELOW the queue connection's retry_after. Laravel
      *    requires that; at equality — which +30 on the shipped 60 hit exactly,
-     *    against a database queue whose retry_after defaults to 90 — the queue
+     *    against the database queue's former 90-second default — the queue
      *    can hand the job to a second worker at the very moment the first is
      *    still running it. Two concurrent 354MB inferences on a 1 vCPU box with
      *    2GB of RAM is how MySQL gets OOM-killed.
@@ -240,7 +239,7 @@ class ProcessFlyerCutout implements ShouldQueue
     private function destinationPath(string $source): string
     {
         $directory = trim((string) config('flyer.cutout.directory', 'flyers/cutouts'), '/');
-        $fingerprint = substr(sha1($this->flyerId . '|' . $source), 0, 12);
+        $fingerprint = substr(sha1($this->flyerId.'|'.$source), 0, 12);
 
         return "{$directory}/{$this->flyerId}-{$fingerprint}.png";
     }

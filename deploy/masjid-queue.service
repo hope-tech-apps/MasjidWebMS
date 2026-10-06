@@ -12,7 +12,8 @@ Group=www-data
 WorkingDirectory=/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
 # --tries=3 matches SendMasjidNotificationJob's retry policy; the job defines
 # its own 5/15/30s backoff. --max-time recycles the worker hourly to bound
-# memory. --timeout caps any single job at 90s.
+# memory. --timeout=90 is the fallback: job timeouts override it (broadcasts: 300s).
+# The database retry_after must exceed every effective job timeout; see README.md.
 ExecStart=/usr/bin/php /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/artisan queue:work database --queue=default --sleep=3 --tries=3 --timeout=90 --max-time=3600
 Restart=always
 RestartSec=3
