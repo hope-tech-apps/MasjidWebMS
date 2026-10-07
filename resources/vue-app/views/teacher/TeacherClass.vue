@@ -961,7 +961,7 @@
                     <p v-else-if="!hifz.length" class="text-muted small">Nothing recorded yet.</p>
                     <ul v-else class="list-unstyled mb-0">
                         <li v-for="h in hifz" :key="h.id" class="py-1 border-bottom small">
-                            <div class="d-flex gap-2 align-items-baseline">
+                            <div class="d-flex flex-wrap gap-2 align-items-baseline">
                                 <span class="text-capitalize flex-grow-1">
                                     <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
                                     <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
@@ -975,6 +975,15 @@
                                         :class="h.note ? 'text-success' : 'text-muted'"
                                         :aria-expanded="openHifzNote === h.id"
                                         @click="toggleHifzNote(h)">{{ h.note ? 'Edit note' : 'Add note' }}</button>
+                                <!-- A note written for one child is often the note
+                                     for the group that recited with her (owner,
+                                     2026-10-07). Offered on a line that HAS a note:
+                                     that is what there is to copy. -->
+                                <button v-if="h.note && hifzClassmates.length" type="button"
+                                        class="btn btn-sm btn-link p-0 text-nowrap"
+                                        :aria-expanded="openHifzCopy === h.id"
+                                        title="Copy this line and its note to other students"
+                                        @click="toggleHifzCopy(h)">Copy to students</button>
                                 <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
                                         @click="removeHifz(h)">Remove</button>
                             </div>
@@ -1010,6 +1019,39 @@
                                 <p v-if="hifzNoteError" class="text-danger small mt-2 mb-0">{{ hifzNoteError }}</p>
                                 <div class="form-text">{{ hifzNoteDraft.length }} / {{ hifzNoteMax }} · This student's family can read this note.</div>
                             </div>
+
+                            <!-- Copy to other students. A note lives on a line, so
+                                 each chosen student gets the LINE with the note: the
+                                 panel says exactly that, and says when the line is
+                                 one that moves a child forward. -->
+                            <div v-if="openHifzCopy === h.id" class="mt-1 mb-2 border rounded-3 px-2 py-2 bg-body-tertiary hifz-copy">
+                                <div class="fw-semibold mb-1">Copy this line and its note to other students</div>
+                                <div class="d-flex flex-wrap column-gap-3 row-gap-1 mb-2">
+                                    <div v-for="s in hifzClassmates" :key="s.membership_id" class="form-check">
+                                        <input :id="`hifz-copy-${h.id}-${s.membership_id}`" type="checkbox" class="form-check-input"
+                                               :checked="hifzCopyTo.includes(s.membership_id)" :disabled="copyingHifz"
+                                               @change="toggleHifzCopyTo(s.membership_id)">
+                                        <label :for="`hifz-copy-${h.id}-${s.membership_id}`" class="form-check-label">{{ name(s.contact) }}</label>
+                                    </div>
+                                </div>
+                                <p class="text-muted mb-2">
+                                    Each student you choose gets their own line: the same portion, type, quality and day, with this note.
+                                    You can change the note or remove the line on their log.
+                                    <span v-if="h.kind === 'sabak'" class="text-success-emphasis fw-semibold">This is new memorization, so it moves each of them forward.</span>
+                                </p>
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <button type="button" class="btn btn-sm btn-success" :disabled="copyingHifz || !hifzCopyTo.length" @click="copyHifz(h)">
+                                        <span v-if="copyingHifz" class="spinner-border spinner-border-sm"></span>
+                                        <span v-else>{{ hifzCopyTo.length ? `Copy to ${hifzCopyTo.length} student${hifzCopyTo.length === 1 ? '' : 's'}` : 'Copy' }}</span>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-link text-muted" :disabled="copyingHifz"
+                                            @click="hifzCopyTo = hifzClassmates.map((s) => s.membership_id)">Choose all</button>
+                                    <button type="button" class="btn btn-sm btn-link text-muted" :disabled="copyingHifz"
+                                            @click="openHifzCopy = null">Cancel</button>
+                                </div>
+                                <p v-if="hifzCopyError" class="text-danger small mt-2 mb-0" role="alert">{{ hifzCopyError }}</p>
+                            </div>
+                            <p v-if="hifzCopyDone && hifzCopyDone.id === h.id" class="text-success small mb-1" role="status">{{ hifzCopyDone.text }}</p>
                         </li>
                     </ul>
                 </template>
@@ -5226,6 +5268,7 @@ const toggleHifzNote = (entry: any) => {
         openHifzNote.value = null;
         return;
     }
+    openHifzCopy.value = null;
     openHifzNote.value = entry.id;
     hifzNoteDraft.value = entry.note ?? '';
     hifzNoteError.value = '';
@@ -5265,10 +5308,97 @@ const saveHifzNote = async (entry: any, note?: string) => {
     }
 };
 
+// ------------------------------------- the same line for other students
+// "Copy notes to other students" (owner, 2026-10-07). A note cannot exist apart
+// from a recitation, so copying it to another student RECORDS that line for
+// them: the same portion, type, quality and day, with the note. Each copy is an
+// ordinary `POST .../hifz`, so it is validated, attributed and struck exactly
+// like a line typed by hand, and the teacher realm gains no verb for it.
+const openHifzCopy = ref<string | number | null>(null);
+const hifzCopyTo = ref<(string | number)[]>([]);
+const copyingHifz = ref(false);
+const hifzCopyError = ref('');
+/** What the last copy did, said under the line it was copied FROM. */
+const hifzCopyDone = ref<{ id: string | number; text: string } | null>(null);
+
+/** Everyone in the class but the student whose log is open. */
+const hifzClassmates = computed(() =>
+    students.value.filter((s) => String(s.membership_id) !== String(hifzMembership.value)));
+
+const toggleHifzCopy = (entry: any) => {
+    if (openHifzCopy.value === entry.id) {
+        openHifzCopy.value = null;
+        return;
+    }
+    // One panel on a line at a time: the note editor gives way.
+    openHifzNote.value = null;
+    openHifzCopy.value = entry.id;
+    hifzCopyTo.value = [];
+    hifzCopyError.value = '';
+    hifzCopyDone.value = null;
+};
+
+const toggleHifzCopyTo = (membershipId: string | number) => {
+    hifzCopyTo.value = hifzCopyTo.value.includes(membershipId)
+        ? hifzCopyTo.value.filter((id) => id !== membershipId)
+        : [...hifzCopyTo.value, membershipId];
+};
+
+/**
+ * Record this line for each chosen student, one request each, in turn.
+ *
+ * Not all-or-nothing, and it says what happened by name: a copy that reached
+ * three students and failed for one reports the three and keeps the one ticked
+ * with the server's reason, so "Copy" again retries only her. The range is sent
+ * as the four coordinates the line holds (a whole surah included), never as
+ * "whole surah", so the copy is the same āyāt whatever the original's flag was.
+ */
+const copyHifz = async (entry: any) => {
+    if (copyingHifz.value || !hifzCopyTo.value.length) return;
+    copyingHifz.value = true;
+    hifzCopyError.value = '';
+    hifzCopyDone.value = null;
+    const copied: string[] = [];
+    const failed: { id: string | number; text: string }[] = [];
+    try {
+        for (const id of [...hifzCopyTo.value]) {
+            const student = students.value.find((s) => s.membership_id === id);
+            const who = student ? name(student.contact) : 'a student';
+            try {
+                await TeacherApiService.post(`${base.value}/hifz`, {
+                    membership_id: id,
+                    kind: entry.kind,
+                    from_surah: entry.from?.surah,
+                    from_ayah: entry.from?.ayah,
+                    to_surah: entry.to?.surah,
+                    to_ayah: entry.to?.ayah,
+                    quality: entry.quality,
+                    note: entry.note,
+                    ...(entry.recited_at ? { recited_at: entry.recited_at } : {}),
+                });
+                copied.push(who);
+            } catch (e: any) {
+                failed.push({ id, text: `Not copied for ${who}: ${apiErrorText(e, 'the line could not be recorded.')}` });
+            }
+        }
+    } finally {
+        copyingHifz.value = false;
+    }
+    hifzCopyTo.value = failed.map((f) => f.id);
+    if (copied.length) hifzCopyDone.value = { id: entry.id, text: `Copied to ${copied.join(', ')}.` };
+    if (failed.length) {
+        hifzCopyError.value = failed.map((f) => f.text).join(' ');
+    } else if (openHifzCopy.value === entry.id) {
+        openHifzCopy.value = null;
+    }
+};
+
 const loadHifz = async () => {
     hifz.value = [];
     // Another student's list: an editor left open would sit on nobody's line.
     openHifzNote.value = null;
+    openHifzCopy.value = null;
+    hifzCopyDone.value = null;
     if (!hifzMembership.value) return;
     hifzLoading.value = true;
     hifzError.value = '';
@@ -5343,6 +5473,7 @@ const removeHifz = async (entry: any) => {
         await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
         hifz.value = hifz.value.filter((h) => h.id !== entry.id);
         if (openHifzNote.value === entry.id) openHifzNote.value = null;
+        if (openHifzCopy.value === entry.id) openHifzCopy.value = null;
     } catch {
         hifzError.value = 'That entry could not be removed.';
     } finally {

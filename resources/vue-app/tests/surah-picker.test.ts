@@ -55,6 +55,15 @@ test('letters are part of the name: spelling marks, the article and doubled vowe
     assert.equal(foldSurahText("Al-Ma'idah"), 'almaidah');
 });
 
+test('digits from an Arabic or Persian keyboard are the same numbers, and the word "surah" is not part of a name', () => {
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '٣٦')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '۳۶')), [36]);
+    assert.equal(surahOnLeave(SURAHS, '٣٦')?.number, 36);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'surah 36')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'Surat Ya-Sin')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'sura')), numbers(SURAHS));
+});
+
 test('a number and letters together must both hold', () => {
     assert.deepEqual(numbers(matchSurahs(SURAHS, '2 baq')), [2]);
     assert.deepEqual(matchSurahs(SURAHS, '2 yas'), []);
@@ -129,7 +138,7 @@ test('typing part of a name narrows the list; a tap chooses; the arrows move the
     } finally { screen.unmount(); }
 });
 
-test('leaving the box: an exact number is taken, an uncertain text is dropped, Escape puts the surah back', async () => {
+test('leaving the box: an exact number is taken, an uncertain text leaves it holding no surah, Escape puts the surah back', async () => {
     const { screen, picked, box } = await picker(78);
     try {
         fire(box(), 'focus'); await flush();
@@ -137,18 +146,28 @@ test('leaving the box: an exact number is taken, an uncertain text is dropped, E
         fire(box(), 'blur'); await flush();
         assert.deepEqual(picked, [2]);
 
+        // Text that names no ONE surah: the box holds none (never the surah of the
+        // last recitation), keeps the text, and says so.
         fire(box(), 'focus'); await flush();
         type(box(), 'yu'); await flush();
         fire(box(), 'blur'); await flush();
-        assert.deepEqual(picked, [2], 'Yunus or Yusuf is not chosen for her');
-        assert.equal(box().props.value, surahLabel(SURAHS[8]), 'the box shows the surah it holds (the test parent never changed it)');
+        assert.deepEqual(picked, [2, null], 'Yunus or Yusuf is not chosen for her, and neither is the old surah');
+        assert.equal(box().props.value, 'yu');
+        assert.ok(screen.text().includes('“yu” is not one surah. Choose a surah from the list.'), screen.text());
+        assert.ok(String(box().props.class).includes('is-invalid'));
 
+        // Escape is the teacher saying "never mind": the surah the box holds comes back.
         fire(box(), 'focus'); await flush();
         type(box(), 'zzz'); await flush();
         assert.ok(screen.text().includes('No surah matches “zzz”.'), screen.text());
         fire(box(), 'keydown', { key: 'Escape' }); await flush();
-        assert.equal(box().props.value, surahLabel(SURAHS[8]));
-        assert.deepEqual(picked, [2]);
+        assert.equal(box().props.value, surahLabel(SURAHS[8]), 'the test parent still holds 78');
+        assert.deepEqual(picked, [2, null]);
+
+        // Focusing and leaving with nothing typed changes nothing.
+        fire(box(), 'focus'); await flush();
+        fire(box(), 'blur'); await flush();
+        assert.deepEqual(picked, [2, null]);
     } finally { screen.unmount(); }
 });
 

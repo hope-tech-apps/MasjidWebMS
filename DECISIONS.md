@@ -9237,3 +9237,24 @@ device, browser layout or production cache verification was performed.
 - **Not done**: the office's Hifdh tab (GroupHifzTab.vue) still has no note editor and still uses a plain surah
   list; names are matched in Latin letters only (the server's list has no Arabic names); no "edited" mark is shown
   beside a reworded note.
+
+## 2026-10-07 — "Copy to students" on a Hifdh note records the line for the chosen classmates
+
+- **Asked by the owner** the same morning, after the note editor: "Add the ability to copy notes to other
+  student(s)".
+- **A note cannot exist apart from a recitation**, so copying it to another student RECORDS that line for them:
+  the same portion, type, quality and day, with the note. The panel says exactly that before anything is sent,
+  lists the classmates to choose from (never the student whose log is open), and says when the line is new
+  memorization, because that moves each chosen student forward. Read this way on purpose: the alternative
+  (pasting the words onto whatever line the other student happens to have) guesses which line.
+- **No new server verb.** Each copy is one ordinary `POST .../groups/{group_id}/hifz`, so it is validated,
+  attributed (`heard_by` = the teacher who copied) and struck like a line typed by hand. Not all-or-nothing: it
+  names who was copied to, names who was not with the server's reason, and keeps only those ticked for a retry.
+  The range goes as the four coordinates the line holds, never as "whole surah".
+- **Offered only on a line that has a note**: that is what there is to copy.
+- **Surah box, hardened the same day**: text left in the box that names no ONE surah now leaves it holding NO
+  surah (with the text and a sentence under it) instead of going back to the surah of the last recitation, which
+  "Record" would have filed the new one under. Escape still puts the surah back. Digits from an Arabic or Persian
+  keyboard are read as numbers, and a leading "surah"/"surat" is ignored.
+- **Not done**: no check that the classmate already has the same line (a second copy records it twice; either is
+  removed like any line); the copy keeps the original's quality (no per-student quality in the panel).

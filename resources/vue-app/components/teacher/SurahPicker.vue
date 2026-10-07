@@ -10,8 +10,8 @@
         teacher could do with the old drop-down is lost.
     -->
     <div class="position-relative">
-        <input :id="inputId" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
-               class="form-control form-control-sm" :disabled="disabled"
+        <input :id="inputId" ref="box" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+               class="form-control form-control-sm" :class="{ 'is-invalid': !open && unresolved }" :disabled="disabled"
                :placeholder="surahs.length ? 'Type a number or part of the name' : 'Loading the surahs…'"
                role="combobox" aria-autocomplete="list"
                :aria-expanded="open && matches.length > 0"
@@ -34,6 +34,11 @@
         </ul>
         <div v-else-if="open && typed.trim()" class="form-text" role="status">
             No surah matches “{{ typed.trim() }}”. Type its number (1 to {{ surahs.length || 114 }}) or part of its name.
+        </div>
+        <!-- Left with text that names no one surah: the box holds NONE, and says so,
+             rather than going back to the surah of the last recitation. -->
+        <div v-else-if="!open && unresolved" class="form-text text-danger" role="alert">
+            “{{ unresolved }}” is not one surah. Choose a surah from the list.
         </div>
     </div>
 </template>
@@ -66,6 +71,9 @@ const open = ref(false);
 const active = ref(-1);
 /** An on-screen keyboard is composing a word: Enter belongs to it, not to the list. */
 const composing = ref(false);
+/** Text the box was left with that names no one surah; the box then holds none. */
+const unresolved = ref('');
+const box = ref<HTMLInputElement | null>(null);
 
 const matches = computed(() => matchSurahs(props.surahs, typed.value));
 
@@ -73,7 +81,11 @@ const showChosen = () => { text.value = chosen.value ? surahLabel(chosen.value) 
 
 // The chosen surah, or the list arriving after the box was drawn. Never while
 // the teacher is typing: that would replace the letters under her fingers.
-watch([chosen, () => props.surahs.length], () => { if (!open.value) showChosen(); }, { immediate: true });
+watch([chosen, () => props.surahs.length], () => {
+    if (chosen.value) unresolved.value = '';
+    // Text left unresolved stays in the box beside its message.
+    if (!open.value && !unresolved.value) showChosen();
+}, { immediate: true });
 
 const reveal = () => nextTick(() => {
     const row = matches.value[active.value];
@@ -82,6 +94,7 @@ const reveal = () => nextTick(() => {
 
 const onFocus = (e: Event) => {
     typed.value = '';
+    unresolved.value = '';
     open.value = true;
     active.value = chosen.value ? matches.value.findIndex((s) => s.number === chosen.value?.number) : -1;
     // The chosen surah's words are selected, so the first key replaces them.
@@ -103,13 +116,19 @@ const onInput = (e: Event) => {
 const pick = (s: Surah) => {
     emit('update:modelValue', s.number);
     typed.value = '';
+    unresolved.value = '';
     open.value = false;
     active.value = -1;
     text.value = surahLabel(s);
+    // A pick by Enter or by a tap leaves the cursor in the box. Its words are
+    // selected again, so typing another surah replaces them instead of being
+    // added to the end of this one's name.
+    nextTick(() => { if (box.value && document.activeElement === box.value) box.value.select?.(); });
 };
 
 const close = () => {
     typed.value = '';
+    unresolved.value = '';
     open.value = false;
     active.value = -1;
     showChosen();
@@ -142,17 +161,28 @@ const onKey = (e: KeyboardEvent) => {
 };
 
 /**
- * Leaving the box with text typed and no pick: an exact number, or the only
- * match, is taken (surahOnLeave); anything less certain is dropped and the box
- * shows the surah it held.
+ * Leaving the box with text typed and no pick. An exact number, or the only
+ * match, is taken (surahOnLeave). Anything less certain leaves the box holding
+ * NO surah, with the text still in it and a sentence under it: going back to the
+ * surah of the last recitation would let "Record" file this one under it. With
+ * nothing typed, the box simply shows the surah it holds.
  */
 const onBlur = () => {
-    const certain = open.value ? surahOnLeave(props.surahs, typed.value) : null;
+    const left = open.value ? typed.value.trim() : '';
+    if (!left) {
+        close();
+        return;
+    }
+    const certain = surahOnLeave(props.surahs, left);
     if (certain) {
         pick(certain);
         return;
     }
-    close();
+    unresolved.value = left;
+    typed.value = '';
+    open.value = false;
+    active.value = -1;
+    emit('update:modelValue', null);
 };
 </script>
 

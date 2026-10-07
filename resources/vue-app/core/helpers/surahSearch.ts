@@ -26,11 +26,19 @@ export const surahLabel = (s: Surah): string => `${s.number} · ${s.name} (${s.a
  */
 export function foldSurahText(text: string): string {
     return text
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '')
         .replace(/ee/g, 'i').replace(/oo/g, 'u').replace(/ou/g, 'u').replace(/aa/g, 'a');
 }
+
+/**
+ * Digits as a phone's Arabic or Persian keyboard types them (٣٦, ۳۶), as the
+ * digits the surah numbers are written in.
+ */
+export const westernDigits = (text: string): string => text
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
 
 /** The name without its article ("An-Naba" is found by "naba"). "Ali 'Imran" has none. */
 const bareName = (name: string): string => foldSurahText(name.replace(/^A[a-z]{1,2}-/, ''));
@@ -48,9 +56,11 @@ const bareName = (name: string): string => foldSurahText(name.replace(/^A[a-z]{1
  * Within a rank the mushaf order is kept.
  */
 export function matchSurahs(surahs: Surah[], query: string): Surah[] {
-    const typedDigits = (query.match(/\d/g) ?? []).join('');
+    const text = westernDigits(query);
+    const typedDigits = (text.match(/\d/g) ?? []).join('');
     const digits = typedDigits.replace(/^0+/, '');
-    const letters = foldSurahText(query.replace(/\d/g, ''));
+    // "surah 36", "surat yasin": the word itself is not part of any name.
+    const letters = foldSurahText(text.replace(/\d/g, '')).replace(/^sura[ht]?/, '');
 
     if (!typedDigits && !letters) return surahs.slice();
     // Only zeros: a number no surah has.
@@ -82,12 +92,13 @@ export function matchSurahs(surahs: Surah[], query: string): Surah[] {
 /**
  * What typed text chooses when the teacher moves on without picking from the
  * list (Tab to the ayah boxes): the surah whose NUMBER is exactly what was typed,
- * or the only surah the text matches. Anything less certain chooses nothing, and
- * the box goes back to the surah it held: a guess here would log a recitation
- * against the wrong surah.
+ * or the only surah the text matches. Anything less certain chooses nothing: a
+ * guess here would log a recitation against the wrong surah. (The box then holds
+ * NO surah rather than the one it held before, for the same reason: see
+ * SurahPicker's onBlur.)
  */
 export function surahOnLeave(surahs: Surah[], query: string): Surah | null {
-    const text = query.trim();
+    const text = westernDigits(query).trim();
     if (!text) return null;
 
     if (/^\d+$/.test(text)) {
