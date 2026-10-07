@@ -1,0 +1,10 @@
+=== Teacher guide ===
+
+### Task [sprout]: Teacher Sprout task
+Velvet acorn. (Picture: Tiny pebble) School sprout (in the School guide) Lunch sprout Whole school School question Admin hint
+
+### Task [ripple]: Teacher Ripple task
+Silver fern.
+
+### Common question [faq-pebble]: Why a pebble?
+For a sprout.

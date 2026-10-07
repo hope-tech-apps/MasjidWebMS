@@ -130,6 +130,7 @@ Route::prefix('admin')->group(function () {
         Route::prefix('masjids/{masjid_id}/guides')->whereNumber('masjid_id')
             ->middleware('throttle:guides')->controller(\App\Http\Controllers\Guides\GuidesController::class)
             ->group(function () {
+                Route::post('/ask', 'ask');
                 Route::get('/', 'index');
                 Route::get('/{book}', 'show');
                 Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');

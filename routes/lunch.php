@@ -108,6 +108,7 @@ Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'capability:jummah_lunch']
 Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'throttle:guides'])
     ->prefix('lunch/masjids/{masjid_id}/guides')->whereNumber('masjid_id')
     ->controller(\App\Http\Controllers\Guides\GuidesController::class)->group(function () {
+        Route::post('/ask', 'ask');
         Route::get('/', 'index');
         Route::get('/{book}', 'show');
         Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');

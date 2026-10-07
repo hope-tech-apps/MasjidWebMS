@@ -382,7 +382,16 @@ class TeacherMultiSchoolTest extends TestCase
         Queue::fake();
         Storage::fake((string) config('groups.media.disk', 'local'));
         Storage::fake((string) config('groups.resources.disk', 'local'));
-        $this->artisan('guides:install', ['folder' => base_path('tests/fixtures/guides/d1-1234abcd')])->assertExitCode(0);
+        $this->artisan('guides:install', ['folder' => base_path('tests/fixtures/guides-ask/d1-1234abcd')])->assertExitCode(0);
+        config(['guide_ask.enabled' => true, 'services.anthropic.key' => 'sweep-fake-key', 'guide_ask.person_per_minute' => 20]);
+        // This sweep proves realm/tenant authorization; GuideAskTest exercises the SDK payload.
+        $this->app->instance(\App\Support\Guides\GuideAskService::class,
+            new class(app(\App\Support\Guides\GuideReleases::class)) extends \App\Support\Guides\GuideAskService {
+                public function answer(array $manifest, array $books, string $reader, string $question, ?string $model = null): array
+                {
+                    return ['answer' => 'Open Teacher Sprout task.', 'unknown' => false, 'tasks' => [['book' => 'teacher', 'id' => 'sprout', 'title' => 'Teacher Sprout task']]];
+                }
+            });
 
         $skillA = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolA->id)->firstOrFail();
         $skillB = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolB->id)->firstOrFail();
@@ -653,6 +662,7 @@ class TeacherMultiSchoolTest extends TestCase
         $bodyRefusal = [403, 404, 422];
 
         return [
+            'POST /guides/ask' => ['body' => fn () => ['question' => 'How do I open Help?']],
             'POST /behavior-skills' => [
                 'body' => fn (TeacherRealmWorld $w) => ['label' => "MARK-{$w->tag}-NEW-SKILL", 'polarity' => BehaviorSkill::POLARITY_POSITIVE, 'default_points' => 2],
             ],

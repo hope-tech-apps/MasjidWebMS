@@ -34,6 +34,7 @@ async function screen(off = false, unavailable = false, missingPicture = false, 
         '@/stores/authStore': { useAuthStore: () => auth },
         '@/core/services/GuideApiService': { default: { json: async (url: string) => { calls.push(url); return { data: url.endsWith('/guides') ? unavailable ? [] : off ? books.slice(0, 1) : books : { ...data, css: pageCss ?? data.css, title: route.params.book + ' guide', html: pageHtml ?? readFileSync(new URL(`../../../tests/fixtures/guides/d1-1234abcd/${route.params.book}/page.html`, import.meta.url), 'utf8') } }; }, picture: async () => { if (missingPicture) throw new Error('missing'); return new Blob(); } } },
         '@/components/guides/GuideContent.vue': { default: content },
+        '@/components/guides/GuideAsk.vue': { default: await compileSfc('components/guides/GuideAsk.vue', {}) },
         '@/core/guides/guidePaths': await loadTs('core/guides/guidePaths.ts', {}),
     });
     await flush();

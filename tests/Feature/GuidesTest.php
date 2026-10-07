@@ -136,7 +136,9 @@ class GuidesTest extends TestCase
     public function no_release_is_a_normal_empty_state(): void
     {
         $this->withToken($this->token('MasjidAdmin'));
-        $this->getJson($this->url('admin'))->assertOk()->assertExactJson(['status' => 'success', 'data' => []]);
+        $this->getJson($this->url('admin'))->assertOk()->assertExactJson(['status' => 'success', 'data' => [], 'ask_available' => false,
+            'ask_min_chars' => 3, 'ask_max_chars' => 500,
+            'ask_failure' => 'That did not work. Try again, or reach out to your Manara support contact.']);
         $this->getJson($this->url('admin', '/admin'))->assertNotFound();
         $this->artisan('guides:status')->expectsOutputToContain('No guide release installed')->assertExitCode(0);
     }

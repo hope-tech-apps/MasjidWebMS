@@ -11,6 +11,8 @@ use FilesystemIterator;
 /** Validates the complete private release before it can become readable. */
 class GuideValidator
 {
+    // Over twice the largest reference text (~128k English characters), bounded in bytes.
+    public const ASK_MAX_BYTES = 262144;
     public const BOOKS = ['admin', 'school', 'teacher', 'lunch'];
     public const VERSION = '/^d[0-9]+-[0-9a-f]{8}$/D';
 
@@ -37,7 +39,7 @@ class GuideValidator
             if (! self::safePath($name)) $this->fail('path', $name);
             if ($entry->isDir()) continue;
             if (! $entry->isFile()) $this->fail('file-type', $name);
-            if ($name !== 'manifest.json' && ! in_array(pathinfo($name, PATHINFO_EXTENSION), ['html', 'css', 'jpg', 'png', 'webp'], true)) $this->fail('extension', $name);
+            if ($name !== 'manifest.json' && ! in_array(pathinfo($name, PATHINFO_EXTENSION), ['html', 'css', 'jpg', 'png', 'webp', 'txt'], true)) $this->fail('extension', $name);
             $actual[] = $name;
         }
         if (! in_array('manifest.json', $actual, true)) $this->fail('missing', 'manifest.json');
@@ -86,9 +88,45 @@ class GuideValidator
             }
             $this->html(file_get_contents($root.'/'.$book.'/page.html'), $book, $meta);
             $this->css(file_get_contents($root.'/'.$book.'/page.css'), $book.'/page.css');
+            if (array_key_exists('ask', $meta)) {
+                $relative = $book.'/ask.txt';
+                if ($meta['ask'] !== $relative) $this->fail('manifest-ask', 'manifest.json');
+                if (! is_int($meta['ask_bytes'] ?? null) || $meta['ask_bytes'] <= 0 || $meta['ask_bytes'] > self::ASK_MAX_BYTES) $this->fail('ask-bytes', $relative);
+                $expected[] = $relative;
+                $this->checkFile($root, $relative, ['bytes' => $meta['ask_bytes'], 'sha256' => $meta['ask_sha256'] ?? null]);
+                $this->ask(file_get_contents($root.'/'.$relative), file_get_contents($root.'/'.$book.'/page.html'), $meta, $relative);
+            } elseif (array_key_exists('ask_sha256', $meta) || array_key_exists('ask_bytes', $meta)) {
+                $this->fail('manifest-ask', 'manifest.json');
+            }
         }
         foreach (array_diff($actual, $expected) as $path) $this->fail('unlisted', $path);
         return $manifest;
+    }
+
+    private function ask(string $text, string $html, array $meta, string $file): void
+    {
+        if (! mb_check_encoding($text, 'UTF-8') || preg_match('/(?![\n\t])\p{Cc}/u', $text)) $this->fail('ask-text', $file);
+        $dom = new DOMDocument;
+        $old = libxml_use_internal_errors(true);
+        try { $dom->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NONET); }
+        finally { libxml_clear_errors(); libxml_use_internal_errors($old); }
+        $faqs = [];
+        foreach ($dom->getElementsByTagName('details') as $el) {
+            if ($el->hasAttribute('data-faq')) $faqs[] = $el->getAttribute('id');
+        }
+        $tasks = $questions = [];
+        foreach (explode("\n", $text) as $line) {
+            if (! str_starts_with($line, '###')) continue;
+            if (! preg_match('/^### (Task|Common question) \[(.+)\]: (.+)$/uD', $line, $match)) $this->fail('ask-heading', $file);
+            if ($match[1] === 'Task') {
+                if (in_array($match[2], $tasks, true) || ! in_array($match[2], array_column($meta['tasks'], 'id'), true)) $this->fail('ask-task', $file);
+                $tasks[] = $match[2];
+            } else {
+                if (in_array($match[2], $questions, true) || ! in_array($match[2], $faqs, true)) $this->fail('ask-faq', $file);
+                $questions[] = $match[2];
+            }
+        }
+        if (array_diff(array_column($meta['tasks'], 'id'), $tasks)) $this->fail('ask-task-missing', $file);
     }
 
     private function checkFile(string $root, string $file, array $meta): void

@@ -88,6 +88,10 @@ final class TenantScopingCoverageTest extends TestCase
      * Verified against the built schema on 2026-08-12, not copied forward.
      */
     private const DECLINED = [
+        \App\Models\GuideUnansweredQuestion::class => [
+            'reason' => 'Platform-wide unanswered guide feedback with exactly four fields, no tenant or actor identity. Only CLI export/prune reads it; attaching a masjid_id would contradict the retention contract. The endpoint authorizes guide access before writing.',
+            'has_masjid_id_column' => false,
+        ],
         MasjidUser::class => [
             'reason' => 'The `masjid_user` membership pivot is the table the tenant is derived FROM. Scoping it would make "which masjids may this user act on?" answerable only from inside a masjid the user is already bound to, and its creating hook would stamp memberships into the wrong organisation. Isolation here is an authorization concern (TenantResolver + the API surface). See .claude/rules/tenant-scoping.md.',
             'has_masjid_id_column' => true,

@@ -96,6 +96,7 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'guide_unanswered_questions' => 'Unanswered guide questions may contain personal data typed by the reader; platform-wide feedback, cleared in full.',
         // Broadcast send history: targeting lists (`audience_contact_ids` is a
         // json array of contacts.id), provider message references, and error
         // text that routinely quotes the failing recipient's number.

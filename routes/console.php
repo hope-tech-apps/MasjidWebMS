@@ -914,3 +914,6 @@ Schedule::command('points:weekly-report')->hourly()->withoutOverlapping(50);
 // system cron as everything above (`schedule:run` every minute).
 Schedule::command('bucks:mint')->hourlyAt(10)->withoutOverlapping(50);
 Schedule::command('bucks:expire')->hourlyAt(40)->withoutOverlapping(50);
+
+// Platform guide feedback may contain personal data entered in questions.
+Schedule::command('guides:ask-prune')->dailyAt('03:47')->withoutOverlapping();

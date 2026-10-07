@@ -1,0 +1,1 @@
+.mg { color: #123; } .mg img { max-width: 100%; } .mg[data-theme="dark"] { color: #eee; background: #123; } .mg[data-book="lunch"] { border-color: #444; }

@@ -98,6 +98,7 @@ Route::prefix('teacher')
                 // one, verified by `tenant` for this very request.
                 Route::prefix('guides')->middleware('throttle:guides')
                     ->controller(\App\Http\Controllers\Guides\GuidesController::class)->group(function () {
+                        Route::post('/ask', 'ask');
                         Route::get('/', 'index');
                         Route::get('/{book}', 'show');
                         Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');

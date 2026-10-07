@@ -1,0 +1,128 @@
+{
+  "version": "d1-1234abcd",
+  "draft": 1,
+  "follows": "fixture",
+  "built_at": "2026-01-01T00:00:00Z",
+  "books": {
+    "admin": {
+      "title": "Admin guide",
+      "page": "admin/page.html",
+      "page_sha256": "e75496e4ef20b32c7231e758839a6ae242b21e933d2028db983f8183dfae1cfc",
+      "style": "admin/page.css",
+      "style_sha256": "2f4436b45a88437f9635c871c845808a860817813036a85cac7c85d913fa33e9",
+      "tasks": [
+        {
+          "id": "sprout",
+          "title": "Admin Sprout task",
+          "section": "Pebble chapter"
+        },
+        {
+          "id": "ripple",
+          "title": "Admin Ripple task",
+          "section": "Fern chapter"
+        }
+      ],
+      "files": {
+        "shots/pebble/pixel.jpg": {
+          "bytes": 632,
+          "sha256": "33b32881eafb0f2741e1a666a142cdf8ca2e362fb50bd6054ce2286474bb05aa"
+        }
+      },
+      "page_bytes": 992,
+      "style_bytes": 154,
+      "ask": "admin/ask.txt",
+      "ask_bytes": 298,
+      "ask_sha256": "031ae2768fa344060b8794535b4f71031508a9bba6b070359c748fb944bd5b3d"
+    },
+    "school": {
+      "title": "School guide",
+      "page": "school/page.html",
+      "page_sha256": "e4d819b20e6d2f90237e3adfc21d0bb31721d0080a2b697f4c8bf44afae5b96d",
+      "style": "school/page.css",
+      "style_sha256": "3c8ed6ba89ecafc6bf3d597876e3490b38564a913cc07b28731033c986b322f4",
+      "tasks": [
+        {
+          "id": "sprout",
+          "title": "School Sprout task",
+          "section": "Pebble chapter"
+        },
+        {
+          "id": "ripple",
+          "title": "School Ripple task",
+          "section": "Fern chapter"
+        }
+      ],
+      "files": {
+        "shots/pebble/pixel.jpg": {
+          "bytes": 631,
+          "sha256": "321da784cff8e6a235313e03f0a20dae0e6d0bf079c2b77046cb9cfeac0d8c53"
+        }
+      },
+      "page_bytes": 996,
+      "style_bytes": 155,
+      "ask": "school/ask.txt",
+      "ask_bytes": 301,
+      "ask_sha256": "f1f848182846c90a82b9e9a600a61ed6acd7c01c3806ead1e76a2556d5c7b35b"
+    },
+    "teacher": {
+      "title": "Teacher guide",
+      "page": "teacher/page.html",
+      "page_sha256": "da791a97019abaa387342031a268234837c7c2ec046228dee2d7b94b30ab6d4f",
+      "style": "teacher/page.css",
+      "style_sha256": "bbd3360efc514979faa7c15c13d258d8e18fcc2c45fb147b7966bb0e05a72045",
+      "tasks": [
+        {
+          "id": "sprout",
+          "title": "Teacher Sprout task",
+          "section": "Pebble chapter"
+        },
+        {
+          "id": "ripple",
+          "title": "Teacher Ripple task",
+          "section": "Fern chapter"
+        }
+      ],
+      "files": {
+        "shots/pebble/pixel.jpg": {
+          "bytes": 631,
+          "sha256": "03fc9cdc39ea2ce230f9a858a6b72af4b7f3743f1af4e5ebca972a92514f7b2e"
+        }
+      },
+      "page_bytes": 1000,
+      "style_bytes": 156,
+      "ask": "teacher/ask.txt",
+      "ask_bytes": 304,
+      "ask_sha256": "9bbacfddb5da63d712edec84e38869e8aeb917c6b3f55976228ceadccd9511d1"
+    },
+    "lunch": {
+      "title": "Lunch guide",
+      "page": "lunch/page.html",
+      "page_sha256": "ab6e629bca0ea31b0181e4274b2c1162554977a36331c7ae4489451c151a3da8",
+      "style": "lunch/page.css",
+      "style_sha256": "cca82db675e369be77e4d62d5af9770062b5948964c6d6c89013c5c2374b6a7f",
+      "tasks": [
+        {
+          "id": "sprout",
+          "title": "Lunch Sprout task",
+          "section": "Pebble chapter"
+        },
+        {
+          "id": "ripple",
+          "title": "Lunch Ripple task",
+          "section": "Fern chapter"
+        }
+      ],
+      "files": {
+        "shots/pebble/pixel.jpg": {
+          "bytes": 632,
+          "sha256": "36f91d0e91b3ccac5d4491c9980691406b077239a39ebe8bd19fba37f1a2d673"
+        }
+      },
+      "page_bytes": 992,
+      "style_bytes": 154,
+      "ask": "lunch/ask.txt",
+      "ask_bytes": 298,
+      "ask_sha256": "8a996aee9b2a15c83b8c7e3197bb731a35a430f91aa51f4a1409c0aa1d5d3586"
+    }
+  }
+}

@@ -322,6 +322,20 @@ class StagingScrubTest extends TestCase
     }
 
     #[Test]
+    public function unanswered_guide_questions_are_cleared_even_with_a_tenant_bound(): void
+    {
+        DB::table('guide_unanswered_questions')->insert([
+            'question' => 'Private made-up question', 'created_at' => now(),
+            'books' => 'admin+school', 'release_version' => 'd1-1234abcd',
+        ]);
+        app(TenantContext::class)->set($this->masjidA->id);
+        $this->app->detectEnvironment(fn () => 'staging');
+        config(['app.env' => 'staging', 'database.connections.sqlite.database' => 'masjids_staging']);
+        $this->artisan('staging:scrub', ['--i-understand-this-destroys-personal-data' => true])->assertExitCode(0);
+        $this->assertDatabaseCount('guide_unanswered_questions', 0);
+    }
+
+    #[Test]
     public function drop_rows_tables_are_emptied(): void
     {
         $this->runScrub();

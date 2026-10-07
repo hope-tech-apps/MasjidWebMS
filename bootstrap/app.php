@@ -90,6 +90,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // this middleware admits the request.
         $middleware->prepend(TrustedHosts::class);
 
+        // Preserve the guide question as typed, including its line breaks and whitespace.
+        $middleware->trimStrings(except: [fn (Request $request) => $request->is('api/*/masjids/*/guides/ask')]);
+
         // Security headers on every response (web + api).
         $middleware->append(SecurityHeaders::class);
 
@@ -251,6 +254,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Don't include sensitive context in default reports.
         $exceptions->dontFlash([
+            'question', // Guide questions must never be flashed into a session.
             'current_password',
             'password',
             'password_confirmation',

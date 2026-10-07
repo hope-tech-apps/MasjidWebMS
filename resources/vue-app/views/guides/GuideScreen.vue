@@ -15,6 +15,8 @@
                 <button class="btn btn-outline-secondary" type="button" @click="query = ''">Clear search</button>
                 <button class="btn btn-outline-secondary" type="button" :aria-pressed="String(theme === 'dark')" @click="toggleTheme">Dark guide: {{ theme === 'dark' ? 'on' : 'off' }}</button>
             </div>
+            <GuideAsk v-if="askAvailable" :key="askAccount" :request="askQuestion" :path="path" :navigate="navigate"
+                      :min-chars="askMinChars" :max-chars="askMaxChars" />
             <div class="guide-columns">
                 <details class="guide-contents-panel" :open="contentsOpen" @toggle="contentsToggled">
                     <summary>Contents</summary>
@@ -49,6 +51,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/authStore';
 import GuideApiService from '@/core/services/GuideApiService';
 import GuideContent from '@/components/guides/GuideContent.vue';
+import GuideAsk from '@/components/guides/GuideAsk.vue';
 import { guidePath } from '@/core/guides/guidePaths';
 import type { GuideRealm, GuideBook, GuidePage, GuideItem } from '@/core/guides/guidePaths';
 const props = defineProps<{ realm: GuideRealm }>();
@@ -67,6 +70,12 @@ const navigate = (target: string) => {
     if (compactMedia?.matches) contentsOpen.value = false;
 };
 const books = ref<GuideBook[]>([]);
+const askAvailable = ref(false);
+const askMinChars = ref(3);
+const askMaxChars = ref(500);
+const askFailure = ref('');
+const askAccount = computed(() => `${props.realm}:${organisationId.value}:${auth.user?.id}:${auth.token}`);
+const askQuestion = (question: string, signal: AbortSignal) => GuideApiService.ask(`/api/${props.realm}/masjids/${organisationId.value}/guides/ask`, question, signal, askFailure.value);
 const page = ref<GuidePage | null>(null);
 const items = ref<GuideItem[]>([]);
 const query = ref('');
@@ -127,7 +136,7 @@ watch(() => [route.fullPath, navigationRead.value, organisationId.value, auth.us
     const run = ++generation;
     controller?.abort(); controller = new AbortController();
     const signal = controller.signal;
-    page.value = null; palette.value = {}; items.value = []; books.value = []; busy.value = true; unavailable.value = false; refused.value = false;
+    askAvailable.value = false; page.value = null; palette.value = {}; items.value = []; books.value = []; busy.value = true; unavailable.value = false; refused.value = false;
     const id = organisationId.value;
     const book = currentBook.value;
     const base = `/api/${props.realm}/masjids/${id}/guides`;
@@ -136,6 +145,9 @@ watch(() => [route.fullPath, navigationRead.value, organisationId.value, auth.us
         const listing = await GuideApiService.json(base, signal);
         if (run !== generation) return;
         books.value = listing.data;
+        askAvailable.value = listing.ask_available === true;
+        askMinChars.value = listing.ask_min_chars ?? 3; askMaxChars.value = listing.ask_max_chars ?? 500;
+        askFailure.value = listing.ask_failure ?? 'That did not work. Try again, or reach out to your Manara support contact.';
         if (!books.value.length) { unavailable.value = true; return; }
         if (!books.value.some(item => item.book === book)) { refused.value = true; return; }
         const response = await GuideApiService.json(`${base}/${encodeURIComponent(book)}`, signal);

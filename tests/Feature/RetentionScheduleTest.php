@@ -115,6 +115,15 @@ class RetentionScheduleTest extends TestCase
     }
 
     #[Test]
+    public function unanswered_guide_retention_is_scheduled_daily_without_overlap(): void
+    {
+        $event = $this->scheduledEventFor('guides:ask-prune');
+        $this->assertNotNull($event);
+        $this->assertSame('47 3 * * *', $event->expression);
+        $this->assertTrue($event->withoutOverlapping);
+    }
+
+    #[Test]
     public function the_group_retention_sweep_is_actually_scheduled(): void
     {
         $event = $this->scheduledEventFor('groups:purge-feed');

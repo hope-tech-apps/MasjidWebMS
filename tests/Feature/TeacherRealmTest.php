@@ -142,6 +142,8 @@ class TeacherRealmTest extends TestCase
 
         $this->assertEqualsCanonicalizing([
             'POST /api/teacher/logout',
+            // Guide-only question, with no tenant data in the provider request.
+            'POST /api/teacher/masjids/{masjid_id}/guides/ask',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/letters/stage',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/letters',
             // Every drill mastered at once (BISS teachers, 2026-09-21). No new

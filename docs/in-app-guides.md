@@ -1,6 +1,6 @@
 # Private in-app guides
 
-Help is inside the signed-in organisation dashboard, teacher shell and lunch shell. Families and guests have no guide access. There is no AI question box.
+Help is inside the signed-in organisation dashboard, teacher shell and lunch shell. Families and guests have no guide access. An optional Ask the guide box uses only this account’s released guide text. It ships switched off; older releases remain readable and offer no box.
 
 All staff are `User` principals on `auth:sanctum`, with separate admin/teacher/lunch role middleware. Families are `Contact` principals on the `family` guard. Admins get Admin; they also get School when the resolved organisation has `crm_enabled`, the same test as the Groups/Classrooms menu. This applies to SuperAdmin too. Teachers get Teacher; lunch staff get Lunch. The API requires a live, non-deleted resolved organisation for every account and checks entitlement before any release/file lookup. Teacher/lunch membership resolution already refuses missing/deleted memberships with 403; the shared controller returns a uniform 404 when an already-resolved organisation no longer exists.
 
@@ -38,8 +38,8 @@ Pruning preserves current and previously selected current, including after rollb
 
 This is the enforced installer contract, including the intentionally conservative CSS subset. The release tool must mirror it. Errors identify a rule and relative file, never file contents.
 
-1. **Release tree:** exactly the four manifest books `admin`, `school`, `teacher`, `lunch`, with `manifest.json` at the root and `<book>/page.html`, `<book>/page.css`. Version matches `^d[0-9]+-[0-9a-f]{8}$`. No symlinks at the release root or within its tree, non-regular files, files outside the manifest, missing listed files, or path traversal. All tree paths use ASCII `[A-Za-z0-9_.-]+` slash-separated components, with no `..` substring, backslash, percent escapes, absolute path or doubled slash. Other than `manifest.json`, only lowercase `.html`, `.css`, `.jpg`, `.png`, `.webp` extensions are allowed.
-2. **Manifest:** version is a matching string; `draft`, `follows`, `built_at` are present and each is a string or integer (the installer does not interpret a timestamp/commit format). `books` has exactly the four keys. Each book has a nonblank string title, `page` exactly `<book>/page.html`, `style` exactly `<book>/page.css`, and corresponding lowercase 64-hex SHA256 values matching the files. Optional `page_bytes`/`style_bytes`, when present, are positive integers matching file sizes. Extra metadata keys are not prohibited.
+1. **Release tree:** exactly the four manifest books `admin`, `school`, `teacher`, `lunch`, with `manifest.json` at the root and `<book>/page.html`, `<book>/page.css`. Version matches `^d[0-9]+-[0-9a-f]{8}$`. No symlinks at the release root or within its tree, non-regular files, files outside the manifest, missing listed files, or path traversal. All tree paths use ASCII `[A-Za-z0-9_.-]+` slash-separated components, with no `..` substring, backslash, percent escapes, absolute path or doubled slash. Other than `manifest.json`, only lowercase `.html`, `.css`, `.jpg`, `.png`, `.webp` extensions are allowed, plus `.txt` ONLY for a book’s listed `<book>/ask.txt`. An unlisted `.txt` is refused.
+2. **Manifest:** version is a matching string; `draft`, `follows`, `built_at` are present and each is a string or integer (the installer does not interpret a timestamp/commit format). `books` has exactly the four keys. Each book has a nonblank string title, `page` exactly `<book>/page.html`, `style` exactly `<book>/page.css`, and corresponding lowercase 64-hex SHA256 values matching the files. Optional `page_bytes`/`style_bytes`, when present, are positive integers matching file sizes. Optional `ask`, `ask_sha256`, `ask_bytes` must appear together: `ask` is exactly `<book>/ask.txt`, SHA256 is lowercase 64-hex and matches the bytes, and size is a matching positive integer no greater than **262,144 bytes**. This gives over twice the largest reference text (~128,000 English characters) in headroom. A book without all three fields remains valid only when it has none. Extra metadata keys are not prohibited.
 3. **Pictures:** `files` keys are book-relative `shots/<walk>/<name>.jpg|png|webp`, where walk uses `[A-Za-z0-9_-]+` and name uses `[A-Za-z0-9_.-]+`, with the path restrictions above. Each record has positive integer bytes and matching lowercase 64-hex SHA256. Every image must have the MIME type claimed by its extension and decode through GD; header sniffing alone is insufficient. Every release file must be listed (manifest.json is the implicit exception).
 4. **HTML fragment:** valid UTF-8 with exactly one top-level `<div>` whose class list includes `mg` and whose data-book exactly matches its book; only whitespace may appear outside it. No script/style/iframe/object/embed/link/base/form/meta or html/head/body/title tags, declarations, processing instructions or comments. No `javascript` plus optional whitespace and colon anywhere after entity decoding; no event attributes or unlisted elements/attributes. The DOM parser may repair passive markup; this is not a claim of strict XML syntax.
 5. **Allowed descendant elements:** `div`, `span`, `section`, `article`, `header`, `footer`, `nav`, `main`, `aside`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `p`, `br`, `hr`, `ul`, `ol`, `li`, `dl`, `dt`, `dd`, `table`, `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `caption`, `colgroup`, `col`, `strong`, `b`, `em`, `i`, `small`, `mark`, `code`, `pre`, `kbd`, `samp`, `blockquote`, `figure`, `figcaption`, `details`, `summary`, `a`, `img`, `sup`, `sub`, `time`, `abbr`. SVG/MathML and every element not in this list are refused.
@@ -54,15 +54,17 @@ This is the enforced installer contract, including the intentionally conservativ
 14. **CSS wrappers:** only `@media (min-width: Npx)` or `@media (max-width: Npx)`, where N is digits with an optional decimal fraction (nonnegative, leading digit required), with optional internal whitespace and whitespace after media. These width wrappers may nest; @media spelling is case-insensitive. No comma/and media-query lists, screen/print queries, supports, container, layer, keyframes, font-face or other at-rule. Style rules cannot nest.
 15. **CSS declarations:** semicolon-separated property:value pairs, balanced strings/brackets/parentheses, nonempty values, with property names matching `(?:--[A-Za-z_][A-Za-z0-9_-]*|-?[A-Za-z][A-Za-z0-9-]*)`. No braces or @ in declaration bodies. Every position declaration is refused (including fixed/sticky, absolute and var indirection); the real release needs none. The only value functions allowed are var() and counter(), the complete function inventory in the real stylesheet. Spelling is checked case-insensitively; no whitespace between function name and opening parenthesis. Bare opening parentheses and opening parentheses inside quoted values are refused. No rgb/rgba/calc/min/max/clamp or other function until the contract is deliberately expanded. Dark styling uses `.mg[data-theme="dark"]` by export convention; the validator does not require a dark rule.
 
+16. **Ask text:** valid UTF-8 plain text, with no Unicode control characters except newline and tab (CR and DEL are refused). Blocks use exactly `### Task [<id>]: <title>` or `### Common question [<faq-id>]: <question>` headings. Every task heading names a task in that book’s manifest, every listed task appears exactly once, and every common-question heading names the `id` of a `details[data-faq]` in that page. Duplicate headings and malformed `###` headings are refused; common questions need not all appear. A release can omit ask files entirely, and an account’s question box requires text for EVERY book it may open. Generate text with the guide repo’s own `tools/ask-text.mjs`, then add the hash/byte size to the manifest. No guide content is generated by the application at request time.
+
 ## API and reader
 
 For each realm `admin`, `teacher`, `lunch`, there are three GET/HEAD routes beneath `/api/<realm>/masjids/{masjid_id}/guides`:
 
-- `/`: allowed books, title and current version; no release gives an empty list.
+- `/`: allowed books, title and current version; no release gives an empty list. Additive top-level `ask_available`, `ask_min_chars`, `ask_max_chars` and reader-specific `ask_failure` fields describe the question box.
 - `/{book}`: one snapshot of version/title/html/css/tasks.
 - `/{book}/{version}/pictures/{path}`: only an exact key from that book/version manifest, authenticated on every read.
 
-Book/list responses are private, no-store. Picture responses carry the real image type, nosniff, private/no-cache and a SHA ETag. A 304 still passes authentication and entitlement. The account limiter allows 900 guide requests/minute, enough for two pages with around 350 pictures plus navigation. No directory listing or public asset address is returned.
+A POST `/ask` in each of those SAME realm route groups uses the same auth, role, tenant and guide throttle gates. See the question contract below. Book/list responses are private, no-store. Picture responses carry the real image type, nosniff, private/no-cache and a SHA ETag. A 304 still passes authentication and entitlement. The account limiter allows 900 guide requests/minute, enough for two pages with around 350 pictures plus navigation. No directory listing or public asset address is returned.
 
 The HTML fragment and its release CSS live in an open shadow root. App element/class selectors, including the higher-specificity body.mn-app h2/h3 colour rule, cannot enter it; release selectors cannot reach outside it. Inherited app fonts remain deliberate. Shadow defaults supply layout, focus/search visibility and app-added picture controls; the unchanged release sheet follows them and owns content colours/custom properties. No colour or palette variables are assigned to .mg by the screen. Chrome reads the release root’s computed paper/card/ink/soft/line/accent/accent-ink/ring values into --guide-* tokens on the outer screen; search, tabs, contents and viewer use those values, falling back to app tokens. Native Contents disclosure starts open on desktop and closed at phone width (700px or less), and closes after phone navigation.
 
@@ -90,3 +92,72 @@ Versioned immutable addresses guarantee stable bytes, not continuing entitlement
 - At desktop width, contents scroll within their panel and use the same palette, without a column of permanently underlined links. At 390px and 320px, Contents starts collapsed, opens with click/Enter/Space, and closes after a destination is selected. Search, guide switch and content fit without horizontal page scrolling.
 - Keyboard through Contents, search, guide links and picture controls; see focus rings in both themes. Open a picture, Zoom/Fit, scroll on a phone, close with Escape/button and confirm focus returns to the picture control inside the shadow root. Check chapter/task/FAQ deep links still scroll and focus their target.
 - Compare the surrounding header/sidebar and another app screen before/after opening Help: their colours, headings and controls remain unchanged. Actual browser CSS/layout, screen-reader behavior and this checklist remain unverified here.
+
+
+## Ask the guide request, settings and limits
+
+`POST /api/<admin|teacher|lunch>/masjids/{masjid_id}/guides/ask` accepts JSON `{ "question": "..." }`; other submitted fields are ignored. The response is `{ answer: string, unknown: bool, tasks: [{book, id, title}] }`, without model usage or metadata. It is private/no-store. Guide entitlement is checked before reading any guide file or counting a question. Disabled, keyless or missing/incomplete ask text answers 404; the listing says `ask_available: false`. Questions must be strings, nonblank, within the configured character range. The request preserves whitespace and line breaks as typed, and invalid input answers 422. Browser transport explicitly uses JSON, bearer authentication, omitted cookies and no-store.
+
+The instruction is copied verbatim from the guide’s `ask/instructions.md` fenced instruction to `resources/guides/ask-instructions.txt`. Reader/contact substitutions come from `config/guide_ask.php`. The Anthropic PHP SDK and `services.anthropic.key` are shared with the Assistant, but none of its tools, history, organisation data, settings or logging is used. The API payload has only `model`, `max_tokens`, `system` and `messages`. One `system` text block contains the substituted instruction, two newlines, then every permitted book’s ask text separated by two newlines (office with classes: **admin, school** in that order). Its `cache_control: {type: "ephemeral"}` marker is on that entire stable block. One final `user` message contains the question. No account name, email, organisation, internal ids, screen contents, tools, thinking settings or prior questions are added. A question can itself contain personal information the reader typed. The service accepts no user/tenant object. Text hashes/sizes are checked again before the call.
+
+Only complete, nonempty `end_turn` responses are shown. Truncation, model errors and timeouts answer 503 with the failure sentence; nothing is retained. Retry count is zero BOTH on the client and each SDK request (the installed SDK normalizes per-call options with defaults). The HTTP transport itself has the configured timeout, plus a connection timeout capped at five seconds: the installed SDK’s timeout option alone does not enforce it on PSR-18. No network/provider call was made during this build.
+
+All spending/retention settings are separate from the Assistant:
+
+| Environment setting | Default |
+|---|---|
+| `GUIDE_ASK_ENABLED` | `false` |
+| `GUIDE_ASK_MODEL` | `claude-haiku-4-5-20251001` |
+| `GUIDE_ASK_MAX_TOKENS` | `512` |
+| `GUIDE_ASK_TIMEOUT` | `20` seconds |
+| `GUIDE_ASK_PERSON_PER_MINUTE` | `3` |
+| `GUIDE_ASK_ORGANISATION_PER_DAY` | `100` |
+| `GUIDE_ASK_PLATFORM_PER_MONTH` | `10000` |
+| `GUIDE_ASK_MIN_CHARS` / `GUIDE_ASK_MAX_CHARS` | `3` / `500` |
+| `GUIDE_ASK_RETENTION_DAYS` | `180` |
+| `GUIDE_ASK_OFFICE_CONTACT` | `your Manara support contact` |
+
+Reader strings are config entries matching the guide’s wording contract. Teacher contact defaults to `your school office`; lunch defaults to `the office that gave you access`. Production contact values belong in server configuration, never this public repository. Shipping code does not enable the box or begin spending.
+
+Reservations use Laravel’s existing cache RateLimiter and the limiter cache store (`cache.limiter`, falling back to the default, which is `database` in repository config). A shared five-second cache lock serializes checks and reservation of all three counters, then releases before the model call. One rolling 60-second bucket is keyed by person id across tokens/organisations; the organisation bucket is keyed by id and UTC calendar day; the platform bucket is keyed only by UTC calendar month. Zero or negative allowances refuse all attempts. Model failures also consume reservations, without refunds or retries; refused/unavailable/invalid requests consume none. Lock contention or cache failure returns the failure sentence before spending. A partial cache write failure can consume some allowance without a call, the conservative direction.
+
+A cache flush, eviction, loss, store/prefix change or a nonshared cache resets counters and can **overspend the monthly question ceiling**. The ceiling is a question count, not a dollar ceiling, and in-flight calls admitted before switching off may finish. The repository deploy clears/rebuilds config/routes/views only (`bin/deploy`), so an ordinary deploy against the same persistent cache preserves counters; live cache configuration was not inspected. Use a shared persistent cache supporting atomic locks. A lock lease expiring during unusually slow counter operations, or flushing its lock during a reservation, can also permit overlapping reservations; the cache is not a durable billing ledger. API prompt caching is separate and does not cache the question/answer in the application.
+
+Task links are derived on the server by case-insensitive complete-title matches against ONLY the manifest tasks of books sent. Letter/number/underscore boundaries prevent substring matches inside another word. Exact title wording/spacing is required. Duplicate titles across permitted books return each match. The server never reads ids or URLs from the reply; invented links remain plain answer text. This is evidence of titles named, not independent proof that the answer is supported by those tasks. `unknown` is true only when the trimmed answer equals that reader’s fallback exactly.
+
+## Unknown-question privacy, retention and author tools
+
+`guide_unanswered_questions` has exactly `question` (TEXT), `created_at` (indexed), `books` and `release_version`. No primary key, user id, organisation id, IP or token id. Only an exact unknown fallback writes a row. Known answers, failures and refusals write nothing. The question can still contain personal data entered by the reader; absence of identity columns does not make its text anonymous.
+
+This is platform guide feedback by owner decision, not tenant-owned business data. `GuideUnansweredQuestion` deliberately lacks `BelongsToMasjid`; the documented `TenantScopingCoverageTest::DECLINED` mechanism records why and asserts the absence of `masjid_id`. A separate schema assertion pins the exact four fields. No staff HTTP read/list/export endpoint exists. CLI access is an operator privilege. `config/staging_scrub.php` drops these rows in full, even with a bound tenant. The prune command deletes rows strictly older than the configured age, refuses nonpositive retention, and runs daily at 03:47 in the application scheduler timezone with `withoutOverlapping()`.
+
+```sh
+php artisan guides:ask-prune
+php artisan guides:ask-export
+```
+
+Export lists all four fields as JSON lines to standard output, preserving text and escaping line breaks/control characters; redirect stdout for a file. These exports contain personal-data-shaped text and need the operator’s retention/access controls. Questions and answers are not logged. The repository has no general request-body logger; exception rendering normally logs exception messages for 5xx, so the ask boundary catches SDK/SQL failures without reporting them. `question` is also excluded from exception session flashing. This is a source review of application behavior, not inspection of external infrastructure logging.
+
+The chrome adds **Ask the guide**, **Your question**, **Ask**, the polite live status **Asking the guide…**, then the answer preserving line breaks and **From the guide:** links. It uses the same palette tokens as search, sits outside the content shadow root, accepts keyboard form submission and disables the field/button while waiting. Plain Vue text interpolation prevents answer HTML from becoming markup. Requests are aborted and transient question/answer state is discarded when leaving/changing accounts; aborting the browser does not revoke an already-admitted server call. No questions or answers are stored in browser storage; form autocomplete is off. Existing Help/search/theme/guide words remain unchanged.
+
+Exact response words, with `{contact}` substituted by reader:
+
+- Unknown: `I don't know that one. Please reach out to {contact} and ask.`
+- Person limit: `Too many questions just now. Try again in a minute.`
+- Organisation/platform caps: `The guide's question box is resting for today. Try again tomorrow, or reach out to {contact}.`
+- Failure: `That did not work. Try again, or reach out to {contact}.`
+
+## Offline tests and later model grading
+
+The small made-up ask fixture is in `tests/fixtures/guides-ask`. `GuideAskReleaseTest` can generate every real book’s text in a temporary release copy using the external guide tool and prove it passes the actual validator; set `GUIDE_ASK_REAL_RELEASE` to the external release folder. The real release and 34-question grading set remain outside this public repository. Server tests fake PSR-18 transport under the actual Anthropic SDK, asserting the serialized request. Mounted SPA tests exercise actual screen/content/ask children and links. These tests do not prove real model quality, prompt-cache eligibility/hit rates, real latency/timeouts/billing, MySQL concurrency or computed phone/dark-theme layout and screen-reader behavior.
+
+Later, with the real platform key and the matching release installed:
+
+```sh
+php artisan guides:ask-test /path/to/test-set.json --model=claude-haiku-4-5-20251001
+php artisan guides:ask-test /path/to/test-set.json --limit=5
+```
+
+The command uses the SAME `GuideAskService::answer` path, intentionally bypassing the enabled switch, limit reservations and retention. It prints each question/answer and PASS/FAIL only to the terminal; returns nonzero on any failure. Unknown must be the exact reader fallback; known must include at least one expected returned task id and all case-sensitive `must_say` phrases. The set’s `written_for_release`, if supplied, must match current. The command does not independently grade invented features/button names beyond those supplied rules. It sums API-reported input/output/cache creation/cache read tokens and counts responses reporting cache reads. Estimated cost says `not computed` unless all four USD-per-million options (`--input-price`, `--output-price`, `--cache-read-price`, `--cache-write-price`) are supplied; no price or model quality claim is embedded.
+
+The external d29 grading set includes a teacher missing-student question accepting ONLY `faq-missing-student`, which is a common-question id rather than a manifest task. The endpoint contract permits task ids only, so that case cannot pass as written even with correct FAQ wording. The grader faithfully reports failure; the guide author must adjust the expected task set or separately agree a FAQ-link response contract. No external test set was edited.

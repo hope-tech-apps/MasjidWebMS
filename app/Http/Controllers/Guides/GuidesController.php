@@ -4,6 +4,10 @@ namespace App\Http\Controllers\Guides;
 
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
+use App\Models\GuideUnansweredQuestion;
+use App\Support\Guides\GuideAskService;
+use App\Support\Guides\GuideAskLimits;
+use Throwable;
 use App\Models\User;
 use App\Support\Guides\GuideReleases;
 use App\Support\TenantContext;
@@ -37,7 +41,34 @@ class GuidesController extends Controller
         foreach ($allowed as $book) {
             if (isset($manifest['books'][$book])) $books[] = ['book' => $book, 'title' => $manifest['books'][$book]['title'], 'version' => $manifest['version']];
         }
-        return response()->json(['status' => 'success', 'data' => $books])->header('Cache-Control', 'private, no-store');
+        return response()->json(['status' => 'success', 'data' => $books,
+            'ask_available' => app(GuideAskService::class)->available($manifest, $allowed),
+            'ask_failure' => app(GuideAskService::class)->failure(match ($request->user()->type) { 'Teacher' => 'teacher', 'LunchStaff' => 'lunch', default => 'office' }),
+            'ask_min_chars' => (int) config('guide_ask.min_chars'), 'ask_max_chars' => (int) config('guide_ask.max_chars')])->header('Cache-Control', 'private, no-store');
+    }
+
+    public function ask(Request $request, string $masjid_id, GuideAskService $ask, GuideAskLimits $limits)
+    {
+        $books = $this->allowed($request);
+        abort_unless($books, 404);
+        $manifest = $this->releases->current();
+        abort_unless($ask->available($manifest, $books), 404);
+        $request->validate(['question' => ['required', 'string', 'min:'.config('guide_ask.min_chars'), 'max:'.config('guide_ask.max_chars')]]);
+        $reader = match ($request->user()->type) { 'Teacher' => 'teacher', 'LunchStaff' => 'lunch', default => 'office' };
+        try {
+            $limit = $limits->reserve($request->user()->id, app(TenantContext::class)->get());
+            if ($limit) return response()->json(['message' => $limit === 'person' ? 'Too many questions just now. Try again in a minute.' : $ask->resting($reader)], 429)->header('Cache-Control', 'private, no-store');
+            $result = $ask->answer($manifest, $books, $reader, $request->input('question'));
+            if ($result['unknown']) GuideUnansweredQuestion::query()->insert([
+                'question' => $request->input('question'), 'created_at' => now(),
+                'books' => implode('+', $books), 'release_version' => $manifest['version'],
+            ]);
+            unset($result['usage']);
+            return response()->json($result)->header('Cache-Control', 'private, no-store');
+        } catch (Throwable) {
+            // SDK/SQL exceptions may quote the question or answer. Never report them.
+            return response()->json(['message' => $ask->failure($reader)], 503)->header('Cache-Control', 'private, no-store');
+        }
     }
 
     public function show(Request $request, string $masjid_id, string $book)
