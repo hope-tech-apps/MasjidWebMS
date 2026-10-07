@@ -10,6 +10,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -17,7 +18,8 @@ use Throwable;
  *
  * This is the whole of the scheduling infrastructure: a delayed queue job.
  * Laravel already guarantees delayed dispatch, so there is no scheduler table,
- * no cron sweep and no second opinion about when a message goes out.
+ * no second opinion about when a message goes out. Recovery has a separate
+ * stale-claim sweep which never sends or requeues.
  *
  * ## It takes an ID, not a model
  *
@@ -47,8 +49,14 @@ class SendBroadcastJob implements ShouldQueue
     /** Generous: the email channel may address a few thousand contacts. */
     public int $timeout = 300;
 
+    public bool $failOnTimeout = true;
+
+    /** Serialized before handle(): Laravel failed() uses a fresh job instance. */
+    public string $claimToken;
+
     public function __construct(public int $broadcastId)
     {
+        $this->claimToken = (string) Str::uuid();
     }
 
     public function handle(BroadcastDispatcher $dispatcher): void
@@ -65,11 +73,16 @@ class SendBroadcastJob implements ShouldQueue
             return;
         }
 
-        $dispatcher->dispatch($broadcast);
+        $dispatcher->dispatch($broadcast, $this->claimToken ?? null);
     }
 
     public function failed(?Throwable $exception): void
     {
+        // Older serialized jobs have no token: they must wait for the stale sweep.
+        if (isset($this->claimToken)) {
+            app(BroadcastDispatcher::class)->settleInterrupted($this->broadcastId, $this->claimToken);
+        }
+
         Log::error('SendBroadcastJob failed', [
             'broadcast_id' => $this->broadcastId,
             'error' => $exception?->getMessage(),

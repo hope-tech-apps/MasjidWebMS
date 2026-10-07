@@ -79,6 +79,9 @@ class Broadcast extends Model implements HasMedia
     /** Claimed under the row lock, before any channel starts. */
     public const STATUS_SENDING = 'sending';
 
+    /** Sending ended without every channel outcome; terminal, never replayed. */
+    public const STATUS_INTERRUPTED = 'interrupted';
+
     /** Cancelled before the send claim; no channel may run. */
     public const STATUS_CANCELLED = 'cancelled';
 
@@ -90,6 +93,8 @@ class Broadcast extends Model implements HasMedia
 
     /** Every selected channel failed. */
     public const STATUS_FAILED = 'failed';
+
+    protected $hidden = ['send_claim_token'];
 
     protected $fillable = [
         'masjid_id',
@@ -119,6 +124,8 @@ class Broadcast extends Model implements HasMedia
             'scheduled_at' => 'datetime',
             'dispatched_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'sending_started_at' => 'datetime',
+            'send_recovered_at' => 'datetime',
             'audience_contact_ids' => 'array',
             'blocks' => 'array',
         ];

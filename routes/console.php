@@ -908,3 +908,7 @@ Schedule::command('points:weekly-report')->hourly()->withoutOverlapping(50);
 // system cron as everything above (`schedule:run` every minute).
 Schedule::command('bucks:mint')->hourlyAt(10)->withoutOverlapping(50);
 Schedule::command('bucks:expire')->hourlyAt(40)->withoutOverlapping(50);
+
+// Lost broadcast claims are terminal, never replayed. The dispatcher checks
+// age under the row lock and skips a still-live sender's OS process lock.
+Schedule::command('broadcasts:settle-interrupted')->everyFiveMinutes()->withoutOverlapping(10);

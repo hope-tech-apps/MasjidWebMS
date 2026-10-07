@@ -29,6 +29,15 @@ class BroadcastDelivery extends Model
     /** Queued/created, not yet attempted. */
     public const STATUS_PENDING = 'pending';
 
+    /** Durably recorded before entering the driver. */
+    public const STATUS_SENDING = 'sending';
+
+    /** Driver began, but its outcome was lost; never retry. */
+    public const STATUS_INTERRUPTED = 'interrupted';
+
+    /** The claimed send ended before this driver started; terminal. */
+    public const STATUS_NOT_SENT = 'not_sent';
+
     /** The scheduled broadcast was cancelled before any channel started. */
     public const STATUS_CANCELLED = 'cancelled';
 

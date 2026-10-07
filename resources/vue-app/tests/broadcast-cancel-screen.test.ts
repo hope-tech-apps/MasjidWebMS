@@ -115,3 +115,42 @@ test('a send that wins the race shows the server refusal and refreshes the Sendi
     assert.equal(buttons(mounted.screen).length, 0);
     mounted.screen.unmount();
 });
+
+test('interrupted history shows each outcome and asks for channel checks before a new composition', async () => {
+    const mounted = await mount([row({
+        status: 'interrupted', cancellable: false,
+        deliveries: [
+            { id: 1, channel: 'announcement', status: 'sent', target_count: 1 },
+            { id: 2, channel: 'email', status: 'interrupted', target_count: 0 },
+            { id: 3, channel: 'sms', status: 'not_sent', target_count: 0 },
+        ],
+    })]);
+    const words = mounted.screen.text();
+    assert.match(words, /Interrupted/);
+    assert.match(words, /Feed: sent \(1\)/);
+    assert.match(words, /Email: interrupted — outcome unknown/);
+    assert.match(words, /Text: not sent/);
+    assert.doesNotMatch(words, /outcome unknown \(0\)|not sent \(0\)/);
+    assert.match(words, /Sending stopped before this broadcast finished\. This broadcast will not be sent again automatically\. Check each channel before composing a replacement\./);
+    assert.equal(buttons(mounted.screen).length, 0);
+    mounted.screen.unmount();
+});
+
+test('a channel in progress says sending instead of pending', async () => {
+    const mounted = await mount([row({ status: 'sending', cancellable: false,
+        deliveries: [{ id: 1, channel: 'email', status: 'sending', target_count: 0 }],
+    })]);
+    assert.match(mounted.screen.text(), /Email: sending/);
+    assert.doesNotMatch(mounted.screen.text(), /Email: pending|sending \(0\)/);
+    mounted.screen.unmount();
+});
+
+test('recovery after every channel finished describes a lost summary with known outcomes', async () => {
+    const mounted = await mount([row({ status: 'partial', cancellable: false,
+        send_recovered_at: '2026-10-07T12:00:00Z', deliveries: [],
+    })]);
+    assert.match(mounted.screen.text(), /Partly sent/);
+    assert.match(mounted.screen.text(), /Sending stopped before this broadcast finished\. This broadcast will not be sent again automatically\. Check each channel before composing a replacement\./);
+    assert.doesNotMatch(mounted.screen.text(), /before all channel outcomes were recorded/);
+    mounted.screen.unmount();
+});

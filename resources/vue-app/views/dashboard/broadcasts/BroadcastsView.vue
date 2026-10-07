@@ -33,9 +33,13 @@
                             :class="['badge', 'fw-normal', deliveryBadge(d.status).klass]"
                             :title="d.note ?? d.error ?? ''">
                             {{ channelLabel(d.channel) }}: {{ deliveryBadge(d.status).label }}
-                            <template v-if="d.target_count !== null"> ({{ d.target_count }})</template>
+                            <template v-if="d.target_count !== null && !['sending', 'interrupted', 'not_sent'].includes(d.status)"> ({{ d.target_count }})</template>
                         </span>
                     </div>
+
+                    <p v-if="b.status === 'interrupted' || b.send_recovered_at" class="text-warning-emphasis small mt-2 mb-0">
+                        Sending stopped before this broadcast finished. This broadcast will not be sent again automatically. Check each channel before composing a replacement.
+                    </p>
 
                     <div v-if="failureNotes(b).length" class="mt-2">
                         <div v-for="(n, i) in failureNotes(b)" :key="i" class="text-danger small">{{ n }}</div>
@@ -138,6 +142,7 @@ function statusBadge(s: BroadcastStatus): { label: string; klass: string } {
         case 'partial': return { label: 'Partly sent', klass: 'bg-warning text-dark' }
         case 'scheduled': return { label: 'Scheduled', klass: 'bg-info text-dark' }
         case 'sending': return { label: 'Sending', klass: 'bg-info text-dark' }
+        case 'interrupted': return { label: 'Interrupted', klass: 'bg-warning text-dark' }
         case 'cancelled': return { label: 'Cancelled', klass: 'bg-secondary' }
         case 'failed': return { label: 'Failed', klass: 'bg-danger' }
         default: return { label: 'Pending', klass: 'bg-secondary' }
@@ -150,6 +155,9 @@ function deliveryBadge(s: BroadcastDeliveryStatus): { label: string; klass: stri
         case 'sent': return { label: 'sent', klass: 'bg-success-subtle text-success' }
         case 'failed': return { label: 'failed', klass: 'bg-danger-subtle text-danger' }
         case 'skipped': return { label: 'nobody to send to', klass: 'bg-light text-muted' }
+        case 'sending': return { label: 'sending', klass: 'bg-info-subtle text-info-emphasis' }
+        case 'interrupted': return { label: 'interrupted — outcome unknown', klass: 'bg-warning-subtle text-warning-emphasis' }
+        case 'not_sent': return { label: 'not sent', klass: 'bg-secondary-subtle text-secondary' }
         case 'cancelled': return { label: 'cancelled', klass: 'bg-secondary-subtle text-secondary' }
         default: return { label: 'pending', klass: 'bg-secondary-subtle text-secondary' }
     }

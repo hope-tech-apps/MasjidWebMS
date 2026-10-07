@@ -61,8 +61,10 @@ an error to be smoothed away.
 
 - Each `broadcast_deliveries` row is committed on its own.
 - `BroadcastDispatcher` catches `Throwable` per channel and continues.
-- Re-dispatching is safe: only `pending` and `failed` deliveries are re-attempted,
-  so a retry can never double-send a channel that already went out.
+- Ordinary completed failed/partial sends retain their existing per-channel
+  retries. Recovered claims, interrupted broadcasts, and any sending, interrupted
+  or not-sent delivery refuse the whole claim, including a stale direct dispatch.
+  Unknown outcomes are never called failed or reopened for automatic replay.
 - The one thing that IS atomic is composition (the broadcast row + its pending
   delivery rows), because nothing has left the building yet.
 
@@ -72,7 +74,7 @@ has an email address, is a fact the admin needs to see — not a red error.
 ## Scheduled cancellation (2026-10-06)
 
 A future schedule dispatches a delayed `SendBroadcastJob` carrying the broadcast
-ID (`BroadcastComposer::send`); no scheduler sweep exists. Jobs remain queued
+ID (`BroadcastComposer::send`); no scheduler sweep sends messages. Jobs remain queued
 after cancellation. Removing a queue entry is never the guarantee.
 
 - `POST /api/admin/masjids/{masjid_id}/broadcasts/{broadcast_id}/cancel` shares
@@ -93,8 +95,9 @@ after cancellation. Removing a queue entry is never the guarantee.
   `cancelled_at`, and changes pending delivery rows to `cancelled`. Audit columns
   are nullable with no backfill; the user FK follows the creator's nullOnDelete
   convention. Staging drops the broadcast history, including this audit.
-- Dispatch commits status `sending` BEFORE entering any driver. A cancelled or
-  sending row returns without entering any channel; an older job/model copy
+- Dispatch commits status `sending`, `sending_started_at` and a claim token
+  BEFORE entering any driver. A cancelled, sending, interrupted or recovered
+  row returns without entering any channel; an older job/model copy
   cannot override the decision. Once claimed, cancel returns 409 and fan-out
   continues normally. Never put the channel loop inside this transaction.
 - Cancel winning the lock prevents every channel. Send winning it prevents
@@ -110,12 +113,8 @@ after cancellation. Removing a queue entry is never the guarantee.
   History shows Sending or Cancelled; cancelled deliveries show cancelled.
 - Immediate-send payloads preserve their existing shape, including absence of
   blocks without a layout. Failed/partial per-channel retries retain the existing
-  dispatcher behavior. **Failure recovery is unresolved (pre-review stop, 2026-10-06):**
-  `SendBroadcastJob::failed()` only logs; an interrupted claim can still leave
-  `sending`. Delivery rows commit after a driver returns, so `pending` can mean
-  never started OR externally sent with its result lost (including email/SMS
-  mid-recipient-loop). Do not call that known failure or make it retryable.
-  See artifacts/pre-review-b-options.md before implementing settlement.
+  dispatcher behavior for normally completed sends. Interruption recovery is
+  terminal (below), including when the failed/partial summary can be derived.
 
 Release ordering matters: stop/drain old queue workers before exposing cancel,
 apply the nullable migration and new code, rebuild route/config caches and start
@@ -131,12 +130,69 @@ rollback inventory in deploy/README.md includes sending too; drain workers befor
 holding deliveries or changing code. Other reader verdicts: DECISIONS.md, pre-ship
 review fixes (2026-10-06).
 
-Coverage: `BroadcastCancellationTest`, mounted `broadcast-cancel-screen.test.ts`
-(actual store), and mysql-group `BroadcastCancellationLocksTest` under
-`tests/MysqlLocks` (committed fixtures, two connections, both lock winners and an
-older REPEATABLE READ snapshot). SQLite and mounted tests do not prove MySQL
-locking, OS worker death or real-browser behavior. The B diagnostic exercises
-a real SQLite DatabaseQueue/Worker::process, not an OS timeout/kill.
+## Interrupted sends (2026-10-07)
+
+A delivery commits `sending` under the parent's row lock BEFORE entering its
+channel driver. Results still commit independently. On recovery, completed rows
+retain every result; `sending` becomes `interrupted` (outcome unknown), and pending
+channels become `not_sent` (never started). Nothing is delivered during recovery.
+`BroadcastDispatcher::rollupStatus` remains the only summary derivation: unknown
+or not-sent rows produce Interrupted. A recovered claim whose results were all
+recorded is also Interrupted, except that the existing success/failure derivation
+may honestly show Partly sent. `send_recovered_at` fences replay in that case.
+Ordinary completed sends retain their existing sent/partial/failed rules.
+
+- `SendBroadcastJob` serializes a claim token BEFORE handle. Laravel calls
+  `failed()` on a fresh deserialized job, so an identity assigned during handle
+  would be lost. `failed()` settles only its own still-sending claim; an unrelated
+  failure cannot claim another worker's outcome. `failOnTimeout` is explicit.
+  Jobs serialized before this change lack the token and wait for the sweep.
+- `broadcasts:settle-interrupted`, every five minutes with withoutOverlapping,
+  settles only sending claims strictly older than 900 seconds: three times the
+  300-second timeout and 2.5 times the database queue's 360-second retry_after.
+  Time and status are rechecked under the same parent lock as dispatch/cancel.
+  One monitors info line per run records settled/failure counts; it does not
+  alert an admin or send a message. A stopped scheduler cannot recover claims.
+- Immediate sends run synchronously and can outlive the queue timeout. A
+  broadcast-specific, non-expiring `flock` therefore spans fan-out. Recovery
+  skips a live process even beyond the age bound; SIGKILL releases its lock.
+  The application, queue and scheduler must share this project's single host
+  and `storage/framework/broadcast-send-locks`. Never delete/replace active lock
+  files: their inode is the liveness proof. They are outside cache/data so cache
+  clearing does not replace them. Recovery opens existing files read-only,
+  so a root cron can check files owned by the PHP/queue user without changing
+  ownership. Recovery creates no files. A new claim with a missing lock inode
+  fails closed; investigate missing storage rather than guessing it is dead.
+  Moving workers/scheduler to another host requires a distributed liveness guard.
+- The nullable migration has no backfill. A legacy sending row's pending channel
+  might already have sent externally, so recovery marks it interrupted, never
+  not sent. Its minimum age uses updated_at because no claim time was recorded.
+  Drain/stop old workers AND old synchronous requests before enabling the sweep:
+  those processes have neither durable channel starts nor the new process lock.
+  Never restore an old dispatcher while recovered claims remain. Migration down
+  refuses to erase existing recovery evidence. No release is performed here.
+- Repeated/delayed jobs and direct dispatch refuse interrupted or recovered
+  parents and any delivery with sending/interrupted/not_sent status, before any
+  driver runs. Conditional result writes and a locked final rollup cannot
+  overwrite a recovery outcome. The admin must compose a NEW broadcast if they
+  want to send again, after checking every channel. Cancel is a 409 with:
+  "This broadcast was interrupted and cannot be cancelled. Check each channel
+  before composing a replacement." Terminal rows release the tag deletion guard:
+  they no longer resolve an audience. Existing scheduled/sending guards remain.
+- History cards show Interrupted; channels show sending, interrupted — outcome
+  unknown, or not sent. Unknown/not-sent outcomes have no misleading (0) count.
+  The same per-channel states/notes appear in the detail API; the current SPA
+  displays outcomes in history cards and has no separate detail route.
+
+Coverage: `BroadcastCancellationTest`, `BroadcastInterruptionTest`,
+`BroadcastWorkerDeathTest` (real local SIGKILL at three boundaries and a real
+Laravel worker timeout shortened to one second), mounted
+`broadcast-cancel-screen.test.ts` (actual store), mysql-group
+`BroadcastInterruptionMysqlTest` under tests/Mysql (column widths/nullability and
+parent/outcome locking reads), and existing `BroadcastCancellationLocksTest`
+under tests/MysqlLocks. MySQL tests were not executed locally. SQLite/process
+checks do not prove InnoDB locking, real provider delivery, or deployed browser
+behavior.
 
 ## Authorization is decided UP FRONT; delivery outcomes are per-channel
 

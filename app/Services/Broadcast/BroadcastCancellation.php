@@ -25,6 +25,7 @@ class BroadcastCancellation
                     'cancelled' => false,
                     'message' => match ($broadcast->status) {
                         Broadcast::STATUS_CANCELLED => 'This broadcast is already cancelled. Nothing will be sent.',
+                        Broadcast::STATUS_INTERRUPTED => 'This broadcast was interrupted and cannot be cancelled. Check each channel before composing a replacement.',
                         Broadcast::STATUS_SENDING => 'This broadcast is sending and cannot be cancelled. Refresh to see the delivery status.',
                         Broadcast::STATUS_SENT => 'This broadcast has already been sent. Check the channel outcomes before composing a follow-up.',
                         Broadcast::STATUS_PARTIAL => 'This broadcast has already reached some channels. Check the channel outcomes before composing a follow-up.',

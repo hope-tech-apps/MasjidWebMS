@@ -9089,3 +9089,52 @@ uses real database insertion, rendering and Worker delivery: 3 red -> 3 green
 receipt PDF, offline receipt and historical report tests: 69 passed / 370 assertions.
 Logs: artifacts/statement-bulk-currency-{red,green,queue-suite,annual-suite}.log.
 No network, formatter, commit or shipping action.
+
+## 2026-10-07 — A broadcast whose send dies is terminal and never replayed
+
+Decided: durably mark each channel sending before its driver; recover only a
+still-sending parent under its existing lock. Preserve completed delivery results,
+mark the active channel interrupted (outcome unknown), and untouched channels not
+sent. Use the dispatcher's single rollup: interrupted is terminal; a completely
+recorded mix of success/failure can retain the honest partial derivation. A nullable
+send_recovered_at fences that partial result against later dispatch. Admins check
+every channel before composing a NEW replacement. No replay, resend or resume UI.
+
+A serialized claim identity lets SendBroadcastJob::failed() settle only its own
+claim, including the framework timeout callback on a fresh deserialized job.
+Every-five-minute scheduler recovery handles callback-less death after a strict
+15-minute minimum age (3 × the 300-second timeout; 2.5 × retry_after 360). Age alone
+cannot protect synchronous immediate sends. A broadcast-only non-expiring OS lock
+spans fan-out; a live sender wins even after that bound, and SIGKILL frees its lock.
+Short database transactions continue to serialize claim, channel start, recovery,
+cancel and final rollup; no transaction spans a channel driver. Late results are
+conditional on the delivery still sending.
+
+Nullable sending_started_at/send_claim_token/send_recovered_at have no backfill.
+Legacy sending/pending outcomes are unknown, not proof of never having started;
+legacy minimum age is updated_at. Claim identity is hidden from API serialization.
+Staging already drops broadcast history, covering the new columns. Existing 24-wide
+string status columns need no alteration. Migration down refuses to erase recorded
+recovery evidence. Interrupted broadcasts refuse cancellation with channel-check
+and replacement guidance, and release their tag audience because they are terminal.
+History and detail API expose individual states; the SPA's existing history cards
+are its outcome surface (there is no separate detail route).
+
+Not done: no automatic replay, no provider/channel rewrites, no payment/shared-helper
+changes, no new permission, no administrative outbound alert, no network, commit,
+deployment, production read or CHANGELOG. Automatic replay is unsafe when an external
+effect preceded the lost result. Other send paths retain their own behavior.
+
+Operating constraint: application, queue and scheduler currently share one host
+and persistent storage/framework/broadcast-send-locks. Preserve the lock inodes;
+recovery uses read-only descriptors and creates no root-owned files. New claims
+with missing lock files fail closed. A multi-host topology needs a distributed
+liveness guard before moving these processes. Drain/stop old queue workers and old
+synchronous requests before enabling the new sweep; legacy processes have no guard.
+Never roll code back past the replay fence while recovered claims remain.
+
+Verification: artifacts/interrupted-red-php.log and interrupted-red-spa.log show
+baseline failures; interrupted-terminal-red.log records tightening the all-finished
+terminal outcome. Final results are recorded in artifacts/verification.md. MySQL
+coverage is authored with the existing tests/Mysql fixture and is NOT executed
+here. Live/deployed browser behavior and real providers are unverified.
