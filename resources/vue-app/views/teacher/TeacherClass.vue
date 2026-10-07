@@ -970,6 +970,9 @@
                                     <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
                                     <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
                                 </span>
+                                <!-- One group, so on a phone the three actions move
+                                     under the line together instead of one by one. -->
+                                <span class="d-flex gap-2 ms-auto align-items-baseline">
                                 <!-- The note is the one thing on a line that is
                                      changed in place. What was heard (portion,
                                      type, quality, day) is still corrected by
@@ -989,6 +992,7 @@
                                         @click="toggleHifzCopy(h)">Copy to students</button>
                                 <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id || hifzBusy"
                                         @click="removeHifz(h)">Remove</button>
+                                </span>
                             </div>
                             <!-- Shown whenever there IS one. The form above has
                                  taken a note since this tab shipped and this list
