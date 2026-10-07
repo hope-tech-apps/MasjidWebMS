@@ -26,7 +26,7 @@ class RegistrationException extends RuntimeException
 
     public static function planMismatch(): self
     {
-        return new self('This fee plan does not belong to this offering.');
+        return new self('This fee plan does not belong to this program.');
     }
 
     public static function planInactive(): self
@@ -44,7 +44,7 @@ class RegistrationException extends RuntimeException
 
     public static function offeringClosed(): self
     {
-        return new self('This offering is not currently accepting registrations.');
+        return new self('This program is not currently accepting registrations.');
     }
 
     /*
@@ -187,7 +187,7 @@ class RegistrationException extends RuntimeException
      */
     public static function offeringFull(): self
     {
-        return new self('This offering is full — free a seat before promoting from the waitlist.');
+        return new self('This program is full — free a seat before promoting from the waitlist.');
     }
 
     /**
@@ -216,6 +216,6 @@ class RegistrationException extends RuntimeException
      */
     public static function offeringHasLiveRegistrations(int $count): self
     {
-        return new self("This offering still has {$count} live registration(s) — deactivate it instead of deleting it.");
+        return new self("This program still has {$count} live registration(s) — turn off \"Open for registration\" instead of deleting it.");
     }
 }

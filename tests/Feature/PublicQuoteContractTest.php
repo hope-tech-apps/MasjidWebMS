@@ -122,7 +122,7 @@ class PublicQuoteContractTest extends TestCase
         // ...so the quote must not answer $150.
         $response = $this->quote('ended-program', $plan->id)
             ->assertStatus(422)
-            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+            ->assertJsonPath('message', 'This program is not currently accepting registrations.');
 
         // And no price travelled with the refusal.
         $this->assertNull($response->json('data'));
@@ -143,7 +143,7 @@ class PublicQuoteContractTest extends TestCase
 
         $this->quote('orphaned-form', $plan->id)
             ->assertStatus(422)
-            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+            ->assertJsonPath('message', 'This program is not currently accepting registrations.');
 
         // The write path already refused this one — the quote now refuses it in
         // the same words, which is the whole point of one decider.
@@ -153,7 +153,7 @@ class PublicQuoteContractTest extends TestCase
             'data' => ['full_name' => 'Aisha Karim'],
         ], $this->headers())
             ->assertStatus(422)
-            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+            ->assertJsonPath('message', 'This program is not currently accepting registrations.');
     }
 
     #[Test]
@@ -166,7 +166,7 @@ class PublicQuoteContractTest extends TestCase
 
         $this->quote('unpublished', $plan->id)
             ->assertStatus(404)
-            ->assertJsonPath('message', 'This offering is not available.');
+            ->assertJsonPath('message', 'This program is not available.');
     }
 
     #[Test]

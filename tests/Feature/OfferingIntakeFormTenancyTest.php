@@ -108,7 +108,7 @@ class OfferingIntakeFormTenancyTest extends TestCase
             'data' => ['b_only_question' => 'yes'],
         ], $headers)
             ->assertStatus(422)
-            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+            ->assertJsonPath('message', 'This program is not currently accepting registrations.');
 
         // Nothing written anywhere, for either organisation.
         $this->assertDatabaseCount('registrations', 0);
@@ -134,7 +134,7 @@ class OfferingIntakeFormTenancyTest extends TestCase
 
             $this->fail('register() accepted another organisation\'s intake form');
         } catch (RegistrationException $e) {
-            $this->assertSame('This offering is not currently accepting registrations.', $e->getMessage());
+            $this->assertSame('This program is not currently accepting registrations.', $e->getMessage());
         }
 
         $mismatched = FormResponse::query()

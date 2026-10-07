@@ -196,7 +196,7 @@ class StoreRegistrationRequest extends BaseFormRequest
     public function messages(): array
     {
         return [
-            'fee_plan_id.exists' => 'That fee plan does not belong to this offering.',
+            'fee_plan_id.exists' => 'That fee plan does not belong to this program.',
             'payer_contact_id.exists' => 'That person does not belong to this organization.',
             'payer_contact_id.required_without' => 'Say who is paying: pick an existing person or type a name.',
             'payer.name.required_without' => 'Say who is paying: pick an existing person or type a name.',

@@ -544,8 +544,8 @@
                         </p>
                         <ul v-else class="list-unstyled mb-0">
                             <li v-for="h in records[child.membership_id].hifz" :key="h.id" class="small">
-                                <span class="text-capitalize">{{ h.kind }}</span>: {{ ayah(h.from) }} {{ rangeArrow }} {{ ayah(h.to) }}
-                                <span class="text-muted">· {{ h.quality }} · {{ when(h.recited_at) }}</span>
+                                <span class="text-capitalize">{{ hifzKindLabel(h.kind) }}</span>: {{ ayah(h.from) }} {{ rangeArrow }} {{ ayah(h.to) }}
+                                <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
                                 <!-- The teacher's note. The payload has always
                                      carried it — the controller says why — and
                                      this list simply never drew it, so a parent
@@ -1047,6 +1047,7 @@
 
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
+import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { awardPointsLabel } from '@/core/helpers/behaviorSkills';
 import { showsThisWeek, signedPoints, weekRangeLabel, weeklyReportOn } from '@/core/helpers/pointsWeek';

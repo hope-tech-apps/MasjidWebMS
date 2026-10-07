@@ -67,7 +67,7 @@ abstract class OfferingFormRequest extends BaseFormRequest
     {
         return [
             'slug.regex' => 'The slug may contain only lowercase letters, numbers and single hyphens.',
-            'slug.unique' => 'Another offering in this organization already uses that slug.',
+            'slug.unique' => 'Another program in this organization already uses that slug.',
             'intake_form_id.exists' => 'That intake form does not belong to this organization.',
             'group_id.exists' => 'That roster group does not belong to this organization.',
         ];

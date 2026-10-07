@@ -72,7 +72,7 @@
                                     in a whole form and be refused at the end.
                                 -->
                                 <div v-if="!sellablePlans.length" class="form-text text-danger">
-                                    This offering has no active fee plan, so it cannot take a
+                                    This program has no active fee plan, so it cannot take a
                                     registration from anybody. Add one on the Fee plans tab first.
                                 </div>
                                 <div v-else-if="selectedPlanIsFree" class="form-text text-success">
@@ -158,7 +158,7 @@
                                 -->
                                 <div v-if="blockingUploads.length" class="alert alert-warning small">
                                     <i class="bi bi-paperclip me-1"></i>
-                                    This offering's form requires an upload
+                                    This program's form requires an upload
                                     ({{ blockingUploads.join(', ') }}), which cannot be attached
                                     from this screen. Send the family the sign-up link instead.
                                 </div>
@@ -369,7 +369,7 @@ onBeforeMount(async () => {
         offering.value = loaded;
         seedAnswers();
     } catch (error) {
-        loadError.value = apiErrorText(error, 'Could not load this offering.');
+        loadError.value = apiErrorText(error, 'Could not load this program.');
     } finally {
         loading.value = false;
     }

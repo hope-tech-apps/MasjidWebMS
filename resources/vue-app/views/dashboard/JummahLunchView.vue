@@ -207,7 +207,7 @@
                                     </td>
                                     <td>
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
-                                            <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s" :disabled="s === 'pending'">{{ s }}</option>
+                                            <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s" :disabled="s === 'pending'">{{ orderStatusLabel(s) }}</option>
                                         </select>
                                         <!-- An unpaid card kitchen order may be a page the customer abandoned; the
                                              office was never told of it, and the server will not confirm it. -->
@@ -1283,6 +1283,11 @@ function formatDate(d: string): string {
         return new Date(String(d).slice(0, 10) + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     } catch { return d; }
 }
+const ORDER_STATUS_LABELS: Record<string, string> = {
+    pending: "Pending", confirmed: "Confirmed", ready: "Ready", picked_up: "Picked up", cancelled: "Cancelled",
+};
+const orderStatusLabel = (status: string): string => ORDER_STATUS_LABELS[status] ?? status;
+
 function statusClass(s: string): string {
     return s === "open" ? "bg-success" : s === "closed" ? "bg-secondary" : "bg-warning text-dark";
 }

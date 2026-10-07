@@ -549,7 +549,7 @@ class ModuleSideDoorsTest extends TestCase
 
         $this->postJson('/api/v1/offerings/weekend-school/quote', ['fee_plan_id' => $plan->id], $headers)
             ->assertStatus(404)
-            ->assertJsonPath('message', 'This offering is not available.');
+            ->assertJsonPath('message', 'This program is not available.');
 
         $this->postJson('/api/v1/offerings/weekend-school/register', [
             'fee_plan_id' => $plan->id,
@@ -557,7 +557,7 @@ class ModuleSideDoorsTest extends TestCase
             'data' => ['full_name' => 'Aisha Karim'],
         ], $headers)
             ->assertStatus(404)
-            ->assertJsonPath('message', 'This offering is not available.');
+            ->assertJsonPath('message', 'This program is not available.');
 
         $this->assertDatabaseCount('registrations', 0);
         $this->assertDatabaseCount('form_responses', 0);

@@ -1088,7 +1088,7 @@
                                 type="text"
                                 class="form-control"
                                 v-model="draft.settings.successTitle"
-                                placeholder="Jazak Allahu Khairan — your registration is in!"
+                                :placeholder="masjidStore.orgType === 'masjid' ? 'Jazak Allahu Khairan — your registration is in!' : 'Thank you — your registration is in!'"
                             />
                         </div>
 
@@ -1105,7 +1105,7 @@
                                 class="input-group input-group-sm mb-1"
                             >
                                 <input type="text" class="form-control" v-model="draft.settings.successNextSteps[stepIndex]" />
-                                <button type="button" class="btn btn-outline-danger" @click="draft.settings.successNextSteps.splice(stepIndex, 1)">
+                                <button type="button" class="btn btn-outline-danger" :aria-label="`Remove next step ${stepIndex + 1}`" @click="draft.settings.successNextSteps.splice(stepIndex, 1)">
                                     <i class="bi bi-x-lg"></i>
                                 </button>
                             </div>

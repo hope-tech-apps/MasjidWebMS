@@ -92,13 +92,8 @@
                         <tr v-for="entry in entries" :key="entry.id">
                             <td class="fw-semibold">{{ studentName(entry) }}</td>
                             <td>
-                                <!--
-                                    The classical names are kept as-is: they are
-                                    what every hifz teacher already says. The
-                                    tooltip explains rather than renaming them.
-                                -->
                                 <span class="badge bg-light text-dark border text-capitalize" :title="kindHint(entry.kind)">
-                                    {{ entry.kind }}
+                                    {{ hifzKindLabel(entry.kind) }}
                                 </span>
                             </td>
                             <td>{{ rangeLabel(entry) }}</td>
@@ -107,7 +102,7 @@
                                 <span class="text-muted"> / </span>
                                 <span class="text-warning">{{ entry.minor_mistakes }}</span>
                             </td>
-                            <td class="text-capitalize">{{ entry.quality }}</td>
+                            <td class="text-capitalize">{{ hifzQualityLabel(entry.quality) }}</td>
                             <td class="small text-muted">{{ formatDate(entry.recited_at) }}</td>
                             <td class="text-end">
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmStrike(entry)" title="Strike">
@@ -147,7 +142,7 @@
                                     <div class="col-md-5">
                                         <label class="form-label">Kind <span class="text-danger">*</span></label>
                                         <select class="form-select text-capitalize" v-model="entryForm.kind">
-                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ kindLabel(kind) }}</option>
+                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ hifzKindLabel(kind) }}</option>
                                         </select>
                                         <div class="form-text">{{ kindHint(entryForm.kind) }}</div>
                                     </div>
@@ -172,7 +167,7 @@
                                     <div class="col-md-4">
                                         <label class="form-label">Quality</label>
                                         <select class="form-select text-capitalize" v-model="entryForm.quality">
-                                            <option v-for="quality in qualities" :key="quality" :value="quality">{{ quality }}</option>
+                                            <option v-for="quality in qualities" :key="quality" :value="quality">{{ hifzQualityLabel(quality) }}</option>
                                         </select>
                                     </div>
                                     <div class="col-md-4">
@@ -207,6 +202,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onBeforeMount, watch } from 'vue';
+import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
@@ -327,18 +323,6 @@ const rangeLabel = (entry: HifzEntry): string => {
         return `${entry.from.surah_name} ${entry.from.ayah}–${entry.to.ayah}`;
     }
     return `${entry.from.surah_name} ${entry.from.ayah} – ${entry.to.surah_name} ${entry.to.ayah}`;
-};
-
-/**
- * Plain English. The stored value is untouched — this is presentation, exactly
- * as kindHint's note says. The option text used to be the raw enum ("sabak"),
- * which reads as jargon to an office administrator who has not been through a
- * ḥifẓ programme and has to pick correctly anyway.
- */
-const kindLabel = (kind: HifzKind): string => {
-    if (kind === 'sabak') return 'New memorization';
-    if (kind === 'sabqi') return 'Recent revision';
-    return 'Older revision';
 };
 
 /** Explain the classical cycle without renaming it — what a UI LABELS them is presentation. */

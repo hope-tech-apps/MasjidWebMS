@@ -202,7 +202,7 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
             return res.data.data;
         }
 
-        throw new Error('Failed to create the offering.');
+        throw new Error('Failed to create the program.');
     }
 
     /**
@@ -250,7 +250,7 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
             return res.data.data;
         }
 
-        throw new Error('Failed to update the offering.');
+        throw new Error('Failed to update the program.');
     }
 
     /**

@@ -121,10 +121,10 @@ class OfferingRegistrationsController extends Controller
             $payload = OfferingPublicPayload::forSlug($masjidId, $slug);
 
             if (! $payload) {
-                return response()->api(404, 'This offering is not available.', null);
+                return response()->api(404, 'This program is not available.', null);
             }
 
-            return response()->api(200, 'Offering loaded.', $payload);
+            return response()->api(200, 'Program loaded.', $payload);
         } catch (\Throwable $e) {
             return response()->api(500, Errors::publicMessage($e), null);
         }
@@ -262,7 +262,7 @@ class OfferingRegistrationsController extends Controller
             $offering = $this->findOffering($masjidId, $slug);
 
             if (! $offering) {
-                return response()->api(404, 'This offering is not available.', null);
+                return response()->api(404, 'This program is not available.', null);
             }
 
             // Resolved FIRST, because a registration changes which question is
@@ -573,7 +573,7 @@ class OfferingRegistrationsController extends Controller
             $offering = $this->findOffering($masjidId, $slug);
 
             if (! $offering) {
-                return response()->api(404, 'This offering is not available.', null);
+                return response()->api(404, 'This program is not available.', null);
             }
 
             // A bot filling every input trips this; a human never sees the
@@ -771,7 +771,7 @@ class OfferingRegistrationsController extends Controller
      *
      * @return array{0:int, 1:mixed}
      */
-    private function resolveTenant(Request $request, string $missingMessage = 'This offering is not available.'): array
+    private function resolveTenant(Request $request, string $missingMessage = 'This program is not available.'): array
     {
         $masjidId = (int) $request->header('masjid-id');
 
@@ -1321,7 +1321,7 @@ class OfferingRegistrationsController extends Controller
     private function outcomeMessage(Registration $registration): string
     {
         if ($registration->status === Registration::STATUS_WAITLISTED) {
-            return 'This offering is full — you have been added to the waitlist.';
+            return 'This program is full — you have been added to the waitlist.';
         }
 
         if ($registration->isConfirmed()) {

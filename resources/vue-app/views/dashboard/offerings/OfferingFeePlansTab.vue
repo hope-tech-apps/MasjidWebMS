@@ -4,7 +4,7 @@
             <div>
                 <h6 class="mb-1">Fee plans</h6>
                 <p class="text-muted small mb-0">
-                    How this offering may be paid for. Every amount is shown in the
+                    How this program may be paid for. Every amount is shown in the
                     currency the plan is stored in.
                 </p>
             </div>
@@ -45,7 +45,7 @@
             <i class="bi bi-cash-coin fs-1 d-block mb-3 text-muted"></i>
             <h6 class="mb-2">No fee plans yet</h6>
             <p class="text-muted mb-0 mx-auto empty-copy">
-                Until this offering has at least one active fee plan, nobody can
+                Until this program has at least one active fee plan, nobody can
                 register for it — there is nothing for the sign-up page to charge. Add
                 a free plan if it costs nothing.
             </p>

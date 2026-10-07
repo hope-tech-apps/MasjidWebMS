@@ -2264,6 +2264,20 @@ const searchMembers = () => {
 
 const doMerge = async () => {
     if (!selectedContact.value || !canMerge.value) return;
+    const kept = mergeMode.value === 'existing' ? mergeTarget.value : mergeNew.value;
+    const recordLabel = (contact: any): string =>
+        `${[contact.first_name, contact.last_name].filter(Boolean).join(' ')} (${contactAddressLabel(contact)})`;
+    const result = await Swal.fire({
+        title: 'Merge these records?',
+        text: `Keep "${recordLabel(kept)}" and remove "${recordLabel(selectedContact.value)}". This cannot be undone. Continue?`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Yes, merge'
+    });
+    if (!result.isConfirmed) return;
+
     // Captured BEFORE the reload below clears `selectedContact` — the outcome
     // dialog is worded for the record that has just been absorbed.
     const wasPlaceholderMerge = isPlaceholderMerge.value;

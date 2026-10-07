@@ -94,7 +94,7 @@ const REGISTRATION_STATUS_ICONS: Partial<Record<RegistrationStatus, string>> = {
 const REGISTRATION_STATUS_HINTS: Partial<Record<RegistrationStatus, string>> = {
     pending: 'Holding a seat while checkout is open. Released automatically if the checkout window expires.',
     confirmed: 'Holding a seat. Registrants have been written onto the roster.',
-    waitlisted: 'No seat — this signup was made after the offering filled. Promote to give it one.',
+    waitlisted: 'No seat — this signup was made after the program filled. Promote to give it one.',
     cancelled: 'The seat has been given back.'
 };
 

@@ -105,7 +105,7 @@ for (const term of ['Halaqat', 'Classrooms', 'Teams', 'Classroom', 'Group', 'Gro
         try {
             assert.ok(programs.mounted.text().includes('an optional roster destination, and how many seats there are.'));
             click(programs.mounted.button('Add New')); await flush();
-            assert.ok(programs.mounted.text().includes('Confirmed registrants are added to the selected roster. Leave it empty for an offering that has no roster.'));
+            assert.ok(programs.mounted.text().includes('Confirmed registrants are added to the selected roster. Leave it empty for a program that has no roster.'));
         } finally { programs.mounted.unmount(); }
     });
 }

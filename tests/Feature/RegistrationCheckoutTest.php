@@ -462,7 +462,7 @@ class RegistrationCheckoutTest extends TestCase
 
         $this->postCheckout($registration)
             ->assertStatus(422)
-            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+            ->assertJsonPath('message', 'This program is not currently accepting registrations.');
 
         // Same words the page and `register` use — one answer at the door and
         // at the till.

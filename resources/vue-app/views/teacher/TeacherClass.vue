@@ -867,9 +867,9 @@
                                          reads, because there is now a Lesson Plans tab
                                          and the two would be read as the same thing. -->
                                     <select class="form-select form-select-sm" style="min-width:12rem" v-model="hifzForm.kind">
-                                        <option value="sabak">New memorization</option>
-                                        <option value="sabqi">Recent revision</option>
-                                        <option value="manzil">Older revision</option>
+                                        <option value="sabak">{{ hifzKindLabel('sabak') }}</option>
+                                        <option value="sabqi">{{ hifzKindLabel('sabqi') }}</option>
+                                        <option value="manzil">{{ hifzKindLabel('manzil') }}</option>
                                     </select>
                                 </div>
                                 <div class="col-12 col-sm-auto">
@@ -909,7 +909,7 @@
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Quality</label>
                                     <select class="form-select form-select-sm" v-model="hifzForm.quality">
-                                        <option v-for="q in hifzQualities" :key="q" :value="q">{{ qualityLabel(q) }}</option>
+                                        <option v-for="q in hifzQualities" :key="q" :value="q">{{ hifzQualityLabel(q) }}</option>
                                     </select>
                                 </div>
                                 <div class="col-6 col-sm-auto">
@@ -963,9 +963,9 @@
                     <ul v-else class="list-unstyled mb-0">
                         <li v-for="h in hifz" :key="h.id" class="d-flex gap-2 align-items-baseline py-1 border-bottom small">
                             <span class="text-capitalize flex-grow-1">
-                                <template v-if="h.whole_surah">{{ h.kind }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
-                                <template v-else>{{ h.kind }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
-                                <span class="text-muted">· {{ h.quality }} · {{ when(h.recited_at) }}</span>
+                                <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
+                                <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
+                                <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
                             </span>
                             <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
                                     @click="removeHifz(h)">Remove</button>
@@ -2504,6 +2504,7 @@ import { messageRow, storyRow, type ScheduledRow } from '@/core/helpers/schedule
 import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import { isVideoFile, pickerLimits } from '@/core/helpers/mediaPick';
 import TeacherStudentSheet from '@/views/teacher/TeacherStudentSheet.vue';
+import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { ageLabel } from '@/core/helpers/studentAge';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -5115,21 +5116,6 @@ const hifzQualities = computed<string[]>(
 
 /** The ceiling the request boundary enforces, so the input cannot invite a 422. */
 const hifzNoteMax = computed<number>(() => Number(hifzMeta.value?.max_note_length) || 1000);
-
-/**
- * Teacher-facing wording. `repeat` is the server's word and reads as an
- * instruction rather than an assessment, so the label a teacher already knows is
- * kept. Anything the map does not know falls back to the raw value capitalised,
- * so a quality added backend-side appears with a serviceable label instead of
- * not appearing at all.
- */
-const QUALITY_LABELS: Record<string, string> = {
-    excellent: 'Excellent',
-    good: 'Good',
-    fair: 'Fair',
-    repeat: 'Needs work',
-};
-const qualityLabel = (q: string) => QUALITY_LABELS[q] ?? (q.charAt(0).toUpperCase() + q.slice(1));
 
 const hifzForm = ref({
     kind: 'sabak',

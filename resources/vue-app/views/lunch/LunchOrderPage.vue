@@ -33,9 +33,9 @@
                             <div class="lunch-item-price">{{ money(item.price_minor) }}</div>
                         </div>
                         <div class="lunch-stepper">
-                            <button type="button" @click="dec(item.id)" :disabled="(cart[item.id] || 0) === 0">−</button>
+                            <button type="button" :aria-label="t('one_fewer', itemName(item))" @click="dec(item.id)" :disabled="(cart[item.id] || 0) === 0">−</button>
                             <span>{{ cart[item.id] || 0 }}</span>
-                            <button type="button" @click="inc(item)">+</button>
+                            <button type="button" :aria-label="t('one_more', itemName(item))" @click="inc(item)">+</button>
                         </div>
                     </div>
                 </section>

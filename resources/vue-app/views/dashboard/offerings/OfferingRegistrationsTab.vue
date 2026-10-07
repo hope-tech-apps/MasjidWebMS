@@ -105,7 +105,7 @@
                 who is paying, which plan they chose, and what Stripe has confirmed.
             </p>
             <p class="text-muted small mb-0 mx-auto empty-copy mt-2">
-                The public sign-up page is not live yet. Publishing this offering's
+                The public sign-up page is not live yet. Publishing this program's
                 sign-up form as a page section collects <em>form responses</em>, which
                 do not take a seat or charge anyone — they will not show up here.
                 To enrol a family yourself, use <strong>Add a registration</strong>.
@@ -385,6 +385,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
  * is one click away on the registration page.
  */
 
+const emit = defineEmits<{ changed: [] }>();
 const props = defineProps<{ offeringId: number | string }>();
 
 // Stores
@@ -508,6 +509,7 @@ const clearFilters = async () => {
 const onCreated = async (registration: Registration) => {
     showAdd.value = false;
     await loadData(1);
+    emit('changed');
 
     Swal.fire({
         icon: registration.status === 'waitlisted' ? 'info' : 'success',
@@ -518,7 +520,7 @@ const onCreated = async (registration: Registration) => {
 
 const outcomeText = (registration: Registration): string => {
     if (registration.status === 'waitlisted') {
-        return 'This offering was full, so no seat was taken and nothing is owed. '
+        return 'This program was full, so no seat was taken and nothing is owed. '
             + 'Promote them from the roster when a place frees up.';
     }
 

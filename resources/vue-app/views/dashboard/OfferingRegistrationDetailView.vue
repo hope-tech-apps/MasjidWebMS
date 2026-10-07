@@ -7,7 +7,7 @@
                     :to="{ name: 'masjid.offeringDetail', params: { offeringId } }"
                 >
                     <i class="bi bi-arrow-left me-1"></i>
-                    Back to the offering
+                    Back to the program
                 </router-link>
             </template>
 
@@ -27,7 +27,7 @@
                         class="btn btn-outline-primary btn-sm"
                         :to="{ name: 'masjid.offeringDetail', params: { offeringId } }"
                     >
-                        Back to the offering
+                        Back to the program
                     </router-link>
                 </div>
 
@@ -329,7 +329,7 @@
 
                                 <p class="text-muted small mb-0 mt-3">
                                     Promoting re-checks capacity, so it can never oversell the
-                                    offering. Cancelling stops any future billing and releases the
+                                    program. Cancelling stops any future billing and releases the
                                     seat — it does not refund anything that already settled, and it
                                     does not remove anyone from
                                     {{ groupsTerm.toLowerCase() }} they belong to.
@@ -658,7 +658,7 @@ const submitAid = async () => {
 const promote = async () => {
     const result = await Swal.fire({
         title: 'Give this sign-up a seat?',
-        text: 'They come off the waitlist. If the offering is full, this is refused rather than overselling it.',
+        text: 'They come off the waitlist. If the program is full, this is refused rather than overselling it.',
         icon: 'question',
         showCancelButton: true,
         confirmButtonText: 'Yes, promote'

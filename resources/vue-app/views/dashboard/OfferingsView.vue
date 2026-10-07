@@ -104,7 +104,7 @@
                     <i class="bi bi-mortarboard fs-1 d-block mb-3 text-muted"></i>
                     <h6 class="mb-2">No {{ offeringLabel.toLowerCase() }} yet</h6>
                     <p class="text-muted mb-2 mx-auto empty-copy">
-                        An offering is one thing people can register for — a semester, a
+                        A program is one thing people can register for — a semester, a
                         camp, an admission round, a membership year. It carries the sign-up
                         form families fill in, an optional roster destination, and how many
                         seats there are.
@@ -184,7 +184,7 @@
                                     <span class="text-muted"> / {{ offering.capacity === null ? '∞' : offering.capacity }}</span>
                                 </td>
                                 <!-- Every registration row ever attached, cancelled included. -->
-                                <td class="text-center text-muted" title="Every sign-up ever attached to this offering, cancelled and waitlisted included.">
+                                <td class="text-center text-muted" title="Every sign-up ever attached to this program, cancelled and waitlisted included.">
                                     {{ offering.registrations_count ?? '—' }}
                                 </td>
                                 <td class="small">
@@ -307,8 +307,8 @@
                                         <input type="text" class="form-control font-monospace" v-model.trim="form.slug" required>
                                         <div class="form-text">
                                             Lowercase letters, numbers and hyphens. This identifies the
-                                            offering to the registration API, so changing it on a live
-                                            offering breaks any link already shared.
+                                            program to the registration API, so changing it on a live
+                                            program breaks any link already shared.
                                             <br>
                                             <!--
                                                 STILL deliberately not "the public address people register
@@ -371,21 +371,21 @@
                                         -->
                                         <div v-else-if="formOptions.length === 0" class="alert alert-info py-2 px-3 mt-2 mb-0 small">
                                             <template v-if="formEditingAllowed && webPagesAllowed">
-                                                You do not have a sign-up form yet, and one is required before an
-                                                offering can be created. Build one from
+                                                You do not have a sign-up form yet, and one is required before a
+                                                program can be created. Build one from
                                                 <strong>Form Responses</strong> with <strong>Create a form</strong>,
                                                 or under <strong>Web Pages Management</strong>: open or add a page,
                                                 add a <strong>Sign-up Form</strong> section, and save. It will appear here.
                                             </template>
                                             <template v-else-if="formEditingAllowed">
-                                                You do not have a sign-up form yet, and one is required before an
-                                                offering can be created. Build one from
+                                                You do not have a sign-up form yet, and one is required before a
+                                                program can be created. Build one from
                                                 <strong>Form Responses</strong> with <strong>Create a form</strong>,
                                                 and save. It will appear here.
                                             </template>
                                             <template v-else>
-                                                You do not have a sign-up form yet, and one is required before an
-                                                offering can be created. Build one under
+                                                You do not have a sign-up form yet, and one is required before a
+                                                program can be created. Build one under
                                                 <strong>Web Pages Management</strong>: open or add a page, add a
                                                 <strong>Sign-up Form</strong> section, and save. It will appear here.
                                             </template>
@@ -426,7 +426,7 @@
                                         </select>
                                         <div class="form-text">
                                             Confirmed registrants are added to the selected roster.
-                                            Leave it empty for an offering
+                                            Leave it empty for a program
                                             that has no roster.
                                         </div>
                                     </div>
@@ -849,7 +849,7 @@ const confirmDelete = async (offering: Offering) => {
         Swal.fire({
             icon: 'error',
             title: 'Not removed',
-            text: apiErrorText(error, 'Failed to remove this offering.')
+            text: apiErrorText(error, 'Failed to remove this program.')
         });
     }
 };

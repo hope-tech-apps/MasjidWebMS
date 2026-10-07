@@ -198,6 +198,7 @@
                     <OfferingRegistrationsTab
                         v-else-if="activeTab === 'registrations'"
                         :offeringId="offeringId"
+                        @changed="bootstrap"
                     />
                 </div>
             </div>
@@ -337,7 +338,7 @@ const bootstrap = async () => {
         if ((error as AxiosError)?.response?.status === 404) {
             notFound.value = true;
         } else {
-            loadError.value = apiErrorText(error, 'Failed to load this offering.');
+            loadError.value = apiErrorText(error, 'Failed to load this program.');
         }
     } finally {
         bootstrapping.value = false;
