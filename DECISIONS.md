@@ -9089,3 +9089,39 @@ uses real database insertion, rendering and Worker delivery: 3 red -> 3 green
 receipt PDF, offline receipt and historical report tests: 69 passed / 370 assertions.
 Logs: artifacts/statement-bulk-currency-{red,green,queue-suite,annual-suite}.log.
 No network, formatter, commit or shipping action.
+
+# 2026-10-07 — Failed-job retention and unauthenticated API requests
+
+Decided: schedule Laravel's existing `queue:prune-failed` daily with
+`withoutOverlapping()`. Keep 30 days initially, as requested by the owner;
+`queue.failed.retention_days` reads `QUEUE_FAILED_RETENTION_DAYS` and is converted
+to hours at schedule registration. The framework deletes strictly older failed
+rows in batches. It never deletes pending `jobs`.
+
+Decided: API guest authentication must reach the existing 401 JSON renderer
+regardless of Accept. Configure the guest redirect callback to return null on
+`api/*`; this prevents Laravel resolving its nonexistent named `login` route.
+All current protected routes are API routes: admin/teacher/lunch staff use
+`auth:sanctum`, family/member use `auth:family`. Browser-like requests therefore
+receive 401 JSON with `Unauthenticated.` and no Location header, preserving the
+existing API contract and member account `data: {}` decoration. The non-API
+fallback is the existing SPA path `/auth/sign-in`.
+
+Not done: no new login route or page, custom prune command, schema change, queue
+send-path change, shared error helper change, or Vue change was needed. No
+payments or checkout changes. No production prune, scheduler/cron edit, deployment,
+network access or commit: this brief authorizes local preparation only. DECISIONS.md
+is untouched so the integrator can add this entry without parallel branch collisions.
+
+Verified locally: regression red 9 failed / 6 passed (51 assertions), then green
+15 passed (100 assertions); related area suites 189 passed (2,737 assertions).
+The retention tests exercise the real database failed-job provider and scheduled
+Artisan command against SQLite fixtures, including the exact cutoff, unchanged
+pending rows and a 60-day config override. A fresh Artisan process with the env
+override set to 60 lists `queue:prune-failed --hours=1440`.
+
+Unverified: MySQL and live cron execution; no MySQL-only tests were added.
+Vue tests/build were not run because no Vue admin file changed. No column was
+added, so StagingScrubCoverageTest was not triggered.
+
+First run on production (recorded before shipping, 2026-10-07): failed_jobs held five rows, all older than 30 days and all form mail (ids 18 to 22, failed 2026-08-30 to 2026-09-01: three FormResponseSubmitted, two FormSubmissionReceipt). The first nightly prune removes them; their ids, dates and types are kept here and in LOG.md, their payloads are not.

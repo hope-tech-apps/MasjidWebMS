@@ -263,6 +263,10 @@ Remove the `include` line from each vhost (or copy the backups back), delete the
 `personal_access_tokens` table bounded by deleting only tokens the guard that
 reads them already refuses, plus 24 hours; not Sanctum's own
 `sanctum:prune-expired`, which would delete parent tokens after ~32 hours).
+It also schedules Laravel's `queue:prune-failed` daily, retaining 30 days of
+failed payloads by default (`queue.failed.retention_days`, overridden by
+`QUEUE_FAILED_RETENTION_DAYS`). Older failed jobs are deleted; pending `jobs`
+are untouched. This uses the same scheduler cron below; no additional cron is needed.
 Laravel's scheduler only runs if
 the system cron invokes `schedule:run` every minute. Install once (as root):
 

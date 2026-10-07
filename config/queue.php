@@ -109,6 +109,8 @@ return [
         'driver' => env('QUEUE_FAILED_DRIVER', 'database-uuids'),
         'database' => env('DB_CONNECTION', 'sqlite'),
         'table' => 'failed_jobs',
+        // Failed mail payloads can contain personal data and encoded attachments.
+        'retention_days' => (int) env('QUEUE_FAILED_RETENTION_DAYS', 30),
     ],
 
 ];

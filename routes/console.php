@@ -21,6 +21,12 @@ Artisan::command('inspire', function () {
 // see deploy/README.md.
 Schedule::command('tokens:prune-expired')->daily()->withoutOverlapping();
 
+// Bound retention of failed payloads, including mail attachments. Laravel's
+// command prunes failed_jobs only; pending jobs are never part of this sweep.
+Schedule::command('queue:prune-failed', [
+    '--hours' => config('queue.failed.retention_days') * 24,
+])->daily()->withoutOverlapping();
+
 // Server-side prayer backstop: every minute, push adhan/iqama at prayer time to
 // devices that have gone dark (no heartbeat > 5 days) so they never miss a
 // reminder even if their local schedule lapsed. Active devices are excluded, so
