@@ -44,6 +44,25 @@ class UpdateFlyerRequest extends StoreFlyerRequest
         parent::withValidator($validator);
     }
 
+    /** Preserve unchanged historical slots without admitting new unknown keys. */
+    protected function validateContentAgainstTemplate($validator, FlyerTemplate $template, array $content): void
+    {
+        $flyer = Flyer::find((int) $this->route('flyer_id'));
+        $known = array_column($template->slots(), 'name');
+
+        if ($flyer && ! $this->has('flyer_template_id')) {
+            foreach ($content as $name => $value) {
+                if (! in_array($name, $known, true)
+                    && array_key_exists($name, $flyer->content)
+                    && $value === $flyer->content[$name]) {
+                    unset($content[$name]);
+                }
+            }
+        }
+
+        parent::validateContentAgainstTemplate($validator, $template, $content);
+    }
+
     /**
      * On a partial save the design usually isn't resent, so fall back to the one the
      * flyer already uses. The lookup is tenant-scoped; a flyer belonging to another

@@ -9137,3 +9137,24 @@ Single-currency service, preview and rendering data keep their original shape; P
 Not done: currency conversion, currency selection/configuration, payment/checkout/shared-helper changes, CSV changes (ledger CSV already labels every donation's currency), schema changes, historical inclusion, repair/reissue of already-issued or already-queued mixed snapshots, production counts or shipping. Those require separate scope/access/owner authorization; existing mixed snapshots lack the per-gift currencies needed for safe reconstruction. No network, commits, formatter or CHANGELOG changes. SQL and verification evidence are alongside this entry.
 
 Production when this shipped (read-only count, 2026-10-07): 0 donor-years with eligible gifts in more than one currency; all 809 succeeded donations are in USD. No existing donor's statement changes.
+
+# 2026-10-07 — Flyer Studio saved drafts
+
+Use the existing organisation-scoped, capability-gated flyer CRUD API and its 15-row
+pagination for a Saved drafts table, Open and confirmed Delete. Add only creator data,
+unchanged historical-slot validation and reference-aware deletion on the server.
+Open restores saved content, a nonempty palette snapshot and private image blobs; Save
+updates the existing ID and permits incomplete drafts. Label authorship Created by,
+not Last saved by, because only created_by is recorded.
+
+Keep current bundled templates/markup and existing renderer/export behaviour. Show
+saved values/images with an explanation if the bundle is unavailable; keep removed
+slots read-only and preserve them on re-save. No migration or historical template
+snapshot: the existing FK restricts deleting a referenced template, while the bundle
+can still lose its markup. Do not add multi-image persistence or a persisted cutout
+preference: those were absent from the existing wire/storage contract. Explain local
+image fields explicitly; restore both stored files and use the model's composite
+choice. No shared helpers, payments, sends, deployments, network calls or commits.
+
+The integrator should re-walk the Flyer Studio admin-guide task after deploying. The
+external guide was not edited from this offline worktree. DECISIONS.md is untouched.

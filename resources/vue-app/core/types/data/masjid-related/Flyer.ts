@@ -269,6 +269,7 @@ export type Flyer = {
     template_name: string | null;
     kind: FlyerKind | null;
     title: string;
+    creator: { id: number; name: string } | null;
     content: FlyerContent;
     palette: FlyerPalette | [];
     status: FlyerStatus;

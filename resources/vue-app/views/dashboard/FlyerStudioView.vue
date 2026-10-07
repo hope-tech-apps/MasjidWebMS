@@ -2,14 +2,14 @@
     <div>
         <PageDataContainer title="Flyer Studio" :hideButton="true">
             <template #headerButtons>
-                <button v-if="store.design" type="button" class="btn btn-outline-secondary" @click="changeTemplate">
+                <button v-if="store.design || store.unavailableDraft" type="button" :disabled="busy" class="btn btn-outline-secondary" @click="changeTemplate">
                     <i class="bi bi-arrow-left me-1"></i>Change design
                 </button>
                 <button
                     v-if="store.design"
                     type="button"
                     class="btn btn-success"
-                    :disabled="!store.canSave || store.saving"
+                    :disabled="!store.canSave || busy"
                     :title="saveHint"
                     @click="save"
                 >
@@ -27,8 +27,59 @@
                     </div>
                 </div>
 
+                <section v-if="!store.loading && !store.design && !store.unavailableDraft" class="mb-4" aria-labelledby="saved-drafts-title">
+                    <h6 id="saved-drafts-title">Saved drafts</h6>
+                    <div v-if="store.draftsError" class="alert alert-warning" role="alert">
+                        {{ store.draftsError }}
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-2" :disabled="busy || store.draftsLoading" @click="store.fetchDrafts(store.draftsPage.current_page)">Try again</button>
+                    </div>
+                    <p v-if="store.draftsLoading" role="status">Loading saved drafts...</p>
+                    <p v-else-if="!store.draftsError && !store.drafts.length" class="text-muted">No saved drafts yet.</p>
+                    <div v-if="store.drafts.length" class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead><tr><th>Title</th><th>Template</th><th>Last saved</th><th>Created by</th><th>Actions</th></tr></thead>
+                            <tbody>
+                                <tr v-for="draft in store.drafts" :key="draft.id">
+                                    <td>{{ draft.title }}</td>
+                                    <td>{{ draft.template_name || 'Unavailable design' }}</td>
+                                    <td>{{ savedDate(draft.updated_at) }}</td>
+                                    <td>{{ draft.creator?.name || 'Not recorded' }}</td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button type="button" class="btn btn-outline-primary" :disabled="busy || store.draftsLoading" @click="open(draft.id)">Open</button>
+                                            <button type="button" class="btn btn-outline-danger" :disabled="busy || store.draftsLoading" @click="remove(draft)">Delete</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <Pagination :options="draftPagination" @pageChange="draftPageChanged" />
+                    </div>
+                </section>
+
+                <div v-if="store.opening" class="text-muted mb-3" role="status">Opening draft...</div>
+                <div v-for="warning in store.openWarnings" :key="warning" class="alert alert-warning" role="alert">{{ warning }}</div>
+                <div v-if="store.unavailableDraft" class="alert alert-warning" role="alert">
+                    This draft’s design is no longer available. Its saved contents and images are shown below. Preview and saving are unavailable; the draft has been kept.
+                    <h6 class="mt-3">{{ store.title }}</h6>
+                </div>
+                <section v-if="Object.keys(store.preservedContent).length" class="mb-4">
+                    <h6>{{ store.unavailableDraft ? 'Saved contents' : 'Fields no longer in this design' }}</h6>
+                    <p v-if="!store.unavailableDraft" class="text-muted">These values cannot be edited or previewed here. They will be kept when you save.</p>
+                    <dl v-for="(value, name) in store.preservedContent" :key="name">
+                        <dt>{{ name }}</dt><dd class="text-break" style="white-space: pre-wrap">{{ savedValue(value) }}</dd>
+                    </dl>
+                </section>
+                <section v-if="Object.keys(store.recoveryImages).length" class="mb-4">
+                    <h6>Saved images</h6>
+                    <figure v-for="(image, variant) in store.recoveryImages" :key="variant">
+                        <figcaption>{{ variant === 'source' ? 'Original photo' : 'Cut-out' }}</figcaption>
+                        <img :src="image" :alt="variant === 'source' ? 'Saved original photo' : 'Saved cut-out'" class="img-fluid" style="max-height: 240px">
+                    </figure>
+                </section>
+
                 <!-- Step 1 — pick a design -->
-                <div v-else-if="!store.design">
+                <div v-if="!store.loading && !store.design && !store.unavailableDraft">
                     <p class="text-muted">
                         Pick a design. Everything is drawn here in the browser, and the export is a
                         download — nothing is posted anywhere.
@@ -39,7 +90,7 @@
 
                         <div class="row g-3">
                             <div v-for="design in group.designs" :key="design.key" class="col-md-6 col-xl-4">
-                                <button type="button" class="design-card w-100 text-start" @click="store.selectTemplate(design.key)">
+                                <button type="button" class="design-card w-100 text-start" :disabled="busy" @click="store.selectTemplate(design.key)">
                                     <div class="d-flex justify-content-between align-items-start gap-2">
                                         <span class="fw-semibold">{{ design.manifest.name }}</span>
                                         <span v-if="isMeasured(design.key)" class="badge bg-primary-subtle text-primary-emphasis">
@@ -58,7 +109,7 @@
                 </div>
 
                 <!-- Step 2 — fill it in -->
-                <div v-else class="row g-4">
+                <div v-else-if="!store.loading && store.design" class="row g-4">
 
                     <!-- Editor -->
                     <div class="col-lg-5">
@@ -70,8 +121,9 @@
 
                         <div class="mb-4">
                             <label class="form-label fw-semibold mb-1" for="flyer-palette">Colours</label>
-                            <select id="flyer-palette" class="form-select" v-model="store.paletteKey">
-                                <option value="">From our brand colours</option>
+                            <select id="flyer-palette" class="form-select" v-model="store.paletteKey" @change="store.changePalette">
+                                <option v-if="store.savedPalette" value="" disabled>Saved colours</option>
+                                <option :value="store.savedPalette ? 'brand' : ''">From our brand colours</option>
                                 <option v-for="option in store.paletteOptions" :key="option.key" :value="option.key">
                                     {{ option.name }}
                                 </option>
@@ -81,6 +133,9 @@
                             </div>
                         </div>
 
+                        <p v-if="store.localImageLabels.length" class="alert alert-warning small">
+                            Images added to these fields are included in downloads but are not stored in drafts: {{ store.localImageLabels.join(', ') }}. Add them again after reopening.
+                        </p>
                         <hr class="my-4">
 
                         <FlyerSlotForm
@@ -177,13 +232,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeMount, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onBeforeMount, onMounted, onUnmounted, reactive, ref, watchEffect } from 'vue';
 import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import FlyerPreview from '@/components/flyer/FlyerPreview.vue';
 import FlyerSlotForm from '@/components/flyer/FlyerSlotForm.vue';
+import Pagination from '@/components/partials/Pagination.vue';
+import { PageChangeData } from '@/core/types/elements/Pagination';
 import { useFlyersStore } from '@/stores/masjid/flyersStore';
 import {
+    Flyer,
     FlyerDesign,
     FlyerExportSize,
     FlyerKind,
@@ -222,6 +280,14 @@ const KIND_LABELS: Record<FlyerKind, string> = {
 };
 
 // Computed
+const busy = computed(() => store.saving || store.uploading || store.opening || store.deleting !== null);
+// The shared pager takes toRefs(options), so keep this object's identity stable.
+const draftPagination = reactive({ itemsTotal: 0, perPage: 15, currentPage: 1 });
+watchEffect(() => {
+    draftPagination.itemsTotal = store.draftsPage.total;
+    draftPagination.perPage = store.draftsPage.per_page;
+    draftPagination.currentPage = store.draftsPage.current_page;
+});
 const grouped = computed(() => {
     const kinds: FlyerKind[] = ['food', 'event', 'janazah'];
 
@@ -235,8 +301,7 @@ const grouped = computed(() => {
 });
 
 const saveHint = computed(() => {
-    if (!store.design?.template) return 'This design is not set up on this server yet.';
-    if (store.missingRequired.length) return 'Fill in everything marked required first.';
+    if (!store.canSave) return 'This design is not set up on this server yet.';
     return 'Save this flyer as a draft.';
 });
 
@@ -254,6 +319,42 @@ onUnmounted(() => {
 });
 
 // Methods
+function savedDate(value: string | null): string {
+    return value ? new Date(value).toLocaleString() : 'Not recorded';
+}
+
+function savedValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function draftPageChanged(data: PageChangeData): void {
+    if (!busy.value && data.toPage !== store.draftsPage.current_page) store.fetchDrafts(data.toPage);
+}
+
+async function open(id: number): Promise<void> {
+    if (busy.value) return;
+    try {
+        await store.openDraft(id);
+    } catch (error: any) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: error?.response?.data?.message ?? error?.message ?? 'The draft could not be opened.' });
+    }
+}
+
+async function remove(draft: Flyer): Promise<void> {
+    if (busy.value) return;
+    const result = await Swal.fire({
+        title: 'Delete this draft?',
+        text: `“${draft.title}” and its unshared stored images will be permanently deleted.`,
+        icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, delete draft', cancelButtonText: 'Cancel', confirmButtonColor: '#d33'
+    });
+    if (!result.isConfirmed || busy.value) return;
+    try {
+        await store.deleteDraft(draft.id);
+    } catch (error: any) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: error?.response?.data?.message ?? error?.message ?? 'The draft could not be deleted.' });
+    }
+}
+
 function isMeasured(key: string): boolean {
     return MEASURED_KEYS.includes(key);
 }
@@ -317,6 +418,7 @@ function onOverflow(value: boolean): void {
 }
 
 async function changeTemplate(): Promise<void> {
+    if (busy.value) return;
     const result = await Swal.fire({
         title: 'Start a different design?',
         text: 'What you have filled in will be cleared.',

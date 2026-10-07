@@ -8,6 +8,8 @@ use App\Http\Requests\Admin\Flyers\UpdateFlyerRequest;
 use App\Models\Flyer;
 use App\Support\Errors;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -44,7 +46,7 @@ class FlyersController extends Controller
             // `schema` is in the select because serialize() reports missing_slots, which
             // reads the design's slots. Drop it and every row in the list claims nothing
             // is missing — the failure looks like an answer, not an error.
-            ->with('template:id,key,name,kind,schema')
+            ->with(['template:id,key,name,kind,schema', 'creator:id,name'])
             ->when($request->query('status'), fn ($query, $status) => $query->where('status', $status))
             ->when(
                 $request->query('template_id'),
@@ -115,7 +117,7 @@ class FlyersController extends Controller
      */
     public function show($masjid_id, $flyer_id)
     {
-        $flyer = Flyer::with('template')->findOrFail($flyer_id);
+        $flyer = Flyer::with(['template', 'creator:id,name'])->findOrFail($flyer_id);
 
         $data = $this->serialize($flyer);
         $data['template'] = $flyer->template ? [
@@ -179,9 +181,9 @@ class FlyersController extends Controller
     /**
      * DELETE /api/admin/masjids/{masjid_id}/flyers/{flyer_id}
      *
-     * A hard delete — flyers are not soft-deleted — so the uploaded photo, its cutout
-     * and any finished render go with the row. Nothing else references those files, and
-     * leaving them behind would slowly fill a 2GB droplet with orphans.
+     * Only drafts may be hard-deleted; a row finished since listing returns 409.
+     * Lock and re-read before checking status and capturing cleanup paths, using the
+     * same row lock as photo writes. Keep files referenced by any other flyer.
      */
     public function destroy($masjid_id, $flyer_id)
     {
@@ -190,18 +192,54 @@ class FlyersController extends Controller
         try {
             $disk = Storage::disk(self::IMAGE_DISK);
 
-            foreach ([$flyer->source_image_path, $flyer->cutout_path, $flyer->rendered_path] as $path) {
-                if ($path) {
-                    $disk->delete($path);
+            $paths = DB::transaction(function () use ($flyer_id) {
+                $locked = Flyer::lockForUpdate()->findOrFail($flyer_id);
+                if ($locked->status !== 'draft') {
+                    return null;
                 }
+
+                $paths = array_unique(array_filter([$locked->source_image_path, $locked->cutout_path, $locked->rendered_path]));
+                $locked->delete();
+
+                return $paths;
+            });
+
+            if ($paths === null) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This flyer is no longer a draft and cannot be deleted.',
+                ], Response::HTTP_CONFLICT);
             }
 
-            $flyer->delete();
+            $failed = 0;
+            foreach ($paths as $path) {
+                $referenced = Flyer::withoutMasjidScope()->where(function ($query) use ($path) {
+                    $query->where('source_image_path', $path)
+                        ->orWhere('cutout_path', $path)
+                        ->orWhere('rendered_path', $path);
+                })->exists();
+
+                if (! $referenced) {
+                    try {
+                        if (! $disk->delete($path)) {
+                            $failed++;
+                        }
+                    } catch (\Throwable) {
+                        $failed++;
+                    }
+                }
+            }
+            if ($failed) {
+                // Paths can contain personal names; log only enough to count failures.
+                Log::warning('Flyer file cleanup failed', ['flyer_id' => $flyer->id, 'path_count' => $failed]);
+            }
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'Flyer deleted successfully',
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -216,6 +254,8 @@ class FlyersController extends Controller
      */
     private function serialize(Flyer $flyer): array
     {
+        $flyer->loadMissing('creator:id,name');
+
         return [
             'id' => $flyer->id,
             'uuid' => $flyer->uuid,
@@ -225,6 +265,7 @@ class FlyersController extends Controller
             'template_name' => $flyer->relationLoaded('template') ? $flyer->template?->name : null,
             'kind' => $flyer->relationLoaded('template') ? $flyer->template?->kind : null,
             'title' => $flyer->title,
+            'creator' => $flyer->creator ? ['id' => $flyer->creator->id, 'name' => $flyer->creator->name] : null,
             'content' => $flyer->content,
             'palette' => $flyer->palette,
             'status' => $flyer->status,

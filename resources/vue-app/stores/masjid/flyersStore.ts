@@ -117,6 +117,7 @@ export const useFlyersStore = defineStore('flyersStore', () => {
     const paletteKey = ref('');
 
     const flyerId = ref<number | null>(null);
+    const savedTemplateId = ref<number | null>(null);
     const cutoutStatus = ref<FlyerCutoutStatus>('none');
     const cutoutError = ref<string | null>(null);
     /**
@@ -137,6 +138,25 @@ export const useFlyersStore = defineStore('flyersStore', () => {
      * the design deletes the row or leaves it alone.
      */
     const savedByAdmin = ref(false);
+    const drafts = ref<Flyer[]>([]);
+    const draftsPage = ref({ total: 0, per_page: 15, current_page: 1, last_page: 1 });
+    const draftsLoading = ref(false);
+    const draftsError = ref('');
+    const opening = ref(false);
+    const deleting = ref<number | null>(null);
+    const openWarnings = ref<string[]>([]);
+    const savedPalette = ref<FlyerPalette | null>(null);
+    const recoveryImages = ref<Record<string, string>>({});
+    const unavailableDraft = computed(() => flyerId.value !== null && !design.value);
+    const preservedContent = computed(() => Object.fromEntries(
+        Object.entries(content.value).filter(([name]) => !slots.value.some(slot => slot.name === name))
+    ));
+    const localImageLabels = computed(() => imageSlots.value
+        .filter(slot => slot.name !== cutoutSlot.value)
+        .map(slot => slot.label));
+    let editorRun = 0;
+    let draftsRun = 0;
+    let draftsOrg: number | string | null = null;
 
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let pollAttempts = 0;
@@ -229,10 +249,10 @@ export const useFlyersStore = defineStore('flyersStore', () => {
 
     /**
      * Resolved, gated, and ready to stamp on the flyer root. Recomputed rather than
-     * stored, so switching palette or template re-runs the contrast check instead of
-     * trusting a value that was correct for a different ground.
+     * stored for new drafts. Reopened drafts keep their saved snapshot until the
+     * admin explicitly chooses colours again.
      */
-    const palette = computed<FlyerPalette>(() => resolvePalette({
+    const palette = computed<FlyerPalette>(() => savedPalette.value ?? resolvePalette({
         named: paletteKey.value ? PALETTES?.palettes?.[paletteKey.value] : undefined,
         theme: theme.value,
         masjidId: numericMasjidId(),
@@ -285,8 +305,8 @@ export const useFlyersStore = defineStore('flyersStore', () => {
 
     const cutoutPending = computed(() => FLYER_CUTOUT_PENDING.includes(cutoutStatus.value));
 
-    /** A flyer can only be saved against a template row the server knows about. */
-    const canSave = computed(() => !!design.value?.template && isComplete.value);
+    /** Drafts may be incomplete; reopening also permits a deactivated server template. */
+    const canSave = computed(() => !!design.value && !!(savedTemplateId.value ?? design.value.template?.id));
 
     function hasAnyValue(item: FlyerListItem): boolean {
         return Object.values(item).some((value) => !!String(value ?? '').trim());
@@ -354,12 +374,124 @@ export const useFlyersStore = defineStore('flyersStore', () => {
     }
 
     async function initialise(): Promise<void> {
+        reset();
         loading.value = true;
         try {
-            await Promise.all([fetchTemplates(), fetchTheme()]);
+            await Promise.all([fetchTemplates(), fetchTheme(), fetchDrafts()]);
         } finally {
             loading.value = false;
         }
+    }
+
+    /** Use the API's last page after concurrent deletions; failed reads retain rows. */
+    async function fetchDrafts(page = 1): Promise<void> {
+        const id = masjidId();
+        if (draftsOrg !== id) {
+            draftsOrg = id;
+            drafts.value = [];
+            draftsPage.value = { total: 0, per_page: 15, current_page: 1, last_page: 1 };
+        }
+        const run = ++draftsRun;
+        if (!id) return;
+        draftsLoading.value = true;
+        draftsError.value = '';
+        try {
+            const res = await ApiService.get(route(`/api/admin/masjids/${id}/flyers?status=draft&page=${page}&per_page=15`));
+            if (res.data?.status !== 'success' || !Array.isArray(res.data?.data?.data)) {
+                throw new Error('Invalid draft list.');
+            }
+            if (run !== draftsRun || id !== masjidId()) return;
+            if (page > res.data.data.last_page) {
+                await fetchDrafts(Math.max(1, res.data.data.last_page));
+                return;
+            }
+            drafts.value = res.data.data.data;
+            draftsPage.value = res.data.data;
+        } catch {
+            if (run === draftsRun && id === masjidId()) draftsError.value = 'Saved drafts could not be loaded. Try again.';
+        } finally {
+            if (run === draftsRun) draftsLoading.value = false;
+        }
+    }
+
+    /** Hydrate into temporary state first so a failed or stale read cannot clear the editor. */
+    async function openDraft(draftId: number): Promise<void> {
+        if (opening.value || saving.value || uploading.value || deleting.value !== null) return;
+        const id = masjidId();
+        if (!id) return;
+        const run = ++editorRun;
+        opening.value = true;
+        try {
+            const res = await ApiService.get(route(`/api/admin/masjids/${id}/flyers/${draftId}`));
+            if (res.data?.status !== 'success' || !res.data?.data || res.data.data.status !== 'draft') {
+                throw new Error('This saved draft is no longer available.');
+            }
+            const flyer = res.data.data as Flyer;
+            const next = designs.value.find(d => d.key === flyer.template_key);
+            const warnings: string[] = [];
+            const recovered: Record<string, string> = {};
+            for (const variant of ['source', 'cutout'] as const) {
+                const url = flyer.images?.[variant];
+                if (!url) continue;
+                try {
+                    recovered[variant] = await urlToDataUrl(url);
+                } catch {
+                    warnings.push(`The saved ${variant === 'source' ? 'photo' : 'cut-out'} could not be loaded. Its stored file has been kept.`);
+                }
+            }
+            if (run !== editorRun || id !== masjidId()) return;
+            stopPolling();
+            discardImplicitDraft();
+            selectedKey.value = next?.key ?? null;
+            flyerId.value = flyer.id;
+            savedTemplateId.value = flyer.flyer_template_id;
+            savedByAdmin.value = true;
+            title.value = flyer.title;
+            content.value = structuredClone(flyer.content);
+            savedPalette.value = Object.keys(flyer.palette ?? {}).length ? { ...flyer.palette } as FlyerPalette : null;
+            paletteKey.value = '';
+            savedAt.value = flyer.updated_at;
+            cutoutStatus.value = flyer.cutout_status;
+            cutoutError.value = flyer.cutout_error;
+            cutoutAvailable.value = false;
+            lastPhoto = null;
+            images.value = {};
+            recoveryImages.value = recovered;
+            openWarnings.value = warnings;
+            const photoSlot = cutoutSlot.value;
+            if (photoSlot && recovered.source) {
+                images.value[photoSlot] = { original: recovered.source, cutout: recovered.cutout ?? null, useCutout: true, fileName: null };
+                recoveryImages.value = {};
+            } else if (recovered.source && next && !photoSlot) {
+                openWarnings.value.push('The saved photo no longer has a slot in this design. It is shown below and its stored file has been kept.');
+            }
+            if (photoSlot && flyer.cutout_pending) schedulePoll();
+        } finally {
+            if (run === editorRun) opening.value = false;
+        }
+    }
+
+    /** Delete only after the view's confirmation; reset a deleted editor without an implicit delete. */
+    async function deleteDraft(draftId: number): Promise<void> {
+        if (deleting.value !== null || opening.value || saving.value || uploading.value) return;
+        const id = masjidId();
+        if (!id) return;
+        deleting.value = draftId;
+        try {
+            const res = await ApiService.delete(route(`/api/admin/masjids/${id}/flyers/${draftId}`));
+            if (res.data?.status !== 'success') throw new Error('The draft could not be deleted.');
+            if (flyerId.value === draftId) reset();
+            const page = drafts.value.length === 1 ? Math.max(1, draftsPage.value.current_page - 1) : draftsPage.value.current_page;
+            await fetchDrafts(page);
+        } finally {
+            deleting.value = null;
+        }
+    }
+
+    /** An explicit colour choice replaces a reopened snapshot. */
+    function changePalette(): void {
+        if (paletteKey.value === 'brand') paletteKey.value = '';
+        savedPalette.value = null;
     }
 
     // ------------------------------------------------------------------ editing
@@ -374,6 +506,11 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         const next = designs.value.find((d) => d.key === key);
         if (!next) return;
 
+        ++editorRun;
+        opening.value = false;
+        savedPalette.value = null;
+        recoveryImages.value = {};
+        openWarnings.value = [];
         stopPolling();
         // Same reasoning as reset(): whatever draft the last design left behind is
         // about to become unreachable.
@@ -381,6 +518,7 @@ export const useFlyersStore = defineStore('flyersStore', () => {
 
         selectedKey.value = key;
         flyerId.value = null;
+        savedTemplateId.value = null;
         savedByAdmin.value = false;
         lastPhoto = null;
         cutoutStatus.value = 'none';
@@ -728,7 +866,9 @@ export const useFlyersStore = defineStore('flyersStore', () => {
 
         slots.value
             .filter((slot) => slot.type === 'image')
-            .forEach((slot) => { out[slot.name] = null; });
+            .forEach((slot) => {
+                if (images.value[slot.name]) out[slot.name] = null;
+            });
 
         return out;
     }
@@ -744,11 +884,11 @@ export const useFlyersStore = defineStore('flyersStore', () => {
     }
 
     function payload(): FlyerPayload | null {
-        const template = design.value?.template;
-        if (!template) return null;
+        const templateId = savedTemplateId.value ?? design.value?.template?.id;
+        if (!design.value || !templateId) return null;
 
         return {
-            flyer_template_id: template.id,
+            flyer_template_id: templateId,
             title: draftTitle(),
             content: contentForSave(),
             // Snapshotted as resolved, so a rebrand next month does not restyle a flyer
@@ -784,6 +924,7 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         // Set here and not in persistDraft(): "saved at" means the admin saved, not
         // that the store created a row behind their back to park a photo on.
         savedAt.value = new Date().toISOString();
+        await fetchDrafts(draftsPage.value.current_page);
 
         return id;
     }
@@ -797,10 +938,12 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         if (!body) throw new Error('This design has not been set up on the server yet, so it cannot be saved.');
 
         saving.value = true;
+        // Keeping the design avoids revalidating a deactivated template as a NEW choice.
+        const { flyer_template_id, ...updateBody } = body;
 
         try {
             const res: AxiosResponse = flyerId.value
-                ? await ApiService.put(route(`/api/admin/masjids/${id}/flyers/${flyerId.value}`), body)
+                ? await ApiService.put(route(`/api/admin/masjids/${id}/flyers/${flyerId.value}`), updateBody)
                 : await ApiService.post(route(`/api/admin/masjids/${id}/flyers`), body);
 
             if (res.data?.status === 'success' && res.data?.data) {
@@ -819,10 +962,9 @@ export const useFlyersStore = defineStore('flyersStore', () => {
      * Throw away the row ensureDraft() created behind the admin's back.
      *
      * That row exists for one reason — the cutout worker needs somewhere to hang the
-     * photo — and the Studio has no flyer list to reach it from afterwards. Walking away
-     * without deleting it leaves a row nobody can ever open, plus its source image and
-     * its cut-out sitting on the private disk. DELETE /flyers/{id} takes the files with
-     * it (FlyersController::destroy).
+     * photo. Leaving without Save still discards this implicit row. The saved drafts
+     * list also reaches drafts saved outside this editor. DELETE /flyers/{id} removes unshared
+     * files too (FlyersController::destroy).
      *
      * A flyer the admin saved is theirs. It is never touched here.
      */
@@ -840,11 +982,18 @@ export const useFlyersStore = defineStore('flyersStore', () => {
 
     /** Leave the Studio the way it was found. */
     function reset(): void {
+        ++editorRun;
+        opening.value = false;
+        savedPalette.value = null;
+        paletteKey.value = '';
+        recoveryImages.value = {};
+        openWarnings.value = [];
         stopPolling();
         discardImplicitDraft();
 
         selectedKey.value = null;
         flyerId.value = null;
+        savedTemplateId.value = null;
         savedByAdmin.value = false;
         lastPhoto = null;
         content.value = {};
@@ -874,6 +1023,18 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         uploading,
         saving,
         savedAt,
+        drafts,
+        draftsPage,
+        draftsLoading,
+        draftsError,
+        opening,
+        deleting,
+        openWarnings,
+        savedPalette,
+        recoveryImages,
+        unavailableDraft,
+        preservedContent,
+        localImageLabels,
         // getters
         designs,
         design,
@@ -894,6 +1055,10 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         fetchTemplates,
         fetchTheme,
         initialise,
+        fetchDrafts,
+        openDraft,
+        deleteDraft,
+        changePalette,
         selectTemplate,
         setSlot,
         setListItems,
