@@ -198,7 +198,7 @@
                     <OfferingRegistrationsTab
                         v-else-if="activeTab === 'registrations'"
                         :offeringId="offeringId"
-                        @changed="bootstrap"
+                        @changed="refreshCounts"
                     />
                 </div>
             </div>
@@ -342,6 +342,18 @@ const bootstrap = async () => {
         }
     } finally {
         bootstrapping.value = false;
+    }
+};
+
+// The sign-up counts in the header, after the roster changed. Not bootstrap():
+// that swaps the page for a spinner, which unmounts the roster and drops the
+// admin's search, filters and view. A failed refresh keeps the counts on screen.
+const refreshCounts = async () => {
+    try {
+        const fresh = await offeringsStore.fetchOffering(offeringId);
+        if (fresh) offering.value = fresh;
+    } catch {
+        // The next page load corrects them.
     }
 };
 </script>

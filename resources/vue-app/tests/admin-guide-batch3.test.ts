@@ -88,6 +88,7 @@ async function programScreen(status: string) {
     const program = { id: 3, name: 'Sample program', slug: 'sample', kind: 'program', registration_count: 0,
         registration_state: 'open', intake_form_id: 5, intake_form: { name: 'Intake', schema: { sections: [] } } };
     let reads = 0;
+    const listReads = { n: 0 };
     const calls: any[] = [];
     const store: any = vue.reactive({ offeringsMeta: { registrations_by_status: { ...counts } }, feePlans: [{ id: 6, label: 'Free', kind: 'free', is_active: true }],
         fetchOffering: async () => {
@@ -95,7 +96,7 @@ async function programScreen(status: string) {
             store.offeringsMeta = { registrations_by_status: { ...counts }, seats: { capacity: 10, taken: counts.confirmed + counts.pending, remaining: 10 - counts.confirmed - counts.pending } };
             return program;
         },
-        fetchRegistrations: async () => { store.registrationsPaginated = { data: [], current_page: 1, total: 0, per_page: 25 }; },
+        fetchRegistrations: async () => { listReads.n++; store.registrationsPaginated = { data: [], current_page: 1, total: 0, per_page: 25 }; },
         fetchFeePlans: async () => {}, searchContacts: async () => [],
         createRegistration: async (_id: number, body: any) => { calls.push(body); counts[status]++; return { id: 8, status, payment_status: 'not_required' }; },
     });
@@ -114,7 +115,7 @@ async function programScreen(status: string) {
     assert.ok(payer, screen.text()); type(payer, 'Test registrant'); await flush();
     select(screen.all(n => n.tag === 'select' && n.children.some(o => o.props.value === 6))[0], 6); await flush();
     submit(screen.all(n => n.tag === 'form')[0]); await flush(12);
-    return { screen, calls, reads };
+    return { screen, calls, reads, listReads };
 }
 test('3 manual registration refusal calls the entry a program', async () => {
     const f = 'views/dashboard/offerings/ManualRegistrationModal.vue';
@@ -133,6 +134,9 @@ for (const status of ['pending', 'confirmed', 'waitlisted']) {
             assert.ok(f.screen.all(n => n.textContent === `${label} 1`).length, f.screen.text());
             assert.equal(f.calls[0].fee_plan_id, 6);
             assert.ok(f.screen.all(n => n.tag === 'button' && n.textContent === 'Add a registration').length, 'roster remains available');
+            // The roster is read on mount and once after the add. A third read means the
+            // header refresh remounted it, which drops the admin's search and filters.
+            assert.equal(f.listReads.n, 2, 'the roster is not remounted by the header refresh');
         } finally { f.screen.unmount(); }
     });
 }
