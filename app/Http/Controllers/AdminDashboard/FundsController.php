@@ -6,12 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Funds\StoreFundRequest;
 use App\Http\Requests\Admin\Funds\UpdateFundRequest;
 use App\Models\CartItem;
+use App\Models\Donation;
+use App\Models\DonationSubscription;
 use App\Models\Fund;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Support\Errors;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -97,38 +100,57 @@ class FundsController extends Controller
     }
 
     /**
-     * Delete a fund. Funds are NOT soft-deleted, and donations.fund_id is a
-     * non-cascading FK, so deleting a fund that still has donations attached
-     * raises a QueryException — caught here and returned as a clean failed
-     * envelope rather than an unhandled 500. Scoped findOrFail → 404
-     * cross-tenant (kept outside the try so a miss is not swallowed).
-     *
-     * A fund a basket still needs is refused with a 409 first (see
-     * `basketStillNeeds`): settlement of a gift line throws once its fund is gone, and
-     * that would leave a payment taken and no record of the gift.
+     * Keep gift history, recurring commitments and payable basket gifts. Lock the
+     * parent FIRST inside the transaction so InnoDB's first ordinary read sees
+     * children committed before the lock was won. Child FK inserts take a shared
+     * parent lock. A basket's reference to a fund is polymorphic and has no FK:
+     * `basketStillNeeds()` is read under this lock, but basket checkout does not
+     * take it, so a basket paid in the same instant can still lose its fund
+     * (the gap that existed before this change; DECISIONS.md).
+     * Scoped lookup stays outside the catch to preserve cross-tenant 404s.
      */
     public function destroy($masjid_id, $fund_id)
     {
         $fund = Fund::findOrFail($fund_id);
 
-        if ($this->basketStillNeeds($fund)) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => 'This fund cannot be deleted yet: a basket gift to it is waiting for payment or has not been recorded. Deactivate it instead, or delete it once those gifts are settled.',
-            ], Response::HTTP_CONFLICT);
-        }
-
         try {
-            $fund->delete();
+            return DB::transaction(function () use ($fund) {
+                $fund = Fund::query()->whereKey($fund->id)->lockForUpdate()->firstOrFail();
 
-            return response()->json([
-                'status' => 'success',
-                'data' => $fund,
-            ], Response::HTTP_OK);
+                // Check every FK reference, including any inconsistent tenant stamp.
+                // Pending/failed gifts and canceled commitments are still history.
+                if (Donation::withoutMasjidScope()->where('fund_id', $fund->id)->exists()) {
+                    return response()->json([
+                        'status' => 'failed',
+                        'data' => 'This fund has gifts recorded in it, so it cannot be deleted. Switch it to inactive instead: it is then hidden from new donations and its history is kept.',
+                    ], Response::HTTP_CONFLICT);
+                }
+
+                if (DonationSubscription::withoutMasjidScope()->where('fund_id', $fund->id)->exists()) {
+                    return response()->json([
+                        'status' => 'failed',
+                        'data' => 'This fund has recurring gifts linked to it, so it cannot be deleted. Switch it to inactive instead: it is then hidden from new donations and its history is kept.',
+                    ], Response::HTTP_CONFLICT);
+                }
+
+                if ($this->basketStillNeeds($fund)) {
+                    return response()->json([
+                        'status' => 'failed',
+                        'data' => 'This fund cannot be deleted yet: a basket gift to it is waiting for payment or has not been recorded. Deactivate it instead, or delete it once those gifts are settled.',
+                    ], Response::HTTP_CONFLICT);
+                }
+
+                $fund->delete();
+
+                return response()->json([
+                    'status' => 'success',
+                    'data' => $fund,
+                ], Response::HTTP_OK);
+            });
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
-                'data' => Errors::publicMessage($e),
+                'data' => Errors::publicMessage($e, allowDebugMessage: false),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

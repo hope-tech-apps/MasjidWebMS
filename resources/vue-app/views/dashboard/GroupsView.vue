@@ -199,7 +199,7 @@
                                         <label class="form-label">Kind <span class="text-danger">*</span></label>
                                         <!-- Options come from the server's Group::KINDS, never a local copy. -->
                                         <select class="form-select text-capitalize" v-model="form.kind" required>
-                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ kind }}</option>
+                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ kind.charAt(0).toUpperCase() + kind.slice(1) }}</option>
                                         </select>
                                     </div>
                                     <div class="col-md-8">

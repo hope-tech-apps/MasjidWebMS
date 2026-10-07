@@ -106,8 +106,8 @@
                     <p class="text-muted mb-2 mx-auto empty-copy">
                         An offering is one thing people can register for — a semester, a
                         camp, an admission round, a membership year. It carries the sign-up
-                        form families fill in, an optional {{ groupsTerm.toLowerCase() }} its
-                        roster is written into, and how many seats there are.
+                        form families fill in, an optional roster destination, and how many
+                        seats there are.
                     </p>
                     <p class="text-muted small mb-0 mx-auto empty-copy">
                         Prices live on its fee plans, which you add after creating it.
@@ -425,8 +425,8 @@
                                             </option>
                                         </select>
                                         <div class="form-text">
-                                            Confirmed registrants are added to this
-                                            {{ groupsTerm.toLowerCase() }}. Leave it empty for an offering
+                                            Confirmed registrants are added to the selected roster.
+                                            Leave it empty for an offering
                                             that has no roster.
                                         </div>
                                     </div>

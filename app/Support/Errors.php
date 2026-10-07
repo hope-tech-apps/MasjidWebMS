@@ -68,11 +68,12 @@ class Errors
 {
     public static function publicMessage(
         Throwable $e,
-        string $fallback = 'An error occurred while processing your request.'
+        string $fallback = 'An error occurred while processing your request.',
+        bool $allowDebugMessage = true
     ): string {
         self::record($e);
 
-        return config('app.debug') ? $e->getMessage() : $fallback;
+        return $allowDebugMessage && config('app.debug') ? $e->getMessage() : $fallback;
     }
 
     /**

@@ -142,7 +142,7 @@
                                 <p v-if="!isEditing" class="text-muted small">
                                     The teacher is emailed. A new teacher gets a link to set up their login; someone who
                                     already teaches at another Manara school keeps their existing login and password and is
-                                    simply added here. Assign at least one {{ classesTerm.toLowerCase() }} they will lead.
+                                    simply added here. Assign the {{ classesTerm.toLowerCase() }} they will lead (at least one).
                                 </p>
                                 <p v-else class="text-muted small">
                                     Update this teacher's details and the {{ classesTerm.toLowerCase() }} they lead. Their

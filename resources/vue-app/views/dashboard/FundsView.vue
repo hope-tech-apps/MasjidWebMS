@@ -103,7 +103,7 @@
                                     <div class="col-12">
                                         <label class="form-label">Type <span class="text-danger">*</span></label>
                                         <select class="form-select text-capitalize" v-model="form.type" required>
-                                            <option v-for="t in fundTypes" :key="t" :value="t" class="text-capitalize">{{ t }}</option>
+                                            <option v-for="t in fundTypes" :key="t" :value="t" class="text-capitalize">{{ t.charAt(0).toUpperCase() + t.slice(1) }}</option>
                                         </select>
                                     </div>
                                     <div class="col-12">

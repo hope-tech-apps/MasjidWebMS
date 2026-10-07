@@ -226,6 +226,21 @@ class GroupCrudTest extends TestCase
     // ---------- store ----------
 
     #[Test]
+    public function capitalized_option_labels_do_not_change_group_keys_in_storage_or_the_api(): void
+    {
+        Sanctum::actingAs($this->adminA);
+        foreach (Group::KINDS as $kind) {
+            $response = $this->postJson($this->groupsUrl(), [
+                'name' => 'Sample ' . $kind, 'kind' => $kind,
+            ])->assertCreated()->assertJsonPath('data.kind', $kind);
+            $id = $response->json('data.id');
+            $this->assertDatabaseHas('groups', ['id' => $id, 'kind' => $kind]);
+            $this->getJson($this->groupsUrl() . '/' . $id)
+                ->assertOk()->assertJsonPath('data.kind', $kind);
+        }
+    }
+
+    #[Test]
     public function store_creates_a_group_and_derives_the_slug_from_the_name(): void
     {
         Sanctum::actingAs($this->adminA);

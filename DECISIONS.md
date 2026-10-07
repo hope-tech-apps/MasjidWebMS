@@ -9008,3 +9008,7 @@ Other scheduled/in-flight consumers audited (code read; verdicts, not new policy
 
 Evidence: artifacts/review-fixes-*.log and artifacts/review-fixes-evidence.md.
 No network, commit, deployment, recovery, provider calls or production changes.
+
+## Admin guide findings 22 and 20 (2026-10-06)
+
+Keep every donation and recurring commitment status when deleting a fund; both fund FKs are restrictive. Lock the fund first in the delete transaction. Basket checkout does NOT take that lock (a first build did, and it was taken out before shipping: a row lock and a new refusal in the payment path is more than a delete message warrants), so a basket paid in the same instant as the delete can still lose its fund, as before this change. Preserve the existing pending/paid-unrecorded basket guard and expired/recorded basket policy. The funds index has no existing gift count/flag, so leave Delete available and show the server refusal. Production Errors::publicMessage already returns a generic fallback; fund deletion now opts out of debug messages too. Terminology packs have plural group nouns and no singular helper: rewrite singular roster copy without substituting a plural term. Capitalise option text only; submit, store and export lowercase keys. No migrations, network, commits or deployment. Evidence in artifacts/.

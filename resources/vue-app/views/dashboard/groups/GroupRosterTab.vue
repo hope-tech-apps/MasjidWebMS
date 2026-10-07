@@ -467,7 +467,7 @@
 
                                 <div class="mb-3">
                                     <label class="form-label">
-                                        {{ membersTerm }} <span class="text-danger">*</span>
+                                        Student <span class="text-danger">*</span>
                                     </label>
                                     <input
                                         class="form-control mb-2"
@@ -1345,7 +1345,6 @@ const emptyAddForm = (): GroupMembershipPayload => ({
 const addForm = ref<GroupMembershipPayload>(emptyAddForm());
 
 // Computed
-const membersTerm = computed<string>(() => masjidStore.term('members'));
 
 const roles = computed<GroupRole[]>(() => groupsStore.groupsMeta?.roles ?? ['leader', 'member', 'guardian']);
 

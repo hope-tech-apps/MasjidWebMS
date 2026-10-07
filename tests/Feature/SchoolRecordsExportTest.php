@@ -34,6 +34,17 @@ use Tests\TestCase;
  */
 class SchoolRecordsExportTest extends TestCase
 {
+    #[Test]
+    public function capitalized_class_options_do_not_change_the_kind_written_to_csv(): void
+    {
+        foreach ([Group::KIND_CLASS, Group::KIND_HALAQA] as $kind) {
+            $this->class->update(['kind' => $kind]);
+            $rows = array_map('str_getcsv', preg_split('/\r?\n/', trim($this->body('classes'))));
+            $this->assertSame('Kind', $rows[0][2]);
+            $this->assertSame($kind, $rows[1][2]);
+        }
+    }
+
     use RefreshDatabase;
 
     private Masjid $school;

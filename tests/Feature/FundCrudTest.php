@@ -3,13 +3,21 @@
 namespace Tests\Feature;
 
 use App\Models\Fund;
+use App\Models\Donation;
 use App\Models\Masjid;
 use App\Models\User;
+use App\Support\Errors;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
+use Tests\Support\SeedsDonationSubscriptions;
 
 /**
  * Donation-funds (Fund CRUD) endpoint tests for
@@ -33,7 +41,7 @@ use Tests\TestCase;
  */
 class FundCrudTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, SeedsDonationSubscriptions;
 
     private Masjid $masjidA;
     private Masjid $masjidB;
@@ -132,6 +140,21 @@ class FundCrudTest extends TestCase
     }
 
     // ---------- store ----------
+
+    #[Test]
+    public function capitalized_option_labels_do_not_change_fund_keys_in_storage_or_the_api(): void
+    {
+        Sanctum::actingAs($this->adminA);
+        foreach (Fund::TYPES as $type) {
+            $response = $this->postJson("/api/admin/masjids/{$this->masjidA->id}/funds", [
+                'name' => 'Sample ' . $type, 'type' => $type,
+            ])->assertCreated()->assertJsonPath('data.type', $type);
+            $id = $response->json('data.id');
+            $this->assertDatabaseHas('funds', ['id' => $id, 'type' => $type]);
+            $this->getJson("/api/admin/masjids/{$this->masjidA->id}/funds/{$id}")
+                ->assertOk()->assertJsonPath('data.type', $type);
+        }
+    }
 
     #[Test]
     public function store_creates_a_fund_scoped_to_the_admins_masjid(): void
@@ -292,6 +315,125 @@ class FundCrudTest extends TestCase
     }
 
     // ---------- destroy ----------
+
+    private const GIFT_REFUSAL = 'This fund has gifts recorded in it, so it cannot be deleted. Switch it to inactive instead: it is then hidden from new donations and its history is kept.';
+    private const RECURRING_REFUSAL = 'This fund has recurring gifts linked to it, so it cannot be deleted. Switch it to inactive instead: it is then hidden from new donations and its history is kept.';
+
+    public static function giftStatuses(): array
+    {
+        return array_map(fn ($status) => [$status], ['pending', 'succeeded', 'failed', 'refunded']);
+    }
+
+    public static function recurringStatuses(): array
+    {
+        return array_map(fn ($status) => [$status], self::storableSubscriptionStatuses());
+    }
+
+    private function assertDeletionRefused(int $fundId, string $sentence): void
+    {
+        Sanctum::actingAs($this->adminA);
+        config(['app.debug' => true]);
+        $deletes = [];
+        DB::listen(function ($query) use (&$deletes): void {
+            if (preg_match('/^delete from ["`]funds["`]/i', $query->sql)) {
+                $deletes[] = $query->sql;
+            }
+        });
+
+        $this->deleteJson("/api/admin/masjids/{$this->masjidA->id}/funds/{$fundId}")
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonPath('data', $sentence);
+        $this->assertDatabaseHas('funds', ['id' => $fundId]);
+        $this->assertSame([], $deletes, 'Refusal must precede any DELETE statement.');
+    }
+
+    #[Test]
+    #[DataProvider('giftStatuses')]
+    public function a_fund_with_a_gift_is_refused_before_a_delete_is_attempted(string $status): void
+    {
+        $id = $this->fundIdFor($this->masjidA);
+        $gift = Donation::factory()->create(['masjid_id' => $this->masjidA->id, 'fund_id' => $id, 'status' => $status]);
+
+        $this->assertDeletionRefused($id, self::GIFT_REFUSAL);
+        $this->assertDatabaseHas('donations', ['id' => $gift->id, 'fund_id' => $id]);
+    }
+
+    #[Test]
+    #[DataProvider('recurringStatuses')]
+    public function a_fund_with_a_recurring_commitment_is_refused_even_without_a_charge(string $status): void
+    {
+        $fund = Fund::findOrFail($this->fundIdFor($this->masjidA));
+        $gift = $this->seedDonationSubscription($this->masjidA, $fund, ['status' => $status]);
+
+        $this->assertDeletionRefused($fund->id, self::RECURRING_REFUSAL);
+        $this->assertDatabaseHas('donation_subscriptions', ['id' => $gift->id, 'fund_id' => $fund->id]);
+    }
+
+    #[Test]
+    public function every_foreign_key_to_funds_is_accounted_for(): void
+    {
+        $references = [];
+        foreach (Schema::getTables() as $table) {
+            foreach (Schema::getForeignKeys($table['name']) as $key) {
+                if ($key['foreign_table'] === 'funds') {
+                    $references[] = [$table['name'], $key['columns'], strtolower($key['on_delete'])];
+                }
+            }
+        }
+        sort($references);
+        $this->assertSame([
+            ['donation_subscriptions', ['fund_id'], 'no action'],
+            ['donations', ['fund_id'], 'no action'],
+        ], $references);
+    }
+
+    private function rawFundException(int $id): QueryException
+    {
+        return new QueryException('mysql', 'delete from `funds` where `id` = ?', [$id],
+            new \PDOException('SQLSTATE[23000]: Integrity constraint violation in private_database'));
+    }
+
+    #[Test]
+    public function production_public_message_for_a_database_exception_is_generic(): void
+    {
+        config(['app.debug' => false]);
+        $this->assertSame('An error occurred while processing your request.', Errors::publicMessage($this->rawFundException(1)));
+    }
+
+    #[Test]
+    public function the_delete_backstop_never_returns_sql_even_with_debug_on(): void
+    {
+        $id = $this->fundIdFor($this->masjidA);
+        config(['app.debug' => true]);
+        Event::listen('eloquent.deleting: ' . Fund::class, function () use ($id): void {
+            throw $this->rawFundException($id);
+        });
+        Sanctum::actingAs($this->adminA);
+
+        $this->deleteJson("/api/admin/masjids/{$this->masjidA->id}/funds/{$id}")
+            ->assertStatus(500)
+            ->assertJsonPath('data', 'An error occurred while processing your request.');
+        $this->assertDatabaseHas('funds', ['id' => $id]);
+    }
+
+    #[Test]
+    public function deletion_locks_the_fund_before_reading_any_references_in_its_transaction(): void
+    {
+        $id = $this->fundIdFor($this->masjidA);
+        $level = DB::transactionLevel();
+        $inside = [];
+        DB::listen(function ($query) use (&$inside, $level): void {
+            if (DB::transactionLevel() > $level) {
+                $inside[] = $query->sql;
+            }
+        });
+        Sanctum::actingAs($this->adminA);
+        $this->deleteJson("/api/admin/masjids/{$this->masjidA->id}/funds/{$id}")->assertOk();
+
+        $this->assertNotEmpty($inside);
+        $this->assertStringStartsWith('select * from "funds" where "funds"."id" = ?', $inside[0]);
+    }
 
     #[Test]
     public function destroy_deletes_the_admins_own_fund(): void
