@@ -803,7 +803,7 @@
                                 >
                                     <td v-for="col in rosterColumns" :key="col.key">
                                         <span v-if="row.values[col.key] !== null && row.values[col.key] !== ''">
-                                            {{ row.values[col.key] }}
+                                            {{ displayValue(row.choice_values?.[col.key] ?? row.values[col.key], col.options) }}
                                         </span>
                                         <span v-else-if="row.incomplete" class="text-muted small fst-italic">
                                             no attendees listed
@@ -1460,7 +1460,7 @@
                                 <dl v-if="flatColumns.length" class="row mb-4">
                                     <template v-for="column in flatColumns" :key="column.key">
                                         <dt class="col-sm-4 text-muted fw-normal small">{{ column.label }}</dt>
-                                        <dd class="col-sm-8" style="white-space: pre-wrap;">{{ displayValue(detail.data?.[column.field]) }}</dd>
+                                        <dd class="col-sm-8" style="white-space: pre-wrap;">{{ displayValue(detail.data?.[column.field], column.options) }}</dd>
                                     </template>
                                 </dl>
 
@@ -1479,7 +1479,7 @@
                                                 <tr v-for="(entry, index) in repeatableRows(group.sectionId)" :key="index">
                                                     <td class="text-muted">{{ index + 1 }}</td>
                                                     <td v-for="column in group.columns" :key="column.key">
-                                                        {{ displayValue(entry?.[column.field]) }}
+                                                        {{ displayValue(entry?.[column.field], column.options) }}
                                                     </td>
                                                 </tr>
                                                 <tr v-if="!repeatableRows(group.sectionId).length">
@@ -3811,16 +3811,18 @@ const timelineDate = (date: string): string => {
     return new Date(year, month - 1, day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-/** Render one submitted answer: booleans as Yes/No, multi-selects joined, blanks dashed. */
-const displayValue = (value: any): string => {
+/** Render current choice wording; an option removed or renamed retains its stored value. */
+const displayValue = (value: any, options?: { value: string; label: string }[]): string => {
     if (value === null || value === undefined || value === '') return '—';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    const choiceLabel = (answer: any) => options?.find(option => String(option.value) === String(answer))?.label ?? answer;
     if (Array.isArray(value)) {
-        const joined = value.filter(v => v !== null && v !== undefined && v !== '').join(', ');
+        const joined = value.filter(v => v !== null && v !== undefined && v !== '')
+            .map(choiceLabel).join(', ');
         return joined || '—';
     }
     if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
+    return String(choiceLabel(value));
 };
 
 const repeatableRows = (sectionId: string): Record<string, any>[] => {

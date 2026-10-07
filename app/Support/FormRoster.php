@@ -37,9 +37,11 @@ class FormRoster
      * The columns a roster table should show: the repeatable section's own fields, in the
      * order the form asks for them.
      *
-     * @return array<int,array{key:string,label:string,type:string}>
+     * Screen metadata may include choice options, resolved as Summary resolves them.
+     *
+     * @return array<int,array{key:string,label:string,type:string,options?:array}>
      */
-    public function columns(): array
+    public function columns(bool $withOptions = false): array
     {
         $section = $this->form->repeatableSection();
 
@@ -55,7 +57,8 @@ class FormRoster
                             'key' => $field['name'],
                             'label' => $field['label'],
                             'type' => $field['type'] ?? 'text',
-                        ];
+                        ] + ($withOptions && in_array($field['type'] ?? null, FormOptionSources::TYPES, true)
+                            ? ['options' => FormOptionSources::resolve($this->form, $field, FormOptionSources::LABEL)] : []);
                     }
                 }
             }
@@ -69,7 +72,8 @@ class FormRoster
                 'key' => $f['name'],
                 'label' => $f['label'],
                 'type' => $f['type'] ?? 'text',
-            ])
+            ] + ($withOptions && in_array($f['type'] ?? null, FormOptionSources::TYPES, true)
+                ? ['options' => FormOptionSources::resolve($this->form, $f, FormOptionSources::LABEL)] : []))
             ->values()
             ->all();
     }
@@ -85,6 +89,7 @@ class FormRoster
         $section = $this->form->repeatableSection();
         $sectionId = $section['id'] ?? null;
         $columns = collect($this->columns())->pluck('key')->all();
+        $multiChoiceKeys = collect($this->columns())->where('type', 'checkboxGroup')->pluck('key');
 
         $rows = collect();
 
@@ -131,6 +136,8 @@ class FormRoster
                     'values' => collect($columns)
                         ->mapWithKeys(fn ($k) => [$k => $this->scalar($data[$k] ?? null)])
                         ->all(),
+                    // Keep the original array: commas in stored choices make values lossy.
+                    'choice_values' => $multiChoiceKeys->mapWithKeys(fn ($k) => [$k => $data[$k] ?? null])->all(),
                 ]));
 
                 continue;
@@ -144,6 +151,7 @@ class FormRoster
                 $rows->push(array_merge($context, [
                     'entry_index' => 0,
                     'values' => collect($columns)->mapWithKeys(fn ($k) => [$k => null])->all(),
+                    'choice_values' => $multiChoiceKeys->mapWithKeys(fn ($k) => [$k => null])->all(),
                     'incomplete' => true,
                 ]));
 
@@ -158,6 +166,9 @@ class FormRoster
                             $k => $this->scalar(is_array($entry) ? ($entry[$k] ?? null) : null),
                         ])
                         ->all(),
+                    'choice_values' => $multiChoiceKeys->mapWithKeys(fn ($k) => [
+                        $k => is_array($entry) ? ($entry[$k] ?? null) : null,
+                    ])->all(),
                 ]));
             }
         }

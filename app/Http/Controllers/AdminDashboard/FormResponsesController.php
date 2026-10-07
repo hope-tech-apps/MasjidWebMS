@@ -18,6 +18,7 @@ use App\Support\Errors;
 use App\Support\FormCashTotals;
 use App\Support\FormDateTaken;
 use App\Support\FormNotifier;
+use App\Support\FormOptionSources;
 use App\Support\FormReservations;
 use App\Support\FormRoster;
 use Illuminate\Http\JsonResponse;
@@ -201,7 +202,7 @@ class FormResponsesController extends Controller
                     ],
                     // The builder's column definitions, so the table can render a column
                     // per question without the SPA having to re-parse the schema.
-                    'columns' => $this->columns($form),
+                    'columns' => $this->columns($form, true),
                     'statuses' => FormResponse::STATUSES,
                     'sortable' => IndexFormResponsesRequest::SORTABLE,
                     // The door's filters, and whether this form has a money leg to show.
@@ -270,7 +271,7 @@ class FormResponsesController extends Controller
                         'name' => $form->name,
                         'capacity' => $form->capacity,
                     ],
-                    'columns' => $roster->columns(),
+                    'columns' => $roster->columns(true),
                     'summary' => $roster->summary($rows),
                     'statuses' => FormResponse::STATUSES,
                     'sortable' => $this->rosterSortable($roster),
@@ -1653,9 +1654,11 @@ class FormResponsesController extends Controller
      * One column per question in the schema, flattening a repeatable section to a single
      * summarised column (the admin table cannot grow a column per attendee).
      *
-     * @return array<int,array{key:string,label:string,section:?string,repeatable:bool,field:string}>
+     * Choice options are resolved as Summary resolves them, only for screen metadata.
+     *
+     * @return array<int,array{key:string,label:string,section:?string,repeatable:bool,field:string,options?:array}>
      */
-    private function columns(Form $form): array
+    private function columns(Form $form, bool $withOptions = false): array
     {
         $columns = [];
 
@@ -1674,7 +1677,8 @@ class FormResponsesController extends Controller
                     'section' => $repeatable ? ($section['title'] ?? $sectionId) : null,
                     'repeatable' => $repeatable,
                     'field' => $field['name'],
-                ];
+                ] + ($withOptions && in_array($field['type'] ?? null, FormOptionSources::TYPES, true)
+                    ? ['options' => FormOptionSources::resolve($form, $field, FormOptionSources::LABEL)] : []);
             }
         }
 

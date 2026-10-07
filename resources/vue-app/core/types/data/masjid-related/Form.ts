@@ -116,6 +116,8 @@ export type FormResponseColumn = {
     section: string | null;
     repeatable: boolean;
     field: string;
+    /** Current choice wording, resolved through the same LABEL options as Summary. */
+    options?: { value: string; label: string }[];
 };
 
 /**
@@ -314,13 +316,19 @@ export type FormResponsesPaymentMeta = {
 };
 
 /** One column of the attendee roster (FormRoster::columns()). */
-export type FormRosterColumn = { key: string; label: string; type: string };
+export type FormRosterColumn = {
+    key: string; label: string; type: string;
+    /** Current choice wording, resolved through the same LABEL options as Summary. */
+    options?: { value: string; label: string }[];
+};
 
 /** One attendee plus the submission's payment context (FormRoster::rows()). */
 export type FormRosterRow = {
     response_id: number;
     entry_index: number;
     values: Record<string, string | number | null>;
+    /** Lossless checkboxGroup answers for display; values retains its existing CSV/sort contract. */
+    choice_values?: Record<string, string[] | null>;
     incomplete?: boolean;
     registered_by: string | null;
     registrant_email: string | null;

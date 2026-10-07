@@ -8898,6 +8898,14 @@ Null allows the question, never bypasses the locked or Stripe checks. Older API
 payloads keep the SPA's previous three-column fallback. This supersedes the deliberate
 three-column-only SPA choice recorded on 2026-10-05.
 
+## 2026-10-06 — Form Responses displays choice wording
+
+Summary's FormOptionSources LABEL resolver also supplies response and roster column
+options. One screen formatter resolves exact stored values, retaining unmatched values.
+Roster choice_values preserves checkboxGroup arrays because joining stored values loses
+boundaries when an option contains a comma. Existing values, sorting and both CSV outputs
+retain their contract. Mail and public confirmation behavior are outside this fix.
+
 No migration, network call, commit or deployment. Stripe seams are faked; Stripe's
 expired-page finality, provider behavior, MySQL lock scheduling and the deployed browser
 remain unverified by this change. Evidence and counts: artifacts/staff-delete-evidence.md.
