@@ -228,7 +228,9 @@ const sendAll = async () => {
 
 const formatCents = (cents: number, currency: string = 'usd'): string => {
     try {
-        return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((cents ?? 0) / 100);
+        // Two decimals always, as the letter and the email print them: left to itself Intl
+        // rounds a zero-decimal currency (JPY 10.50 would read 11).
+        return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((cents ?? 0) / 100);
     } catch (e) {
         return `$${((cents ?? 0) / 100).toFixed(2)}`;
     }
