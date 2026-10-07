@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessFlyerCutout;
+use App\Services\Flyer\ImageCutout;
 use App\Models\Flyer;
 use App\Models\FlyerTemplate;
 use App\Models\Masjid;
@@ -9,7 +11,10 @@ use App\Models\MasjidUser;
 use App\Models\User;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -130,6 +135,122 @@ class FlyerDraftsTest extends TestCase
         $this->assertNull(Flyer::withoutMasjidScope()->find($draft->id));
         Storage::disk('local')->assertExists('flyers/source/shared.png');
         Storage::disk('local')->assertMissing('flyers/cutouts/only.png');
+    }
+
+    #[Test]
+    public function delete_refuses_a_flyer_finished_since_it_was_listed(): void
+    {
+        $draft = $this->draft(['rendered_path' => 'flyers/rendered/finished.png']);
+        Storage::disk('local')->put($draft->rendered_path, 'finished');
+        $this->getJson($this->url('?status=draft'))->assertOk()->assertJsonPath('data.total', 1);
+        $draft->update(['status' => 'rendered']);
+        $this->deleteJson($this->url("/{$draft->id}"))->assertStatus(409)
+            ->assertJsonPath('message', 'This flyer is no longer a draft and cannot be deleted.');
+        $this->assertNotNull($draft->fresh());
+        Storage::disk('local')->assertExists($draft->rendered_path);
+    }
+
+    /** Inject a write after an unlocked read, as another request could do. */
+    private function changeAfterUnlockedRead(Flyer $draft, array $changes): void
+    {
+        $level = DB::transactionLevel();
+        $changed = false;
+        Flyer::retrieved(function (Flyer $read) use ($draft, $changes, $level, &$changed): void {
+            if (! $changed && $read->id === $draft->id && DB::transactionLevel() === $level) {
+                $changed = true;
+                Flyer::withoutMasjidScope()->whereKey($draft->id)->update($changes);
+            }
+        });
+    }
+
+    #[Test]
+    public function delete_checks_status_on_the_locked_fresh_row(): void
+    {
+        $draft = $this->draft();
+        $this->changeAfterUnlockedRead($draft, ['status' => 'rendered']);
+        $this->deleteJson($this->url("/{$draft->id}"))->assertStatus(409);
+        $this->assertSame('rendered', $draft->fresh()->status);
+    }
+
+    #[Test]
+    public function delete_captures_the_latest_photo_under_its_transaction(): void
+    {
+        $draft = $this->draft(['source_image_path' => 'flyers/sources/old.png']);
+        Storage::disk('local')->put('flyers/sources/new.png', 'new');
+        $this->changeAfterUnlockedRead($draft, ['source_image_path' => 'flyers/sources/new.png']);
+        $level = DB::transactionLevel();
+        Flyer::deleting(function (Flyer $row) use ($level): void {
+            $this->assertGreaterThan($level, DB::transactionLevel());
+        });
+        $this->deleteJson($this->url("/{$draft->id}"))->assertOk();
+        Storage::disk('local')->assertMissing('flyers/sources/new.png');
+    }
+
+    #[Test]
+    public function photo_replace_and_clear_capture_the_latest_paths_under_a_transaction(): void
+    {
+        foreach (['replace', 'clear'] as $action) {
+            $draft = $this->draft(['source_image_path' => 'flyers/sources/old.png']);
+            $new = "flyers/sources/new-{$draft->id}.png";
+            Storage::disk('local')->put($new, 'new');
+            $this->changeAfterUnlockedRead($draft, ['source_image_path' => $new]);
+            $level = DB::transactionLevel();
+            Flyer::updating(function (Flyer $row) use ($draft, $level): void {
+                if ($row->id === $draft->id) $this->assertGreaterThan($level, DB::transactionLevel());
+            });
+            if ($action === 'replace') {
+                $this->post($this->url("/{$draft->id}/photo"), [
+                    'image' => UploadedFile::fake()->image('photo.png'), 'remove_background' => '0',
+                ], ['Accept' => 'application/json'])->assertOk();
+                Storage::disk('local')->assertExists($draft->fresh()->source_image_path);
+            } else {
+                $this->deleteJson($this->url("/{$draft->id}/photo"))->assertOk();
+                $this->assertNull($draft->fresh()->source_image_path);
+            }
+            Storage::disk('local')->assertMissing($new);
+        }
+    }
+
+    #[Test]
+    public function a_cutout_finishing_after_delete_or_replacement_cannot_leave_its_output(): void
+    {
+        foreach (['delete', 'replace'] as $action) {
+            $draft = $this->draft(['source_image_path' => "flyers/sources/{$action}.png", 'cutout_status' => 'queued']);
+            Storage::disk('local')->put($draft->source_image_path, 'source');
+            $destination = null;
+            $cutout = \Mockery::mock(ImageCutout::class);
+            $cutout->shouldReceive('run')->once()->andReturnUsing(function ($source, $output) use ($draft, $action, &$destination): array {
+                $destination = substr($output, strlen(Storage::disk('local')->path('')));
+                if ($action === 'delete') {
+                    $this->deleteJson($this->url("/{$draft->id}"))->assertOk();
+                } else {
+                    $this->post($this->url("/{$draft->id}/photo"), [
+                        'image' => UploadedFile::fake()->image('replacement.png'), 'remove_background' => '0',
+                    ], ['Accept' => 'application/json'])->assertOk();
+                }
+                Storage::disk('local')->put($destination, 'cutout');
+                return ['ok' => true, 'reason' => null, 'meta' => []];
+            });
+            (new ProcessFlyerCutout($draft->id, 'local'))->handle($cutout);
+            Storage::disk('local')->assertMissing($destination);
+            $stored = $draft->fresh();
+            if ($action === 'delete') $this->assertNull($stored);
+            else $this->assertNull($stored->cutout_path);
+        }
+    }
+
+    #[Test]
+    public function failed_file_deletion_warns_without_exposing_paths(): void
+    {
+        $draft = $this->draft(['source_image_path' => 'flyers/sources/private-person-name.png']);
+        $disk = \Mockery::mock();
+        $disk->shouldReceive('delete')->with($draft->source_image_path)->once()->andReturn(false);
+        Storage::shouldReceive('disk')->with('local')->andReturn($disk);
+        Log::shouldReceive('warning')->once()->with('Flyer file cleanup failed', [
+            'flyer_id' => $draft->id, 'path_count' => 1,
+        ]);
+        $this->deleteJson($this->url("/{$draft->id}"))->assertOk();
+        $this->assertNull($draft->fresh());
     }
 
     #[Test]

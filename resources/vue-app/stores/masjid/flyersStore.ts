@@ -383,7 +383,7 @@ export const useFlyersStore = defineStore('flyersStore', () => {
         }
     }
 
-    /** The existing API owns paging and tenant filtering; failed reads retain the rows. */
+    /** Use the API's last page after concurrent deletions; failed reads retain rows. */
     async function fetchDrafts(page = 1): Promise<void> {
         const id = masjidId();
         if (draftsOrg !== id) {
@@ -401,6 +401,10 @@ export const useFlyersStore = defineStore('flyersStore', () => {
                 throw new Error('Invalid draft list.');
             }
             if (run !== draftsRun || id !== masjidId()) return;
+            if (page > res.data.data.last_page) {
+                await fetchDrafts(Math.max(1, res.data.data.last_page));
+                return;
+            }
             drafts.value = res.data.data.data;
             draftsPage.value = res.data.data;
         } catch {

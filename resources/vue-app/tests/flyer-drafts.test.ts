@@ -221,3 +221,34 @@ test('changing organisation clears old drafts even when the next read fails', as
     assert.doesNotMatch(screen.text(), /Saved dinner/);
     screen.unmount();
 });
+
+
+test('delete recovers remaining drafts when concurrent deletion moves the last page', async () => {
+    const { store, screen, api, calls } = await setup({}, true);
+    store.drafts = [row(), row({ id: 12, title: 'Second draft' })];
+    store.draftsPage = { total: 17, per_page: 15, current_page: 2, last_page: 2 };
+    api.get = async (url: string) => {
+        calls.push(['get', url]);
+        const page = url.includes('page=2&') ? 2 : 1;
+        return { data: { status: 'success', data: {
+            data: page === 2 ? [] : [row({ id: 13, title: 'Remaining draft' })],
+            total: 15, per_page: 15, current_page: page, last_page: 1,
+        } } };
+    };
+    await store.deleteDraft(11); await flush();
+    assert.equal(store.draftsPage.current_page, 1);
+    assert.match(screen.text(), /Remaining draft/);
+    assert.ok(calls.some(c => c[1].includes('status=draft&page=1&per_page=15')));
+    screen.unmount();
+});
+
+test('finished-draft refusal appears on screen and preserves the list and editor', async () => {
+    const { store, screen, api, questions } = await setup({}, true);
+    store.flyerId = 11;
+    api.delete = async () => { throw { response: { data: { message: 'This flyer is no longer a draft and cannot be deleted.' } } }; };
+    click(screen.button('Delete')); await flush();
+    assert.equal(questions.at(-1).text, 'This flyer is no longer a draft and cannot be deleted.');
+    assert.equal(store.flyerId, 11);
+    assert.equal(store.drafts.length, 1);
+    screen.unmount();
+});

@@ -8,6 +8,8 @@ use App\Http\Requests\Admin\Flyers\UpdateFlyerRequest;
 use App\Models\Flyer;
 use App\Support\Errors;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -179,9 +181,9 @@ class FlyersController extends Controller
     /**
      * DELETE /api/admin/masjids/{masjid_id}/flyers/{flyer_id}
      *
-     * A hard delete — flyers are not soft-deleted — so the uploaded photo, its cutout
-     * and any finished render go with the row only when no other flyer references them.
-     * Check all tenants and all three path columns, including finished flyers.
+     * Only drafts may be hard-deleted; a row finished since listing returns 409.
+     * Lock and re-read before checking status and capturing cleanup paths, using the
+     * same row lock as photo writes. Keep files referenced by any other flyer.
      */
     public function destroy($masjid_id, $flyer_id)
     {
@@ -190,9 +192,26 @@ class FlyersController extends Controller
         try {
             $disk = Storage::disk(self::IMAGE_DISK);
 
-            $paths = array_unique(array_filter([$flyer->source_image_path, $flyer->cutout_path, $flyer->rendered_path]));
-            $flyer->delete();
+            $paths = DB::transaction(function () use ($flyer_id) {
+                $locked = Flyer::lockForUpdate()->findOrFail($flyer_id);
+                if ($locked->status !== 'draft') {
+                    return null;
+                }
 
+                $paths = array_unique(array_filter([$locked->source_image_path, $locked->cutout_path, $locked->rendered_path]));
+                $locked->delete();
+
+                return $paths;
+            });
+
+            if ($paths === null) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This flyer is no longer a draft and cannot be deleted.',
+                ], Response::HTTP_CONFLICT);
+            }
+
+            $failed = 0;
             foreach ($paths as $path) {
                 $referenced = Flyer::withoutMasjidScope()->where(function ($query) use ($path) {
                     $query->where('source_image_path', $path)
@@ -201,14 +220,26 @@ class FlyersController extends Controller
                 })->exists();
 
                 if (! $referenced) {
-                    $disk->delete($path);
+                    try {
+                        if (! $disk->delete($path)) {
+                            $failed++;
+                        }
+                    } catch (\Throwable) {
+                        $failed++;
+                    }
                 }
+            }
+            if ($failed) {
+                // Paths can contain personal names; log only enough to count failures.
+                Log::warning('Flyer file cleanup failed', ['flyer_id' => $flyer->id, 'path_count' => $failed]);
             }
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'Flyer deleted successfully',
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',

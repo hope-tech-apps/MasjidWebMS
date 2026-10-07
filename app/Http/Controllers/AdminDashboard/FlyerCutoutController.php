@@ -8,6 +8,7 @@ use App\Models\Flyer;
 use App\Support\Errors;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -47,7 +48,8 @@ class FlyerCutoutController extends Controller
     /**
      * POST /api/admin/masjids/{masjid_id}/flyers/{flyer_id}/photo   (multipart)
      *
-     * Replaces whatever photo the flyer had. Pass remove_background=0 to keep the
+     * Replaces the photo under the same row lock as draft deletion.
+     * Pass remove_background=0 to keep the
      * picture exactly as uploaded — a photographed dish on a plain white cloth often
      * looks better untouched than cut out.
      */
@@ -58,56 +60,65 @@ class FlyerCutoutController extends Controller
         $this->validateUpload($request);
 
         try {
-            $file = $request->file('image');
+            $flyer = DB::transaction(function () use ($request, $flyer_id) {
+                $flyer = Flyer::lockForUpdate()->findOrFail($flyer_id);
+                $file = $request->file('image');
 
-            // The extension is GUESSED from the file's content type, never taken from
-            // the client's filename — the uploaded name reaches a shell-free argv in
-            // ImageCutout, but it has no business deciding what we write to disk.
-            $name = $flyer->id . '-' . Str::random(20) . '.' . ($file->extension() ?: 'jpg');
+                // The extension is GUESSED from the file's content type, never taken from
+                // the client's filename — the uploaded name reaches a shell-free argv in
+                // ImageCutout, but it has no business deciding what we write to disk.
+                $name = $flyer->id . '-' . Str::random(20) . '.' . ($file->extension() ?: 'jpg');
 
-            $disk = Storage::disk(self::IMAGE_DISK);
-            $path = $disk->putFileAs(self::SOURCE_DIRECTORY, $file, $name);
+                $disk = Storage::disk(self::IMAGE_DISK);
+                $path = $disk->putFileAs(self::SOURCE_DIRECTORY, $file, $name);
 
-            if ($path === false) {
+                if ($path === false) {
+                    return null;
+                }
+
+                $previous = [$flyer->source_image_path, $flyer->cutout_path];
+
+                $wantsCutout = $request->boolean('remove_background', true)
+                    && (bool) config('flyer.cutout.enabled', false);
+
+                $flyer->update([
+                    'source_image_path' => $path,
+                    // The old cutout belongs to the old photo. Clearing it here is what
+                    // stops the renderer compositing last week's picture onto this flyer.
+                    'cutout_path' => null,
+                    // 'none' is the resting state for a photo used as-is, which is exactly
+                    // what an un-provisioned host or an opted-out admin has — not a failure.
+                    'cutout_status' => $wantsCutout ? ProcessFlyerCutout::STATUS_QUEUED : ProcessFlyerCutout::STATUS_NONE,
+                    'cutout_error' => null,
+                ]);
+
+                foreach ($previous as $old) {
+                    if ($old && $old !== $path) {
+                        $disk->delete($old);
+                    }
+                }
+
+                return $flyer;
+            });
+
+            if ($flyer === null) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'The photo could not be saved.',
                 ], Response::HTTP_INTERNAL_SERVER_ERROR);
             }
 
-            $previous = [$flyer->source_image_path, $flyer->cutout_path];
-
-            $wantsCutout = $request->boolean('remove_background', true)
-                && (bool) config('flyer.cutout.enabled', false);
-
-            $flyer->update([
-                'source_image_path' => $path,
-                // The old cutout belongs to the old photo. Clearing it here is what
-                // stops the renderer compositing last week's picture onto this flyer.
-                'cutout_path' => null,
-                // 'none' is the resting state for a photo used as-is, which is exactly
-                // what an un-provisioned host or an opted-out admin has — not a failure.
-                'cutout_status' => $wantsCutout ? ProcessFlyerCutout::STATUS_QUEUED : ProcessFlyerCutout::STATUS_NONE,
-                'cutout_error' => null,
-            ]);
-
-            if ($wantsCutout) {
-                // Only the id travels with the job: it re-reads source_image_path when a
-                // worker picks it up, so a photo swapped in between cannot produce a
-                // cutout of the wrong image.
-                ProcessFlyerCutout::dispatch($flyer->id, self::IMAGE_DISK);
-            }
-
-            foreach ($previous as $old) {
-                if ($old && $old !== $path) {
-                    $disk->delete($old);
-                }
+            // The job must see the committed source path, including in an outer transaction.
+            if ($flyer->cutout_status === ProcessFlyerCutout::STATUS_QUEUED) {
+                ProcessFlyerCutout::dispatch($flyer->id, self::IMAGE_DISK)->afterCommit();
             }
 
             return response()->json([
                 'status' => 'success',
                 'data' => $this->cutoutState($flyer->fresh()),
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -215,33 +226,41 @@ class FlyerCutoutController extends Controller
     /**
      * DELETE /api/admin/masjids/{masjid_id}/flyers/{flyer_id}/photo
      *
-     * Removes the picture and its cutout, returning the flyer to the state it had
-     * before any photo was uploaded.
+     * Removes the picture and its cutout under the same row lock as draft deletion,
+     * returning the flyer to the state it had before any photo was uploaded.
      */
     public function destroy($masjid_id, $flyer_id)
     {
         $flyer = Flyer::findOrFail($flyer_id);
 
         try {
-            $disk = Storage::disk(self::IMAGE_DISK);
+            $flyer = DB::transaction(function () use ($flyer_id) {
+                $flyer = Flyer::lockForUpdate()->findOrFail($flyer_id);
+                $previous = [$flyer->source_image_path, $flyer->cutout_path];
 
-            foreach ([$flyer->source_image_path, $flyer->cutout_path] as $path) {
-                if ($path) {
-                    $disk->delete($path);
+                $flyer->update([
+                    'source_image_path' => null,
+                    'cutout_path' => null,
+                    'cutout_status' => ProcessFlyerCutout::STATUS_NONE,
+                    'cutout_error' => null,
+                ]);
+
+                $disk = Storage::disk(self::IMAGE_DISK);
+                foreach ($previous as $path) {
+                    if ($path) {
+                        $disk->delete($path);
+                    }
                 }
-            }
 
-            $flyer->update([
-                'source_image_path' => null,
-                'cutout_path' => null,
-                'cutout_status' => ProcessFlyerCutout::STATUS_NONE,
-                'cutout_error' => null,
-            ]);
+                return $flyer;
+            });
 
             return response()->json([
                 'status' => 'success',
                 'data' => $this->cutoutState($flyer->fresh()),
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',

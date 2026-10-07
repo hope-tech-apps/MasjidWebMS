@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -163,7 +164,9 @@ class ProcessFlyerCutout implements ShouldQueue
             return;
         }
 
-        $this->record($flyer, self::STATUS_PROCESSING, null, null);
+        if (! $this->record($flyer, self::STATUS_PROCESSING, null, null)) {
+            return;
+        }
 
         $destination = $this->destinationPath($source);
 
@@ -181,7 +184,10 @@ class ProcessFlyerCutout implements ShouldQueue
                 ]);
             }
 
-            $this->record($flyer, self::STATUS_DONE, $destination, null);
+            if (! $this->record($flyer, self::STATUS_DONE, $destination, null)) {
+                // The photo changed or the draft was deleted during inference.
+                $disk->delete($destination);
+            }
 
             return;
         }
@@ -244,15 +250,23 @@ class ProcessFlyerCutout implements ShouldQueue
         return "{$directory}/{$this->flyerId}-{$fingerprint}.png";
     }
 
-    private function record(Flyer $flyer, string $status, ?string $path, ?string $error): void
+    private function record(Flyer $flyer, string $status, ?string $path, ?string $error): bool
     {
-        // Assigned directly rather than through fill(), so this keeps working if
-        // the cutout columns ever leave $fillable.
-        $flyer->cutout_status = $status;
-        $flyer->cutout_path = $path;
-        // cutout_error is TEXT, so this cap is for the admin reading it, not the
-        // column — a Python traceback pasted into the Studio helps nobody.
-        $flyer->cutout_error = $error === null ? null : Str::limit($error, 480);
-        $flyer->save();
+        // Never hold the row lock during inference. Re-check its source when writing
+        // so deletion/replacement cannot leave an orphan or attach an old cutout.
+        return DB::transaction(function () use ($flyer, $status, $path, $error): bool {
+            $locked = Flyer::lockForUpdate()->find($flyer->id);
+            if (! $locked || $locked->source_image_path !== $flyer->source_image_path) {
+                return false;
+            }
+
+            $locked->cutout_status = $status;
+            $locked->cutout_path = $path;
+            // Keep tracebacks out of the admin-facing error field.
+            $locked->cutout_error = $error === null ? null : Str::limit($error, 480);
+            $locked->save();
+
+            return true;
+        });
     }
 }
