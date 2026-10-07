@@ -382,6 +382,7 @@ class TeacherMultiSchoolTest extends TestCase
         Queue::fake();
         Storage::fake((string) config('groups.media.disk', 'local'));
         Storage::fake((string) config('groups.resources.disk', 'local'));
+        $this->artisan('guides:install', ['folder' => base_path('tests/fixtures/guides/d1-1234abcd')])->assertExitCode(0);
 
         $skillA = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolA->id)->firstOrFail();
         $skillB = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolB->id)->firstOrFail();

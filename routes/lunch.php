@@ -103,3 +103,12 @@ Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'capability:jummah_lunch']
             Route::patch('/menus/{menu_id}/orders/{order_id}/items', 'updateItems');
         });
     });
+
+// The guide remains readable when the board capability is off; membership is still required.
+Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'throttle:guides'])
+    ->prefix('lunch/masjids/{masjid_id}/guides')->whereNumber('masjid_id')
+    ->controller(\App\Http\Controllers\Guides\GuidesController::class)->group(function () {
+        Route::get('/', 'index');
+        Route::get('/{book}', 'show');
+        Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');
+    });

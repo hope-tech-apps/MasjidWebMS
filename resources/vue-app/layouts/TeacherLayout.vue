@@ -31,6 +31,7 @@
                          teacher at one school sees the header they always saw. -->
                     <TeacherSchoolPicker :choices="choices" :current-id="selectedId" :switching="switching"
                                          @choose="switchSchool" />
+                    <router-link to="/teacher/help/teacher" class="nav-link mn-topbar-link">Help</router-link>
                     <span v-if="teacherName" class="mn-topbar-person d-none d-md-inline">{{ teacherName }}</span>
                     <button class="btn btn-sm btn-outline-secondary teacher-tap" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>

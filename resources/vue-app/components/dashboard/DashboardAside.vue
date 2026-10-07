@@ -46,7 +46,7 @@
             </div>
 
             <nav id="dashboard_aside_menu" aria-label="Sections">
-                <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
+                <template v-for="menuItem in navigationItems">
                     <router-link v-if="stateOf(menuItem) === 'visible'"
                         :to="menuItem.to" class="dashboard-aside-menu-item" @click="closeAsideOnSmallScreens">
                         <div class="menu-item-icon" aria-hidden="true">
@@ -78,6 +78,11 @@
                         </router-link>
                     </div>
                 </details>
+                <router-link v-if="helpItem && stateOf(helpItem) === 'visible'" :to="helpItem.to"
+                    class="dashboard-aside-menu-item" @click="closeAsideOnSmallScreens">
+                    <div class="menu-item-icon" aria-hidden="true"><i class="bi bi-question-circle"></i></div>
+                    <div class="menu-item-text">{{ title(helpItem) }}</div>
+                </router-link>
             </nav>
 
             <div class="aside-footer">
@@ -124,6 +129,10 @@ const dashboardAsideStore = useDashboardAsideStore();
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
 const tenantSwitchStore = useTenantSwitchStore();
+
+// Help stays last even after the owner's expandable list of switched-off screens.
+const helpItem = computed(() => dashboardAsideStore.asideMenuItems.find(item => item.to === '/masjid/help/admin'));
+const navigationItems = computed(() => dashboardAsideStore.asideMenuItems.filter(item => item !== helpItem.value));
 
 /**
  * Where an item goes for this person and this organisation — the one predicate

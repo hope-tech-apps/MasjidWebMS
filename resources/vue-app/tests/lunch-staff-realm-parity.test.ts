@@ -38,8 +38,9 @@ const shape = (verb: string, p: string): string =>
 const withoutComments = (code: string): string => code.replace(/\/\*[\s\S]*?\*\/|^\s*(\/\/|#).*$/gm, '');
 
 /** Every route the lunch realm serves under .../jummah-lunch. */
+const boardRoutes = withoutComments(lunchRoutes).split("->prefix('lunch/masjids/{masjid_id}/jummah-lunch')")[1]?.split('\nRoute::')[0] || '';
 const served = new Set(
-    [...withoutComments(lunchRoutes).matchAll(/Route::(get|post|put|patch|delete)\('(\/[^']*)',\s*'\w+'\)/g)]
+    [...boardRoutes.matchAll(/Route::(get|post|put|patch|delete)\('(\/[^']*)',\s*'\w+'\)/g)]
         .map((m) => shape(m[1], m[2])),
 );
 

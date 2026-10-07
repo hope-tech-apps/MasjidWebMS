@@ -127,6 +127,14 @@ Route::prefix('admin')->group(function () {
     // render the tenant the SERVER resolved, never the one its own store
     // believes in.
     Route::middleware([EchoResolvedTenant::class, 'auth:sanctum', 'admin', 'tenant'])->group(function () {
+        Route::prefix('masjids/{masjid_id}/guides')->whereNumber('masjid_id')
+            ->middleware('throttle:guides')->controller(\App\Http\Controllers\Guides\GuidesController::class)
+            ->group(function () {
+                Route::get('/', 'index');
+                Route::get('/{book}', 'show');
+                Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');
+            });
+
         Route::controller(AuthController::class)->group(function () {
             Route::get('/user', [AuthController::class, 'user']);
             Route::post('/logout', [AuthController::class, 'logout']);

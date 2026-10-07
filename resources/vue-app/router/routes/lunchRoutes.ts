@@ -35,6 +35,12 @@ const lunchRoutes: RouteRecordRaw[] = [
         },
         children: [
             {
+                path: 'help/:book/:task?',
+                component: () => import('@/views/guides/GuideScreen.vue'),
+                props: { realm: 'lunch' },
+                meta: { pageTitle: 'Help' },
+            },
+            {
                 path: '',
                 name: 'lunchBoard',
                 component: () => import("@/views/dashboard/JummahLunchView.vue"),

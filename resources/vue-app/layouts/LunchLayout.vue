@@ -12,6 +12,7 @@
 
                 <div class="ms-auto d-flex align-items-center gap-3">
                     <span class="mn-topbar-chip d-none d-sm-inline">Jummah Lunch</span>
+                    <router-link to="/lunch/help/lunch" class="nav-link mn-topbar-link">Help</router-link>
                     <span v-if="staffName" class="mn-topbar-person d-none d-md-inline">{{ staffName }}</span>
                     <button class="btn btn-sm btn-outline-secondary" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>

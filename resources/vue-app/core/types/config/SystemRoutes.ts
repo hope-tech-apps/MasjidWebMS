@@ -23,6 +23,9 @@ export type MasjidDashboardRoute =
     '/masjid/broadcasts/compose' |
     // The lobby TV board's settings.
     '/masjid/tv-display' |
+    '/masjid/help/admin' |
+    '/masjid/help/school' |
+    `/masjid/help/${'admin' | 'school'}/${string}` |
     `/masjid/announcements/${number}` |
     '/masjid/events' |
     `/masjid/events/${number}` |

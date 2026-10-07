@@ -32,6 +32,12 @@ const teacherRoutes: RouteRecordRaw[] = [
         },
         children: [
             {
+                path: 'help/:book/:task?',
+                component: () => import('@/views/guides/GuideScreen.vue'),
+                props: { realm: 'teacher' },
+                meta: { pageTitle: 'Help' },
+            },
+            {
                 path: '',
                 name: 'teacherClasses',
                 component: () => import("@/views/teacher/TeacherClasses.vue"),

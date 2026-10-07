@@ -242,6 +242,10 @@ final class TeacherRealmWorld
             'attachment_id' => str_contains($uri, '/posts/')
                 ? (string) $this->postAttachment->id
                 : (string) $this->messageAttachment->id,
+            // The globally shared guide fixture, installed by the realm sweep.
+            'book' => 'teacher',
+            'version' => 'd1-1234abcd',
+            'path' => 'shots/pebble/pixel.jpg',
             'reaction' => 'thumbs_up',
             default => throw new \LogicException("The sweep has no real id for the route placeholder {{$placeholder}}; add one to TeacherRealmWorld::idFor()."),
         };

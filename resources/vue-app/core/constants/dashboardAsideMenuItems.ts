@@ -736,6 +736,12 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin'],
         requiresOrgTypes: ['masjid'],
         lever: 'SuperAdmin only: platform library shared by every app; per-organisation visibility is Mobile App Features'
+    },
+    {
+        title: 'Help',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="white"/><path d="M9 8a3 3 0 0 1 6 0c0 2-3 2-3 5m0 3v1" stroke="white"/></svg>',
+        to: '/masjid/help/admin',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
     }
 ];
 

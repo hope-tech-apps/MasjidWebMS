@@ -1,0 +1,262 @@
+<?php
+
+namespace App\Support\Guides;
+
+use DOMDocument;
+use DOMElement;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use FilesystemIterator;
+
+/** Validates the complete private release before it can become readable. */
+class GuideValidator
+{
+    public const BOOKS = ['admin', 'school', 'teacher', 'lunch'];
+    public const VERSION = '/^d[0-9]+-[0-9a-f]{8}$/D';
+
+    public static function safePath(mixed $path): bool
+    {
+        return is_string($path) && preg_match('~^[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)*$~D', $path)
+            && ! str_contains($path, '..') && ! str_contains($path, '//');
+    }
+
+    private function identifier(mixed $value): bool
+    {
+        // Task/chapter identifiers are data, never filesystem paths or CSS selectors.
+        return is_string($value) && trim($value) !== '' && ! preg_match('/[\x00-\x1f\x7f]/', $value);
+    }
+
+    public function validate(string $root): array
+    {
+        if (is_link($root)) $this->fail('symlink', 'release');
+        if (! is_dir($root)) $this->fail('missing', 'release');
+        $actual = [];
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST) as $entry) {
+            $name = substr($entry->getPathname(), strlen($root) + 1);
+            if ($entry->isLink()) $this->fail('symlink', $name);
+            if (! self::safePath($name)) $this->fail('path', $name);
+            if ($entry->isDir()) continue;
+            if (! $entry->isFile()) $this->fail('file-type', $name);
+            if ($name !== 'manifest.json' && ! in_array(pathinfo($name, PATHINFO_EXTENSION), ['html', 'css', 'jpg', 'png', 'webp'], true)) $this->fail('extension', $name);
+            $actual[] = $name;
+        }
+        if (! in_array('manifest.json', $actual, true)) $this->fail('missing', 'manifest.json');
+        $manifest = json_decode(file_get_contents($root.'/manifest.json'), true);
+        if (! is_array($manifest) || ! is_string($manifest['version'] ?? null) || ! preg_match(self::VERSION, $manifest['version'])) $this->fail('manifest-version', 'manifest.json');
+        foreach (['draft', 'follows', 'built_at'] as $key) {
+            if (! array_key_exists($key, $manifest) || (! is_string($manifest[$key]) && ! is_int($manifest[$key]))) $this->fail('manifest-'.$key, 'manifest.json');
+        }
+        if (! is_array($manifest['books'] ?? null)) $this->fail('manifest-books', 'manifest.json');
+        $keys = array_keys($manifest['books']);
+        sort($keys);
+        $books = self::BOOKS;
+        sort($books);
+        if ($keys !== $books) $this->fail('manifest-books', 'manifest.json');
+        $expected = ['manifest.json'];
+        foreach (self::BOOKS as $book) {
+            $meta = $manifest['books'][$book];
+            if (! is_array($meta) || ! is_string($meta['title'] ?? null) || trim($meta['title']) === '') $this->fail('manifest-title', 'manifest.json');
+            foreach (['page' => 'page.html', 'style' => 'page.css'] as $key => $fixed) {
+                if (! self::safePath($meta[$key] ?? null)) $this->fail('path', 'manifest.json');
+                $relative = $book.'/'.$fixed;
+                // The manifest names each file from the release root.
+                if ($meta[$key] !== $relative) $this->fail('manifest-'.$key, 'manifest.json');
+                $expected[] = $relative;
+                $check = ['sha256' => $meta[$key.'_sha256'] ?? null];
+                if (array_key_exists($key.'_bytes', $meta)) {
+                    if (! is_int($meta[$key.'_bytes']) || $meta[$key.'_bytes'] <= 0) $this->fail('manifest-bytes', $relative);
+                    $check['bytes'] = $meta[$key.'_bytes'];
+                }
+                $this->checkFile($root, $relative, $check);
+            }
+            if (! is_array($meta['files'] ?? null)) $this->fail('manifest-files', 'manifest.json');
+            foreach ($meta['files'] as $path => $file) {
+                if (! self::safePath($path) || ! preg_match('~^shots/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\.(jpg|png|webp)$~D', $path)) $this->fail('path', 'manifest.json');
+                $relative = $book.'/'.$path;
+                $expected[] = $relative;
+                if (! is_array($file) || ! is_int($file['bytes'] ?? null) || $file['bytes'] <= 0) $this->fail('manifest-bytes', $relative);
+                $this->checkFile($root, $relative, $file);
+                $image = @getimagesize($root.'/'.$relative);
+                $mime = match (pathinfo($path, PATHINFO_EXTENSION)) { 'jpg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp' };
+                if (! $image || ($image['mime'] ?? '') !== $mime) $this->fail('image-type', $relative);
+                // Header sniffing alone accepts a truncated/corrupt image.
+                $decoded = @imagecreatefromstring(file_get_contents($root.'/'.$relative));
+                if ($decoded === false) $this->fail('image-decode', $relative);
+                imagedestroy($decoded);
+            }
+            $this->html(file_get_contents($root.'/'.$book.'/page.html'), $book, $meta);
+            $this->css(file_get_contents($root.'/'.$book.'/page.css'), $book.'/page.css');
+        }
+        foreach (array_diff($actual, $expected) as $path) $this->fail('unlisted', $path);
+        return $manifest;
+    }
+
+    private function checkFile(string $root, string $file, array $meta): void
+    {
+        if (! is_file($root.'/'.$file)) $this->fail('missing', $file);
+        if (isset($meta['bytes']) && filesize($root.'/'.$file) !== $meta['bytes']) $this->fail('bytes', $file);
+        if (! is_string($meta['sha256'] ?? null) || ! preg_match('/^[0-9a-f]{64}$/D', $meta['sha256']) || ! hash_equals($meta['sha256'], hash_file('sha256', $root.'/'.$file))) $this->fail('sha256', $file);
+    }
+
+    private function html(string $html, string $book, array $meta): void
+    {
+        $file = $book.'/page.html';
+        if (! mb_check_encoding($html, 'UTF-8') || preg_match('~<\s*(script|style|iframe|object|embed|link|base|form|meta)\b~i', $html)) $this->fail('html-forbidden-tag', $file);
+        if (preg_match('/javascript\s*:/i', html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8'))) $this->fail('html-javascript', $file);
+        if (preg_match('~<\s*(html|head|body|title)\b~i', $html)) $this->fail('html-forbidden-tag', $file);
+        if (str_contains($html, '<?') || str_contains($html, '<!')) $this->fail('html-declaration', $file);
+        $dom = new DOMDocument;
+        $old = libxml_use_internal_errors(true);
+        try {
+            $dom->loadHTML('<?xml encoding="UTF-8"><html><body>'.$html.'</body></html>', LIBXML_NONET);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($old);
+        }
+        $body = $dom->getElementsByTagName('body')->item(0);
+        $roots = [];
+        foreach ($body->childNodes as $node) {
+            if ($node instanceof DOMElement) $roots[] = $node;
+            elseif (trim($node->textContent) !== '') $this->fail('html-root', $file);
+        }
+        if (count($roots) !== 1 || $roots[0]->tagName !== 'div' || $roots[0]->getAttribute('data-book') !== $book || ! in_array('mg', preg_split('/\s+/', $roots[0]->getAttribute('class')), true)) $this->fail('html-root', $file);
+        $tags = ['div', 'span', 'section', 'article', 'header', 'footer', 'nav', 'main', 'aside', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col', 'strong', 'b', 'em', 'i', 'small', 'mark', 'code', 'pre', 'kbd', 'samp', 'blockquote', 'figure', 'figcaption', 'details', 'summary', 'a', 'img', 'sup', 'sub', 'time', 'abbr'];
+        $attrs = ['class', 'id', 'title', 'lang', 'dir', 'role', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-hidden', 'data-book', 'data-task', 'data-chapter', 'data-faq', 'data-guide', 'data-guide-hint', 'data-words', 'data-src', 'width', 'height', 'alt', 'href', 'rel', 'target', 'colspan', 'rowspan', 'scope', 'open', 'start', 'datetime'];
+        $tasks = $chapters = $questions = [];
+        foreach ($roots[0]->getElementsByTagName('*') as $el) {
+            if (! in_array($el->tagName, $tags, true)) $this->fail('html-forbidden-tag', $file);
+            foreach ($el->attributes as $attr) {
+                if (str_starts_with(strtolower($attr->name), 'on')) $this->fail('html-event-attribute', $file);
+                if (! in_array($attr->name, $attrs, true)) $this->fail('html-attribute', $file);
+                if (preg_match('/javascript\s*:/i', $attr->value)) $this->fail('html-javascript', $file);
+                if ($attr->name === 'href' && ($el->tagName !== 'a' || ! preg_match('~^https://[^\s]+$~D', $attr->value) || ! filter_var($attr->value, FILTER_VALIDATE_URL))) $this->fail('html-href', $file);
+                if (in_array($attr->name, ['data-src', 'data-guide', 'data-guide-hint'], true) && $el->tagName !== match ($attr->name) { 'data-src' => 'img', 'data-guide' => 'a', default => 'span' }) $this->fail('html-markup', $file);
+            }
+            if ($el->hasAttribute('href')) {
+                $rel = preg_split('/\s+/', strtolower($el->getAttribute('rel')));
+                if (! in_array('noopener', $rel, true) || ! in_array('noreferrer', $rel, true)) $this->fail('html-rel', $file);
+            }
+            if ($el->tagName === 'img') {
+                if (! isset($meta['files'][$el->getAttribute('data-src')])) $this->fail('html-picture-manifest', $file);
+                if (! $el->hasAttribute('alt') || ! preg_match('/^[1-9][0-9]*$/D', $el->getAttribute('width')) || ! preg_match('/^[1-9][0-9]*$/D', $el->getAttribute('height'))) $this->fail('html-picture-dimensions', $file);
+            }
+            foreach (['data-guide', 'data-guide-hint'] as $key) {
+                if (! $el->hasAttribute($key)) continue;
+                if (! in_array($el->getAttribute($key), self::BOOKS, true) || $el->hasAttribute('href')) $this->fail('html-guide-link', $file);
+                // A link names one task, one common question, or (with neither) the whole guide.
+                if ($el->hasAttribute('data-task') && $el->hasAttribute('data-faq')) $this->fail('html-guide-link', $file);
+                foreach (['data-task', 'data-faq'] as $target) {
+                    if ($el->hasAttribute($target) && ! $this->identifier($el->getAttribute($target))) $this->fail('html-guide-link', $file);
+                }
+            }
+            if ($el->hasAttribute('data-faq') && $el->tagName !== 'details' && ! $el->hasAttribute('data-guide') && ! $el->hasAttribute('data-guide-hint')) $this->fail('html-faq', $file);
+            if ($el->tagName === 'details' && $el->hasAttribute('data-faq') && $el->hasAttribute('id')) {
+                $id = $el->getAttribute('id');
+                if (! $this->identifier($id) || isset($questions[$id])) $this->fail('html-faq', $file);
+                $questions[$id] = true;
+            }
+            if ($el->hasAttribute('data-words') && ! (($el->tagName === 'section' && $el->hasAttribute('data-task')) || ($el->tagName === 'details' && $el->hasAttribute('data-faq')))) $this->fail('html-markup', $file);
+            foreach (['data-chapter', 'data-task'] as $key) {
+                // Cross-guide links use data-task as their destination, not a section.
+                if (! $el->hasAttribute($key) || ($key === 'data-task' && ($el->hasAttribute('data-guide') || $el->hasAttribute('data-guide-hint')))) continue;
+                $id = $el->getAttribute($key);
+                if ($el->tagName !== 'section' || ! $this->identifier($id)) $this->fail('html-section', $file);
+                if ($key === 'data-task') {
+                    if (isset($tasks[$id])) $this->fail('html-duplicate-task', $file);
+                    $parent = $el->parentNode;
+                    while ($parent instanceof DOMElement && ! $parent->hasAttribute('data-chapter')) $parent = $parent->parentNode;
+                    $tasks[$id] = $parent instanceof DOMElement ? $parent->getAttribute('data-chapter') : null;
+                } else {
+                    if (isset($chapters[$id])) $this->fail('html-duplicate-chapter', $file);
+                    $chapters[$id] = true;
+                }
+            }
+        }
+        if (! is_array($meta['tasks'] ?? null) || ! array_is_list($meta['tasks'])) $this->fail('manifest-tasks', 'manifest.json');
+        $listed = [];
+        foreach ($meta['tasks'] as $task) {
+            if (! is_array($task) || ! is_string($task['id'] ?? null) || isset($listed[$task['id']]) || ! is_string($task['title'] ?? null) || trim($task['title']) === '' || ! is_string($task['section'] ?? null) || trim($task['section']) === '' || ! array_key_exists($task['id'], $tasks) || $tasks[$task['id']] === null) $this->fail('html-task-manifest', $file);
+            $listed[$task['id']] = true;
+        }
+        if (count($listed) !== count($tasks) || array_diff_key($listed, $tasks) !== []) $this->fail('html-task-manifest', $file);
+        // The root's attributes also pass the allowlist (it is not included above).
+        foreach ($roots[0]->attributes as $attr) {
+            if (! in_array($attr->name, ['class', 'data-book', 'id', 'lang', 'dir', 'aria-label', 'role'], true)) $this->fail('html-root-attribute', $file);
+        }
+    }
+
+    private function css(string $css, string $file): void
+    {
+        if (! mb_check_encoding($css, 'UTF-8') || preg_match('~@import|url\s*\(|image(?:-set)?\s*\(|expression\s*\(|</style|\\\\|[\x00-\x08\x0b\x0c\x0e-\x1f]~i', $css)) $this->fail('css-forbidden', $file);
+        $css = preg_replace('~/\*.*?\*/~s', '', $css);
+        if (preg_match('~@import|url\s*\(|image(?:-set)?\s*\(|expression\s*\(~i', $css)) $this->fail('css-forbidden', $file);
+        if (str_contains($css, '/*')) $this->fail('css-syntax', $file);
+        $this->cssBlocks($css, $file);
+    }
+
+    /** Allows scoped rules inside media/supports/container blocks, no global at-rules. */
+    private function cssBlocks(string $css, string $file): void
+    {
+        while (trim($css) !== '') {
+            $open = strpos($css, '{');
+            if ($open === false) $this->fail('css-syntax', $file);
+            $selector = trim(substr($css, 0, $open));
+            $depth = 1;
+            $quote = null;
+            for ($i = $open + 1, $length = strlen($css); $i < $length && $depth > 0; $i++) {
+                $c = $css[$i];
+                if ($quote !== null) { if ($c === $quote) $quote = null; continue; }
+                if ($c === '"' || $c === "'") { $quote = $c; continue; }
+                if ($c === '{') $depth++;
+                if ($c === '}') $depth--;
+            }
+            if ($depth !== 0 || $quote !== null) $this->fail('css-syntax', $file);
+            $body = substr($css, $open + 1, $i - $open - 2);
+            $css = substr($css, $i);
+            if (str_starts_with($selector, '@')) {
+                if (! preg_match('/^@(media|supports|container)\s+[^;{}]+$/D', $selector)) $this->fail('css-at-rule', $file);
+                $this->cssBlocks($body, $file);
+            } else {
+                // Split only top-level commas; :is(a,b) and attributes can contain commas.
+                $selectors = preg_split('/,(?![^()]*\))(?![^\[\]]*\])/', $selector);
+                foreach ($selectors as $one) {
+                    $this->scopedSelector(trim($one), $file);
+                }
+                if (str_contains($body, '{') || str_contains($body, '}') || str_contains($body, '@')) $this->fail('css-syntax', $file);
+            }
+        }
+    }
+
+    private function scopedSelector(string $selector, string $file): void
+    {
+        if (! preg_match('/^\.mg(?=$|[\s.\[:>#])/', $selector)) $this->fail('css-scope', $file);
+        $quote = null;
+        $depth = 0;
+        $descendant = false;
+        for ($i = 3, $length = strlen($selector); $i < $length; $i++) {
+            $c = $selector[$i];
+            if ($quote !== null) { if ($c === $quote) $quote = null; continue; }
+            if ($c === '"' || $c === "'") { $quote = $c; continue; }
+            if ($c === '(' || $c === '[') { $depth++; continue; }
+            if ($c === ')' || $c === ']') { if (--$depth < 0) $this->fail('css-syntax', $file); continue; }
+            if ($depth > 0) continue;
+            // Column combinators can select outside a root's descendants.
+            if ($c === '|') $this->fail('css-scope', $file);
+            if ($descendant) continue;
+            if ($c === '+' || $c === '~') $this->fail('css-scope', $file);
+            if ($c === '>') { $descendant = true; continue; }
+            if (ctype_space($c)) {
+                while ($i + 1 < $length && ctype_space($selector[$i + 1])) $i++;
+                $next = $selector[$i + 1] ?? '';
+                if (in_array($next, ['+', '~', '|'], true)) $this->fail('css-scope', $file);
+                if ($next !== '') $descendant = true;
+            }
+        }
+        if ($depth !== 0 || $quote !== null) $this->fail('css-syntax', $file);
+    }
+
+    private function fail(string $rule, string $file): never
+    {
+        throw new GuideValidationException($rule, $file);
+    }
+}

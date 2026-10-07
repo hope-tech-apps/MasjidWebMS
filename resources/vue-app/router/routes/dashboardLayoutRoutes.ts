@@ -21,6 +21,12 @@ const dashboardRoutes: RouteRecordRaw[] = [
         },
         redirect: '/masjid/details',
         children: [
+            {
+                path: 'help/:book/:task?',
+                component: () => import('@/views/guides/GuideScreen.vue'),
+                props: { realm: 'admin' },
+                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], pageTitle: 'Help' },
+            },
             // {
             //     path: 'dashboard',
             //     name: 'masjid.dashboard',

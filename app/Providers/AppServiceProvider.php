@@ -251,6 +251,10 @@ class AppServiceProvider extends ServiceProvider
         // apart in the SPA). Named, so its bucket is keyed by the limiter AND
         // the teacher: an inline throttle:N,M keys on the bare auth id, which a
         // family Contact with the same number would share.
+        // One guide can contain ~350 pictures; allow two complete page loads plus navigation.
+        RateLimiter::for('guides', fn (Request $request) => Limit::perMinute(900)
+            ->by('guides:'.$request->user()->getAuthIdentifier()));
+
         RateLimiter::for('curriculum-standards', fn (Request $request) => Limit::perMinute(240)
             ->by('curriculum-standards:' . ($request->user()?->getAuthIdentifier() ?? $request->ip())));
 

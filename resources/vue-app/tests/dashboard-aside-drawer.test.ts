@@ -194,7 +194,18 @@ test('each link closes the drawer itself: nothing is looked up in the page once 
     const source = readFileSync(new URL('../components/dashboard/DashboardAside.vue', import.meta.url), 'utf8');
     const template = source.slice(0, source.indexOf('<script'));
 
-    assert.equal((template.match(/<router-link/g) ?? []).length, 2, 'the menu entry and the switched-off link');
-    assert.equal((template.match(/<router-link[^>]*@click="closeAsideOnSmallScreens"/g) ?? []).length, 2);
+    assert.equal((template.match(/<router-link/g) ?? []).length, 3, 'the menu entry, switched-off link and final Help entry');
+    assert.equal((template.match(/<router-link[^>]*@click="closeAsideOnSmallScreens"/g) ?? []).length, 3);
     assert.doesNotMatch(source, /querySelectorAll/);
+});
+
+test('Help is the last rendered link, including after a SuperAdmin switched-off list', async (t) => {
+    for (const userType of ['MasjidAdmin', 'SuperAdmin']) {
+        const { screen } = await mountAside(t, { userType, masjid: plainMasjid() });
+        const links = screen.all(n => n.tag === 'router-link');
+        assert.equal(links.at(-1)?.props.to, '/masjid/help/admin');
+        assert.equal(links.at(-1)?.textContent, 'Help');
+        assert.deepEqual(leftOpenBy([links.at(-1)!]), []);
+        screen.unmount();
+    }
 });

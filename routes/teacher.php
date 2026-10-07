@@ -96,6 +96,13 @@ Route::prefix('teacher')
                 // The school this request is bound to, for the shell's header.
                 // `/user` names the DEFAULT membership; this names the SELECTED
                 // one, verified by `tenant` for this very request.
+                Route::prefix('guides')->middleware('throttle:guides')
+                    ->controller(\App\Http\Controllers\Guides\GuidesController::class)->group(function () {
+                        Route::get('/', 'index');
+                        Route::get('/{book}', 'show');
+                        Route::get('/{book}/{version}/pictures/{path}', 'picture')->where('path', '.*');
+                    });
+
                 Route::get('/school', [SchoolController::class, 'show']);
 
                 // The teacher's own classes (names-only), and the behaviour-skill
