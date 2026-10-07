@@ -122,12 +122,13 @@ class GuideValidator
         if (count($roots) !== 1 || $roots[0]->tagName !== 'div' || $roots[0]->getAttribute('data-book') !== $book || ! in_array('mg', preg_split('/\s+/', $roots[0]->getAttribute('class')), true)) $this->fail('html-root', $file);
         $tags = ['div', 'span', 'section', 'article', 'header', 'footer', 'nav', 'main', 'aside', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col', 'strong', 'b', 'em', 'i', 'small', 'mark', 'code', 'pre', 'kbd', 'samp', 'blockquote', 'figure', 'figcaption', 'details', 'summary', 'a', 'img', 'sup', 'sub', 'time', 'abbr'];
         $attrs = ['class', 'id', 'title', 'lang', 'dir', 'role', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-hidden', 'data-book', 'data-task', 'data-chapter', 'data-faq', 'data-guide', 'data-guide-hint', 'data-words', 'data-src', 'width', 'height', 'alt', 'href', 'rel', 'target', 'colspan', 'rowspan', 'scope', 'open', 'start', 'datetime'];
-        $tasks = $chapters = $questions = [];
+        $tasks = $chapters = $questions = $references = [];
         foreach ($roots[0]->getElementsByTagName('*') as $el) {
             if (! in_array($el->tagName, $tags, true)) $this->fail('html-forbidden-tag', $file);
             foreach ($el->attributes as $attr) {
                 if (str_starts_with(strtolower($attr->name), 'on')) $this->fail('html-event-attribute', $file);
                 if (! in_array($attr->name, $attrs, true)) $this->fail('html-attribute', $file);
+                if (in_array($attr->name, ['aria-labelledby', 'aria-describedby'], true)) $references[] = $attr->value;
                 if (preg_match('/javascript\s*:/i', $attr->value)) $this->fail('html-javascript', $file);
                 if ($attr->name === 'href' && ($el->tagName !== 'a' || ! preg_match('~^https://[^\s]+$~D', $attr->value) || ! filter_var($attr->value, FILTER_VALIDATE_URL))) $this->fail('html-href', $file);
                 if (in_array($attr->name, ['data-src', 'data-guide', 'data-guide-hint'], true) && $el->tagName !== match ($attr->name) { 'data-src' => 'img', 'data-guide' => 'a', default => 'span' }) $this->fail('html-markup', $file);
@@ -150,9 +151,9 @@ class GuideValidator
                 }
             }
             if ($el->hasAttribute('data-faq') && $el->tagName !== 'details' && ! $el->hasAttribute('data-guide') && ! $el->hasAttribute('data-guide-hint')) $this->fail('html-faq', $file);
-            if ($el->tagName === 'details' && $el->hasAttribute('data-faq') && $el->hasAttribute('id')) {
+            if ($el->hasAttribute('id')) {
                 $id = $el->getAttribute('id');
-                if (! $this->identifier($id) || isset($questions[$id])) $this->fail('html-faq', $file);
+                if ($el->tagName !== 'details' || ! $el->hasAttribute('data-faq') || ! preg_match('/^faq-[a-z0-9-]+$/D', $id) || isset($questions[$id])) $this->fail('html-id', $file);
                 $questions[$id] = true;
             }
             if ($el->hasAttribute('data-words') && ! (($el->tagName === 'section' && $el->hasAttribute('data-task')) || ($el->tagName === 'details' && $el->hasAttribute('data-faq')))) $this->fail('html-markup', $file);
@@ -181,7 +182,11 @@ class GuideValidator
         if (count($listed) !== count($tasks) || array_diff_key($listed, $tasks) !== []) $this->fail('html-task-manifest', $file);
         // The root's attributes also pass the allowlist (it is not included above).
         foreach ($roots[0]->attributes as $attr) {
-            if (! in_array($attr->name, ['class', 'data-book', 'id', 'lang', 'dir', 'aria-label', 'role'], true)) $this->fail('html-root-attribute', $file);
+            if (! in_array($attr->name, ['class', 'data-book', 'lang', 'dir', 'aria-label', 'role'], true)) $this->fail('html-root-attribute', $file);
+        }
+        foreach ($references as $reference) {
+            $ids = preg_split('/\s+/', trim($reference));
+            foreach ($ids as $id) if (! isset($questions[$id])) $this->fail('html-aria-reference', $file);
         }
     }
 
@@ -194,7 +199,7 @@ class GuideValidator
         $this->cssBlocks($css, $file);
     }
 
-    /** Allows scoped rules inside media/supports/container blocks, no global at-rules. */
+    /** Only the responsive width wrapper used by the release; no other at-rules. */
     private function cssBlocks(string $css, string $file): void
     {
         while (trim($css) !== '') {
@@ -214,45 +219,110 @@ class GuideValidator
             $body = substr($css, $open + 1, $i - $open - 2);
             $css = substr($css, $i);
             if (str_starts_with($selector, '@')) {
-                if (! preg_match('/^@(media|supports|container)\s+[^;{}]+$/D', $selector)) $this->fail('css-at-rule', $file);
+                if (! preg_match('/^@media\s+\(\s*(?:min|max)-width\s*:\s*[0-9]+(?:\.[0-9]+)?px\s*\)$/iD', $selector)) $this->fail('css-at-rule', $file);
                 $this->cssBlocks($body, $file);
             } else {
-                // Split only top-level commas; :is(a,b) and attributes can contain commas.
-                $selectors = preg_split('/,(?![^()]*\))(?![^\[\]]*\])/', $selector);
-                foreach ($selectors as $one) {
-                    $this->scopedSelector(trim($one), $file);
-                }
-                if (str_contains($body, '{') || str_contains($body, '}') || str_contains($body, '@')) $this->fail('css-syntax', $file);
+                $this->scopedSelectors($this->cssTokens($selector, [' ', ',', '>'], $file, true), $file);
+                $this->declarations($body, $file);
             }
         }
     }
 
-    private function scopedSelector(string $selector, string $file): void
+    /** One lexer handles delimiters and scope: quoted punctuation is never grouping. */
+    private function cssTokens(string $text, array $delimiters, string $file, bool $selector = false): array
     {
-        if (! preg_match('/^\.mg(?=$|[\s.\[:>#])/', $selector)) $this->fail('css-scope', $file);
+        $tokens = $stack = [];
         $quote = null;
-        $depth = 0;
-        $descendant = false;
-        for ($i = 3, $length = strlen($selector); $i < $length; $i++) {
-            $c = $selector[$i];
-            if ($quote !== null) { if ($c === $quote) $quote = null; continue; }
-            if ($c === '"' || $c === "'") { $quote = $c; continue; }
-            if ($c === '(' || $c === '[') { $depth++; continue; }
-            if ($c === ')' || $c === ']') { if (--$depth < 0) $this->fail('css-syntax', $file); continue; }
-            if ($depth > 0) continue;
-            // Column combinators can select outside a root's descendants.
-            if ($c === '|') $this->fail('css-scope', $file);
-            if ($descendant) continue;
-            if ($c === '+' || $c === '~') $this->fail('css-scope', $file);
-            if ($c === '>') { $descendant = true; continue; }
-            if (ctype_space($c)) {
-                while ($i + 1 < $length && ctype_space($selector[$i + 1])) $i++;
-                $next = $selector[$i + 1] ?? '';
-                if (in_array($next, ['+', '~', '|'], true)) $this->fail('css-scope', $file);
-                if ($next !== '') $descendant = true;
+        $start = 0;
+        for ($i = 0, $length = strlen($text); $i < $length; $i++) {
+            $c = $text[$i];
+            if ($quote !== null) {
+                if ($selector && str_contains('(){},', $c)) $this->fail('css-selector', $file);
+                if ($c === $quote) $quote = null;
+                continue;
+            }
+            if ($c === '"' || $c === "'") {
+                if ($selector && end($stack) !== ']') $this->fail('css-selector', $file);
+                $quote = $c;
+                continue;
+            }
+            if ($c === '(' || $c === '[') { $stack[] = $c === '(' ? ')' : ']'; continue; }
+            if ($c === ')' || $c === ']') {
+                if (array_pop($stack) !== $c) $this->fail('css-syntax', $file);
+                continue;
+            }
+            $delimiter = ctype_space($c) ? ' ' : $c;
+            if ($stack === [] && in_array($delimiter, $delimiters, true)) {
+                $token = trim(substr($text, $start, $i - $start));
+                if ($token !== '') $tokens[] = $token;
+                $tokens[] = $delimiter;
+                $start = $i + 1;
             }
         }
-        if ($depth !== 0 || $quote !== null) $this->fail('css-syntax', $file);
+        if ($quote !== null || $stack !== []) $this->fail('css-syntax', $file);
+        $token = trim(substr($text, $start));
+        if ($token !== '') $tokens[] = $token;
+        return $tokens;
+    }
+
+    private function scopedSelectors(array $tokens, string $file): void
+    {
+        $first = true;
+        $compound = false;
+        foreach ($tokens as $token) {
+            if ($token === ' ') continue;
+            if ($token === ',' || $token === '>') {
+                if (! $compound) $this->fail('css-syntax', $file);
+                if ($token === ',') $first = true;
+                $compound = false;
+                continue;
+            }
+            if ($first && ! preg_match('/^\.mg(?=$|[.\[:])/', $token)) $this->fail('css-scope', $file);
+            $this->selectorCompound($token, $file);
+            $first = false;
+            $compound = true;
+        }
+        if (! $compound) $this->fail('css-syntax', $file);
+    }
+
+    /** Classes, types, attributes and simple pseudos only; no selector functions or ids. */
+    private function selectorCompound(string $token, string $file): void
+    {
+        if (preg_match('/^(?:[a-zA-Z][a-zA-Z0-9-]*|\*)/', $token, $match)) {
+            if (in_array(strtolower($match[0]), ['html', 'body'], true)) $this->fail('css-scope', $file);
+            $token = substr($token, strlen($match[0]));
+        }
+        while ($token !== '') {
+            if (preg_match('/^\.[a-zA-Z_][a-zA-Z0-9_-]*/', $token, $match)
+                || preg_match('/^\[[a-zA-Z_][a-zA-Z0-9_-]*(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[a-zA-Z0-9_-]+))?\]/', $token, $match)
+                || preg_match('/^:(?:focus-visible|focus-within|hover|focus|active|first-child|last-child|only-child|empty|checked|disabled|enabled)(?![a-zA-Z0-9_-])/', $token, $match)) {
+                $token = substr($token, strlen($match[0]));
+            } elseif (in_array($token, ['::before', '::after'], true)) {
+                return;
+            } else $this->fail('css-selector', $file);
+        }
+    }
+
+    private function declarations(string $body, string $file): void
+    {
+        if (str_contains($body, '{') || str_contains($body, '}') || str_contains($body, '@')) $this->fail('css-syntax', $file);
+        foreach ($this->cssTokens($body, [';'], $file) as $declaration) {
+            if ($declaration === ';') continue;
+            $parts = explode(':', $declaration, 2);
+            if (count($parts) !== 2 || ! preg_match('/^(?:--[a-zA-Z_][a-zA-Z0-9_-]*|-?[a-zA-Z][a-zA-Z0-9-]*)$/D', trim($parts[0])) || trim($parts[1]) === '') $this->fail('css-declaration', $file);
+            // The real release uses no positioning. Refuse it entirely, including var indirection.
+            if (strtolower(trim($parts[0])) === 'position') $this->fail('css-position', $file);
+            $value = $parts[1];
+            $quote = null;
+            for ($i = 0, $length = strlen($value); $i < $length; $i++) {
+                $c = $value[$i];
+                if ($c === '(') {
+                    if ($quote !== null || ! preg_match('/([a-zA-Z_-][a-zA-Z0-9_-]*)$/', substr($value, 0, $i), $function) || ! in_array(strtolower($function[1]), ['var', 'counter'], true)) $this->fail('css-function', $file);
+                }
+                if ($quote !== null) { if ($c === $quote) $quote = null; }
+                elseif ($c === '"' || $c === "'") $quote = $c;
+            }
+        }
     }
 
     private function fail(string $rule, string $file): never

@@ -19,7 +19,6 @@ export function attachGuide(container: HTMLElement, options: Options) {
     let disposed = false;
     const urls = new Set<string>();
     const tasks = new Map(options.tasks.map(t => [t.id, t]));
-    const sections = [...root.querySelectorAll<HTMLElement>('section[data-task]')];
     const items: GuideItem[] = [];
     const targets = new Map<string, HTMLElement>();
     const questions = new Map<string, HTMLElement>();
@@ -136,15 +135,15 @@ export function attachGuide(container: HTMLElement, options: Options) {
         theme(value: string) { root.dataset.theme = value; },
         search(query: string) {
             const needle = query.trim().toLocaleLowerCase();
-            for (const el of sections) {
-                el.hidden = !!needle && !searchText.get(el.dataset.task!)?.includes(needle);
+            const visible = new Set<HTMLElement>();
+            for (const item of items.filter(item => item.kind !== 'chapter' && searchText.get(item.id)?.includes(needle))) {
+                const el = targets.get(item.id)!;
+                // A matching task/question shows its whole answer, including nested questions.
+                for (const child of el.querySelectorAll<HTMLElement>('section[data-task], section[data-chapter], details[data-faq]')) visible.add(child);
+                let ancestor: HTMLElement | null = el;
+                while (ancestor && ancestor !== root) { visible.add(ancestor); ancestor = ancestor.parentElement; }
             }
-            for (const chapter of root.querySelectorAll<HTMLElement>('section[data-chapter]')) {
-                chapter.hidden = !!needle && ![...chapter.querySelectorAll<HTMLElement>('section[data-task]')].some(el => !el.hidden);
-            }
-            for (const item of items.filter(item => item.kind === 'faq')) {
-                targets.get(item.id)!.hidden = !!needle && !searchText.get(item.id)?.includes(needle);
-            }
+            for (const el of targets.values()) el.hidden = !!needle && !visible.has(el);
         },
         focusTask(id: string) { return focus(targets.get(id)); },
         focusQuestion(id: string) { return focus(questions.get(id)); },

@@ -195,6 +195,64 @@ class GuidesTest extends TestCase
         }
     }
 
+    public static function reviewedOrganisations(): array
+    {
+        $cases = [];
+        foreach (['SuperAdmin' => 'admin', 'MasjidAdmin' => 'admin', 'Teacher' => 'teacher', 'LunchStaff' => 'lunch'] as $kind => $realm) {
+            foreach (['missing', 'deleted'] as $state) $cases[$kind.'-'.$state] = [$kind, $realm, $state];
+        }
+        return $cases;
+    }
+
+    #[Test, DataProvider('reviewedOrganisations')]
+    public function reviewed_missing_or_deleted_organisation_cannot_serve_guides(string $kind, string $realm, string $state): void
+    {
+        $this->install();
+        $this->withToken($this->token($kind));
+        $book = $realm === 'admin' ? 'admin' : $realm;
+        $this->getJson($this->url($realm, '/'.$book))->assertOk();
+        $id = $this->org->id;
+        if ($state === 'missing') $id = 999999;
+        else \Illuminate\Support\Facades\DB::table('masjids')->where('id', $id)->update(['deleted_at' => now()]);
+        app('auth')->forgetGuards(); app(TenantContext::class)->forgetTenant();
+        // Ordinary staff fail at membership resolution; SuperAdmin reaches the controller.
+        $status = $kind === 'SuperAdmin' ? 404 : 403;
+        foreach (['', '/'.$book, '/'.$book.'/d1-1234abcd/pictures/shots/pebble/pixel.jpg'] as $suffix) {
+            $this->getJson('/api/'.$realm.'/masjids/'.$id.'/guides'.$suffix)->assertStatus($status);
+        }
+    }
+
+    #[Test, DataProvider('reviewedAccountKinds')]
+    public function reviewed_organisation_removed_after_tenant_resolution_is_a_uniform_miss(string $kind, string $realm): void
+    {
+        $this->install();
+        $this->withToken($this->token($kind));
+        // Isolate the controller's live-row check after a tenant was already resolved.
+        $this->withoutMiddleware(\App\Http\Middleware\ResolveMasjidTenant::class);
+        \Illuminate\Support\Facades\DB::table('masjids')->where('id', $this->org->id)->update(['deleted_at' => now()]);
+        $book = $realm === 'admin' ? 'admin' : $realm;
+        $miss = null;
+        foreach (['', '/'.$book, '/'.$book.'/d1-1234abcd/pictures/shots/pebble/pixel.jpg', '/absent'] as $suffix) {
+            app(TenantContext::class)->set((int) $this->org->id);
+            $response = $this->getJson($this->url($realm, $suffix))->assertNotFound();
+            if ($miss === null) $miss = $response->json();
+            else $this->assertSame($miss, $response->json());
+        }
+    }
+
+    public static function reviewedAccountKinds(): array
+    {
+        return [['SuperAdmin', 'admin'], ['MasjidAdmin', 'admin'], ['Teacher', 'teacher'], ['LunchStaff', 'lunch']];
+    }
+
+    #[Test]
+    public function reviewed_scoped_css_and_page_local_aria_remain_accepted(): void
+    {
+        $this->edit('admin/page.css', '.mg[data-theme="dark"] > section[data-task] h3, .mg [data-note="]"]:focus-visible { color:var(--ink); } .mg li::before { content:counter(step); } @media (max-width:520px) { .mg .steps > li { margin:0; } }');
+        $this->edit('admin/page.html', str_replace('</div>', '<p aria-labelledby="faq-pebble" aria-describedby="faq-pebble">Pebble reference</p></div>', file_get_contents($this->source.'/admin/page.html')));
+        $this->install();
+    }
+
     public static function badPaths(): array
     {
         return array_map(fn ($p) => [$p], ['shots/pebble/missing.jpg', '../page.html', '%2e%2e/page.html', '%252e%252e/page.html', 'school/shots/pebble/pixel.jpg', 'shots/pebble/pixel.jpg%00', '/etc/passwd']);
@@ -334,6 +392,29 @@ class GuidesTest extends TestCase
             $cases[$key.'-bytes-type'] = [$key.'-bytes-type', '', 'manifest-bytes'];
         }
         $cases['task-outside-chapter'] = ['task-outside-chapter', '', 'html-task-manifest'];
+        foreach ([
+            'quoted-scope-escape' => '.mg [data-x="("], body, [data-x=")"] {display:none}',
+            'root-pseudo' => '.mg:root {display:none}', 'host-pseudo' => '.mg:host {display:none}',
+            'has' => '.mg:has(body) {color:red}', 'is' => '.mg:is(.mg, body) {color:red}',
+            'where' => '.mg:where(body) {color:red}', 'not' => '.mg:not(body) {color:red}',
+            'html-type' => '.mg html {display:none}', 'body-type' => '.mg body {display:none}',
+            'nesting' => '.mg & {color:red}', 'quoted-parens' => '.mg[data-x="("] {color:red}',
+            'quoted-comma' => '.mg[data-x="a,b"] {color:red}', 'quoted-braces' => '.mg[data-x="{x}"] {color:red}',
+            'fixed' => '.mg {position:fixed !important}', 'sticky' => '.mg {position:sticky}',
+            'position-variable' => '.mg {--place:fixed;position:var(--place)}',
+            'unneeded-function' => '.mg {transform:translate(0,-100px)}', 'bare-parens' => '.mg {width:(1px)}',
+            'supports' => '@supports (display:grid) { .mg {display:grid} }', 'container' => '@container (width>1px) { .mg {color:red} }',
+        ] as $name => $css) $cases['review-css-'.$name] = ['css', $css, 'css'];
+        foreach ([
+            'app-id' => '<p id="dashboard_overall_layer">Pebble</p>',
+            'faq-id-prefix' => '<details data-faq id="pebble"><summary>Pebble</summary></details>',
+            'id-on-other-tag' => '<p id="faq-other">Pebble</p>',
+            'id-without-faq' => '<details id="faq-other"><summary>Pebble</summary></details>',
+            'aria-app-id' => '<p aria-labelledby="dashboard_overall_layer">Pebble</p>',
+            'aria-mixed-id' => '<p aria-describedby="faq-pebble absent">Pebble</p>',
+            'aria-empty' => '<p aria-describedby="">Pebble</p>',
+        ] as $name => $html) $cases['review-html-'.$name] = ['html', $html, 'html'];
+        $cases['review-root-id'] = ['root-id', '', 'html'];
         return $cases;
     }
 
@@ -343,7 +424,8 @@ class GuidesTest extends TestCase
         $this->install();
         $before = Storage::disk('local')->get('guides/current.json');
         $file = match ($type) { 'css', 'style-bytes', 'style-bytes-type' => 'admin/page.css', 'image', 'bytes' => 'admin/shots/pebble/pixel.jpg', 'extra' => 'admin/extra.html', 'extension' => 'admin/extra.exe', 'symlink', 'symlink-directory' => 'admin/link.jpg', default => 'admin/page.html' };
-        if ($type === 'task-outside-chapter') $this->edit($file, str_replace('data-chapter="pebble"', 'class="pebble"', file_get_contents($this->source.'/'.$file)));
+        if ($type === 'root-id') $this->edit($file, str_replace('data-book="admin"', 'data-book="admin" id="dashboard_overall_layer"', file_get_contents($this->source.'/'.$file)));
+        elseif ($type === 'task-outside-chapter') $this->edit($file, str_replace('data-chapter="pebble"', 'class="pebble"', file_get_contents($this->source.'/'.$file)));
         elseif ($type === 'root-event') $this->edit($file, str_replace('data-book="admin"', 'data-book="admin" onclick="hidden"', file_get_contents($this->source.'/'.$file)));
         elseif ($type === 'symlink-directory') symlink($this->source.'/teacher', $this->source.'/'.$file);
         elseif ($type === 'root') $this->edit($file, '<p>Hidden</p>');

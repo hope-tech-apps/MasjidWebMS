@@ -18,8 +18,10 @@ class GuidesController extends Controller
     {
         $user = $request->user();
         if (! $user instanceof User || ! app(TenantContext::class)->get()) return [];
+        $organisation = Masjid::find(app(TenantContext::class)->get());
+        if (! $organisation) return [];
         return match ($user->type) {
-            'SuperAdmin', 'MasjidAdmin' => Masjid::find(app(TenantContext::class)->get())?->crm_enabled ? ['admin', 'school'] : ['admin'],
+            'SuperAdmin', 'MasjidAdmin' => $organisation->crm_enabled ? ['admin', 'school'] : ['admin'],
             'Teacher' => ['teacher'],
             'LunchStaff' => ['lunch'],
             default => [],
@@ -29,6 +31,7 @@ class GuidesController extends Controller
     public function index(Request $request, string $masjid_id)
     {
         $allowed = $this->allowed($request);
+        abort_unless($allowed, 404);
         $manifest = $this->releases->current();
         $books = [];
         foreach ($allowed as $book) {

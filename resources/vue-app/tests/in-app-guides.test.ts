@@ -19,7 +19,7 @@ withDocumentKeys();
 
 const data = { version: 'd1-1234abcd', title: 'Admin guide', html, css: '.mg {color:black}', tasks: [{ id: 'sprout', title: 'Sprout task', section: 'Misleading manifest section' }, { id: 'ripple', title: 'Ripple task', section: 'Misleading manifest section' }] };
 
-async function screen(off = false, unavailable = false, missingPicture = false) {
+async function screen(off = false, unavailable = false, missingPicture = false, pageHtml?: string) {
     const viewer = await compileSfc('components/guides/GuideViewer.vue', {});
     const content = await compileSfc('components/guides/GuideContent.vue', {
         '@/components/guides/GuideViewer.vue': { default: viewer },
@@ -30,7 +30,7 @@ async function screen(off = false, unavailable = false, missingPicture = false) 
     const mounted = await mountSfc('views/guides/GuideScreen.vue', { realm: 'admin' }, {
         'vue-router': { useRoute: () => route, useRouter: () => router },
         '@/stores/authStore': { useAuthStore: () => auth },
-        '@/core/services/GuideApiService': { default: { json: async (url: string) => { calls.push(url); return { data: url.endsWith('/guides') ? unavailable ? [] : off ? books.slice(0, 1) : books : { ...data, title: route.params.book + ' guide', html: readFileSync(new URL(`../../../tests/fixtures/guides/d1-1234abcd/${route.params.book}/page.html`, import.meta.url), 'utf8') } }; }, picture: async () => { if (missingPicture) throw new Error('missing'); return new Blob(); } } },
+        '@/core/services/GuideApiService': { default: { json: async (url: string) => { calls.push(url); return { data: url.endsWith('/guides') ? unavailable ? [] : off ? books.slice(0, 1) : books : { ...data, title: route.params.book + ' guide', html: pageHtml ?? readFileSync(new URL(`../../../tests/fixtures/guides/d1-1234abcd/${route.params.book}/page.html`, import.meta.url), 'utf8') } }; }, picture: async () => { if (missingPicture) throw new Error('missing'); return new Blob(); } } },
         '@/components/guides/GuideContent.vue': { default: content },
         '@/core/guides/guidePaths': await loadTs('core/guides/guidePaths.ts', {}),
     });
@@ -309,3 +309,25 @@ test('real release when requested mounts all four passive pages with real childr
         } finally { s.unmount(); }
     }
 });
+
+
+for (const query of ['moonlit-answer', 'Sprout task']) {
+    test(`reviewed nested question search preserves visible ancestors and whole matching task: ${query}`, async () => {
+        const nested = '<details data-faq id="faq-nested" data-words="moonlit-answer"><summary>Nested question</summary><p>Amber answer.</p></details>';
+        const page = html.replace('<p>Velvet acorn.</p>', '<p>Velvet acorn.</p>' + nested);
+        const { mounted } = await screen(false, false, false, page);
+        try {
+            const question: any = mounted.all(n => n.tag === 'details' && n.props.id === 'faq-nested')[0];
+            question.setAttribute('open', '');
+            type(mounted.all(n => n.tag === 'input')[0], query); await flush();
+            assert.equal(question.hidden, false);
+            assert.equal(question.props.open, ''); assert.match(question.textContent, /Amber answer/);
+            const task: any = mounted.all(n => n.tag === 'section' && n.props['data-task'] === 'sprout')[0];
+            const chapter: any = mounted.all(n => n.tag === 'section' && n.props['data-chapter'] === 'pebble')[0];
+            assert.equal(task.hidden, false); assert.equal(chapter.hidden, false);
+            assert.equal((mounted.all(n => n.tag === 'section' && n.props['data-task'] === 'ripple')[0] as any).hidden, true);
+            click(mounted.button('Clear search')); await flush();
+            assert.equal((mounted.all(n => n.tag === 'section' && n.props['data-task'] === 'ripple')[0] as any).hidden, false);
+        } finally { mounted.unmount(); }
+    });
+}
