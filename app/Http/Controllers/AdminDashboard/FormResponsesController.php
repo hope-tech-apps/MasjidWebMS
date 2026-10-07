@@ -312,7 +312,7 @@ class FormResponsesController extends Controller
         $form = $masjid->forms()->findOrFail($form_id);
 
         $roster = FormRoster::for($form);
-        $columns = $roster->columns();
+        $columns = $roster->columns(true);
         $rows = $this->sortRoster($roster->rows($this->query($request, $masjid, $form)->get()), $request);
 
         $filename = $form->slug.'-roster-'.now()->format('Y-m-d').'.csv';
@@ -339,12 +339,13 @@ class FormResponsesController extends Controller
             if ($staffPricing) {
                 array_push($header, ...self::STAFF_PRICE_COLUMNS);
             }
-            fputcsv($out, $header);
+            fputcsv($out, $header, escape: '');
 
             foreach ($rows as $row) {
                 $line = [];
                 foreach ($columns as $column) {
-                    $line[] = $this->csvCell($this->stringify($row['values'][$column['key']] ?? ''));
+                    $value = $row['choice_values'][$column['key']] ?? $row['values'][$column['key']] ?? '';
+                    $line[] = $this->csvCell($this->exportValue($value, $column));
                 }
                 $line[] = $this->csvCell((string) ($row['registered_by'] ?? ''));
                 $line[] = $this->csvCell((string) ($row['registrant_email'] ?? ''));
@@ -361,7 +362,7 @@ class FormResponsesController extends Controller
                 if ($staffPricing) {
                     array_push($line, ...$this->staffPriceCells($row['price_breakdown'] ?? null, $row['staff_payment_method'] ?? null, $row['price_set_by'] ?? null));
                 }
-                fputcsv($out, $line);
+                fputcsv($out, $line, escape: '');
             }
 
             fclose($out);
@@ -1376,7 +1377,7 @@ class FormResponsesController extends Controller
         $masjid = Masjid::findOrFail($masjid_id);
         $form = $masjid->forms()->findOrFail($form_id);
 
-        $columns = $this->columns($form);
+        $columns = $this->columns($form, true);
         $filename = $form->slug.'-responses-'.now()->format('Y-m-d').'.csv';
 
         $query = $this->query($request, $masjid, $form);
@@ -1414,7 +1415,7 @@ class FormResponsesController extends Controller
             if ($staffPricing) {
                 array_push($header, ...self::STAFF_PRICE_COLUMNS);
             }
-            fputcsv($out, $header);
+            fputcsv($out, $header, escape: '');
 
             // chunkById keeps memory flat on a large registration list.
             $query->chunkById(200, function ($chunk) use ($out, $columns, $form, $money, $staffPricing) {
@@ -1455,7 +1456,7 @@ class FormResponsesController extends Controller
                     if ($staffPricing) {
                         array_push($row, ...$this->staffPriceCells($response->priceBreakdown(), $response->staff_payment_method, $response->staff_holder_name));
                     }
-                    fputcsv($out, $row);
+                    fputcsv($out, $row, escape: '');
                 }
             });
 
@@ -1676,7 +1677,7 @@ class FormResponsesController extends Controller
      * One column per question in the schema, flattening a repeatable section to a single
      * summarised column (the admin table cannot grow a column per attendee).
      *
-     * Choice options are resolved as Summary resolves them, only for screen metadata.
+     * Choice options are resolved as Summary resolves them, for screens and CSV wording.
      *
      * @return array<int,array{key:string,label:string,section:?string,repeatable:bool,field:string,options?:array}>
      */
@@ -1724,11 +1725,25 @@ class FormResponsesController extends Controller
             return collect($rows)
                 ->map(fn ($row) => is_array($row) ? ($row[$column['field']] ?? '') : '')
                 ->filter(fn ($v) => $v !== '' && $v !== null)
-                ->map(fn ($v) => $this->stringify($v))
+                ->map(fn ($v) => $this->exportValue($v, $column))
                 ->implode(' | ');
         }
 
-        return $this->stringify($data[$column['field']] ?? '');
+        return $this->exportValue($data[$column['field']] ?? '', $column);
+    }
+
+    /** Translate each choice before joining, preserving commas inside stored values. */
+    private function exportValue(mixed $value, array $column): string
+    {
+        if (! isset($column['options'])) {
+            return $this->stringify($value);
+        }
+
+        $label = fn ($answer) => (is_string($answer) || is_int($answer) || is_float($answer)) && $answer !== ''
+            ? (collect($column['options'])->first(fn ($option) => (string) $option['value'] === (string) $answer)['label'] ?? $answer)
+            : $answer;
+
+        return $this->stringify(is_array($value) ? array_map($label, $value) : $label($value));
     }
 
     private function stringify(mixed $value): string

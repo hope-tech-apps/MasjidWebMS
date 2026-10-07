@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Support\FormAnswersText;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -57,7 +58,7 @@ class FormAnswersTextTest extends TestCase
         // One space before every word, the first too; the address and the decimal are the
         // words between their punctuation.
         $this->assertSame(
-            ' samira nasser samira example test 4 guardian legal guardian sat sun tariq 5 émile 8 5',
+            ' samira nasser samira example test 4 guardian legal guardian sat saturday sun sunday tariq 5 émile 8 5',
             $text
         );
     }
@@ -91,7 +92,49 @@ class FormAnswersTextTest extends TestCase
     public function a_choice_that_is_not_one_of_the_options_is_kept_without_a_label(): void
     {
         $this->assertSame(' aunt', FormAnswersText::build($this->sections(), ['relationship' => 'Aunt']));
-        $this->assertSame(' sat', FormAnswersText::build($this->sections(), ['days' => 'sat']));
+        $this->assertSame(' sat saturday', FormAnswersText::build($this->sections(), ['days' => 'sat']));
+    }
+
+    public static function filteredChoiceValues(): array
+    {
+        $cases = [];
+        foreach (['select', 'radio', 'checkboxGroup'] as $type) {
+            foreach (['digest' => '0123456789abcdef0123456789abcdef', 'provider' => 'pi_3Qa123456789012345'] as $kind => $value) {
+                $cases[$type.' '.$kind] = [$type, $value];
+            }
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('filteredChoiceValues')]
+    public function choice_labels_survive_filtered_raw_values(string $type, string $value): void
+    {
+        $sections = [['fields' => [['name' => 'choice', 'type' => $type, 'options' => [
+            ['value' => $value, 'label' => ' Lunch helper '],
+        ]]]]];
+        $answer = $type === 'checkboxGroup' ? [$value] : $value;
+
+        $this->assertSame(' lunch helper', FormAnswersText::build($sections, ['choice' => $answer]));
+    }
+
+    public static function choiceTypes(): array
+    {
+        return ['dropdown' => ['select'], 'choose one' => ['radio'], 'choose any' => ['checkboxGroup']];
+    }
+
+    #[Test]
+    #[DataProvider('choiceTypes')]
+    public function choice_matching_keeps_surrounding_spaces_until_after_label_resolution(string $type): void
+    {
+        $sections = [['fields' => [['name' => 'choice', 'type' => $type, 'options' => [
+            ['value' => 'x', 'label' => 'Alpha'],
+            ['value' => ' x ', 'label' => ' Beta '],
+        ]]]]];
+        $answer = $type === 'checkboxGroup' ? [' x '] : ' x ';
+
+        $this->assertSame(' x beta', FormAnswersText::build($sections, ['choice' => $answer]));
     }
 
     #[Test]
