@@ -236,7 +236,9 @@ Route::prefix('admin')->group(function () {
             // Masjid announcements
             Route::prefix('{masjid_id}/announcements')->middleware('capability:announcements')->controller(AnnouncementsController::class)->group((function () {
                 Route::get('/', 'index');
+                Route::get('/archived', 'archived');
                 Route::post('/', 'store');
+                Route::post('/{annoncement_id}/restore', 'restore')->middleware('renderer.purge');
                 Route::get('/{annoncement_id}', 'show');
                 Route::post('/{annoncement_id}', 'update');
                 Route::delete('/{annoncement_id}', 'destroy');
@@ -310,7 +312,9 @@ Route::prefix('admin')->group(function () {
             // off. Only the Services screens call show and the writes.
             Route::prefix('{masjid_id}/services')->controller(ServicesController::class)->group((function () {
                 Route::get('/', 'index');
+                Route::get('/archived', 'archived')->middleware('capability:services');
                 Route::post('/', 'store')->middleware('capability:services');
+                Route::post('/{service_id}/restore', 'restore')->middleware(['capability:services', 'renderer.purge']);
                 Route::get('/{service_id}', 'show')->middleware('capability:services');
                 Route::post('/{service_id}', 'update')->middleware('capability:services');
                 Route::delete('/{service_id}', 'destroy')->middleware('capability:services');

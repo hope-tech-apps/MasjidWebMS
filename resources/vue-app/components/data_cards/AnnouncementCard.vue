@@ -15,7 +15,7 @@
                     {{ announcement.details }}
                 </p>
             </div>
-            <router-link :to="`/masjid/announcements/${announcement.id}`"
+            <router-link v-if="!announcement.deleted_at" :to="`/masjid/announcements/${announcement.id}`"
                 class="text-decoration-none text-success fw-semibold">
                 Read More
             </router-link>

@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Jobs\PurgeRendererCache;
 use App\Jobs\PurgeRendererCacheAgain;
+use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
+use App\Models\Service;
 use App\Models\User;
 use App\Support\Renderer\RendererCachePurge;
 use App\Support\Renderer\RendererPurgeScheduler;
@@ -17,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -90,6 +93,32 @@ class RendererCachePurgeTest extends TestCase
             && now()->diffInSeconds($job->delay, false) >= RendererPurgeScheduler::FIRST_PASS_DELAY - 2);
         Queue::assertPushed(PurgeRendererCacheAgain::class, 1);
         Queue::assertPushed(PurgeRendererCacheAgain::class, fn (PurgeRendererCacheAgain $job) => $job->organisationId === $masjid->id);
+    }
+
+    public static function restoredResources(): array
+    {
+        return [['services', Service::class], ['announcements', Announcement::class]];
+    }
+
+    #[Test, DataProvider('restoredResources')]
+    public function restoring_public_content_queues_both_purge_passes(string $area, string $model): void
+    {
+        $masjid = $this->org();
+        $this->actAsAdmin($masjid);
+        $fields = ['masjid_id' => $masjid->id, 'title' => 'Restored item', 'summary' => 'Summary', 'text' => 'Text'];
+        $fields += $area === 'services' ? ['description' => 'Description'] : [
+            'details' => 'Details', 'start_date' => now()->subDay()->toDateString(),
+            'end_date' => now()->addWeek()->toDateString(),
+        ];
+        $row = $model::create($fields);
+        $row->delete();
+
+        $this->post("/api/admin/masjids/{$masjid->id}/{$area}/{$row->id}/restore", [], ['Accept' => 'application/json'])
+            ->assertSuccessful();
+
+        $this->assertFalse($row->fresh()->trashed());
+        $this->assertQueuedFor($masjid);
+        Http::assertNothingSent();
     }
 
     private function fakeRenderer(array ...$answers): void
@@ -319,7 +348,9 @@ class RendererCachePurgeTest extends TestCase
             foreach ($exempt as $skip) {
                 $inGroup = $inGroup && $rest !== $skip && ! str_starts_with($rest, $skip.'/') && ! str_starts_with($rest, $skip);
             }
-            $inGroup = $inGroup || $rest === 'theme';
+            $inGroup = $inGroup || $rest === 'theme' || in_array($rest, [
+                'services/{service_id}/restore', 'announcements/{annoncement_id}/restore',
+            ], true);
 
             foreach ($writes as $method) {
                 if (in_array('renderer.purge', $route->gatherMiddleware(), true)) {
@@ -336,6 +367,8 @@ class RendererCachePurgeTest extends TestCase
         $this->assertSame($expected, $purging);
         $this->assertContains('POST pages/{page_id}/sections', $purging, 'control: page sections purge');
         $this->assertContains('POST offerings/{offering_id}/fee-plans', $purging, 'control: fee plans purge');
+        $this->assertContains('POST services/{service_id}/restore', $purging);
+        $this->assertContains('POST announcements/{annoncement_id}/restore', $purging);
         $this->assertNotContains('POST theme/preview', $purging);
         $this->assertNotContains('POST theme/preview-session', $purging);
         $this->assertNotContains('POST splash-announcements', $purging, 'splash is fetched in the browser; its cache is Laravel\'s');

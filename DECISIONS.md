@@ -9168,3 +9168,45 @@ Index both the stored value and matching label for all three choice types, inclu
 Not done: no new migration (the column already exists and the existing command supports repairs); no scheduler/job or automatic rebuild on form edits (the owner authorised a controlled repair, not another operational workflow). No payment, checkout, notification/send or Vue code changes. No production run, deployment, network, commits, formatter or CHANGELOG. DECISIONS.md stays untouched for the integrator. The earlier choice decision is dated 2026-10-06 in this checkout, not 2026-10-07 as the brief described.
 
 Production timing and actual MySQL execution/locks remain unverified here. The integrator should run a bounded pilot after deployment/owner approval, then repeat per organisation. See forms-export-evidence.md for commands, verification, local timings and limitations.
+
+# 2026-10-07 — Services and Announcements: archived list and restore
+
+Decided: add GET /api/admin/masjids/{masjid_id}/{services|announcements}/archived and
+POST /api/admin/masjids/{masjid_id}/{services|announcements}/{id}/restore. Lists contain
+only that organisation's soft-deleted rows, nine per page, deleted_at DESC then id ASC.
+Both endpoints inherit Archive's auth:sanctum/admin/tenant middleware and module gate.
+Services' existing active index stays ungated for the other admin screens that read it.
+
+Restore's transaction first re-reads the tenant-scoped row, including trashed rows,
+FOR UPDATE. Check trashed() on that locked row. Change only deleted_at, with timestamps
+disabled for that save. Already restored is a successful no-op, with no second restore
+event. Same id, created_at, updated_at, fields, dates and media survive. Existing admin
+and mobile lists have no explicit ordering; public lists keep created_at DESC, id ASC.
+No new ordering rule for active lists. Flush the corresponding mobile key on an actual
+restore; announcements also flush the signage fallback cache. No broadcast is replayed.
+
+The restored row is available in fresh public website and mobile payloads immediately.
+Website page caches (300s default in the local site ref) and existing app screens may
+lag. Public site and iPhone/Android announcement feeds are unfiltered; expired notices
+are still publicly readable. Restore leaves their dates intact. They remain absent from
+filter_active=1 and date-filtered signage/tvOS displays. The admin sees the original end
+date plus "Expired — dates unchanged." on both archived and Current lists.
+
+Walkthrough: open Services or Announcements; choose Status → Archived (the labelled
+select pattern from FormResponsesView.vue:141). Read the title/media and Archived on
+time. Tap Restore, read the public-visibility warning, choose Restore or Cancel. Success
+switches to page 1 of Current with a success message; the restored item follows the
+existing position rule and may be on another page. A cancelled dialog writes nothing.
+Archived cards omit Read More, since active-only detail endpoints cannot open them.
+
+Not done: no migration (deleted_at already exists); no permanent delete action, new
+permission, payment/checkout change, resend or shared helper modification. Existing
+Archive and separate permanent-delete routes are unchanged. Archive's signage fallback
+cache delay is recorded rather than altered, as the brief requires unchanged Archive.
+No renderer-cache purge was added: the API becomes public immediately but existing
+renderer refresh/caching rules stay intact, and the confirmation states the delay.
+No CHANGELOG or DECISIONS edit, network, commit, deploy or production operation.
+
+Verified locally: see artifacts/verification.md. MySQL FOR UPDATE test is authored and
+syntax-checked but not executed; SQLite cannot prove InnoDB locking. No deployed-page,
+device, browser layout or production cache verification was performed.
