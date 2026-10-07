@@ -5,16 +5,20 @@ import { chooseOption, click, compileSfc, deferred, flush, mountSfc } from './su
 
 const vue = createRequire(import.meta.url)('vue');
 const pageOf = (rows: any[]) => ({ data: rows, current_page: 1, per_page: 9, total: rows.length });
-const container = {
-    props: ['title', 'paginationOptions'], emits: ['pageChange'],
-    render(this: any) { return vue.h('div', [vue.h('h1', this.title), this.$slots.default?.()]); },
-};
 
-async function screen(area: string) {
+async function screen(area: string, multiplePages = false) {
     const singular = area === 'services' ? 'Service' : 'Announcement';
     const org = vue.reactive({ masjid: { id: 3, timezone: 'UTC' } });
     const active = [{ id: 1, title: 'Current item', deleted_at: null, end_date: '2999-01-01' }];
     const archived = [{ id: 2, title: 'Archived item', deleted_at: '2026-10-01T12:00:00Z', end_date: '2020-01-01' }];
+    if (multiplePages) {
+        active.splice(0, active.length, ...Array.from({ length: 11 }, (_, i) => ({
+            id: i + 1, title: `Current item ${i + 1}`, deleted_at: null, end_date: '2999-01-01',
+        })));
+        archived.splice(0, archived.length, ...Array.from({ length: 20 }, (_, i) => ({
+            id: i + 101, title: `Archived item ${i + 1}`, deleted_at: '2026-10-01T12:00:00Z', end_date: '2020-01-01',
+        })));
+    }
     const calls: any[] = [];
     const dialogs: any[] = [];
     const answer = { confirm: false, dialog: null as any, post: null as any, get: null as any };
@@ -22,7 +26,11 @@ async function screen(area: string) {
         get: async (url: string) => {
             calls.push(['GET', url]);
             if (answer.get) return answer.get(url);
-            return { data: { status: 'success', data: pageOf(url.includes('/archived') ? archived : active) } };
+            const rows = url.includes('/archived') ? archived : active;
+            const page = Number(new URL(url, 'https://example.test').searchParams.get('page') || 1);
+            return { data: { status: 'success', data: {
+                data: rows.slice((page - 1) * 9, page * 9), current_page: page, per_page: 9, total: rows.length,
+            } } };
         },
         post: async (url: string) => {
             calls.push(['POST', url]);
@@ -32,18 +40,20 @@ async function screen(area: string) {
             return { data: { status: 'success' } };
         },
     };
-    // These doubles let the original screens mount so the missing filter is the red failure.
-    const store = vue.reactive({
-        [`${area}Paginated`]: pageOf(active),
-        [`fetchMasjid${singular}sPaginated`]: async () => {},
-    });
     const card = await compileSfc(`components/data_cards/${singular}Card.vue`, {
         [`@/core/types/data/masjid-related/${singular}`]: {},
+    });
+    const pagination = await compileSfc('components/partials/Pagination.vue', {
+        '@/core/types/elements/Pagination': {},
+    });
+    const container = await compileSfc('components/PageDataContainer.vue', {
+        '@/components/partials/Pagination.vue': { default: pagination },
+        '@/core/types/elements/Buttons': {},
+        '@/core/types/elements/Pagination': {},
     });
     const mounted = await mountSfc(`views/dashboard/${area}/${singular}sView.vue`, {}, {
         [`@/components/data_cards/${singular}Card.vue`]: { default: card },
         '@/components/PageDataContainer.vue': { default: container },
-        [`@/stores/masjid/${area}Store`]: { [`use${singular}sStore`]: () => store },
         '@/stores/masjidStore': { useMasjidStore: () => org },
         '@/core/services/ApiService': { default: api },
         '@/core/plugins/SweetAlerts2': {
@@ -173,4 +183,44 @@ for (const area of ['services', 'announcements']) {
             assert.doesNotMatch(s.mounted.text(), /Stale archived item/);
         } finally { s.mounted.unmount(); }
     });
+}
+
+for (const area of ['services', 'announcements']) {
+    for (const initial of ['current', 'archived']) {
+        test(`${area}: ${initial} pagination survives visiting the other list and coming back`, async () => {
+            const s = await screen(area, true);
+            try {
+                const pagerButton = (label: string) => {
+                    const buttons = s.mounted.all((n) => n.tag === 'button' && n.props['aria-label'] === label);
+                    assert.equal(buttons.length, 1, `${label} is visible for a multi-page list`);
+                    return buttons[0];
+                };
+                for (const status of [initial, initial === 'current' ? 'archived' : 'current', initial]) {
+                    chooseOption(s.filter(), status);
+                    await flush();
+                    const title = status === 'current' ? 'Current' : 'Archived';
+                    const base = `/api/admin/masjids/3/${area}${status === 'archived' ? '/archived' : ''}`;
+                    assert.equal(s.calls.at(-1)?.[1], `${base}?page=1`);
+                    assert.match(s.mounted.text(), new RegExp(`${title} item 1\\b`));
+                    assert.equal(pagerButton('Previous page').props.disabled, true, 'switching lists resets to page one');
+                    assert.equal(pagerButton('Next page').props.disabled, undefined);
+                    const pages = s.mounted.all((n) => n.tag === 'button' && /^\d+$/.test(n.textContent.trim()));
+                    assert.equal(pages.length, status === 'current' ? 2 : 3, 'the pager reads this list total');
+                    click(pagerButton('Next page'));
+                    await flush();
+                    assert.equal(s.calls.at(-1)?.[1], `${base}?page=2`);
+                    assert.match(s.mounted.text(), new RegExp(`${title} item 10\\b`));
+                    assert.equal(s.mounted.button('2').props.class.includes('active'), true);
+                    assert.equal(pagerButton('Next page').props.disabled, status === 'current' ? true : undefined);
+                    click(pagerButton('Previous page'));
+                    await flush();
+                    assert.equal(s.calls.at(-1)?.[1], `${base}?page=1`);
+                    assert.match(s.mounted.text(), new RegExp(`${title} item 1\\b`));
+                    // Leave page two selected before changing the list, to exercise its reset.
+                    click(pagerButton('Next page'));
+                    await flush();
+                }
+            } finally { s.mounted.unmount(); }
+        });
+    }
 }

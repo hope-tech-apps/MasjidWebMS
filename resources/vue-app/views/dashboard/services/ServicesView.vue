@@ -55,7 +55,7 @@ async function load(page = 1) {
     const currentRequest = ++request;
     loadedFor = undefined;
     services.value = [];
-    paginationOptions.value = { itemsTotal: 0, currentPage: 1, perPage: 9 };
+    Object.assign(paginationOptions.value, { itemsTotal: 0, currentPage: 1, perPage: 9 });
     error.value = '';
     loading.value = false;
     if (!orgId) return;
@@ -67,7 +67,7 @@ async function load(page = 1) {
         if (res.data?.status !== 'success' || !res.data?.data) throw new Error('Invalid list response');
         const result = res.data.data;
         services.value = result.data;
-        paginationOptions.value = { itemsTotal: result.total, currentPage: result.current_page, perPage: result.per_page };
+        Object.assign(paginationOptions.value, { itemsTotal: result.total, currentPage: result.current_page, perPage: result.per_page });
         loadedFor = orgId;
     } catch (e: any) {
         if (currentRequest === request && orgId === masjidStore.masjid?.id) {
