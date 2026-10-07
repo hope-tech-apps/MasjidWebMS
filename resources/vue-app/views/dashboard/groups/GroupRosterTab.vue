@@ -467,7 +467,7 @@
 
                                 <div class="mb-3">
                                     <label class="form-label">
-                                        Student <span class="text-danger">*</span>
+                                        Person <span class="text-danger">*</span>
                                     </label>
                                     <input
                                         class="form-control mb-2"
