@@ -9125,3 +9125,24 @@ Vue tests/build were not run because no Vue admin file changed. No column was
 added, so StagingScrubCoverageTest was not triggered.
 
 First run on production (recorded before shipping, 2026-10-07): failed_jobs held five rows, all older than 30 days and all form mail (ids 18 to 22, failed 2026-08-30 to 2026-09-01: three FormResponseSubmitted, two FormSubmissionReceipt). The first nightly prune removes them; their ids, dates and types are kept here and in LOG.md, their payloads are not.
+
+# 2026-10-07 — Flyer Studio saved drafts
+
+Use the existing organisation-scoped, capability-gated flyer CRUD API and its 15-row
+pagination for a Saved drafts table, Open and confirmed Delete. Add only creator data,
+unchanged historical-slot validation and reference-aware deletion on the server.
+Open restores saved content, a nonempty palette snapshot and private image blobs; Save
+updates the existing ID and permits incomplete drafts. Label authorship Created by,
+not Last saved by, because only created_by is recorded.
+
+Keep current bundled templates/markup and existing renderer/export behaviour. Show
+saved values/images with an explanation if the bundle is unavailable; keep removed
+slots read-only and preserve them on re-save. No migration or historical template
+snapshot: the existing FK restricts deleting a referenced template, while the bundle
+can still lose its markup. Do not add multi-image persistence or a persisted cutout
+preference: those were absent from the existing wire/storage contract. Explain local
+image fields explicitly; restore both stored files and use the model's composite
+choice. No shared helpers, payments, sends, deployments, network calls or commits.
+
+The integrator should re-walk the Flyer Studio admin-guide task after deploying. The
+external guide was not edited from this offline worktree. DECISIONS.md is untouched.

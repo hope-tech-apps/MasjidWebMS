@@ -44,7 +44,7 @@ class FlyersController extends Controller
             // `schema` is in the select because serialize() reports missing_slots, which
             // reads the design's slots. Drop it and every row in the list claims nothing
             // is missing — the failure looks like an answer, not an error.
-            ->with('template:id,key,name,kind,schema')
+            ->with(['template:id,key,name,kind,schema', 'creator:id,name'])
             ->when($request->query('status'), fn ($query, $status) => $query->where('status', $status))
             ->when(
                 $request->query('template_id'),
@@ -115,7 +115,7 @@ class FlyersController extends Controller
      */
     public function show($masjid_id, $flyer_id)
     {
-        $flyer = Flyer::with('template')->findOrFail($flyer_id);
+        $flyer = Flyer::with(['template', 'creator:id,name'])->findOrFail($flyer_id);
 
         $data = $this->serialize($flyer);
         $data['template'] = $flyer->template ? [
@@ -180,8 +180,8 @@ class FlyersController extends Controller
      * DELETE /api/admin/masjids/{masjid_id}/flyers/{flyer_id}
      *
      * A hard delete — flyers are not soft-deleted — so the uploaded photo, its cutout
-     * and any finished render go with the row. Nothing else references those files, and
-     * leaving them behind would slowly fill a 2GB droplet with orphans.
+     * and any finished render go with the row only when no other flyer references them.
+     * Check all tenants and all three path columns, including finished flyers.
      */
     public function destroy($masjid_id, $flyer_id)
     {
@@ -190,13 +190,20 @@ class FlyersController extends Controller
         try {
             $disk = Storage::disk(self::IMAGE_DISK);
 
-            foreach ([$flyer->source_image_path, $flyer->cutout_path, $flyer->rendered_path] as $path) {
-                if ($path) {
+            $paths = array_unique(array_filter([$flyer->source_image_path, $flyer->cutout_path, $flyer->rendered_path]));
+            $flyer->delete();
+
+            foreach ($paths as $path) {
+                $referenced = Flyer::withoutMasjidScope()->where(function ($query) use ($path) {
+                    $query->where('source_image_path', $path)
+                        ->orWhere('cutout_path', $path)
+                        ->orWhere('rendered_path', $path);
+                })->exists();
+
+                if (! $referenced) {
                     $disk->delete($path);
                 }
             }
-
-            $flyer->delete();
 
             return response()->json([
                 'status' => 'success',
@@ -216,6 +223,8 @@ class FlyersController extends Controller
      */
     private function serialize(Flyer $flyer): array
     {
+        $flyer->loadMissing('creator:id,name');
+
         return [
             'id' => $flyer->id,
             'uuid' => $flyer->uuid,
@@ -225,6 +234,7 @@ class FlyersController extends Controller
             'template_name' => $flyer->relationLoaded('template') ? $flyer->template?->name : null,
             'kind' => $flyer->relationLoaded('template') ? $flyer->template?->kind : null,
             'title' => $flyer->title,
+            'creator' => $flyer->creator ? ['id' => $flyer->creator->id, 'name' => $flyer->creator->name] : null,
             'content' => $flyer->content,
             'palette' => $flyer->palette,
             'status' => $flyer->status,
