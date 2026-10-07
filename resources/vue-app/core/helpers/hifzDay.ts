@@ -14,9 +14,13 @@
  *    now), and its day is its UTC calendar day, wherever it is read;
  *  - any other instant is a real moment, and its day is the reader's local day.
  *
- * A recitation really heard at 00:00:00.000 or 12:00:00.000 UTC to the second
- * would be read as a date too. It is the same day in every time zone the app is
- * used in, so nothing shows wrong for it.
+ * WHEN THE ROW SAYS WHEN IT WAS TYPED (`created_at`, which the teacher's and the
+ * office's payloads carry and the family's does not): a recitation recorded as
+ * it was heard is stamped with the same second it was created in, so an instant
+ * within two seconds of its `created_at` is a real moment even if it happens to
+ * be exactly midnight or noon UTC (8 pm or 8 am in New York). Without
+ * `created_at` that one-in-43,200 recording would read as the UTC day, which in
+ * the Americas is the day after for the midnight one.
  */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -27,22 +31,29 @@ const parse = (iso: string | null | undefined): Date | null => {
     return Number.isNaN(d.getTime()) ? null : d;
 };
 
-const isChosenDate = (d: Date): boolean =>
+const isDateOnly = (d: Date): boolean =>
     d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0
     && (d.getUTCHours() === 0 || d.getUTCHours() === 12);
 
-/** `YYYY-MM-DD`, or '' when the instant is missing or unreadable. */
-export function hifzDayOf(iso: string | null | undefined): string {
+const utcDay = (d: Date): string => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+const localDayOf = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/**
+ * `YYYY-MM-DD`, or '' when the instant is missing or unreadable.
+ *
+ * @param createdIso  the row's `created_at`, when the payload has it
+ */
+export function hifzDayOf(iso: string | null | undefined, createdIso?: string | null): string {
     const d = parse(iso);
     if (!d) return '';
-    return isChosenDate(d)
-        ? `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
-        : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const created = parse(createdIso);
+    const heardAsTyped = created !== null && Math.abs(d.getTime() - created.getTime()) <= 2000;
+    return !heardAsTyped && isDateOnly(d) ? utcDay(d) : localDayOf(d);
 }
 
 /** The day as the lists write it ("Oct 5, 2026"), or '' when there is none. */
-export function hifzDayLabel(iso: string | null | undefined, locale?: string): string {
-    const day = hifzDayOf(iso);
+export function hifzDayLabel(iso: string | null | undefined, locale?: string, createdIso?: string | null): string {
+    const day = hifzDayOf(iso, createdIso);
     if (!day) return '';
     const [y, m, d] = day.split('-').map(Number);
     // Built from the three numbers in the reader's zone and formatted there, so
@@ -51,10 +62,23 @@ export function hifzDayLabel(iso: string | null | undefined, locale?: string): s
 }
 
 /**
- * What to send as `recited_at` for a day chosen in the date box: noon UTC of
- * that day. A bare date becomes midnight UTC on the server, which is the
- * evening before in the Americas; noon UTC is that same calendar day from
- * Honolulu to Auckland, for every reader, including ones that do not use this
- * file.
+ * What to send as `recited_at` for a day chosen in the date box. The server
+ * refuses an instant in the future, so the first of these that is not after
+ * `now`:
+ *
+ *  1. noon UTC of that day: the same calendar day for every reader from
+ *     Honolulu to Auckland, including readers that do not use this file;
+ *  2. midnight UTC of that day (the bare date this form used to send): east of
+ *     Greenwich, early on a day, yesterday's noon UTC has not happened yet;
+ *  3. a minute ago: the chosen day is the reader's own today and neither of the
+ *     above has happened yet (far east of Greenwich, just after midnight). A
+ *     real moment, which reads as the reader's local day, which is that day.
+ *
+ * All three read back as the chosen day through hifzDayOf.
  */
-export const hifzDayToSend = (day: string): string => `${day}T12:00:00Z`;
+export function hifzDayToSend(day: string, now: Date = new Date()): string {
+    const noon = `${day}T12:00:00Z`;
+    if (new Date(noon).getTime() <= now.getTime()) return noon;
+    if (new Date(`${day}T00:00:00Z`).getTime() <= now.getTime()) return day;
+    return new Date(now.getTime() - 60_000).toISOString();
+}

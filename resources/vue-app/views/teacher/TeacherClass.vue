@@ -864,13 +864,12 @@
                             <!-- Changing a line that is already recorded (owner,
                                  2026-10-07: "edit the date as well or really all
                                  aspects of their entry"). The form below is the
-                                 line; saving records the corrected line and strikes
-                                 the old one, which is what Remove and recording
-                                 again has always done, in one step. -->
+                                 line; saving corrects it in place on the server,
+                                 which keeps the old version as a struck copy. -->
                             <div v-if="hifzEditing" class="alert alert-success py-2 px-3 small mb-3 hifz-editing" role="status">
                                 <div class="fw-semibold">Changing this line</div>
                                 <div class="text-capitalize">{{ hifzLine(hifzEditing) }}</div>
-                                <div class="text-muted">Saving records the corrected line and removes the old one.</div>
+                                <div class="text-muted">Saving corrects this line. The earlier version is kept in the school's records.</div>
                             </div>
                             <div class="row g-2 align-items-end">
                                 <div class="col-6 col-sm-auto">
@@ -987,7 +986,7 @@
                                 <span class="text-capitalize flex-grow-1">
                                     <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
                                     <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
-                                    <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ hifzDayLabel(h.recited_at) }}</span>
+                                    <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ hifzDayLabel(h.recited_at, undefined, h.created_at) }}</span>
                                     <span v-if="hifzEditing && hifzEditing.id === h.id" class="badge bg-success-subtle text-success-emphasis fw-normal ms-1">being changed above</span>
                                 </span>
                                 <!-- One group, so on a phone the three actions move
@@ -5292,10 +5291,12 @@ const loadSurahs = async () => {
 
 // ---------------------------------------------- changing a recorded line
 // "Edit entry" (owner, 2026-10-07). The form above IS the editor: the line is
-// loaded into it, and saving does what this module has always asked a teacher to
-// do by hand to correct a line, in one step: record the corrected line, then
-// strike the old one. So nothing is rewritten in place except the note, the
-// history of corrections is kept exactly as before, and the realm gains no verb.
+// loaded into it, and saving sends ONE request, `POST .../hifz/{id}/correct`.
+// The server corrects the entry in place and keeps the line as it stood as a
+// struck copy, so the history of corrections is kept and the entry keeps its
+// place in the order a child's position is read from. (The first build recorded
+// a new line and struck the old one from here; a re-recorded line gets a new id,
+// which could move a child's position backwards. See HifzEntriesController::correct.)
 const hifzEditing = ref<any | null>(null);
 /** The form as it stood before a line was loaded into it, put back afterwards. */
 let hifzFormBefore: any = null;
@@ -5305,7 +5306,7 @@ const hifzLine = (h: any): string => {
     const portion = h.whole_surah
         ? `all of ${h.from?.surah_name ?? `Surah ${h.from?.surah}`}`
         : `${ayah(h.from)} → ${ayah(h.to)}`;
-    return `${hifzKindLabel(h.kind)}: ${portion} · ${hifzQualityLabel(h.quality)} · ${hifzDayLabel(h.recited_at)}`;
+    return `${hifzKindLabel(h.kind)}: ${portion} · ${hifzQualityLabel(h.quality)} · ${hifzDayLabel(h.recited_at, undefined, h.created_at)}`;
 };
 
 /**
@@ -5317,7 +5318,7 @@ const hifzEditable = (h: any): boolean =>
     !!h.from?.surah && !!h.from?.ayah && !!h.to?.ayah && h.from.surah === h.to?.surah;
 
 /** The day a line was heard, as the date box holds it; '' when it is unknown (core/helpers/hifzDay). */
-const hifzDay = (h: any): string => hifzDayOf(h.recited_at);
+const hifzDay = (h: any): string => hifzDayOf(h.recited_at, h.created_at);
 
 const startHifzEdit = (entry: any) => {
     if (hifzBusy.value || hifzEditing.value || !hifzEditable(entry)) return;
@@ -5355,20 +5356,17 @@ const cancelHifzEdit = () => {
 };
 
 /**
- * Save a changed line.
+ * Save a changed line: one request, and the server does the rest.
  *
  *  - Nothing changed: nothing is sent.
- *  - Only the NOTE changed: the note alone is rewritten in place (the same PUT
- *    "Edit note" uses), so the line keeps its id and who heard it.
- *  - Anything about WHAT WAS HEARD changed (type, surah, āyāt, quality, day):
- *    the corrected line is recorded FIRST and the old one struck SECOND. In that
- *    order a failure can only ever leave the old line beside the new one, never
- *    neither: if the strike fails the screen says so and both are in the list
- *    for the teacher to remove one.
+ *  - Otherwise the whole line goes to `.../correct`: type, surah, āyāt,
+ *    quality and the note (always sent; blank clears it).
+ *  - The day is sent ONLY when it was changed (hifzDayToSend). Left alone, the
+ *    request says nothing about it and the entry keeps the exact moment it was
+ *    heard.
  *
- * The day: left as it was, the line keeps the exact time it was heard; changed
- * to today, it is stamped now (as a new record is); changed to another day, it
- * carries that date.
+ * A refusal changes nothing on the server: the form stays as typed, in edit
+ * mode, with the reason shown.
  */
 const saveHifzEdit = async () => {
     const entry = hifzEditing.value;
@@ -5376,19 +5374,17 @@ const saveHifzEdit = async () => {
     const f = hifzForm.value;
     const wholeNow = !!f.whole_surah;
     const dayNow = f.recited_on || todayIso;
+    const dayChanged = dayNow !== (hifzDay(entry) || todayIso);
     // "Whole surah" ticked on a line that was a whole surah is the same āyāt,
     // judged without the surah list (which may not have loaded); otherwise the
     // two numbers decide.
     const rangeChanged = f.surah !== entry.from.surah
         || (wholeNow ? !entry.whole_surah : (f.from_ayah !== entry.from.ayah || f.to_ayah !== entry.to.ayah));
-    const heardChanged = f.kind !== entry.kind
-        || rangeChanged
-        || f.quality !== entry.quality
-        || dayNow !== (hifzDay(entry) || todayIso);
     const noteNow = f.note.trim();
-    const noteChanged = noteNow !== (entry.note ?? '').trim();
+    const changed = f.kind !== entry.kind || rangeChanged || f.quality !== entry.quality || dayChanged
+        || noteNow !== (entry.note ?? '').trim();
 
-    if (!heardChanged && !noteChanged) {
+    if (!changed) {
         endHifzEdit();
         return;
     }
@@ -5396,53 +5392,30 @@ const saveHifzEdit = async () => {
     recordingHifz.value = true;
     hifzError.value = '';
     try {
-        if (!heardChanged) {
-            const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: noteNow });
-            const saved = res.data?.data;
-            if (!(saved && saved.id === entry.id && 'note' in saved)) {
-                // An answer that does not say what was stored: show what the server holds.
-                endHifzEdit();
-                await loadHifz();
-                return;
-            }
-            const row = hifz.value.find((h) => h.id === entry.id);
-            if (row) row.note = saved.note ?? null;
-            endHifzEdit();
-            return;
-        }
-
-        try {
-            await TeacherApiService.post(`${base.value}/hifz`, {
-                membership_id: hifzMembership.value,
-                kind: f.kind,
-                from_surah: f.surah,
-                to_surah: f.surah,
-                ...(wholeNow ? { whole_surah: 1 } : { from_ayah: f.from_ayah, to_ayah: f.to_ayah }),
-                quality: f.quality,
-                major_mistakes: entry.major_mistakes ?? 0,
-                minor_mistakes: entry.minor_mistakes ?? 0,
-                ...(noteNow ? { note: noteNow } : {}),
-                ...(dayNow === hifzDay(entry)
-                    ? (entry.recited_at ? { recited_at: entry.recited_at } : {})
-                    : (dayNow !== todayIso ? { recited_at: hifzDayToSend(dayNow) } : {})),
-            });
-        } catch (e: any) {
-            // Nothing has changed: the old line stands, and the form keeps what was typed.
-            hifzError.value = apiErrorText(e, 'The change was not saved. Check your connection and try again.');
-            return;
-        }
-
-        let struck = true;
-        try {
-            await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
-        } catch {
-            struck = false;
-        }
+        const res = await TeacherApiService.post(`${base.value}/hifz/${entry.id}/correct`, {
+            kind: f.kind,
+            from_surah: f.surah,
+            to_surah: f.surah,
+            ...(wholeNow ? { whole_surah: 1 } : { from_ayah: f.from_ayah, to_ayah: f.to_ayah }),
+            quality: f.quality,
+            note: noteNow,
+            ...(dayChanged ? { recited_at: hifzDayToSend(dayNow) } : {}),
+        });
+        const saved = res.data?.data;
         endHifzEdit();
-        await loadHifz();
-        if (!struck) {
-            hifzError.value = 'The corrected line was recorded, but the old line could not be removed. Both are in the list below: remove the old one.';
+        if (saved && saved.id === entry.id) {
+            // The server's line, in the place the old one held. A changed day can
+            // move it in the list, so the list is read again in that case.
+            const at = hifz.value.findIndex((h) => h.id === entry.id);
+            if (at >= 0 && !dayChanged) hifz.value.splice(at, 1, saved);
+            else await loadHifz();
+        } else {
+            // An answer that does not say what was stored: show what the server holds.
+            await loadHifz();
         }
+    } catch (e: any) {
+        // Nothing has changed on the server. The form keeps what was typed.
+        hifzError.value = apiErrorText(e, 'The change was not saved. Check your connection and try again.');
     } finally {
         recordingHifz.value = false;
     }

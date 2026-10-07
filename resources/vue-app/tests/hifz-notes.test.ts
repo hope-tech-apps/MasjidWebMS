@@ -330,15 +330,21 @@ const ayahBox = (screen: any, which: 'from' | 'to') => screen.all((n: any) => n.
 const noteBox = (screen: any) => screen.all((n: any) => n.tag === 'input' && String(n.props.placeholder ?? '').startsWith('e.g. struggled'))[0];
 const valueOf = (el: any) => el.value ?? el.props.value ?? '';
 const editingBox = (screen: any) => screen.all((n: any) => n.kind === 'el' && String(n.props.class ?? '').includes('hifz-editing'))[0];
-// A line heard at a real moment (not a chosen date), so "the day left alone keeps the exact time" can be seen.
+// A line heard at a real moment (typed the same second), so "the day left alone says nothing about the day" can be seen.
 const heard = (id: number, note: string | null, extra: Record<string, any> = {}) =>
-    ({ ...row(id, note), recited_at: '2026-10-01T15:00:00+00:00', major_mistakes: 0, minor_mistakes: 0, ...extra });
+    ({ ...row(id, note), recited_at: '2026-10-01T15:00:00+00:00', created_at: '2026-10-01T15:00:00+00:00', major_mistakes: 0, minor_mistakes: 0, ...extra });
 
 async function editing(rows: any[], extra: Record<string, any> = {}) {
     const calls: { verb: string; url: string; body?: any }[] = [];
     const short = (url: string) => url.replace(/^.*\/groups\/2/, '');
     const opened = await openHifdh(rows, {
-        post: async (url: string, body: any) => { calls.push({ verb: 'post', url: short(url), body }); return ok({ id: 500 }); },
+        // The server's answer to a correction: the same entry, carrying what was sent.
+        post: async (url: string, body: any) => {
+            calls.push({ verb: 'post', url: short(url), body });
+            const line = rows.find((r) => url.endsWith(`/hifz/${r.id}/correct`)) ?? rows[0];
+            return ok({ ...line, kind: body.kind, quality: body.quality, note: body.note || null,
+                to: { ...line.to, ayah: body.to_ayah ?? line.to.ayah }, recited_at: body.recited_at ?? line.recited_at });
+        },
         put: async (url: string, body: any) => { calls.push({ verb: 'put', url: short(url), body }); return ok({ ...rows[0], note: body.note || null }); },
         delete: async (url: string) => { calls.push({ verb: 'delete', url: short(url) }); return ok({}); },
         ...extra,
@@ -353,7 +359,7 @@ test('Edit entry loads the whole line into the form, holds the other lines, and 
 
         assert.ok(editingBox(screen).textContent.includes('Changing this line'), editingBox(screen).textContent);
         assert.ok(editingBox(screen).textContent.includes('Recent revision: An-Naba 1 → An-Naba 10'), editingBox(screen).textContent);
-        assert.ok(editingBox(screen).textContent.includes('Saving records the corrected line and removes the old one.'));
+        assert.ok(editingBox(screen).textContent.includes("Saving corrects this line. The earlier version is kept in the school's records."));
         // (The type and the quality are drop-downs, which this harness cannot read
         // back; the next test proves they were loaded by what Save then sends.)
         assert.equal(String(valueOf(ayahBox(screen, 'from'))), '1');
@@ -378,26 +384,27 @@ test('Edit entry loads the whole line into the form, holds the other lines, and 
     } finally { screen.unmount(); }
 });
 
-test('changing the day records the corrected line first and strikes the old one second', async () => {
+test('changing the day sends ONE correction for that entry, with the chosen day and the rest of the line as it is', async () => {
     const { screen, calls } = await editing([heard(1, 'Keep this note.', { kind: 'sabqi', quality: 'fair' })]);
     try {
         click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
         type(dateBox(screen), '2026-09-29'); await flush();
         click(screen.button('Save changes')); await flush(16);
 
-        assert.deepEqual(calls.map((c) => `${c.verb} ${c.url}`), ['post /hifz', 'delete /hifz/1']);
+        assert.deepEqual(calls.map((c) => `${c.verb} ${c.url}`), ['post /hifz/1/correct'], 'one request: nothing is struck or recorded from the screen');
         assert.deepEqual(calls[0].body, {
             // The type and quality are the LINE's, loaded into the form, not the form's defaults.
-            membership_id: 9, kind: 'sabqi', from_surah: 78, to_surah: 78, from_ayah: 1, to_ayah: 10,
-            quality: 'fair', major_mistakes: 0, minor_mistakes: 0, note: 'Keep this note.',
+            kind: 'sabqi', from_surah: 78, to_surah: 78, from_ayah: 1, to_ayah: 10, quality: 'fair',
+            note: 'Keep this note.',
             // A chosen day goes as noon UTC of that day, never a bare date.
             recited_at: '2026-09-29T12:00:00Z',
         });
+        assert.equal('membership_id' in calls[0].body, false, 'a correction never names a student');
         assert.equal(editingBox(screen), undefined, 'edit mode is over');
     } finally { screen.unmount(); }
 });
 
-test('changing the ayahs or the quality but not the day keeps the exact time the line was heard', async () => {
+test('changing the ayahs or the quality but not the day says nothing about the day, and the line shows the server\'s answer', async () => {
     const { screen, calls } = await editing([heard(1, null)]);
     try {
         click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
@@ -405,22 +412,25 @@ test('changing the ayahs or the quality but not the day keeps the exact time the
         chooseOption(qualitySelect(screen), 'excellent'); await flush();
         click(screen.button('Save changes')); await flush(16);
 
-        assert.deepEqual(calls.map((c) => `${c.verb} ${c.url}`), ['post /hifz', 'delete /hifz/1']);
+        assert.deepEqual(calls.map((c) => `${c.verb} ${c.url}`), ['post /hifz/1/correct']);
         assert.equal(calls[0].body.to_ayah, 12);
         assert.equal(calls[0].body.quality, 'excellent');
-        assert.equal(calls[0].body.recited_at, '2026-10-01T15:00:00+00:00');
-        assert.equal('note' in calls[0].body, false, 'a line with no note is recorded with none');
+        assert.equal('recited_at' in calls[0].body, false, 'the entry keeps the moment it was heard');
+        assert.equal(calls[0].body.note, '', 'the note is always sent; blank means none');
+        const line = rowsOn(screen)[0].textContent;
+        assert.ok(line.includes('An-Naba 1 → An-Naba 12') && line.includes('· Excellent ·'), line);
     } finally { screen.unmount(); }
 });
 
-test('when only the note is changed in the form, the note alone is rewritten and the line is not replaced', async () => {
+test('changing only the note in the form is still one correction, and the line shows the new words', async () => {
     const { screen, calls } = await editing([heard(1, 'Old words.')]);
     try {
         click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
         type(noteBox(screen), 'New words.'); await flush();
         click(screen.button('Save changes')); await flush(16);
 
-        assert.deepEqual(calls, [{ verb: 'put', url: '/hifz/1', body: { note: 'New words.' } }]);
+        assert.deepEqual(calls.map((c) => `${c.verb} ${c.url}`), ['post /hifz/1/correct']);
+        assert.equal(calls[0].body.note, 'New words.');
         assert.ok(rowsOn(screen)[0].textContent.includes('New words.'), rowsOn(screen)[0].textContent);
         assert.equal(editingBox(screen), undefined);
     } finally { screen.unmount(); }
@@ -436,41 +446,36 @@ test('saving a line that was not changed sends nothing', async () => {
     } finally { screen.unmount(); }
 });
 
-test('a correction the server refuses changes nothing: the old line stands and the form keeps what was typed', async () => {
-    const { screen, calls } = await editing([heard(1, null)], {
-        post: async () => { throw httpError(422, { message: 'The to ayah is past the end of this surah.' }); },
+for (const [what, change] of [
+    ['a changed ayah', async (screen: any) => { type(ayahBox(screen, 'to'), '40'); }],
+    ['a changed note alone', async (screen: any) => { type(noteBox(screen), 'New words.'); }],
+] as const) {
+    test(`a correction the server refuses (${what}) says why, changes nothing and keeps what was typed`, async () => {
+        const { screen, calls } = await editing([heard(1, 'Old words.')], {
+            post: async () => { throw httpError(422, { message: 'The to ayah is past the end of this surah.' }); },
+        });
+        try {
+            click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
+            await change(screen); await flush();
+            click(screen.button('Save changes')); await flush(16);
+
+            assert.deepEqual(calls, [], 'nothing else is sent after a refusal');
+            assert.ok(screen.text().includes('The to ayah is past the end of this surah.'), screen.text());
+            assert.ok(editingBox(screen), 'still in edit mode');
+            assert.ok(rowsOn(screen)[0].textContent.includes('Old words.'), 'the line is as it was');
+            assert.equal(screen.button('Save changes').disabled, false, 'and can be tried again');
+        } finally { screen.unmount(); }
     });
-    try {
-        click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
-        type(ayahBox(screen, 'to'), '40'); await flush();
-        click(screen.button('Save changes')); await flush(16);
-
-        assert.deepEqual(calls.filter((c) => c.verb === 'delete'), [], 'the old line is never struck when the new one was refused');
-        assert.ok(screen.text().includes('The to ayah is past the end of this surah.'), screen.text());
-        assert.ok(editingBox(screen), 'still in edit mode');
-        assert.equal(String(valueOf(ayahBox(screen, 'to'))), '40');
-    } finally { screen.unmount(); }
-});
-
-test('if the old line cannot be struck after the corrected one is recorded, the screen says both are in the list', async () => {
-    const { screen, calls } = await editing([heard(1, null)], {
-        delete: async () => { throw httpError(500, { message: 'Server error.' }); },
-    });
-    try {
-        click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
-        chooseOption(kindSelect(screen), 'manzil'); await flush();
-        click(screen.button('Save changes')); await flush(16);
-
-        assert.deepEqual(calls.map((c) => c.verb), ['post']);
-        assert.ok(screen.text().includes('The corrected line was recorded, but the old line could not be removed. Both are in the list below: remove the old one.'), screen.text());
-        assert.equal(editingBox(screen), undefined);
-    } finally { screen.unmount(); }
-});
+}
 
 test('a line that runs across two surahs has no Edit entry, and a chosen day reads as that day in the list', async () => {
     const across = { ...heard(1, 'Across two.'), from: { surah: 113, surah_name: 'Al-Falaq', ayah: 1 }, to: { surah: 114, surah_name: 'An-Nas', ayah: 6 } };
-    // Stored the old way (a bare date, midnight UTC) and the new way (noon UTC).
-    const { screen } = await editing([across, { ...heard(2, null), recited_at: '2026-09-17T00:00:00+00:00' }, { ...heard(3, null), recited_at: '2026-10-05T12:00:00+00:00' }]);
+    // Stored the old way (a bare date, midnight UTC) and the new way (noon UTC), both typed later than the day they name.
+    const { screen } = await editing([
+        across,
+        { ...heard(2, null), recited_at: '2026-09-17T00:00:00+00:00', created_at: '2026-09-20T18:00:00+00:00' },
+        { ...heard(3, null), recited_at: '2026-10-05T12:00:00+00:00', created_at: '2026-10-06T18:00:00+00:00' },
+    ]);
     try {
         const rows = rowsOn(screen);
         assert.equal(buttonIn(rows[0], 'Edit entry'), undefined);

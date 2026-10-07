@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Groups\CorrectHifzEntryRequest;
 use App\Http\Requests\Admin\Groups\StoreHifzEntryRequest;
 use App\Models\Contact;
 use App\Models\Group;
@@ -17,6 +18,7 @@ use App\Support\QuranIndex;
 use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -60,7 +62,7 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * ## The two gates, mirroring the feed
  *
- *   - WRITING (record / strike / reword a note) is `permission:manage contacts`, exactly like
+ *   - WRITING (record / correct / strike / reword a note) is `permission:manage contacts`, exactly like
  *     the roster endpoints beside it: the accountable administrator acts, and
  *     the entry records WHICH account heard it (`heard_by_user_id`) or corrected
  *     it (`corrected_by_user_id`). An admin who is not on the roster can
@@ -356,6 +358,138 @@ class HifzEntriesController extends Controller
     }
 
     /**
+     * POST .../groups/{group_id}/hifz/{entry_id}/correct — correct a recorded line.
+     *
+     * The owner, 2026-10-07: "Will the teacher be able to edit the date as well or
+     * really all aspects of their entry? ... we will need this."
+     *
+     * WHY THIS IS NOT "STRIKE AND RECORD AGAIN" DONE FOR THE TEACHER. That was the
+     * first build, and the pre-ship review broke it: HifzProgress reads a child's
+     * position from the LAST sabak by (recited_at, id). A re-recorded line gets a
+     * new, higher id, so correcting the quality of the EARLIER of two lines heard
+     * at the same moment (every backdated line of a day shares one) made it the
+     * later one, and the child's position moved BACKWARDS though no āyah had
+     * changed. A correction must keep the entry's place in that order, which
+     * means keeping the entry.
+     *
+     * SO THE ENTRY IS CORRECTED IN PLACE, AND THE HISTORY IS KEPT BESIDE IT. In
+     * one transaction: the line as it stood is written as a STRUCK copy
+     * (soft-deleted, `corrected_by_user_id` = who corrected it), then the entry
+     * itself takes the corrected values. The struck copy is what "strike and
+     * record again" used to leave behind, so the audit trail this module was
+     * built around is the same; the live entry keeps its id, who heard it, and
+     * (unless the day is changed) the moment it was heard.
+     *
+     * Only the NOTE changed: no struck copy. The note is commentary, edited in
+     * place by design (updateNote), and it is logged the same way.
+     * Nothing changed: nothing is written.
+     *
+     * NEVER the student: there is no `membership_id` on this request. A line
+     * recorded for the wrong child is struck and recorded for the right one.
+     *
+     * Same gate as record and strike. A struck entry is a MISS (404).
+     */
+    public function correct(CorrectHifzEntryRequest $request, $masjid_id, $group_id, $entry_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $entry = $group->hifzEntries()->findOrFail($entry_id);
+
+        $heard = [
+            'kind' => $request->input('kind'),
+            'from_surah' => $request->integer('from_surah'),
+            'from_ayah' => $request->integer('from_ayah'),
+            'to_surah' => $request->integer('to_surah'),
+            'to_ayah' => $request->integer('to_ayah'),
+            'quality' => $request->input('quality'),
+        ];
+
+        // The mistakes ride along only when a client speaks about them.
+        foreach (['major_mistakes', 'minor_mistakes'] as $count) {
+            if ($request->has($count)) {
+                $heard[$count] = $request->integer($count);
+            }
+        }
+
+        // ABSENT means "the day was not changed": the entry keeps the moment it
+        // was heard, to the second, which is also what keeps its place in the
+        // order HifzProgress reads.
+        if ($request->filled('recited_at')) {
+            $heard['recited_at'] = $request->date('recited_at');
+        }
+
+        $note = trim((string) $request->input('note', ''));
+        $note = $note === '' ? null : $note;
+
+        try {
+            $result = DB::transaction(function () use ($entry, $heard, $note, $request) {
+                // The line as it stood, taken before anything is filled.
+                $was = $entry->replicate();
+                $noteBefore = $entry->note;
+
+                $entry->fill($heard);
+                $changed = array_keys($entry->getDirty());
+                $struckCopyId = null;
+
+                if ($changed !== []) {
+                    // replicate() leaves the timestamps out; a copy of the old line
+                    // was first recorded when the line was.
+                    $was->created_at = $entry->created_at;
+                    $was->corrected_by_user_id = $request->user()?->id;
+                    $was->save();
+                    $was->delete();
+                    $struckCopyId = $was->id;
+                }
+
+                $entry->note = $note;
+                $noteChanged = $entry->isDirty('note');
+
+                if ($changed !== [] || $noteChanged) {
+                    $entry->save();
+                }
+
+                return [$changed, $noteChanged, $struckCopyId, $noteBefore];
+            });
+
+            [$changed, $noteChanged, $struckCopyId, $noteBefore] = $result;
+
+            if ($changed !== []) {
+                // Field NAMES only: what was heard about a child is not log text.
+                Log::warning('Hifdh entry corrected', [
+                    'masjid_id' => $entry->masjid_id,
+                    'group_id' => $entry->group_id,
+                    'entry_id' => $entry->id,
+                    'struck_copy_id' => $struckCopyId,
+                    'by_user_id' => $request->user()?->id,
+                    'heard_by_user_id' => $entry->heard_by_user_id,
+                    'changed' => $changed,
+                    'note_changed' => $noteChanged,
+                ]);
+            } elseif ($noteChanged) {
+                Log::warning('Hifdh note edited', [
+                    'masjid_id' => $entry->masjid_id,
+                    'group_id' => $entry->group_id,
+                    'entry_id' => $entry->id,
+                    'by_user_id' => $request->user()?->id,
+                    'heard_by_user_id' => $entry->heard_by_user_id,
+                    'had_note' => filled($noteBefore),
+                    'has_note' => filled($entry->note),
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $this->serialize($entry->fresh()->load($this->readEagerLoads())),
+                'meta' => $this->meta() + ['changed' => $changed, 'note_changed' => $noteChanged],
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
      * DELETE .../groups/{group_id}/hifz/{entry_id} — strike a mis-recorded entry.
      *
      * A teacher tapped the wrong student, or typed 2:255 when they meant 2:225.
@@ -366,10 +500,11 @@ class HifzEntriesController extends Controller
      * The entry leaves every listing, every total and every derivation at once
      * through the ordinary soft-delete scope, and `corrected_by_user_id` records
      * who made the correction — a change to a child's academic record is itself
-     * accountable. WHAT WAS HEARD is never edited in place, on purpose: striking
-     * and re-recording leaves an audit trail where an in-place edit would quietly
-     * rewrite what a teacher said they heard. The one field that is edited in
-     * place is the note, which is commentary and moves nothing (updateNote).
+     * accountable. WHAT WAS HEARD is never rewritten WITHOUT A TRACE, on purpose:
+     * an in-place edit that left nothing behind would quietly rewrite what a
+     * teacher said they heard. So a correction (correct) keeps the old line as a
+     * struck copy beside the corrected entry, and the one field edited with no
+     * copy is the note, which is commentary and moves nothing (updateNote).
      *
      * Administration, so `manage contacts` alone, with no read gate — the same
      * call as revoking an award. Idempotent: striking an already-struck entry

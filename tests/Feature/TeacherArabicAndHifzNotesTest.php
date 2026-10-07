@@ -530,6 +530,235 @@ class TeacherArabicAndHifzNotesTest extends TestCase
         $this->assertSame('Struck.', \App\Models\HifzEntry::withTrashed()->findOrFail($entry->id)->note);
     }
 
+    // ------------------------------------------------------------------
+    // Correcting a recorded line (owner, 2026-10-07): POST .../hifz/{id}/correct.
+    // In place, with the line as it stood kept as a struck copy.
+    // ------------------------------------------------------------------
+
+    /** The line `recitation()` records, as a correction body, with overrides. */
+    private function line(array $over = []): array
+    {
+        return $over + [
+            'kind' => 'sabak', 'from_surah' => 114, 'from_ayah' => 1, 'to_surah' => 114, 'to_ayah' => 6,
+            'quality' => 'excellent', 'note' => null,
+        ];
+    }
+
+    private function correctUrl(\App\Models\HifzEntry $entry): string
+    {
+        return $this->hifzUrl($entry).'/correct';
+    }
+
+    /** @return \Illuminate\Support\Collection<int, \App\Models\HifzEntry> the struck rows of the student */
+    private function struck(): \Illuminate\Support\Collection
+    {
+        return \App\Models\HifzEntry::withoutGlobalScopes()->onlyTrashed()
+            ->where('group_membership_id', $this->student->id)->orderBy('id')->get();
+    }
+
+    #[Test]
+    public function a_correction_changes_the_line_in_place_and_keeps_the_line_as_it_stood_as_a_struck_copy(): void
+    {
+        $entry = $this->recitation('First words.');
+        $heardAt = $entry->recited_at->toIso8601String();
+        $createdAt = $entry->created_at->toIso8601String();
+
+        $this->postJson($this->correctUrl($entry), $this->line([
+            'quality' => 'fair', 'to_ayah' => 4, 'note' => 'First words.',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('data.id', $entry->id)
+            ->assertJsonPath('data.quality', 'fair')
+            ->assertJsonPath('data.to.ayah', 4)
+            ->assertJsonPath('data.note', 'First words.')
+            ->assertJsonPath('data.heard_by.id', $this->teacher->id);
+
+        $now = $entry->fresh();
+        $this->assertSame('fair', $now->quality);
+        $this->assertSame(4, $now->to_ayah);
+        // The day was not sent: the moment it was heard is untouched, to the second.
+        $this->assertSame($heardAt, $now->recited_at->toIso8601String());
+        $this->assertSame($createdAt, $now->created_at->toIso8601String());
+        $this->assertNull($now->corrected_by_user_id);
+
+        // The history: one struck copy holding what the line said before, and who corrected it.
+        $struck = $this->struck();
+        $this->assertCount(1, $struck);
+        $this->assertSame('excellent', $struck[0]->quality);
+        $this->assertSame(6, $struck[0]->to_ayah);
+        $this->assertSame('First words.', $struck[0]->note);
+        $this->assertSame($this->teacher->id, $struck[0]->corrected_by_user_id);
+        $this->assertSame($this->teacher->id, $struck[0]->heard_by_user_id);
+        $this->assertSame($heardAt, $struck[0]->recited_at->toIso8601String());
+
+        // The teacher's list holds the one corrected line and nothing of the copy.
+        $this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/hifz")
+            ->assertOk()->assertJsonCount(1, 'data.data')->assertJsonPath('data.data.0.quality', 'fair');
+    }
+
+    #[Test]
+    public function correcting_the_earlier_of_two_lines_heard_at_the_same_moment_does_not_move_the_childs_position(): void
+    {
+        // Two new-memorization lines of one day, entered for an earlier date: both
+        // carry the same instant, so only their ids order them.
+        $day = '2026-10-05';
+        $first = $this->postJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz", [
+            'membership_id' => $this->student->id, 'kind' => 'sabak', 'quality' => 'good',
+            'from_surah' => 78, 'from_ayah' => 1, 'to_surah' => 78, 'to_ayah' => 10, 'recited_at' => $day,
+        ])->assertSuccessful()->json('data.id');
+        $this->postJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz", [
+            'membership_id' => $this->student->id, 'kind' => 'sabak', 'quality' => 'good',
+            'from_surah' => 78, 'from_ayah' => 11, 'to_surah' => 78, 'to_ayah' => 20, 'recited_at' => $day,
+        ])->assertSuccessful();
+
+        $progress = "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/hifz/progress";
+        $this->getJson($progress)->assertOk()->assertJsonPath('data.current_position.ayah', 20);
+
+        // Only the QUALITY of the earlier line changes.
+        $this->postJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz/{$first}/correct",
+            ['kind' => 'sabak', 'from_surah' => 78, 'from_ayah' => 1, 'to_surah' => 78, 'to_ayah' => 10, 'quality' => 'excellent', 'note' => null]
+        )->assertOk()->assertJsonPath('data.id', $first);
+
+        // The child is still at the end of the LATER line. (Striking and recording
+        // again gave the earlier line a higher id and put the child back at 78:10.)
+        $this->getJson($progress)->assertOk()
+            ->assertJsonPath('data.current_position.surah', 78)
+            ->assertJsonPath('data.current_position.ayah', 20);
+    }
+
+    #[Test]
+    public function a_corrected_day_moves_the_line_and_a_day_in_the_future_is_refused(): void
+    {
+        $entry = $this->recitation(null);
+
+        $this->postJson($this->correctUrl($entry), $this->line(['recited_at' => '2026-09-29T12:00:00Z']))
+            ->assertOk()
+            ->assertJsonPath('data.recited_at', '2026-09-29T12:00:00+00:00');
+        $this->assertSame('2026-09-29 12:00:00', $entry->fresh()->recited_at->toDateTimeString());
+        $this->assertCount(1, $this->struck());
+
+        $this->postJson($this->correctUrl($entry), $this->line(['recited_at' => now()->addDay()->toIso8601String()]))
+            ->assertStatus(422);
+        $this->assertSame('2026-09-29 12:00:00', $entry->fresh()->recited_at->toDateTimeString());
+        $this->assertCount(1, $this->struck(), 'a refused correction leaves no copy');
+    }
+
+    #[Test]
+    public function when_only_the_note_differs_the_note_is_rewritten_and_no_copy_is_struck_and_an_unchanged_line_writes_nothing(): void
+    {
+        $entry = $this->recitation('Old words.');
+        $stamp = $entry->fresh()->updated_at->toIso8601String();
+
+        \Illuminate\Support\Facades\Log::spy();
+
+        // Unchanged.
+        $this->travel(5)->seconds();
+        $this->postJson($this->correctUrl($entry), $this->line(['note' => 'Old words.']))
+            ->assertOk()->assertJsonPath('meta.changed', [])->assertJsonPath('meta.note_changed', false);
+        $this->assertSame($stamp, $entry->fresh()->updated_at->toIso8601String());
+        $this->assertCount(0, $this->struck());
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('warning');
+
+        // Only the note.
+        $this->postJson($this->correctUrl($entry), $this->line(['note' => 'New words.']))
+            ->assertOk()->assertJsonPath('data.note', 'New words.')->assertJsonPath('meta.changed', []);
+        $this->assertSame('New words.', $entry->fresh()->note);
+        $this->assertCount(0, $this->struck());
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $m, array $c): bool => $m === 'Hifdh note edited' && ! str_contains(json_encode($c), 'words'))
+            ->once();
+    }
+
+    #[Test]
+    public function a_correction_is_held_to_the_mushaf_and_a_refused_one_changes_nothing(): void
+    {
+        $entry = $this->recitation('Kept.');
+
+        // An-Nas has 6 ayahs.
+        $this->postJson($this->correctUrl($entry), $this->line(['to_ayah' => 7, 'note' => 'Kept.']))->assertStatus(422);
+        // The end before the start.
+        $this->postJson($this->correctUrl($entry), $this->line(['from_ayah' => 5, 'to_ayah' => 2, 'note' => 'Kept.']))->assertStatus(422);
+        // No note key at all.
+        $body = $this->line(['quality' => 'repeat']);
+        unset($body['note']);
+        $this->postJson($this->correctUrl($entry), $body)->assertStatus(422);
+        // Not a quality the school has.
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'perfect', 'note' => 'Kept.']))->assertStatus(422);
+
+        $now = $entry->fresh();
+        $this->assertSame('excellent', $now->quality);
+        $this->assertSame(6, $now->to_ayah);
+        $this->assertSame('Kept.', $now->note);
+        $this->assertCount(0, $this->struck());
+
+        // "Whole surah" is filled in by the server, as on a new record.
+        $this->postJson($this->correctUrl($entry), [
+            'kind' => 'sabqi', 'from_surah' => 112, 'to_surah' => 112, 'whole_surah' => true, 'quality' => 'good', 'note' => 'Kept.',
+        ])->assertOk()->assertJsonPath('data.whole_surah', true)->assertJsonPath('data.to.ayah', 4)->assertJsonPath('data.kind', 'sabqi');
+    }
+
+    #[Test]
+    public function a_correction_cannot_move_a_line_to_another_student_or_rename_who_heard_it(): void
+    {
+        $entry = $this->recitation(null);
+        $other = GroupMembership::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->mine->id,
+            'contact_id' => Contact::factory()->create(['masjid_id' => $this->school->id])->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+        ]);
+
+        $this->postJson($this->correctUrl($entry), $this->line([
+            'quality' => 'good', 'membership_id' => $other->id, 'group_membership_id' => $other->id,
+            'heard_by_user_id' => 999999, 'group_id' => $this->notMine->id, 'masjid_id' => 999999,
+        ]))->assertOk();
+
+        $now = $entry->fresh();
+        $this->assertSame('good', $now->quality);
+        $this->assertSame($this->student->id, $now->group_membership_id);
+        $this->assertSame($this->teacher->id, $now->heard_by_user_id);
+        $this->assertSame($this->mine->id, $now->group_id);
+        $this->assertSame($this->school->id, $now->masjid_id);
+    }
+
+    #[Test]
+    public function a_correction_is_logged_by_field_names_only_and_keeps_the_same_fences_as_recording(): void
+    {
+        $entry = $this->recitation('Private words about a child.');
+
+        \Illuminate\Support\Facades\Log::spy();
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'repeat', 'note' => 'Private words about a child.']))->assertOk();
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($entry): bool {
+                return $message === 'Hifdh entry corrected'
+                    && $context['entry_id'] === $entry->id
+                    && $context['by_user_id'] === $this->teacher->id
+                    && $context['changed'] === ['quality']
+                    && is_int($context['struck_copy_id'])
+                    && ! str_contains(json_encode($context), 'Private')
+                    && ! str_contains(json_encode($context), 'repeat');
+            })->once();
+
+        // A struck entry is a miss.
+        $struckId = $this->struck()[0]->id;
+        $this->postJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz/{$struckId}/correct",
+            $this->line()
+        )->assertNotFound();
+
+        // A teacher limited to another subject is refused, and nothing changes.
+        GroupStaff::query()->where('group_id', $this->mine->id)
+            ->update(['subjects' => json_encode([GroupStaff::SUBJECT_ARABIC])]);
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'good']))->assertForbidden();
+        $this->assertSame('repeat', $entry->fresh()->quality);
+
+        // A class the teacher does not lead.
+        $this->postJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->notMine->id}/hifz/{$entry->id}/correct",
+            $this->line(['quality' => 'good'])
+        )->assertForbidden();
+    }
+
     /** One recitation for the student, recorded by the teacher through the real door. */
     private function recitation(?string $note): \App\Models\HifzEntry
     {

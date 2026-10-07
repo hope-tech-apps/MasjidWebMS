@@ -771,6 +771,13 @@ class TeacherMultiSchoolTest extends TestCase
             // The note alone (2026-10-07). Like the DELETE beside it, a miss in the
             // other school: the entry is found through the class, inside the tenant.
             'PUT /groups/{group_id}/hifz/{entry_id}' => ['body' => fn () => ['note' => 'Sweep note.']],
+            'POST /groups/{group_id}/hifz/{entry_id}/correct' => [
+                'body' => fn () => [
+                    'kind' => HifzEntry::KIND_SABAK,
+                    'from_surah' => 78, 'from_ayah' => 1, 'to_surah' => 78, 'to_ayah' => 6,
+                    'quality' => HifzEntry::QUALITY_EXCELLENT, 'note' => 'Sweep correction.',
+                ],
+            ],
             'DELETE /groups/{group_id}/hifz/{entry_id}' => [],
 
             // -- class story

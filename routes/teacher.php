@@ -306,6 +306,9 @@ Route::prefix('teacher')
                         // The NOTE alone (owner, 2026-10-07). What was heard is
                         // still corrected by striking and recording again.
                         Route::put('/hifz/{entry_id}', [HifzEntriesController::class, 'updateNote']);
+                        // A recorded line corrected in place, the old line kept
+                        // as a struck copy (owner, 2026-10-07). Never the student.
+                        Route::post('/hifz/{entry_id}/correct', [HifzEntriesController::class, 'correct']);
                         Route::delete('/hifz/{entry_id}', [HifzEntriesController::class, 'destroy']);
                         Route::get('/members/{membership_id}/hifz', [HifzEntriesController::class, 'forMember']);
                         Route::get('/members/{membership_id}/hifz/progress', [HifzEntriesController::class, 'progress']);

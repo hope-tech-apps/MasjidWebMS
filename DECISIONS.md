@@ -9285,25 +9285,32 @@ device, browser layout or production cache verification was performed.
 
 - **Asked by the owner** after the note editor: "Will the teacher be able to edit the date as well or really all
   aspects of their entry?", then "we will need this".
-- **How, without rewriting what was heard in place.** "Edit entry" loads the line into the form at the top of the
-  tab (type, surah, ayahs, quality, day, note). Saving does what this module has always asked a teacher to do by
-  hand: the corrected line is RECORDED, then the old one is STRUCK. So `corrected_by_user_id` and the soft delete
-  still carry the history of corrections, HifzProgress derives the position from the corrected line, and the
-  teacher realm gains no verb (one `POST .../hifz`, one `DELETE .../hifz/{entry_id}`). New first, old second: a
-  failure between the two leaves both lines in the list and the screen says so; it can never leave neither.
-- **Only the note changed** in that form: the note alone is rewritten in place (the PUT), the line keeps its id.
-  **Nothing changed**: nothing is sent.
-- **The day.** Left alone, the corrected line keeps the exact time the original was heard. Changed to today, it is
-  stamped now. Changed to another day, it is sent as noon UTC of that day.
+- **What the teacher gets.** "Edit entry" loads the line into the form at the top of the tab (type, surah, ayahs,
+  quality, day, note). Save changes sends ONE request, `POST .../groups/{group_id}/hifz/{entry_id}/correct`.
+- **What the server does: corrects the entry in place and keeps the line as it stood as a struck copy**, in one
+  transaction (soft-deleted row, `corrected_by_user_id` = who corrected it). So the history of corrections this
+  module was built around is still there, the entry keeps its id and who heard it, and nothing a teacher recorded
+  is rewritten without a trace. Only the note differs: no copy (the note is commentary). Nothing differs: nothing
+  is written. No `membership_id`: a correction never moves a recitation to another student.
+- **Why not "record the corrected line, then strike the old one" from the screen**, which was the first build and
+  needed no server change: the second agent's review broke it. HifzProgress reads a child's position from the last
+  new-memorization line by `(recited_at, id)`. A re-recorded line gets a higher id, so correcting only the QUALITY
+  of the earlier of two lines that share an instant put the child back at the earlier line's end. Every line
+  entered for an earlier day shares its instant with the others of that day, and that is every line in production
+  today. A correction has to keep the entry, so it had to be the server's.
+- **The day.** Sent only when it was changed; left alone, the entry keeps the exact moment it was heard.
 - **A bug found on the way, live since backdating shipped.** A day chosen in the date box was sent as a bare date,
   stored as midnight UTC, and every list formatted that instant in the reader's zone: in the Americas a line
   dated the 5th read the 4th, on the teacher's, the family's and the office's screens. `core/helpers/hifzDay.ts`
-  is now the one reading (an instant at exactly 00:00:00 or 12:00:00 UTC is a chosen DATE and reads as its UTC
-  calendar day; any other instant is a real moment and reads as the reader's day), used by all three lists, and
-  the form sends noon UTC. No stored row is changed: the rows already at midnight UTC simply read correctly.
+  is now the one reading, used by all three lists: an instant at exactly 00:00:00 or 12:00:00 UTC is a chosen
+  DATE and reads as its UTC calendar day, any other instant is a real moment and reads as the reader's day; where
+  the payload carries `created_at` (teacher, office), an instant typed the same second it names is a real moment
+  even at midnight or noon. The form now sends noon UTC of the chosen day, or midnight UTC, or a minute ago when
+  those have not happened yet for a reader far east of Greenwich (the server refuses the future). No stored row is
+  changed: the rows already at midnight UTC simply read correctly.
 - **While a line is loaded into the form** the student box and every line's own actions wait for Save changes or
-  Cancel, and a record in flight now holds the tab like a note save or a copy does (a record used to be able to
-  reload the list under an open note editor).
+  Cancel; a record or a correction in flight holds the tab like a note save or a copy does.
 - **Not offered** on a line that runs across two surahs: the form records one surah. Its note can still be changed.
-- **Not done**: the mistakes counts are carried over unchanged (no screen edits them); the corrected line's
-  `heard_by` is the teacher who corrected it; the office's Hifdh tab has no Edit entry.
+- **Known and left**: the family's payload has no `created_at`, so a recitation recorded for a family's child at
+  exactly 00:00:00 or 12:00:00 UTC (one second in 43,200) reads there as its UTC day; the mistakes counts are not
+  editable on any screen; the office's Hifdh tab has no Edit entry.

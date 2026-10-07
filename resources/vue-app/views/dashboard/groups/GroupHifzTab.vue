@@ -103,7 +103,7 @@
                                 <span class="text-warning">{{ entry.minor_mistakes }}</span>
                             </td>
                             <td class="text-capitalize">{{ hifzQualityLabel(entry.quality) }}</td>
-                            <td class="small text-muted">{{ hifzDayLabel(entry.recited_at) || '—' }}</td>
+                            <td class="small text-muted">{{ hifzDayLabel(entry.recited_at, undefined, entry.created_at) || '—' }}</td>
                             <td class="text-end">
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmStrike(entry)" title="Strike">
                                     <i class="bi bi-eraser"></i>

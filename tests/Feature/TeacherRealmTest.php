@@ -203,6 +203,12 @@ class TeacherRealmTest extends TestCase
             // still moves only by recording and striking. Same fence as the two
             // beside it (`teacher.teaches:quran`).
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
+            // Correcting a recorded line (2026-10-07, owner's request): the day, the
+            // portion, the type, the quality. It cannot name a student, so it moves
+            // no recitation between children, and it leaves the old line behind as
+            // a struck copy, so nothing a teacher recorded is rewritten without a
+            // trace. Same fence as the verbs beside it.
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}/correct',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',
             // Two VIDEO playback tickets, 2026-09-24, and they are the only

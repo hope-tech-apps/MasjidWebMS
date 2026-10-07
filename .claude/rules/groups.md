@@ -1684,16 +1684,34 @@ entry would be unreadable data about a minor, kept forever).
 
 **Correction is the soft delete**, as revocation is for an award: `deleted_at`
 drops the entry from every listing, every total and every derivation at once, and
-`corrected_by_user_id` records who did it. WHAT WAS HEARD is never edited in
-place, on purpose — striking and re-recording leaves an audit trail where an
-in-place edit would quietly rewrite what a teacher said they heard.
+`corrected_by_user_id` records who did it. WHAT WAS HEARD is never rewritten
+without a trace, on purpose — an edit that left nothing behind would quietly
+rewrite what a teacher said they heard.
+
+**A recorded line is corrected IN PLACE, with the old line kept as a struck copy**
+(owner, 2026-10-07): `POST .../groups/{group_id}/hifz/{entry_id}/correct`
+(teacher realm, `teacher.teaches:quran`). In one transaction the line as it stood
+is written as a soft-deleted row carrying `corrected_by_user_id`, then the entry
+takes the corrected kind, range, quality and (only when sent) day. It is NOT
+"strike and record again": HifzProgress orders by `(recited_at, id)`, so a
+re-recorded line with a new id can move a child's position backwards among lines
+that share an instant (every backdated line of a day does). The request has no
+`membership_id`: a correction never moves a recitation to another student.
 
 **The note is the one field edited in place** (owner, 2026-10-07):
 `PUT .../groups/{group_id}/hifz/{entry_id}` (teacher realm, `teacher.teaches:quran`)
 takes `note` and nothing else. It is commentary, read by no derivation, so it
 cannot move a child's position. Whoever may record and strike may reword it; each
 change writes a WARNING line with the entry and the account, never the words. Do
-not widen that endpoint to the portion, the kind, the quality or the day.
+not widen that endpoint to the portion, the kind, the quality or the day: those go
+through `correct`, which keeps the struck copy.
+
+**The day a recitation reads as** is decided in ONE place on the screens,
+`resources/vue-app/core/helpers/hifzDay.ts`: a day chosen in a date box is stored
+at midnight UTC (rows before 2026-10-07) or noon UTC (since), and formatting that
+instant in the reader's zone showed the day BEFORE in the Americas. Any new list
+of recitations reads the day through that helper, never `toLocaleDateString` on
+`recited_at`.
 
 **Permissions**: `view contacts` / `manage contacts`, minting nothing.
 `Permission::count() === 8` stays pinned. Nothing here is paywalled.
