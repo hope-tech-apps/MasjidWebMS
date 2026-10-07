@@ -768,6 +768,9 @@ class TeacherMultiSchoolTest extends TestCase
                 ],
                 'refuse' => $bodyRefusal,
             ],
+            // The note alone (2026-10-07). Like the DELETE beside it, a miss in the
+            // other school: the entry is found through the class, inside the tenant.
+            'PUT /groups/{group_id}/hifz/{entry_id}' => ['body' => fn () => ['note' => 'Sweep note.']],
             'DELETE /groups/{group_id}/hifz/{entry_id}' => [],
 
             // -- class story

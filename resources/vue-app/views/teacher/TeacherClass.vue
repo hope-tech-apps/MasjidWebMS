@@ -847,8 +847,11 @@
             <section v-else-if="activeTab === 'hifz'">
                 <p class="text-muted small">Qur'an recitation log for one student at a time.</p>
                 <label class="form-label small text-muted">Student</label>
+                <!-- Held while a note is saving or a line is being copied: both
+                     answer to the list that is on screen, and a change of student
+                     under them would land the answer on another child's lines. -->
                 <select class="form-select form-select-sm mb-3" style="max-width: 22rem"
-                        v-model="hifzMembership" @change="loadHifz">
+                        v-model="hifzMembership" :disabled="hifzBusy" @change="loadHifz">
                     <option value="">Choose a student…</option>
                     <option v-for="s in students" :key="s.membership_id" :value="s.membership_id">
                         {{ name(s.contact) }}
@@ -973,7 +976,7 @@
                                      Remove and recording again. -->
                                 <button type="button" class="btn btn-sm btn-link p-0 text-nowrap"
                                         :class="h.note ? 'text-success' : 'text-muted'"
-                                        :aria-expanded="openHifzNote === h.id"
+                                        :aria-expanded="openHifzNote === h.id" :disabled="hifzBusy"
                                         @click="toggleHifzNote(h)">{{ h.note ? 'Edit note' : 'Add note' }}</button>
                                 <!-- A note written for one child is often the note
                                      for the group that recited with her (owner,
@@ -981,10 +984,10 @@
                                      that is what there is to copy. -->
                                 <button v-if="h.note && hifzClassmates.length" type="button"
                                         class="btn btn-sm btn-link p-0 text-nowrap"
-                                        :aria-expanded="openHifzCopy === h.id"
+                                        :aria-expanded="openHifzCopy === h.id" :disabled="hifzBusy"
                                         title="Copy this line and its note to other students"
                                         @click="toggleHifzCopy(h)">Copy to students</button>
-                                <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
+                                <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id || hifzBusy"
                                         @click="removeHifz(h)">Remove</button>
                             </div>
                             <!-- Shown whenever there IS one. The form above has
@@ -5264,6 +5267,9 @@ const hifzNoteError = ref('');
 
 /** Open the editor on a line, seeded with what is already written there. */
 const toggleHifzNote = (entry: any) => {
+    // A save in flight owns the draft and the error line; a copy owns the note
+    // it is sending. Neither is handed to another line under it.
+    if (hifzBusy.value) return;
     if (openHifzNote.value === entry.id) {
         openHifzNote.value = null;
         return;
@@ -5280,6 +5286,7 @@ const toggleHifzNote = (entry: any) => {
  * `note` is always sent: a present, empty value is the deliberate clear.
  */
 const saveHifzNote = async (entry: any, note?: string) => {
+    if (hifzBusy.value) return;
     savingHifzNote.value = true;
     hifzNoteError.value = '';
     try {
@@ -5302,7 +5309,13 @@ const saveHifzNote = async (entry: any, note?: string) => {
         // The editor stays OPEN with the draft in it. apiErrorText, not
         // `data.message`: the likeliest refusal is the length rule, which
         // arrives as a validation bag with no top-level message.
-        hifzNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
+        const why = apiErrorText(e, 'That note did not save. Check your connection and try again.');
+        // Under the box it belongs to. Nothing on this tab can move the editor
+        // while a save is in flight (hifzBusy), so this is the same line; the
+        // check is for a list that was replaced some other way, and then the
+        // refusal is said at the top rather than under a stranger's line.
+        if (openHifzNote.value === entry.id) hifzNoteError.value = why;
+        else hifzError.value = why;
     } finally {
         savingHifzNote.value = false;
     }
@@ -5325,7 +5338,16 @@ const hifzCopyDone = ref<{ id: string | number; text: string } | null>(null);
 const hifzClassmates = computed(() =>
     students.value.filter((s) => String(s.membership_id) !== String(hifzMembership.value)));
 
+/**
+ * A note is saving or a line is being copied. While it is, the student cannot
+ * be changed and no other line's editor or copy panel can be opened: each
+ * answers to the list on screen, and its answer must come back to the line and
+ * the student it left from.
+ */
+const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value);
+
 const toggleHifzCopy = (entry: any) => {
+    if (hifzBusy.value) return;
     if (openHifzCopy.value === entry.id) {
         openHifzCopy.value = null;
         return;
@@ -5354,28 +5376,36 @@ const toggleHifzCopyTo = (membershipId: string | number) => {
  * "whole surah", so the copy is the same āyāt whatever the original's flag was.
  */
 const copyHifz = async (entry: any) => {
-    if (copyingHifz.value || !hifzCopyTo.value.length) return;
+    if (hifzBusy.value) return;
+    // Only students who are offered in THIS panel: classmates of the student
+    // whose log is open, never that student, never an id left from another panel.
+    const offered = new Set(hifzClassmates.value.map((s) => s.membership_id));
+    const chosen = hifzCopyTo.value.filter((id) => offered.has(id));
+    if (!chosen.length) return;
+    // The line as it stands NOW, read once. Every chosen student gets these same
+    // words even if the line on screen changes while the copies go out.
+    const line = {
+        kind: entry.kind,
+        from_surah: entry.from?.surah,
+        from_ayah: entry.from?.ayah,
+        to_surah: entry.to?.surah,
+        to_ayah: entry.to?.ayah,
+        quality: entry.quality,
+        note: entry.note,
+        ...(entry.recited_at ? { recited_at: entry.recited_at } : {}),
+    };
+    const from = hifzMembership.value;
     copyingHifz.value = true;
     hifzCopyError.value = '';
     hifzCopyDone.value = null;
     const copied: string[] = [];
     const failed: { id: string | number; text: string }[] = [];
     try {
-        for (const id of [...hifzCopyTo.value]) {
+        for (const id of chosen) {
             const student = students.value.find((s) => s.membership_id === id);
             const who = student ? name(student.contact) : 'a student';
             try {
-                await TeacherApiService.post(`${base.value}/hifz`, {
-                    membership_id: id,
-                    kind: entry.kind,
-                    from_surah: entry.from?.surah,
-                    from_ayah: entry.from?.ayah,
-                    to_surah: entry.to?.surah,
-                    to_ayah: entry.to?.ayah,
-                    quality: entry.quality,
-                    note: entry.note,
-                    ...(entry.recited_at ? { recited_at: entry.recited_at } : {}),
-                });
+                await TeacherApiService.post(`${base.value}/hifz`, { membership_id: id, ...line });
                 copied.push(who);
             } catch (e: any) {
                 failed.push({ id, text: `Not copied for ${who}: ${apiErrorText(e, 'the line could not be recorded.')}` });
@@ -5384,16 +5414,34 @@ const copyHifz = async (entry: any) => {
     } finally {
         copyingHifz.value = false;
     }
+    const said = [
+        copied.length ? `Copied to ${copied.join(', ')}.` : '',
+        ...failed.map((f) => f.text),
+    ].filter(Boolean).join(' ');
+    // The panel this run left from, still on the same student's log. Nothing on
+    // the tab can change either while a copy is in flight (hifzBusy); if the list
+    // was replaced some other way, the outcome is said at the top of the tab and
+    // no selection is written into a panel that did not make it.
+    if (openHifzCopy.value !== entry.id || hifzMembership.value !== from) {
+        if (said) hifzError.value = said;
+        return;
+    }
     hifzCopyTo.value = failed.map((f) => f.id);
     if (copied.length) hifzCopyDone.value = { id: entry.id, text: `Copied to ${copied.join(', ')}.` };
     if (failed.length) {
         hifzCopyError.value = failed.map((f) => f.text).join(' ');
-    } else if (openHifzCopy.value === entry.id) {
+    } else {
         openHifzCopy.value = null;
     }
 };
 
+// Counts the loads. Choosing student B and then A can bring A's lines back first
+// and B's last; without this the list on screen was B's under A's name, and a
+// note edited or a line removed there was B's.
+let hifzSeq = 0;
+
 const loadHifz = async () => {
+    const seq = ++hifzSeq;
     hifz.value = [];
     // Another student's list: an editor left open would sit on nobody's line.
     openHifzNote.value = null;
@@ -5404,15 +5452,17 @@ const loadHifz = async () => {
     hifzError.value = '';
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${hifzMembership.value}/hifz`);
+        // An older student's answer, arriving late: the newer load owns the list.
+        if (seq !== hifzSeq) return;
         hifz.value = rowsOf(res.data?.data);
         // The endpoint has always sent this and this screen has always discarded
         // it, which is the whole reason the quality dropdown drifted out of sync
         // with the backend and offered a value the API rejects.
         hifzMeta.value = res.data?.meta ?? null;
     } catch {
-        hifzError.value = 'The recitation log could not be loaded.';
+        if (seq === hifzSeq) hifzError.value = 'The recitation log could not be loaded.';
     } finally {
-        hifzLoading.value = false;
+        if (seq === hifzSeq) hifzLoading.value = false;
     }
 };
 

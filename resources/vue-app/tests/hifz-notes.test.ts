@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseOption, click, flush, httpError, mountSfc, type } from './support/mountSfc.ts';
+import { chooseOption, click, deferred, flush, httpError, mountSfc, type } from './support/mountSfc.ts';
 import { modulesFor } from './support/batch3Modules.ts';
 
 /**
@@ -226,5 +226,98 @@ test('opening the note editor closes the copy panel, and the other way round', a
         click(buttonIn(rowsOn(screen)[0], 'Copy to students')); await flush();
         assert.equal(screen.all((n: any) => n.tag === 'textarea').length, 0);
         assert.ok(copyPanel(screen));
+    } finally { screen.unmount(); }
+});
+
+// ------------------------------------------------------------------ the review's reproductions (2026-10-07)
+const studentSelect = (screen: any) => screen.all((n: any) => n.tag === 'select' && n.children.some((o: any) => o.props.value === 9))[0];
+
+test('a slower answer for the student chosen first never replaces the list of the student chosen last', async () => {
+    const first = deferred<any>();
+    const puts: string[] = [];
+    let call = 0;
+    const { screen } = await openHifdh([], {
+        get: async (url: string) => {
+            if (url.endsWith('/groups/2')) return ok(classData);
+            if (url.endsWith('/members/10/hifz')) { call++; return first.promise; }
+            if (url.endsWith('/members/9/hifz')) return ok([row(1, 'Nine\'s note.')]);
+            return ok([]);
+        },
+        put: async (url: string) => { puts.push(url); return ok(row(1, 'x')); },
+    });
+    try {
+        // Student 10 (slow), then back to 9 (fast): 9's lines are on screen.
+        chooseOption(studentSelect(screen), 10); await flush();
+        chooseOption(studentSelect(screen), 9); await flush(12);
+        assert.ok(rowsOn(screen)[0].textContent.includes("Nine's note."));
+        // 10's answer lands late, carrying another child's line.
+        first.resolve(ok([{ ...row(99, 'Ten\'s note.') }])); await flush(12);
+        assert.equal(call, 1);
+        assert.equal(rowsOn(screen).length, 1);
+        assert.ok(rowsOn(screen)[0].textContent.includes("Nine's note."), rowsOn(screen)[0].textContent);
+        assert.equal(screen.text().includes("Ten's note."), false, 'the late list is dropped');
+    } finally { screen.unmount(); }
+});
+
+test('while a note is saving nothing else on the tab can be opened, and a refusal lands under its own box with the draft kept', async () => {
+    const saving = deferred<any>();
+    const { screen } = await openHifdh([row(1, 'Line one.'), row(2, 'Line two.')], { put: async () => saving.promise });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Edit note')); await flush();
+        type(editorOn(screen), 'A draft on line one.'); await flush();
+        click(buttonIn(rowsOn(screen)[0], 'Save note')); await flush();
+
+        // In flight: the other line's editor, the copy panel and the student box are held.
+        assert.equal(buttonIn(rowsOn(screen)[1], 'Edit note').disabled, true);
+        assert.equal(buttonIn(rowsOn(screen)[1], 'Copy to students').disabled, true);
+        assert.equal(studentSelect(screen).disabled, true);
+        assert.equal(click(buttonIn(rowsOn(screen)[1], 'Edit note')), false);
+
+        saving.reject(httpError(422, { message: 'The note field must not be greater than 1000 characters.' })); await flush(12);
+        const first = rowsOn(screen)[0];
+        assert.ok(first.textContent.includes('must not be greater than 1000 characters'), first.textContent);
+        assert.equal(rowsOn(screen)[1].textContent.includes('must not be greater'), false, 'never under another line');
+        const box = editorOn(screen);
+        assert.equal(box.value ?? box.props.value, 'A draft on line one.');
+        assert.equal(studentSelect(screen).disabled, false, 'released when the save has answered');
+    } finally { screen.unmount(); }
+});
+
+test('while a line is being copied the student cannot be changed, and every chosen student gets the same words', async () => {
+    const gate = deferred<any>();
+    const bodies: any[] = [];
+    const { screen } = await openHifdh([row(1, 'Original note.')], {
+        post: async (_url: string, body: any) => { bodies.push(body); if (body.membership_id === 10) await gate.promise; return ok({ id: 70 }); },
+        put: async () => ok(row(1, 'Changed note.')),
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Copy to students')); await flush();
+        click(buttonIn(copyPanel(screen), 'Choose all')); await flush();
+        click(buttonIn(copyPanel(screen), 'Copy to 2 students')); await flush();
+
+        // The first copy is waiting. Nothing can change the student, open the editor or start another copy.
+        assert.equal(studentSelect(screen).disabled, true);
+        assert.equal(buttonIn(rowsOn(screen)[0], 'Edit note').disabled, true);
+        assert.equal(click(buttonIn(rowsOn(screen)[0], 'Edit note')), false);
+        assert.equal(screen.all((n: any) => n.tag === 'textarea').length, 0);
+
+        gate.resolve(null); await flush(16);
+        assert.deepEqual(bodies.map((b) => [b.membership_id, b.note]), [[10, 'Original note.'], [11, 'Original note.']]);
+        assert.equal(studentSelect(screen).disabled, false);
+    } finally { screen.unmount(); }
+});
+
+test('a copy only ever goes to students ticked in the panel on screen', async () => {
+    const bodies: any[] = [];
+    const { screen } = await openHifdh([row(1, 'To copy.')], {
+        post: async (_url: string, body: any) => { bodies.push(body.membership_id); return ok({ id: 80 }); },
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Copy to students')); await flush();
+        tick(screen, 1, 10); await flush();
+        // Change to the ticked student's own log: the panel closes and its ticks go with it.
+        chooseOption(studentSelect(screen), 10); await flush(12);
+        assert.equal(copyPanel(screen), undefined);
+        assert.deepEqual(bodies, [], 'nothing was copied by changing student');
     } finally { screen.unmount(); }
 });

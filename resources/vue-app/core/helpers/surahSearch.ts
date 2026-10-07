@@ -40,6 +40,40 @@ export const westernDigits = (text: string): string => text
     .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
 
+/**
+ * A typed text taken apart: its digits (as typed, and without leading zeros), its
+ * letters folded for comparing, and whether it asks for nothing at all.
+ *
+ * `blank` is true for an empty box AND for the word "surah" by itself ("surah",
+ * "Surat "): the word is not part of any name, so until something follows it the
+ * teacher has not said which. A blank text lists every surah and NARROWS nothing,
+ * so nothing is highlighted for Enter (hasSurahQuery).
+ */
+function readSurahQuery(query: string): { typedDigits: string; digits: string; letters: string; blank: boolean } {
+    const text = westernDigits(query);
+    const typedDigits = (text.match(/\d/g) ?? []).join('');
+    const rest = text.replace(/\d/g, '');
+    const folded = foldSurahText(rest);
+    // "surah 36", "surat yasin": the word itself is not part of any name.
+    const letters = folded.replace(/^sura[ht]?/, '');
+
+    return {
+        typedDigits,
+        digits: typedDigits.replace(/^0+/, ''),
+        letters,
+        blank: !typedDigits && !letters && (rest.trim() === '' || folded !== ''),
+    };
+}
+
+/**
+ * Whether the text narrows the list at all. Only then is the first match the
+ * teacher's own doing, and only then may Enter take it.
+ */
+export function hasSurahQuery(query: string): boolean {
+    const { typedDigits, letters } = readSurahQuery(query);
+    return typedDigits !== '' || letters !== '';
+}
+
 /** The name without its article ("An-Naba" is found by "naba"). "Ali 'Imran" has none. */
 const bareName = (name: string): string => foldSurahText(name.replace(/^A[a-z]{1,2}-/, ''));
 
@@ -56,13 +90,13 @@ const bareName = (name: string): string => foldSurahText(name.replace(/^A[a-z]{1
  * Within a rank the mushaf order is kept.
  */
 export function matchSurahs(surahs: Surah[], query: string): Surah[] {
-    const text = westernDigits(query);
-    const typedDigits = (text.match(/\d/g) ?? []).join('');
-    const digits = typedDigits.replace(/^0+/, '');
-    // "surah 36", "surat yasin": the word itself is not part of any name.
-    const letters = foldSurahText(text.replace(/\d/g, '')).replace(/^sura[ht]?/, '');
+    const { typedDigits, digits, letters, blank } = readSurahQuery(query);
 
-    if (!typedDigits && !letters) return surahs.slice();
+    if (blank) return surahs.slice();
+    // Text with nothing in it to find a surah by (Arabic letters, punctuation): the
+    // list's names are in Latin letters, so it matches NONE. Returning the whole
+    // list here would put Al-Fatihah under the highlight for Enter to take.
+    if (!typedDigits && !letters) return [];
     // Only zeros: a number no surah has.
     if (typedDigits && !digits) return [];
 

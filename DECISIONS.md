@@ -9258,3 +9258,25 @@ device, browser layout or production cache verification was performed.
   keyboard are read as numbers, and a leading "surah"/"surat" is ignored.
 - **Not done**: no check that the classmate already has the same line (a second copy records it twice; either is
   removed like any line); the copy keeps the original's quality (no per-student quality in the panel).
+
+## 2026-10-07 — Hifdh notes, the pre-ship review: what it reproduced and what changed
+
+- **CI stopped the first push**: TeacherMultiSchoolTest's route sweep refuses a teacher write route it has no
+  payload for. `PUT /groups/{group_id}/hifz/{entry_id}` is in sweepSpecs() now and is swept in both schools.
+- **The second agent's read-only review reproduced six defects** (each now has a test in hifz-notes.test.ts or
+  surah-picker.test.ts):
+  1. Choosing student B then A could leave B's lines on screen under A (the older answer landing last; this race
+     predates today, and the new editor would have turned it into a note written on another child's line).
+     loadHifz counts its loads and drops an older answer.
+  2. Opening another line's editor while a note was saving lost the draft and put the refusal under the other
+     line. 3. A copy that finished after the student was changed wrote its leftover ticks into the next panel,
+     where the student had no box. 4. A note edited while its line was being copied sent two different notes.
+     For all three: while a note is saving or a line is being copied (`hifzBusy`) the student box, every
+     "Edit note" / "Add note", "Copy to students" and "Remove" are held; a copy reads the line ONCE before it
+     starts, sends only to students offered in the panel on screen, and writes its outcome back only to the panel
+     and student it left from.
+  5. Text left in the Surah box that named no one surah went back to the previous surah (already changed in the
+     copy commit: the box holds none). 6. Text with nothing to match on, such as Arabic letters or Arabic digits
+     before they were read as numbers, listed all 114 with Al-Fatihah highlighted, and Enter took it. Such text
+     now matches nothing; the word "surah" by itself lists every surah and highlights none (hasSurahQuery).
+- The server endpoint had no finding.

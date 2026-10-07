@@ -12,7 +12,7 @@
     <div class="position-relative">
         <input :id="inputId" ref="box" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
                class="form-control form-control-sm" :class="{ 'is-invalid': !open && unresolved }" :disabled="disabled"
-               :placeholder="surahs.length ? 'Type a number or part of the name' : 'Loading the surahs…'"
+               :placeholder="surahs.length ? 'Type a number or a name' : 'Loading the surahs…'"
                role="combobox" aria-autocomplete="list"
                :aria-expanded="open && matches.length > 0"
                :aria-controls="`${inputId}-list`"
@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { matchSurahs, surahLabel, surahOnLeave, type Surah } from '@/core/helpers/surahSearch';
+import { hasSurahQuery, matchSurahs, surahLabel, surahOnLeave, type Surah } from '@/core/helpers/surahSearch';
 
 const props = defineProps<{
     /** The server's list (`GET .../quran-surahs`), in mushaf order. */
@@ -109,8 +109,10 @@ const onInput = (e: Event) => {
     typed.value = value;
     text.value = value;
     open.value = true;
-    // The best match is highlighted, so "36" then Enter is the whole gesture.
-    active.value = matches.value.length ? 0 : -1;
+    // The best match is highlighted, so "36" then Enter is the whole gesture. Only
+    // when the text narrows the list: with nothing to go on (the word "surah" by
+    // itself) the first row is just the first surah, and Enter must not take it.
+    active.value = hasSurahQuery(value) && matches.value.length ? 0 : -1;
 };
 
 const pick = (s: Surah) => {

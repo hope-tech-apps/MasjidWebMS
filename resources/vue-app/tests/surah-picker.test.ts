@@ -64,6 +64,35 @@ test('digits from an Arabic or Persian keyboard are the same numbers, and the wo
     assert.deepEqual(numbers(matchSurahs(SURAHS, 'sura')), numbers(SURAHS));
 });
 
+test('text with nothing in it to find a surah by matches none, and never puts the first surah under Enter', async () => {
+    // Arabic letters, punctuation: the list's names are in Latin letters.
+    assert.deepEqual(matchSurahs(SURAHS, 'يس'), []);
+    assert.deepEqual(matchSurahs(SURAHS, '??'), []);
+    assert.equal(surahOnLeave(SURAHS, 'يس'), null);
+
+    const { screen, picked, box, options } = await picker(78);
+    try {
+        fire(box(), 'focus'); await flush();
+        type(box(), 'يس'); await flush();
+        assert.equal(options().length, 0);
+        assert.ok(screen.text().includes('No surah matches “يس”.'), screen.text());
+        fire(box(), 'keydown', { key: 'Enter' }); await flush();
+        assert.deepEqual(picked, [], 'Enter takes nothing');
+
+        // The word "surah" by itself lists every surah and highlights none.
+        type(box(), 'surah'); await flush();
+        assert.equal(options().length, SURAHS.length);
+        fire(box(), 'keydown', { key: 'Enter' }); await flush();
+        assert.deepEqual(picked, [], 'Enter takes nothing until the text narrows the list');
+
+        // Arabic-keyboard digits ARE a number.
+        type(box(), '٣٦'); await flush();
+        assert.deepEqual(options(), ['36 · Ya-Sin (83)']);
+        fire(box(), 'keydown', { key: 'Enter' }); await flush();
+        assert.deepEqual(picked, [36]);
+    } finally { screen.unmount(); }
+});
+
 test('a number and letters together must both hold', () => {
     assert.deepEqual(numbers(matchSurahs(SURAHS, '2 baq')), [2]);
     assert.deepEqual(matchSurahs(SURAHS, '2 yas'), []);
@@ -109,7 +138,7 @@ test('the box shows the chosen surah; focusing it lists every surah as the old d
 test('typing a number then Enter chooses that surah', async () => {
     const { screen, picked, box, options } = await picker(null);
     try {
-        assert.equal(box().props.placeholder, 'Type a number or part of the name');
+        assert.equal(box().props.placeholder, 'Type a number or a name');
         fire(box(), 'focus'); await flush();
         type(box(), '36'); await flush();
         assert.deepEqual(options(), ['36 · Ya-Sin (83)']);
