@@ -23,7 +23,7 @@ use Throwable;
  *  - a text, number, date, email or phone answer: its value;
  *  - a choose-one answer (select, radio): its value and the LABEL of that option, because
  *    the label is what the family read ("Legal guardian", stored as `guardian`);
- *  - a choose-any answer (checkboxGroup): each value picked.
+ *  - a choose-any answer (checkboxGroup): each value picked and its option's label.
  *
  * WHAT IS NOT. A key the form does not declare (whatever an import or an older version of
  * the form left in the document); a `file` question (the stored value is a file name); a
@@ -214,7 +214,7 @@ final class FormAnswersText
     /** The text of a response to $form. A form that is gone declares nothing. */
     public static function for(?Form $form, mixed $data): string
     {
-        return self::build($form?->sections() ?? [], $data);
+        return self::build($form ? self::labelledSections($form) : [], $data);
     }
 
     /**
@@ -290,11 +290,14 @@ final class FormAnswersText
      * Plain query-builder writes: no model event, and `updated_at` is left alone, because
      * nothing about the response changed. A row saved by someone else between the read and
      * the write is not overwritten with text from the answers it had before: the fill only
-     * writes over NULL, and the rebuild only over a row whose `updated_at` has not moved.
+     * writes over NULL, and the rebuild compares timestamp, exact answers and old index.
+     * Inclusive organisation/ID bounds and an optional per-chunk progress callback allow
+     * a controlled repair. The callback receives last ID, total writes and skipped IDs.
      *
      * @return int rows written
      */
-    public static function fill(?int $formId = null, bool $rebuild = false, int $chunk = 500): int
+    public static function fill(?int $formId = null, bool $rebuild = false, int $chunk = 500,
+        ?int $masjidId = null, ?int $fromId = null, ?int $toId = null, ?callable $progress = null): int
     {
         $sections = [];
         $written = 0;
@@ -302,18 +305,23 @@ final class FormAnswersText
         DB::table(self::TABLE)
             ->select('id', 'form_id', 'data', 'updated_at', self::COLUMN)
             ->when($formId !== null, fn ($query) => $query->where('form_id', $formId))
+            ->when($masjidId !== null, fn ($query) => $query->where('masjid_id', $masjidId))
+            ->when($fromId !== null, fn ($query) => $query->where('id', '>=', $fromId))
+            ->when($toId !== null, fn ($query) => $query->where('id', '<=', $toId))
             ->when(! $rebuild, fn ($query) => $query->whereNull(self::COLUMN))
-            ->chunkById(max(1, $chunk), function ($rows) use (&$sections, &$written, $rebuild): void {
+            ->chunkById(max(1, $chunk), function ($rows) use (&$sections, &$written, $rebuild, $progress): void {
                 $unknown = $rows->pluck('form_id')->unique()->reject(fn ($id) => isset($sections[$id]))->values();
 
                 if ($unknown->isNotEmpty()) {
                     // Straight from the table, so a soft-deleted form's rows are filled too.
-                    foreach (DB::table('forms')->whereIn('id', $unknown->all())->pluck('schema', 'id') as $id => $schema) {
-                        $decoded = is_string($schema) ? json_decode($schema, true) : null;
-                        $sections[$id] = is_array($decoded) && is_array($decoded['sections'] ?? null) ? $decoded['sections'] : [];
+                    foreach (DB::table('forms')->whereIn('id', $unknown->all())->get(['id', 'masjid_id', 'schema', 'settings']) as $row) {
+                        $form = new Form;
+                        $form->setRawAttributes((array) $row);
+                        $sections[$row->id] = self::labelledSections($form);
                     }
                 }
 
+                $skipped = [];
                 foreach ($rows as $row) {
                     $text = self::build(
                         $sections[$row->form_id] ?? [],
@@ -334,11 +342,45 @@ final class FormAnswersText
                         $update->where('updated_at', $row->updated_at);
                     }
 
-                    $written += $update->update([self::COLUMN => $text]);
+                    // Timestamps have second precision. Compare the exact answers too,
+                    // so a simultaneous edit or scrub cannot restore stale search text.
+                    if ($rebuild) {
+                        $update->whereRaw(DB::getDriverName() === 'mysql' ? 'BINARY data = BINARY ?' : 'data = ? COLLATE BINARY', [$row->data]);
+                        $update->where(self::COLUMN, $row->{self::COLUMN});
+                    }
+                    $changed = $update->update([self::COLUMN => $text]);
+                    $written += $changed;
+                    if ($changed === 0) {
+                        $skipped[] = $row->id;
+                    }
+                }
+                if ($progress !== null) {
+                    $progress($rows->last()->id, $written, $skipped);
                 }
             });
 
         return $written;
+    }
+
+    /** Resolve source wording once per form/source, keeping malformed sections harmless. */
+    private static function labelledSections(Form $form): array
+    {
+        $sections = $form->sections();
+        $resolve = FormOptionSources::resolver($form, FormOptionSources::LABEL);
+        foreach ($sections as &$section) {
+            if (! is_array($section) || ! is_array($section['fields'] ?? null)) {
+                continue;
+            }
+            foreach ($section['fields'] as &$field) {
+                if (FormOptionSources::isSourced($field) && in_array($field['type'] ?? null, FormOptionSources::TYPES, true)) {
+                    $field['options'] = $resolve($field);
+                }
+            }
+            unset($field);
+        }
+        unset($section);
+
+        return $sections;
     }
 
     private static function escapeLike(string $word): string
@@ -370,22 +412,32 @@ final class FormAnswersText
 
             if ($type === self::CHOOSE_ANY_TYPE) {
                 foreach (is_array($value) ? $value : [$value] as $picked) {
-                    self::add($parts, $picked);
+                    self::addChoice($parts, $field, $picked);
                 }
 
                 continue;
             }
 
-            if (! self::add($parts, $value) || ! in_array($type, self::CHOOSE_ONE_TYPES, true)) {
-                continue;
+            if (in_array($type, self::CHOOSE_ONE_TYPES, true)) {
+                self::addChoice($parts, $field, $value);
+            } else {
+                self::add($parts, $value);
             }
+        }
+    }
 
-            foreach (is_array($field['options'] ?? null) ? $field['options'] : [] as $option) {
-                if (is_array($option) && is_scalar($option['value'] ?? null) && (string) $option['value'] === trim((string) $value)) {
-                    self::add($parts, $option['label'] ?? null);
+    /** Index a picked value and its wording using the same rules for every choice type. */
+    private static function addChoice(array &$parts, array $field, mixed $value): void
+    {
+        if (! self::add($parts, $value)) {
+            return;
+        }
 
-                    break;
-                }
+        foreach (is_array($field['options'] ?? null) ? $field['options'] : [] as $option) {
+            if (is_array($option) && is_scalar($option['value'] ?? null) && (string) $option['value'] === trim((string) $value)) {
+                self::add($parts, $option['label'] ?? null);
+
+                break;
             }
         }
     }

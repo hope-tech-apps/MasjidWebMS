@@ -57,7 +57,7 @@ class FormAnswersTextTest extends TestCase
         // One space before every word, the first too; the address and the decimal are the
         // words between their punctuation.
         $this->assertSame(
-            ' samira nasser samira example test 4 guardian legal guardian sat sun tariq 5 émile 8 5',
+            ' samira nasser samira example test 4 guardian legal guardian sat saturday sun sunday tariq 5 émile 8 5',
             $text
         );
     }
@@ -91,7 +91,7 @@ class FormAnswersTextTest extends TestCase
     public function a_choice_that_is_not_one_of_the_options_is_kept_without_a_label(): void
     {
         $this->assertSame(' aunt', FormAnswersText::build($this->sections(), ['relationship' => 'Aunt']));
-        $this->assertSame(' sat', FormAnswersText::build($this->sections(), ['days' => 'sat']));
+        $this->assertSame(' sat saturday', FormAnswersText::build($this->sections(), ['days' => 'sat']));
     }
 
     #[Test]

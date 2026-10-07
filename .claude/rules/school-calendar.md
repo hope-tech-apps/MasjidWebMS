@@ -77,7 +77,9 @@ reads `years: []`.
   schema (bindForm, OfferingPublicPayload) and by submit validation
   (FormSchema), so the page and both doors agree.
 - **LABEL** set: every meeting day, closed ones with detail `No school — reason`,
-  plus any stored ISO date formatted. Used by FormInsights and FormNotifier.
+  plus any stored ISO date formatted. Used by FormInsights and FormNotifier;
+  Form Responses screen/CSV metadata and FormAnswersText resolve the current
+  LABEL options once per form/source, retaining unmatched stored values.
   The roster breakdown cannot reach a sourced field. It reads only the
   repeatable section's fields, where a source is refused, and a flat form's
   `columns()` carry no options.
@@ -105,5 +107,6 @@ needed nothing else: its year starts on a Sunday and its off-Sundays are closure
 
 No per-day capacity, no alert when a chosen day later closes, no public
 calendar section type, no two-weekday schools or make-up days, and no
-per-Sunday roster. Roster row cells and the responses CSV show a sourced answer
-as its ISO date. Only insights and emails carry the written-out label.
+per-Sunday roster. Form Responses screens and both CSVs carry choice wording.
+Search indexes the wording and stored value; existing rows need
+`forms:rebuild-answers-text --masjid=<id> --all` after wording changes.

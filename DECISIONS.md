@@ -9125,3 +9125,13 @@ Vue tests/build were not run because no Vue admin file changed. No column was
 added, so StagingScrubCoverageTest was not triggered.
 
 First run on production (recorded before shipping, 2026-10-07): failed_jobs held five rows, all older than 30 days and all form mail (ids 18 to 22, failed 2026-08-30 to 2026-09-01: three FormResponseSubmitted, two FormSubmissionReceipt). The first nightly prune removes them; their ids, dates and types are kept here and in LOG.md, their payloads are not.
+
+# 2026-10-07 — Form CSV wording and choice-label search
+
+Both Form Responses CSV exports translate Dropdown / Choose one / Choose any stored values to current option wording, using FormOptionSources LABEL resolution once per export/source. The cell stays in the same column; missing options retain stored values. Translate array choices before joining, keeping commas inside option values lossless. Keep the existing comma-space and pipe separators, headers, column order, raw-value export sort order, UTF-8 output and LF endings. Apply the existing formula guard after translating and joining, including admin-authored labels. Deliberately change the old FormChoiceLabelsTest byte pins only in choice cells.
+
+Index both the stored value and matching label for all three choice types, including current source options. Do not rewrite response data. Reuse forms:rebuild-answers-text and FormAnswersText::fill, the writer already used by the original answers_text column migration. Extend the command with organisation and inclusive ID bounds, bounded chunks, a snapshot ceiling, progress and resumable failures. Write only answers_text with optimistic timestamp, exact-data and old-index comparisons. Skipped concurrent changes return failure and specify a repeat range. No table-wide transaction, DDL or locking read; updates address existing primary keys. Exceptions print class and SQLSTATE, never answers or bound SQL.
+
+Not done: no new migration (the column already exists and the existing command supports repairs); no scheduler/job or automatic rebuild on form edits (the owner authorised a controlled repair, not another operational workflow). No payment, checkout, notification/send or Vue code changes. No production run, deployment, network, commits, formatter or CHANGELOG. DECISIONS.md stays untouched for the integrator. The earlier choice decision is dated 2026-10-06 in this checkout, not 2026-10-07 as the brief described.
+
+Production timing and actual MySQL execution/locks remain unverified here. The integrator should run a bounded pilot after deployment/owner approval, then repeat per organisation. See forms-export-evidence.md for commands, verification, local timings and limitations.

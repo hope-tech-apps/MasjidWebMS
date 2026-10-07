@@ -278,3 +278,24 @@ it('fills rows stored before the column from the JSON as MySQL returns it, once'
         ->and(DB::table('form_responses')->where('form_id', $form->id)->value('answers_text'))
         ->toBe(' samira nasser four example test طارق rahmani');
 });
+
+it('rebuilds choice labels within an organisation and ID range without changing other columns', function () {
+    $form = searchMysqlForm();
+    $schema = $form->schema;
+    $schema['sections'][0]['fields'][] = ['name' => 'help', 'label' => 'Help', 'type' => 'checkboxGroup',
+        'options' => [['value' => 'settingUp', 'label' => 'Setting up']]];
+    $form->update(['schema' => $schema]);
+    $row = searchMysqlEnrol($form, 'Test Parent', 'test@example.test', [], ['help' => ['settingUp', 'removedOption']]);
+    DB::table('form_responses')->where('id', $row->id)->update(['answers_text' => ' settingup removedoption']);
+    $before = (array) DB::table('form_responses')->where('id', $row->id)->first();
+    expect(searchMysqlFind($form, 'Setting up'))->toBe([]);
+    $options = ['--all' => true, '--masjid' => $form->masjid_id,
+        '--from-id' => $row->id, '--to-id' => $row->id, '--chunk' => 1];
+    $this->artisan('forms:rebuild-answers-text', $options)->expectsOutputToContain('1 form response(s)')->assertSuccessful();
+    expect(searchMysqlFind($form, 'Setting up'))->toBe(['test@example.test'])
+        ->and(searchMysqlFind($form, 'removedOption'))->toBe(['test@example.test']);
+    $after = (array) DB::table('form_responses')->where('id', $row->id)->first();
+    unset($before['answers_text'], $after['answers_text']);
+    expect($after)->toBe($before);
+    $this->artisan('forms:rebuild-answers-text', $options)->expectsOutputToContain('0 form response(s)')->assertSuccessful();
+});

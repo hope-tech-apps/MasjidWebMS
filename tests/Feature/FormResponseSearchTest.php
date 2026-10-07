@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Support\FormAnswersText;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -528,6 +529,7 @@ class FormResponseSearchTest extends TestCase
         $this->enrol($this->form, 'Samira Nasser', 'four@example.test', [['firstName' => 'Layla', 'lastName' => 'Rahmani']], [
             'relationship' => 'guardian',
             'helpWith' => ['carpool', 'cleanup'],
+            'preferredContact' => 'phone',
             'immunisationRecord' => 'vaccines-scan.pdf',
         ]);
 
@@ -536,14 +538,16 @@ class FormResponseSearchTest extends TestCase
         $this->assertSame(['four@example.test'], $this->find('Legal'));
         // The label of an option nobody picked is not in any row.
         $this->assertSame([], $this->find('Father'));
-        // A choose-any answer: each value picked.
+        // A choose-any answer: each value and its label.
         $this->assertSame(['four@example.test'], $this->find('carpool'));
+        $this->assertSame(['four@example.test'], $this->find('Driving Tidying'));
+        $this->assertSame(['four@example.test'], $this->find('Phone call'));
         $this->assertSame(['four@example.test'], $this->find('cleanup carpool'));
         // The name of an uploaded file is not an answer to look for.
         $this->assertSame([], $this->find('vaccines'));
 
         $this->assertSame(
-            ' samira nasser four example test guardian legal guardian carpool cleanup layla rahmani',
+            ' samira nasser four example test guardian legal guardian carpool driving cleanup tidying up phone phone call layla rahmani',
             $this->form->responses()->where('respondent_email', 'four@example.test')->firstOrFail()->answers_text
         );
     }
@@ -687,6 +691,106 @@ class FormResponseSearchTest extends TestCase
 
         // `staging:scrub` rewrites `data` without the model, so the copy has to go with it.
         $this->assertContains('answers_text', config('staging_scrub.null_columns.form_responses'));
+    }
+
+    #[Test]
+    public function a_new_public_submission_is_searchable_by_every_choice_label(): void
+    {
+        $this->form->update(['settings' => []]);
+        $this->post('/api/v1/forms/'.$this->form->id.'/responses', ['data' => [
+            'registrantName' => 'Test Parent', 'registrantEmail' => 'visitor@example.test',
+            'relationship' => 'guardian', 'preferredContact' => 'phone', 'helpWith' => ['carpool'],
+            'children' => [['firstName' => 'Test', 'lastName' => 'Child']],
+        ]], ['masjid-id' => (string) $this->masjid->id])->assertOk();
+        foreach (['Legal guardian', 'Phone call', 'Driving', 'carpool'] as $query) {
+            $rows = $this->getJson($this->url('?q='.rawurlencode($query)))->assertOk();
+            $this->assertSame(1, $rows->json('data.total'));
+        }
+        $this->assertSame([], $this->find('Tidying'));
+    }
+
+    #[Test]
+    public function rebuild_rejects_invalid_bounds_without_writing(): void
+    {
+        foreach ([['--form' => '1.5'], ['--masjid' => '0'], ['--from-id' => '-1'],
+            ['--to-id' => 'abc'], ['--from-id' => '2', '--to-id' => '1'],
+            ['--chunk' => '0'], ['--chunk' => '1001']] as $options) {
+            $this->artisan('forms:rebuild-answers-text', $options)->assertExitCode(2);
+        }
+    }
+
+    #[Test]
+    public function rebuild_skips_an_answer_changed_in_the_same_timestamp_second(): void
+    {
+        $row = $this->enrol($this->form, 'Test Parent', 'one@example.test', [], ['helpWith' => ['carpool']]);
+        DB::table('form_responses')->where('id', $row->id)->update(['answers_text' => ' carpool']);
+        $changed = false;
+        DB::connection()->beforeExecuting(function (string $query) use ($row, &$changed): void {
+            if (! $changed && str_starts_with($query, 'update "form_responses" set "answers_text"')) {
+                $changed = true;
+                DB::table('form_responses')->where('id', $row->id)->update([
+                    'data' => json_encode(['helpWith' => ['cleanup']]), 'answers_text' => ' cleanup tidying up',
+                ]);
+            }
+        });
+        $this->artisan('forms:rebuild-answers-text', ['--form' => $this->form->id, '--all' => true])
+            ->expectsOutputToContain('Concurrent changes skipped')->assertExitCode(1);
+        $this->assertTrue($changed);
+        $this->assertSame(' cleanup tidying up', $row->fresh()->answers_text);
+        $this->assertSame([], $this->find('Driving'));
+        $this->assertSame(['one@example.test'], $this->find('Tidying'));
+    }
+
+    #[Test]
+    public function interrupted_rebuild_reports_a_safe_resume_point_and_redacts_exception_text(): void
+    {
+        $one = $this->enrol($this->form, 'Test Parent', 'one@example.test', [], ['helpWith' => ['carpool']]);
+        $two = $this->enrol($this->form, 'Test Parent', 'two@example.test', [], ['helpWith' => ['carpool']]);
+        DB::table('form_responses')->whereIn('id', [$one->id, $two->id])->update(['answers_text' => ' carpool']);
+        $interrupted = false;
+        DB::connection()->beforeExecuting(function (string $query, array $bindings) use ($two, &$interrupted): void {
+            if (! $interrupted && str_starts_with($query, 'update "form_responses" set "answers_text"')
+                && $bindings[1] === $two->id) {
+                $interrupted = true;
+                throw new \RuntimeException('unprintable answer');
+            }
+        });
+        $options = ['--form' => $this->form->id, '--all' => true, '--chunk' => 1];
+        $this->assertSame(1, Artisan::call('forms:rebuild-answers-text', $options));
+        $output = Artisan::output();
+        $this->assertStringContainsString('--from-id='.$two->id.' --to-id='.$two->id, $output);
+        $this->assertStringNotContainsString('unprintable answer', $output);
+        $this->assertSame(['one@example.test'], $this->find('Driving'));
+        $this->assertSame(0, Artisan::call('forms:rebuild-answers-text', $options + ['--from-id' => $two->id]));
+        $this->assertSame(['one@example.test', 'two@example.test'], $this->find('Driving'));
+    }
+
+    #[Test]
+    public function bounded_rebuild_finds_old_choice_labels_and_only_changes_answers_text(): void
+    {
+        $one = $this->enrol($this->form, 'Test Parent', 'one@example.test', [], ['helpWith' => ['carpool', 'removedOption']]);
+        $two = $this->enrol($this->form, 'Test Parent', 'two@example.test', [], ['helpWith' => ['carpool']]);
+        $other = $this->enrol($this->otherForm, 'Other Parent', 'other@example.test', [], ['helpWith' => ['carpool']]);
+        DB::table('form_responses')->whereIn('id', [$one->id, $two->id, $other->id])->update(['answers_text' => ' carpool removedoption']);
+        $before = DB::table('form_responses')->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
+        $this->assertSame([], $this->find('Driving'));
+        $options = ['--all' => true, '--masjid' => $this->masjid->id,
+            '--from-id' => $one->id, '--to-id' => $one->id, '--chunk' => 1];
+        $this->artisan('forms:rebuild-answers-text', $options)->expectsOutputToContain('1 form response(s)')->assertSuccessful();
+        $this->assertSame(['one@example.test'], $this->find('Driving'));
+        $this->assertSame(['one@example.test', 'two@example.test'], $this->find('removedOption'));
+        $this->artisan('forms:rebuild-answers-text', $options)->expectsOutputToContain('0 form response(s)')->assertSuccessful();
+        $after = DB::table('form_responses')->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
+        foreach ($after as $index => $row) {
+            unset($row['answers_text'], $before[$index]['answers_text']);
+            $this->assertSame($before[$index], $row);
+        }
+        $this->assertSame(' carpool removedoption', $two->fresh()->answers_text);
+        $this->assertSame(' carpool removedoption', $other->fresh()->answers_text);
+        $this->artisan('forms:rebuild-answers-text', ['--all' => true, '--masjid' => $this->masjid->id,
+            '--from-id' => $two->id, '--to-id' => $two->id, '--chunk' => 1])->assertSuccessful();
+        $this->assertSame(['one@example.test', 'two@example.test'], $this->find('Driving'));
+        $this->assertSame(['one@example.test'], $this->find('removedOption'));
     }
 
     #[Test]
