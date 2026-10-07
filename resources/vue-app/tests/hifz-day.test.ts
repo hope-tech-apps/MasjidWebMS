@@ -72,9 +72,18 @@ test('a chosen day is never sent as an instant the server would refuse as the fu
     inZone('Pacific/Auckland', () => {
         for (const now of [auckland, new Date('2026-10-06T11:00:30Z')]) {
             const sent = hifzDayToSend('2026-10-07', now);
-            assert.equal(sent, '2026-10-06T11:00:00.000Z');
-            assert.ok(new Date(sent).getTime() <= now.getTime());
-            assert.equal(hifzDayOf(sent), '2026-10-07');
+            assert.ok(new Date(sent).getTime() <= now.getTime(), sent);
+            assert.equal(hifzDayOf(sent), '2026-10-07', sent);
+            assert.equal(hifzDayOf(sent, new Date(now.getTime() + 2000).toISOString()), '2026-10-07', 'and with the row saying when it was typed');
+        }
+        // New Zealand in winter is exactly twelve hours ahead: the start of the day there IS noon UTC,
+        // one of the two instants that mean "a date". Choosing today all through the morning must still read as today.
+        for (const iso of ['2026-05-31T12:00:01Z', '2026-05-31T12:30:00Z', '2026-05-31T18:00:00Z', '2026-05-31T23:59:59Z']) {
+            const now = new Date(iso);
+            const sent = hifzDayToSend('2026-06-01', now);
+            assert.ok(new Date(sent).getTime() <= now.getTime(), `${iso} -> ${sent}`);
+            assert.equal(hifzDayOf(sent), '2026-06-01', `${iso} -> ${sent}`);
+            assert.equal(hifzDayOf(sent, new Date(now.getTime() + 1000).toISOString()), '2026-06-01', `${iso} -> ${sent} with created_at`);
         }
     });
     // New York, 7 am on the 7th, changing a line's day to today: noon UTC is ahead, midnight UTC is behind.
@@ -84,4 +93,28 @@ test('a chosen day is never sent as an instant the server would refuse as the fu
         assert.equal(hifzDayToSend('2099-01-01', new Date('2026-10-07T15:00:00Z')), '2099-01-01T12:00:00Z');
         assert.equal(hifzDayToSend('2026-10-08', new Date('2026-10-07T15:00:00Z')), '2026-10-08T12:00:00Z');
     });
+});
+
+test('every chosen day up to today reads back as that day, through a day of moments in six zones', () => {
+    const zones = ['America/New_York', 'America/Los_Angeles', 'Pacific/Honolulu', 'UTC', 'Asia/Karachi', 'Pacific/Auckland'];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    for (const tz of zones) {
+        inZone(tz, () => {
+            // Every 7 minutes and 13 seconds across two days in winter and two in summer (both sides of daylight saving).
+            for (const start of ['2026-01-14T00:00:00Z', '2026-07-14T00:00:00Z']) {
+                for (let t = new Date(start).getTime(); t < new Date(start).getTime() + 48 * 3600_000; t += 433_000) {
+                    const now = new Date(t);
+                    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+                    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                    const yesterday = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
+                    for (const day of [today, yesterday]) {
+                        const sent = hifzDayToSend(day, now);
+                        const instant = new Date(sent.length === 10 ? `${sent}T00:00:00Z` : sent);
+                        assert.ok(instant.getTime() <= now.getTime(), `${tz} ${now.toISOString()} ${day} -> ${sent} is in the future`);
+                        assert.equal(hifzDayOf(instant.toISOString()), day, `${tz} ${now.toISOString()} ${day} -> ${sent}`);
+                    }
+                }
+            }
+        });
+    }
 });

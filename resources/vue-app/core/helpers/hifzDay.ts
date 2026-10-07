@@ -70,9 +70,9 @@ export function hifzDayLabel(iso: string | null | undefined, locale?: string, cr
  *     Honolulu to Auckland, including readers that do not use this file;
  *  2. midnight UTC of that day (the bare date this form used to send): east of
  *     Greenwich, early on a day, yesterday's noon UTC has not happened yet;
- *  3. ONLY when the chosen day is the reader's own today: the start of that day
- *     where the reader is. Far east of Greenwich, just after midnight, neither
- *     of the above has happened yet; local midnight has, and it reads as the
+ *  3. ONLY when the chosen day is the reader's own today: a second ago. East of
+ *     Greenwich, before UTC has reached that day, neither of the above has
+ *     happened yet; a second ago has, and as a real moment it reads as the
  *     reader's local day, which is that day.
  *
  * A day that is really in the future gets (1), unchanged, and the server says
@@ -84,7 +84,15 @@ export function hifzDayToSend(day: string, now: Date = new Date()): string {
     if (new Date(`${day}T00:00:00Z`).getTime() <= now.getTime()) return day;
     if (day === localDayOf(now)) {
         const [y, m, d] = day.split('-').map(Number);
-        return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+        const startOfDay = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+        // A second ago, to the second: a real moment of the reader's today that
+        // has happened. Never earlier than the start of that day, and never one
+        // of the two instants that MEAN "a date" (hifzDayOf): twelve hours east
+        // of Greenwich the start of the day is exactly noon UTC, and sent as it
+        // is it read back as the day before.
+        let moment = Math.max(Math.floor(now.getTime() / 1000) * 1000 - 1000, startOfDay);
+        if (isDateOnly(new Date(moment))) moment += 1000;
+        return new Date(moment).toISOString();
     }
     return noon;
 }
