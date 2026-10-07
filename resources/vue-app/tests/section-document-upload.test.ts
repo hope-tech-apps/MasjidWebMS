@@ -113,6 +113,33 @@ const CTA = 'components/sections/editors/CTASectionEditor.vue';
 
 /* ------------------------------------------------------------ Link Buttons */
 
+test('Link Buttons: every URL field is optional, including an existing address, an empty address and null', async () => {
+    const { store } = fakeStore(stored());
+    const editor = await mountEditor(LINK_LIST, links(
+        { label: 'Calendar', url: ADDRESS },
+        { label: 'Schedule', url: '' },
+        { label: 'Handbook', url: null as any },
+    ), store);
+
+    assert.equal(editor.linkFields().length, 3);
+    for (const field of editor.linkFields()) {
+        assert.equal(field.props.required, undefined, 'an empty URL must not fail browser validation');
+        const label = field.parent!.children.find((node) => node.tag === 'label');
+        assert.equal(label?.textContent, 'URL', 'the URL label must not carry a required mark');
+    }
+    editor.screen.unmount();
+});
+
+test('Link Buttons: URL help explains what a visitor sees when the address is empty', async () => {
+    const { store } = fakeStore(stored());
+    const editor = await mountEditor(LINK_LIST, links({ label: 'Calendar', url: '' }), store);
+
+    assert.ok(editor.screen.text().includes(
+        'Leave the address blank to show the label as plain text on the website, not a link.',
+    ));
+    editor.screen.unmount();
+});
+
 test('Link Buttons: choosing a PDF uploads it once and writes its address, a label and the download icon into that button', async () => {
     const { store, calls } = fakeStore(stored());
     const editor = await mountEditor(LINK_LIST, links({}, {}), store);

@@ -116,18 +116,19 @@
                             </div>
 
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">URL <span class="text-danger">*</span></label>
+                                <label class="form-label">URL</label>
                                 <input
                                     type="text"
                                     class="form-control"
                                     v-model="link.url"
                                     @input="emitUpdate"
                                     placeholder="https://example.com, mailto:info@masjid.org, tel:+15551234567"
-                                    required
                                 />
                                 <div class="form-text">
                                     Use <code>mailto:</code> for email and <code>tel:</code> for phone
                                     numbers; anything else should start with <code>https://</code>.
+                                    Leave the address blank to show the label as plain text on the website,
+                                    not a link.
                                 </div>
                                 <SectionDocumentUpload
                                     :key="`link-document-${index}-${rowsMoved}`"
