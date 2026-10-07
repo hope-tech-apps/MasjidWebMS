@@ -19,7 +19,7 @@ export type BroadcastChannel = 'announcement' | 'push' | 'signage' | 'email' | '
 export type BroadcastAudience = 'everyone' | 'contacts' | 'service' | 'tag'
 
 /** Per-channel outcome. `skipped` is a fact, not a failure. */
-export type BroadcastDeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped'
+export type BroadcastDeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped' | 'cancelled'
 
 export type BroadcastDelivery = {
     id: number;
@@ -38,7 +38,7 @@ export type BroadcastDelivery = {
  * not transactional, because a push already on ten thousand lock screens cannot
  * be rolled back. The UI has to show it as its own outcome.
  */
-export type BroadcastStatus = 'pending' | 'scheduled' | 'sent' | 'partial' | 'failed'
+export type BroadcastStatus = 'pending' | 'scheduled' | 'sending' | 'sent' | 'partial' | 'failed' | 'cancelled'
 
 export type Broadcast = {
     id: number;
@@ -54,6 +54,10 @@ export type Broadcast = {
     audience_tag_id?: number | null;
     status: BroadcastStatus;
     scheduled_at: string | null;
+    /** Server eligibility; absent on older payloads means no cancel control. */
+    cancellable?: boolean;
+    cancelled_at?: string | null;
+    cancelled_by_user_id?: number | null;
     created_at: string;
     deliveries?: BroadcastDelivery[];
     image?: Media | null;

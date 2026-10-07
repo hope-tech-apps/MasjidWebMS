@@ -9,10 +9,8 @@ import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData"
 /**
  * The unified publish composer's history.
  *
- * Read-only apart from the send itself, which the composer view posts directly
- * (it builds a FormData with an image, exactly like the announcement form).
- * There is no update or delete: a broadcast is a record of something that has
- * already left the building.
+ * The composer posts the send directly. An unstarted scheduled send can be cancelled, even when overdue;
+ * the server decides whether it is still waiting and returns its updated audit row.
  */
 export const useBroadcastsStore = defineStore('broadcastsStore', () => {
 
@@ -36,8 +34,15 @@ export const useBroadcastsStore = defineStore('broadcastsStore', () => {
             })
     }
 
+    async function cancelBroadcast(id: number) {
+        if (!masjidStore.masjid?.id) throw new Error('Select an organisation before cancelling a broadcast.')
+        const res = await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/broadcasts/${id}/cancel`, {})
+        return res.data
+    }
+
     return {
         broadcastsPaginated,
         fetchBroadcastsPaginated,
+        cancelBroadcast,
     }
 })

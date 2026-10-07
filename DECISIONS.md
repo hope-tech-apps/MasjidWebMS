@@ -8901,3 +8901,59 @@ three-column-only SPA choice recorded on 2026-10-05.
 No migration, network call, commit or deployment. Stripe seams are faked; Stripe's
 expired-page finality, provider behavior, MySQL lock scheduling and the deployed browser
 remain unverified by this change. Evidence and counts: artifacts/staff-delete-evidence.md.
+
+## 2026-10-06 — Cancel an unstarted scheduled broadcast from its history row
+
+Owner decision: add cancellation only; editing is outside this task.
+
+A schedule is a delayed SendBroadcastJob, not a scheduler sweep. Cancellation
+must therefore be enforced in BroadcastDispatcher, where every channel begins,
+not by attempting to delete a queue entry. Both cancellation and the dispatcher's
+send claim lock and re-read the tenant-scoped broadcast row in a short transaction.
+Cancel commits cancelled plus the actor/time and cancelled pending deliveries;
+send commits sending before any driver. Whichever commits first owns the outcome:
+a cancelled message cannot reach any channel, and a sending message cannot become
+a misleading half-sent cancellation. The channel loop remains outside a transaction,
+preserving the existing independent delivery outcomes and failed/partial retry behavior.
+
+Eligibility: status exactly scheduled and a non-null scheduled_at, whatever the
+clock says. Due/overdue rows are cancellable until the send claim commits. This
+supersedes the original future-only rule, corrected by the owner before review.
+Repeat cancel is a 409 with a clear already cancelled sentence, preserving the first actor/time. Other terminal states and
+pending/sending are refused with actionable messages. Same route middleware and
+capability:broadcasts as existing broadcast routes; foreign resource IDs are 404.
+There is no new permission and no new contacts gate.
+
+Nullable cancelled_by_user_id (users FK, nullOnDelete like the creator) and
+cancelled_at record the audit without inventing meaning for dispatched_at or
+updated_at. No backfill. config/staging_scrub.php classifies the audit within the
+existing dropped broadcasts history. Server responses provide cancellable and
+the nullable audit keys; the SPA consumes the flag, confirms, displays the exact
+server message, and refreshes success/refusal. Cancelled channel rows have their
+own state instead of remaining deceptively pending. Immediate response shape,
+including absent blocks without a layout, remains pinned by the existing test.
+
+Operational consequence: stop/drain old workers before exposing cancellation and
+start workers on the new dispatcher after migration/code/cache changes. Old code
+must not be restored while cancelled delayed jobs remain queued. A worker lost
+after claiming can leave sending: failure recovery is unresolved, as established
+before review. The dispatcher persists a delivery result only after the driver
+returns, while email/SMS sends happen within recipient loops. A pending delivery
+cannot distinguish never started from sent with its result lost. Settlement that
+marks it failed would reopen a duplicate-send path. B is stopped under the owner's
+explicit stop condition; options and executable diagnostics are in
+artifacts/pre-review-b-options.md. No recovery design has been chosen.
+No deployment, production change, network access or commit is part of this work.
+
+Verification and limitations are recorded in STATE.md and artifacts/; MySQL tests
+are in the guarded mysql group under tests/MysqlLocks, using committed fixtures
+and a second connection rather than pretending SQLite proves row locks.
+
+Known limit, not fixed in this change (2026-10-07): the send claim commits `sending` before any
+channel runs, so a send whose worker dies part-way leaves the broadcast `sending`: not
+cancellable (there is nothing left to cancel; the job has one try and is not replayed) and shown
+as Sending until someone looks. Before this change the same death left it `scheduled`, which
+looked as if it would still go out. Settling it automatically is not safe yet: the dispatcher
+cannot tell a channel that never started from one that sent and died before its result was
+written, and marking that one failed and sending again was shown to publish twice. The follow-up
+is a terminal "interrupted" outcome that is never replayed automatically.

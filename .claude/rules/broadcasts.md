@@ -1,11 +1,14 @@
 ---
 paths:
   - "app/Services/Broadcast/**"
+  - "app/Jobs/SendBroadcastJob.php"
   - "app/Models/Broadcast.php"
   - "app/Models/BroadcastDelivery.php"
   - "app/Enums/BroadcastChannel.php"
   - "app/Enums/BroadcastAudience.php"
   - "app/Http/Controllers/AdminDashboard/BroadcastsController.php"
+  - "resources/vue-app/views/dashboard/broadcasts/**"
+  - "resources/vue-app/stores/masjid/broadcastsStore.ts"
   - "app/Http/Controllers/Mobile/SignageController.php"
 ---
 # The unified publish composer (T-008)
@@ -65,6 +68,60 @@ an error to be smoothed away.
 
 `skipped` is not a failure. No registered devices, or an audience where nobody
 has an email address, is a fact the admin needs to see — not a red error.
+
+## Scheduled cancellation (2026-10-06)
+
+A future schedule dispatches a delayed `SendBroadcastJob` carrying the broadcast
+ID (`BroadcastComposer::send`); no scheduler sweep exists. Jobs remain queued
+after cancellation. Removing a queue entry is never the guarantee.
+
+- `POST /api/admin/masjids/{masjid_id}/broadcasts/{broadcast_id}/cancel` shares
+  the existing auth:sanctum, admin, tenant and capability:broadcasts middleware.
+  It adds no permission or contact-reading gate. Scoped foreign IDs are 404,
+  including for a SuperAdmin acting inside an organisation's route.
+- `BroadcastCancellation` and `BroadcastDispatcher` both re-read the broadcast
+  with `lockForUpdate()` inside a short transaction. Eligibility is decided on
+  THAT row: status exactly `scheduled`, non-null scheduled_at, whatever the clock
+  says. Due/overdue rows remain cancellable until a worker commits the send claim.
+- Cancel commits status `cancelled`, server-derived `cancelled_by_user_id` and
+  `cancelled_at`, and changes pending delivery rows to `cancelled`. Audit columns
+  are nullable with no backfill; the user FK follows the creator's nullOnDelete
+  convention. Staging drops the broadcast history, including this audit.
+- Dispatch commits status `sending` BEFORE entering any driver. A cancelled or
+  sending row returns without entering any channel; an older job/model copy
+  cannot override the decision. Once claimed, cancel returns 409 and fan-out
+  continues normally. Never put the channel loop inside this transaction.
+- Cancel winning the lock prevents every channel. Send winning it prevents
+  cancellation of a partially delivered message. Repeat cancellation returns
+  409 with "This broadcast is already cancelled. Nothing will be sent." and
+  preserves the original actor/time. Other refusals carry an actionable sentence.
+- List, detail, compose and cancel responses include server `cancellable` and
+  nullable cancellation audit keys. The SPA shows Cancel only from this flag,
+  asks "Cancel scheduled broadcast?" / "This broadcast will not be sent on any
+  channel.", with "Yes, cancel broadcast" and "Keep scheduled". It blocks
+  repeat taps, displays the server message, and refreshes after success/refusal.
+  History shows Sending or Cancelled; cancelled deliveries show cancelled.
+- Immediate-send payloads preserve their existing shape, including absence of
+  blocks without a layout. Failed/partial per-channel retries retain the existing
+  dispatcher behavior. **Failure recovery is unresolved (pre-review stop, 2026-10-06):**
+  `SendBroadcastJob::failed()` only logs; an interrupted claim can still leave
+  `sending`. Delivery rows commit after a driver returns, so `pending` can mean
+  never started OR externally sent with its result lost (including email/SMS
+  mid-recipient-loop). Do not call that known failure or make it retryable.
+  See artifacts/pre-review-b-options.md before implementing settlement.
+
+Release ordering matters: stop/drain old queue workers before exposing cancel,
+apply the nullable migration and new code, rebuild route/config caches and start
+workers on the new dispatcher. An old worker does not understand cancelled.
+Do not roll back to a dispatcher without the guard while cancelled delayed jobs
+remain: that would reopen the send door. No release is performed by this change.
+
+Coverage: `BroadcastCancellationTest`, mounted `broadcast-cancel-screen.test.ts`
+(actual store), and mysql-group `BroadcastCancellationLocksTest` under
+`tests/MysqlLocks` (committed fixtures, two connections, both lock winners and an
+older REPEATABLE READ snapshot). SQLite and mounted tests do not prove MySQL
+locking, OS worker death or real-browser behavior. The B diagnostic exercises
+a real SQLite DatabaseQueue/Worker::process, not an OS timeout/kill.
 
 ## Authorization is decided UP FRONT; delivery outcomes are per-channel
 

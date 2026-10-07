@@ -268,6 +268,7 @@ Route::prefix('admin')->group(function () {
                 // Declared before /{broadcast_id} so "preview" is never read as an id.
                 Route::post('/preview', 'preview');
                 Route::get('/{broadcast_id}', 'show');
+                Route::post('/{broadcast_id}/cancel', 'cancel');
             });
 
             // Masjid splash announcements (in-app message / splash modal). A splash

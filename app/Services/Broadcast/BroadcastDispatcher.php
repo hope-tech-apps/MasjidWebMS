@@ -14,6 +14,7 @@ use App\Services\Broadcast\Channels\SmsChannel;
 use App\Support\Errors;
 use App\Support\TenantContext;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
@@ -99,6 +100,24 @@ class BroadcastDispatcher
         $masjid = Masjid::findOrFail($broadcast->masjid_id);
 
         return $this->withTenant((int) $broadcast->masjid_id, function () use ($broadcast, $masjid): Broadcast {
+            // The same row lock as cancellation. Commit the claim BEFORE any
+            // driver runs; never hold a transaction across irreversible sends.
+            $claimed = DB::transaction(function () use (&$broadcast): bool {
+                $broadcast = Broadcast::query()->lockForUpdate()->findOrFail($broadcast->id);
+
+                if (in_array($broadcast->status, [Broadcast::STATUS_CANCELLED, Broadcast::STATUS_SENDING], true)) {
+                    return false;
+                }
+
+                $broadcast->forceFill(['status' => Broadcast::STATUS_SENDING])->save();
+
+                return true;
+            });
+
+            if (! $claimed) {
+                return $broadcast->load('deliveries');
+            }
+
             $pending = $broadcast->deliveries()
                 ->whereIn('status', [BroadcastDelivery::STATUS_PENDING, BroadcastDelivery::STATUS_FAILED])
                 ->get()

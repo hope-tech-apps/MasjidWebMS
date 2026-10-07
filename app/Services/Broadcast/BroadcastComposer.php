@@ -192,7 +192,15 @@ class BroadcastComposer
             return $broadcast;
         }
 
-        return $this->dispatcher->dispatch($broadcast);
+        $dispatched = $this->dispatcher->dispatch($broadcast);
+
+        // The dispatcher now re-reads under a lock. Keep the immediate create
+        // payload's existing shape (notably an absent blocks key), while taking
+        // its delivery outcome from that fresh row.
+        return $broadcast->forceFill([
+            'status' => $dispatched->status,
+            'dispatched_at' => $dispatched->dispatched_at,
+        ])->load('deliveries');
     }
 
     private function isFuture(?Carbon $at): bool

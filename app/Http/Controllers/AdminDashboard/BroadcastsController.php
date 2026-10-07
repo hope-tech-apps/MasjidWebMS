@@ -9,10 +9,12 @@ use App\Http\Requests\Admin\Broadcasts\PreviewNewsletterRequest;
 use App\Http\Requests\Admin\Broadcasts\StoreBroadcastRequest;
 use App\Models\Broadcast;
 use App\Models\Masjid;
+use App\Services\Broadcast\BroadcastCancellation;
 use App\Services\Broadcast\BroadcastComposer;
 use App\Services\Broadcast\Newsletter\NewsletterBlocks;
 use App\Services\Broadcast\Newsletter\NewsletterPreviewMail;
 use App\Support\Errors;
+use Illuminate\Http\Request;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -69,6 +71,7 @@ class BroadcastsController extends Controller
             ->with('deliveries')
             ->orderByDesc('created_at')
             ->paginate(15);
+        $broadcasts->through(fn (Broadcast $broadcast) => $this->present($broadcast));
 
         return response()->json([
             'status' => 'success',
@@ -90,6 +93,18 @@ class BroadcastsController extends Controller
             'status' => 'success',
             'data' => $this->present($broadcast),
         ], Response::HTTP_OK);
+    }
+
+    /** Cancel a scheduled send that has not started, deciding on the tenant-scoped locked row. */
+    public function cancel(Request $request, $masjid_id, $broadcast_id, BroadcastCancellation $cancellation)
+    {
+        $result = $cancellation->cancel((int) $broadcast_id, (int) $request->user()->id);
+
+        return response()->json([
+            'status' => $result['cancelled'] ? 'success' : 'error',
+            'message' => $result['message'],
+            'data' => $this->present($result['broadcast']->load('deliveries')),
+        ], $result['cancelled'] ? Response::HTTP_OK : Response::HTTP_CONFLICT);
     }
 
     /**
@@ -278,6 +293,9 @@ class BroadcastsController extends Controller
     {
         return array_merge($broadcast->toArray(), [
             'image_url' => $broadcast->imageUrl(),
+            'cancellable' => $broadcast->isCancellable(),
+            'cancelled_at' => $broadcast->cancelled_at?->toISOString(),
+            'cancelled_by_user_id' => $broadcast->cancelled_by_user_id,
         ]);
     }
 }

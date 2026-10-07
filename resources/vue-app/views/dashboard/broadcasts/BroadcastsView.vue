@@ -41,6 +41,11 @@
                         <div v-for="(n, i) in failureNotes(b)" :key="i" class="text-danger small">{{ n }}</div>
                     </div>
 
+                    <button v-if="b.cancellable" type="button" class="btn btn-outline-danger btn-sm mt-3"
+                        :disabled="cancellingId !== null" @click="cancelBroadcast(b)">
+                        {{ cancellingId === b.id ? 'Cancelling…' : 'Cancel' }}
+                    </button>
+
                 </div>
             </div>
 
@@ -53,11 +58,13 @@ import PageDataContainer from '@/components/PageDataContainer.vue'
 import { Broadcast, BroadcastChannel, BroadcastDeliveryStatus, BroadcastStatus } from '@/core/types/data/masjid-related/Broadcast'
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination'
 import { useBroadcastsStore } from '@/stores/masjid/broadcastsStore'
+import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
 import { computed, onBeforeMount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const store = useBroadcastsStore()
+const cancellingId = ref<number | null>(null)
 
 const broadcasts = computed(() => store.broadcastsPaginated?.data ?? [])
 
@@ -82,6 +89,32 @@ const pageChange = async (data: PageChangeData) => {
     await loadPage(data.toPage)
 }
 
+async function cancelBroadcast(b: Broadcast) {
+    if (cancellingId.value !== null) return
+    cancellingId.value = b.id
+    let confirmed = false
+    try {
+        const answer = await QSwal.fire({
+            title: 'Cancel scheduled broadcast?',
+            text: 'This broadcast will not be sent on any channel.',
+            icon: 'warning', confirmButtonText: 'Yes, cancel broadcast', cancelButtonText: 'Keep scheduled',
+        })
+        if (!answer.isConfirmed) return
+        confirmed = true
+        const result = await store.cancelBroadcast(b.id)
+        await MSwal.fire({ title: 'Cancelled', text: result.message, icon: 'success' })
+    } catch (error: any) {
+        await MSwal.fire({
+            title: 'Could not cancel broadcast',
+            text: error.response?.data?.message ?? 'The broadcast could not be cancelled. Refresh the list and try again.',
+            icon: 'warning',
+        })
+    } finally {
+        if (confirmed) await loadPage(paginationOptions.value.currentPage || 1)
+        cancellingId.value = null
+    }
+}
+
 const CHANNEL_LABELS: Record<BroadcastChannel, string> = {
     announcement: 'Feed',
     push: 'Push',
@@ -104,6 +137,8 @@ function statusBadge(s: BroadcastStatus): { label: string; klass: string } {
         case 'sent': return { label: 'Sent', klass: 'bg-success' }
         case 'partial': return { label: 'Partly sent', klass: 'bg-warning text-dark' }
         case 'scheduled': return { label: 'Scheduled', klass: 'bg-info text-dark' }
+        case 'sending': return { label: 'Sending', klass: 'bg-info text-dark' }
+        case 'cancelled': return { label: 'Cancelled', klass: 'bg-secondary' }
         case 'failed': return { label: 'Failed', klass: 'bg-danger' }
         default: return { label: 'Pending', klass: 'bg-secondary' }
     }
@@ -115,6 +150,7 @@ function deliveryBadge(s: BroadcastDeliveryStatus): { label: string; klass: stri
         case 'sent': return { label: 'sent', klass: 'bg-success-subtle text-success' }
         case 'failed': return { label: 'failed', klass: 'bg-danger-subtle text-danger' }
         case 'skipped': return { label: 'nobody to send to', klass: 'bg-light text-muted' }
+        case 'cancelled': return { label: 'cancelled', klass: 'bg-secondary-subtle text-secondary' }
         default: return { label: 'pending', klass: 'bg-secondary-subtle text-secondary' }
     }
 }
@@ -130,6 +166,7 @@ function audienceLabel(b: Broadcast): string {
 }
 
 function sentWhen(b: Broadcast): string {
+    if (b.status === 'cancelled' && b.cancelled_at) return `cancelled on ${new Date(b.cancelled_at).toLocaleString()}`
     const iso = b.scheduled_at ?? b.created_at
     const when = new Date(iso).toLocaleString()
     return b.status === 'scheduled' ? `scheduled for ${when}` : when

@@ -76,6 +76,12 @@ class Broadcast extends Model implements HasMedia
     /** Accepted for a future send; a delayed queue job holds it. */
     public const STATUS_SCHEDULED = 'scheduled';
 
+    /** Claimed under the row lock, before any channel starts. */
+    public const STATUS_SENDING = 'sending';
+
+    /** Cancelled before the send claim; no channel may run. */
+    public const STATUS_CANCELLED = 'cancelled';
+
     /** Every selected channel succeeded (or had nothing to deliver to). */
     public const STATUS_SENT = 'sent';
 
@@ -100,6 +106,8 @@ class Broadcast extends Model implements HasMedia
         'audience_tag_id',
         'scheduled_at',
         'dispatched_at',
+        'cancelled_by_user_id',
+        'cancelled_at',
         'status',
     ];
 
@@ -110,6 +118,7 @@ class Broadcast extends Model implements HasMedia
             'ends_on' => 'date',
             'scheduled_at' => 'datetime',
             'dispatched_at' => 'datetime',
+            'cancelled_at' => 'datetime',
             'audience_contact_ids' => 'array',
             'blocks' => 'array',
         ];
@@ -118,6 +127,13 @@ class Broadcast extends Model implements HasMedia
     public function deliveries(): HasMany
     {
         return $this->hasMany(BroadcastDelivery::class);
+    }
+
+    /** Scheduled with a time, even overdue; the locked send claim decides whether it started. */
+    public function isCancellable(): bool
+    {
+        return $this->status === self::STATUS_SCHEDULED
+            && $this->scheduled_at !== null;
     }
 
     /** The admin who composed it; null once that account is deleted. */

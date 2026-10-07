@@ -100,7 +100,7 @@ return [
         // json array of contacts.id), provider message references, and error
         // text that routinely quotes the failing recipient's number.
         'broadcast_deliveries' => 'Provider message ids and error text quoting recipients; cascades from broadcasts, deleted first anyway.',
-        'broadcasts' => 'Send history plus explicit audience_contact_ids targeting lists. Staging must start with no sends to replay.',
+        'broadcasts' => 'Send history, cancellation actor (cancelled_by_user_id) and time (cancelled_at), plus explicit audience_contact_ids targeting lists. Staging must start with no sends to replay.',
 
         // Baskets. `cart_items.payload` carries the answers a line will submit —
         // on MEC's festival ticket form that is the name of every attendee — and

@@ -29,6 +29,9 @@ class BroadcastDelivery extends Model
     /** Queued/created, not yet attempted. */
     public const STATUS_PENDING = 'pending';
 
+    /** The scheduled broadcast was cancelled before any channel started. */
+    public const STATUS_CANCELLED = 'cancelled';
+
     /** The channel accepted the message. */
     public const STATUS_SENT = 'sent';
 
