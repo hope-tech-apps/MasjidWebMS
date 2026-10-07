@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseOption, click, compileSfc, flush, mountSfc, type } from './support/mountSfc.ts';
+import { chooseOption, click, compileSfc, deferred, flush, httpError, mountSfc, press, type } from './support/mountSfc.ts';
 import { modulesFor } from './support/batch3Modules.ts';
 import { foldSurahText, matchSurahs, surahLabel, surahOnLeave, type Surah } from '../core/helpers/surahSearch.ts';
 
@@ -234,5 +234,63 @@ test('on the Hifdh form, the typed surah is the one recorded', async () => {
         assert.equal(posts.length, 1, JSON.stringify(posts));
         assert.equal(posts[0].body.from_surah, 78);
         assert.equal(posts[0].body.to_surah, 78);
+    } finally { screen.unmount(); }
+});
+
+test('with a recitation ready to record, Record is held while a note is saving, so its reload cannot close the editor under the save', async () => {
+    const saving = deferred<any>();
+    const posts: any[] = [];
+    const route = { params: { masjidId: '1', groupId: '2' }, query: {} };
+    const router = { useRoute: () => route, useRouter: () => ({ replace: async () => {}, resolve: () => ({ href: '/' }) }) };
+    const ok = (data: any, meta: any = {}) => ({ data: { status: 'success', data, meta } });
+    const line = { id: 1, membership_id: 9, kind: 'sabak', quality: 'good', whole_surah: false, note: 'Old note.',
+        from: { surah: 78, surah_name: 'An-Naba', ayah: 1 }, to: { surah: 78, surah_name: 'An-Naba', ayah: 10 }, recited_at: '2026-10-01T15:00:00+00:00' };
+    const api = {
+        get: async (url: string) => ok(url.endsWith('/quran-surahs') ? SURAHS : url.endsWith('/hifz') ? [line]
+            : url.endsWith('/groups/2') ? { id: 2, name: 'Sample class', students: [{ membership_id: 9, contact: { first_name: 'Test student' } }] } : []),
+        post: async (_url: string, body: any) => { posts.push(body); return ok({ id: 90 }); },
+        put: async () => saving.promise,
+    };
+    const parent = 'views/teacher/TeacherClass.vue';
+    const child = await compileSfc(file, await modulesFor(file, {}));
+    const screen = await mountSfc(parent, {}, await modulesFor(parent, {
+        'vue-router': router,
+        '@/core/services/TeacherApiService': { default: api, rowsOf: (d: any) => Array.isArray(d) ? d : d?.data ?? [] },
+        '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
+        '@/components/teacher/SurahPicker.vue': { default: child },
+    }));
+    const under = (node: any, test: (n: any) => boolean): any => {
+        for (const c of node.children ?? []) { if (c.kind === 'el' && test(c)) return c; const d = under(c, test); if (d) return d; }
+        return undefined;
+    };
+    const row = () => screen.all((n: any) => n.tag === 'li' && n.textContent.includes('Remove'))[0];
+    const named = (label: string) => under(row(), (n) => n.tag === 'button' && n.textContent.trim() === label);
+    try {
+        await flush(); click(screen.button('Hifdh')); await flush();
+        chooseOption(screen.all((n: any) => n.tag === 'select' && n.children.some((o: any) => o.props.value === 9))[0], 9);
+        await flush(12);
+        // A whole surah chosen: the form is ready, and Record is live.
+        const box = screen.all((n: any) => n.tag === 'input' && n.props.id === 'hifz-surah')[0];
+        fire(box, 'focus'); await flush(); type(box, '114'); await flush(); fire(box, 'keydown', { key: 'Enter' }); await flush();
+        const whole = screen.all((n: any) => n.tag === 'input' && n.props.id === 'hifz-whole-surah')[0];
+        whole.checked = true; fire(whole, 'change'); (whole.listeners?.change ?? []).forEach((h: any) => h({ target: whole }));
+        await flush();
+        assert.equal(screen.button('Record').disabled, false, 'ready to record');
+
+        // A note save goes out and has not answered.
+        click(named('Edit note')); await flush();
+        const editor = screen.all((n: any) => n.tag === 'textarea')[0];
+        type(editor, 'Draft that must survive.'); await flush();
+        click(named('Save note')); await flush();
+
+        assert.equal(screen.button('Record').disabled, true, 'held while the save is in flight');
+        press(screen.button('Record')); await flush(12);
+        assert.deepEqual(posts, [], 'a tap that got past the held button records nothing');
+
+        saving.reject(httpError(500, { message: 'Server error.' })); await flush(12);
+        const still = screen.all((n: any) => n.tag === 'textarea')[0];
+        assert.ok(still, 'the editor is still open');
+        assert.equal(still.value ?? still.props.value, 'Draft that must survive.');
+        assert.equal(screen.button('Record').disabled, false, 'released when the save has answered');
     } finally { screen.unmount(); }
 });

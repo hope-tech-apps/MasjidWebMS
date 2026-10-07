@@ -930,7 +930,7 @@
                                            placeholder="e.g. struggled with the waqf on ayah 12" />
                                 </div>
                                 <div class="col-auto">
-                                    <button class="btn btn-sm btn-success" :disabled="recordingHifz || !hifzValid" @click="recordHifz">
+                                    <button class="btn btn-sm btn-success" :disabled="hifzBusy || !hifzValid" @click="recordHifz">
                                         <span v-if="recordingHifz" class="spinner-border spinner-border-sm"></span>
                                         <span v-else>Record</span>
                                     </button>
@@ -5343,12 +5343,14 @@ const hifzClassmates = computed(() =>
     students.value.filter((s) => String(s.membership_id) !== String(hifzMembership.value)));
 
 /**
- * A note is saving or a line is being copied. While it is, the student cannot
- * be changed and no other line's editor or copy panel can be opened: each
- * answers to the list on screen, and its answer must come back to the line and
- * the student it left from.
+ * A note is saving, a line is being copied, or a recitation is being recorded.
+ * While it is, the student cannot be changed, no other line's editor or copy
+ * panel can be opened and nothing else can be written: each answers to the list
+ * on screen, and its answer must come back to the line and the student it left
+ * from. Record is in it because it reloads the list when it is done, which
+ * closed an open note editor under a save still in flight and lost its draft.
  */
-const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value);
+const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value || recordingHifz.value);
 
 const toggleHifzCopy = (entry: any) => {
     if (hifzBusy.value) return;
@@ -5471,7 +5473,7 @@ const loadHifz = async () => {
 };
 
 const recordHifz = async () => {
-    if (!hifzMembership.value || !hifzValid.value) return;
+    if (!hifzMembership.value || !hifzValid.value || hifzBusy.value) return;
     recordingHifz.value = true;
     hifzError.value = '';
     try {
@@ -5522,6 +5524,7 @@ const recordHifz = async () => {
 };
 
 const removeHifz = async (entry: any) => {
+    if (hifzBusy.value) return;
     removingHifz.value = entry.id;
     try {
         await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
