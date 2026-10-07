@@ -961,14 +961,26 @@
                     <div v-if="hifzLoading" class="text-center py-3"><span class="spinner-border spinner-border-sm text-success"></span></div>
                     <p v-else-if="!hifz.length" class="text-muted small">Nothing recorded yet.</p>
                     <ul v-else class="list-unstyled mb-0">
-                        <li v-for="h in hifz" :key="h.id" class="d-flex gap-2 align-items-baseline py-1 border-bottom small">
-                            <span class="text-capitalize flex-grow-1">
-                                <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
-                                <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
-                                <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
-                            </span>
-                            <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
-                                    @click="removeHifz(h)">Remove</button>
+                        <li v-for="h in hifz" :key="h.id" class="py-1 border-bottom small">
+                            <div class="d-flex gap-2 align-items-baseline">
+                                <span class="text-capitalize flex-grow-1">
+                                    <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
+                                    <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
+                                    <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
+                                </span>
+                                <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
+                                        @click="removeHifz(h)">Remove</button>
+                            </div>
+                            <!-- Shown whenever there IS one. The form above has
+                                 taken a note since this tab shipped and this list
+                                 never displayed it, so a teacher could not find
+                                 what she had written about a child's recitation
+                                 (the same gap the drill notes on the Letters tab
+                                 once had). Outside the capitalised line: these
+                                 are her words, shown as she typed them. -->
+                            <div v-if="h.note" class="text-muted fst-italic hifz-note" dir="auto" style="white-space: pre-wrap;">
+                                <i class="bi bi-chat-left-text me-1" aria-hidden="true"></i><span class="visually-hidden">Note: </span>{{ h.note }}
+                            </div>
                         </li>
                     </ul>
                 </template>
