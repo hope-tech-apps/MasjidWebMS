@@ -19,9 +19,11 @@ it('keeps exactly the two restrictive foreign keys to funds as the backstop', fu
          AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME
         WHERE k.TABLE_SCHEMA = DATABASE() AND k.REFERENCED_TABLE_NAME = 'funds'
         ORDER BY k.TABLE_NAME, k.COLUMN_NAME");
-    expect(array_map(fn ($key) => [$key->t, $key->c, $key->d], $keys))->toBe([
-        ['donation_subscriptions', 'fund_id', 'RESTRICT'],
-        ['donations', 'fund_id', 'RESTRICT'],
+    // MySQL reports a foreign key declared without an action as NO ACTION, which it
+    // enforces exactly as RESTRICT; either is the backstop this test is here to keep.
+    expect(array_map(fn ($key) => [$key->t, $key->c, in_array($key->d, ['RESTRICT', 'NO ACTION'], true) ? 'restrictive' : $key->d], $keys))->toBe([
+        ['donation_subscriptions', 'fund_id', 'restrictive'],
+        ['donations', 'fund_id', 'restrictive'],
     ]);
 });
 
@@ -47,7 +49,8 @@ it('takes a primary key FOR UPDATE lock on deletion before checking references',
     $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
     $org = $this->org(['crm_enabled' => true]);
     $fund = $this->fund($org);
-    Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin']));
+    // users.phone has no default on MySQL; SQLite does not mind.
+    Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '5550100000']));
     $level = DB::transactionLevel();
     $inside = [];
     DB::listen(function ($query) use (&$inside, $level): void {
