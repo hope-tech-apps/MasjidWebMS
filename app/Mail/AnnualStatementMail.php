@@ -38,12 +38,15 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
     /** Issuer identity for diagnostics; sending uses only the captured snapshot. */
     public ?int $masjidId = null;
 
+    /** Currency sections captured before queueing; absent in older payloads. */
+    public array $currencies = [];
+
     public function __construct(
         public string $masjidName,
         public string $donorName,
         public int $year,
-        public string $currency,
-        public string $totalEligible,
+        public ?string $currency,
+        public ?string $totalEligible,
         public int $giftCount,
         public array $gifts,
         public array $byFund,
@@ -51,9 +54,11 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
         public ?string $pdfName = null,
         bool $religiousOrg = true,
         ?int $masjidId = null,
+        array $currencies = [],
     ) {
         $this->religiousOrg = $religiousOrg;
         $this->masjidId = $masjidId;
+        $this->currencies = $currencies;
     }
 
     /** Attach the formal letter PDF when one was rendered. */
@@ -91,7 +96,7 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
                 'gifts' => $this->gifts,
                 'byFund' => $this->byFund,
                 'religiousOrg' => $this->religiousOrg,
-            ],
+            ] + ($this->currencies ? ['currencies' => $this->currencies] : []),
         );
     }
 }

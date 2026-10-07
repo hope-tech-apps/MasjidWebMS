@@ -610,8 +610,15 @@ direct charge on the organisation's account, and the webhook alone marks it paid
   `DonationReceiptMail` / `AnnualStatementMail` passes `religiousOrg:`, so the
   email agrees with the PDF it carries. The mailables declare it as a defaulted
   property, NOT a promoted one, so a payload queued before it existed still
-  unserializes. Masjid output is byte-identical to c0f6a72
+  unserializes. Single-currency masjid output is byte-identical to c0f6a72
   (`ReceiptWordingByOrgTypeTest` against `tests/fixtures/receipts-c0f6a72`).
+
+- **Annual statement currencies.** One document still covers the donor/year, but
+  mixed statements list independent currency totals and label every gift in its
+  currency. No conversion or combined monetary total. Summary rows remain per
+  donor/currency; the header totals each currency and counts distinct donors.
+  Single-currency statement data and rendered HTML retain the original bytes
+  (`AnnualStatementCurrencyTest`, fixtures at 78ceee4c).
 
 ## Imported order history is never Stripe's (DECISIONS.md 2026-09-25)
 

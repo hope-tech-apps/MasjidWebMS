@@ -42,12 +42,19 @@ class StatementLetterService
             'donorName' => trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? '')) ?: 'Valued donor',
             'year' => $statement['year'],
             'currency' => $statement['currency'],
-            'totalEligible' => $money($statement['total_eligible']),
+            'totalEligible' => $statement['total_eligible'] === null ? null : $money($statement['total_eligible']),
             'giftCount' => $statement['gift_count'],
             'gifts' => array_map(fn ($g) => [
                 'date' => $g['date'], 'fund' => $g['fund'], 'amount' => $money($g['amount']),
-            ], $statement['gifts']),
+            ] + (isset($g['currency']) ? ['currency' => $g['currency']] : []), $statement['gifts']),
         ]);
+
+        if (isset($statement['currencies'])) {
+            $data['currencies'] = array_map(fn ($section) => [
+                'currency' => $section['currency'],
+                'totalEligible' => $money($section['total_eligible']),
+            ], $statement['currencies']);
+        }
 
         return Pdf::loadView('pdf.annual-statement', $data)
             ->setPaper('letter')

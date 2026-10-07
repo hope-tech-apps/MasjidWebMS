@@ -33,8 +33,8 @@
 
                 <template v-else>
                     <div class="alert alert-light border d-flex justify-content-between align-items-center mb-3">
-                        <span>{{ donors.length }} donor{{ donors.length === 1 ? '' : 's' }} · {{ year }}</span>
-                        <strong>Total eligible: {{ formatCents(totalEligible) }}</strong>
+                        <span>{{ donorCount }} donor{{ donorCount === 1 ? '' : 's' }} · {{ year }}</span>
+                        <strong>Total eligible: {{ totalLabel }}</strong>
                     </div>
 
                     <div class="table-responsive">
@@ -49,7 +49,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="d in donors" :key="d.contact_id">
+                                <tr v-for="d in donors" :key="`${d.contact_id}-${d.currency}`">
                                     <td>{{ d.name }}</td>
                                     <td>
                                         <span v-if="d.email">{{ d.email }}</span>
@@ -112,7 +112,20 @@ const sendingId = ref<number | null>(null);
 const downloadingId = ref<number | null>(null);
 const sendingAll = ref(false);
 const donors = ref<DonorRow[]>([]);
-const totalEligible = ref(0);
+// Summary rows already separate donor/currency. Derive totals from those rows
+// so a cached API's old combined total can never be displayed.
+const donorCount = computed(() => new Set(donors.value.map(d => d.contact_id)).size);
+const totalsByCurrency = computed(() => {
+    const totals: Record<string, number> = {};
+    for (const d of donors.value) {
+        const currency = d.currency.toUpperCase();
+        totals[currency] = (totals[currency] ?? 0) + d.total_eligible;
+    }
+    return Object.entries(totals);
+});
+const totalLabel = computed(() => totalsByCurrency.value.length === 1
+    ? formatCents(totalsByCurrency.value[0][1], totalsByCurrency.value[0][0])
+    : totalsByCurrency.value.map(([currency, cents]) => `${currency} ${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join('; '));
 
 const currentYear = new Date().getFullYear();
 const year = ref(currentYear - 1); // statements default to last completed year
@@ -130,7 +143,6 @@ const loadData = async () => {
         const res = await ApiService.get(`/api/admin/masjids/${id}/annual-statements?year=${year.value}` as any);
         if (res.data?.status === 'success') {
             donors.value = res.data.data.donors || [];
-            totalEligible.value = res.data.data.total_eligible || 0;
         }
     } catch (e) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load statements.' });

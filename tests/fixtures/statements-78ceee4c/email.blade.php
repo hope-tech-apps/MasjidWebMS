@@ -24,25 +24,24 @@
                                 tax-deductible contributions to {{ $masjidName }} for {{ $year }}, for your records.
                             </p>
 
-@foreach (($currencies ?? []) ?: [['currency' => $currency, 'total_eligible' => $totalEligible, 'gift_count' => $giftCount, 'by_fund' => $byFund, 'gifts' => $gifts]] as $section)
                             <!-- Total -->
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4e7eb; border-radius:8px; margin-bottom:20px;">
                                 <tr>
                                     <td style="padding:16px 20px;">
-                                        <div style="font-size:13px; color:#7b8794; text-transform:uppercase; letter-spacing:.04em;">Total tax-eligible ({{ $section['gift_count'] }} {{ $section['gift_count'] === 1 ? 'donation' : 'donations' }})</div>
-                                        <div style="font-size:26px; font-weight:700; color:#1f2933; margin-top:4px;">{{ $section['currency'] }} {{ $section['total_eligible'] }}</div>
+                                        <div style="font-size:13px; color:#7b8794; text-transform:uppercase; letter-spacing:.04em;">Total tax-eligible ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }})</div>
+                                        <div style="font-size:26px; font-weight:700; color:#1f2933; margin-top:4px;">{{ $currency }} {{ $totalEligible }}</div>
                                     </td>
                                 </tr>
                             </table>
 
                             <!-- By fund -->
-                            @if (count($section['by_fund']) > 1)
+                            @if (count($byFund) > 1)
                                 <h6 style="font-size:12px; color:#7b8794; text-transform:uppercase; letter-spacing:.04em; margin:0 0 8px;">By fund</h6>
                                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px; margin-bottom:20px;">
-                                    @foreach ($section['by_fund'] as $row)
+                                    @foreach ($byFund as $row)
                                         <tr>
                                             <td style="padding:6px 0; color:#52606d;">{{ $row['fund'] }}</td>
-                                            <td style="padding:6px 0; text-align:right; font-weight:600;">{{ $section['currency'] }} {{ $row['amount'] }}</td>
+                                            <td style="padding:6px 0; text-align:right; font-weight:600;">{{ $currency }} {{ $row['amount'] }}</td>
                                         </tr>
                                     @endforeach
                                 </table>
@@ -57,17 +56,16 @@
                                     <td style="padding:8px 0; color:#7b8794; text-align:right;">Receipt</td>
                                     <td style="padding:8px 0; color:#7b8794; text-align:right;">Amount</td>
                                 </tr>
-                                @foreach ($section['gifts'] as $gift)
+                                @foreach ($gifts as $gift)
                                     <tr style="border-bottom:1px solid #f0f2f4;">
                                         <td style="padding:8px 0;">{{ $gift['date'] }}</td>
                                         <td style="padding:8px 0;">{{ $gift['fund'] }}</td>
                                         <td style="padding:8px 0; text-align:right; color:#7b8794;">#{{ $gift['serial'] }}</td>
-                                        <td style="padding:8px 0; text-align:right; font-weight:600;">{{ $section['currency'] }} {{ $gift['amount'] }}</td>
+                                        <td style="padding:8px 0; text-align:right; font-weight:600;">{{ $currency }} {{ $gift['amount'] }}</td>
                                     </tr>
                                 @endforeach
                             </table>
 
-@endforeach
                             <p style="margin:24px 0 0; font-size:12px; line-height:1.6; color:#9aa5b1;">
 @if ($religiousOrg ?? true)
                                 No goods or services were provided in exchange for these contributions, other than

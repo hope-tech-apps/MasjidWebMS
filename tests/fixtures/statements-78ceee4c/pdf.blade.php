@@ -56,7 +56,7 @@
         that supporters like you have shown to charity.</p>
 
 @if ($religiousOrg ?? true)
-    <p>This is to acknowledge your total contributions of <strong>@if (count($currencies ?? []) > 1)@foreach ($currencies as $section){{ $section['currency'] }} {{ $section['totalEligible'] }}@if (! $loop->last)<br>@endif @endforeach @else{{ $currency }} {{ $totalEligible }}@endif</strong>
+    <p>This is to acknowledge your total contributions of <strong>{{ $currency }} {{ $totalEligible }}</strong>
         ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }}) to {{ $masjidName }} during {{ $year }}.
         {{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
         As such, all contributions are tax deductible for federal and state income tax purposes.@if ($taxId)
@@ -71,7 +71,7 @@
      when a tax ID is on file. Directives sit at column 0 and this comment lives
      in this branch because a Blade comment leaves its newline behind: the masjid
      bytes stay identical (ReceiptWordingByOrgTypeTest). --}}
-    <p>This is to acknowledge your total contributions of <strong>@if (count($currencies ?? []) > 1)@foreach ($currencies as $section){{ $section['currency'] }} {{ $section['totalEligible'] }}@if (! $loop->last)<br>@endif @endforeach @else{{ $currency }} {{ $totalEligible }}@endif</strong>
+    <p>This is to acknowledge your total contributions of <strong>{{ $currency }} {{ $totalEligible }}</strong>
         ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }}) to {{ $masjidName }} during {{ $year }}.@if ($taxId)
         {{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
         As such, all contributions are tax deductible for federal and state income tax purposes.
@@ -92,7 +92,7 @@
                 <tr style="border-bottom:1px solid #eee;">
                     <td style="padding:4px 0;">{{ $g['date'] }}</td>
                     <td style="padding:4px 0;">{{ $g['fund'] }}</td>
-                    <td style="padding:4px 0; text-align:right;">{{ $g['currency'] ?? $currency }} {{ $g['amount'] }}</td>
+                    <td style="padding:4px 0; text-align:right;">{{ $currency }} {{ $g['amount'] }}</td>
                 </tr>
             @endforeach
         </table>

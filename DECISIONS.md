@@ -9125,3 +9125,15 @@ Vue tests/build were not run because no Vue admin file changed. No column was
 added, so StagingScrubCoverageTest was not triggered.
 
 First run on production (recorded before shipping, 2026-10-07): failed_jobs held five rows, all older than 30 days and all form mail (ids 18 to 22, failed 2026-08-30 to 2026-09-01: three FormResponseSubmitted, two FormSubmissionReceipt). The first nightly prune removes them; their ids, dates and types are kept here and in LOG.md, their payloads are not.
+
+## 2026-10-07 — Annual statement totals stay within one currency
+
+At 78ceee4c the summary grouped by donor/currency, but forContact summed all gifts and fund totals under the first gift's currency; the PDF repeated that currency on every gift. The email did the same. The index separately summed all summary rows, and the SPA labeled that sum as USD and counted currency rows as donors.
+
+Decided: retain one document and one bulk queue entry per donor/year. Group mixed statement monetary totals and fund totals by donation currency, display independent PDF totals, label each gift, and render an email section per currency. Mixed statement currency/total_eligible are null; currencies carries the complete independent sections. The index returns totals_by_currency and a null combined total when more than one currency is present. The SPA keeps donor/currency rows, uses distinct donor counts and currency row keys, and calculates currency totals from rows so older summary responses cannot supply a mixed sum.
+
+Single-currency service, preview and rendering data keep their original shape; PDF/email HTML is byte-identical to frozen 78ceee4c templates for masjid, school and community issuers. Existing queued single-currency payloads keep their default behavior. Receipt eligibility, dates, issued amounts, serials and bulk deduplication are unchanged.
+
+Not done: currency conversion, currency selection/configuration, payment/checkout/shared-helper changes, CSV changes (ledger CSV already labels every donation's currency), schema changes, historical inclusion, repair/reissue of already-issued or already-queued mixed snapshots, production counts or shipping. Those require separate scope/access/owner authorization; existing mixed snapshots lack the per-gift currencies needed for safe reconstruction. No network, commits, formatter or CHANGELOG changes. SQL and verification evidence are alongside this entry.
+
+Production when this shipped (read-only count, 2026-10-07): 0 donor-years with eligible gifts in more than one currency; all 809 succeeded donations are in USD. No existing donor's statement changes.

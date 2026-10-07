@@ -59,12 +59,18 @@ class AnnualStatementsController extends Controller
         $year = $this->resolveYear($request);
         $rows = $this->statements->summaryForYear((int) $masjid_id, $year);
 
+        $totals = [];
+        foreach ($rows as $row) {
+            $totals[$row['currency']] = ($totals[$row['currency']] ?? 0) + $row['total_eligible'];
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => [
                 'year' => $year,
                 'donors' => $rows,
-                'total_eligible' => array_sum(array_column($rows, 'total_eligible')),
+                'total_eligible' => count($totals) <= 1 ? array_sum($totals) : null,
+                'totals_by_currency' => $totals,
             ],
         ], Response::HTTP_OK);
     }
@@ -192,6 +198,7 @@ class AnnualStatementsController extends Controller
                 // organisation keeps the masjid wording), so the two never disagree.
                 religiousOrg: Letterhead::religiousOrg($masjid),
                 masjidId: $masjidId,
+                currencies: $data['currencies'] ?? [],
             ));
 
             return true;
@@ -217,7 +224,7 @@ class AnnualStatementsController extends Controller
     {
         $money = fn (int $cents) => number_format($cents / 100, 2);
 
-        return [
+        $data = [
             'contact' => [
                 'id' => $statement['contact']->id,
                 'name' => trim(($statement['contact']->first_name ?? '') . ' ' . ($statement['contact']->last_name ?? '')),
@@ -225,20 +232,38 @@ class AnnualStatementsController extends Controller
             ],
             'year' => $statement['year'],
             'currency' => $statement['currency'],
-            'total_eligible' => $money($statement['total_eligible']),
+            'total_eligible' => $statement['total_eligible'] === null ? null : $money($statement['total_eligible']),
             'gift_count' => $statement['gift_count'],
             'gifts' => array_map(fn ($g) => [
                 'date' => $g['date'],
                 'fund' => $g['fund'],
                 'amount' => $money($g['amount']),
                 'serial' => $g['serial'],
-            ], $statement['gifts']),
+            ] + (isset($g['currency']) ? ['currency' => $g['currency']] : []), $statement['gifts']),
             'by_fund' => array_map(
                 fn ($fund, $cents) => ['fund' => $fund, 'amount' => $money($cents)],
                 array_keys($statement['by_fund']),
                 array_values($statement['by_fund']),
             ),
         ];
+
+        if (isset($statement['currencies'])) {
+            $data['currencies'] = array_map(fn ($section) => [
+                'currency' => $section['currency'],
+                'total_eligible' => $money($section['total_eligible']),
+                'gift_count' => $section['gift_count'],
+                'gifts' => array_map(fn ($g) => [
+                    'date' => $g['date'], 'fund' => $g['fund'],
+                    'amount' => $money($g['amount']), 'serial' => $g['serial'],
+                ], $section['gifts']),
+                'by_fund' => array_map(
+                    fn ($fund, $cents) => ['fund' => $fund, 'amount' => $money($cents)],
+                    array_keys($section['by_fund']), array_values($section['by_fund']),
+                ),
+            ], $statement['currencies']);
+        }
+
+        return $data;
     }
 
     /** Default to last calendar year (the usual statement window), clamp to sane range. */

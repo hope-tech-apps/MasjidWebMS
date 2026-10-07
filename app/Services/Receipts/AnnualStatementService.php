@@ -12,11 +12,11 @@ use Illuminate\Support\Carbon;
  *
  * Recurring and one-time gifts are summed identically (each recurring charge is an
  * ordinary succeeded Donation with its own receipt), so nothing here special-cases
- * subscriptions. Only donations that ACTUALLY ISSUED a receipt count — a gift to a
- * non-receiptable fund never issued one and so is correctly excluded from the
- * tax-eligible total.
+ * subscriptions. Succeeded gifts to receiptable funds count, using the receipt
+ * eligible amount when present and the charged amount otherwise. Each currency
+ * is totaled separately.
  *
- * Imported order history (`source = 'historical'`, MEC's Wix orders) is left
+ * Imported order history (`source = 'historical'`, legacy orders) is left
  * out of both queries. That money moved through Square or PayPal on the old Wix
  * site; a statement Manara emails is a tax document, and listing those gifts on
  * it would state that Manara recorded payments it never saw (DECISIONS.md
@@ -33,15 +33,20 @@ class AnnualStatementService
     /**
      * One donor's statement for a year.
      *
+     * Single-currency statements retain the original payload. Mixed statements
+     * have null currency/total_eligible, currency-labeled gifts, and a currencies
+     * list with independent totals, gift counts, gifts and fund totals.
+     *
      * @return array{
      *   contact: Contact,
      *   year: int,
-     *   currency: string,
-     *   total_eligible: int,
+     *   currency: ?string,
+     *   total_eligible: ?int,
      *   gift_count: int,
-     *   gifts: array<int, array{date:string, fund:string, amount:int, serial:int}>,
-     *   by_fund: array<string, int>
-     * }|null  null when the donor gave nothing receiptable that year
+     *   gifts: array<int, array{date:string, fund:string, amount:int, serial:?int, currency?:string}>,
+     *   by_fund: array<string, int>,
+     *   currencies?: array<int, array{currency:string, total_eligible:int, gift_count:int, gifts:array, by_fund:array<string,int>}>
+     * }|null null when the donor gave nothing receiptable that year
      */
     public function forContact(int $masjidId, int $contactId, int $year): ?array
     {
@@ -79,36 +84,53 @@ class AnnualStatementService
         }
 
         $gifts = [];
-        $byFund = [];
-        $total = 0;
+        $currencies = [];
 
         foreach ($donations as $d) {
             $eligible = $d->receipt ? (int) $d->receipt->eligible_amount : (int) $d->charged_amount;
             $fundName = $d->fund?->name ?? 'General';
-            $total += $eligible;
-            $byFund[$fundName] = ($byFund[$fundName] ?? 0) + $eligible;
+            $currency = strtoupper((string) $d->currency);
+            $currencies[$currency] ??= [
+                'currency' => $currency, 'total_eligible' => 0, 'gift_count' => 0,
+                'gifts' => [], 'by_fund' => [],
+            ];
+            $section = &$currencies[$currency];
+            $section['total_eligible'] += $eligible;
+            $section['gift_count']++;
+            $section['by_fund'][$fundName] = ($section['by_fund'][$fundName] ?? 0) + $eligible;
 
-            $gifts[] = [
+            $gift = [
                 'date' => Carbon::parse($d->donated_at ?? $d->created_at)->format('M j, Y'),
                 'fund' => $fundName,
                 'amount' => $eligible,
                 'serial' => $d->receipt ? (int) $d->receipt->serial_number : null,
             ];
+            $section['gifts'][] = $gift;
+            $gifts[] = $gift + ['currency' => $currency];
+            unset($section);
         }
 
-        return [
+        $single = count($currencies) === 1 ? reset($currencies) : null;
+
+        $statement = [
             'contact' => $contact,
             'year' => $year,
-            'currency' => strtoupper((string) $donations->first()->currency),
-            'total_eligible' => $total,
+            'currency' => $single['currency'] ?? null,
+            'total_eligible' => $single['total_eligible'] ?? null,
             'gift_count' => $donations->count(),
-            'gifts' => $gifts,
-            'by_fund' => $byFund,
+            'gifts' => $single['gifts'] ?? $gifts,
+            'by_fund' => $single['by_fund'] ?? [],
         ];
+
+        if (! $single) {
+            $statement['currencies'] = array_values($currencies);
+        }
+
+        return $statement;
     }
 
     /**
-     * Report row per donor who has receiptable giving in the year — the admin
+     * Report row per donor and currency with receiptable giving in the year — the admin
      * summary that drives "email statement" / "email all".
      *
      * @return array<int, array{contact_id:int, name:string, email:?string, total_eligible:int, gift_count:int, currency:string}>
