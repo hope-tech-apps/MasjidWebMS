@@ -1684,9 +1684,16 @@ entry would be unreadable data about a minor, kept forever).
 
 **Correction is the soft delete**, as revocation is for an award: `deleted_at`
 drops the entry from every listing, every total and every derivation at once, and
-`corrected_by_user_id` records who did it. There is no update endpoint on
-purpose — striking and re-recording leaves an audit trail where an in-place edit
-would quietly rewrite what a teacher said they heard.
+`corrected_by_user_id` records who did it. WHAT WAS HEARD is never edited in
+place, on purpose — striking and re-recording leaves an audit trail where an
+in-place edit would quietly rewrite what a teacher said they heard.
+
+**The note is the one field edited in place** (owner, 2026-10-07):
+`PUT .../groups/{group_id}/hifz/{entry_id}` (teacher realm, `teacher.teaches:quran`)
+takes `note` and nothing else. It is commentary, read by no derivation, so it
+cannot move a child's position. Whoever may record and strike may reword it; each
+change writes a WARNING line with the entry and the account, never the words. Do
+not widen that endpoint to the portion, the kind, the quality or the day.
 
 **Permissions**: `view contacts` / `manage contacts`, minting nothing.
 `Permission::count() === 8` stays pinned. Nothing here is paywalled.

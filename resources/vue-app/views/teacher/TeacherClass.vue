@@ -873,13 +873,12 @@
                                     </select>
                                 </div>
                                 <div class="col-12 col-sm-auto">
-                                    <label class="form-label small text-muted mb-1">Surah</label>
-                                    <select class="form-select form-select-sm" style="min-width:14rem" v-model.number="hifzForm.surah">
-                                        <option :value="null" disabled>Choose a surah…</option>
-                                        <option v-for="s in surahs" :key="s.number" :value="s.number">
-                                            {{ s.number }} · {{ s.name }} ({{ s.ayahs }})
-                                        </option>
-                                    </select>
+                                    <label class="form-label small text-muted mb-1" for="hifz-surah">Surah</label>
+                                    <!-- Type-to-find, by number or part of the name.
+                                         It was a plain list of 114 to scroll through
+                                         for every recitation. -->
+                                    <SurahPicker input-id="hifz-surah" style="min-width:14rem"
+                                                 :surahs="surahs" v-model="hifzForm.surah" />
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Ayahs</label>
@@ -968,6 +967,14 @@
                                     <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
                                     <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
                                 </span>
+                                <!-- The note is the one thing on a line that is
+                                     changed in place. What was heard (portion,
+                                     type, quality, day) is still corrected by
+                                     Remove and recording again. -->
+                                <button type="button" class="btn btn-sm btn-link p-0 text-nowrap"
+                                        :class="h.note ? 'text-success' : 'text-muted'"
+                                        :aria-expanded="openHifzNote === h.id"
+                                        @click="toggleHifzNote(h)">{{ h.note ? 'Edit note' : 'Add note' }}</button>
                                 <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
                                         @click="removeHifz(h)">Remove</button>
                             </div>
@@ -978,8 +985,30 @@
                                  (the same gap the drill notes on the Letters tab
                                  once had). Outside the capitalised line: these
                                  are her words, shown as she typed them. -->
-                            <div v-if="h.note" class="text-muted fst-italic hifz-note" dir="auto" style="white-space: pre-wrap;">
+                            <div v-if="h.note && openHifzNote !== h.id" class="text-muted fst-italic hifz-note" dir="auto" style="white-space: pre-wrap;">
                                 <i class="bi bi-chat-left-text me-1" aria-hidden="true"></i><span class="visually-hidden">Note: </span>{{ h.note }}
+                            </div>
+
+                            <div v-if="openHifzNote === h.id" class="mt-1 mb-2 hifz-note-editor">
+                                <textarea class="form-control form-control-sm" rows="2" dir="auto"
+                                          v-model="hifzNoteDraft" :maxlength="hifzNoteMax"
+                                          :disabled="savingHifzNote" aria-label="Note on this recitation"
+                                          placeholder="e.g. struggled with the waqf on ayah 12"></textarea>
+                                <div class="d-flex align-items-center gap-2 mt-2">
+                                    <button type="button" class="btn btn-sm btn-success" :disabled="savingHifzNote" @click="saveHifzNote(h)">
+                                        <span v-if="savingHifzNote" class="spinner-border spinner-border-sm"></span>
+                                        <span v-else>Save note</span>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-link text-muted" :disabled="savingHifzNote"
+                                            @click="openHifzNote = null">Cancel</button>
+                                    <!-- Clearing is deliberate and says so, as on the
+                                         Letters tab: an empty box saved by accident
+                                         would erase a sentence about a child. -->
+                                    <button v-if="h.note" type="button" class="btn btn-sm btn-link text-danger ms-auto"
+                                            :disabled="savingHifzNote" @click="saveHifzNote(h, '')">Remove note</button>
+                                </div>
+                                <p v-if="hifzNoteError" class="text-danger small mt-2 mb-0">{{ hifzNoteError }}</p>
+                                <div class="form-text">{{ hifzNoteDraft.length }} / {{ hifzNoteMax }} · This student's family can read this note.</div>
                             </div>
                         </li>
                     </ul>
@@ -2519,6 +2548,7 @@ import TeacherStudentSheet from '@/views/teacher/TeacherStudentSheet.vue';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { ageLabel } from '@/core/helpers/studentAge';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
+import SurahPicker from '@/components/teacher/SurahPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { awardPointsLabel, pickerFrom, withSkillInserted } from '@/core/helpers/behaviorSkills';
 import { isWeekly, pointsHeadline, signedPoints, weekFromQuery, weekRangeLabel } from '@/core/helpers/pointsWeek';
@@ -5182,8 +5212,63 @@ const loadSurahs = async () => {
     }
 };
 
+// ---------------------------------------------- the note on a recitation
+// One editor open at a time, on the line it belongs to, as the drill notes on the
+// Letters tab work. Its error is said under the box the teacher is looking at.
+const openHifzNote = ref<string | number | null>(null);
+const hifzNoteDraft = ref('');
+const savingHifzNote = ref(false);
+const hifzNoteError = ref('');
+
+/** Open the editor on a line, seeded with what is already written there. */
+const toggleHifzNote = (entry: any) => {
+    if (openHifzNote.value === entry.id) {
+        openHifzNote.value = null;
+        return;
+    }
+    openHifzNote.value = entry.id;
+    hifzNoteDraft.value = entry.note ?? '';
+    hifzNoteError.value = '';
+};
+
+/**
+ * Write the note and NOTHING else. The endpoint takes the note alone, so a
+ * sentence about a recitation cannot move the child or change what was heard.
+ * `note` is always sent: a present, empty value is the deliberate clear.
+ */
+const saveHifzNote = async (entry: any, note?: string) => {
+    savingHifzNote.value = true;
+    hifzNoteError.value = '';
+    try {
+        const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: note ?? hifzNoteDraft.value });
+        const saved = res.data?.data;
+        const row = hifz.value.find((h) => h.id === entry.id);
+        if (saved && saved.id === entry.id && 'note' in saved) {
+            // The server's words, not the draft: it trims, and it is what the
+            // family will read.
+            if (row) row.note = saved.note ?? null;
+        } else if (row) {
+            // An answer that does not say what was stored is not a save the
+            // screen can vouch for: show what the server holds.
+            await loadHifz();
+        }
+        // Only the editor this save belongs to. The teacher may have opened
+        // another line's while it was in flight.
+        if (openHifzNote.value === entry.id) openHifzNote.value = null;
+    } catch (e: any) {
+        // The editor stays OPEN with the draft in it. apiErrorText, not
+        // `data.message`: the likeliest refusal is the length rule, which
+        // arrives as a validation bag with no top-level message.
+        hifzNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
+    } finally {
+        savingHifzNote.value = false;
+    }
+};
+
 const loadHifz = async () => {
     hifz.value = [];
+    // Another student's list: an editor left open would sit on nobody's line.
+    openHifzNote.value = null;
     if (!hifzMembership.value) return;
     hifzLoading.value = true;
     hifzError.value = '';
@@ -5257,6 +5342,7 @@ const removeHifz = async (entry: any) => {
     try {
         await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
         hifz.value = hifz.value.filter((h) => h.id !== entry.id);
+        if (openHifzNote.value === entry.id) openHifzNote.value = null;
     } catch {
         hifzError.value = 'That entry could not be removed.';
     } finally {

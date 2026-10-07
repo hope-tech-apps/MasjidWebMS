@@ -197,6 +197,12 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz',
+            // Rewording the NOTE on a recitation (2026-10-07, owner's request):
+            // one verb, and it writes one column. The portion, the type, the
+            // quality and the day cannot be sent to it, so a child's position
+            // still moves only by recording and striking. Same fence as the two
+            // beside it (`teacher.teaches:quran`).
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',
             // Two VIDEO playback tickets, 2026-09-24, and they are the only

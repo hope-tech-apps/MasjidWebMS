@@ -341,6 +341,217 @@ class TeacherArabicAndHifzNotesTest extends TestCase
         ]);
     }
 
+    // ------------------------------------------------------------------
+    // Rewording the note on a recitation (owner, 2026-10-07). The list never
+    // showed the note and nothing could change it; PUT .../hifz/{entry_id}
+    // rewrites the NOTE and nothing else.
+    // ------------------------------------------------------------------
+
+    #[Test]
+    public function a_teacher_may_reword_the_note_on_a_recitation_and_reads_it_back(): void
+    {
+        $entry = $this->recitation('Struggled with the waqf on ayah 3.');
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Fixed the waqf on ayah 3 today.'])
+            ->assertOk()
+            ->assertJsonPath('data.id', $entry->id)
+            ->assertJsonPath('data.note', 'Fixed the waqf on ayah 3 today.');
+
+        $this->assertSame('Fixed the waqf on ayah 3 today.', $entry->fresh()->note);
+
+        // The list the teacher's screen draws carries the new words.
+        $this->getJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/hifz")
+            ->assertOk()
+            ->assertJsonPath('data.data.0.note', 'Fixed the waqf on ayah 3 today.');
+    }
+
+    #[Test]
+    public function a_note_can_be_added_to_a_recitation_that_had_none_and_cleared_deliberately(): void
+    {
+        $entry = $this->recitation(null);
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Revise at home.'])->assertOk();
+        $this->assertSame('Revise at home.', $entry->fresh()->note);
+
+        // PRESENT and blank is the deliberate clear, as for every note here.
+        $this->putJson($this->hifzUrl($entry), ['note' => '   '])
+            ->assertOk()
+            ->assertJsonPath('data.note', null);
+        $this->assertNull($entry->fresh()->note);
+    }
+
+    #[Test]
+    public function a_request_that_does_not_mention_the_note_changes_nothing(): void
+    {
+        $entry = $this->recitation('Keep this.');
+
+        $this->putJson($this->hifzUrl($entry), ['quality' => 'repeat'])->assertStatus(422);
+
+        $this->assertSame('Keep this.', $entry->fresh()->note);
+        $this->assertSame('excellent', $entry->fresh()->quality);
+    }
+
+    #[Test]
+    public function only_the_note_is_rewritten_never_what_was_heard(): void
+    {
+        $entry = $this->recitation('First words.');
+        $before = $entry->fresh()->only([
+            'kind', 'from_surah', 'from_ayah', 'to_surah', 'to_ayah', 'quality',
+            'major_mistakes', 'minor_mistakes', 'heard_by_user_id', 'group_membership_id', 'corrected_by_user_id',
+        ]);
+        $heardAt = $entry->fresh()->recited_at->toIso8601String();
+
+        $this->putJson($this->hifzUrl($entry), [
+            'note' => 'Second words.',
+            // None of these may ride along.
+            'kind' => 'manzil', 'quality' => 'repeat', 'from_surah' => 2, 'from_ayah' => 1,
+            'to_surah' => 2, 'to_ayah' => 286, 'major_mistakes' => 9, 'recited_at' => '2026-01-01',
+            'membership_id' => 999999, 'heard_by_user_id' => 999999,
+        ])->assertOk();
+
+        $after = $entry->fresh();
+        $this->assertSame('Second words.', $after->note);
+        $this->assertSame($before, $after->only(array_keys($before)));
+        $this->assertSame($heardAt, $after->recited_at->toIso8601String());
+        $this->assertFalse($after->trashed());
+    }
+
+    #[Test]
+    public function a_note_longer_than_the_limit_is_refused_and_the_old_one_stays(): void
+    {
+        $entry = $this->recitation('Short.');
+        $max = (int) config('groups.hifz.max_note_length', 1000);
+
+        $this->putJson($this->hifzUrl($entry), ['note' => str_repeat('a', $max + 1)])
+            ->assertStatus(422);
+
+        $this->assertSame('Short.', $entry->fresh()->note);
+
+        $this->putJson($this->hifzUrl($entry), ['note' => str_repeat('a', $max)])->assertOk();
+    }
+
+    #[Test]
+    public function a_teacher_who_did_not_hear_it_but_teaches_quran_in_the_class_may_reword_it_and_the_edit_is_logged_without_the_words(): void
+    {
+        $entry = $this->recitation('Typed by the first teacher.');
+
+        $second = User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        MasjidUser::create([
+            'masjid_id' => $this->school->id, 'user_id' => $second->id, 'role' => 'teacher', 'is_default' => true,
+        ]);
+        $this->mine->staff()->attach($second->id, [
+            'masjid_id' => $this->mine->masjid_id, 'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
+        ]);
+        Sanctum::actingAs($second, ['staff']);
+
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Reworded by the second teacher.'])
+            ->assertOk()
+            // Who HEARD it does not change because somebody else reworded the note.
+            ->assertJsonPath('data.heard_by.id', $this->teacher->id);
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($entry, $second): bool {
+                return $message === 'Hifdh note edited'
+                    && $context['entry_id'] === $entry->id
+                    && $context['by_user_id'] === $second->id
+                    && $context['heard_by_user_id'] === $this->teacher->id
+                    && ! str_contains(json_encode($context), 'Reworded')
+                    && ! str_contains(json_encode($context), 'Typed by');
+            })->once();
+    }
+
+    #[Test]
+    public function saving_the_same_note_again_succeeds_and_logs_no_edit(): void
+    {
+        $entry = $this->recitation('Unchanged.');
+
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Unchanged.'])->assertOk();
+
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('warning');
+    }
+
+    #[Test]
+    public function a_teacher_limited_to_another_subject_cannot_reword_a_hifz_note(): void
+    {
+        $entry = $this->recitation('Qur\'an teacher\'s words.');
+
+        GroupStaff::query()->where('group_id', $this->mine->id)
+            ->update(['subjects' => json_encode([GroupStaff::SUBJECT_ARABIC])]);
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Arabic teacher was here.'])->assertForbidden();
+
+        $this->assertSame('Qur\'an teacher\'s words.', $entry->fresh()->note);
+    }
+
+    #[Test]
+    public function a_note_in_a_class_the_teacher_does_not_lead_cannot_be_reworded_by_either_address(): void
+    {
+        $other = GroupMembership::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->notMine->id,
+            'contact_id' => Contact::factory()->create(['masjid_id' => $this->school->id])->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+        ]);
+        $theirs = \App\Models\HifzEntry::create([
+            'masjid_id' => $this->school->id,
+            'group_id' => $this->notMine->id, 'group_membership_id' => $other->id,
+            'heard_by_user_id' => $this->teacher->id, 'kind' => 'sabak',
+            'from_surah' => 114, 'from_ayah' => 1, 'to_surah' => 114, 'to_ayah' => 6,
+            'quality' => 'good', 'note' => 'Another class.',
+        ]);
+
+        // Through its own class: the teacher does not lead it.
+        $this->putJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->notMine->id}/hifz/{$theirs->id}",
+            ['note' => 'Not my class.']
+        )->assertForbidden();
+
+        // Through the class the teacher DOES lead: the entry is not in it, so it is a miss.
+        $this->putJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz/{$theirs->id}",
+            ['note' => 'Not my class.']
+        )->assertNotFound();
+
+        $this->assertSame('Another class.', $theirs->fresh()->note);
+    }
+
+    #[Test]
+    public function a_struck_recitation_has_no_note_to_reword(): void
+    {
+        $entry = $this->recitation('Struck.');
+
+        $this->deleteJson($this->hifzUrl($entry))->assertOk();
+
+        $this->putJson($this->hifzUrl($entry), ['note' => 'Written where nobody reads.'])->assertNotFound();
+
+        $this->assertSame('Struck.', \App\Models\HifzEntry::withTrashed()->findOrFail($entry->id)->note);
+    }
+
+    /** One recitation for the student, recorded by the teacher through the real door. */
+    private function recitation(?string $note): \App\Models\HifzEntry
+    {
+        $id = $this->postJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz",
+            [
+                'membership_id' => $this->student->id,
+                'kind' => 'sabak',
+                'from_surah' => 114, 'from_ayah' => 1,
+                'to_surah' => 114, 'to_ayah' => 6,
+                'quality' => 'excellent',
+            ] + ($note === null ? [] : ['note' => $note])
+        )->assertSuccessful()->json('data.id');
+
+        return \App\Models\HifzEntry::withoutGlobalScopes()->findOrFail($id);
+    }
+
+    private function hifzUrl(\App\Models\HifzEntry $entry): string
+    {
+        return "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz/{$entry->id}";
+    }
+
     /** The first drill the class's current stage actually contains. */
     /** One drill's note out of a tracker payload, by drill id. */
     private function drillNote(array $payload, string $drillId): ?string

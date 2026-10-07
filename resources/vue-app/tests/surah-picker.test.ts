@@ -1,0 +1,190 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { chooseOption, click, compileSfc, flush, mountSfc, type } from './support/mountSfc.ts';
+import { modulesFor } from './support/batch3Modules.ts';
+import { foldSurahText, matchSurahs, surahLabel, surahOnLeave, type Surah } from '../core/helpers/surahSearch.ts';
+
+/**
+ * The Surah box on the teacher's Hifdh form: type the number or part of the name.
+ * It was a plain list of 114 to scroll through for every recitation.
+ */
+const doc = (globalThis as any).document;
+doc.addEventListener ??= () => {};
+doc.removeEventListener ??= () => {};
+doc.body = { style: {} };
+(globalThis as any).window ??= { addEventListener() {}, removeEventListener() {} };
+
+// A slice of the server's list, as GET .../quran-surahs answers it.
+const SURAHS: Surah[] = [
+    { number: 1, name: 'Al-Fatihah', ayahs: 7 }, { number: 2, name: 'Al-Baqarah', ayahs: 286 },
+    { number: 3, name: "Ali 'Imran", ayahs: 200 }, { number: 10, name: 'Yunus', ayahs: 109 },
+    { number: 12, name: 'Yusuf', ayahs: 111 }, { number: 18, name: 'Al-Kahf', ayahs: 110 },
+    { number: 30, name: 'Ar-Rum', ayahs: 60 }, { number: 36, name: 'Ya-Sin', ayahs: 83 },
+    { number: 78, name: 'An-Naba', ayahs: 40 }, { number: 100, name: 'Al-Adiyat', ayahs: 11 },
+    { number: 110, name: 'An-Nasr', ayahs: 3 }, { number: 114, name: 'An-Nas', ayahs: 6 },
+];
+const numbers = (list: Surah[]) => list.map((s) => s.number);
+
+test('nothing typed is the whole list, in mushaf order', () => {
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '')), numbers(SURAHS));
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '   ')), numbers(SURAHS));
+});
+
+test('digits are the number, read from its first digit, the exact number first', () => {
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '36')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '1')), [1, 10, 12, 18, 100, 110, 114]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '3')), [3, 30, 36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '036')), [36], 'leading zeros are ignored');
+    assert.deepEqual(matchSurahs(SURAHS, '115'), []);
+    assert.deepEqual(matchSurahs(SURAHS, '0'), [], 'no surah is numbered zero');
+});
+
+test('letters are part of the name: spelling marks, the article and doubled vowels do not matter', () => {
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'yas')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'Ya Sin')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'yaseen')), [36]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'fatiha')), [1]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'al-fat')), [1]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'imraan')), [3]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'kahf')), [18]);
+    // A name that STARTS with the letters comes before one that only holds them.
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'nas')), [110, 114]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'yu')), [10, 12]);
+    assert.deepEqual(numbers(matchSurahs(SURAHS, 'a')).slice(0, 2), [1, 2]);
+    assert.deepEqual(matchSurahs(SURAHS, 'zzz'), []);
+    assert.equal(foldSurahText("Al-Ma'idah"), 'almaidah');
+});
+
+test('a number and letters together must both hold', () => {
+    assert.deepEqual(numbers(matchSurahs(SURAHS, '2 baq')), [2]);
+    assert.deepEqual(matchSurahs(SURAHS, '2 yas'), []);
+});
+
+test('leaving the box takes an exact number or the only match, and never guesses', () => {
+    assert.equal(surahOnLeave(SURAHS, '36')?.number, 36);
+    assert.equal(surahOnLeave(SURAHS, '1')?.number, 1, 'the exact number, though 10 and 12 also start with it');
+    assert.equal(surahOnLeave(SURAHS, 'yaseen')?.number, 36);
+    assert.equal(surahOnLeave(SURAHS, 'yu'), null, 'Yunus or Yusuf: not certain');
+    assert.equal(surahOnLeave(SURAHS, '115'), null);
+    assert.equal(surahOnLeave(SURAHS, ''), null);
+});
+
+const fire = (el: any, name: string, extra: Record<string, any> = {}) => {
+    const handler = el.props[`on${name[0].toUpperCase()}${name.slice(1)}`];
+    const event = { target: el, currentTarget: el, preventDefault() {}, stopPropagation() {}, ...extra };
+    (Array.isArray(handler) ? handler : handler ? [handler] : []).forEach((h: any) => h(event));
+};
+const file = 'components/teacher/SurahPicker.vue';
+
+async function picker(modelValue: number | null) {
+    const picked: (number | null)[] = [];
+    const screen = await mountSfc(file, { surahs: SURAHS, modelValue, inputId: 'hifz-surah', 'onUpdate:modelValue': (v: number | null) => picked.push(v) },
+        await modulesFor(file, {}));
+    await flush();
+    const box = () => screen.all((n: any) => n.tag === 'input')[0];
+    const options = () => screen.all((n: any) => n.props.role === 'option').map((n: any) => n.textContent);
+    return { screen, picked, box, options };
+}
+
+test('the box shows the chosen surah; focusing it lists every surah as the old drop-down did', async () => {
+    const { screen, box, options } = await picker(78);
+    try {
+        assert.equal(box().props.value, surahLabel(SURAHS[8]));
+        assert.equal(options().length, 0, 'closed until it is focused');
+        fire(box(), 'focus'); await flush();
+        assert.equal(options().length, SURAHS.length);
+        assert.equal(options()[0], '1 · Al-Fatihah (7)');
+    } finally { screen.unmount(); }
+});
+
+test('typing a number then Enter chooses that surah', async () => {
+    const { screen, picked, box, options } = await picker(null);
+    try {
+        assert.equal(box().props.placeholder, 'Type a number or part of the name');
+        fire(box(), 'focus'); await flush();
+        type(box(), '36'); await flush();
+        assert.deepEqual(options(), ['36 · Ya-Sin (83)']);
+        fire(box(), 'keydown', { key: 'Enter' }); await flush();
+        assert.deepEqual(picked, [36]);
+        assert.equal(box().props.value, '36 · Ya-Sin (83)');
+        assert.equal(options().length, 0, 'the list closes on a pick');
+    } finally { screen.unmount(); }
+});
+
+test('typing part of a name narrows the list; a tap chooses; the arrows move the highlight', async () => {
+    const { screen, picked, box, options } = await picker(null);
+    try {
+        fire(box(), 'focus'); await flush();
+        type(box(), 'yu'); await flush();
+        assert.deepEqual(options(), ['10 · Yunus (109)', '12 · Yusuf (111)']);
+        fire(box(), 'keydown', { key: 'ArrowDown' }); await flush();
+        fire(box(), 'keydown', { key: 'Enter' }); await flush();
+        assert.deepEqual(picked, [12], 'the first match is highlighted, one step down is the second');
+
+        fire(box(), 'focus'); await flush();
+        type(box(), 'kahf'); await flush();
+        const row = screen.all((n: any) => n.props.role === 'option')[0];
+        fire(row, 'mousedown'); await flush();
+        assert.deepEqual(picked, [12, 18]);
+    } finally { screen.unmount(); }
+});
+
+test('leaving the box: an exact number is taken, an uncertain text is dropped, Escape puts the surah back', async () => {
+    const { screen, picked, box } = await picker(78);
+    try {
+        fire(box(), 'focus'); await flush();
+        type(box(), '2'); await flush();
+        fire(box(), 'blur'); await flush();
+        assert.deepEqual(picked, [2]);
+
+        fire(box(), 'focus'); await flush();
+        type(box(), 'yu'); await flush();
+        fire(box(), 'blur'); await flush();
+        assert.deepEqual(picked, [2], 'Yunus or Yusuf is not chosen for her');
+        assert.equal(box().props.value, surahLabel(SURAHS[8]), 'the box shows the surah it holds (the test parent never changed it)');
+
+        fire(box(), 'focus'); await flush();
+        type(box(), 'zzz'); await flush();
+        assert.ok(screen.text().includes('No surah matches “zzz”.'), screen.text());
+        fire(box(), 'keydown', { key: 'Escape' }); await flush();
+        assert.equal(box().props.value, surahLabel(SURAHS[8]));
+        assert.deepEqual(picked, [2]);
+    } finally { screen.unmount(); }
+});
+
+test('on the Hifdh form, the typed surah is the one recorded', async () => {
+    const posts: any[] = [];
+    const route = { params: { masjidId: '1', groupId: '2' }, query: {} };
+    const router = { useRoute: () => route, useRouter: () => ({ replace: async () => {}, resolve: () => ({ href: '/' }) }) };
+    const ok = (data: any, meta: any = {}) => ({ data: { status: 'success', data, meta } });
+    const api = {
+        get: async (url: string) => ok(url.endsWith('/quran-surahs') ? SURAHS
+            : url.endsWith('/groups/2') ? { id: 2, name: 'Sample class', students: [{ membership_id: 9, contact: { first_name: 'Test student' } }] } : []),
+        post: async (url: string, body: any) => { posts.push({ url, body }); return ok({}); },
+    };
+    const parent = 'views/teacher/TeacherClass.vue';
+    const child = await compileSfc(file, await modulesFor(file, {}));
+    const screen = await mountSfc(parent, {}, await modulesFor(parent, {
+        'vue-router': router,
+        '@/core/services/TeacherApiService': { default: api, rowsOf: (d: any) => Array.isArray(d) ? d : d?.data ?? [] },
+        '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
+        '@/components/teacher/SurahPicker.vue': { default: child },
+    }));
+    try {
+        await flush(); click(screen.button('Hifdh')); await flush();
+        chooseOption(screen.all((n: any) => n.tag === 'select' && n.children.some((o: any) => o.props.value === 9))[0], 9);
+        await flush(12);
+        const box = screen.all((n: any) => n.tag === 'input' && n.props.id === 'hifz-surah')[0];
+        assert.ok(box, 'the Surah box is a text box now');
+        fire(box, 'focus'); await flush();
+        type(box, 'naba'); await flush();
+        fire(box, 'keydown', { key: 'Enter' }); await flush();
+        const whole = screen.all((n: any) => n.tag === 'input' && n.props.id === 'hifz-whole-surah')[0];
+        whole.checked = true; fire(whole, 'change'); (whole.listeners?.change ?? []).forEach((h: any) => h({ target: whole }));
+        await flush();
+        click(screen.button('Record')); await flush(12);
+        assert.equal(posts.length, 1, JSON.stringify(posts));
+        assert.equal(posts[0].body.from_surah, 78);
+        assert.equal(posts[0].body.to_surah, 78);
+    } finally { screen.unmount(); }
+});

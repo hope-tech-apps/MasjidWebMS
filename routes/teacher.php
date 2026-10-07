@@ -303,6 +303,9 @@ Route::prefix('teacher')
                         Route::middleware('teacher.teaches:quran')->group(function () {
                         Route::get('/hifz', [HifzEntriesController::class, 'index']);
                         Route::post('/hifz', [HifzEntriesController::class, 'store']);
+                        // The NOTE alone (owner, 2026-10-07). What was heard is
+                        // still corrected by striking and recording again.
+                        Route::put('/hifz/{entry_id}', [HifzEntriesController::class, 'updateNote']);
                         Route::delete('/hifz/{entry_id}', [HifzEntriesController::class, 'destroy']);
                         Route::get('/members/{membership_id}/hifz', [HifzEntriesController::class, 'forMember']);
                         Route::get('/members/{membership_id}/hifz/progress', [HifzEntriesController::class, 'progress']);

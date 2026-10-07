@@ -17,6 +17,7 @@ use App\Support\QuranIndex;
 use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -59,7 +60,7 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * ## The two gates, mirroring the feed
  *
- *   - WRITING (record / strike) is `permission:manage contacts`, exactly like
+ *   - WRITING (record / strike / reword a note) is `permission:manage contacts`, exactly like
  *     the roster endpoints beside it: the accountable administrator acts, and
  *     the entry records WHICH account heard it (`heard_by_user_id`) or corrected
  *     it (`corrected_by_user_id`). An admin who is not on the roster can
@@ -284,6 +285,77 @@ class HifzEntriesController extends Controller
     }
 
     /**
+     * PUT .../groups/{group_id}/hifz/{entry_id} — rewrite or clear the NOTE.
+     *
+     * PUT because that is the verb every update in the teacher realm uses (class
+     * files, the daily Arabic note); it replaces ONE field, not the entry.
+     *
+     * The owner, 2026-10-07: "The quran teacher should be able to view and edit
+     * their notes on the students hifdh." The note is the one field of an entry
+     * that is the teacher's commentary rather than what was heard, so it is the
+     * one field edited in place. The portion, the kind, the quality, the
+     * mistakes and the day are still corrected by striking and re-recording
+     * (destroy): that is what keeps a child's position honest, and nothing this
+     * method writes is read by HifzProgress.
+     *
+     * WHO: whoever may record and strike here, no narrower. The account that
+     * heard the recitation is not required. Someone who may strike the whole
+     * entry may certainly reword its note, and on the day this shipped every
+     * note in production had been typed under one login for a class another
+     * teacher leads, so "only the writer" would have refused the very teacher
+     * who asked. The edit is accountable all the same: a WARNING line (the
+     * level production keeps) names the entry and the account, never the words.
+     *
+     * `note` must be PRESENT. An absent key is a client that is not speaking
+     * about the note (the rule TeacherArabicAndHifzNotesTest pins for every note
+     * in this module), which here leaves nothing to do, so it is a 422 and not a
+     * silent success. Present and blank is the deliberate clear.
+     *
+     * A struck entry is a MISS (404): it has left every listing, and a note on
+     * it would be written where nobody reads.
+     */
+    public function updateNote(Request $request, $masjid_id, $group_id, $entry_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $entry = $group->hifzEntries()->findOrFail($entry_id);
+
+        $validated = $request->validate([
+            'note' => 'present|nullable|string|max:' . (int) config('groups.hifz.max_note_length', 1000),
+        ]);
+
+        $note = trim((string) ($validated['note'] ?? ''));
+        $before = $entry->note;
+
+        try {
+            $entry->update(['note' => $note === '' ? null : $note]);
+
+            if ($entry->note !== $before) {
+                Log::warning('Hifdh note edited', [
+                    'masjid_id' => $entry->masjid_id,
+                    'group_id' => $entry->group_id,
+                    'entry_id' => $entry->id,
+                    'by_user_id' => $request->user()?->id,
+                    'heard_by_user_id' => $entry->heard_by_user_id,
+                    'had_note' => filled($before),
+                    'has_note' => filled($entry->note),
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                // The writer sees what they just wrote, as in store().
+                'data' => $this->serialize($entry->load($this->readEagerLoads())),
+                'meta' => $this->meta(),
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
      * DELETE .../groups/{group_id}/hifz/{entry_id} — strike a mis-recorded entry.
      *
      * A teacher tapped the wrong student, or typed 2:255 when they meant 2:225.
@@ -294,9 +366,10 @@ class HifzEntriesController extends Controller
      * The entry leaves every listing, every total and every derivation at once
      * through the ordinary soft-delete scope, and `corrected_by_user_id` records
      * who made the correction — a change to a child's academic record is itself
-     * accountable. There is no update endpoint on purpose: striking and
-     * re-recording leaves an audit trail where an in-place edit would quietly
-     * rewrite what a teacher said they heard.
+     * accountable. WHAT WAS HEARD is never edited in place, on purpose: striking
+     * and re-recording leaves an audit trail where an in-place edit would quietly
+     * rewrite what a teacher said they heard. The one field that is edited in
+     * place is the note, which is commentary and moves nothing (updateNote).
      *
      * Administration, so `manage contacts` alone, with no read gate — the same
      * call as revoking an award. Idempotent: striking an already-struck entry

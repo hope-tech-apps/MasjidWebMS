@@ -9210,3 +9210,30 @@ No CHANGELOG or DECISIONS edit, network, commit, deploy or production operation.
 Verified locally: see artifacts/verification.md. MySQL FOR UPDATE test is authored and
 syntax-checked but not executed; SQLite cannot prove InnoDB locking. No deployed-page,
 device, browser layout or production cache verification was performed.
+
+## 2026-10-07 — A teacher can read and reword the note on a recitation, and finds the surah by typing
+
+- **Asked by the owner** (2026-10-07, with his okay to deploy during school hours): the Qur'an teacher must be able
+  to view and edit the notes on students' Hifdh, and to type a surah's number or part of its name instead of
+  scrolling for it. Order given: view, then edit, then the surah box.
+- **View** (shipped first as 78f18572, screen only): the teacher's Hifdh list drew the portion, the quality and the
+  day and never the note the form had always taken. The note is now under its line.
+- **Edit reverses one sentence of this module's design, narrowly.** "There is no update endpoint on purpose" stays
+  true of what was HEARD (portion, kind, quality, mistakes, day): still strike and record again, so a child's
+  position only ever moves by an accountable record. The NOTE is commentary that no derivation reads, so
+  `PUT .../groups/{group_id}/hifz/{entry_id}` rewrites the note and nothing else (`note` must be present; blank
+  clears it; a struck entry is a 404). PUT, not PATCH: every update in the teacher realm is a PUT and its API
+  client has no patch.
+- **Who may reword: whoever may record and strike in that class, not only the account that heard it.** Read on
+  production before choosing: every note there had been typed under ONE login in a class another
+  teacher leads, so "only the writer" would have refused the teacher who asked. Someone who may strike the whole
+  entry may reword its note. `heard_by` is unchanged by a reworded note; a WARNING line (entry, account, never
+  the words) is the record of who changed it. No column was added for it: no migration in a school-hours ship.
+- **The family reads the note** (Family\HifzEntriesController serialises it), so the editor says so under the box.
+- **Surah box**: `SurahPicker.vue` + `core/helpers/surahSearch.ts`. It offers only the rows `GET .../quran-surahs`
+  returned and holds a surah number or nothing. Digits are the number from its first digit (exact first), letters
+  are part of the name with accents, hyphens, the article and doubled vowels folded. Leaving the box takes an
+  exact number or the only match and never guesses between two.
+- **Not done**: the office's Hifdh tab (GroupHifzTab.vue) still has no note editor and still uses a plain surah
+  list; names are matched in Latin letters only (the server's list has no Arabic names); no "edited" mark is shown
+  beside a reworded note.

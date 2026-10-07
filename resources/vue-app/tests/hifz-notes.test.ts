@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseOption, click, flush, mountSfc } from './support/mountSfc.ts';
+import { chooseOption, click, flush, httpError, mountSfc, type } from './support/mountSfc.ts';
 import { modulesFor } from './support/batch3Modules.ts';
 
 /**
@@ -68,5 +68,74 @@ test('a recitation that has a note shows it under its line, as the teacher typed
         // The line itself still reads as it did: the portion first.
         assert.ok(rows[0].textContent.startsWith('New memorization:'), rows[0].textContent);
         assert.ok(rows[1].textContent.startsWith('New memorization:'), rows[1].textContent);
+    } finally { screen.unmount(); }
+});
+
+const editorOn = (screen: any) => screen.all((n: any) => n.tag === 'textarea')[0];
+/** The button with exactly these words somewhere under `node`, or undefined. */
+const buttonIn = (node: any, label: string): any => {
+    for (const child of node.children ?? []) {
+        if (child.kind === 'el' && child.tag === 'button' && child.textContent.trim() === label) return child;
+        const deeper = buttonIn(child, label);
+        if (deeper) return deeper;
+    }
+    return undefined;
+};
+
+test('Edit note opens the words already written, saves the note alone, and shows what the server stored', async () => {
+    const puts: { url: string; body: any }[] = [];
+    const { screen } = await openHifdh([row(1, 'First words.'), row(2, null)], {
+        put: async (url: string, body: any) => { puts.push({ url, body }); return ok({ ...row(1, body.note.trim() || null) }); },
+    });
+    try {
+        let rows = rowsOn(screen);
+        assert.ok(buttonIn(rows[0], 'Edit note'), 'a line that has a note offers Edit note');
+        assert.ok(buttonIn(rows[1], 'Add note'), 'a line that has none offers Add note');
+
+        click(buttonIn(rows[0], 'Edit note')); await flush();
+        const box = editorOn(screen);
+        assert.equal(box.value ?? box.props.value, 'First words.');
+        assert.ok(screen.text().includes("This student's family can read this note."));
+
+        type(box, '  Second words.  '); await flush();
+        click(buttonIn(rowsOn(screen)[0], 'Save note')); await flush(12);
+
+        assert.equal(puts.length, 1);
+        assert.match(puts[0].url, /\/groups\/2\/hifz\/1$/);
+        assert.deepEqual(Object.keys(puts[0].body), ['note'], 'nothing but the note is sent');
+        rows = rowsOn(screen);
+        assert.ok(rows[0].textContent.includes('Second words.'), rows[0].textContent);
+        assert.equal(rows[0].textContent.includes('First words.'), false);
+        assert.equal(screen.all((n: any) => n.tag === 'textarea').length, 0, 'the editor closes on a save');
+    } finally { screen.unmount(); }
+});
+
+test('Remove note sends an empty note, and the line goes back to Add note', async () => {
+    const puts: any[] = [];
+    const { screen } = await openHifdh([row(1, 'To be removed.')], {
+        put: async (_url: string, body: any) => { puts.push(body); return ok({ ...row(1, null) }); },
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Edit note')); await flush();
+        click(buttonIn(rowsOn(screen)[0], 'Remove note')); await flush(12);
+        assert.deepEqual(puts, [{ note: '' }]);
+        const line = rowsOn(screen)[0];
+        assert.equal(line.textContent.includes('To be removed.'), false);
+        assert.ok(buttonIn(line, 'Add note'));
+    } finally { screen.unmount(); }
+});
+
+test('a refused save keeps the editor open with the draft and says why under the box', async () => {
+    const { screen } = await openHifdh([row(1, 'Kept.')], {
+        put: async () => { throw httpError(422, { message: 'The note field must not be greater than 1000 characters.' }); },
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Edit note')); await flush();
+        type(editorOn(screen), 'A draft that must survive.'); await flush();
+        click(buttonIn(rowsOn(screen)[0], 'Save note')); await flush(12);
+        const box = editorOn(screen);
+        assert.ok(box, 'the editor is still open');
+        assert.equal(box.value ?? box.props.value, 'A draft that must survive.');
+        assert.ok(screen.text().includes('must not be greater than 1000 characters'), screen.text());
     } finally { screen.unmount(); }
 });
