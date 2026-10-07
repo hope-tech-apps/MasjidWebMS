@@ -45,7 +45,7 @@
                                 <th scope="col">Name</th>
                                 <th scope="col">Email</th>
                                 <th scope="col">Access</th>
-                                <th scope="col">{{ LAST_OPENED_LABEL }}</th>
+                                <th scope="col">{{ lastOpenedLabel(masjidStore.term('organization')) }}</th>
                                 <th scope="col" class="text-end">Actions</th>
                             </tr>
                         </thead>
@@ -147,7 +147,7 @@ import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
-import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
+import { lastOpenedLabel, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import { CapabilityInfo, TeamAccess, TeamMember } from '@/core/types/data/Capability';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';

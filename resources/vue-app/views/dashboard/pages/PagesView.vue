@@ -30,7 +30,7 @@
                             <th>Show in Menu</th>
                             <th>Show as Button</th>
                             <th>Sections</th>
-                            <th>Actions</th>
+                            <th class="page-actions">Actions</th>
                         </tr>
                     </thead>
                     <Draggable
@@ -85,7 +85,7 @@
                                         Manage Sections
                                     </button>
                                 </td>
-                                <td>
+                                <td class="page-actions">
                                     <div class="btn-group btn-group-sm">
                                         <button
                                             class="btn btn-outline-primary"
@@ -287,6 +287,14 @@ const confirmDelete = async (page: Page) => {
 </script>
 
 <style scoped>
+/* Keep Edit and Delete reachable even when the other columns need horizontal scrolling. */
+.page-actions {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background-color: var(--bs-body-bg, white);
+}
+
 .table {
     background: white;
     border-radius: 8px;

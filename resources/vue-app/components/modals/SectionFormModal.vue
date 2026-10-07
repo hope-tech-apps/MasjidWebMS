@@ -434,7 +434,7 @@ const props = defineProps<{
 // Emits
 const emit = defineEmits<{
     close: [];
-    saved: [];
+    saved: [action?: 'attached'];
 }>();
 
 // Store
@@ -752,7 +752,7 @@ const handleAttach = async () => {
             position: 'top-end'
         });
 
-        emit('saved');
+        emit('saved', 'attached');
     } catch (error: any) {
         console.error('Error attaching section:', error);
 

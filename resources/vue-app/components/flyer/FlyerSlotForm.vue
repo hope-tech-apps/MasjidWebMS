@@ -3,7 +3,7 @@
         <div v-for="slot in slots" :key="slot.name" class="mb-4">
 
             <label class="form-label d-flex align-items-center gap-2 mb-1" :for="`slot-${slot.name}`">
-                <span class="fw-semibold">{{ slot.label }}</span>
+                <span class="fw-semibold">{{ slot.name === 'logo' && slot.label === 'Masjid logo' ? `${masjidStore.term('organization')} logo` : slot.label }}</span>
                 <span v-if="slot.required" class="text-danger">*</span>
 
                 <!-- The phone number, the food disclaimer and the name of the deceased
@@ -168,6 +168,7 @@
 
 <script setup lang="ts">
 import { PropType, computed, toRefs } from 'vue';
+import { useMasjidStore } from '@/stores/masjidStore';
 import {
     FlyerContent,
     FlyerCutoutStatus,
@@ -176,6 +177,8 @@ import {
     FlyerSlot,
     FLYER_CUTOUT_PENDING
 } from '@/core/types/data/masjid-related/Flyer';
+
+const masjidStore = useMasjidStore();
 
 /**
  * The editor, generated from the design's manifest rather than hand-written per

@@ -225,7 +225,7 @@ const closeModal = () => {
     selectedSection.value = undefined;
 };
 
-const handleSectionSaved = async () => {
+const handleSectionSaved = async (action?: 'attached') => {
     // Read before closeModal(), which forgets the section that was being edited: read after it,
     // every save was announced as a new section.
     const wasEdit = selectedSection.value !== undefined;
@@ -235,7 +235,8 @@ const handleSectionSaved = async () => {
     Swal.fire({
         icon: 'success',
         title: 'Success!',
-        text: wasEdit ? 'Section updated successfully' : 'Section created successfully',
+        text: action === 'attached' ? 'Section attached to page successfully'
+            : wasEdit ? 'Section updated successfully' : 'Section created successfully',
         timer: 2000,
         showConfirmButton: false
     });

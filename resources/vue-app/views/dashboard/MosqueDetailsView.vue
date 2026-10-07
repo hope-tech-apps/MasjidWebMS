@@ -30,7 +30,7 @@
                     </ColumnInputContainer>
                     <ColumnInputContainer label="Website Link" name="masjid_website_link" :show_error="true" class="w-100">
                         <Field name="masjid_website_link" type="text" v-model="detailsModel.website_link" class="dashboard-input"
-                            placeholder="masjid name goes here"></Field>
+                            placeholder="https://example.org"></Field>
                     </ColumnInputContainer>
                 </div>
             </div>
@@ -106,11 +106,11 @@
                     <ColumnInputContainer label="Facebook" name="facebook_link" :show_error="true"
                         class="w-100 w-md-50">
                         <Field name="facebook_link" type="text" v-model="detailsModel.facebook" class="dashboard-input"
-                            placeholder="www.facebook.com/example"></Field>
+                            placeholder="https://www.facebook.com/example"></Field>
                     </ColumnInputContainer>
                     <ColumnInputContainer label="Youtube" name="youtube_link" :show_error="true" class="w-100 w-md-50">
                         <Field name="youtube_link" type="text" v-model="detailsModel.youtube" class="dashboard-input"
-                            placeholder="www.youtube.com/example"></Field>
+                            placeholder="https://www.youtube.com/example"></Field>
                     </ColumnInputContainer>
                 </div>
                 <!-- Secon Inputs Group -->
@@ -118,7 +118,7 @@
                     <ColumnInputContainer label="Instagram" name="instagram_link" :show_error="true"
                         class="w-100 w-md-50">
                         <Field name="instagram_link" type="text" v-model="detailsModel.instagram"
-                            class="dashboard-input" placeholder="www.instagram.com/example"></Field>
+                            class="dashboard-input" placeholder="https://www.instagram.com/example"></Field>
                     </ColumnInputContainer>
                     <ColumnInputContainer label="WhatsApp" name="whatsapp_number" :show_error="true"
                         class="w-100 w-md-50">
@@ -190,8 +190,8 @@ const phone = ref<string>('');
 const timezones = ref<string[]>([]);
 
 const validationSchema = object().shape({
-    logo_image: string().required(),
-    masjid_email: string().email().required(),
+    logo_image: string().required().label('Logo'),
+    masjid_email: string().email().required().label('Email Address'),
     masjid_phone: string()
         .matches(/^$|^\+?[0-9 ]+$/, "must have the curruent format: '+[digits and spaces only]'")
         .test(
@@ -203,14 +203,14 @@ const validationSchema = object().shape({
                 } else {
                     return false;
                 }
-            }).required(),
+            }).required().label('Phone Number'),
     masjid_timezone: string().required().label('Timezone'),
     masjid_latitude: number().required().min(-90).max(90).label('Latitude'),
     masjid_longitude: number().required().min(-180).max(180).label('Longitude'),
-    facebook_link: string().url().optional(),
-    youtube_link: string().url().optional(),
-    instagram_link: string().url().optional(),
-    whatsapp_number: string()
+    facebook_link: string().url().optional().label('Facebook'),
+    youtube_link: string().url().optional().label('Youtube'),
+    instagram_link: string().url().optional().label('Instagram'),
+    whatsapp_number: string().label('WhatsApp')
         .matches(/^$|^\+?[0-9 ]+$/, "must have the curruent format: '+[digits and spaces only]'")
         .test(
             'min-length-8',
@@ -268,7 +268,7 @@ async function fetchMasjidDetails() {
 
 async function updateMasjidDetails() {
 
-    QSwal.fire("Sure ?", "Update the mosque details?", "question")
+    QSwal.fire("Sure ?", `Update the ${masjidStore.term('organization').toLowerCase()} details?`, "question")
         .then(async result => {
             if (result.isConfirmed && masjidStore.masjid) {
                 updateDetailsLoading.value = true;

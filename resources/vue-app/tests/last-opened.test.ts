@@ -1,12 +1,12 @@
 /**
- * "Last opened this school" (core/helpers/lastOpened.ts), the per-organisation
+ * "Last opened this organisation" (core/helpers/lastOpened.ts), the per-organisation
  * replacement for the global last sign-in on Team & Access and the Teachers list.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { LAST_OPENED_LABEL, NOT_OPENED_TEXT, formatLastOpened } from '../core/helpers/lastOpened.ts';
+import { lastOpenedLabel, NOT_OPENED_TEXT, formatLastOpened } from '../core/helpers/lastOpened.ts';
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
@@ -23,7 +23,9 @@ test('null, empty and garbage are no date at all, never "Invalid Date"', () => {
 });
 
 test('the label says what the value is, and "not opened" does not claim they never signed in', () => {
-    assert.equal(LAST_OPENED_LABEL, 'Last opened this school');
+    for (const [organization, label] of [['Masjid', 'masjid'], ['School', 'school'], ['Organization', 'organization']]) {
+        assert.equal(lastOpenedLabel(organization), `Last opened this ${label}`);
+    }
     assert.doesNotMatch(NOT_OPENED_TEXT, /signed in/i);
 });
 
@@ -31,7 +33,7 @@ test('Team & Access and the Teachers list read last_seen_at and use the label, n
     for (const file of ['../views/dashboard/TeamView.vue', '../views/dashboard/TeachersView.vue']) {
         const view = read(file);
 
-        assert.match(view, /\{\{ LAST_OPENED_LABEL \}\}/, `${file} names the column`);
+        assert.match(view, /\{\{ lastOpenedLabel\(masjidStore\.term\('organization'\)\) \}\}/, `${file} names the column`);
         assert.match(view, /\.last_seen_at/, `${file} reads last_seen_at`);
         assert.match(view, /formatLastOpened\(/, `${file} formats it with the helper`);
         assert.doesNotMatch(view, /last_sign_in_at/, `${file} no longer reads the global sign-in`);

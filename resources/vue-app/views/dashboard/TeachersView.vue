@@ -51,7 +51,7 @@
                                 <th>Email</th>
                                 <th>Phone</th>
                                 <th class="text-center">Status</th>
-                                <th>{{ LAST_OPENED_LABEL }}</th>
+                                <th>{{ lastOpenedLabel(masjidStore.term('organization')) }}</th>
                                 <th>{{ classesTerm }}</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -346,7 +346,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { sortTeacherFormErrors, teacherPickerState } from '@/core/helpers/teacherForm';
 import type { TeacherPickerState } from '@/core/helpers/teacherForm';
-import { LAST_OPENED_LABEL, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
+import { lastOpenedLabel, NOT_OPENED_HINT, NOT_OPENED_TEXT, formatLastOpened } from '@/core/helpers/lastOpened';
 import Swal from 'sweetalert2';
 
 /**

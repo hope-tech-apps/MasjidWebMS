@@ -90,7 +90,7 @@ import { Form, Field, ErrorMessage } from 'vee-validate';
 import { object, string } from 'yup';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
-import { QSwal } from '@/core/plugins/SweetAlerts2';
+import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
@@ -177,15 +177,15 @@ async function updateGeneralSettings() {
                 await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/general-settings`, formData)
                     .then(res => {
                         if (res.data?.status === 'success') {
-                            QSwal.fire("Success", "General settings updated successfully.", "success");
+                            MSwal.fire("Success", "General settings updated successfully.", "success");
                             // Refresh masjid data
                             masjidStore.fetchMasjid();
                         } else {
-                            QSwal.fire("Sorry", getMessageFromObj(res), "warning");
+                            MSwal.fire("Sorry", getMessageFromObj(res), "warning");
                         }
                     })
                     .catch((e: AxiosError<BackendResponseData>) => {
-                        QSwal.fire(e.message, getMessageFromObj(e), "error");
+                        MSwal.fire(e.message, getMessageFromObj(e), "error");
                     })
                     .finally(() => {
                         updateSettingsLoading.value = false;

@@ -1,6 +1,6 @@
 <template>
     <div>
-        <PageDataContainer title="Payment Methods">
+        <PageDataContainer title="Payment Methods" :hideButton="true">
             <div class="container w-100 pm">
                 <p class="text-muted">
                     Tick each way {{ orgName }} accepts money and say how to pay with it. Your website shows these to people

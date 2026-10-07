@@ -1,5 +1,5 @@
 /**
- * "Last opened this school": the per-organisation replacement for the old global
+ * "Last opened this organisation": the per-organisation replacement for the old global
  * "Last sign-in" on Team & Access and the Teachers list.
  *
  * A person's last sign-in is one fact about them at ANY school (a token is minted
@@ -11,7 +11,10 @@
  *
  * No imports: this runs under `npm run test:spa`.
  */
-export const LAST_OPENED_LABEL = 'Last opened this school';
+/** Name the organisation using its terminology pack's organization term. */
+export function lastOpenedLabel(organization: string): string {
+    return `Last opened this ${organization.toLowerCase()}`;
+}
 
 export const NOT_OPENED_TEXT = 'Not opened yet';
 

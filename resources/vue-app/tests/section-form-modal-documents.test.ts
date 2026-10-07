@@ -134,12 +134,12 @@ async function mountModal(saved: any, upload: (file: any) => Promise<any>, optio
     }
 
     const asked: any[] = [];
-    const emitted = { close: 0, saved: 0 };
+    const emitted = { close: 0, saved: 0, action: undefined as string | undefined };
     const screen = await mountSfc(MODAL, {
         section: saved && !vue.isReactive(saved) ? vue.reactive(saved) : saved,
         pageId: 3,
         onClose: () => { emitted.close++; },
-        onSaved: () => { emitted.saved++; },
+        onSaved: (action?: string) => { emitted.saved++; emitted.action = action; },
     }, {
         '@/core/types/data/masjid-related/PageSection': {},
         '@/stores/masjid/pagesStore': { usePagesStore: () => store },
@@ -1168,6 +1168,7 @@ test('Attach Section asks nothing when no PDF was uploaded here', async () => {
     assert.deepEqual(modal.questions(), []);
     assert.deepEqual(modal.attaches, [{ pageId: 3, sectionId: 21 }]);
     assert.equal(modal.emitted.saved, 1);
+    assert.equal(modal.emitted.action, 'attached');
 
     modal.screen.unmount();
 });

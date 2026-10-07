@@ -25,7 +25,12 @@ async function mountList() {
         props: ['section', 'pageId', 'previewPage'],
         emits: ['saved', 'close'],
         setup(props: any, { emit }: any) {
-            return () => vue.h('button', { onClick: () => emit('saved') }, props.section ? 'Save the edit' : 'Save the new section');
+            return () => props.section
+                ? vue.h('button', { onClick: () => emit('saved') }, 'Save the edit')
+                : vue.h('div', [
+                    vue.h('button', { onClick: () => emit('saved', 'attached') }, 'Attach existing section'),
+                    vue.h('button', { onClick: () => emit('saved') }, 'Save the new section'),
+                ]);
         },
     };
     const draggable = {
@@ -84,5 +89,14 @@ test('saving a new section still says it was created', async () => {
 
     assert.equal(said.length, 1);
     assert.equal(said[0].text, 'Section created successfully');
+    screen.unmount();
+});
+
+test('attaching an existing section says it was attached after the modal closes', async () => {
+    const { screen, said } = await mountList();
+    click(screen.button('Add Section')); await flush();
+    click(screen.button('Attach existing section')); await flush();
+    assert.equal(said.length, 1);
+    assert.equal(said[0].text, 'Section attached to page successfully');
     screen.unmount();
 });

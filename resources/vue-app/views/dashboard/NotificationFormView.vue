@@ -35,7 +35,7 @@
 
         <div class="card-footer bg-white border-0 d-flex justify-content-end">
             <LoadingButton type="submit" :is-loading="isLoading" classes="btn btn-success">
-                Save Changes
+                Send notification
             </LoadingButton>
         </div>
     </Form>
@@ -110,7 +110,7 @@ const onImageChange = (event: Event) => {
 const onSubmit = async () => {
 
     isLoading.value = true;
-    QSwal.fire("Question", 'Save the new notification?', 'question')
+    QSwal.fire("Question", 'Send the new notification?', 'question')
         .then(async (result) => {
             if (result.isConfirmed) {
 
@@ -137,7 +137,7 @@ const onSubmit = async () => {
                         .then(res => {
                             if (res.data.status === 'success') {
                                 swalInstance.title = "Success";
-                                swalInstance.text = "Notification saved successfully then broadcasted through the masjid channel.";
+                                swalInstance.text = `Notification saved successfully and broadcast through the ${masjidStore.term('organization').toLowerCase()} channel.`;
                                 swalInstance.icon = "success";
                             } else {
                                 swalInstance.title = "Sorry";

@@ -180,7 +180,7 @@ import { Form, Field, ErrorMessage } from 'vee-validate';
 import { object, string } from 'yup';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
-import { QSwal } from '@/core/plugins/SweetAlerts2';
+import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import type { AxiosError } from 'axios';
 import type { BackendResponseData } from '@/core/types/config/AxiosCustom';
@@ -375,14 +375,14 @@ const onSubmit = async () => {
                 await ApiService.post(`/api/admin/masjids/${masjidStore.masjid?.id}/theme`, themePayload())
                     .then(async res => {
                         if (res.data.status === 'success') {
-                            QSwal.fire("Success", "Theme settings saved successfully.", "success");
+                            MSwal.fire("Success", "Theme settings saved successfully.", "success");
                             await fetchSettings();
                         } else {
-                            QSwal.fire("Sorry", getMessageFromObj(res), "warning");
+                            MSwal.fire("Sorry", getMessageFromObj(res), "warning");
                         }
                     })
                     .catch((e: AxiosError<BackendResponseData>) => {
-                        QSwal.fire(e.message, getMessageFromObj(e), "error");
+                        MSwal.fire(e.message, getMessageFromObj(e), "error");
                     })
                     .finally(() => {
                         isLoading.value = false;
