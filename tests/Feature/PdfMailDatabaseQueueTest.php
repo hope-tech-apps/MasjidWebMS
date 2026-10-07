@@ -127,6 +127,58 @@ class PdfMailDatabaseQueueTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('bulkDonorOutcomes')]
+    public function bulk_counts_each_multi_currency_donor_once(?string $email, bool $refuseQueue, int $queued, int $skipped, int $failed): void
+    {
+        $this->donor->forceFill(['email' => $email])->save();
+        $this->gift->forceFill(['currency' => 'usd'])->save();
+        Donation::factory()->create([
+            'masjid_id' => $this->org->id, 'fund_id' => $this->fund->id, 'contact_id' => $this->donor->id,
+            'source' => 'offline', 'payment_method' => 'check', 'donated_at' => '2025-04-14',
+            'status' => 'succeeded', 'currency' => 'cad', 'intended_amount' => 15000, 'charged_amount' => 15000,
+        ]);
+        $this->donor('second@example.test', 10000);
+        $this->get($this->url().'?year=2025')->assertOk()->assertJsonCount(3, 'data.donors');
+
+        $refused = 0;
+        if ($refuseQueue) {
+            DB::connection()->beforeExecuting(function ($query, $bindings) use (&$refused) {
+                if (str_starts_with(strtolower($query), 'insert into "jobs"') && str_contains(implode(' ', $bindings), 'first@example.test')) {
+                    $refused++;
+                    throw new \RuntimeException('Queue insert refused for first@example.test');
+                }
+            });
+        }
+
+        $this->post($this->url().'/send-all?year=2025')->assertOk()
+            ->assertJsonPath('data.queued', $queued)->assertJsonPath('data.skipped', $skipped)->assertJsonPath('data.failed', $failed);
+        $this->assertSame($refuseQueue ? 1 : 0, $refused);
+        $this->assertSame($queued, DB::table('jobs')->count());
+        foreach (DB::table('jobs')->pluck('payload') as $payload) {
+            $mail = unserialize(json_decode($payload, true, flags: JSON_THROW_ON_ERROR)['data']['command'])->mailable;
+            $this->assertInstanceOf(AnnualStatementMail::class, $mail);
+            $this->assertSame($mail->hasTo('first@example.test') ? 2 : 1, $mail->giftCount);
+            $this->assertStringStartsWith('%PDF-', $mail->pdf);
+            app('queue.worker')->runNextJob('database', 'default', new WorkerOptions(sleep: 0, maxTries: 1));
+        }
+        $this->assertSame(0, DB::table('jobs')->count());
+        $this->assertSame(0, DB::table('failed_jobs')->count());
+        $messages = app('mailer')->getSymfonyTransport()->messages();
+        $this->assertCount($queued, $messages);
+        $recipients = array_map(fn ($message) => $message->getOriginalMessage()->getTo()[0]->getAddress(), $messages->all());
+        $this->assertEqualsCanonicalizing($queued === 2 ? ['first@example.test', 'second@example.test'] : ['second@example.test'], $recipients);
+    }
+
+    public static function bulkDonorOutcomes(): array
+    {
+        return [
+            'queued' => ['first@example.test', false, 2, 0, 0],
+            'no email' => [null, false, 1, 1, 0],
+            'queue failure' => ['first@example.test', true, 1, 0, 1],
+        ];
+    }
+
+    #[Test]
     public function bulk_counts_queue_failures_separately_and_continues_to_the_next_donor(): void
     {
         $this->donor('second@example.test', 10000);

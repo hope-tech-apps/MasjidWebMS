@@ -118,11 +118,12 @@ class AnnualStatementsController extends Controller
         ], $queued ? Response::HTTP_OK : Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 
-    /** Bulk: report queued, skipped (no email), failed; a donor failure never stops the rest. */
+    /** Bulk: count each donor once as queued, skipped (no email), or failed; continue after failures. */
     public function sendAll(Request $request, $masjid_id)
     {
         $year = $this->resolveYear($request);
-        $rows = $this->statements->summaryForYear((int) $masjid_id, $year);
+        // Summary rows separate currencies, but the emailed statement covers the whole donor/year.
+        $rows = collect($this->statements->summaryForYear((int) $masjid_id, $year))->unique('contact_id');
 
         $queued = 0;
         $skipped = 0;

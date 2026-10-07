@@ -9071,3 +9071,21 @@ new wording and omits old sent/delivery claims. Evidence under artifacts/. Tests
 the real database queue on SQLite and the array mail transport, not queue/mail fakes.
 MySQL, a real mail provider, staging and production data were not verified here.
 No network, commits, deploys, formatter, or CHANGELOG changes.
+
+## 2026-10-06 — Bulk annual statements count donors, not currency summary rows
+
+Confirmed at HEAD 526af880: AnnualStatementService::forContact filters organisation,
+contact and year, with no currency filter. Row Email sends that full statement;
+StatementLetterService::pdfFor renders all its gifts. Summary rows group by contact
+AND currency, so bulk previously queued the same donor/year document twice.
+Deduplicate contact_id before sendAll's branches, counting queued, skipped and failed
+once per donor. No summary, single-send or statement-rendering change.
+Separate existing issue: forContact sums mixed-currency amounts and labels them with
+the first gift's currency; the PDF also uses that currency on every gift. Outside this
+one-finding repair; no claim that mixed-currency presentation is correct.
+Evidence: PdfMailDatabaseQueueTest::bulk_counts_each_multi_currency_donor_once
+uses real database insertion, rendering and Worker delivery: 3 red -> 3 green
+(48 assertions). Full queue file: 9 passed / 138 assertions; annual delivery, wording,
+receipt PDF, offline receipt and historical report tests: 69 passed / 370 assertions.
+Logs: artifacts/statement-bulk-currency-{red,green,queue-suite,annual-suite}.log.
+No network, formatter, commit or shipping action.
