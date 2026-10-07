@@ -1,0 +1,13 @@
+/* Shadow-root defaults: only layout/accessibility and app-added picture controls.
+   The release sheet is appended second and owns every content colour/token. */
+:host { display: block; min-width: 0; }
+.mg { max-width: 100%; min-width: 0; padding: 1rem; border-radius: .75rem; }
+.mg section, .mg details { scroll-margin-top: 6rem; }
+.mg img { display: block; max-width: 100%; height: auto; }
+.mg .mg-picture { position: relative; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line, #889b98); border-radius: .25rem; overflow: hidden; cursor: zoom-in; background: var(--paper, #e5eeec); color: var(--ink, #263e39); font: inherit; }
+.mg .mg-picture-caption { position: absolute; bottom: 0; right: 0; padding: .35rem .6rem; background: var(--card, #fff); color: var(--ink, #172b2a); font-size: .8rem; pointer-events: none; }
+.mg .mg-picture-loading, .mg .mg-picture-unavailable { cursor: default; }
+.mg .mg-picture-unavailable { font-size: .8rem; min-height: 1px; }
+.mg [hidden] { display: none !important; }
+.mg table { display: block; max-width: 100%; overflow-x: auto; }
+.mg :focus-visible { outline: 3px solid var(--ring, #168372); outline-offset: 3px; }

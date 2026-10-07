@@ -40,6 +40,8 @@ proto.getAttribute = function (name: string) { return this.props[name] ?? null; 
 proto.hasAttribute = function (name: string) { return name in this.props; };
 proto.append = function (...nodes: any[]) { for (const node of nodes) { if (node.parent) node.parent.children = node.parent.children.filter((n: any) => n !== node); node.parent = this; this.children.push(node); } };
 proto.replaceChildren = function (...nodes: any[]) { for (const node of this.children) node.parent = null; this.children = []; this.append(...nodes); };
+// Expose shadow children to the test renderer's traversal, without pretending to compute CSS.
+proto.attachShadow = function (options: { mode: string }) { const root: any = new Node('el', '#shadow-root'); root.mode = options.mode; root.host = this; this.shadowRoot = root; this.append(root); return root; };
 proto.replaceWith = function (node: any) { const parent = this.parent; const index = parent.children.indexOf(this); parent.children[index] = node; node.parent = parent; this.parent = null; };
 proto.contains = function (node: any) { return node === this || this.children.some((n: any) => n.contains(node)); };
 proto.scrollIntoView = function () { this.scrolled = true; };

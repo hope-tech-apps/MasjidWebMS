@@ -35,10 +35,12 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', key); props.pict
 
 <style scoped>
 .guide-viewer { position: fixed; inset: 0; z-index: 1100; background: #000d; display: flex; align-items: center; justify-content: center; padding: 1rem; }
-.guide-viewer-panel { color: white; width: min(100%, 1440px); min-width: 0; max-height: 100%; overflow: auto; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .75rem; justify-items: center; }
+.guide-viewer-panel { color: var(--guide-ink, var(--mn-ink, #172b2a)); background: var(--guide-paper, var(--mn-surface, #fff)); padding: .75rem; border-radius: .75rem; width: min(100%, 1440px); min-width: 0; max-height: 100%; overflow: auto; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .75rem; justify-items: center; }
 .guide-viewer-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; }
+.guide-viewer .guide-viewer-controls .btn { background: var(--guide-card, var(--mn-surface)); color: var(--guide-ink, var(--mn-ink)); border-color: var(--guide-line, var(--mn-line)); }
+.guide-viewer .btn:focus-visible { outline: 3px solid var(--guide-ring, #168372); outline-offset: 3px; }
 .guide-viewer-image { width: 100%; min-width: 0; max-height: 75vh; overflow: auto; touch-action: pan-x pan-y pinch-zoom; }
 .guide-viewer-image img { display: block; margin: auto; max-width: 100%; max-height: 75vh; object-fit: contain; }
 .guide-viewer-image.is-zoomed img { width: auto; max-width: none; max-height: none; }
-.guide-viewer-image:focus-visible { outline: 3px solid #8cddcf; outline-offset: 3px; }
+.guide-viewer-image:focus-visible { outline: 3px solid var(--guide-ring, #168372); outline-offset: 3px; }
 </style>

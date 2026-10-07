@@ -18,11 +18,13 @@ URL.revokeObjectURL = url => { revoked.push(url); };
 withDocumentKeys();
 
 const data = { version: 'd1-1234abcd', title: 'Admin guide', html, css: '.mg {color:black}', tasks: [{ id: 'sprout', title: 'Sprout task', section: 'Misleading manifest section' }, { id: 'ripple', title: 'Ripple task', section: 'Misleading manifest section' }] };
+const fragmentStyleModule = { default: readFileSync(new URL('../components/guides/guideContent.css', import.meta.url), 'utf8') };
 
-async function screen(off = false, unavailable = false, missingPicture = false, pageHtml?: string) {
+async function screen(off = false, unavailable = false, missingPicture = false, pageHtml?: string, pageCss?: string) {
     const viewer = await compileSfc('components/guides/GuideViewer.vue', {});
     const content = await compileSfc('components/guides/GuideContent.vue', {
         '@/components/guides/GuideViewer.vue': { default: viewer },
+        '@/components/guides/guideContent.css?inline': fragmentStyleModule,
         '@/core/guides/guideRuntime': await loadTs('core/guides/guideRuntime.ts', {}),
     });
     route.params.book = 'admin'; route.params.task = ''; route.query = {}; route.fullPath = '/masjid/help/admin';
@@ -30,7 +32,7 @@ async function screen(off = false, unavailable = false, missingPicture = false, 
     const mounted = await mountSfc('views/guides/GuideScreen.vue', { realm: 'admin' }, {
         'vue-router': { useRoute: () => route, useRouter: () => router },
         '@/stores/authStore': { useAuthStore: () => auth },
-        '@/core/services/GuideApiService': { default: { json: async (url: string) => { calls.push(url); return { data: url.endsWith('/guides') ? unavailable ? [] : off ? books.slice(0, 1) : books : { ...data, title: route.params.book + ' guide', html: pageHtml ?? readFileSync(new URL(`../../../tests/fixtures/guides/d1-1234abcd/${route.params.book}/page.html`, import.meta.url), 'utf8') } }; }, picture: async () => { if (missingPicture) throw new Error('missing'); return new Blob(); } } },
+        '@/core/services/GuideApiService': { default: { json: async (url: string) => { calls.push(url); return { data: url.endsWith('/guides') ? unavailable ? [] : off ? books.slice(0, 1) : books : { ...data, css: pageCss ?? data.css, title: route.params.book + ' guide', html: pageHtml ?? readFileSync(new URL(`../../../tests/fixtures/guides/d1-1234abcd/${route.params.book}/page.html`, import.meta.url), 'utf8') } }; }, picture: async () => { if (missingPicture) throw new Error('missing'); return new Blob(); } } },
         '@/components/guides/GuideContent.vue': { default: content },
         '@/core/guides/guidePaths': await loadTs('core/guides/guidePaths.ts', {}),
     });
@@ -176,7 +178,7 @@ test('mounted real content: chapter/task/question deep links focus, and theme st
     assert.equal(document.activeElement, section);
     const question = mounted.all(n => n.tag === 'a' && n.textContent === 'Why a pebble?')[0];
     click(question); await flush();
-    const details = mounted.all(n => n.tag === 'details')[0];
+    const details = mounted.all(n => n.tag === 'details' && 'data-faq' in n.props)[0];
     assert.equal(details.props.open, ''); assert.equal(document.activeElement, details);
     mounted.unmount();
 });
@@ -198,7 +200,7 @@ test('mounted search includes task and question data-words, and clear restores b
     assert.match(contents.textContent, /Sprout task/); assert.doesNotMatch(contents.textContent, /Ripple task|No results/);
     type(field, 'moonstone'); await flush();
     assert.match(contents.textContent, /Why a pebble/); assert.doesNotMatch(contents.textContent, /No results/);
-    const faq: any = mounted.all(n => n.tag === 'details')[0]; assert.equal(faq.hidden, false);
+    const faq: any = mounted.all(n => n.tag === 'details' && 'data-faq' in n.props)[0]; assert.equal(faq.hidden, false);
     type(field, 'nothing matches'); await flush(); assert.equal(faq.hidden, true); assert.match(contents.textContent, /No results/);
     click(mounted.button('Clear search')); await flush(); assert.equal(faq.hidden, false); assert.match(contents.textContent, /Sprout task.*Ripple task/);
     mounted.unmount();
@@ -292,7 +294,7 @@ test('real release when requested mounts all four passive pages with real childr
             path: (target: string, task?: string, faq?: string) => guidePath(realm, target, task, faq),
             fetchPicture: async () => { throw new Error('Synthetic unavailable picture response'); }, navigate() {},
             onContents: (value: any[]) => { items = value; },
-        }, { '@/components/guides/GuideViewer.vue': { default: viewer }, '@/core/guides/guideRuntime': runtime });
+        }, { '@/components/guides/GuideViewer.vue': { default: viewer }, '@/components/guides/guideContent.css?inline': fragmentStyleModule, '@/core/guides/guideRuntime': runtime });
         try {
             await flush();
             assert.equal(items.filter(item => item.kind === 'task').length, meta.tasks.length);
@@ -331,3 +333,118 @@ for (const query of ['moonlit-answer', 'Sprout task']) {
         } finally { mounted.unmount(); }
     });
 }
+
+function displayEnvironment(options: { staff?: boolean; app?: string; system?: boolean; saved?: string; blocked?: boolean; phone?: boolean } = {}) {
+    const previous = { body: document.body, html: document.documentElement, window: (globalThis as any).window, storage: (globalThis as any).localStorage, computed: (globalThis as any).getComputedStyle, observer: (globalThis as any).MutationObserver };
+    const body: any = new Node('el', 'body'); const html: any = new Node('el', 'html');
+    if (options.staff) body.classList.add('mn-app');
+    if (options.app) html.setAttribute('data-bs-theme', options.app);
+    (document as any).body = body; (document as any).documentElement = html;
+    const listeners = new Set<() => void>();
+    const media = { matches: !!options.system, addEventListener: (_name: string, fn: () => void) => listeners.add(fn), removeEventListener: (_name: string, fn: () => void) => listeners.delete(fn) };
+    const compact = { ...media, matches: !!options.phone };
+    (globalThis as any).window = { matchMedia: (query: string) => query.includes('prefers-color') ? media : compact };
+    const saved = new Map(options.saved ? [['MANARA_GUIDE_THEME', options.saved]] : []);
+    (globalThis as any).localStorage = { getItem: (key: string) => { if (options.blocked) throw new Error('Storage refused'); return saved.get(key) ?? null; }, setItem: (key: string, value: string) => { if (options.blocked) throw new Error('Storage refused'); saved.set(key, value); } };
+    (globalThis as any).getComputedStyle = (node: any) => ({ getPropertyValue: (key: string) => ({ '--paper': node.dataset.theme === 'dark' ? '#0f1814' : '#f6f8f6', '--ink': node.dataset.theme === 'dark' ? '#e8f0eb' : '#14241c', '--card': node.dataset.theme === 'dark' ? '#17231d' : '#ffffff', '--soft': '#50625a', '--line': '#dbe4de', '--accent': '#12824c', '--accent-ink': '#ffffff', '--ring': '#c2500d' }[key] || '') });
+    const observers: any[] = [];
+    (globalThis as any).MutationObserver = class { disconnected = false; callback: () => void; constructor(callback: () => void) { this.callback = callback; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } };
+    return { media, saved, body, html, listeners, observers, changed() { for (const observer of observers) if (!observer.disconnected) observer.callback(); for (const listener of listeners) listener(); }, restore() { (document as any).body = previous.body; (document as any).documentElement = previous.html; (globalThis as any).window = previous.window; (globalThis as any).localStorage = previous.storage; (globalThis as any).getComputedStyle = previous.computed; (globalThis as any).MutationObserver = previous.observer; } };
+}
+
+for (const [name, options, expected] of [
+    ['light staff app/dark system', { staff: true, system: true }, 'light'],
+    ['light staff app/light system', { staff: true, system: false }, 'light'],
+    ['dark app/light system', { app: 'dark', system: false }, 'dark'],
+    ['dark app/dark system', { app: 'dark', system: true }, 'dark'],
+    ['no app/dark system', { system: true }, 'dark'],
+    ['no app/light system', { system: false }, 'light'],
+    ['saved dark beats light app', { staff: true, saved: 'dark' }, 'dark'],
+    ['saved light beats dark app/system', { app: 'dark', system: true, saved: 'light' }, 'light'],
+    ['invalid choice ignored', { staff: true, system: true, saved: 'sepia' }, 'light'],
+] as const) {
+    test(`display theme precedence and label/state agreement: ${name}`, async () => {
+        const env = displayEnvironment(options); let mounted: any;
+        try {
+            ({ mounted } = await screen());
+            const root: any = mounted.all((n: Node) => n.props['data-book'] === 'admin')[0];
+            assert.equal(root.dataset.theme, expected);
+            const toggle = mounted.button('Dark guide');
+            assert.equal(toggle.textContent, expected === 'dark' ? 'Dark guide: on' : 'Dark guide: off');
+            assert.equal(String(toggle.props['aria-pressed']), String(expected === 'dark'));
+            click(toggle); await flush();
+            assert.equal(root.dataset.theme, expected === 'dark' ? 'light' : 'dark');
+            assert.equal(mounted.button('Dark guide').textContent, expected === 'dark' ? 'Dark guide: off' : 'Dark guide: on');
+        } finally { mounted?.unmount(); env.restore(); }
+    });
+}
+
+test('display choice is remembered across mounts and navigation', async () => {
+    const env = displayEnvironment({ staff: true }); let mounted: any;
+    try {
+        ({ mounted } = await screen()); click(mounted.button('Dark guide')); await flush();
+        assert.equal(env.saved.get('MANARA_GUIDE_THEME'), 'dark');
+        router.push('/masjid/help/school'); await flush(); assert.equal(mounted.all((n: Node) => n.props['data-book'] === 'school')[0].dataset.theme, 'dark');
+        mounted.unmount(); ({ mounted } = await screen()); assert.equal(mounted.all((n: Node) => n.props['data-book'] === 'admin')[0].dataset.theme, 'dark');
+    } finally { mounted?.unmount(); env.restore(); }
+});
+
+test('display works when reading and writing browser storage throws', async () => {
+    const env = displayEnvironment({ staff: true, system: true, blocked: true }); let mounted: any;
+    try {
+        ({ mounted } = await screen()); assert.equal(mounted.button('Dark guide').textContent, 'Dark guide: off');
+        click(mounted.button('Dark guide')); await flush(); assert.equal(mounted.button('Dark guide').textContent, 'Dark guide: on');
+        assert.match(mounted.text(), /Velvet acorn/);
+    } finally { mounted?.unmount(); env.restore(); }
+});
+
+test('display follows app/system changes until chosen and disposes theme listeners', async () => {
+    const env = displayEnvironment(); let mounted: any;
+    try {
+        ({ mounted } = await screen()); env.html.setAttribute('data-bs-theme', 'dark'); env.changed(); await flush();
+        assert.equal(mounted.button('Dark guide').textContent, 'Dark guide: on');
+        env.html.removeAttribute('data-bs-theme'); env.media.matches = true; env.changed(); await flush(); assert.equal(mounted.button('Dark guide').textContent, 'Dark guide: on');
+        click(mounted.button('Dark guide')); await flush(); env.changed(); await flush(); assert.equal(mounted.button('Dark guide').textContent, 'Dark guide: off');
+        mounted.unmount(); mounted = null; assert.equal(env.listeners.size, 0); assert.ok(env.observers.length && env.observers.every(observer => observer.disconnected));
+    } finally { mounted?.unmount(); env.restore(); }
+});
+
+test('display isolates the release stylesheet and never overrides its root colours or variables', async () => {
+    const env = displayEnvironment({ staff: true }); let mounted: any;
+    try {
+        ({ mounted } = await screen());
+        const host: any = mounted.all((n: Node) => n.props.class === 'guide-fragment')[0];
+        assert.equal(host.shadowRoot?.mode, 'open');
+        const styles: any[] = host.shadowRoot.querySelectorAll('style');
+        assert.equal(styles.length, 2); assert.equal(styles[1].textContent, data.css);
+        const root: any = host.shadowRoot.querySelector('.mg');
+        assert.equal(Object.keys(root.style).filter(key => key.startsWith('--') || /color|background/i.test(key)).length, 0);
+        assert.doesNotMatch(styles[0].textContent.match(/\.mg\s*\{[^}]*\}/)?.[0] || '', /(?:color|background|--[\w-]+)\s*:/);
+        const source = readFileSync(new URL('../components/guides/GuideContent.vue', import.meta.url), 'utf8');
+        assert.doesNotMatch(source, /\.guide-fragment\s+\.mg(?:\[.*?\])?\s*\{[^}]*(?:color|background|--[\w-]+)\s*:/);
+    } finally { mounted?.unmount(); env.restore(); }
+});
+
+test('display chrome reads the release palette in both themes without writing it onto mg', async () => {
+    const env = displayEnvironment({ staff: true }); let mounted: any;
+    try {
+        ({ mounted } = await screen());
+        const chrome: any = mounted.all((n: Node) => n.props.class === 'guide-screen')[0];
+        assert.equal(chrome.props.style['--guide-paper'], '#f6f8f6'); assert.equal(chrome.props.style['--guide-ink'], '#14241c');
+        click(mounted.button('Dark guide')); await flush(); assert.equal(chrome.props.style['--guide-paper'], '#0f1814'); assert.equal(chrome.props.style['--guide-ink'], '#e8f0eb');
+        const root: any = mounted.all((n: Node) => n.props['data-book'] === 'admin')[0]; assert.equal(Object.keys(root.style).length, 0);
+        assert.equal(env.body.className.trim(), 'mn-app');
+    } finally { mounted?.unmount(); env.restore(); }
+});
+
+test('display contents use native disclosure, closed initially on a phone and open on desktop', async () => {
+    for (const phone of [true, false]) {
+        const env = displayEnvironment({ staff: true, phone }); let mounted: any;
+        try {
+            ({ mounted } = await screen());
+            const panel = mounted.all((n: Node) => n.tag === 'details' && n.props.class === 'guide-contents-panel')[0];
+            assert.ok(panel); assert.equal(!!panel.props.open, !phone); assert.equal(panel.querySelector('summary').textContent, 'Contents');
+            assert.match(panel.querySelector('nav').textContent, /Pebble chapter/);
+        } finally { mounted?.unmount(); env.restore(); }
+    }
+});
