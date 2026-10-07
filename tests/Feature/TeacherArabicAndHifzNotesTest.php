@@ -759,6 +759,60 @@ class TeacherArabicAndHifzNotesTest extends TestCase
         )->assertForbidden();
     }
 
+    #[Test]
+    public function a_second_correction_keeps_the_first_corrections_version_and_each_copy_holds_the_line_before_it(): void
+    {
+        $entry = $this->recitation('Original.');   // excellent
+
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'good', 'note' => 'Correction A.']))->assertOk();
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'fair', 'note' => 'Correction B.']))->assertOk();
+
+        $now = $entry->fresh();
+        $this->assertSame(['fair', 'Correction B.'], [$now->quality, $now->note]);
+
+        // The history is a chain: the original, then the first correction. (The
+        // row is read under a lock inside the transaction, so on MySQL two
+        // corrections arriving together are this same sequence, one after the other.)
+        $struck = $this->struck();
+        $this->assertSame(
+            [['excellent', 'Original.'], ['good', 'Correction A.']],
+            $struck->map(fn ($e) => [$e->quality, $e->note])->all()
+        );
+    }
+
+    #[Test]
+    public function a_time_sent_with_an_offset_is_stored_as_the_instant_it_names_on_a_record_and_on_a_correction(): void
+    {
+        // 00:30 on 5 October in New York is 04:30 UTC.
+        $id = $this->postJson("/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/hifz", [
+            'membership_id' => $this->student->id, 'kind' => 'sabak', 'quality' => 'good',
+            'from_surah' => 114, 'from_ayah' => 1, 'to_surah' => 114, 'to_ayah' => 6,
+            'recited_at' => '2026-10-05T00:30:00-04:00',
+        ])->assertSuccessful()->assertJsonPath('data.recited_at', '2026-10-05T04:30:00+00:00')->json('data.id');
+
+        $entry = \App\Models\HifzEntry::withoutGlobalScopes()->findOrFail($id);
+        $this->assertSame('2026-10-05 04:30:00', $entry->recited_at->toDateTimeString());
+
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'good', 'recited_at' => '2026-10-04T23:15:00-04:00']))
+            ->assertOk()->assertJsonPath('data.recited_at', '2026-10-05T03:15:00+00:00');
+        $this->assertSame('2026-10-05 03:15:00', $entry->fresh()->recited_at->toDateTimeString());
+    }
+
+    #[Test]
+    public function a_correction_or_a_reworded_note_for_a_line_struck_a_moment_ago_is_a_miss_and_writes_nothing(): void
+    {
+        $entry = $this->recitation('Before the strike.');
+        $this->deleteJson($this->hifzUrl($entry))->assertOk();
+
+        $this->postJson($this->correctUrl($entry), $this->line(['quality' => 'fair', 'note' => 'After.']))->assertNotFound();
+        $this->putJson($this->hifzUrl($entry), ['note' => 'After.'])->assertNotFound();
+
+        $row = \App\Models\HifzEntry::withoutGlobalScopes()->withTrashed()->findOrFail($entry->id);
+        $this->assertSame(['excellent', 'Before the strike.'], [$row->quality, $row->note]);
+        // Only the struck line itself: no copy was written for a correction that found nothing.
+        $this->assertCount(1, $this->struck());
+    }
+
     /** One recitation for the student, recorded by the teacher through the real door. */
     private function recitation(?string $note): \App\Models\HifzEntry
     {

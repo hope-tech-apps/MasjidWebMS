@@ -59,7 +59,7 @@ test('a recording made at exactly midnight or noon UTC is a real moment when the
     });
 });
 
-test('a chosen day is never sent as an instant the server would refuse as the future', () => {
+test('a chosen day is never sent as an instant the server would refuse as the future, and never swapped for another day', () => {
     // The Americas, mid-morning: noon UTC of yesterday is long past.
     assert.equal(hifzDayToSend('2026-10-06', new Date('2026-10-07T14:00:00Z')), '2026-10-06T12:00:00Z');
     // Auckland, half past midnight on the 7th (11:30 UTC on the 6th), choosing yesterday the 6th:
@@ -67,12 +67,21 @@ test('a chosen day is never sent as an instant the server would refuse as the fu
     const auckland = new Date('2026-10-06T11:30:00Z');
     assert.equal(hifzDayToSend('2026-10-06', auckland), '2026-10-06');
     inZone('Pacific/Auckland', () => assert.equal(hifzDayOf('2026-10-06T00:00:00+00:00'), '2026-10-06'));
-    // The same moment, choosing the reader's own today (the 7th there): neither has
-    // happened, so a minute ago, which reads as that local day.
-    const sent = hifzDayToSend('2026-10-07', auckland);
-    assert.equal(sent, '2026-10-06T11:29:00.000Z');
-    assert.ok(new Date(sent).getTime() < auckland.getTime());
-    inZone('Pacific/Auckland', () => assert.equal(hifzDayOf(sent), '2026-10-07'));
+    // The same reader choosing their own today (the 7th there), even thirty seconds into it:
+    // the start of that day where they are. It has happened, and it reads as that day.
+    inZone('Pacific/Auckland', () => {
+        for (const now of [auckland, new Date('2026-10-06T11:00:30Z')]) {
+            const sent = hifzDayToSend('2026-10-07', now);
+            assert.equal(sent, '2026-10-06T11:00:00.000Z');
+            assert.ok(new Date(sent).getTime() <= now.getTime());
+            assert.equal(hifzDayOf(sent), '2026-10-07');
+        }
+    });
     // New York, 7 am on the 7th, changing a line's day to today: noon UTC is ahead, midnight UTC is behind.
     assert.equal(hifzDayToSend('2026-10-07', new Date('2026-10-07T11:00:00Z')), '2026-10-07');
+    // A day that really is in the future is sent as that day, for the server to refuse. Never today instead.
+    inZone('America/New_York', () => {
+        assert.equal(hifzDayToSend('2099-01-01', new Date('2026-10-07T15:00:00Z')), '2099-01-01T12:00:00Z');
+        assert.equal(hifzDayToSend('2026-10-08', new Date('2026-10-07T15:00:00Z')), '2026-10-08T12:00:00Z');
+    });
 });

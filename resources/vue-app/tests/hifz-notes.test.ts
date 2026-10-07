@@ -485,3 +485,65 @@ test('a line that runs across two surahs has no Edit entry, and a chosen day rea
         assert.ok(rows[2].textContent.includes('Oct 5, 2026'), rows[2].textContent);
     } finally { screen.unmount(); }
 });
+
+test('a day typed in the future is sent as that day for the server to refuse, never saved as another day', async () => {
+    const { screen, calls } = await editing([heard(1, null)], {
+        post: async (url: string, body: any) => {
+            calls.push({ verb: 'post', url: url.replace(/^.*\/groups\/2/, ''), body });
+            throw httpError(422, { message: 'A recitation cannot be dated in the future.' });
+        },
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
+        type(dateBox(screen), '2099-01-01'); await flush();
+        click(screen.button('Save changes')); await flush(16);
+
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].body.recited_at, '2099-01-01T12:00:00Z');
+        assert.ok(screen.text().includes('A recitation cannot be dated in the future.'), screen.text());
+        assert.ok(editingBox(screen), 'still in edit mode, nothing saved');
+    } finally { screen.unmount(); }
+});
+
+test('while a line is being removed nothing else on the tab can be opened, and a removed line is not left in the form', async () => {
+    const removing = deferred<any>();
+    const { screen } = await editing([heard(1, 'To go.'), heard(2, 'To stay.')], { delete: async () => removing.promise });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Remove')); await flush();
+        for (const label of ['Edit note', 'Edit entry', 'Copy to students']) {
+            assert.equal(buttonIn(rowsOn(screen)[0], label).disabled, true, `${label} on the line being removed`);
+            assert.equal(buttonIn(rowsOn(screen)[1], label).disabled, true, `${label} on the other line`);
+        }
+        assert.equal(click(buttonIn(rowsOn(screen)[0], 'Edit entry')), false);
+        assert.equal(editingBox(screen), undefined);
+        assert.equal(studentSelect(screen).disabled, true);
+
+        removing.resolve(ok({})); await flush(12);
+        assert.equal(rowsOn(screen).length, 1);
+        assert.ok(rowsOn(screen)[0].textContent.includes('To stay.'));
+        assert.equal(editingBox(screen), undefined);
+        assert.equal(buttonIn(rowsOn(screen)[0], 'Edit entry').disabled, false, 'released when the removal has answered');
+    } finally { screen.unmount(); }
+});
+
+test('a correction answered with a line marked struck is not drawn as a live line: the list is read again', async () => {
+    let gets = 0;
+    const live = heard(2, 'Still here.');
+    const { screen } = await editing([heard(1, null), live], {
+        get: async (url: string) => {
+            if (url.endsWith('/groups/2')) return ok(classData);
+            if (url.endsWith('/hifz')) { gets++; return ok(gets === 1 ? [heard(1, null), live] : [live]); }
+            return ok([]);
+        },
+        post: async () => ok({ ...heard(1, null), quality: 'excellent', corrected_at: '2026-10-07T15:00:00+00:00' }),
+    });
+    try {
+        click(buttonIn(rowsOn(screen)[0], 'Edit entry')); await flush();
+        chooseOption(qualitySelect(screen), 'excellent'); await flush();
+        click(screen.button('Save changes')); await flush(16);
+
+        assert.equal(gets, 2, 'the list was read again');
+        assert.equal(rowsOn(screen).length, 1);
+        assert.ok(rowsOn(screen)[0].textContent.includes('Still here.'));
+    } finally { screen.unmount(); }
+});

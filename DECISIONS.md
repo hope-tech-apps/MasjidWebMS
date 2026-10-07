@@ -9314,3 +9314,24 @@ device, browser layout or production cache verification was performed.
 - **Known and left**: the family's payload has no `created_at`, so a recitation recorded for a family's child at
   exactly 00:00:00 or 12:00:00 UTC (one second in 43,200) reads there as its UTC day; the mistakes counts are not
   editable on any screen; the office's Hifdh tab has no Edit entry.
+
+## 2026-10-07 — Hifdh correction, the second review pass: locks, offsets and a date that must not be swapped
+
+- The second agent re-ran its four findings (position order CLOSED, future-day refusal CLOSED, silent note failure
+  CLOSED; a real midnight-UTC recording still reads as the UTC day on the FAMILY list only, which is the known
+  limit recorded above) and reproduced five more, all closed here with a test each:
+  1. **Two corrections of one line at once** each copied the ORIGINAL as "the line as it stood", so the first
+     correction's version was in no row. 2. **A strike landing between the lookup and the save** was corrected
+     anyway, by id, and answered 200 with a struck line. Both: `correct()` (and `updateNote()`) now make ONE lookup,
+     under `lockForUpdate`, inside the transaction, and decide everything from that row; a struck line is a 404; the
+     answer is the locked row, never `fresh()`, which ignores the soft-delete scope.
+  3. **A time sent with an offset lost the offset** (`2026-10-05T00:30:00-04:00` stored as 00:30, read as the 4th):
+     Eloquent writes a datetime's wall time. `heardAt()` converts to the application's zone first, in `store()` too
+     (there since the module shipped; no screen sent an offset).
+  4. **A future day typed past the date box's `max` was saved as "a minute ago"** by the fallback meant for a reader
+     far east of Greenwich. The fallback now applies only to the reader's own today (the start of their day); a
+     real future day is sent as that day and the server refuses it.
+  5. **A line could be loaded into the form while its removal was in flight** and stayed there after it was gone:
+     a removal now holds the tab like every other write.
+- Not exercised: the two-connection race on MySQL itself. The lock is the standard InnoDB row lock on a primary
+  key; the sequential test shows the chain of copies the lock produces.

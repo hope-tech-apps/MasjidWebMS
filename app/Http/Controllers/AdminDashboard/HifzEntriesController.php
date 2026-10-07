@@ -17,6 +17,7 @@ use App\Support\HifzProgress;
 use App\Support\QuranIndex;
 use App\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -268,7 +269,7 @@ class HifzEntriesController extends Controller
                 'major_mistakes' => $request->integer('major_mistakes'),
                 'minor_mistakes' => $request->integer('minor_mistakes'),
                 'note' => $request->input('note'),
-                'recited_at' => $request->filled('recited_at') ? $request->date('recited_at') : now(),
+                'recited_at' => $request->filled('recited_at') ? $this->heardAt($request) : now(),
             ]);
 
             return response()->json([
@@ -319,42 +320,61 @@ class HifzEntriesController extends Controller
     public function updateNote(Request $request, $masjid_id, $group_id, $entry_id)
     {
         $group = Group::findOrFail($group_id);
-        $entry = $group->hifzEntries()->findOrFail($entry_id);
 
         $validated = $request->validate([
             'note' => 'present|nullable|string|max:' . (int) config('groups.hifz.max_note_length', 1000),
         ]);
 
         $note = trim((string) ($validated['note'] ?? ''));
-        $before = $entry->note;
+        $note = $note === '' ? null : $note;
 
         try {
-            $entry->update(['note' => $note === '' ? null : $note]);
+            // One lookup, under a row lock, as in correct(): a strike landing
+            // between a lookup and the save would otherwise be given a note and
+            // answered as a success.
+            $result = DB::transaction(function () use ($group, $entry_id, $note) {
+                $entry = $group->hifzEntries()->whereKey((int) $entry_id)->lockForUpdate()->first();
 
-            if ($entry->note !== $before) {
-                Log::warning('Hifdh note edited', [
-                    'masjid_id' => $entry->masjid_id,
-                    'group_id' => $entry->group_id,
-                    'entry_id' => $entry->id,
-                    'by_user_id' => $request->user()?->id,
-                    'heard_by_user_id' => $entry->heard_by_user_id,
-                    'had_note' => filled($before),
-                    'has_note' => filled($entry->note),
-                ]);
-            }
+                if ($entry === null) {
+                    return null;
+                }
 
-            return response()->json([
-                'status' => 'success',
-                // The writer sees what they just wrote, as in store().
-                'data' => $this->serialize($entry->load($this->readEagerLoads())),
-                'meta' => $this->meta(),
-            ], Response::HTTP_OK);
+                $before = $entry->note;
+                $entry->update(['note' => $note]);
+
+                return [$entry, $before];
+            });
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+
+        if ($result === null) {
+            throw (new ModelNotFoundException())->setModel(HifzEntry::class, [(int) $entry_id]);
+        }
+
+        [$entry, $before] = $result;
+
+        if ($entry->note !== $before) {
+            Log::warning('Hifdh note edited', [
+                'masjid_id' => $entry->masjid_id,
+                'group_id' => $entry->group_id,
+                'entry_id' => $entry->id,
+                'by_user_id' => $request->user()?->id,
+                'heard_by_user_id' => $entry->heard_by_user_id,
+                'had_note' => filled($before),
+                'has_note' => filled($entry->note),
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            // The writer sees what they just wrote, as in store().
+            'data' => $this->serialize($entry->load($this->readEagerLoads())),
+            'meta' => $this->meta(),
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -392,7 +412,6 @@ class HifzEntriesController extends Controller
     public function correct(CorrectHifzEntryRequest $request, $masjid_id, $group_id, $entry_id)
     {
         $group = Group::findOrFail($group_id);
-        $entry = $group->hifzEntries()->findOrFail($entry_id);
 
         $heard = [
             'kind' => $request->input('kind'),
@@ -414,14 +433,30 @@ class HifzEntriesController extends Controller
         // was heard, to the second, which is also what keeps its place in the
         // order HifzProgress reads.
         if ($request->filled('recited_at')) {
-            $heard['recited_at'] = $request->date('recited_at');
+            $heard['recited_at'] = $this->heardAt($request);
         }
 
         $note = trim((string) $request->input('note', ''));
         $note = $note === '' ? null : $note;
 
         try {
-            $result = DB::transaction(function () use ($entry, $heard, $note, $request) {
+            $result = DB::transaction(function () use ($group, $entry_id, $heard, $note, $request) {
+                // THE ONE LOOKUP, UNDER A ROW LOCK. Everything below is decided
+                // from this row and nothing read earlier, for two reasons the
+                // pre-ship review reproduced with a lookup made outside:
+                //   - two corrections of one line each copied the ORIGINAL as
+                //     "the line as it stood", so the first correction's version
+                //     was in no row at all once the second had saved;
+                //   - a strike that landed between the lookup and the save was
+                //     corrected anyway, by id, and answered as a success.
+                // Locked, the second correction waits and then sees the first;
+                // a struck line is simply not found (the soft-delete scope).
+                $entry = $group->hifzEntries()->whereKey((int) $entry_id)->lockForUpdate()->first();
+
+                if ($entry === null) {
+                    return null;
+                }
+
                 // The line as it stood, taken before anything is filled.
                 $was = $entry->replicate();
                 $noteBefore = $entry->note;
@@ -447,46 +482,68 @@ class HifzEntriesController extends Controller
                     $entry->save();
                 }
 
-                return [$changed, $noteChanged, $struckCopyId, $noteBefore];
+                return [$entry, $changed, $noteChanged, $struckCopyId, $noteBefore];
             });
-
-            [$changed, $noteChanged, $struckCopyId, $noteBefore] = $result;
-
-            if ($changed !== []) {
-                // Field NAMES only: what was heard about a child is not log text.
-                Log::warning('Hifdh entry corrected', [
-                    'masjid_id' => $entry->masjid_id,
-                    'group_id' => $entry->group_id,
-                    'entry_id' => $entry->id,
-                    'struck_copy_id' => $struckCopyId,
-                    'by_user_id' => $request->user()?->id,
-                    'heard_by_user_id' => $entry->heard_by_user_id,
-                    'changed' => $changed,
-                    'note_changed' => $noteChanged,
-                ]);
-            } elseif ($noteChanged) {
-                Log::warning('Hifdh note edited', [
-                    'masjid_id' => $entry->masjid_id,
-                    'group_id' => $entry->group_id,
-                    'entry_id' => $entry->id,
-                    'by_user_id' => $request->user()?->id,
-                    'heard_by_user_id' => $entry->heard_by_user_id,
-                    'had_note' => filled($noteBefore),
-                    'has_note' => filled($entry->note),
-                ]);
-            }
-
-            return response()->json([
-                'status' => 'success',
-                'data' => $this->serialize($entry->fresh()->load($this->readEagerLoads())),
-                'meta' => $this->meta() + ['changed' => $changed, 'note_changed' => $noteChanged],
-            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+
+        if ($result === null) {
+            // Outside the try: the JSON renderer turns this into the same clean
+            // 404 a findOrFail miss is.
+            throw (new ModelNotFoundException())->setModel(HifzEntry::class, [(int) $entry_id]);
+        }
+
+        [$entry, $changed, $noteChanged, $struckCopyId, $noteBefore] = $result;
+
+        if ($changed !== []) {
+            // Field NAMES only: what was heard about a child is not log text.
+            Log::warning('Hifdh entry corrected', [
+                'masjid_id' => $entry->masjid_id,
+                'group_id' => $entry->group_id,
+                'entry_id' => $entry->id,
+                'struck_copy_id' => $struckCopyId,
+                'by_user_id' => $request->user()?->id,
+                'heard_by_user_id' => $entry->heard_by_user_id,
+                'changed' => $changed,
+                'note_changed' => $noteChanged,
+            ]);
+        } elseif ($noteChanged) {
+            Log::warning('Hifdh note edited', [
+                'masjid_id' => $entry->masjid_id,
+                'group_id' => $entry->group_id,
+                'entry_id' => $entry->id,
+                'by_user_id' => $request->user()?->id,
+                'heard_by_user_id' => $entry->heard_by_user_id,
+                'had_note' => filled($noteBefore),
+                'has_note' => filled($entry->note),
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            // The row that was locked and saved, never a re-read by id: fresh()
+            // ignores the soft-delete scope and would hand back a struck line.
+            'data' => $this->serialize($entry->load($this->readEagerLoads())),
+            'meta' => $this->meta() + ['changed' => $changed, 'note_changed' => $noteChanged],
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * `recited_at` as the instant it names, in the application's time zone.
+     *
+     * A string with an offset ("2026-10-05T00:30:00-04:00") parses to a moment
+     * that carries that offset, and Eloquent writes a datetime's WALL TIME into
+     * a column that has no zone: 00:30 was stored for an instant that is 04:30
+     * UTC, four hours and, near midnight, a day out. Converted first, the wall
+     * time written is the application's own.
+     */
+    private function heardAt(Request $request): \Carbon\CarbonInterface
+    {
+        return $request->date('recited_at')->setTimezone(config('app.timezone'));
     }
 
     /**

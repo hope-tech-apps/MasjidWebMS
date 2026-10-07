@@ -70,15 +70,21 @@ export function hifzDayLabel(iso: string | null | undefined, locale?: string, cr
  *     Honolulu to Auckland, including readers that do not use this file;
  *  2. midnight UTC of that day (the bare date this form used to send): east of
  *     Greenwich, early on a day, yesterday's noon UTC has not happened yet;
- *  3. a minute ago: the chosen day is the reader's own today and neither of the
- *     above has happened yet (far east of Greenwich, just after midnight). A
- *     real moment, which reads as the reader's local day, which is that day.
+ *  3. ONLY when the chosen day is the reader's own today: the start of that day
+ *     where the reader is. Far east of Greenwich, just after midnight, neither
+ *     of the above has happened yet; local midnight has, and it reads as the
+ *     reader's local day, which is that day.
  *
- * All three read back as the chosen day through hifzDayOf.
+ * A day that is really in the future gets (1), unchanged, and the server says
+ * so: this never swaps a day somebody typed for another one.
  */
 export function hifzDayToSend(day: string, now: Date = new Date()): string {
     const noon = `${day}T12:00:00Z`;
     if (new Date(noon).getTime() <= now.getTime()) return noon;
     if (new Date(`${day}T00:00:00Z`).getTime() <= now.getTime()) return day;
-    return new Date(now.getTime() - 60_000).toISOString();
+    if (day === localDayOf(now)) {
+        const [y, m, d] = day.split('-').map(Number);
+        return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+    }
+    return noon;
 }

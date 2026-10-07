@@ -5403,9 +5403,10 @@ const saveHifzEdit = async () => {
         });
         const saved = res.data?.data;
         endHifzEdit();
-        if (saved && saved.id === entry.id) {
+        if (saved && saved.id === entry.id && !saved.corrected_at) {
             // The server's line, in the place the old one held. A changed day can
-            // move it in the list, so the list is read again in that case.
+            // move it in the list, so the list is read again in that case. (A line
+            // that comes back marked struck is never drawn as live: the list is read.)
             const at = hifz.value.findIndex((h) => h.id === entry.id);
             if (at >= 0 && !dayChanged) hifz.value.splice(at, 1, saved);
             else await loadHifz();
@@ -5504,14 +5505,16 @@ const hifzClassmates = computed(() =>
     students.value.filter((s) => String(s.membership_id) !== String(hifzMembership.value)));
 
 /**
- * A note is saving, a line is being copied, or a recitation is being recorded.
+ * A note is saving, a line is being copied, a recitation is being recorded or
+ * corrected, or a line is being removed (a line opened in the form while its
+ * removal was still in flight stayed in the form after it was gone).
  * While it is, the student cannot be changed, no other line's editor or copy
  * panel can be opened and nothing else can be written: each answers to the list
  * on screen, and its answer must come back to the line and the student it left
  * from. Record is in it because it reloads the list when it is done, which
  * closed an open note editor under a save still in flight and lost its draft.
  */
-const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value || recordingHifz.value);
+const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value || recordingHifz.value || removingHifz.value !== null);
 
 const toggleHifzCopy = (entry: any) => {
     if (hifzBusy.value || hifzEditing.value) return;
@@ -5696,6 +5699,7 @@ const removeHifz = async (entry: any) => {
         hifz.value = hifz.value.filter((h) => h.id !== entry.id);
         if (openHifzNote.value === entry.id) openHifzNote.value = null;
         if (openHifzCopy.value === entry.id) openHifzCopy.value = null;
+        if (hifzEditing.value?.id === entry.id) endHifzEdit();
     } catch {
         hifzError.value = 'That entry could not be removed.';
     } finally {
