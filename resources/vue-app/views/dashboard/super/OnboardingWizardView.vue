@@ -99,7 +99,7 @@
                 <div class="d-flex flex-column flex-md-row gap-4">
                     <div class="wizard-field w-100">
                         <label>Email <span class="req">*</span></label>
-                        <input v-model="form.email" type="email" class="dashboard-input" placeholder="contact@masjid.org" />
+                        <input v-model="form.email" type="email" class="dashboard-input" placeholder="contact@example.org" />
                     </div>
                     <div class="wizard-field w-100">
                         <label>Phone <span class="req">*</span></label>

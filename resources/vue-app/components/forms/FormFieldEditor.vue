@@ -211,7 +211,7 @@
                             type="text"
                             class="form-control form-control-sm"
                             v-model="option.detail"
-                            placeholder="e.g. Send to (336) 350-1642"
+                            placeholder="e.g. Send to (555) 010-0142"
                         />
                     </div>
                     <div class="col-md-1 d-flex justify-content-end">

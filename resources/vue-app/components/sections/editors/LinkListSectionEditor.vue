@@ -122,7 +122,7 @@
                                     class="form-control"
                                     v-model="link.url"
                                     @input="emitUpdate"
-                                    placeholder="https://example.com, mailto:info@masjid.org, tel:+15551234567"
+                                    placeholder="https://example.com, mailto:info@example.org, tel:+15551234567"
                                 />
                                 <div class="form-text">
                                     Use <code>mailto:</code> for email and <code>tel:</code> for phone

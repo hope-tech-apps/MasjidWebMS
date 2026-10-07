@@ -67,11 +67,11 @@
                         <div class="modal-body">
                             <div class="mb-3">
                                 <label class="form-label">Name *</label>
-                                <input class="form-control" v-model="form.name" placeholder="Brick House 2">
+                                <input class="form-control" v-model="form.name" placeholder="Main Street House">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Address</label>
-                                <input class="form-control" v-model="form.address" placeholder="1910 S Mebane St">
+                                <input class="form-control" v-model="form.address" placeholder="12 Main Street">
                             </div>
                             <div class="row">
                                 <div class="col-md-6 mb-3">

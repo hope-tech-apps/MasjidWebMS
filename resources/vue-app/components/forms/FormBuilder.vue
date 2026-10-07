@@ -19,7 +19,7 @@
                                 class="form-control"
                                 :value="draft.name"
                                 @input="onNameInput(($event.target as HTMLInputElement).value)"
-                                placeholder="e.g. Ashab al-Kahf Youth Retreat 2026"
+                                placeholder="e.g. Youth Retreat 2026"
                             />
                         </div>
 

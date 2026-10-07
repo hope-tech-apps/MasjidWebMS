@@ -209,7 +209,7 @@
                                     class="form-control"
                                     v-model="member.email"
                                     @input="emitUpdate"
-                                    placeholder="teacher@school.org"
+                                    placeholder="teacher@example.org"
                                 />
                             </div>
 
