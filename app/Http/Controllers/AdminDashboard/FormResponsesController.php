@@ -243,13 +243,14 @@ class FormResponsesController extends Controller
             $form = $masjid->forms()->findOrFail($form_id);
 
             $roster = FormRoster::for($form);
+            $columns = $roster->columns(true);
 
             // Flattening happens in PHP (the entries live in a JSON column, and JSON-path
             // sorting is not portable MySQL/SQLite), so the filtered responses are read in
             // full. The bound is one form's registrations — hundreds for a camp.
             $rows = $roster->rows($this->query($request, $masjid, $form)->get());
 
-            $rows = $this->sortRoster($rows, $request);
+            $rows = $this->sortRoster($rows, $request, $columns);
 
             $perPage = $request->perPage();
             $page = max(1, (int) $request->input('page', 1));
@@ -271,7 +272,7 @@ class FormResponsesController extends Controller
                         'name' => $form->name,
                         'capacity' => $form->capacity,
                     ],
-                    'columns' => $roster->columns(true),
+                    'columns' => $columns,
                     'summary' => $roster->summary($rows),
                     'statuses' => FormResponse::STATUSES,
                     'sortable' => $this->rosterSortable($roster),
@@ -376,7 +377,7 @@ class FormResponsesController extends Controller
      *
      * @param  Collection<int,array<string,mixed>>  $rows
      */
-    private function sortRoster($rows, IndexFormResponsesRequest $request)
+    private function sortRoster($rows, IndexFormResponsesRequest $request, array $screenColumns = [])
     {
         $sort = $request->input('sort');
         $descending = $request->sortDirection() === 'desc';
@@ -390,10 +391,13 @@ class FormResponsesController extends Controller
             ])->values();
         }
 
+        // CSV callers supply no options and retain their stored-value ordering.
+        $choice = collect($screenColumns)->first(fn ($column) => $column['key'] === $sort && isset($column['options']));
         $reader = match (true) {
             $sort === 'submitted_at' => fn ($row) => $row['submitted_at'] ?? '',
             $sort === 'respondent_name' => fn ($row) => mb_strtolower((string) ($row['registered_by'] ?? '')),
             $sort === 'status' => fn ($row) => $row['status'] ?? '',
+            $choice !== null => fn ($row) => $this->choiceSortValue($row, $choice),
             // Anything else is a roster COLUMN key.
             default => fn ($row) => $this->sortableValue($row['values'][$sort] ?? null),
         };
@@ -401,6 +405,24 @@ class FormResponsesController extends Controller
         $sorted = $rows->sortBy($reader, SORT_NATURAL | SORT_FLAG_CASE, $descending);
 
         return $sorted->values();
+    }
+
+    /** The same text FormResponsesView displays, including unmatched and empty answers. */
+    private function choiceSortValue(array $row, array $column): string
+    {
+        $key = $column['key'];
+        $value = $row['choice_values'][$key] ?? $row['values'][$key] ?? null;
+        if ($value === null || $value === '') {
+            return '—';
+        }
+
+        $label = fn ($answer) => collect($column['options'])
+            ->first(fn ($option) => (string) $option['value'] === (string) $answer)['label'] ?? $answer;
+        $text = is_array($value)
+            ? implode(', ', array_map($label, array_values(array_filter($value, fn ($answer) => $answer !== null && $answer !== ''))))
+            : (string) $label($value);
+
+        return mb_strtolower(is_array($value) && $text === '' ? '—' : $text);
     }
 
     /** Numbers must sort numerically (age 9 before 10), text case-insensitively. */
@@ -1661,6 +1683,7 @@ class FormResponsesController extends Controller
     private function columns(Form $form, bool $withOptions = false): array
     {
         $columns = [];
+        $resolve = FormOptionSources::resolver($form, FormOptionSources::LABEL);
 
         foreach ($form->sections() as $section) {
             $sectionId = $section['id'] ?? null;
@@ -1678,7 +1701,7 @@ class FormResponsesController extends Controller
                     'repeatable' => $repeatable,
                     'field' => $field['name'],
                 ] + ($withOptions && in_array($field['type'] ?? null, FormOptionSources::TYPES, true)
-                    ? ['options' => FormOptionSources::resolve($form, $field, FormOptionSources::LABEL)] : []);
+                    ? ['options' => $resolve($field)] : []);
             }
         }
 

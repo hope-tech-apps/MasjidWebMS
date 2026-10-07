@@ -107,6 +107,25 @@ final class FormOptionSources
     }
 
     /**
+     * Resolve column metadata once per source, with form and purpose bound to this call.
+     * The caller keeps this closure only while building one request's columns; no cache
+     * survives it. Typed options remain field-specific. Supplemental answers are not used
+     * by column metadata and must still go through resolve().
+     */
+    public static function resolver(Form $form, string $purpose): Closure
+    {
+        $sources = [];
+
+        return static function (array $field) use ($form, $purpose, &$sources): array {
+            if (! self::isSourced($field)) {
+                return self::resolve($form, $field, $purpose);
+            }
+
+            return $sources[$field['optionsSource']] ??= self::resolve($form, $field, $purpose);
+        };
+    }
+
+    /**
      * The form's schema with every sourced field's options filled in. A form
      * with no sourced field comes back exactly as stored, and loads no calendar.
      */

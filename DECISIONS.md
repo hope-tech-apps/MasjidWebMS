@@ -8903,8 +8903,14 @@ three-column-only SPA choice recorded on 2026-10-05.
 Summary's FormOptionSources LABEL resolver also supplies response and roster column
 options. One screen formatter resolves exact stored values, retaining unmatched values.
 Roster choice_values preserves checkboxGroup arrays because joining stored values loses
-boundaries when an option contains a comma. Existing values, sorting and both CSV outputs
-retain their contract. Mail and public confirmation behavior are outside this fix.
+boundaries when an option contains a comma. Existing values and both CSV outputs retain
+their contract; screen roster choice sorting uses displayed wording before pagination.
+Sourced column options are resolved once per form/source/purpose while building a request's
+metadata, using a local closure with no cache store or state shared across requests.
+Searching matches a Choose-any answer by its stored value, not its label; this was left
+unchanged because matching labels requires rebuilding existing responses' stored search
+text, a stored-data change reserved for the owner's decision.
+Mail and public confirmation behavior are outside this fix.
 
 No migration, network call, commit or deployment. Stripe seams are faked; Stripe's
 expired-page finality, provider behavior, MySQL lock scheduling and the deployed browser

@@ -44,6 +44,7 @@ class FormRoster
     public function columns(bool $withOptions = false): array
     {
         $section = $this->form->repeatableSection();
+        $resolve = FormOptionSources::resolver($this->form, FormOptionSources::LABEL);
 
         if (! $section) {
             // No repeatable section: the "person" is the registrant, so the roster's
@@ -58,7 +59,7 @@ class FormRoster
                             'label' => $field['label'],
                             'type' => $field['type'] ?? 'text',
                         ] + ($withOptions && in_array($field['type'] ?? null, FormOptionSources::TYPES, true)
-                            ? ['options' => FormOptionSources::resolve($this->form, $field, FormOptionSources::LABEL)] : []);
+                            ? ['options' => $resolve($field)] : []);
                     }
                 }
             }
@@ -73,7 +74,7 @@ class FormRoster
                 'label' => $f['label'],
                 'type' => $f['type'] ?? 'text',
             ] + ($withOptions && in_array($f['type'] ?? null, FormOptionSources::TYPES, true)
-                ? ['options' => FormOptionSources::resolve($this->form, $f, FormOptionSources::LABEL)] : []))
+                ? ['options' => $resolve($f)] : []))
             ->values()
             ->all();
     }
