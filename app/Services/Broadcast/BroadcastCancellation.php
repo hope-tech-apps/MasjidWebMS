@@ -15,6 +15,9 @@ class BroadcastCancellation
         return DB::transaction(function () use ($broadcastId, $actorId): array {
             // A locking read sees the latest row, even if this request read an older copy.
             $broadcast = Broadcast::query()->lockForUpdate()->findOrFail($broadcastId);
+            // Old dispatchers kept the parent scheduled until rollup. Inspect fresh
+            // outcomes under the parent lock before promising that nothing will send.
+            $broadcast->load(['deliveries' => fn ($query) => $query->lockForUpdate()]);
 
             if (! $broadcast->isCancellable()) {
                 return [
@@ -26,6 +29,9 @@ class BroadcastCancellation
                         Broadcast::STATUS_SENT => 'This broadcast has already been sent. Check the channel outcomes before composing a follow-up.',
                         Broadcast::STATUS_PARTIAL => 'This broadcast has already reached some channels. Check the channel outcomes before composing a follow-up.',
                         Broadcast::STATUS_FAILED => 'This broadcast has failed and cannot be cancelled. Check the channel outcomes before composing a replacement.',
+                        Broadcast::STATUS_SCHEDULED => $broadcast->hasDeliveryAttempt()
+                            ? 'This broadcast cannot be cancelled because an earlier attempt is recorded. Some channels may already have gone out; check the channel outcomes.'
+                            : 'Only a scheduled broadcast can be cancelled. Refresh the list to see its current status.',
                         default => 'Only a scheduled broadcast can be cancelled. Refresh the list to see its current status.',
                     },
                 ];

@@ -11,6 +11,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
@@ -261,6 +262,42 @@ class ContactTagsTest extends TestCase
         $this->deleteJson($this->url("/{$tag->id}"))->assertStatus(422);
 
         $this->assertNotNull(ContactTag::withoutMasjidScope()->find($tag->id));
+    }
+
+    public static function broadcastStates(): array
+    {
+        return [
+            'scheduled' => ['scheduled', 422],
+            'sending' => ['sending', 422],
+            'sent' => ['sent', 200],
+            'partial' => ['partial', 200],
+            'failed' => ['failed', 200],
+            'cancelled' => ['cancelled', 200],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('broadcastStates')]
+    public function deleting_a_tag_protects_every_in_flight_broadcast_but_releases_settled_ones(string $status, int $expected): void
+    {
+        $tag = $this->tag('Volunteer');
+        $contact = $this->contact();
+        $tag->contacts()->attach([$contact->id]);
+        $broadcast = Broadcast::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id, 'title' => 'Iftar rota', 'body' => 'See you Friday.',
+            'audience' => 'tag', 'audience_tag_id' => $tag->id,
+            'scheduled_at' => now()->subMinute(), 'status' => $status,
+        ]);
+        Sanctum::actingAs($this->admin);
+
+        $this->deleteJson($this->url("/{$tag->id}"))->assertStatus($expected);
+        if ($expected === 422) {
+            $this->assertNotNull($tag->fresh());
+            $this->assertSame([$tag->id], $this->tagIdsOf($contact));
+            $this->assertSame($tag->id, (int) $broadcast->fresh()->audience_tag_id);
+        } else {
+            $this->assertNull($tag->fresh());
+        }
     }
 
     #[Test]

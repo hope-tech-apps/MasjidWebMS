@@ -148,16 +148,19 @@ never reads that column, so **a rollback is a code rollback only: never run
 Its `down()` refuses while any broadcast carries a layout, because dropping the
 column would erase the record of every newsletter sent.
 
-What a rollback does NOT protect by itself is a newsletter already **scheduled**.
+What a rollback does NOT protect by itself is a newsletter already **scheduled or sending**.
 It waits on the queue as a `SendBroadcastJob`; when it fires, the old code sends
 the plain single-image email, with every block silently missing (the queued
 `BroadcastMail` carries a `blocks` property the old class ignores). Before
-rolling back:
+rolling back, stop/drain active broadcast workers before inspecting or holding
+delivery rows. A `sending` row still needs its layout until the channel work
+finishes; an interrupted `sending` row requires checking outcomes, never replaying
+it as though nothing went out:
 
 ```sql
 SELECT id, masjid_id, title, scheduled_at, status
 FROM broadcasts
-WHERE blocks IS NOT NULL AND status IN ('scheduled', 'pending');
+WHERE blocks IS NOT NULL AND status IN ('scheduled', 'pending', 'sending');
 ```
 
 For each row, tell the organisation and hold its email before the old code is

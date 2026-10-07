@@ -2,18 +2,27 @@
 
 namespace Tests\Feature\Broadcasts;
 
+use App\Enums\BroadcastChannel;
+use App\Mail\BroadcastMail;
 use App\Models\Broadcast;
 use App\Models\Contact;
 use App\Models\ContactTag;
 use App\Models\Masjid;
+use App\Models\MasjidSmsSender;
 use App\Models\MobileAppUser;
 use App\Models\User;
 use App\Services\Broadcast\BroadcastAudienceResolver;
+use App\Services\Broadcast\BroadcastChannelDriver;
+use App\Services\Broadcast\BroadcastComposer;
+use App\Services\Broadcast\BroadcastDispatcher;
+use App\Services\Broadcast\ChannelResult;
+use App\Services\Broadcast\Channels\EmailChannel;
 use App\Services\Broadcast\EmailSuppressionService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -191,6 +200,50 @@ class TagAudienceTest extends TestCase
 
         $delivery = $broadcast->deliveries()->withoutGlobalScopes()->where('channel', 'email')->firstOrFail();
         $this->assertSame(1, (int) $delivery->target_count);
+    }
+
+    #[Test]
+    public function deleting_the_tag_between_email_and_sms_is_refused_and_sms_keeps_its_audience(): void
+    {
+        Queue::fake();
+        config(['services.sms.driver' => 'log']);
+        $tag = $this->tag('Volunteer');
+        $contact = $this->contact('tagged@example.test', '+13365550101', $tag);
+        MasjidSmsSender::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id, 'provider' => 'twilio',
+            'phone_number' => '+16135550100', 'sender_label' => 'Test Masjid',
+            'registration_status' => MasjidSmsSender::STATUS_APPROVED, 'approved_at' => now(),
+        ]);
+        Sanctum::actingAs($this->admin);
+        $broadcast = app(BroadcastComposer::class)->send($this->masjid, [
+            'title' => 'Iftar rota', 'body' => 'See you Friday.',
+            'audience' => 'tag', 'tag_id' => $tag->id, 'scheduled_at' => now()->addHour(),
+        ], [BroadcastChannel::EMAIL, BroadcastChannel::SMS], authorId: $this->admin->id);
+        $email = app(EmailChannel::class);
+        $seen = (object) ['response' => null, 'status' => null];
+        $test = $this;
+        $this->app->bind(EmailChannel::class, fn () => new class($email, $test, $tag->id, $seen) implements BroadcastChannelDriver {
+            public function __construct(private EmailChannel $email, private object $test, private int $tagId, private object $seen) {}
+            public function channel(): BroadcastChannel { return BroadcastChannel::EMAIL; }
+            public function deliver(Broadcast $broadcast, Masjid $masjid): ChannelResult
+            {
+                $result = $this->email->deliver($broadcast, $masjid);
+                $this->seen->status = $broadcast->fresh()->status;
+                $this->seen->response = $this->test->deleteJson("/api/admin/masjids/{$masjid->id}/contact-tags/{$this->tagId}");
+                return $result;
+            }
+        });
+
+        $result = app(BroadcastDispatcher::class)->dispatch($broadcast);
+
+        $this->assertSame('sending', $seen->status);
+        $seen->response->assertStatus(422);
+        $this->assertNotNull($tag->fresh());
+        Mail::assertQueued(BroadcastMail::class, fn ($mail) => $mail->hasTo($contact->email));
+        $sms = $result->deliveries->firstWhere('channel', 'sms');
+        $this->assertSame('sent', $sms->status);
+        $this->assertSame(1, $sms->target_count);
+        $this->assertSame('sent', $result->status);
     }
 
     #[Test]

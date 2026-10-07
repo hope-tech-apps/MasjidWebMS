@@ -129,11 +129,18 @@ class Broadcast extends Model implements HasMedia
         return $this->hasMany(BroadcastDelivery::class);
     }
 
-    /** Scheduled with a time, even overdue; the locked send claim decides whether it started. */
+    /** Scheduled with a time, even overdue, and no delivery evidence of an earlier attempt. */
     public function isCancellable(): bool
     {
         return $this->status === self::STATUS_SCHEDULED
-            && $this->scheduled_at !== null;
+            && $this->scheduled_at !== null
+            && ! $this->hasDeliveryAttempt();
+    }
+
+    /** Uses eager-loaded deliveries in history; old workers could leave a scheduled parent after sending. */
+    public function hasDeliveryAttempt(): bool
+    {
+        return $this->deliveries->contains(fn (BroadcastDelivery $delivery) => ! $delivery->isUntouchedPending());
     }
 
     /** The admin who composed it; null once that account is deleted. */

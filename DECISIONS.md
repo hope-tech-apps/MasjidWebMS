@@ -8917,7 +8917,8 @@ a misleading half-sent cancellation. The channel loop remains outside a transact
 preserving the existing independent delivery outcomes and failed/partial retry behavior.
 
 Eligibility: status exactly scheduled and a non-null scheduled_at, whatever the
-clock says. Due/overdue rows are cancellable until the send claim commits. This
+clock says, with every delivery still untouched pending (see pre-ship fixes below).
+Untouched due/overdue rows are cancellable until the send claim commits. This
 supersedes the original future-only rule, corrected by the owner before review.
 Repeat cancel is a 409 with a clear already cancelled sentence, preserving the first actor/time. Other terminal states and
 pending/sending are refused with actionable messages. Same route middleware and
@@ -8951,9 +8952,45 @@ and a second connection rather than pretending SQLite proves row locks.
 
 Known limit, not fixed in this change (2026-10-07): the send claim commits `sending` before any
 channel runs, so a send whose worker dies part-way leaves the broadcast `sending`: not
-cancellable (there is nothing left to cancel; the job has one try and is not replayed) and shown
+cancellable once claimed (the job has one try and is not replayed) and shown
 as Sending until someone looks. Before this change the same death left it `scheduled`, which
 looked as if it would still go out. Settling it automatically is not safe yet: the dispatcher
 cannot tell a channel that never started from one that sent and died before its result was
 written, and marking that one failed and sending again was shown to publish twice. The follow-up
 is a terminal "interrupted" outcome that is never replayed automatically.
+
+## 2026-10-06 — Broadcast cancellation pre-ship review fixes
+
+Both findings reproduced on 72b3e643: an earlier worker's outcome does not let a
+scheduled parent promise "Nothing will be sent", and a sending claim does not
+release its tag audience. Cancellation locks the parent first, then reads its
+deliveries with a locking read (also fresh inside an existing InnoDB read view).
+Every delivery must be pending, target_count zero, and reference_id, reference,
+note, error and delivered_at null. Any other recorded state refuses without
+writing parent/audit/deliveries. The refusal is exactly:
+"This broadcast cannot be cancelled because an earlier attempt is recorded. Some
+channels may already have gone out; check the channel outcomes."
+History/detail use the same predicate over their eager-loaded deliveries; the
+three-row history regression observes one delivery SELECT for the page.
+This is evidence of a recorded attempt, not proof that an untouched pending row
+was never externally sent by an old worker that lost its result. The existing
+interrupted-worker/recovery limit above remains unresolved.
+
+Other scheduled/in-flight consumers audited (code read; verdicts, not new policy):
+
+| Reader / input owner | Verdict and reason |
+| --- | --- |
+| ContactTagsController::destroy | Fixed: scheduled AND sending retain the tag; the email-then-delete-then-SMS regression keeps one SMS recipient. Settled/cancelled rows release it. Refusal advises waiting/checking outcomes when already sending. |
+| deploy/README.md newsletter rollback inventory | Fixed: include sending in its SQL inventory and stop/drain active workers before holding outcomes or rolling back. Sending still depends on the layout. Eight SQLite inventory fixtures checked the documented query red then green. |
+| BroadcastComposer::compose/send/isFuture | Keep: scheduled vs pending chooses a delayed vs immediate job at composition; not an in-flight input guard. |
+| BroadcastDispatcher / SendBroadcastJob | Keep: claim already protects sending/cancelled; retry selection/rollup use delivery states, not scheduled. Job reads by id with no schedule filter. |
+| BroadcastAudienceResolver / service deletion / tag membership / consent and suppression | Keep: audience resolved live per channel, status-independent. Withdrawals and opt-outs must still shrink audiences; service deletion had no scheduled-only guard before this claim. |
+| ContactsController CRUD/merge; MemberAccountDeletion; WixContactImport | Keep: general contact changes have no scheduled-only guard; named-recipient retention in member deletion/import checks ALL broadcast states. |
+| Newsletter blocks/renderers / BroadcastMail / block-column rollback migration | Keep: layout snapshotted on broadcast/queued mail; no mutable template reference or scheduled-only guard. Column down refuses any layout in any state. Queued mail has no broadcast-status check; cancellation cannot recall it. |
+| MasjidsController archive/module updates / AnnouncementChannel / PushChannel / SmsChannel | Keep: no scheduled-only deletion/deactivation predicate. Archive is soft-delete; dispatcher looks up Masjid before claim. Channel module/sender guards are status-independent. Mid-send administrative changes predate this claim and are outside these two defects. |
+| BroadcastsController index/show/present / BroadcastsView / store/types | Predicate fixed via model. Index is unfiltered history with eager-loaded deliveries; badge/date branches are display-only and already label sending. Cancel follows the server flag. |
+| Broadcast::scopeLiveOnSignage / mobile SignageController | Keep: visibility uses successful signage delivery plus dates, regardless of parent scheduled/sending status. |
+| ImpactMetrics / other counters and filters | Keep: no broadcast scheduled counters/filters found. Appointment/class-story/conversation scheduled readers belong to different models (the class guards already include sending). |
+
+Evidence: artifacts/review-fixes-*.log and artifacts/review-fixes-evidence.md.
+No network, commit, deployment, recovery, provider calls or production changes.

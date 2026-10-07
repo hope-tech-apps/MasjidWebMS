@@ -64,24 +64,24 @@ class ContactTagsController extends Controller
     /**
      * Delete a tag. The contacts stay; only the label goes.
      *
-     * Refused while a SCHEDULED broadcast is addressed to it. The foreign key
+     * Refused while a SCHEDULED or SENDING broadcast is addressed to it. The foreign key
      * would null the broadcast's tag and the resolver would then address nobody
      * — the safe direction, but a send the admin scheduled would silently reach
-     * no one. Saying so now lets them cancel or re-address it first.
+     * no one. A sending broadcast still resolves its audience for each channel.
      */
     public function destroy($masjid_id, $tag_id): JsonResponse
     {
         $tag = ContactTag::findOrFail($tag_id);
 
-        $scheduled = Broadcast::query()
+        $inFlight = Broadcast::query()
             ->where('audience_tag_id', $tag->id)
-            ->where('status', Broadcast::STATUS_SCHEDULED)
+            ->whereIn('status', [Broadcast::STATUS_SCHEDULED, Broadcast::STATUS_SENDING])
             ->exists();
 
-        if ($scheduled) {
+        if ($inFlight) {
             return response()->json([
                 'status' => 'failed',
-                'message' => 'A scheduled broadcast is addressed to this tag. Send or cancel it before deleting the tag.',
+                'message' => 'A scheduled or sending broadcast is addressed to this tag. Cancel it if it has not started, or wait for sending to finish and check the channel outcomes before deleting the tag.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

@@ -82,7 +82,13 @@ after cancellation. Removing a queue entry is never the guarantee.
 - `BroadcastCancellation` and `BroadcastDispatcher` both re-read the broadcast
   with `lockForUpdate()` inside a short transaction. Eligibility is decided on
   THAT row: status exactly `scheduled`, non-null scheduled_at, whatever the clock
-  says. Due/overdue rows remain cancellable until a worker commits the send claim.
+  says, and every delivery is untouched pending (zero target count and null
+  references, note, error and delivered_at). Outcomes are freshly read with a
+  locking read under the parent lock. Old workers could settle channels while
+  leaving the parent scheduled; refuse these rows with "This broadcast cannot be
+  cancelled because an earlier attempt is recorded. Some channels may already
+  have gone out; check the channel outcomes." Do not rewrite outcomes or audit
+  on refusal. Untouched due/overdue rows remain cancellable until the send claim.
 - Cancel commits status `cancelled`, server-derived `cancelled_by_user_id` and
   `cancelled_at`, and changes pending delivery rows to `cancelled`. Audit columns
   are nullable with no backfill; the user FK follows the creator's nullOnDelete
@@ -96,7 +102,8 @@ after cancellation. Removing a queue entry is never the guarantee.
   409 with "This broadcast is already cancelled. Nothing will be sent." and
   preserves the original actor/time. Other refusals carry an actionable sentence.
 - List, detail, compose and cancel responses include server `cancellable` and
-  nullable cancellation audit keys. The SPA shows Cancel only from this flag,
+  nullable cancellation audit keys. The predicate uses the already eager-loaded
+  deliveries; never add a prior-attempt query per history row. The SPA shows Cancel only from this flag,
   asks "Cancel scheduled broadcast?" / "This broadcast will not be sent on any
   channel.", with "Yes, cancel broadcast" and "Keep scheduled". It blocks
   repeat taps, displays the server message, and refreshes after success/refusal.
@@ -115,6 +122,14 @@ apply the nullable migration and new code, rebuild route/config caches and start
 workers on the new dispatcher. An old worker does not understand cancelled.
 Do not roll back to a dispatcher without the guard while cancelled delayed jobs
 remain: that would reopen the send door. No release is performed by this change.
+
+Tags addressed by `scheduled` OR `sending` broadcasts cannot be deleted: each
+channel resolves its audience separately, so committing the claim does not free
+the tag. Settled/cancelled rows release this guard. Live consent, suppression,
+service interests and tag membership still apply at channel time. The newsletter
+rollback inventory in deploy/README.md includes sending too; drain workers before
+holding deliveries or changing code. Other reader verdicts: DECISIONS.md, pre-ship
+review fixes (2026-10-06).
 
 Coverage: `BroadcastCancellationTest`, mounted `broadcast-cancel-screen.test.ts`
 (actual store), and mysql-group `BroadcastCancellationLocksTest` under
@@ -227,7 +242,7 @@ push reads no contacts on its own and no individual contact is ever disclosed.
   and `pushSubscriptionIds()` returns `[]` for a tag audience that reaches it
   anyway. A tag audience with no tag — never chosen, or deleted since
   (`nullOnDelete`) — addresses NOBODY, never everyone; deleting a tag a
-  still-scheduled broadcast addresses is refused. `readsContacts()` is true, so
+  scheduled or sending broadcast addresses is refused. `readsContacts()` is true, so
   it inherits the `crm_enabled` + `view contacts` gate. Pinned by
   `tests/Feature/Broadcasts/TagAudienceTest.php`.
 

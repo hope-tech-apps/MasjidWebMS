@@ -6,6 +6,7 @@ use App\Enums\BroadcastChannel;
 use App\Jobs\SendBroadcastJob;
 use App\Models\Announcement;
 use App\Models\Broadcast;
+use App\Models\BroadcastDelivery;
 use App\Models\Masjid;
 use App\Models\Notification;
 use App\Models\User;
@@ -16,6 +17,7 @@ use App\Services\Broadcast\ChannelResult;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
@@ -227,6 +229,69 @@ class BroadcastCancellationTest extends TestCase
             }
             $this->assertSame($status, $broadcast->fresh()->status);
         }
+    }
+
+    public static function priorAttempts(): array
+    {
+        return [
+            'sent' => [['status' => 'sent']],
+            'failed' => [['status' => 'failed']],
+            'skipped' => [['status' => 'skipped']],
+            'cancelled delivery' => [['status' => 'cancelled']],
+            'unknown status' => [['status' => 'interrupted']],
+            'pending with recipients' => [['target_count' => 1]],
+            'pending with local reference' => [['reference_id' => 123]],
+            'pending with provider reference' => [['reference' => 'provider-id']],
+            'pending with note' => [['note' => 'Already attempted']],
+            'pending with error' => [['error' => 'Attempt failed']],
+            'pending with delivery time' => [['delivered_at' => '2026-10-06 11:00:00']],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('priorAttempts')]
+    public function a_scheduled_parent_with_evidence_of_an_earlier_attempt_cannot_be_cancelled(array $outcome): void
+    {
+        $broadcast = $this->scheduled();
+        // Simulate an old worker settling one delivery but dying before parent rollup.
+        $broadcast->load('deliveries');
+        $broadcast->deliveries()->where('channel', 'email')->update($outcome);
+        $before = $broadcast->deliveries()->orderBy('id')->get()->toArray();
+        Carbon::setTestNow(now()->addHours(2));
+
+        $response = $this->postJson($this->url($broadcast))->assertStatus(409)
+            ->assertJsonPath('data.status', 'scheduled')
+            ->assertJsonPath('data.cancellable', false)
+            ->assertJsonPath('message', 'This broadcast cannot be cancelled because an earlier attempt is recorded. Some channels may already have gone out; check the channel outcomes.');
+        $this->assertStringNotContainsString('Nothing will be sent', $response->json('message'));
+        $this->assertNull($broadcast->fresh()->cancelled_at);
+        $this->assertNull($broadcast->fresh()->cancelled_by_user_id);
+        $this->assertSame($before, $broadcast->deliveries()->orderBy('id')->get()->toArray());
+        $this->getJson("/api/admin/masjids/{$this->organisation->id}/broadcasts")
+            ->assertOk()->assertJsonPath('data.data.0.cancellable', false);
+        $this->getJson("/api/admin/masjids/{$this->organisation->id}/broadcasts/{$broadcast->id}")
+            ->assertOk()->assertJsonPath('data.cancellable', false);
+    }
+
+    #[Test]
+    public function history_checks_prior_attempts_using_one_delivery_query_for_the_whole_page(): void
+    {
+        $untouched = $this->scheduled();
+        $started = $this->scheduled();
+        $started->deliveries()->where('channel', 'email')->update(['status' => BroadcastDelivery::STATUS_SENT]);
+        $this->scheduled();
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            if (str_starts_with(strtolower($query->sql), 'select') && str_contains($query->sql, 'broadcast_deliveries')) {
+                $queries[] = $query->sql;
+            }
+        });
+
+        $response = $this->getJson("/api/admin/masjids/{$this->organisation->id}/broadcasts")->assertOk();
+        $this->assertCount(1, $queries, 'Deliveries must stay eager-loaded, with no per-row attempt query.');
+        $rows = collect($response->json('data.data'))->keyBy('id');
+        $this->assertFalse($rows[$started->id]['cancellable']);
+        $this->assertTrue($rows[$untouched->id]['cancellable']);
     }
 
     #[Test]

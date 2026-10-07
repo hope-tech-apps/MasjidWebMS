@@ -67,6 +67,18 @@ class BroadcastDelivery extends Model
         return $this->belongsTo(Broadcast::class);
     }
 
+    /** No recorded outcome from an earlier attempt, including partially written results. */
+    public function isUntouchedPending(): bool
+    {
+        return $this->status === self::STATUS_PENDING
+            && $this->target_count === 0
+            && $this->reference_id === null
+            && $this->reference === null
+            && $this->note === null
+            && $this->error === null
+            && $this->delivered_at === null;
+    }
+
     public function channelType(): ?BroadcastChannel
     {
         return BroadcastChannel::tryFrom((string) $this->channel);
