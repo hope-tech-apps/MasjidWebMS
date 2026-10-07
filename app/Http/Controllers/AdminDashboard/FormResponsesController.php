@@ -339,7 +339,7 @@ class FormResponsesController extends Controller
             if ($staffPricing) {
                 array_push($header, ...self::STAFF_PRICE_COLUMNS);
             }
-            fputcsv($out, $header);
+            fputcsv($out, $header, escape: '');
 
             foreach ($rows as $row) {
                 $line = [];
@@ -362,7 +362,7 @@ class FormResponsesController extends Controller
                 if ($staffPricing) {
                     array_push($line, ...$this->staffPriceCells($row['price_breakdown'] ?? null, $row['staff_payment_method'] ?? null, $row['price_set_by'] ?? null));
                 }
-                fputcsv($out, $line);
+                fputcsv($out, $line, escape: '');
             }
 
             fclose($out);
@@ -1415,7 +1415,7 @@ class FormResponsesController extends Controller
             if ($staffPricing) {
                 array_push($header, ...self::STAFF_PRICE_COLUMNS);
             }
-            fputcsv($out, $header);
+            fputcsv($out, $header, escape: '');
 
             // chunkById keeps memory flat on a large registration list.
             $query->chunkById(200, function ($chunk) use ($out, $columns, $form, $money, $staffPricing) {
@@ -1456,7 +1456,7 @@ class FormResponsesController extends Controller
                     if ($staffPricing) {
                         array_push($row, ...$this->staffPriceCells($response->priceBreakdown(), $response->staff_payment_method, $response->staff_holder_name));
                     }
-                    fputcsv($out, $row);
+                    fputcsv($out, $row, escape: '');
                 }
             });
 

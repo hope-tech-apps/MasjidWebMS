@@ -426,15 +426,17 @@ final class FormAnswersText
         }
     }
 
-    /** Index a picked value and its wording using the same rules for every choice type. */
+    /** Match exact choice values; labels remain searchable even when raw codes are filtered. */
     private static function addChoice(array &$parts, array $field, mixed $value): void
     {
-        if (! self::add($parts, $value)) {
+        if ((! is_string($value) && ! is_int($value) && ! is_float($value)) || $value === '') {
             return;
         }
 
+        self::add($parts, $value);
+
         foreach (is_array($field['options'] ?? null) ? $field['options'] : [] as $option) {
-            if (is_array($option) && is_scalar($option['value'] ?? null) && (string) $option['value'] === trim((string) $value)) {
+            if (is_array($option) && is_scalar($option['value'] ?? null) && (string) $option['value'] === (string) $value) {
                 self::add($parts, $option['label'] ?? null);
 
                 break;

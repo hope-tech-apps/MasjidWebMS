@@ -295,6 +295,111 @@ class FormChoiceLabelsTest extends TestCase
         $this->assertSame($rosterCsv, $this->getJson($this->url."/roster/export?sort=extras&direction={$direction}")->assertOk()->streamedContent());
     }
 
+    public static function backslashQuoteCells(): array
+    {
+        $cases = [];
+        foreach ([false, true] as $repeatable) {
+            foreach (['/export', '/roster/export'] as $suffix) {
+                foreach (['label', 'answer', 'header'] as $source) {
+                    $cases[($repeatable ? 'repeating' : 'flat')." {$suffix} {$source}"] = [$repeatable, $suffix, $source];
+                }
+            }
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('backslashQuoteCells')]
+    public function both_csv_exports_double_quotes_after_backslashes(bool $repeatable, string $suffix, string $source): void
+    {
+        $value = 'safe\\",=1+1,tail';
+        $cell = '"safe\\"",=1+1,tail"';
+        $schema = $this->form->schema;
+        $schema['sections'][0]['repeatable'] = $repeatable;
+        foreach ($schema['sections'][0]['fields'] as &$field) {
+            $field['label'] = $source === 'header' ? $value : $field['label'];
+            $field['type'] = $source === 'answer' ? 'text' : $field['type'];
+            $field['options'] = [['value' => 'safe', 'label' => $source === 'label' ? $value : 'Ordinary']];
+        }
+        unset($field);
+        $this->form->update(['schema' => $schema]);
+        $answer = $source === 'answer' ? $value : 'safe';
+        $answers = ['role' => $answer, 'meal' => $answer, 'extras' => $source === 'answer' ? $answer : [$answer]];
+        $this->response->update(['data' => $repeatable ? ['attendees' => [$answers]] : $answers,
+            'submitted_at' => '2026-10-06 12:00:00', 'amount_due' => 0]);
+        $headers = $source === 'header' ? "{$cell},{$cell},{$cell}" : 'Role,Meal,Extras';
+        $cells = $source === 'header' ? 'Ordinary,Ordinary,Ordinary' : "{$cell},{$cell},{$cell}";
+        $expected = $suffix === '/export'
+            ? "Submitted,Status,Entries,\"Amount due\",{$headers}\n\"2026-10-06 12:00\",confirmed,1,0.00,{$cells}\n"
+            : "{$headers},\"Registered by\",\"Registrant email\",\"Registrant phone\",Status,Submitted\n{$cells},,,,confirmed,\"2026-10-06 12:00\"\n";
+        $csv = $this->getJson($this->url.$suffix)->assertOk()->streamedContent();
+        $this->assertSame($expected, $csv);
+
+        // Read as a spreadsheet does: doubled quotes, with no backslash escape.
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, $csv);
+        rewind($stream);
+        $header = fgetcsv($stream, 0, ',', '"', '');
+        $row = fgetcsv($stream, 0, ',', '"', '');
+        fclose($stream);
+        $this->assertCount($suffix === '/export' ? 7 : 8, $header);
+        $this->assertCount(count($header), $row);
+        $offset = $suffix === '/export' ? 4 : 0;
+        $this->assertSame(array_fill(0, 3, $value), array_slice($source === 'header' ? $header : $row, $offset, 3));
+    }
+
+    public static function unusualChoiceValues(): array
+    {
+        $cases = [];
+        foreach ([false, true] as $repeatable) {
+            foreach (['digest' => '0123456789abcdef0123456789abcdef',
+                'provider' => 'pi_3Qa123456789012345', 'spaces' => ' x '] as $kind => $value) {
+                $cases[($repeatable ? 'repeating' : 'flat').' '.$kind] = [$repeatable, $value];
+            }
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('unusualChoiceValues')]
+    public function unusual_choice_labels_are_searchable_on_save_and_after_rebuilding(bool $repeatable, string $value): void
+    {
+        $schema = $this->form->schema;
+        $schema['sections'][0]['repeatable'] = $repeatable;
+        foreach ($schema['sections'][0]['fields'] as &$field) {
+            $field['options'] = [['value' => 'x', 'label' => 'Alpha'], ['value' => $value, 'label' => 'Lunch helper']];
+        }
+        unset($field);
+        $this->assertTrue(\Illuminate\Support\Facades\Validator::make(['schema' => $schema],
+            ['schema' => [new \App\Rules\ValidFormSchema]])->passes());
+        $this->form->update(['schema' => $schema]);
+        $answers = ['role' => $value, 'meal' => $value, 'extras' => [$value]];
+        $data = $repeatable ? ['attendees' => [$answers]] : $answers;
+        $this->response->update(['data' => $data]);
+
+        foreach (['save', 'rebuild'] as $stage) {
+            if ($stage === 'rebuild') {
+                DB::table('form_responses')->where('id', $this->response->id)->update(['answers_text' => ' stale']);
+                $this->artisan('forms:rebuild-answers-text', ['--form' => $this->form->id, '--all' => true])->assertSuccessful();
+            }
+            $text = $this->response->fresh()->answers_text;
+            $this->assertSame(3, substr_count($text, ' lunch helper'), $stage);
+            $this->assertStringNotContainsString(' alpha', $text);
+            $this->assertSame($value === ' x ' ? ' x lunch helper x lunch helper x lunch helper'
+                : ' lunch helper lunch helper lunch helper', $text);
+            $this->assertSame(1, $this->getJson($this->url.'?q=Lunch%20helper')->assertOk()->json('data.total'));
+            $this->assertSame(0, $this->getJson($this->url.'?q=Alpha')->assertOk()->json('data.total'));
+            $this->assertSame($data, $this->response->fresh()->data);
+        }
+        foreach (['/export', '/roster/export'] as $suffix) {
+            $csv = $this->getJson($this->url.$suffix)->assertOk()->streamedContent();
+            $this->assertStringContainsString('"Lunch helper","Lunch helper","Lunch helper"', $csv);
+            $this->assertStringNotContainsString('Alpha', $csv);
+        }
+    }
+
     public static function screens(): array
     {
         return ['responses' => [''], 'roster' => ['/roster'], 'responses CSV' => ['/export'], 'roster CSV' => ['/roster/export']];

@@ -167,6 +167,34 @@ class DonationLedgerFilterTest extends TestCase
         return "/api/admin/masjids/{$this->masjidA->id}/donations/export{$queryString}";
     }
 
+    #[Test]
+    public function the_export_doubles_quotes_after_backslashes_in_authored_text(): void
+    {
+        Sanctum::actingAs($this->adminA);
+        $value = 'safe\\",=1+1,tail';
+        $this->fundA->update(['name' => $value]);
+        $this->offlineGift->update(['note' => $value, 'check_number' => $value]);
+        $csv = $this->get($this->exportUrl('?from=2024-01-01&to=2024-12-31'))
+            ->assertOk()->streamedContent();
+        $cell = '"safe\\"",=1+1,tail"';
+        $this->assertSame(
+            "Date,Donor,\"Donor email\",Fund,Zakat,\"Zakat source\",Amount,Net,Currency,Source,\"Payment method\",\"Check number\",Status,Note\n"
+            ."2024-01-05,,,{$cell},no,,25.00,25.00,USD,offline,cash,{$cell},succeeded,{$cell}\n",
+            $csv
+        );
+        $stream = fopen('php://memory', 'r+');
+        fwrite($stream, $csv);
+        rewind($stream);
+        $header = fgetcsv($stream, 0, ',', '"', '');
+        $row = fgetcsv($stream, 0, ',', '"', '');
+        fclose($stream);
+        $this->assertCount(14, $header);
+        $this->assertCount(14, $row);
+        foreach ([3, 11, 13] as $column) {
+            $this->assertSame($value, $row[$column]);
+        }
+    }
+
     /** @return array<int,int> The donation ids on the returned ledger page. */
     private function ledgerIds(array $json): array
     {

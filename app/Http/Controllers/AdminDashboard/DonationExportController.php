@@ -56,14 +56,14 @@ class DonationExportController extends Controller
                 'Date', 'Donor', 'Donor email', 'Fund', 'Zakat', 'Zakat source',
                 'Amount', 'Net',
                 'Currency', 'Source', 'Payment method', 'Check number', 'Status', 'Note',
-            ]);
+            ], escape: '');
 
             // chunkById keeps memory flat over a full history. It paginates on the
             // primary key, so rows come out in entry order — adding a gift-date
             // ORDER BY here would break the id cursor and silently skip rows.
             $query->chunkById(500, function ($chunk) use ($out) {
                 foreach ($chunk as $donation) {
-                    fputcsv($out, $this->row($donation));
+                    fputcsv($out, $this->row($donation), escape: '');
                 }
             });
 
