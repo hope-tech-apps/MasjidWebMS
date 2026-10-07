@@ -95,7 +95,7 @@ for (const org of ['Masjid', 'School', 'Organization']) {
         submit(f.screen.all((n) => n.tag === 'form')[0]); await flush();
         assert.equal(f.alerts[0].text, 'Send the new notification?');
         assert.equal(f.sent.length, 1);
-        assert.equal(f.alerts[1].text, `Notification saved successfully and broadcast through the ${org.toLowerCase()} channel.`);
+        assert.equal(f.alerts[1].text, 'Notification saved and sent.');
         assert.equal(f.alerts[1].confirmButtonText, 'Ok');
         f.screen.unmount();
     });

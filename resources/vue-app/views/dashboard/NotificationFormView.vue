@@ -137,7 +137,8 @@ const onSubmit = async () => {
                         .then(res => {
                             if (res.data.status === 'success') {
                                 swalInstance.title = "Success";
-                                swalInstance.text = `Notification saved successfully and broadcast through the ${masjidStore.term('organization').toLowerCase()} channel.`;
+                                // No organisation kind here: a SuperAdmin may send to a recipient of another kind than the dashboard's.
+                                swalInstance.text = 'Notification saved and sent.';
                                 swalInstance.icon = "success";
                             } else {
                                 swalInstance.title = "Sorry";
