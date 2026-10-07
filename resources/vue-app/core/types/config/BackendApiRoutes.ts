@@ -26,6 +26,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/tv-display` |
     `/api/admin/masjids/${string}/announcements` |
     `/api/admin/masjids/${string}/announcements?page=${number}` |
+    `/api/admin/masjids/${string}/announcements/archived?page=${number}` |
+    `/api/admin/masjids/${string}/announcements/${string}/restore` |
     `/api/admin/masjids/${string}/announcements/${string}/` |
     `/api/admin/masjids/${string}/announcements/${string}/trash` |
     `/api/admin/masjids/${string}/splash-announcements` |
@@ -45,6 +47,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/events/${string}/duplicate` |
     `/api/admin/masjids/${string}/services` |
     `/api/admin/masjids/${string}/services?page=${number}` |
+    `/api/admin/masjids/${string}/services/archived?page=${number}` |
+    `/api/admin/masjids/${string}/services/${string}/restore` |
     `/api/admin/masjids/${string}/services/${string}/` |
     `/api/admin/masjids/${string}/services/${string}/trash` |
     `/api/admin/masjids/${string}/contacts` |

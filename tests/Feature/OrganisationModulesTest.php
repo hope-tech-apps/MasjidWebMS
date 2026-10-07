@@ -355,7 +355,7 @@ class OrganisationModulesTest extends TestCase
      * notify-followers picker) and AboutUsView read GET /services. They keep
      * listing the services already published while Services is off, so the
      * index is the one services route without the gate; only the Services
-     * screens call show and the writes.
+     * screens call show, archived and the writes.
      */
     #[Test]
     public function services_gates_every_write_and_show_and_leaves_the_picker_list_open(): void
@@ -385,6 +385,8 @@ class OrganisationModulesTest extends TestCase
         $this->assertTrue($index, 'no GET services index found; did the prefix move?');
         $this->assertEqualsCanonicalizing([
             'POST services',
+            'GET services/archived',
+            'POST services/{service_id}/restore',
             'GET services/{service_id}',
             'POST services/{service_id}',
             'DELETE services/{service_id}',

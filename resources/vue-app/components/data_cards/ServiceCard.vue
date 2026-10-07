@@ -10,7 +10,7 @@
                     {{ service.description }}
                 </p>
             </div>
-            <router-link :to="`/masjid/services/${service.id}`"
+            <router-link v-if="!service.deleted_at" :to="`/masjid/services/${service.id}`"
                 class="text-decoration-none btn btn-success fw-semibold">
                 Read More
             </router-link>

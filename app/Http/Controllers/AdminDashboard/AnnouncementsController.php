@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Announcements\UpdateAnnouncementRequest;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class AnnouncementsController extends Controller
@@ -23,6 +24,39 @@ class AnnouncementsController extends Controller
             'status' => 'success',
             'data' => $announcements
         ], Response::HTTP_OK);
+    }
+
+    /** List only this organisation's archived announcements, newest archive first. */
+    public function archived($masjid_id)
+    {
+        $announcements = Announcement::onlyTrashed()->where('masjid_id', $masjid_id)
+            ->with('image')->orderByDesc('deleted_at')->orderBy('id')->paginate(9);
+
+        return response()->json(['status' => 'success', 'data' => $announcements]);
+    }
+
+    /** Restore the same row and dates once; no broadcast is dispatched again. */
+    public function restore($masjid_id, $announcement_id)
+    {
+        [$announcement, $restored] = DB::transaction(function () use ($masjid_id, $announcement_id) {
+            $announcement = Announcement::withTrashed()->where('masjid_id', $masjid_id)
+                ->lockForUpdate()->findOrFail($announcement_id);
+            $restored = $announcement->trashed();
+            if ($restored) {
+                // Restore only deleted_at: retain the content's original timestamps and position.
+                Announcement::withoutTimestamps(fn () => $announcement->restore());
+            }
+
+            return [$announcement, $restored];
+        });
+
+        if ($restored) {
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+            // This endpoint also serves a date-filtered announcement fallback.
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SIGNAGE);
+        }
+
+        return response()->json(['status' => 'success', 'data' => $announcement->load('image')]);
     }
 
     /**

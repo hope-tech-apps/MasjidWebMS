@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Services\UpdateServiceRequest;
 use App\Models\Masjid;
 use App\Models\Service;
 use App\Support\MobileCache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class ServicesController extends Controller
@@ -23,6 +24,37 @@ class ServicesController extends Controller
             'status' => 'success',
             'data' => $services
         ], Response::HTTP_OK);
+    }
+
+    /** List only this organisation's archived services, newest archive first. */
+    public function archived($masjid_id)
+    {
+        $services = Service::onlyTrashed()->where('masjid_id', $masjid_id)
+            ->with('image', 'icon')->orderByDesc('deleted_at')->orderBy('id')->paginate(9);
+
+        return response()->json(['status' => 'success', 'data' => $services]);
+    }
+
+    /** Restore the same row and media once, deciding from a fresh locking read. */
+    public function restore($masjid_id, $service_id)
+    {
+        [$service, $restored] = DB::transaction(function () use ($masjid_id, $service_id) {
+            $service = Service::withTrashed()->where('masjid_id', $masjid_id)
+                ->lockForUpdate()->findOrFail($service_id);
+            $restored = $service->trashed();
+            if ($restored) {
+                // Restore only deleted_at: retain the content's original timestamps and position.
+                Service::withoutTimestamps(fn () => $service->restore());
+            }
+
+            return [$service, $restored];
+        });
+
+        if ($restored) {
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+        }
+
+        return response()->json(['status' => 'success', 'data' => $service->load('image', 'icon')]);
     }
 
     /**
