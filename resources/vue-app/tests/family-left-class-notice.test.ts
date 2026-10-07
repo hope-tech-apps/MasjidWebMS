@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as behaviorSkills from '../core/helpers/behaviorSkills.ts';
 import * as hifzLabels from '../core/helpers/hifzLabels.ts';
+import * as hifzDay from '../core/helpers/hifzDay.ts';
 import * as gradebook from '../core/helpers/gradebook.ts';
 import * as letterRuns from '../core/helpers/letterRuns.ts';
 import * as pointsWeek from '../core/helpers/pointsWeek.ts';
@@ -152,6 +153,7 @@ async function mountClass(api: any, groupId: number): Promise<Mounted> {
         '@/core/helpers/letterRuns': letterRuns,
         '@/core/helpers/gradebook': gradebook,
         '@/core/helpers/hifzLabels': hifzLabels,
+        '@/core/helpers/hifzDay': hifzDay,
         '@/components/common/AvatarPicker.vue': { default: stub },
         '@/core/services/StudentApiService': { default: {} },
         '@/views/family/FamilyAttachment.vue': { default: stub },

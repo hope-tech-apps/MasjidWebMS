@@ -851,7 +851,7 @@
                      answer to the list that is on screen, and a change of student
                      under them would land the answer on another child's lines. -->
                 <select class="form-select form-select-sm mb-3" style="max-width: 22rem"
-                        v-model="hifzMembership" :disabled="hifzBusy" @change="loadHifz">
+                        v-model="hifzMembership" :disabled="hifzBusy || !!hifzEditing" @change="loadHifz">
                     <option value="">Choose a student…</option>
                     <option v-for="s in students" :key="s.membership_id" :value="s.membership_id">
                         {{ name(s.contact) }}
@@ -859,8 +859,19 @@
                 </select>
 
                 <template v-if="hifzMembership">
-                    <div class="card border mb-3">
+                    <div id="hifz-form" class="card border mb-3" :class="{ 'border-success': hifzEditing }">
                         <div class="card-body">
+                            <!-- Changing a line that is already recorded (owner,
+                                 2026-10-07: "edit the date as well or really all
+                                 aspects of their entry"). The form below is the
+                                 line; saving records the corrected line and strikes
+                                 the old one, which is what Remove and recording
+                                 again has always done, in one step. -->
+                            <div v-if="hifzEditing" class="alert alert-success py-2 px-3 small mb-3 hifz-editing" role="status">
+                                <div class="fw-semibold">Changing this line</div>
+                                <div class="text-capitalize">{{ hifzLine(hifzEditing) }}</div>
+                                <div class="text-muted">Saving records the corrected line and removes the old one.</div>
+                            </div>
                             <div class="row g-2 align-items-end">
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Type</label>
@@ -929,8 +940,16 @@
                                            v-model="hifzForm.note" :maxlength="hifzNoteMax"
                                            placeholder="e.g. struggled with the waqf on ayah 12" />
                                 </div>
-                                <div class="col-auto">
-                                    <button class="btn btn-sm btn-success" :disabled="hifzBusy || !hifzValid" @click="recordHifz">
+                                <div class="col-auto d-flex align-items-center gap-2">
+                                    <template v-if="hifzEditing">
+                                        <button class="btn btn-sm btn-success" :disabled="hifzBusy || !hifzValid" @click="saveHifzEdit">
+                                            <span v-if="recordingHifz" class="spinner-border spinner-border-sm"></span>
+                                            <span v-else>Save changes</span>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-link text-muted" :disabled="hifzBusy"
+                                                @click="cancelHifzEdit">Cancel</button>
+                                    </template>
+                                    <button v-else class="btn btn-sm btn-success" :disabled="hifzBusy || !hifzValid" @click="recordHifz">
                                         <span v-if="recordingHifz" class="spinner-border spinner-border-sm"></span>
                                         <span v-else>Record</span>
                                     </button>
@@ -968,7 +987,8 @@
                                 <span class="text-capitalize flex-grow-1">
                                     <template v-if="h.whole_surah">{{ hifzKindLabel(h.kind) }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
                                     <template v-else>{{ hifzKindLabel(h.kind) }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
-                                    <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ when(h.recited_at) }}</span>
+                                    <span class="text-muted">· {{ hifzQualityLabel(h.quality) }} · {{ hifzDayLabel(h.recited_at) }}</span>
+                                    <span v-if="hifzEditing && hifzEditing.id === h.id" class="badge bg-success-subtle text-success-emphasis fw-normal ms-1">being changed above</span>
                                 </span>
                                 <!-- One group, so on a phone the three actions move
                                      under the line together instead of one by one. -->
@@ -979,18 +999,26 @@
                                      Remove and recording again. -->
                                 <button type="button" class="btn btn-sm btn-link p-0 text-nowrap"
                                         :class="h.note ? 'text-success' : 'text-muted'"
-                                        :aria-expanded="openHifzNote === h.id" :disabled="hifzBusy"
+                                        :aria-expanded="openHifzNote === h.id" :disabled="hifzBusy || !!hifzEditing"
                                         @click="toggleHifzNote(h)">{{ h.note ? 'Edit note' : 'Add note' }}</button>
+                                <!-- Everything else about the line: the day, the
+                                     surah and āyāt, the type, the quality. Not on a
+                                     line that runs across two surahs, which the form
+                                     above cannot hold (it records one surah). -->
+                                <button v-if="hifzEditable(h)" type="button" class="btn btn-sm btn-link p-0 text-nowrap"
+                                        :disabled="hifzBusy || !!hifzEditing"
+                                        title="Change the day, the surah and ayahs, the type, the quality or the note"
+                                        @click="startHifzEdit(h)">Edit entry</button>
                                 <!-- A note written for one child is often the note
                                      for the group that recited with her (owner,
                                      2026-10-07). Offered on a line that HAS a note:
                                      that is what there is to copy. -->
                                 <button v-if="h.note && hifzClassmates.length" type="button"
                                         class="btn btn-sm btn-link p-0 text-nowrap"
-                                        :aria-expanded="openHifzCopy === h.id" :disabled="hifzBusy"
+                                        :aria-expanded="openHifzCopy === h.id" :disabled="hifzBusy || !!hifzEditing"
                                         title="Copy this line and its note to other students"
                                         @click="toggleHifzCopy(h)">Copy to students</button>
-                                <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id || hifzBusy"
+                                <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id || hifzBusy || !!hifzEditing"
                                         @click="removeHifz(h)">Remove</button>
                                 </span>
                             </div>
@@ -2595,6 +2623,7 @@ import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import { isVideoFile, pickerLimits } from '@/core/helpers/mediaPick';
 import TeacherStudentSheet from '@/views/teacher/TeacherStudentSheet.vue';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
+import { hifzDayLabel, hifzDayOf, hifzDayToSend } from '@/core/helpers/hifzDay';
 import { ageLabel } from '@/core/helpers/studentAge';
 import StandardPicker from '@/components/teacher/StandardPicker.vue';
 import SurahPicker from '@/components/teacher/SurahPicker.vue';
@@ -5261,6 +5290,164 @@ const loadSurahs = async () => {
     }
 };
 
+// ---------------------------------------------- changing a recorded line
+// "Edit entry" (owner, 2026-10-07). The form above IS the editor: the line is
+// loaded into it, and saving does what this module has always asked a teacher to
+// do by hand to correct a line, in one step: record the corrected line, then
+// strike the old one. So nothing is rewritten in place except the note, the
+// history of corrections is kept exactly as before, and the realm gains no verb.
+const hifzEditing = ref<any | null>(null);
+/** The form as it stood before a line was loaded into it, put back afterwards. */
+let hifzFormBefore: any = null;
+
+/** A line as the list writes it, for the "Changing this line" box. */
+const hifzLine = (h: any): string => {
+    const portion = h.whole_surah
+        ? `all of ${h.from?.surah_name ?? `Surah ${h.from?.surah}`}`
+        : `${ayah(h.from)} → ${ayah(h.to)}`;
+    return `${hifzKindLabel(h.kind)}: ${portion} · ${hifzQualityLabel(h.quality)} · ${hifzDayLabel(h.recited_at)}`;
+};
+
+/**
+ * The form records ONE surah, so only a line inside one surah can be loaded
+ * into it. A line across two (the API allows it) keeps its note editor and
+ * Remove.
+ */
+const hifzEditable = (h: any): boolean =>
+    !!h.from?.surah && !!h.from?.ayah && !!h.to?.ayah && h.from.surah === h.to?.surah;
+
+/** The day a line was heard, as the date box holds it; '' when it is unknown (core/helpers/hifzDay). */
+const hifzDay = (h: any): string => hifzDayOf(h.recited_at);
+
+const startHifzEdit = (entry: any) => {
+    if (hifzBusy.value || hifzEditing.value || !hifzEditable(entry)) return;
+    openHifzNote.value = null;
+    openHifzCopy.value = null;
+    hifzCopyDone.value = null;
+    hifzError.value = '';
+    hifzFormBefore = { ...hifzForm.value };
+    hifzForm.value = {
+        kind: entry.kind,
+        surah: entry.from.surah,
+        // A whole surah is ticked rather than typed out, as it was recorded.
+        from_ayah: entry.whole_surah ? null : entry.from.ayah,
+        to_ayah: entry.whole_surah ? null : entry.to.ayah,
+        quality: entry.quality,
+        note: entry.note ?? '',
+        recited_on: hifzDay(entry),
+        whole_surah: !!entry.whole_surah,
+    };
+    hifzEditing.value = entry;
+    nextTick(() => document.getElementById('hifz-form')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+};
+
+/** Leave edit mode and put the form back as it was (the kept surah included). */
+const endHifzEdit = () => {
+    hifzEditing.value = null;
+    if (hifzFormBefore) hifzForm.value = hifzFormBefore;
+    hifzFormBefore = null;
+};
+
+const cancelHifzEdit = () => {
+    if (hifzBusy.value) return;
+    hifzError.value = '';
+    endHifzEdit();
+};
+
+/**
+ * Save a changed line.
+ *
+ *  - Nothing changed: nothing is sent.
+ *  - Only the NOTE changed: the note alone is rewritten in place (the same PUT
+ *    "Edit note" uses), so the line keeps its id and who heard it.
+ *  - Anything about WHAT WAS HEARD changed (type, surah, āyāt, quality, day):
+ *    the corrected line is recorded FIRST and the old one struck SECOND. In that
+ *    order a failure can only ever leave the old line beside the new one, never
+ *    neither: if the strike fails the screen says so and both are in the list
+ *    for the teacher to remove one.
+ *
+ * The day: left as it was, the line keeps the exact time it was heard; changed
+ * to today, it is stamped now (as a new record is); changed to another day, it
+ * carries that date.
+ */
+const saveHifzEdit = async () => {
+    const entry = hifzEditing.value;
+    if (!entry || hifzBusy.value || !hifzValid.value || !hifzMembership.value) return;
+    const f = hifzForm.value;
+    const wholeNow = !!f.whole_surah;
+    const dayNow = f.recited_on || todayIso;
+    // "Whole surah" ticked on a line that was a whole surah is the same āyāt,
+    // judged without the surah list (which may not have loaded); otherwise the
+    // two numbers decide.
+    const rangeChanged = f.surah !== entry.from.surah
+        || (wholeNow ? !entry.whole_surah : (f.from_ayah !== entry.from.ayah || f.to_ayah !== entry.to.ayah));
+    const heardChanged = f.kind !== entry.kind
+        || rangeChanged
+        || f.quality !== entry.quality
+        || dayNow !== (hifzDay(entry) || todayIso);
+    const noteNow = f.note.trim();
+    const noteChanged = noteNow !== (entry.note ?? '').trim();
+
+    if (!heardChanged && !noteChanged) {
+        endHifzEdit();
+        return;
+    }
+
+    recordingHifz.value = true;
+    hifzError.value = '';
+    try {
+        if (!heardChanged) {
+            const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: noteNow });
+            const saved = res.data?.data;
+            if (!(saved && saved.id === entry.id && 'note' in saved)) {
+                // An answer that does not say what was stored: show what the server holds.
+                endHifzEdit();
+                await loadHifz();
+                return;
+            }
+            const row = hifz.value.find((h) => h.id === entry.id);
+            if (row) row.note = saved.note ?? null;
+            endHifzEdit();
+            return;
+        }
+
+        try {
+            await TeacherApiService.post(`${base.value}/hifz`, {
+                membership_id: hifzMembership.value,
+                kind: f.kind,
+                from_surah: f.surah,
+                to_surah: f.surah,
+                ...(wholeNow ? { whole_surah: 1 } : { from_ayah: f.from_ayah, to_ayah: f.to_ayah }),
+                quality: f.quality,
+                major_mistakes: entry.major_mistakes ?? 0,
+                minor_mistakes: entry.minor_mistakes ?? 0,
+                ...(noteNow ? { note: noteNow } : {}),
+                ...(dayNow === hifzDay(entry)
+                    ? (entry.recited_at ? { recited_at: entry.recited_at } : {})
+                    : (dayNow !== todayIso ? { recited_at: hifzDayToSend(dayNow) } : {})),
+            });
+        } catch (e: any) {
+            // Nothing has changed: the old line stands, and the form keeps what was typed.
+            hifzError.value = apiErrorText(e, 'The change was not saved. Check your connection and try again.');
+            return;
+        }
+
+        let struck = true;
+        try {
+            await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
+        } catch {
+            struck = false;
+        }
+        endHifzEdit();
+        await loadHifz();
+        if (!struck) {
+            hifzError.value = 'The corrected line was recorded, but the old line could not be removed. Both are in the list below: remove the old one.';
+        }
+    } finally {
+        recordingHifz.value = false;
+    }
+};
+
 // ---------------------------------------------- the note on a recitation
 // One editor open at a time, on the line it belongs to, as the drill notes on the
 // Letters tab work. Its error is said under the box the teacher is looking at.
@@ -5272,8 +5459,9 @@ const hifzNoteError = ref('');
 /** Open the editor on a line, seeded with what is already written there. */
 const toggleHifzNote = (entry: any) => {
     // A save in flight owns the draft and the error line; a copy owns the note
-    // it is sending. Neither is handed to another line under it.
-    if (hifzBusy.value) return;
+    // it is sending. Neither is handed to another line under it. Nor while a
+    // line is loaded into the form above: Save or Cancel there first.
+    if (hifzBusy.value || hifzEditing.value) return;
     if (openHifzNote.value === entry.id) {
         openHifzNote.value = null;
         return;
@@ -5353,7 +5541,7 @@ const hifzClassmates = computed(() =>
 const hifzBusy = computed(() => savingHifzNote.value || copyingHifz.value || recordingHifz.value);
 
 const toggleHifzCopy = (entry: any) => {
-    if (hifzBusy.value) return;
+    if (hifzBusy.value || hifzEditing.value) return;
     if (openHifzCopy.value === entry.id) {
         openHifzCopy.value = null;
         return;
@@ -5449,7 +5637,9 @@ let hifzSeq = 0;
 const loadHifz = async () => {
     const seq = ++hifzSeq;
     hifz.value = [];
-    // Another student's list: an editor left open would sit on nobody's line.
+    // Another student's list: an editor left open would sit on nobody's line,
+    // and a line loaded into the form would be saved against the wrong child.
+    if (hifzEditing.value) endHifzEdit();
     openHifzNote.value = null;
     openHifzCopy.value = null;
     hifzCopyDone.value = null;
@@ -5473,7 +5663,7 @@ const loadHifz = async () => {
 };
 
 const recordHifz = async () => {
-    if (!hifzMembership.value || !hifzValid.value || hifzBusy.value) return;
+    if (!hifzMembership.value || !hifzValid.value || hifzBusy.value || hifzEditing.value) return;
     recordingHifz.value = true;
     hifzError.value = '';
     try {
@@ -5497,9 +5687,11 @@ const recordHifz = async () => {
             // teacher wrote nothing, which is a different claim.
             ...(hifzForm.value.note.trim() ? { note: hifzForm.value.note.trim() } : {}),
             // Sent only when it is NOT today: an entry recorded now should keep
-            // the time it happened, and a bare date would stamp it midnight.
+            // the time it happened. A chosen day goes as noon UTC of that day
+            // (hifzDayToSend): the bare date this used to send is stored as
+            // midnight UTC, which every list then showed as the day BEFORE.
             ...(hifzForm.value.recited_on && hifzForm.value.recited_on !== todayIso
-                ? { recited_at: hifzForm.value.recited_on }
+                ? { recited_at: hifzDayToSend(hifzForm.value.recited_on) }
                 : {}),
         });
         // The surah is KEPT: the next entry for this child is usually the next
@@ -5524,7 +5716,7 @@ const recordHifz = async () => {
 };
 
 const removeHifz = async (entry: any) => {
-    if (hifzBusy.value) return;
+    if (hifzBusy.value || hifzEditing.value) return;
     removingHifz.value = entry.id;
     try {
         await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);

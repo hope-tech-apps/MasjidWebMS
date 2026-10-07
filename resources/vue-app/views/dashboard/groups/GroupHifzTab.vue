@@ -103,7 +103,7 @@
                                 <span class="text-warning">{{ entry.minor_mistakes }}</span>
                             </td>
                             <td class="text-capitalize">{{ hifzQualityLabel(entry.quality) }}</td>
-                            <td class="small text-muted">{{ formatDate(entry.recited_at) }}</td>
+                            <td class="small text-muted">{{ hifzDayLabel(entry.recited_at) || '—' }}</td>
                             <td class="text-end">
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmStrike(entry)" title="Strike">
                                     <i class="bi bi-eraser"></i>
@@ -203,6 +203,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
+import { hifzDayLabel } from '@/core/helpers/hifzDay';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
@@ -426,11 +427,6 @@ const confirmStrike = async (entry: HifzEntry) => {
     }
 };
 
-const formatDate = (iso: string | null): string => {
-    if (!iso) return '—';
-    const date = new Date(iso);
-    return isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-};
 
 // Lock body scroll while the modal is open
 watch(showRecordModal, (open) => {

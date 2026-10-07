@@ -9280,3 +9280,30 @@ device, browser layout or production cache verification was performed.
      before they were read as numbers, listed all 114 with Al-Fatihah highlighted, and Enter took it. Such text
      now matches nothing; the word "surah" by itself lists every surah and highlights none (hasSurahQuery).
 - The server endpoint had no finding.
+
+## 2026-10-07 — "Edit entry": every part of a recorded Hifdh line can be changed, and a chosen day reads as that day
+
+- **Asked by the owner** after the note editor: "Will the teacher be able to edit the date as well or really all
+  aspects of their entry?", then "we will need this".
+- **How, without rewriting what was heard in place.** "Edit entry" loads the line into the form at the top of the
+  tab (type, surah, ayahs, quality, day, note). Saving does what this module has always asked a teacher to do by
+  hand: the corrected line is RECORDED, then the old one is STRUCK. So `corrected_by_user_id` and the soft delete
+  still carry the history of corrections, HifzProgress derives the position from the corrected line, and the
+  teacher realm gains no verb (one `POST .../hifz`, one `DELETE .../hifz/{entry_id}`). New first, old second: a
+  failure between the two leaves both lines in the list and the screen says so; it can never leave neither.
+- **Only the note changed** in that form: the note alone is rewritten in place (the PUT), the line keeps its id.
+  **Nothing changed**: nothing is sent.
+- **The day.** Left alone, the corrected line keeps the exact time the original was heard. Changed to today, it is
+  stamped now. Changed to another day, it is sent as noon UTC of that day.
+- **A bug found on the way, live since backdating shipped.** A day chosen in the date box was sent as a bare date,
+  stored as midnight UTC, and every list formatted that instant in the reader's zone: in the Americas a line
+  dated the 5th read the 4th, on the teacher's, the family's and the office's screens. `core/helpers/hifzDay.ts`
+  is now the one reading (an instant at exactly 00:00:00 or 12:00:00 UTC is a chosen DATE and reads as its UTC
+  calendar day; any other instant is a real moment and reads as the reader's day), used by all three lists, and
+  the form sends noon UTC. No stored row is changed: the rows already at midnight UTC simply read correctly.
+- **While a line is loaded into the form** the student box and every line's own actions wait for Save changes or
+  Cancel, and a record in flight now holds the tab like a note save or a copy does (a record used to be able to
+  reload the list under an open note editor).
+- **Not offered** on a line that runs across two surahs: the form records one surah. Its note can still be changed.
+- **Not done**: the mistakes counts are carried over unchanged (no screen edits them); the corrected line's
+  `heard_by` is the teacher who corrected it; the office's Hifdh tab has no Edit entry.
