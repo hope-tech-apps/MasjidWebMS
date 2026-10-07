@@ -146,12 +146,12 @@ const sendOne = async (d: DonorRow) => {
     try {
         const res = await ApiService.post(`/api/admin/masjids/${id}/annual-statements/${d.contact_id}/send?year=${year.value}` as any, {});
         if (res.data?.status === 'success') {
-            Swal.fire({ icon: 'success', title: 'Sent', text: `Statement emailed to ${d.name}.` });
+            Swal.fire({ icon: 'success', title: 'Queued', text: `Statement queued for delivery to ${d.name}.` });
         } else {
-            Swal.fire({ icon: 'warning', title: 'Not sent', text: res.data?.message || 'Could not send.' });
+            Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to queue statement.' });
         }
     } catch (e) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to send statement.' });
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to queue statement.' });
     } finally {
         sendingId.value = null;
     }
@@ -191,7 +191,7 @@ const sendAll = async () => {
     const confirm = await Swal.fire({
         icon: 'question',
         title: `Email all ${year.value} statements?`,
-        text: `This emails a statement to every donor with an email on file.`,
+        text: `This queues a statement for every donor with an email on file.`,
         showCancelButton: true,
         confirmButtonText: 'Send all',
         confirmButtonColor: '#2f9e57',
@@ -202,11 +202,13 @@ const sendAll = async () => {
     try {
         const res = await ApiService.post(`/api/admin/masjids/${id}/annual-statements/send-all?year=${year.value}` as any, {});
         if (res.data?.status === 'success') {
-            const { queued, skipped } = res.data.data;
-            Swal.fire({ icon: 'success', title: 'Done', text: `${queued} statement(s) queued${skipped ? `, ${skipped} skipped (no email)` : ''}.` });
+            const { queued, skipped, failed } = res.data.data;
+            Swal.fire({ icon: failed ? 'warning' : 'success', title: failed ? 'Some statements failed' : 'Done', text: `${queued} statement(s) queued, ${skipped} skipped (no email), ${failed} failed.` });
+        } else {
+            Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to queue statements.' });
         }
     } catch (e) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to send statements.' });
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to queue statements.' });
     } finally {
         sendingAll.value = false;
     }

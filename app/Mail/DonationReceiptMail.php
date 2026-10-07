@@ -2,13 +2,13 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\SerializesPdfAttachment;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
 /**
  * The donor's tax receipt email. Takes only primitives (already resolved in the
@@ -19,10 +19,12 @@ use Illuminate\Queue\SerializesModels;
  * DonationReceiptPdfService rides along as the printable/filable copy, exactly
  * as AnnualStatementMail carries the year-end letter. The attachment is
  * optional — a render failure must still let the HTML receipt go out.
+ * Sent inline today; explicit queueing also preserves the PDF using base64 in
+ * the serialized payload rather than putting raw binary in the queue's JSON.
  */
 class DonationReceiptMail extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesPdfAttachment;
 
     /**
      * Whether the issuer is a masjid, the only kind of organisation whose receipt

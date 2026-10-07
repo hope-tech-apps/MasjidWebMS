@@ -9012,3 +9012,62 @@ No network, commit, deployment, recovery, provider calls or production changes.
 ## Admin guide findings 22 and 20 (2026-10-06)
 
 Keep every donation and recurring commitment status when deleting a fund; both fund FKs are restrictive. Lock the fund first in the delete transaction. Basket checkout does NOT take that lock (a first build did, and it was taken out before shipping: a row lock and a new refusal in the payment path is more than a delete message warrants), so a basket paid in the same instant as the delete can still lose its fund, as before this change. Preserve the existing pending/paid-unrecorded basket guard and expired/recorded basket policy. The funds index has no existing gift count/flag, so leave Delete available and show the server refusal. Production Errors::publicMessage already returns a generic fallback; fund deletion now opts out of debug messages too. Terminology packs have plural group nouns and no singular helper: rewrite singular roster copy without substituting a plural term. Capitalise option text only; submit, store and export lowercase keys. No migrations, network, commits or deployment. Evidence in artifacts/.
+
+## 2026-10-06 — Queue-safe giving statements and receipt PDFs
+
+AnnualStatementMail previously serialized raw `$pdf` bytes inside a JSON queue
+payload; the real database driver rejects the malformed UTF-8. Mail/queue fakes
+bypassed that boundary. DonationReceiptMail has the same raw property, but its
+webhook sender is inline today; explicit queueing reproduced the same exception.
+
+Use the owner's authorised encoded-byte fallback: SerializesPdfAttachment delegates
+the normal Laravel model serialization, replacing only `pdf` with `pdfBase64` in
+transit and decoding before restoring properties. Runtime callers still see the
+original bytes; existing no-PDF and older wording payloads retain their defaults.
+No ShouldQueue change for DonationReceiptMail; inline receipt delivery marking stays
+unchanged. The audit of all 19 mailables is artifacts/mail-binary-audit.md.
+
+IDs-only rendering was rejected for this repair because StatementLetterService
+re-reads mutable giving, letterhead, organisation type, and current date. That would
+silently change the requested document; freezing/versioning those inputs is a larger
+statement lifecycle design. The snapshot uses the same renderer as the download and
+captures recipient, year, figures and wording before dispatch. AnnualStatementMail
+also carries the verified route's masjidId (nullable default for older jobs). The
+worker performs no tenant queries or model restoration, so an unbound or unrelated
+tenant cannot substitute another organisation. Existing scoped TenantContext plus
+ResetTenantContextBetweenJobs still clear asynchronous job bindings; sync requests
+retain their context. Real Worker tests send with an unrelated bound tenant, after
+changing organisation, ledger, recipient and date, and assert exact attachment bytes.
+
+Cost accepted for this scoped fallback: PDF base64 is `4 * ceil(bytes / 3)` bytes,
+plus metadata/HTML figures; giving remains recoverable in jobs and failed_jobs. This
+is encoding, not encryption. PDF rendering remains in the HTTP request, with the
+existing worker timeout (no new PDF-render timeout or retry window). No migration.
+
+Bulk returns HTTP 200 for a completed fan-out, with independent queued, skipped
+(no email) and failed counts. Missing statements, lookup exceptions, render failures
+and queue insertion failures are failed; each donor's failure permits the next donor.
+A null PDF fails instead of queueing HTML-only success. Single no-email remains 422;
+render/queue failure is now 500 with "Failed to queue statement." Logs carry IDs and
+exception class, avoiding recipient or payload text from exceptions. Queued means
+accepted by the queue, not delivered by the mail provider; later worker/provider
+failures cannot be included in the synchronous bulk response.
+
+Exact screen results (title; body):
+- Email success: "Queued"; "Statement queued for delivery to {donor name}."
+- Email failure: "Error!"; "Failed to queue statement."
+- Bulk without failures: "Done"; "{queued} statement(s) queued, {skipped} skipped (no email), {failed} failed."
+- Bulk with any failures, including all failed: "Some statements failed"; same count sentence.
+- Bulk request failure: "Error!"; "Failed to queue statements."
+
+Verified locally (no network): six real database-queue regressions red on original
+HEAD, then six passed (90 assertions). Eight mounted screen regressions red on
+original screen, then green; all 1,293 SPA tests pass. Requested PHP domain/queue
+checks plus neighbouring notification checks: 172 passed; four Resend transport
+checks failed at setup because the sandbox refuses stream_socket_server on loopback
+(Operation not permitted, tests/Feature/ResendTransportTimeoutTest.php:64). npm run
+build passed with Vite's chunk-size advisory; the active statement chunk contains
+new wording and omits old sent/delivery claims. Evidence under artifacts/. Tests use
+the real database queue on SQLite and the array mail transport, not queue/mail fakes.
+MySQL, a real mail provider, staging and production data were not verified here.
+No network, commits, deploys, formatter, or CHANGELOG changes.

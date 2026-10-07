@@ -88,7 +88,7 @@ class AnnualStatementsController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /** Email one donor their statement. */
+    /** Queue one donor's statement; no email is 422, rendering/queue failure is 500. */
     public function send(Request $request, $masjid_id, $contact_id)
     {
         $year = $this->resolveYear($request);
@@ -101,17 +101,24 @@ class AnnualStatementsController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
-        $sent = $this->dispatchStatement((int) $masjid_id, $statement);
+        if (! $statement['contact']->email) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This donor has no email address on file.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $queued = $this->dispatchStatement((int) $masjid_id, $statement);
 
         return response()->json([
-            'status' => $sent ? 'success' : 'error',
-            'message' => $sent
+            'status' => $queued ? 'success' : 'error',
+            'message' => $queued
                 ? 'Statement queued for delivery.'
-                : 'This donor has no email address on file.',
-        ], $sent ? Response::HTTP_OK : Response::HTTP_UNPROCESSABLE_ENTITY);
+                : 'Failed to queue statement.',
+        ], $queued ? Response::HTTP_OK : Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 
-    /** Bulk: email every donor with giving in the year and an email on file. */
+    /** Bulk: report queued, skipped (no email), failed; a donor failure never stops the rest. */
     public function sendAll(Request $request, $masjid_id)
     {
         $year = $this->resolveYear($request);
@@ -119,6 +126,7 @@ class AnnualStatementsController extends Controller
 
         $queued = 0;
         $skipped = 0;
+        $failed = 0;
 
         foreach ($rows as $row) {
             if (empty($row['email'])) {
@@ -127,21 +135,28 @@ class AnnualStatementsController extends Controller
                 continue;
             }
 
-            $statement = $this->statements->forContact((int) $masjid_id, $row['contact_id'], $year);
-            if ($statement && $this->dispatchStatement((int) $masjid_id, $statement)) {
-                $queued++;
-            } else {
-                $skipped++;
+            try {
+                $statement = $this->statements->forContact((int) $masjid_id, $row['contact_id'], $year);
+                if ($statement && ! $statement['contact']->email) {
+                    $skipped++;
+                } elseif ($statement && $this->dispatchStatement((int) $masjid_id, $statement)) {
+                    $queued++;
+                } else {
+                    $failed++;
+                }
+            } catch (\Throwable $e) {
+                $failed++;
+                $this->logFailure((int) $masjid_id, $row['contact_id'], $e);
             }
         }
 
         return response()->json([
             'status' => 'success',
-            'data' => ['year' => $year, 'queued' => $queued, 'skipped' => $skipped],
+            'data' => ['year' => $year, 'queued' => $queued, 'skipped' => $skipped, 'failed' => $failed],
         ], Response::HTTP_OK);
     }
 
-    /** Build + queue the mailable from statement data. Returns false if no email. */
+    /** Build + queue the snapshot. False means no email or a logged render/queue failure. */
     private function dispatchStatement(int $masjidId, array $statement): bool
     {
         $contact = $statement['contact'];
@@ -154,10 +169,13 @@ class AnnualStatementsController extends Controller
         $data = $this->present($statement);
         $donorName = trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? '')) ?: 'Valued donor';
 
-        // Attach the formal letter PDF (same one the download produces).
-        $pdf = $this->letters->pdfFor($masjidId, (int) $contact->id, $statement['year']);
-
         try {
+            // Rendering belongs inside the per-donor failure boundary too.
+            $pdf = $this->letters->pdfFor($masjidId, (int) $contact->id, $statement['year']);
+            if ($pdf === null) {
+                throw new \RuntimeException('Statement letter unavailable.');
+            }
+
             Mail::to($email)->send(new AnnualStatementMail(
                 masjidName: $masjid?->name ?? 'Your masjid',
                 donorName: $donorName,
@@ -172,18 +190,25 @@ class AnnualStatementsController extends Controller
                 // The same wording decision the attached letter made (a missing
                 // organisation keeps the masjid wording), so the two never disagree.
                 religiousOrg: Letterhead::religiousOrg($masjid),
+                masjidId: $masjidId,
             ));
 
             return true;
         } catch (\Throwable $e) {
-            Log::error('Annual statement email failed', [
-                'masjid_id' => $masjidId,
-                'contact_id' => $contact->id,
-                'error' => $e->getMessage(),
-            ]);
+            $this->logFailure($masjidId, (int) $contact->id, $e);
 
             return false;
         }
+    }
+
+    private function logFailure(int $masjidId, int $contactId, \Throwable $e): void
+    {
+        // Queue/transport exception text may contain recipients or the payload.
+        Log::error('Annual statement email failed', [
+            'masjid_id' => $masjidId,
+            'contact_id' => $contactId,
+            'exception' => $e::class,
+        ]);
     }
 
     /** Format the service's integer-cents payload into display strings. */

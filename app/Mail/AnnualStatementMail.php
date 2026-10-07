@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\SerializesPdfAttachment;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -9,18 +10,19 @@ use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
 /**
  * A donor's year-end giving statement for 501(c)(3) tax purposes. Primitives only
  * (resolved before queueing) so nothing tenant-scoped rides through serialization.
+ * The PDF is base64 only in the payload: the worker sends the requested letter
+ * without re-reading a changed ledger, letterhead, organisation type or date.
  *
  * @param array<int, array{date:string, fund:string, amount:string, serial:int}> $gifts
  * @param array<int, array{fund:string, amount:string}> $byFund
  */
 class AnnualStatementMail extends Mailable implements ShouldQueue
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesPdfAttachment;
 
     /**
      * Whether the issuer is a masjid, the only kind of organisation whose
@@ -32,6 +34,9 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
      * uninitialized property.
      */
     public bool $religiousOrg = true;
+
+    /** Issuer identity for diagnostics; sending uses only the captured snapshot. */
+    public ?int $masjidId = null;
 
     public function __construct(
         public string $masjidName,
@@ -45,8 +50,10 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
         public ?string $pdf = null,
         public ?string $pdfName = null,
         bool $religiousOrg = true,
+        ?int $masjidId = null,
     ) {
         $this->religiousOrg = $religiousOrg;
+        $this->masjidId = $masjidId;
     }
 
     /** Attach the formal letter PDF when one was rendered. */
