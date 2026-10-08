@@ -25,6 +25,28 @@ class TeacherInviteRequest extends BaseFormRequest
     use ClassSubjectAssignments;
 
     /**
+     * The subjects for one class, as the assignment should store them: a unique,
+     * ordered list, or NULL for "everything". Empty means everything too, so an
+     * admin who unticks every box cannot lock a teacher out of their own class.
+     *
+     * @return list<string>|null
+     */
+    public function subjectsFor(int $classId): ?array
+    {
+        if ($this->classSubjectsOn()) {
+            return $this->subjectsForWithClassSubjects($classId);
+        }
+
+        $given = $this->validated('class_subjects')[$classId] ?? ($this->validated('class_subjects')[(string) $classId] ?? null);
+
+        if (! is_array($given) || $given === []) {
+            return null;
+        }
+
+        return array_values(array_intersect(\App\Models\GroupStaff::SUBJECTS, $given));
+    }
+
+    /**
      * The address, trimmed and lowercased, BEFORE it is validated or looked up.
      *
      * Emails are compared case-insensitively by MySQL and case-sensitively by the
@@ -35,13 +57,44 @@ class TeacherInviteRequest extends BaseFormRequest
      */
     protected function prepareForValidation(): void
     {
-        $this->prepareClassSubjectAssignments();
+        if ($this->classSubjectsOn()) $this->prepareClassSubjectAssignments();
+
         if (is_string($this->input('email'))) {
             $this->merge(['email' => mb_strtolower(trim($this->input('email')))]);
         }
     }
 
     public function rules(): array
+    {
+        if ($this->classSubjectsOn()) {
+            return $this->rulesWithClassSubjects();
+        }
+
+        return [
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255'],
+            'phone' => ['nullable', 'string', 'regex:/^\+?[0-9 ]+$/'],
+            // At least one class — a teacher with no classes has nothing to sign
+            // in for. That the ids name classes IN THE BOUND SCHOOL is verified in
+            // the controller against the tenant-scoped Group query, not here (a
+            // plain exists rule cannot see the tenant scope).
+            'class_ids' => ['required', 'array', 'min:1'],
+            'class_ids.*' => ['integer'],
+            // Which subjects the teacher teaches in each class, keyed by class id
+            // (owner, 2026-09-21). OPTIONAL, and a class left out — or given an
+            // empty list — teaches everything, which is what every full-time
+            // teacher is and what every assignment before this was.
+            'class_subjects' => ['sometimes', 'array'],
+            // NULL is "every subject", and it is what GET hands the screen for such a
+            // class and what the screen sends back (and sends when every box is
+            // unticked). Without `nullable` that null was refused as "not an array",
+            // so a teacher with one all-subjects class could not be saved at all.
+            'class_subjects.*' => ['nullable', 'array'],
+            'class_subjects.*.*' => ['string', \Illuminate\Validation\Rule::in(\App\Models\GroupStaff::SUBJECTS)],
+        ];
+    }
+
+    private function rulesWithClassSubjects(): array
     {
         return [
             'name' => ['required', 'string', 'max:255'],

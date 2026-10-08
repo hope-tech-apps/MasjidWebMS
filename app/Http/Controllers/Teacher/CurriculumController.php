@@ -51,6 +51,110 @@ class CurriculumController extends TeacherController
 
     public function index(Request $request, $masjid_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
+            return $this->indexWithClassSubjects($request, $masjid_id);
+        }
+
+        $grade = $request->query('grade');
+        $subject = $request->query('subject');
+        $week = $request->query('week');
+
+        // Named with `?group_id=`, the same limits subjectsFor applies to the subject
+        // list apply to the weeks, the cell and its siblings below: a Qur'an-only
+        // teacher is never handed Arabic or Islamic Studies rows by asking for them.
+        $limits = $this->limits($request);
+        $fenced = fn (?string $name): bool => SubjectFence::allows($limits, SubjectKey::for($name));
+
+        $grades = CurriculumWeek::query()
+            ->distinct()->orderBy('grade_label')->pluck('grade_label');
+
+        // With a grade: that grade's subjects. With none, only where the school has
+        // NO guide (BISS teaches from none): there is no grade to choose, and the
+        // school's own list is the whole answer. A school with a guide still
+        // chooses a grade first, exactly as it always did.
+        $subjects = $grade
+            ? $this->subjectsFor($request, (string) $grade)
+            : ($grades->isEmpty() ? $this->subjectsFor($request, null) : collect());
+
+        $weeks = ($grade && $subject && $fenced((string) $subject))
+            ? CurriculumWeek::query()
+                ->where('grade_label', $grade)->where('subject', $subject)
+                ->orderBy('week_no')
+                ->get(['week_no', 'quarter', 'focus', 'objective', 'standard_code'])
+                ->map(fn (CurriculumWeek $w): array => [
+                    'week_no' => (int) $w->week_no,
+                    'quarter' => $w->quarter !== null ? (int) $w->quarter : null,
+                    'focus' => $w->focus,
+                    'standard_code' => $w->standard_code,
+                ] + (filled($w->objective) ? ['objective' => $w->objective] : []))
+            : collect();
+
+        // The cell itself, only when all three are named. This is what the
+        // Prefill button writes into the form.
+        $cell = null;
+
+        if ($grade && $subject && $week !== null && $week !== '' && $fenced((string) $subject)) {
+            $row = CurriculumWeek::query()
+                ->where('grade_label', $grade)
+                ->where('subject', $subject)
+                ->where('week_no', (int) $week)
+                ->first();
+
+            // A separated subject the split has no row for (weeks 9 on): the school's
+            // combined line for that week, labelled as such. Never a made-up row.
+            $combined = $row ? null : $this->combinedFallback((string) $grade, (string) $subject, (int) $week, $fenced);
+
+            if ($combined) {
+                $row = $combined;
+            }
+
+            if ($row) {
+                $cell = $row->toPrefillArray();
+
+                if ($combined) {
+                    $cell['from_combined_guide'] = true;
+                    $cell['guide_subject'] = $combined->subject;
+                }
+
+                // The rest of that week for the SAME grade, so the form can
+                // offer real cross-subject integration lines instead of asking
+                // a teacher to remember what Science is doing.
+                $cell['siblings'] = CurriculumWeek::query()
+                    ->where('grade_label', $grade)
+                    ->where('week_no', (int) $week)
+                    // A combined-line fallback is the cell itself: not its own sibling.
+                    ->where('subject', '!=', $combined ? $combined->subject : $subject)
+                    ->orderBy('subject')
+                    ->get(['subject', 'focus', 'objective'])
+                    // Only the subjects a staff subject covers (Qur'an, Arabic, Islamic Studies) are
+                    // fenced. Mathematics, Science and the rest belong to no staff subject, so a
+                    // limited teacher still gets their integration lines.
+                    ->filter(fn (CurriculumWeek $s): bool => SubjectKey::staffKeys(SubjectKey::for($s->subject)) === [] || $fenced($s->subject))
+                    // The school's separated Qur'an, Arabic and Islamic Studies weeks keep the
+                    // surah and the specifics in the Objective, not the Focus Skill, so a
+                    // sibling carries its objective when it has one. A row without one
+                    // (every row of the base guide) is exactly what it always was.
+                    ->map(fn (CurriculumWeek $s): array => [
+                        'subject' => $s->subject,
+                        'focus' => $s->focus,
+                    ] + (filled($s->objective) ? ['objective' => $s->objective] : []))
+                    ->values();
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'grades' => $grades->values(),
+                'subjects' => $subjects->values(),
+                'weeks' => $weeks->values(),
+                'cell' => $cell,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    private function indexWithClassSubjects(Request $request, $masjid_id): JsonResponse
+    {
         $grade = $request->query('grade');
         $subject = $request->query('subject');
         $week = $request->query('week');
@@ -163,7 +267,8 @@ class CurriculumController extends TeacherController
     {
         if (SubjectKey::clean($name) === null || ! $request->filled('group_id')) return $name;
         $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
-        abort_unless($group->teachesStudents() && app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+        abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+        if (! SubjectFence::usesClassSubjects($group)) return $name;
         $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
         $subjects = \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->whereNull('hidden_at')
             ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->get();
@@ -173,14 +278,27 @@ class CurriculumController extends TeacherController
 
     private function limits(Request $request): ?array
     {
+        if (\App\Support\ClassSubjectMode::enabled((int) $request->route('masjid_id'))) {
+            return $this->limitsWithClassSubjects($request);
+        }
+
+        return $request->filled('group_id')
+            ? SubjectFence::limitsFor($request->user(), (int) $request->query('group_id'))
+            : null;
+    }
+
+    private function limitsWithClassSubjects(Request $request): ?array
+    {
         if (SchoolSettings::classSubjects(SchoolSettings::org($request->route('masjid_id')))) {
             if ($request->filled('group_id')) {
                 $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
-                abort_unless($group->teachesStudents() && app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+                abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+                if (! SubjectFence::usesClassSubjects($group)) return SubjectFence::assigned((int) $group->id, (int) $request->user()->id);
                 return SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
             }
             $ids = []; $keys = [];
-            foreach (\App\Models\Group::where('kind', 'class')->whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
+            foreach (\App\Models\Group::whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
+                if (! SubjectFence::usesClassSubjects($group)) continue;
                 $limits = SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
                 if ($limits === null) return null;
                 $ids = [...$ids, ...$limits['class_subject_ids']];
@@ -252,8 +370,40 @@ class CurriculumController extends TeacherController
      */
     private function subjectsFor(Request $request, ?string $grade): \Illuminate\Support\Collection
     {
+        if (\App\Support\ClassSubjectMode::enabled((int) $request->route('masjid_id'))) {
+            return $this->subjectsForWithClassSubjects($request, $grade);
+        }
+
+        $out = [];
+
+        $guide = $grade === null
+            ? collect()
+            : CurriculumWeek::query()->where('grade_label', $grade)
+                ->distinct()->orderBy('subject')->pluck('subject');
+
+        foreach ($guide as $name) {
+            $out[SubjectKey::for($name)] ??= $name;
+        }
+
+        foreach (SchoolSubject::query()->orderBy('position')->orderBy('name')->get() as $subject) {
+            // No grade named (a school with no guide): every subject on its list.
+            if ($grade === null || $subject->appliesToGrade($grade)) {
+                $out[SubjectKey::for($subject->name)] ??= $subject->name;
+            }
+        }
+
+        $limits = $this->limits($request);
+
+        return collect($out)
+            ->filter(fn (string $name, string $key) => SubjectFence::allows($limits, $key))
+            ->sortBy(fn (string $name) => mb_strtolower($name))
+            ->values();
+    }
+
+    private function subjectsForWithClassSubjects(Request $request, ?string $grade): \Illuminate\Support\Collection
+    {
         $group = $request->filled('group_id') ? \App\Models\Group::find((int) $request->query('group_id')) : null;
-        if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+        if ($group !== null && SubjectFence::usesClassSubjects($group)) {
             return collect(\App\Support\ClassSubjects::fenced(\App\Support\ClassSubjects::offered($group), SubjectFence::limitsFor($request->user(), (int) $group->id)))
                 ->pluck('name')->values();
         }
@@ -299,6 +449,144 @@ class CurriculumController extends TeacherController
      * sides folded the same way, which no portable LIKE or collation does.
      */
     public function standards(Request $request, $masjid_id): JsonResponse
+    {
+        if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
+            return $this->standardsWithClassSubjects($request, $masjid_id);
+        }
+
+        // Called per keystroke, so the query is bounded before any work: a long
+        // or array-valued parameter is a 422, never a 500 or a slow scan.
+        $valid = $request->validate([
+            'q' => ['nullable', 'string', 'max:64'],
+            'grade' => ['nullable', 'string', 'max:32'],
+            'subject' => ['nullable', 'string', 'max:64'],
+            'week' => ['nullable', 'integer', 'min:0', 'max:60'],
+            'group_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        $q = trim((string) ($valid['q'] ?? ''));
+        $grade = (string) ($valid['grade'] ?? '');
+        $subject = (string) ($valid['subject'] ?? '');
+        $week = (int) ($valid['week'] ?? 0);
+
+        $needle = self::squash($q);
+
+        if (mb_strlen($needle) < 2) {
+            return $this->matches([]);
+        }
+
+        $words = self::words($q);
+        // A digit means a code: "RI.3.1", "MP1", "NF 1". Topic words never
+        // carry one, and a query without one ("NC" for the NC-history weeks)
+        // must keep its word matches.
+        $codeQuery = (bool) preg_match('/\p{N}/u', $q);
+
+        // The same limits as the subject list: a limited teacher searches only the
+        // subjects they teach in this class.
+        $limits = $this->limits($request);
+
+        $rows = CurriculumWeek::query()
+            ->orderBy('grade_label')->orderBy('subject')->orderBy('week_no')
+            ->get(['grade_label', 'subject', 'week_no', 'quarter', 'focus', 'objective',
+                'learning_outcome', 'standard_code', 'assessment_note', 'source_label'])
+            ->filter(fn (CurriculumWeek $r): bool => SubjectFence::allows($limits, SubjectKey::for($r->subject)));
+
+        // One suggestion per distinct wording of a standard. The guide repeats
+        // a code across weeks, often with a different focus each time (a
+        // practice standard can carry nineteen), and each wording is a
+        // different thing to put in a plan.
+        $found = [];
+        $codeMatched = false;
+
+        foreach ($rows as $row) {
+            $score = self::score($row, $needle, $words);
+
+            if ($score === 0) {
+                continue;
+            }
+
+            $codeMatched = $codeMatched || ($codeQuery && $score >= self::CODE_MATCH);
+            // The objective is part of the wording: the school's plan repeats a
+            // code and focus ("K.QUR.MEM.1 Memorization") in two weeks with a
+            // different Objective each time, and those are two things to pick.
+            $key = implode("\0", [$row->grade_label, $row->subject, (string) $row->standard_code, $row->focus, (string) $row->objective]);
+
+            if (! isset($found[$key])) {
+                $found[$key] = [
+                    'score' => $score,
+                    'scope' => self::scope($row, $grade, $subject),
+                    // By subject KEY, so the guide's "Qur'an" and the catalogue's "Qur’an"
+                    // (the form's subject comes from either) are the same subject.
+                    'in_scope' => ($grade === '' || $row->grade_label === $grade)
+                        && ($subject === '' || SubjectKey::for($row->subject) === SubjectKey::for($subject)),
+                    'row' => $row,
+                    'weeks' => [],
+                ];
+            }
+
+            $found[$key]['weeks'][] = (int) $row->week_no;
+        }
+
+        // A code-shaped query that found its code is a code search. The words
+        // its letters happen to start ("ri" from "RI.5.1") are noise beside
+        // the standard the teacher actually typed.
+        if ($codeMatched) {
+            $found = array_filter($found, fn (array $f): bool => $f['score'] >= self::CODE_MATCH);
+        }
+
+        $ranked = collect($found)
+            ->sortBy([
+                // The form's own grade and subject first, then its grade alone.
+                // Scope before score: Social Studies' "3.G.1" is an exact match
+                // for "3.G.1", but on a Grade 3 Maths form the teacher means
+                // NC.3.G.1, typed without its state prefix.
+                fn (array $a, array $b): int => $b['scope'] <=> $a['scope'],
+                fn (array $a, array $b): int => $b['score'] <=> $a['score'],
+                // The week the form is on, when the guide teaches it then.
+                fn (array $a, array $b): int => in_array($week, $b['weeks'], true) <=> in_array($week, $a['weeks'], true),
+            ])
+            ->take(self::MAX_MATCHES)
+            ->map(function (array $f) use ($week): array {
+                /** @var CurriculumWeek $row */
+                $row = $f['row'];
+
+                $match = [
+                    'standard_code' => $row->standard_code,
+                    // The guide's weekly focus, NOT the standard's official
+                    // wording, which the guide does not carry.
+                    'focus' => $row->focus,
+                    'grade_label' => $row->grade_label,
+                    'subject' => $row->subject,
+                    'weeks' => $f['weeks'],
+                    // The week a pick should land on: the form's own week when
+                    // the guide teaches this then, otherwise its first.
+                    'week_no' => in_array($week, $f['weeks'], true) ? $week : $f['weeks'][0],
+                    'assessment_formative' => $row->assessment_note,
+                    'prefill_source' => $row->source_label,
+                    // False when the form names a grade or subject this row is
+                    // not, so the list can say where its own suggestions end.
+                    'in_scope' => $f['in_scope'],
+                ];
+
+                // The school's own Objective and Learning Outcome, only on the
+                // rows that have them, so an older row's payload is unchanged.
+                if (filled($row->objective)) {
+                    $match['objective'] = $row->objective;
+                }
+
+                if (filled($row->learning_outcome)) {
+                    $match['learning_outcome'] = $row->learning_outcome;
+                }
+
+                return $match;
+            })
+            ->values()
+            ->all();
+
+        return $this->matches($ranked);
+    }
+
+    private function standardsWithClassSubjects(Request $request, $masjid_id): JsonResponse
     {
         // Called per keystroke, so the query is bounded before any work: a long
         // or array-valued parameter is a 422, never a 500 or a slow scan.

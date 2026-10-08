@@ -1,0 +1,268 @@
+[
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "index",
+    "origin": "index",
+    "gate": true,
+    "sha256": "629f491065414f06787c0e4ff99b068f56b8ad47db131490c9dec7d103298547"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "createOrAttach",
+    "origin": "createOrAttach",
+    "gate": true,
+    "sha256": "6097cd40293aa98b882aa89a4658aea44d353044a5120cfaef718a0ba9e8d9ee"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "grantMembershipAndClasses",
+    "origin": "grantMembershipAndClasses",
+    "gate": true,
+    "sha256": "963d4d94e33c0c9a47ec4b4de54a1a13bdda0b45dcfe04c810a21b9e82d59951"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "show",
+    "origin": "show",
+    "gate": true,
+    "sha256": "6c2599c9fac48e8adf3e8e27ce96ce3d5fcecbb4df99d093da3b06c559bb6e9e"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "update",
+    "origin": "update",
+    "gate": true,
+    "sha256": "1122b64a5178475ea8ebf3a8b449bf01c521a407ad2e16220733335a77c9e05c"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "liveAssignments",
+    "origin": "liveAssignments",
+    "gate": true,
+    "sha256": "54986695e20ae93e552b7f5106c8efcf6ce72e45ef6c60fdc07c8d904ee4bccf"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "serialize",
+    "origin": "serialize",
+    "gate": true,
+    "sha256": "e7276076252702500b28427ad145bc87244a5c6966feb32257ec85a8ef62abaf"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/GroupsController.php",
+    "method": "teachersByGroup",
+    "origin": "teachersByGroup",
+    "gate": true,
+    "sha256": "b2ee1d834dd796d8a33eefb24a6f1ad74db454914358505b6cb34d7f7e6d8df7"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/GroupsController.php",
+    "method": "store",
+    "origin": "store",
+    "gate": true,
+    "sha256": "2e7c655a226fdb90afca51f76551c4a1b229659ec66613a806302e3208670d8d"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/GroupsController.php",
+    "method": "show",
+    "origin": "show",
+    "gate": true,
+    "sha256": "4b5846004c4e78ffe9aa638038f3e5d0becd80c78b7285bb97e41c6adb455ce1"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/GroupsController.php",
+    "method": "update",
+    "origin": "update",
+    "gate": true,
+    "sha256": "e6e0a05f69c6bf4c2b643a3a3435d41a7f826a5ad040b39b056f8cff87700ced"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/TeacherController.php",
+    "method": "classPayload",
+    "origin": "classPayload",
+    "gate": true,
+    "sha256": "121701babea5e2c1d3405540471ac6eb969b227e067d482856f72dddd171aa59"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/GradebookController.php",
+    "method": "index",
+    "origin": "index",
+    "gate": true,
+    "sha256": "c3ea5dd6b5d9b3bcd515f46926849a5405d218aaa9c0374b5b93520033a93f8f"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/CurriculumController.php",
+    "method": "index",
+    "origin": "index",
+    "gate": true,
+    "sha256": "e220c7a863f165e9b470b69ae675be5af6e594a591812b9fb859a60fd9e86f83"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/CurriculumController.php",
+    "method": "standards",
+    "origin": "standards",
+    "gate": true,
+    "sha256": "561b6efc8bb50d178929ad3ea0568b9870afb24f4a0fb985fa7f948eb7a11f0f"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/CurriculumController.php",
+    "method": "limits",
+    "origin": "limits",
+    "gate": true,
+    "sha256": "59ad3fdbd5b2fd130709e448d02c371085ad081985612dec4b037d4544502ed1"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/CurriculumController.php",
+    "method": "subjectsFor",
+    "origin": "subjectsFor",
+    "gate": true,
+    "sha256": "338c06708fb4711eae352fc7d2022294f4b87c697dc6c05fe2cac2f2f9364df7"
+  },
+  {
+    "path": "app/Support/ClassSubjects.php",
+    "method": "offered",
+    "origin": "offered",
+    "gate": true,
+    "sha256": "073092717eaf6af1867ce7487a3f9835742d9fd4998135103bace46f70323863"
+  },
+  {
+    "path": "app/Support/ClassSubjects.php",
+    "method": "defaultFor",
+    "origin": "defaultFor",
+    "gate": true,
+    "sha256": "90d419db3606f97c7c00089cfe3b15954adea8df2a6fceb3acced3da70751503"
+  },
+  {
+    "path": "app/Support/SubjectFence.php",
+    "method": "limitsFor",
+    "origin": "limitsFor",
+    "gate": true,
+    "sha256": "480872c043473a8623df9e906567b8b4977c7fc46399c8f7442cc266eaac1ce4"
+  },
+  {
+    "path": "app/Support/SubjectFence.php",
+    "method": "allows",
+    "origin": "allows",
+    "gate": true,
+    "sha256": "f736a210378c03a039f519a92436319f21b52dff8b4b5426610c96b6640aed80"
+  },
+  {
+    "path": "app/Support/SubjectFence.php",
+    "method": "allowedKeys",
+    "origin": "allowedKeys",
+    "gate": true,
+    "sha256": "b7b37e74e1bea53c399c9e86757fa0ab3e760052b23d1e02ad2e4664f2e91082"
+  },
+  {
+    "path": "app/Http/Middleware/EnsureTeacherTeachesSubject.php",
+    "method": "handle",
+    "origin": "handle",
+    "gate": true,
+    "sha256": "f3ca7acb6ef892a655ddd279357077eaa312369fc67662407dad419e1730fde0"
+  },
+  {
+    "path": "app/Http/Requests/Admin/Users/TeacherInviteRequest.php",
+    "method": "subjectsFor",
+    "origin": "subjectsFor",
+    "gate": true,
+    "sha256": "d98adb70f38bdecfbaed232a49c7c0837bd519f0b11ec03167d314e8a8b8d34b"
+  },
+  {
+    "path": "app/Http/Requests/Admin/Users/TeacherInviteRequest.php",
+    "method": "rules",
+    "origin": "rules",
+    "gate": true,
+    "sha256": "8a0c6e1cf34199cbfa0748ec87921a98e9d2f02b65e47e8117c05314f38a4f9d"
+  },
+  {
+    "path": "app/Http/Requests/Admin/Users/TeacherUpdateRequest.php",
+    "method": "subjectsFor",
+    "origin": "subjectsFor",
+    "gate": true,
+    "sha256": "d98adb70f38bdecfbaed232a49c7c0837bd519f0b11ec03167d314e8a8b8d34b"
+  },
+  {
+    "path": "app/Http/Requests/Admin/Users/TeacherUpdateRequest.php",
+    "method": "rules",
+    "origin": "rules",
+    "gate": true,
+    "sha256": "35805c810e631adb8921389d6f09ae6f61e1e0c909c7732f03cb2cdb7ebb3b2c"
+  },
+  {
+    "path": "app/Support/CapabilityCatalogue.php",
+    "method": "forOrgType",
+    "origin": "forOrgType",
+    "gate": false,
+    "sha256": "be2225e0d7c2144cd26f2f0c525aa25a44bf8b731b421f06e7c84bdeac094200"
+  },
+  {
+    "path": "app/Support/CapabilityCatalogue.php",
+    "method": "resolve",
+    "origin": "resolve",
+    "gate": false,
+    "sha256": "2694bc8859dc7f3e86037e30ba3a1979040d5102b2bd23387541b22b07fa5bef"
+  },
+  {
+    "path": "app/Support/CapabilityCatalogue.php",
+    "method": "visibility",
+    "origin": "visibility",
+    "gate": true,
+    "sha256": "ec4f97c9bc1e8e6e5bfd6f4f4857a97575c75e29c1d9dec89f618646a2861008"
+  },
+  {
+    "path": "app/Models/GroupStaff.php",
+    "method": "booted",
+    "origin": "booted",
+    "gate": false,
+    "sha256": "119ac91e20456cbc159ba42c00afa2fb97cd71bad3aebab6f6b2b7cc42c0a8f6"
+  },
+  {
+    "path": "app/Models/Masjid.php",
+    "method": "legacyCapabilities",
+    "origin": "getCapabilitiesAttribute",
+    "gate": false,
+    "sha256": "2e2c0eb1cd66771a7d846a8c42c616221e20954498380aef909ce26312f503bd"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/MasjidsController.php",
+    "method": "legacyCapabilities",
+    "origin": "capabilities",
+    "gate": false,
+    "sha256": "9417f0fdb760a093ac5413b8dd6d8fa20fa86c3788765f696b3c1b573d79fd36"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/LessonPlanController.php",
+    "method": "limits",
+    "origin": "limits",
+    "gate": false,
+    "sha256": "4b36cc4013de6e4d791a603d875cc31705265d65f23f7beeb46f57400e49229e"
+  },
+  {
+    "path": "app/Http/Controllers/Teacher/GradebookController.php",
+    "method": "limits",
+    "origin": "limits",
+    "gate": false,
+    "sha256": "4b36cc4013de6e4d791a603d875cc31705265d65f23f7beeb46f57400e49229e"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "destroy",
+    "origin": "destroy",
+    "gate": true,
+    "sha256": "01d4e6ecc4e673f23d663ab61b8c62ce052bbf59cb2e3b7f7adb73ecf4e35d56"
+  },
+  {
+    "path": "app/Http/Controllers/AdminDashboard/TeachersController.php",
+    "method": "store",
+    "origin": "store",
+    "gate": true,
+    "sha256": "ded92afb1073eac95f4f041947cf099682a64e3f0ffded3b6c4a94fe798f7639"
+  },
+  {
+    "path": "app/Models/Group.php",
+    "method": "booted",
+    "origin": "booted",
+    "gate": false,
+    "sha256": "03953afad524c8a9158028a323de0d775718b111d7ff771ddfe859ab3f37f059"
+  }
+]

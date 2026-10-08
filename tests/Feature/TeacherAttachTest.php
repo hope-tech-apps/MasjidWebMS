@@ -673,7 +673,10 @@ class TeacherAttachTest extends TestCase
         // `masjid_user_default_unique` would turn the second into a 500.
         $source = file_get_contents(app_path('Http/Controllers/AdminDashboard/TeachersController.php'));
 
-        $this->assertSame(2, preg_match_all('/User::withTrashed\(\)->whereKey\([^)]*\)->lockForUpdate\(\)/', $source), 'store() and destroy() must both hold the user row, independently of the school mutex');
+        foreach (['createOrAttach', 'createOrAttachWithClassSubjects', 'destroy', 'destroyWithClassSubjects'] as $method) {
+            $body = \Tests\Support\LegacyMethodContract::body('app/Http/Controllers/AdminDashboard/TeachersController.php', $method);
+            $this->assertSame(1, preg_match_all('/User::withTrashed\(\)->whereKey\([^)]*\)->lockForUpdate\(\)/', $body), $method.' must hold the user row, independently of the school mutex');
+        }
         $this->assertLessThan(
             strpos($source, "'is_default' => ! MasjidUser::where('user_id', \$user->id)"),
             strpos($source, 'User::withTrashed()->whereKey($foundId)->lockForUpdate()'),
