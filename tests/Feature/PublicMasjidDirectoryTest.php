@@ -63,7 +63,7 @@ class PublicMasjidDirectoryTest extends TestCase
         'parent_id',
         'created_at', 'updated_at',
         // Branding/storefront metadata an app or site is meant to render.
-        'copyright_text', 'app_store_link', 'google_play_link',
+        'copyright_text', 'app_store_link', 'google_play_link', 'privacy_policy_url',
     ];
 
     protected function setUp(): void

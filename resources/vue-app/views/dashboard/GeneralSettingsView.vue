@@ -148,13 +148,20 @@ const validationSchema = object().shape({
     copyright_text: string().optional(),
     app_store_link: string().url().optional(),
     google_play_link: string().url().optional(),
-    privacy_policy_url: string().url().matches(/^https:\/\//i, { message: 'The link must start with https://', excludeEmptyString: true }).max(255).optional(),
+    // The server's own rule (UpdateGeneralSettingsRequest::PRIVACY_POLICY_URL_SHAPE): what both apps will open.
+    privacy_policy_url: string().trim().max(255).matches(/^https:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?([\/?#][^\s]*)?$/i, {
+        message: 'Enter a full address like https://www.example.org/privacy',
+        excludeEmptyString: true,
+    }).optional(),
     google_maps_key: string().optional(),
 });
 
 // Computed
 const oldHeaderLogoImage = computed(() => masjidStore.masjid?.header_logo?.original_url ?? undefined);
 const oldFooterLogoImage = computed(() => masjidStore.masjid?.footer_logo?.original_url ?? undefined);
+
+// Whether the saved settings were read into the form (see the save, below).
+const settingsLoaded = ref(false);
 
 // Functions
 async function fetchGeneralSettings() {
@@ -169,6 +176,7 @@ async function fetchGeneralSettings() {
                     settingsModel.value.privacy_policy_url = data.privacy_policy_url || '';
                     settingsModel.value.google_maps_key = data.google_maps_key || '';
                     currentAppHeaderImage.value = data.app_header_image?.original_url ?? undefined;
+                    settingsLoaded.value = true;
                 }
             })
             .catch((e: AxiosError) => {
@@ -212,7 +220,12 @@ async function updateGeneralSettings() {
                 formData.append('copyright_text', settingsModel.value.copyright_text);
                 formData.append('app_store_link', settingsModel.value.app_store_link);
                 formData.append('google_play_link', settingsModel.value.google_play_link);
-                formData.append('privacy_policy_url', settingsModel.value.privacy_policy_url);
+                // Sent only once the saved settings were read. If that read failed the box is
+                // empty because nothing was loaded, not because the office emptied it, and an
+                // empty value tells the server to remove the link the app shows.
+                if (settingsLoaded.value) {
+                    formData.append('privacy_policy_url', settingsModel.value.privacy_policy_url.trim());
+                }
                 formData.append('google_maps_key', settingsModel.value.google_maps_key);
 
                 await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/general-settings`, formData)

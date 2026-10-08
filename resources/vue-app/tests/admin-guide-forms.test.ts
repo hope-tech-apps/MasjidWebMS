@@ -10,7 +10,7 @@ const yup = require('yup');
 
 // Keep the screens' schemas, hints, submit handlers and the real alert mixin defaults.
 // Transport and widgets are stand-ins; this renderer has no browser layout.
-async function mountForm(file: string, organization = 'Masjid', confirmed = true, outcome = 'success') {
+async function mountForm(file: string, organization = 'Masjid', confirmed = true, outcome = 'success', settingsLoad = 'answers') {
     const alerts: any[] = [];
     const sent: any[] = [];
     let schema: any;
@@ -34,6 +34,7 @@ async function mountForm(file: string, organization = 'Masjid', confirmed = true
     const data = { name: 'Sample organisation', email: 'office@example.org', phone: '+15555555555',
         social_media_links: [], timezone: 'UTC', latitude: 40, longitude: -75, website_link: '',
         copyright_text: '', app_store_link: '', google_play_link: '', google_maps_key: '',
+        privacy_policy_url: 'https://www.example.org/privacy',
         primary_color: '#01B151', secondary_color: '#0B7A3B', accent_color: '#F2B705', background_color: '#FFFFFF' };
     const screen = await mountSfc(`views/dashboard/${file}.vue`, {}, {
         '@/components/form/ColumnInputContainer.vue': { default: slotOnly },
@@ -45,7 +46,10 @@ async function mountForm(file: string, organization = 'Masjid', confirmed = true
         '@/core/helpers/themeTokens': themeTokens,
         '@/core/plugins/SweetAlerts2': swal,
         '@/core/services/ApiService': { default: {
-            get: async (url: string) => ({ data: { status: 'success', data: url.endsWith('/timezones') ? ['UTC'] : data } }),
+            get: async (url: string) => {
+                if (settingsLoad === 'fails' && !url.endsWith('/timezones')) throw new Error('offline');
+                return { data: { status: 'success', data: url.endsWith('/timezones') ? ['UTC'] : data } };
+            },
             post: async (url: string, body: any) => { sent.push({ url, body }); return { data: { status: outcome, data } }; },
         } },
         '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1 }, term: () => organization, fetchMasjid: async () => {} }) },
@@ -100,6 +104,36 @@ for (const org of ['Masjid', 'School', 'Organization']) {
         f.screen.unmount();
     });
 }
+
+// The privacy policy link (2026-10-08). An empty value tells the server to REMOVE the link the
+// organisation's app shows, so the form may send the field only when the box holds what was saved.
+test('General Settings sends the privacy policy link it read from the saved settings', async () => {
+    const f = await mountForm('GeneralSettingsView');
+    submit(f.screen.all((n) => n.tag === 'form')[0]); await flush();
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0].body.get('privacy_policy_url'), 'https://www.example.org/privacy');
+    f.screen.unmount();
+});
+
+test('General Settings that could not read the saved settings does not send the privacy policy link', async () => {
+    const f = await mountForm('GeneralSettingsView', 'Masjid', true, 'success', 'fails');
+    submit(f.screen.all((n) => n.tag === 'form')[0]); await flush();
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0].body.has('privacy_policy_url'), false, 'an empty box that was never loaded would erase the saved link');
+    assert.equal(f.sent[0].body.has('copyright_text'), true, 'the rest of the form is still sent, as before');
+    f.screen.unmount();
+});
+
+test('General Settings accepts the addresses the server accepts and refuses the ones it refuses', async () => {
+    const f = await mountForm('GeneralSettingsView');
+    for (const ok of ['', ' https://www.example.org/privacy ', 'HTTPS://example.org', 'https://www.example.org:8443/p?x=1#y', 'https://xn--r8jz45g.xn--zckzah/privacy']) {
+        await f.schema.validateAt('privacy_policy_url', { privacy_policy_url: ok });
+    }
+    for (const bad of ['http://example.org/privacy', 'example.org/privacy', '/privacy', 'https://user:pw@example.org/', 'https://exa_mple.org/', 'https://example.org:123456/', 'https://example.org/our privacy', 'null']) {
+        await assert.rejects(f.schema.validateAt('privacy_policy_url', { privacy_policy_url: bad }), bad);
+    }
+    f.screen.unmount();
+});
 
 for (const file of ['GeneralSettingsView', 'PrayerCalculationSettingsView', 'ThemeSettingsView']) {
     for (const outcome of ['success', 'failed']) {

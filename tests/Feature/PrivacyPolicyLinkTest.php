@@ -91,6 +91,12 @@ class PrivacyPolicyLinkTest extends TestCase
             'javascript:alert(1)',
             'https://office:secret@www.meccharlotte.org/',  // sign-in details in the address
             'https://www.meccharlotte.org/' . str_repeat('a', 240), // longer than the column
+            'https://例え.テスト/privacy',                    // raw Unicode host: Android finds no host in it
+            'https://mec_charlotte.org/privacy',            // an underscore is not a host name
+            'https://www.meccharlotte.org:123456/privacy',  // not a port
+            'https://www.meccharlotte.org/our privacy',     // a space inside the address
+            'null',                                         // what a careless form sends for "nothing"
+            'undefined',
         ];
 
         foreach ($refused as $address) {
@@ -102,6 +108,26 @@ class PrivacyPolicyLinkTest extends TestCase
         }
 
         $this->assertSame(self::POLICY, $this->masjid->fresh()->privacy_policy_url, 'a refused save changes nothing');
+    }
+
+    #[Test]
+    public function an_address_is_stored_the_way_both_apps_open_it(): void
+    {
+        $accepted = [
+            // typed on a phone: a capital first letter, a space after it
+            ' Https://www.meccharlotte.org/privacy ' => 'https://www.meccharlotte.org/privacy',
+            'HTTPS://www.MECCharlotte.org/Privacy' => 'https://www.MECCharlotte.org/Privacy',
+            'https://meccharlotte.org' => 'https://meccharlotte.org',
+            'https://www.meccharlotte.org:8443/privacy?lang=en#contact' => 'https://www.meccharlotte.org:8443/privacy?lang=en#contact',
+            'https://xn--r8jz45g.xn--zckzah/privacy' => 'https://xn--r8jz45g.xn--zckzah/privacy',
+        ];
+
+        foreach ($accepted as $typed => $stored) {
+            $this->postJson($this->settingsUrl(), ['copyright_text' => 'x', 'privacy_policy_url' => $typed])->assertOk();
+
+            $this->assertSame($stored, $this->masjid->fresh()->privacy_policy_url, $typed);
+            $this->assertSame($stored, $this->app_payload()->json('data.privacy_policy_url'), $typed);
+        }
     }
 
     #[Test]
@@ -120,6 +146,7 @@ class PrivacyPolicyLinkTest extends TestCase
         $this->postJson($this->settingsUrl(), ['copyright_text' => 'still here', 'privacy_policy_url' => ''])->assertOk();
 
         $this->assertNull($this->masjid->fresh()->privacy_policy_url);
+        $this->assertArrayHasKey('privacy_policy_url', $this->app_payload()->json('data'));
         $this->assertNull($this->app_payload()->json('data.privacy_policy_url'));
     }
 

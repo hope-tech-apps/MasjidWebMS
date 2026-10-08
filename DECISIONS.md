@@ -9436,12 +9436,19 @@ device, browser layout or production cache verification was performed.
 - **Decided**: one nullable column, `masjids.privacy_policy_url`, beside the store links, typed on General settings
   as "Privacy Policy Link". It rides on `GET /api/mobile/masjids/{id}` with the rest of the row (null when unset), so
   no app release is needed for it and an organisation that names none shows no row.
-- **The server refuses what the apps would drop.** Both apps open only an absolute https address with no sign-in
-  details in it and drop anything else without a word (iOS `HomeLinks`, Android `ServerLink`), so the request rule is
-  the same and says why on the office's screen. 255 characters is the column: MySQL refuses a longer one.
+- **The server refuses what the apps would drop.** Both apps open only an absolute https address with a host and no
+  sign-in details in it and drop anything else without a word (iOS `HomeLinks`, Android `ServerLink`), so the request
+  rule says why on the office's screen. The two apps parse an address with two different libraries, so the rule is
+  narrower than `url` (`UpdateGeneralSettingsRequest::PRIVACY_POLICY_URL_SHAPE`): a plain ASCII host name (an
+  internationalised name in its xn-- form: Android's parser finds no host in raw Unicode), an optional port of up to
+  five digits, then the path. The address is stored trimmed with `https` in lower case, because a phone keyboard
+  capitalises the first letter and Android matches a scheme by exact case. 255 characters is the column: MySQL
+  refuses a longer one. The office's screen carries the same expression; change them together.
 - **A save that does not carry the field leaves it alone.** The settings save writes every other field from the
   request whether or not it was sent. An office tab opened before this shipped saves without the new field, and
   reading that as null would erase the link the app shows; the field emptied on purpose is sent empty and is cleared.
+  For the same reason the screen sends the field only after it has read the saved settings: if that read failed the
+  box is empty because nothing loaded, and sending it would remove the link (found in review, 2026-10-08).
 - The recorded payload of the live-shaped test organisations was re-recorded: `privacy_policy_url: null` was added to
   the three `GET /api/mobile/masjids/{id}` recordings and nothing else moved.
 - Not built: a privacy page hosted by the platform (the address is the organisation's own page), the link on the
