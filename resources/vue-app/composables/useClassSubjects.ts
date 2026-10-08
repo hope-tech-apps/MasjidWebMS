@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
-import { useToolResponseGuard } from './useToolResponseGuard';
+import { useToolResponseGuard, useToolSaveContext } from './useToolResponseGuard';
 import { useRoute, useRouter } from 'vue-router';
 import type { AxiosInstance, AxiosResponse } from 'axios';
 import { apiErrorText } from '@/core/services/ApiErrors';
@@ -51,6 +51,7 @@ const line = (tab: string, label: string): ClassChoice => ({ key: `tab:${tab}`, 
 /** Screen navigation is separate from authorization; every subject also passes its detail GET. */
 export function useClassSubjects<T extends string>(options: {
     realm: 'teacher' | 'office'; group: Ref<ClassPayload | null>; base: Ref<string>; api: SubjectReader;
+    reconcileSaved?: (operation: string) => void;
     activeTab: Ref<T>; activate: (tab: string, alphabet: string | null) => void;
 }) {
     const route = useRoute();
@@ -178,8 +179,9 @@ export function useClassSubjects<T extends string>(options: {
             else subject.value = current;
         }
     });
-    const keepRead = useToolResponseGuard(() => enabled.value,
-        () => JSON.stringify([options.base.value, route.query.subject, route.query.tab, route.query.week, options.activeTab.value]));
+    const toolView = () => JSON.stringify([options.base.value, route.query.subject, options.activeTab.value]);
+    const keepRead = useToolResponseGuard(() => enabled.value, toolView);
+    const saveContext = useToolSaveContext(() => enabled.value, () => options.base.value, toolView, options.reconcileSaved);
     onBeforeUnmount(() => { alive = false; ++generation; });
-    return { enabled, sections, subject, notice, busy, currentKey, title, fixedAlphabet, choose, href, setWeek, keepRead };
+    return { enabled, sections, subject, notice, busy, currentKey, title, fixedAlphabet, choose, href, setWeek, keepRead, saveContext };
 }

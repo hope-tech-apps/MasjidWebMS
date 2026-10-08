@@ -255,7 +255,7 @@
 </template>
 
 <script setup lang="ts">
-import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
+import { useToolResponseGuard, useToolSaveContext } from '@/composables/useToolResponseGuard';
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
@@ -291,6 +291,16 @@ const props = defineProps<{
 
 const keepResponseFor = useToolResponseGuard(() => props.classSubjectsEnabled === true,
     () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]));
+const saveContext = useToolSaveContext(() => props.classSubjectsEnabled === true,
+    () => JSON.stringify([props.masjidId, props.groupId]),
+    () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]), () => { loadAll(); });
+const keepSkills = useToolResponseGuard(() => props.classSubjectsEnabled === true, () => String(props.masjidId));
+const skillSaveContext = useToolSaveContext(() => props.classSubjectsEnabled === true, () => String(props.masjidId),
+    () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]), () => { loadSkills(); });
+const loadSkills = async () => {
+    const keep = keepSkills(() => props.masjidId, 'skills');
+    try { await behaviorStore.fetchSkills(false, keep); } catch { /* The picker has its own empty hint. */ }
+};
 // Stores
 const behaviorStore = useBehaviorStore();
 
@@ -370,10 +380,11 @@ const loadAll = async () => {
     loadError.value = '';
     forbidden.value = false;
     const keepResponse = keepResponseFor(() => props.groupId, 'list');
+    if (props.classSubjectsEnabled) { loadSummaries(); loadSkills(); }
     try {
         await behaviorStore.fetchAwards(props.groupId, 1, keepResponse);
         if (!keepResponse()) return;
-        await loadSummaries();
+        if (!props.classSubjectsEnabled) await loadSummaries();
         if (!keepResponse()) return;
     } catch (error) {
         if (!keepResponse()) return;
@@ -387,10 +398,12 @@ const loadAll = async () => {
         loading.value = false;
     }
 
+    if (props.classSubjectsEnabled) return;
+
     // The vocabulary is tenant-level and never audience-gated, so it loads even
     // when the awards above were refused — the "give points" path still works.
     try {
-        await behaviorStore.fetchSkills(false, keepResponse);
+        await behaviorStore.fetchSkills(false, keepSkills(() => props.masjidId, 'skills'));
         if (!keepResponse()) return;
     } catch (error) {
         if (!keepResponse()) return;
@@ -451,69 +464,65 @@ const applyDefaultPoints = () => {
 const submitAward = async () => {
     if (!canAward.value) return;
     awarding.value = true;
-    const keepResponse = keepResponseFor(() => awardForm.value.membership_id, 'submitAward');
+    const save = saveContext(() => `${showAwardModal.value}:${awardForm.value.membership_id}`, 'submitAward');
     try {
         await behaviorStore.awardSkill(props.groupId, {
             ...awardForm.value,
             points: pointsOverride.value
         });
-        if (!keepResponse()) return;
-        showAwardModal.value = false;
-        await loadAll();
-        if (!keepResponse()) return;
+        save.saved();
+        if (save.editor()) showAwardModal.value = false;
+        if (save.reconcile()) await loadAll();
         Swal.fire({ icon: 'success', title: 'Recorded', timer: 1600, showConfirmButton: false });
     } catch (error) {
-        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to record the award.') });
     } finally {
-        if (!keepResponse()) return;
-        awarding.value = false;
+        if (save.finish()) awarding.value = false;
     }
 };
 
 const submitSkill = async () => {
     if (!skillForm.value.label) return;
     savingSkill.value = true;
-    const keepResponse = keepResponseFor(() => props.groupId, 'submitSkill');
+    const save = skillSaveContext(() => props.groupId, 'submitSkill');
     try {
         await behaviorStore.createSkill(skillForm.value);
-        if (!keepResponse()) return;
-        skillForm.value = emptySkillForm();
-        await behaviorStore.fetchSkills(false, keepResponse);
-        if (!keepResponse()) return;
+        save.saved();
+        if (save.editor()) skillForm.value = emptySkillForm();
+        if (save.reconcile()) await loadSkills();
     } catch (error) {
-        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to create the skill.') });
     } finally {
-        if (!keepResponse()) return;
-        savingSkill.value = false;
+        if (save.finish()) savingSkill.value = false;
     }
 };
 
 const confirmRevoke = async (award: BehaviorAward) => {
-    const keepResponse = keepResponseFor(() => props.groupId, 'confirmRevoke');
-    const result = await Swal.fire({
-        title: 'Revoke this award?',
-        text: 'It leaves every listing and every total at once, and the correction is recorded against your account.',
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Yes, revoke'
-    });
-    if (!keepResponse()) return;
-
-    if (!result.isConfirmed) return;
-
+    const save = saveContext(() => null, 'confirmRevoke');
     try {
-        await behaviorStore.revokeAward(props.groupId, award.id);
-        if (!keepResponse()) return;
-        await loadAll();
-        if (!keepResponse()) return;
-        Swal.fire({ icon: 'success', title: 'Revoked', timer: 1600, showConfirmButton: false });
-    } catch (error) {
-        if (!keepResponse()) return;
-        Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to revoke the award.') });
+        const result = await Swal.fire({
+            title: 'Revoke this award?',
+            text: 'It leaves every listing and every total at once, and the correction is recorded against your account.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Yes, revoke'
+        });
+        if (!save.editor()) return;
+
+        if (!result.isConfirmed) return;
+
+        try {
+            await behaviorStore.revokeAward(props.groupId, award.id);
+            save.saved();
+            if (save.reconcile()) await loadAll();
+            Swal.fire({ icon: 'success', title: 'Revoked', timer: 1600, showConfirmButton: false });
+        } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to revoke the award.') });
+        }
+    } finally {
+        save.finish();
     }
 };
 

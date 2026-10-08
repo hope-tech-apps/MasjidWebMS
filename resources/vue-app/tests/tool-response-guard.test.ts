@@ -15,7 +15,7 @@ async function guardHarness() {
     });
     const scope = vue.effectScope();
     const capture = scope.run(() => useToolResponseGuard(() => enabled.value, () => context.value));
-    return { enabled, context, selection, capture: (channel = 'tracker') => capture(() => selection.value, channel), dispose: () => { disposals.forEach(fn => fn()); scope.stop(); } };
+    return { enabled, context, selection, capture: (channel = 'tracker') => capture(() => selection.value, channel), invalidate: (channel: string) => capture.invalidate(channel), dispose: () => { disposals.forEach(fn => fn()); scope.stop(); } };
 }
 
 test('tool guard drops every stale class, subject, alphabet, student and week, including leave then return', async () => {
@@ -71,4 +71,46 @@ test('office store assignments reject stale Hifdh entries/progress, Points award
         current = false; late.resolve({ data: { status: 'success', data, meta: {} } }); await request;
         assert.equal(JSON.stringify(store[state]), before, `${file}.${action} cannot write the shared state after its view leaves`);
     }
+});
+
+test('save redesign 5 OFF: a continuation after disposal creates no selection watcher', async () => {
+    const disposals: (() => void)[] = []; let watches = 0;
+    const loaded = await loadTs('composables/useToolResponseGuard.ts', {
+        vue: { ...vue, watch: (...args: any[]) => { watches++; return (vue.watch as any)(...args); }, onBeforeUnmount: (fn: () => void) => disposals.push(fn) },
+    });
+    const scope = vue.effectScope(); const student = vue.ref(9);
+    const capture = scope.run(() => loaded.useToolResponseGuard(() => false, () => 'class:2'));
+    const first = capture(); disposals.forEach(fn => fn()); scope.stop();
+    assert.equal(first(), true, 'legacy response is still applied');
+    const before = watches;
+    const progress = capture(() => student.value, 'student:9');
+    assert.equal(progress(), true, 'legacy chained progress is still applied');
+    assert.equal(watches, before, 'cleanup cannot be followed by new subscriptions');
+});
+
+test('save context never sequences away successes and separates current owner from departed editor', async () => {
+    const disposals: (() => void)[] = []; let watches = 0;
+    const { useToolSaveContext } = await loadTs('composables/useToolResponseGuard.ts', {
+        vue: { ...vue, watch: (...args: any[]) => { watches++; return (vue.watch as any)(...args); }, onBeforeUnmount: (fn: () => void) => disposals.push(fn) },
+    });
+    const scope = vue.effectScope(); const owner = vue.ref('class:2'); const view = vue.ref('points'); const student = vue.ref(9);
+    const capture = scope.run(() => useToolSaveContext(() => true, () => owner.value, () => view.value));
+    const first = capture(() => student.value); const second = capture(() => student.value);
+    assert.equal(first.editor(), true); assert.equal(second.editor(), true, 'saves do not compete for a sequence');
+    student.value = 10; student.value = 9;
+    assert.equal(first.editor(), false); assert.equal(first.reconcile(), true);
+    view.value = 'roster'; view.value = 'points'; assert.equal(second.editor(), false); assert.equal(second.reconcile(), true);
+    assert.equal(first.finish(), false, 'newer operation owns the busy flag');
+    assert.equal(second.finish(), true); disposals.forEach(fn => fn()); scope.stop();
+    assert.equal(first.reconcile(), false); const before = watches; capture(); assert.equal(watches, before);
+});
+
+test('read invalidation rejects only the pre-save channel and allocates nothing', async () => {
+    const h = await guardHarness();
+    try {
+        const tracker = h.capture(); const skills = h.capture('skills');
+        h.invalidate('tracker');
+        assert.equal(tracker(), false); assert.equal(skills(), true);
+        h.invalidate('unused');
+    } finally { h.dispose(); }
 });

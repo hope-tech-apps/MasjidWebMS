@@ -3,13 +3,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as vue from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
-import { click, deferred, flush, httpError, mountSfc, Node, pressKey, chooseOption, submit, type, withDocumentKeys } from './support/mountSfc.ts';
+import { click, deferred, flush, httpError, loadTs, mountSfc, Node, pressKey, chooseOption, submit, type, withDocumentKeys } from './support/mountSfc.ts';
 import { realClassModules } from './support/classSubjectModules.ts';
 
 const doc = (globalThis as any).document;
 withDocumentKeys();
 doc.body = { style: {} };
-(globalThis as any).window = { innerWidth: 1280, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: (globalThis as any).window.innerWidth < 768, addEventListener() {}, removeEventListener() {} }) };
+const resizeHandlers = new Set<() => void>();
+(globalThis as any).window = { innerHeight: 900, scrollY: 0, innerWidth: 1280, addEventListener(event: string, fn: () => void) { if (event === 'resize') resizeHandlers.add(fn); }, removeEventListener(event: string, fn: () => void) { if (event === 'resize') resizeHandlers.delete(fn); }, matchMedia: () => ({ matches: (globalThis as any).window.innerWidth < 768, addEventListener() {}, removeEventListener() {} }) };
 // DOM elements are opaque to Vue; model that here so ref focus identity stays real.
 (Node.prototype as any).__v_skip = true;
 // The custom renderer models focus and inert attributes, not CSS geometry.
@@ -70,6 +71,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         ...(options.flag === false ? {} : { class_subjects_enabled: true, class_subjects: structuredClone(subjects), my_class_subject_ids: options.mine ?? null }), ...options.data });
     let catalog = structuredClone(options.subjects ?? subjects);
     const calls: any[] = [];
+    const alerts: any[] = [];
     const pending = options.detail;
     const route = vue.reactive<any>({ params: { masjidId: '1', groupId: '2' }, query: { ...options.query } });
     const history: any[] = [{ ...route.query }];
@@ -132,8 +134,9 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         '@/stores/masjidStore': { useMasjidStore: () => masjid },
         '@/stores/masjid/groupsStore': { useGroupsStore: () => groupsStore },
         '@/stores/masjid/hifzStore': { useHifzStore: () => hifzStore },
-        sweetalert2: { default: { fire: async () => ({ isConfirmed: false }), mixin: () => ({ fire: async () => ({ isConfirmed: false }) }) } },
+        sweetalert2: { default: { fire: async (notice: any) => { alerts.push(notice); return { isConfirmed: false }; }, mixin: () => ({ fire: async () => ({ isConfirmed: false }) }) } },
     };
+    Object.assign(overrides, options.modules);
     const file = realm === 'teacher' ? 'views/teacher/TeacherClass.vue' : 'views/dashboard/GroupDetailView.vue';
     const screen = await mountSfc(file, {}, await realClassModules(file, overrides));
     await flush(10);
@@ -141,7 +144,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         const disclosure = screen.all((n: Node) => n.tag === 'button' && /^Class subjects \(\d+\)$/.test(n.textContent))[0];
         if (disclosure) { click(disclosure); await flush(); }
     }
-    return { screen, data, calls, router, route, hifzStore };
+    return { screen, data, calls, router, route, hifzStore, alerts };
 }
 
 test('check 1: OFF pins every legacy tab word and its original bootstrap requests, both views', async () => {
@@ -634,4 +637,202 @@ test('office Letters discards A’s mark and releases the mark button on B’s t
         late.resolve(ok({ ...arabicDrillTracker(), totals: { mastered: 28, total: 28 } })); await flush();
         assert.doesNotMatch(screen.text(), /28 of 28 mastered/); assert.equal(Boolean(screen.button('Arabic drill').props.disabled), false);
     } finally { screen.unmount(); }
+});
+
+const studentPicker = (screen: any) => screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent.includes('Choose a student')))[0];
+const visit = async (screen: any, on: boolean, label: string) => {
+    if (on) await pick(screen, label); else { click(exactButton(screen, label)); await flush(10); }
+};
+for (const on of [true, false]) {
+    test(`save redesign 1 ${on ? 'ON' : 'OFF'}: paging awards retains pending school skills`, async () => {
+        const late = deferred();
+        const { screen } = await setup('office', { flag: on, read: (url: string) => {
+            if (url.includes('/behavior-skills')) return late.promise;
+            if (url.includes('/awards?page=')) return ok({ data: [{ id: 1, skill_label: 'Existing award', points: 1 }], current_page: Number(url.split('=').at(-1)), per_page: 25, total: 26, last_page: 2 });
+            return undefined;
+        } });
+        try {
+            await visit(screen, on, 'Points'); click(exactButton(screen, 'Next page')); await flush();
+            late.resolve(ok({ data: [{ id: 8, label: 'Pending vocabulary', is_active: true, polarity: 'positive', default_points: 1 }] })); await flush();
+            click(exactButton(screen, 'Give points')); await flush();
+            assert.match(screen.text(), /Pending vocabulary/);
+        } finally { screen.unmount(); }
+    });
+    test(`save redesign 2 ${on ? 'ON' : 'OFF'}: Points re-entry settles selected history`, async () => {
+        const late = deferred(); let reads = 0;
+        const { screen } = await setup('teacher', { flag: on, read: (url: string) => {
+            if (url.endsWith('/members/9/awards')) return ++reads === 1 ? late.promise : ok([{ id: 20, skill_label: 'Fresh history', points: 1 }]);
+            return undefined;
+        } });
+        try {
+            await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 9); await flush();
+            await visit(screen, on, 'Roster'); await visit(screen, on, 'Points');
+            late.resolve(ok([{ id: 20, skill_label: on ? 'Dropped history' : 'Fresh history', points: 1 }])); await flush();
+            assert.match(screen.text(), /Fresh history/); assert.equal(reads, on ? 2 : 1);
+        } finally { screen.unmount(); }
+    });
+    for (const action of ['period', 'skill']) test(`save redesign 3 ${on ? 'ON' : 'OFF'}: ${action} save survives student change`, async () => {
+        const late = deferred(); let totals = 0; let storedPeriod = 'running';
+        const { screen, data } = await setup('teacher', { flag: on, data: { students: [student, secondStudent], points_period: 'running' },
+            read: (url: string) => { if (url.includes('/awards/totals')) { totals++; return ok({ points_period: storedPeriod, students: [], class: {} }); } return undefined; },
+            write: (_: string, url: string) => url.endsWith(action === 'period' ? '/points-period' : '/behavior-skills') ? late.promise : undefined });
+        try {
+            await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 9); await flush();
+            const before = totals;
+            if (action === 'period') {
+                const input: any = screen.all((n: Node) => n.props.id === 'points-weekly')[0]; input.checked = true; input.props.onChange({ target: input });
+            } else {
+                type(screen.all((n: Node) => n.tag === 'input' && n.props.placeholder === 'e.g. Helped without being asked')[0], 'Created school skill'); await flush();
+                click(exactButton(screen, 'Add'));
+            }
+            await flush(); chooseOption(studentPicker(screen), 10); await flush();
+            storedPeriod = 'weekly'; late.resolve(ok(action === 'period' ? { points_period: 'weekly' } : { id: 30, label: 'Created school skill', polarity: 'positive', default_points: 1 })); await flush();
+            if (action === 'period') { assert.equal(data.points_period, 'weekly'); assert.ok(totals > before); }
+            else { assert.match(screen.text(), /Created school skill \(\+1\)/); assert.equal(screen.all((n: Node) => n.tag === 'input' && n.props.placeholder === 'e.g. Helped without being asked')[0].value, ''); }
+        } finally { screen.unmount(); }
+    });
+    for (const tool of ['Hifdh', 'Points']) test(`save redesign 4 ${on ? 'ON' : 'OFF'}: office ${tool} refreshes A after switching editor to B`, async () => {
+        const late = deferred(); let lists = 0; let summaries = 0;
+        const { screen } = await setup('office', { flag: on, data: { memberships: [membership, { ...membership, id: 10, ...secondStudent }] },
+            hifzStore: { recordEntry: () => late.promise, fetchEntries: async () => { lists++; }, fetchProgress: async () => { summaries++; } },
+            read: (url: string) => {
+                if (url.includes('/awards?page=')) { lists++; return ok({ data: [], current_page: 1, total: 0, per_page: 25 }); }
+                if (url.includes('/awards/summary')) summaries++;
+                if (url.includes('/behavior-skills')) return ok({ data: [{ id: 8, label: 'Practice skill', is_active: true, polarity: 'positive', default_points: 1 }] });
+                return undefined;
+            }, write: (_: string, url: string) => url.endsWith('/awards') ? late.promise : undefined });
+        try {
+            await visit(screen, on, tool === 'Hifdh' && on ? "Qur'an" : tool);
+            click(exactButton(screen, tool === 'Hifdh' ? 'Record recitation' : 'Give points')); await flush();
+            const picker = studentPicker(screen); chooseOption(picker, 9); await flush();
+            if (tool === 'Points') { const skills = screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent.includes('Practice skill')))[0]; chooseOption(skills, 8); await flush(); }
+            const before = [lists, summaries]; submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+            chooseOption(picker, 10); await flush(); late.resolve(ok(row)); await flush(10);
+            assert.ok(lists > before[0], 'class log refreshed'); assert.ok(summaries > before[1], 'positions/totals refreshed');
+            if (on) assert.equal(studentPicker(screen).options.find((o: any) => o.selected)?.value, 10);
+            else assert.equal(screen.all((n: Node) => n.tag === 'form').length, 0, 'legacy success closes modal');
+        } finally { screen.unmount(); }
+    });
+}
+
+test('save redesign menu: resting clearance at 900/768 and own scroll reveal Files', async () => {
+    const { screen } = await setup('teacher');
+    try {
+        const menu: any = screen.all((n: Node) => n.tag === 'aside')[0];
+        const workspace: any = screen.all((n: Node) => String(n.props.class).includes('class-workspace') && !String(n.props.class).includes('content'))[0];
+        workspace.getBoundingClientRect = () => ({ top: 196, bottom: 954 });
+        for (const height of [900, 768]) {
+            (globalThis as any).window.innerHeight = height;
+            // A viewport resize runs the component's registered handler.
+            for (const fn of resizeHandlers) fn(); await flush();
+            assert.equal(menu.props.style?.['--class-menu-rest-top'], '196px');
+        }
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) test(`save sweep ${on ? 'ON' : 'OFF'}: pending award history is independent of the Points week`, async () => {
+    const late = deferred(); let reads = 0;
+    const { screen, router } = await setup('teacher', { flag: on, read: (url: string) => {
+        if (url.endsWith('/members/9/awards')) { reads++; return late.promise; }
+        return undefined;
+    } });
+    try {
+        await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 9); await flush();
+        await router.push({ query: { tab: 'points', week: '2026-09-20' } }); await flush();
+        late.resolve(ok([{ id: 1, skill_label: 'History across weeks', points: 2 }])); await flush();
+        assert.match(screen.text(), /History across weeks/); assert.equal(reads, 1);
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) test(`save sweep ${on ? 'ON' : 'OFF'}: school vocabulary can arrive while another tab is open`, async () => {
+    const late = deferred(); let reads = 0;
+    const { screen } = await setup('teacher', { flag: on, read: (url: string) => {
+        if (url.endsWith('/behavior-skills')) { reads++; return late.promise; }
+        return undefined;
+    } });
+    try {
+        await visit(screen, on, 'Points'); await visit(screen, on, 'Roster');
+        late.resolve(ok([{ id: 8, label: 'School vocabulary', polarity: 'positive', default_points: 1 }])); await flush();
+        await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 9); await flush();
+        assert.match(screen.text(), /School vocabulary/); assert.equal(reads, 1);
+    } finally { screen.unmount(); }
+});
+
+for (const gone of [false, true]) test(`save sweep: teacher save refusal is surfaced after ${gone ? 'unmount' : 'leaving its tool'}`, async () => {
+    const late = deferred();
+    const { screen, alerts } = await setup('teacher', { read: (url: string) => url.endsWith('/members/9/letters?alphabet=arabic') ? ok(arabicDrillTracker()) : undefined,
+        write: (_: string, url: string) => url.endsWith('/members/9/letters') ? late.promise : undefined });
+    try {
+        await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush();
+        click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush(); click(screen.all((n: Node) => n.tag === 'button' && n.textContent.includes('Arabic drill') && !n.textContent.startsWith('Note on'))[0]); await flush();
+        if (gone) screen.unmount(); else await pick(screen, 'ELA');
+        late.reject(httpError(422, { message: 'The saved mark was refused.' })); await flush();
+        assert.ok(alerts.some((a: any) => a.text === 'The saved mark was refused.' && a.icon === 'error'));
+        if (!gone) assert.doesNotMatch(screen.text(), /The saved mark was refused/);
+    } finally { if (!gone) screen.unmount(); }
+});
+
+for (const on of [true, false]) test(`save sweep ${on ? 'ON' : 'OFF'}: office Hifdh legacy continuation after unmount applies progress`, async () => {
+    const late = deferred(); const calls: any[] = [];
+    const { screen } = await setup('office', { flag: on, hifzStore: {
+        fetchEntries: () => late.promise,
+        fetchProgress: async (_group: number, student: number, keep: () => boolean) => { calls.push({ student, accepted: keep() }); },
+    } });
+    await visit(screen, on, on ? "Qur'an" : 'Hifdh'); screen.unmount();
+    const before = calls.length; late.resolve(undefined); await flush();
+    assert.equal(calls.length, on ? before : before + 1);
+    if (!on) assert.equal(calls.at(-1).accepted, true);
+});
+
+for (const on of [true, false]) test(`save sweep ${on ? 'ON' : 'OFF'}: an older save cannot release a newer editor's busy flag`, async () => {
+    const first = deferred(); const second = deferred(); let writes = 0;
+    const { screen } = await setup('office', { flag: on, data: { memberships: [membership, { ...membership, id: 10, ...secondStudent }] },
+        hifzStore: { recordEntry: () => ++writes === 1 ? first.promise : second.promise } });
+    try {
+        await visit(screen, on, on ? "Qur'an" : 'Hifdh'); click(exactButton(screen, 'Record recitation')); await flush();
+        const picker = studentPicker(screen); chooseOption(picker, 9); await flush(); submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+        chooseOption(picker, 10); await flush();
+        if (on) {
+            submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush(); assert.equal(writes, 2);
+            first.resolve(ok(row)); await flush(); assert.equal(exactButton(screen, 'Record').disabled, true);
+            second.resolve(ok({ ...row, membership_id: 10 })); await flush(); assert.equal(screen.all((n: Node) => n.tag === 'form').length, 0);
+        } else {
+            assert.equal(exactButton(screen, 'Record').disabled, true, 'OFF keeps its original busy flag across student switches');
+            first.resolve(ok(row)); await flush(); assert.equal(writes, 1);
+        }
+    } finally { screen.unmount(); }
+});
+
+test('save sweep: office Hifdh remount before success reconciles the replacement class log', async () => {
+    const late = deferred(); let saved = false; let reads = 0;
+    const helper = await loadTs('composables/useToolResponseGuard.ts', { vue });
+    const { screen, hifzStore } = await setup('office', { modules: { '@/composables/useToolResponseGuard': helper, './useToolResponseGuard': helper }, hifzStore: {
+        recordEntry: () => late.promise,
+        fetchEntries: async () => { reads++; hifzStore.entriesPaginated.data = [{ ...row, quality: saved ? 'excellent' : 'good', note: saved ? 'Reconciled saved recitation' : 'Before save' }]; },
+    } });
+    try {
+        await pick(screen, "Qur'an"); click(exactButton(screen, 'Record recitation')); await flush();
+        chooseOption(studentPicker(screen), 9); await flush(); submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+        await pick(screen, 'Healthful Living'); await pick(screen, "Qur'an"); const before = reads;
+        saved = true; late.resolve(ok(row)); await flush();
+        assert.ok(reads > before); assert.equal(hifzStore.entriesPaginated.data[0].note, 'Reconciled saved recitation'); assert.match(screen.text(), /Excellent/);
+    } finally { screen.unmount(); }
+});
+
+test('save sweep: a school skill save reconciles a replacement teacher picker', async () => {
+    const late = deferred(); let saved = false;
+    const helper = await loadTs('composables/useToolResponseGuard.ts', { vue });
+    const options = { query: { tab: 'points' }, modules: { '@/composables/useToolResponseGuard': helper, './useToolResponseGuard': helper },
+        read: (url: string) => url.endsWith('/behavior-skills') ? ok(saved ? [{ id: 80, label: 'Saved after remount', polarity: 'positive', default_points: 1 }] : []) : undefined,
+        write: (_: string, url: string) => url.endsWith('/behavior-skills') ? late.promise : undefined };
+    const first = await setup('teacher', options);
+    chooseOption(studentPicker(first.screen), 9); await flush();
+    type(first.screen.all((n: Node) => n.props.placeholder === 'e.g. Helped without being asked')[0], 'Saved after remount'); await flush();
+    click(exactButton(first.screen, 'Add')); await flush(); first.screen.unmount();
+    const next = await setup('teacher', options);
+    try {
+        chooseOption(studentPicker(next.screen), 9); await flush();
+        saved = true; late.resolve(ok({ id: 80, label: 'Saved after remount', polarity: 'positive', default_points: 1 })); await flush();
+        assert.match(next.screen.text(), /Saved after remount \(\+1\)/);
+    } finally { next.screen.unmount(); }
 });

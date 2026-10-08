@@ -34,6 +34,8 @@ export async function modulesFor(file: string, overrides: Record<string, any>, t
         if (trail.includes(`${rel}.ts`)) { modules[spec] = {}; continue; }
         if (existsSync(path.join(root, `${rel}.ts`))) {
             modules[spec] = await loadTs(`${rel}.ts`, await modulesFor(`${rel}.ts`, overrides, [...trail, file]));
+        } else if (spec === 'sweetalert2') {
+            modules[spec] = { default: { fire: async () => ({ isConfirmed: false }) } };
         } else if (spec === 'axios') {
             modules[spec] = { AxiosError: class extends Error {} };
         } else {

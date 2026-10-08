@@ -1,9 +1,10 @@
 <template>
-    <div v-if="enabled" class="class-workspace">
+    <div v-if="enabled" ref="workspace" class="class-workspace">
         <button v-if="phone" ref="trigger" type="button" class="btn btn-outline-success class-menu-trigger"
                 :aria-expanded="String(open)" :aria-controls="menuId" @click="show">Class menu</button>
         <div v-if="open && phone" class="class-menu-backdrop" data-class-backdrop @click="close()"></div>
         <aside v-if="!phone || open" :id="menuId" ref="panel" class="class-menu" :class="{ 'class-menu-open': phone }"
+               :style="phone ? undefined : { '--class-menu-rest-top': `${restTop}px` }"
                :role="phone ? 'dialog' : undefined" :aria-modal="phone ? 'true' : undefined"
                :aria-label="phone ? 'Class menu' : undefined" tabindex="-1">
             <button v-if="phone" type="button" class="btn btn-outline-secondary mb-3" @click="close()">Close class menu</button>
@@ -42,6 +43,8 @@ const open = ref(false);
 const phone = ref(false);
 const trigger = ref<HTMLElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
+const workspace = ref<HTMLElement | null>(null);
+const restTop = ref(80);
 const content = ref<HTMLElement | null>(null);
 const heading = ref<HTMLElement | null>(null);
 let media: MediaQueryList | null = null;
@@ -98,7 +101,7 @@ const select = (event: MouseEvent, item: ClassChoice) => {
     event.preventDefault();
     close(false);
     emit('choose', item);
-    nextTick(() => { if (mounted) heading.value?.focus(); });
+    nextTick(() => { if (mounted) heading.value?.focus(phone.value ? undefined : { preventScroll: true }); });
 };
 // Adjust the menu's own scroll position. scrollIntoView would also move the page.
 const revealSelection = async () => {
@@ -112,11 +115,19 @@ const revealSelection = async () => {
     if (line.top < bounds.top) panel.value.scrollTop -= bounds.top - line.top;
     else if (line.bottom > bounds.bottom) panel.value.scrollTop += line.bottom - bounds.bottom;
 };
-const resize = () => { phone.value = media?.matches ?? false; if (!phone.value) close(); };
+// The sticky top is only the scrolled position. At rest the class header sits
+// above this workspace, so reserve its measured space before enabling menu scroll.
+const measureRest = async () => {
+    await nextTick();
+    if (!mounted || !props.enabled || phone.value || !workspace.value) return;
+    restTop.value = Math.max(80, workspace.value.getBoundingClientRect().top + (window.scrollY || 0));
+};
+const resize = () => { phone.value = media?.matches ?? false; if (!phone.value) close(); measureRest().then(revealSelection); };
 const start = () => {
     if (listening || !props.enabled) return;
     media = window.matchMedia('(max-width: 767.98px)'); resize();
     media.addEventListener('change', resize);
+    window.addEventListener('resize', resize);
     document.addEventListener('keydown', keydown);
     document.addEventListener('focusin', containFocus);
     listening = true;
@@ -128,13 +139,15 @@ const stop = () => {
         document.removeEventListener('keydown', keydown);
         document.removeEventListener('focusin', containFocus);
     }
+    if (listening) window.removeEventListener('resize', resize);
     listening = false;
 };
 onMounted(() => { mounted = true; start(); revealSelection(); });
 watch(() => props.enabled, enabled => { if (mounted) enabled ? start() : stop(); });
 watch(() => [props.currentKey, props.busy, props.enabled], async () => {
+    await measureRest();
     await revealSelection();
-    if (props.enabled && !props.busy) { await nextTick(); if (mounted) heading.value?.focus(); }
+    if (props.enabled && !props.busy) { await nextTick(); if (mounted) heading.value?.focus(phone.value ? undefined : { preventScroll: true }); }
 });
 onBeforeUnmount(() => { mounted = false; stop(); });
 </script>
@@ -154,7 +167,7 @@ onBeforeUnmount(() => { mounted = false; stop(); });
 .class-menu-trigger { justify-self: start; min-height: 44px; }
 .class-menu-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 1090; }
 @media (min-width: 768px) {
-    .class-menu { position: sticky; top: var(--class-menu-top, 80px); max-height: calc(100dvh - var(--class-menu-top, 80px) - 1rem); overflow-y: auto; overscroll-behavior: contain; }
+    .class-menu { position: sticky; top: var(--class-menu-top, 80px); max-height: calc(100dvh - max(var(--class-menu-rest-top, 80px), var(--class-menu-top, 80px)) - 1rem); overflow-y: auto; overscroll-behavior: contain; }
 }
 @media (pointer: coarse) { .class-menu-line { min-height: 44px; } }
 @media (max-width: 767.98px) {

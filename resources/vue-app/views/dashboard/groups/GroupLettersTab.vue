@@ -172,7 +172,8 @@
 </template>
 
 <script setup lang="ts">
-import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
+import Swal from 'sweetalert2';
+import { useToolResponseGuard, useToolSaveContext } from '@/composables/useToolResponseGuard';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
@@ -224,6 +225,14 @@ watch(selected, () => {
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);
 const keepResponseFor = useToolResponseGuard(() => !!props.fixedAlphabet,
     () => JSON.stringify([base.value, props.fixedAlphabet]));
+const saveContext = useToolSaveContext(() => !!props.fixedAlphabet,
+    () => base.value, () => JSON.stringify([base.value, alphabet.value]), () => {
+        loadOverview().catch((error) => {
+            stageFailed.value = true;
+            stageNote.value = error?.response?.data?.message ?? 'The letters for this class could not be loaded. Reload the page to try again.';
+        });
+        if (selected.value) open(selected.value);
+    });
 // The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.
 const letterRunsOf = computed(() => letterRuns(tracker.value));
 
@@ -295,9 +304,13 @@ const NEXT: Record<string, string> = {
  */
 const loadOverview = async (which: string = alphabet.value) => {
     const keepResponse = keepResponseFor(() => alphabet.value, 'loadOverview');
-    const res = await ApiService.get(`${base.value}/letters?alphabet=${which}` as any);
-    if (!keepResponse()) return;
-    overview.value = res.data?.data ?? null;
+    try {
+        const res = await ApiService.get(`${base.value}/letters?alphabet=${which}` as any);
+        if (!keepResponse()) return;
+        overview.value = res.data?.data ?? null;
+    } catch (error) {
+        if (keepResponse()) throw error;
+    }
 };
 
 onMounted(async () => {
@@ -411,25 +424,28 @@ const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
     stageFailed.value = false;
-    const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'setStage');
+    const save = saveContext(() => alphabet.value, 'setStage');
     try {
         const res = await ApiService.put(`${base.value}/letters/stage` as any, { stage });
-        if (!keepResponse()) return;
-        overview.value = res.data?.data ?? overview.value;
+        save.saved();
+        if (props.fixedAlphabet) keepResponseFor.invalidate('loadOverview');
+        if (save.editor()) overview.value = res.data?.data ?? overview.value;
         stageNote.value = res.data?.message ?? '';
         // A narrower stage hides later work rather than deleting it, so a child
         // already open must be re-read against the new scope.
-        if (selected.value) await open(selected.value);
+        if (save.reconcile() && selected.value) await open(selected.value);
     } catch (e: any) {
-        if (!keepResponse()) return;
+        if (!save.editor()) {
+            Swal.fire({ icon: 'error', title: 'Error!', text: e?.response?.data?.message ?? 'That did not save. Check your connection and try again.' });
+            return;
+        }
         // The select snaps back to the stage the payload still holds, and this
         // says why rather than leaving a refusal looking like a slow save.
         stageFailed.value = true;
         stageNote.value = e?.response?.data?.message
             ?? 'The class stage could not be changed.';
     } finally {
-        if (!keepResponse()) return;
-        savingStage.value = false;
+        if (save.finish()) savingStage.value = false;
     }
 };
 
@@ -441,18 +457,21 @@ const setStage = async (stage: string) => {
 const advance = async (drill: any) => {
     marking.value = drill.id;
     letterError.value = '';
-    const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'advance');
+    const save = saveContext(() => `${alphabet.value}:${selected.value?.membership_id}`, 'advance');
     try {
         const res = await ApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters` as any,
             { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning', alphabet: alphabet.value }
         );
-        if (!keepResponse()) return;
-        tracker.value = res.data?.data ?? tracker.value;
-        await loadOverview();
-        if (!keepResponse()) return;
+        save.saved();
+        if (props.fixedAlphabet && save.editor()) keepResponseFor.invalidate('open');
+        if (save.editor()) tracker.value = res.data?.data ?? tracker.value;
+        if (save.reconcile()) await loadOverview();
     } catch (e: any) {
-        if (!keepResponse()) return;
+        if (!save.editor()) {
+            Swal.fire({ icon: 'error', title: 'Error!', text: e?.response?.data?.message ?? 'That did not save. Check your connection and try again.' });
+            return;
+        }
         // The tile deliberately stays where it was — a failed write must never
         // lie about progress — but it has to SAY SO. This catch did not exist,
         // which is the defect already found and fixed on the teacher's copy of
@@ -461,8 +480,7 @@ const advance = async (drill: any) => {
         letterError.value = e?.response?.data?.message
             ?? 'That did not save. Check your connection and tap again.';
     } finally {
-        if (!keepResponse()) return;
-        marking.value = null;
+        if (save.finish()) marking.value = null;
     }
 };
 </script>

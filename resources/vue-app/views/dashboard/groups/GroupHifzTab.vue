@@ -201,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
+import { useToolResponseGuard, useToolSaveContext } from '@/composables/useToolResponseGuard';
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { hifzDayLabel } from '@/core/helpers/hifzDay';
@@ -248,6 +248,9 @@ const props = defineProps<{
 
 const keepResponseFor = useToolResponseGuard(() => props.classSubjectsEnabled === true,
     () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]));
+const saveContext = useToolSaveContext(() => props.classSubjectsEnabled === true,
+    () => JSON.stringify([props.masjidId, props.groupId]),
+    () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]), () => { loadAll(); });
 // Stores
 const hifzStore = useHifzStore();
 
@@ -347,10 +350,11 @@ const loadAll = async () => {
     loadError.value = '';
     forbidden.value = false;
     const keepResponse = keepResponseFor(() => props.groupId, 'list');
+    if (props.classSubjectsEnabled) loadProgress();
     try {
         await hifzStore.fetchEntries(props.groupId, 1, keepResponse);
         if (!keepResponse()) return;
-        await loadProgress();
+        if (!props.classSubjectsEnabled) await loadProgress();
         if (!keepResponse()) return;
     } catch (error) {
         if (!keepResponse()) return;
@@ -405,20 +409,17 @@ const openRecordModal = () => {
 const submitEntry = async () => {
     if (!canRecord.value) return;
     recording.value = true;
-    const keepResponse = keepResponseFor(() => entryForm.value.membership_id, 'submitEntry');
+    const save = saveContext(() => `${showRecordModal.value}:${entryForm.value.membership_id}`, 'submitEntry');
     try {
         await hifzStore.recordEntry(props.groupId, entryForm.value);
-        if (!keepResponse()) return;
-        showRecordModal.value = false;
-        await loadAll();
-        if (!keepResponse()) return;
+        save.saved();
+        if (save.editor()) showRecordModal.value = false;
+        if (save.reconcile()) await loadAll();
         Swal.fire({ icon: 'success', title: 'Recorded', timer: 1600, showConfirmButton: false });
     } catch (error) {
-        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to record the recitation.') });
     } finally {
-        if (!keepResponse()) return;
-        recording.value = false;
+        if (save.finish()) recording.value = false;
     }
 };
 
@@ -429,31 +430,33 @@ const submitEntry = async () => {
  * the student back — which the confirmation says out loud.
  */
 const confirmStrike = async (entry: HifzEntry) => {
-    const keepResponse = keepResponseFor(() => props.groupId, 'confirmStrike');
-    const result = await Swal.fire({
-        title: 'Strike this entry?',
-        text: entry.kind === 'sabak'
-            ? "This was a new lesson, so striking it moves the student's recorded position back. The correction is recorded against your account."
-            : 'It leaves every listing and every total at once. The correction is recorded against your account.',
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Yes, strike'
-    });
-    if (!keepResponse()) return;
-
-    if (!result.isConfirmed) return;
-
+    const save = saveContext(() => null, 'confirmStrike');
     try {
-        await hifzStore.strikeEntry(props.groupId, entry.id);
-        if (!keepResponse()) return;
-        await loadAll();
-        if (!keepResponse()) return;
-        Swal.fire({ icon: 'success', title: 'Struck', timer: 1600, showConfirmButton: false });
-    } catch (error) {
-        if (!keepResponse()) return;
-        Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to strike the entry.') });
+        const result = await Swal.fire({
+            title: 'Strike this entry?',
+            text: entry.kind === 'sabak'
+                ? "This was a new lesson, so striking it moves the student's recorded position back. The correction is recorded against your account."
+                : 'It leaves every listing and every total at once. The correction is recorded against your account.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Yes, strike'
+        });
+        if (!save.editor()) return;
+
+        if (!result.isConfirmed) return;
+
+        try {
+            await hifzStore.strikeEntry(props.groupId, entry.id);
+            save.saved();
+            if (save.reconcile()) await loadAll();
+            Swal.fire({ icon: 'success', title: 'Struck', timer: 1600, showConfirmButton: false });
+        } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to strike the entry.') });
+        }
+    } finally {
+        save.finish();
     }
 };
 
