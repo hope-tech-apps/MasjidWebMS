@@ -58,7 +58,7 @@ class ClassSubjectsController extends Controller
         $group = $this->group((int) $group_id);
         $subject = DB::transaction(function () use ($group, $request) {
             $this->lockGroup($group);
-            $fields = $request->validated();
+            $fields = $request->safe()->except('attach_saved_work');
             if (! array_key_exists('tool', $fields)) $fields['tool'] = ClassSubjectInitializer::defaultTool(SubjectKey::for($fields['name']));
             if (! array_key_exists('guide_subject', $fields)) {
                 $aliases = ClassSubjectInitializer::aliases(SubjectKey::for($fields['name']));
@@ -69,9 +69,12 @@ class ClassSubjectsController extends Controller
             $position = $position === null ? 0 : $position + 1;
             if ($position > 65535) throw ValidationException::withMessages(['name' => ['Reorder this class\'s subjects before adding another.']]);
             $this->check($group, $fields);
-            return ClassSubject::create(['group_id' => $group->id, 'position' => $position] + $fields)->fresh();
+            $subject = new ClassSubject(['group_id' => $group->id, 'position' => $position] + $fields);
+            if ($request->boolean('attach_saved_work')) $subject->saveAttachingOrphanedWork();
+            else $subject->save();
+            return $subject;
         });
-        return response()->json(['status' => 'success', 'data' => $subject], 201);
+        return response()->json(['status' => 'success', 'data' => $subject->fresh(), 'attached_saved_work' => $subject->attachedSavedWork()], 201);
     }
 
     public function update(SaveClassSubjectRequest $request, $masjid_id, $group_id, $subject_id)

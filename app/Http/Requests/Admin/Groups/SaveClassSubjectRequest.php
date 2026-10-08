@@ -19,6 +19,7 @@ class SaveClassSubjectRequest extends BaseFormRequest
         return [
             'name' => [$this->isMethod('post') ? 'required' : 'sometimes', 'required', 'string', 'max:64'],
             'guide_subject' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'attach_saved_work' => [$this->isMethod('post') ? 'sometimes' : 'prohibited', 'boolean'],
             'tool' => ['sometimes', 'nullable', Rule::in(ClassSubject::TOOLS)],
         ];
     }

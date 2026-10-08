@@ -150,6 +150,13 @@ final class ClassSubjectInitializer
             ]));
         $report = ['class' => $group->name, 'class_id' => $group->id, 'subjects_added' => count($fields ?? []),
             'assignments_mapped' => 0, 'creates' => $fields ?? [], 'assignments' => [], 'losses' => [], 'blocked' => []];
+        $work = ClassSubjectSavedWork::counts((int) $group->masjid_id, (int) $group->id);
+        $owned = $subjects->flatMap(fn ($subject) => $subject->matchingKeys())->all();
+        $report['orphaned_work'] = array_diff_key($work, array_fill_keys($owned, true));
+        foreach ($report['creates'] as &$create) {
+            $create['attaches_saved_work'] = array_intersect_key($work, array_fill_keys(self::aliases(SubjectKey::for($create['name'])), true));
+        }
+        unset($create);
         foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->orderBy('user_id')->get() as $staff) {
             $mapping = self::needsMapping($staff);
             if ($mapping) $report['assignments_mapped']++;
@@ -225,7 +232,8 @@ final class ClassSubjectInitializer
         $seeded = 0;
         if ($group->class_subjects_initialized_at === null) {
             foreach (self::startingList($group) as $position => $fields) {
-                ClassSubject::create(['masjid_id' => $group->masjid_id, 'group_id' => $group->id, 'position' => $position] + $fields);
+                // The preflight reports these attachments to names explicitly selected by setup.
+                (new ClassSubject(['masjid_id' => $group->masjid_id, 'group_id' => $group->id, 'position' => $position] + $fields))->saveAttachingOrphanedWork();
                 $seeded++;
             }
             Group::withoutTimestamps(fn () => $group->forceFill(['class_subjects_initialized_at' => now()])->save());
@@ -243,7 +251,7 @@ final class ClassSubjectInitializer
             if ($staff->class_subjects_mapped_at === null || $staff->class_subject_legacy_snapshot !== null) {
                 $fields += ['class_subject_ids' => $ids, 'class_subjects_mapped_at' => now()];
             }
-            GroupStaff::withoutTimestamps(fn () => $staff->forceFill($fields)->save());
+            GroupStaff::withoutTimestamps(fn () => $staff->resolveClassSubjectAssignment($fields));
             $mapped++;
         }
         return ['class' => $group->name, 'subjects_added' => $seeded, 'assignments_mapped' => $mapped];

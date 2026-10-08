@@ -40,7 +40,7 @@ it('pins required insert columns against the real mysql migrations', function ()
         'model_has_roles' => ['role_id', 'model_type', 'model_id'],
     ];
     foreach ($required as $table => $names) {
-        $actual = collect(DB::select('SHOW COLUMNS FROM '.$table))->filter(fn ($column) =>
+        $actual = collect(DB::select('SHOW COLUMNS FROM `'.$table.'`'))->filter(fn ($column) =>
             $column->Null === 'NO' && $column->Default === null && ! str_contains($column->Extra, 'auto_increment') && ! str_contains($column->Extra, 'GENERATED'))
             ->pluck('Field')->all();
         sort($actual); sort($names);
