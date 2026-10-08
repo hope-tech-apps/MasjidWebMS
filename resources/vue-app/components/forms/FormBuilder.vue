@@ -510,8 +510,8 @@
                                 :class="{ 'is-invalid': !!fieldIssue('settings.fee.amount') }"
                                 min="0"
                                 step="0.01"
-                                :value="draft.settings.feeAmount ?? ''"
-                                @input="draft.settings.feeAmount = toNumberOrNull(($event.target as HTMLInputElement).value); clearServerError('settings.fee.amount'); clearServerError('settings.fee')"
+                                :value="amountText('formFeeAmount', draft.settings.feeAmount)"
+                                @input="draft.settings.feeAmount = typedAmount('formFeeAmount', ($event.target as HTMLInputElement).value); clearServerError('settings.fee.amount'); clearServerError('settings.fee')"
                                 :placeholder="feeAmountOptional ? 'Optional' : 'Enter a price'"
                             />
                             <div v-if="fieldIssue('settings.fee.amount')" class="invalid-feedback d-block">
@@ -640,8 +640,8 @@
                                     :class="{ 'is-invalid': !!fieldIssue(`settings.fee.tiers.${tierIndex}.amount`) }"
                                     min="0"
                                     step="0.01"
-                                    :value="tier.amount ?? ''"
-                                    @input="tier.amount = toNumberOrNull(($event.target as HTMLInputElement).value); clearServerError(`settings.fee.tiers.${tierIndex}.amount`); clearServerError('settings.fee')"
+                                    :value="amountText(`formTierAmount${tierIndex}`, tier.amount)"
+                                    @input="tier.amount = typedAmount(`formTierAmount${tierIndex}`, ($event.target as HTMLInputElement).value); clearServerError(`settings.fee.tiers.${tierIndex}.amount`); clearServerError('settings.fee')"
                                 />
                                 <div v-if="fieldIssue(`settings.fee.tiers.${tierIndex}.amount`)" class="invalid-feedback d-block">
                                     {{ fieldIssue(`settings.fee.tiers.${tierIndex}.amount`) }}
@@ -734,8 +734,8 @@
                                     :class="{ 'is-invalid': !!fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`) }"
                                     min="0"
                                     step="0.01"
-                                    :value="tier.amount ?? ''"
-                                    @input="tier.amount = toNumberOrNull(($event.target as HTMLInputElement).value); clearCountTierErrors()"
+                                    :value="amountText(`formCountTierAmount${tierIndex}`, tier.amount)"
+                                    @input="tier.amount = typedAmount(`formCountTierAmount${tierIndex}`, ($event.target as HTMLInputElement).value); clearCountTierErrors()"
                                 />
                                 <div v-if="fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`)" class="invalid-feedback d-block">
                                     {{ fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`) }}
@@ -1869,6 +1869,27 @@ const toNumberOrNull = (value: string): number | null => {
     if (value === null || value.trim() === '') return null;
     const parsed = Number(value);
     return Number.isNaN(parsed) ? null : parsed;
+};
+
+/**
+ * A price box shows what was typed into it for as long as that still means the number held.
+ * Vue writes a bound `value` back on EVERY redraw of the screen, whatever caused it: a box
+ * bound to the number alone loses "425.0" to "425" under the cursor, and the next key makes
+ * it 4250. Kept by the box's id and not reactive: the text only ever changes with its number.
+ */
+const typedAmounts = new Map<string, string>();
+
+const amountText = (box: string, amount: number | null): string => {
+    const typed = typedAmounts.get(box);
+
+    return typed !== undefined && toNumberOrNull(typed) === amount ? typed : (amount === null ? '' : String(amount));
+};
+
+/** Remembers the box's text as typed and answers the number it means. */
+const typedAmount = (box: string, text: string): number | null => {
+    typedAmounts.set(box, text);
+
+    return toNumberOrNull(text);
 };
 
 /** The address follows the name until an admin edits the address by hand. */
@@ -3187,6 +3208,10 @@ const setChoiceSwitch = (option: FormFieldOption, key: 'perQuantity' | 'reserves
 watch(() => (choiceQuestion.value?.options ?? []).map(option => toRaw(option)), (now, before) => {
     if (now.length !== before.length || now.some((option, index) => option !== before[index])) clearChoiceErrors();
 });
+
+// A refusal of a choice's stored value (too long, priced twice) no longer describes it once
+// that value is retyped under the question.
+watch(() => (choiceQuestion.value?.options ?? []).map(option => option.value ?? '').join('\u0000'), clearChoiceErrors);
 
 /** Everything said about one choice's price: its amount first, then what the server says of the row. */
 const choicePriceIssue = (index: number): string | null =>

@@ -9351,20 +9351,26 @@ device, browser layout or production cache verification was performed.
   only unique within a section, so held by name the pricing moved to another question that passed through the key.
 - **An unfinished set of prices is still sent**, so the server refuses it. Left out, the form would save as free.
 - **A price box is bound to the text as typed, never to its number.** A number box redrawn from the number loses
-  "425.0" to "425" under the cursor and the next key makes it 4250. The same redraw existed for prices by number of
-  entries, where every keystroke replaced the list of server refusals; that list is now left alone when nothing in it
-  matches (`dropServerErrors`).
+  "425.0" to "425" under the cursor and the next key makes it 4250. This was true of every price box in the builder
+  already on production (one price, a date step, a price by number of entries), whenever the screen redrew between
+  two keys: prices by number of entries did so on every keystroke, by replacing the list of server refusals. All of
+  them now show what was typed while it still means the number held (`amountText`), and that list is left alone when
+  nothing in it matches (`dropServerErrors`).
 - **The number question goes with these prices only while one is charged per unit.** A number question left over from
   "a price for each, times a number" was otherwise sent along, and the server then stops requiring it and drops its
   answer from every registration.
 - **Charged per unit and reserves a date** are switches on each row, shown only on a form that already has that
   pricing (set up by `form:import`) or a list of dates. Before, a level removed and typed in again lost them without
   a word. Setting up a number question or a date list from nothing stays with `form:import`.
+- **Choices set aside for the school calendar belong to their question**, not to the editor on screen: editors are
+  reused by position, so after a question was moved its typed choices (and now their prices) were handed to the
+  question standing in its old place. They are the same choices, not copies, so their prices come back with them.
 - **Refusals mirrored on the screen**: no question chosen; the question removed, no longer a choice question, or not
   required; a choice with no price; a negative price; over 1,000,000; more than 20 choices; a card price under 50
   cents or not in whole cents; staff codes with this pricing; a date list no price reserves.
 - **Reviewed before shipping** by four independent readers and a sceptic for each (26 findings, all reproduced, none
-  refuted). The four that mattered: cents typed key by key saved ten times too high; the left-over number question;
+  refuted), then the fix was read by a second agent (three more: the other price boxes, the set-aside choices after a
+  move, a refusal left beside a retyped stored value). The four that mattered: cents typed key by key saved ten times too high; the left-over number question;
   switches lost through the school-calendar toggle and through remove-and-add; the pricing re-pointed by another
   question's answer key. Each has a test that fails on the reviewed commit.
 - **Not built**: a per-child price worked out from the children listed (the form still asks the family to pick its

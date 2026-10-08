@@ -438,6 +438,15 @@
     </div>
 </template>
 
+<script lang="ts">
+/**
+ * The typed choices set aside when a question takes its choices from the school calendar,
+ * kept against the QUESTION. The builder reuses an editor by its place in the section, so a
+ * list kept in the editor itself was handed to whichever question stood there after a move.
+ */
+const stashedOptionsByQuestion = new WeakMap<object, unknown[]>();
+</script>
+
 <script setup lang="ts">
 import {
     CHOICE_FIELD_TYPES,
@@ -453,7 +462,7 @@ import {
     selectionCountProblem,
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
-import { computed, ref } from 'vue';
+import { computed, ref, toRaw } from 'vue';
 
 /**
  * One question inside the form builder.
@@ -551,22 +560,21 @@ const calendarHint = computed(() => {
  * The choices themselves are kept, not copies: the form builder holds a price against each
  * choice (prices by answer), and a copy would come back with its price gone.
  */
-const stashedOptions = ref<FormFieldOption[] | null>(null);
-
 const useCalendarChoices = () => {
     if (props.field.options?.length) {
-        stashedOptions.value = props.field.options;
+        stashedOptionsByQuestion.set(toRaw(props.field), toRaw(props.field.options));
     }
     props.field.options = [];
     props.field.optionsSource = SCHOOL_MEETING_DAYS;
 };
 
 const useTypedChoices = () => {
+    const question = toRaw(props.field);
+    const stashed = stashedOptionsByQuestion.get(question) as FormFieldOption[] | undefined;
+
     delete props.field.optionsSource;
-    props.field.options = stashedOptions.value?.length
-        ? stashedOptions.value
-        : [{ value: '', label: '', detail: null }];
-    stashedOptions.value = null;
+    props.field.options = stashed?.length ? stashed : [{ value: '', label: '', detail: null }];
+    stashedOptionsByQuestion.delete(question);
 };
 
 // ---------- how many can they pick (checkboxGroup) ----------

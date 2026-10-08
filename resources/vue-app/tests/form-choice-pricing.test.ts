@@ -762,3 +762,95 @@ test('prices by answer show the currency box, and a negative amount left in anot
         assert.equal('amount' in writes[0].settings.fee, false);
     } finally { screen.unmount(); }
 });
+
+// ------------------------------------------------------------------ found by the second read of the fix, 2026-10-08
+
+test('every price box keeps what is being typed when the screen redraws for another reason', async () => {
+    // A flat price, then a date step: both were bound to their number, and any redraw wrote it back.
+    const flat = afterschool({ settings: { fee: { amount: 80, currency: 'USD' } } });
+    const one = await builder(flat);
+    try {
+        const amount = one.byId('formFeeAmount');
+        for (const typed of ['4', '42', '425', '425', '425.0']) { type(amount, typed); await flush(); }
+        // Something else on the screen changes while the box holds "425.0".
+        check(one.byId('formPaymentStaffCodes'), true); await flush();
+        assert.equal(amount.value, '425.0', 'not written back to 425, which made the next key 4250');
+
+        type(amount, '425.00'); await flush();
+        check(one.byId('formPaymentStaffCodes'), false); await flush();
+        assert.equal(amount.value, '425.00');
+        await one.save();
+        assert.equal(one.writes[0].settings.fee.amount, 425);
+    } finally { one.screen.unmount(); }
+
+    const stepped = afterschool({ settings: { fee: { amount: 140, currency: 'USD', tiers: [{ amount: 100, until: '2027-08-14', label: 'Early bird' }] } } });
+    const two = await builder(stepped);
+    try {
+        const step = two.byId('formTierAmount0');
+        for (const typed of ['1', '10', '100', '100', '100.0']) { type(step, typed); await flush(); }
+        check(two.byId('formPaymentStaffCodes'), true); await flush();
+        assert.equal(step.value, '100.0');
+    } finally { two.screen.unmount(); }
+
+    const counted = afterschool({
+        schema: { sections: [{ id: 'children', title: 'Children', repeatable: true, minEntries: 1, maxEntries: 5,
+            fields: [{ name: 'childName', label: 'Child name', type: 'text', required: true }] }] },
+        settings: { fee: { currency: 'USD', perEntryOfSection: 'children', countTiers: [{ min: 1, amount: 100, label: '1 child' }] } },
+    });
+    const three = await builder(counted);
+    try {
+        const box = three.byId('formCountTierAmount0');
+        for (const typed of ['1', '17', '170', '170', '170.0']) { type(box, typed); await flush(); }
+        check(three.byId('formPaymentStaffCodes'), true); await flush();
+        assert.equal(box.value, '170.0');
+    } finally { three.screen.unmount(); }
+});
+
+test('choices set aside for the school calendar come back to their own question, even after the questions are moved', async () => {
+    const calendar = [{ key: formTypes.SCHOOL_MEETING_DAYS, label: 'The school calendar (meeting days)', available: true }];
+    const twoQuestions = afterschool({
+        schema: { sections: [{ id: 'payment', title: 'Payment', fields: [
+            { name: 'paymentChoice', label: 'Children and payment', type: 'select', required: true,
+                options: [{ value: 'c1Month', label: '1 child: first month' }, { value: 'c1Full', label: '1 child: full payment' }] },
+            { name: 'day', label: 'Day', type: 'select', required: true, optionsSource: formTypes.SCHOOL_MEETING_DAYS },
+        ] }] },
+        settings: { fee: { currency: 'USD', byChoice: { field: 'paymentChoice', prices: [{ value: 'c1Month', amount: 150 }, { value: 'c1Full', amount: 400 }] } } },
+    });
+    const { screen, writes, rows, byId, wordings, save } = await builder(twoQuestions, null, calendar);
+    try {
+        // The pricing question takes the calendar, then is moved below "Day".
+        choose(byId('form_s0_f0_src_calendar')); await flush();
+        // [0] is the section's own Move Down; [1] is the first question's.
+        click(screen.all(n => n.tag === 'button' && n.props.title === 'Move Down')[1]); await flush();
+        assert.deepEqual(screen.all(n => n.tag === 'input' && n.props.placeholder === 'e.g. Full name').map(input => input.props.value), ['Day', 'Children and payment']);
+
+        // "Day", now first, goes back to a typed list: it must not be handed the other question's choices.
+        choose(byId('form_s0_f0_src_typed')); await flush();
+        assert.deepEqual(wordings().map(input => input.props.value), [''], '"Day" starts with one empty choice of its own');
+
+        // The pricing question, now second, gets its own choices and prices back.
+        choose(byId('form_s0_f1_src_typed')); await flush();
+        assert.deepEqual(rows(), [['1 child: first month', '150'], ['1 child: full payment', '400']]);
+
+        type(wordings()[0], 'Saturday'); await flush();
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice, { field: 'paymentChoice', prices: [{ value: 'c1Month', amount: 150 }, { value: 'c1Full', amount: 400 }] });
+        assert.deepEqual(writes[0].schema.sections[0].fields.map((f: any) => [f.name, (f.options ?? []).length]), [['day', 1], ['paymentChoice', 2]]);
+    } finally { screen.unmount(); }
+});
+
+test('a refusal of a choice\'s stored value goes when that value is retyped', async () => {
+    const refusal = { 'settings.fee.byChoice.prices.0.value': ['The stored value of this choice was refused.'] };
+    const { screen, price, save } = await builder(afterschool(), refusal);
+    try {
+        await save();
+        assert.match(String(price(0).props.class), /is-invalid/);
+
+        const storedValue = screen.all(n => n.tag === 'input' && n.value === 'c1Month')[0];
+        assert.ok(storedValue, 'the question editor shows the stored value');
+        type(storedValue, 'firstMonth'); await flush();
+
+        assert.doesNotMatch(String(price(0).props.class), /is-invalid/);
+        assert.doesNotMatch(screen.all(n => n.props['data-test'] === 'choice-prices')[0].textContent, /was refused/);
+    } finally { screen.unmount(); }
+});
