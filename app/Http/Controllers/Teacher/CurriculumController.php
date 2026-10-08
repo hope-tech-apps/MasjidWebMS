@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Teacher;
 
 use App\Models\CurriculumWeek;
 use App\Models\SchoolSubject;
+use App\Support\SchoolSettings;
 use App\Support\SubjectFence;
 use App\Support\SubjectKey;
 use Illuminate\Http\JsonResponse;
@@ -58,6 +59,7 @@ class CurriculumController extends TeacherController
         // list apply to the weeks, the cell and its siblings below: a Qur'an-only
         // teacher is never handed Arabic or Islamic Studies rows by asking for them.
         $limits = $this->limits($request);
+        $subjectsOn = SchoolSettings::classSubjects(SchoolSettings::org($masjid_id));
         $fenced = fn (?string $name): bool => SubjectFence::allows($limits, SubjectKey::for($name));
 
         $grades = CurriculumWeek::query()
@@ -124,7 +126,8 @@ class CurriculumController extends TeacherController
                     // Only the subjects a staff subject covers (Qur'an, Arabic, Islamic Studies) are
                     // fenced. Mathematics, Science and the rest belong to no staff subject, so a
                     // limited teacher still gets their integration lines.
-                    ->filter(fn (CurriculumWeek $s): bool => SubjectKey::staffKeys(SubjectKey::for($s->subject)) === [] || $fenced($s->subject))
+                    ->filter(fn (CurriculumWeek $s): bool => $subjectsOn
+                        ? $fenced($s->subject) : (SubjectKey::staffKeys(SubjectKey::for($s->subject)) === [] || $fenced($s->subject)))
                     // The school's separated Qur'an, Arabic and Islamic Studies weeks keep the
                     // surah and the specifics in the Objective, not the Focus Skill, so a
                     // sibling carries its objective when it has one. A row without one
@@ -157,6 +160,20 @@ class CurriculumController extends TeacherController
      */
     private function limits(Request $request): ?array
     {
+        if (SchoolSettings::classSubjects(SchoolSettings::org($request->route('masjid_id')))) {
+            if ($request->filled('group_id')) {
+                $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
+                abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+                return SubjectFence::limitsFor($request->user(), (int) $group->id);
+            }
+            $ids = [];
+            foreach (\App\Models\Group::whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
+                $limits = SubjectFence::limitsFor($request->user(), (int) $group->id);
+                if ($limits === null) return null;
+                $ids = [...$ids, ...($limits['class_subject_ids'] ?? [])];
+            }
+            return SubjectFence::limitsForIds($ids === [] ? [0] : array_values(array_unique($ids)));
+        }
         return $request->filled('group_id')
             ? SubjectFence::limitsFor($request->user(), (int) $request->query('group_id'))
             : null;
@@ -221,6 +238,12 @@ class CurriculumController extends TeacherController
      */
     private function subjectsFor(Request $request, ?string $grade): \Illuminate\Support\Collection
     {
+        $group = $request->filled('group_id') ? \App\Models\Group::find((int) $request->query('group_id')) : null;
+        if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+            return collect(\App\Support\ClassSubjects::fenced(\App\Support\ClassSubjects::offered($group), $this->limits($request)))
+                ->pluck('name')->values();
+        }
+
         $out = [];
 
         $guide = $grade === null

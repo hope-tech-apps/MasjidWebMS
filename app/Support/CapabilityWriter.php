@@ -48,6 +48,8 @@ final class CapabilityWriter
      */
     public static function applyAtCreation(Masjid $new, array $desired, ?int $actor): array
     {
+        if (($desired['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($new);
+
         $orgType = $new->orgType();
         $overrides = is_array($new->capability_overrides) ? $new->capability_overrides : [];
         $departures = [];
@@ -122,7 +124,7 @@ final class CapabilityWriter
      * @param  array<string, bool>  $changes  key => real PHP boolean; the request coerces strings
      * @return array{changed: list<string>, unchanged: list<string>} changed = the effective value moved; unchanged = it already had that value (stored and ledgered all the same)
      */
-    public static function apply(Masjid $org, array $changes, int $actor): array
+    public static function apply(Masjid $org, array $changes, ?int $actor): array
     {
         if ($changes === []) {
             throw new InvalidArgumentException('apply() needs at least one capability.');
@@ -153,6 +155,8 @@ final class CapabilityWriter
 
         return DB::transaction(function () use ($org, $changes, $actor, $keys) {
             $locked = Masjid::query()->whereKey($org->getKey())->lockForUpdate()->firstOrFail();
+            if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
+
             $overrides = is_array($locked->capability_overrides) ? $locked->capability_overrides : [];
             $flips = [];
 

@@ -86,18 +86,19 @@ class TeachersController extends Controller
         $seen = MembershipSeen::forOrganisation((int) $this->tenant->get());
         $groups = Group::whereIn('id', $rows->pluck('group_id')->unique())->get()->keyBy('id');
 
-        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups, $seen) {
+        $subjectsOn = $this->subjectsOn();
+        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups, $seen, $subjectsOn) {
             $user = $users->get($userId);
             if ($user === null) {
                 return null;
             }
 
             $classes = $rows->where('user_id', $userId)
-                ->map(function (GroupStaff $r) use ($groups) {
+                ->map(function (GroupStaff $r) use ($groups, $subjectsOn) {
                     $g = $groups->get($r->group_id);
 
                     // null = every subject; see GroupStaff::SUBJECTS.
-                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null];
+                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? ['class_subject_ids' => $r->class_subject_ids ?: null] : []);
                 })
                 ->filter()
                 ->values();
@@ -359,7 +360,7 @@ class TeachersController extends Controller
                 'role' => GroupStaff::ROLE_TEACHER,
                 'subjects' => $request->subjectsFor((int) $group->id),
                 'assigned_at' => now(),
-            ]);
+            ] + $request->subjectAssignmentFields($group));
         }
     }
 
@@ -437,7 +438,7 @@ class TeachersController extends Controller
                 // silently widen a Sunday School teacher back to every subject.
                 'class_subjects' => $assignments
                     ->mapWithKeys(fn (GroupStaff $r) => [(int) $r->group_id => $r->subjects ?: null]),
-            ],
+            ] + $this->assignmentMap($assignments),
             'meta' => [
                 'subjects' => collect(GroupStaff::SUBJECTS)
                     ->map(fn (string $s) => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s]])
@@ -521,13 +522,21 @@ class TeachersController extends Controller
                     'role' => GroupStaff::ROLE_TEACHER,
                     'subjects' => $subjects,
                     'assigned_at' => now(),
-                ]);
+                ] + $request->subjectAssignmentFields($group));
             }
 
             // A class the teacher ALREADY leads keeps its row, and may have its
             // subjects changed — only when the request speaks about it, so a
             // client that never sends `class_subjects` leaves every existing
             // assignment exactly as it was.
+            if ($request->has('class_subject_ids')) {
+                foreach ($classes->whereIn('id', array_intersect($classIds, $current)) as $group) {
+                    if (! array_key_exists($group->id, $request->validated('class_subject_ids'))) continue;
+                    $row = GroupStaff::where('user_id', $user->id)->where('group_id', $group->id)->firstOrFail();
+                    $row->forceFill($request->subjectAssignmentFields($group))->save();
+                }
+            }
+
             if ($request->has('class_subjects')) {
                 foreach (array_intersect($classIds, $current) as $keptId) {
                     $subjects = $request->subjectsFor((int) $keptId);
@@ -540,6 +549,11 @@ class TeachersController extends Controller
                         // pivot model (->using(GroupStaff)) and must NOT encode,
                         // or the list is stored twice and read back as a string.
                         ->update(['subjects' => $subjects === null ? null : json_encode(array_values($subjects))]);
+                    $group = $classes->firstWhere('id', $keptId);
+                    if (! $request->has('class_subject_ids')) {
+                        $row = GroupStaff::where('user_id', $user->id)->where('group_id', $keptId)->firstOrFail();
+                        $row->forceFill($request->subjectAssignmentFields($group))->save();
+                    }
                 }
             }
         });
@@ -711,7 +725,7 @@ class TeachersController extends Controller
         return GroupStaff::query()
             ->where('user_id', $user->id)
             ->whereIn('group_id', Group::query()->select('id'))
-            ->get(['group_id', 'subjects']);
+            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at']);
     }
 
     /** The ids of the LIVE classes this teacher leads in the bound school. */
@@ -752,10 +766,11 @@ class TeachersController extends Controller
         // What was actually stored, read back — not what the request asked for,
         // so the screen shows the assignment as it now is. group_staff is
         // tenant-scoped: these are THIS school's rows.
-        $subjects = GroupStaff::query()
+        $subjectsOn = $this->subjectsOn();
+        $rows = GroupStaff::query()
             ->where('user_id', $userId)
-            ->get(['group_id', 'subjects'])
-            ->mapWithKeys(fn (GroupStaff $r) => [(int) $r->group_id => $r->subjects ?: null]);
+            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at'])
+            ->keyBy('group_id');
 
         return [
             'id' => $userId,
@@ -764,8 +779,19 @@ class TeachersController extends Controller
             'classes' => $classes->map(fn (Group $g) => [
                 'id' => (int) $g->id,
                 'name' => $g->name,
-                'subjects' => $subjects->get((int) $g->id),
-            ])->values(),
+                'subjects' => $rows->get((int) $g->id)?->subjects ?: null,
+            ] + ($subjectsOn ? ['class_subject_ids' => $rows->get((int) $g->id)?->class_subject_ids ?: null] : []))->values(),
         ];
     }
+
+    private function subjectsOn(): bool
+    {
+        return \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($this->tenant->get()));
+    }
+
+    private function assignmentMap($rows): array
+    {
+        return $this->subjectsOn() ? ['class_subject_ids' => $rows->mapWithKeys(fn ($r) => [(int) $r->group_id => $r->class_subject_ids ?: null])] : [];
+    }
+
 }

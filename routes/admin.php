@@ -1082,6 +1082,19 @@ Route::prefix('admin')->group(function () {
                 // reads, `manage contacts` writes, like the class list beside it,
                 // and no permission is minted. Work keeps a SNAPSHOT of the
                 // subject's name, so no edit here moves a mark.
+                Route::prefix('{masjid_id}/groups/{group_id}/subjects')
+                    ->middleware('capability:class_subjects')
+                    ->controller(\App\Http\Controllers\AdminDashboard\ClassSubjectsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::get('/{subject_id}', 'show')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::put('/reorder', 'reorder')->middleware('permission:manage contacts');
+                        Route::put('/{subject_id}/restore', 'restore')->middleware('permission:manage contacts');
+                        Route::put('/{subject_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{subject_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
                 Route::prefix('{masjid_id}/school-subjects')
                     ->controller(\App\Http\Controllers\AdminDashboard\SchoolSubjectsController::class)
                     ->group(function () {

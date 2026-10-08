@@ -47,12 +47,17 @@ final class SubjectFence
      * What `$user` is limited to in `$groupId`: a list of staff subjects, or NULL
      * for everything.
      *
-     * @return list<string>|null
+     * @return list<string>|array{class_subject_ids:list<int>,keys:list<string>}|null
      */
     public static function limitsFor(?User $user, int $groupId): ?array
     {
         if ($user === null || $user->type !== 'Teacher') {
             return null;
+        }
+
+        $group = \App\Models\Group::find($groupId);
+        if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+            return self::limitsForIds(self::assignedIds($groupId, (int) $user->getKey()));
         }
 
         return self::assigned($groupId, (int) $user->getKey());
@@ -79,6 +84,34 @@ final class SubjectFence
         return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
     }
 
+    /** NULL/empty means all only after a successful mapping. An unmapped row fails closed. */
+    public static function assignedIds(int $groupId, int $userId): ?array
+    {
+        $row = GroupStaff::where('group_id', $groupId)->where('user_id', $userId)->first();
+        if ($row === null || $row->class_subjects_mapped_at === null) return [0];
+        return $row->class_subject_ids === null || $row->class_subject_ids === []
+            ? null : array_map('intval', $row->class_subject_ids);
+    }
+
+    /** Resolve once per fence, never once per assignment, plan or curriculum row. */
+    public static function limitsForIds(?array $ids): ?array
+    {
+        if ($ids === null) return null;
+        $keys = \App\Models\ClassSubject::whereIn('id', $ids)->get()
+            ->flatMap(fn ($s) => $s->matchingKeys())->unique()->values()->all();
+        return ['class_subject_ids' => $ids, 'keys' => $keys];
+    }
+
+    /** Fields are additive: the legacy `my_subjects` still describes legacy assignments. */
+    public static function payload(\App\Models\Group $group, ?User $user): array
+    {
+        if (! $group->teachesStudents() || ! SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) return [];
+        $ids = $user?->type === 'Teacher' ? self::assignedIds((int) $group->id, (int) $user->id) : null;
+        $subjects = \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')
+            ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->orderBy('position')->orderBy('id')->get();
+        return ['class_subjects_enabled' => true, 'class_subjects' => $subjects, 'my_class_subject_ids' => $ids];
+    }
+
     /**
      * May `$user` change how much each type of work counts in `$groupId`?
      *
@@ -99,6 +132,10 @@ final class SubjectFence
             return true;
         }
 
+        if (array_key_exists('class_subject_ids', $limits)) {
+            return in_array((string) $subjectKey, self::allowedKeys($limits), true);
+        }
+
         return array_intersect(SubjectKey::staffKeys((string) $subjectKey), $limits) !== [];
     }
 
@@ -110,7 +147,11 @@ final class SubjectFence
      */
     public static function allowedKeys(?array $limits): ?array
     {
-        return $limits === null ? null : SubjectKey::keysFor($limits);
+        if ($limits === null) return null;
+        if (array_key_exists('class_subject_ids', $limits)) {
+            return $limits['keys'];
+        }
+        return SubjectKey::keysFor($limits);
     }
 
     /**

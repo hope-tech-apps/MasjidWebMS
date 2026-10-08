@@ -436,6 +436,11 @@ return [
     | unconditionally because it exists to FORCE a state, not to mask a value.
     */
     'anonymise' => [
+        'class_subjects' => [
+            'name' => 'label:Subject',
+            'name_key' => 'label:subject',
+            'previous_name_keys' => 'json_replace',
+        ],
 
         'users' => [
             'name' => 'label:Admin',   // "Admin 12" — a staging admin is identified by their email, not their name
@@ -687,6 +692,8 @@ return [
         'meal_menus.notes' => 'Operational notes on a public menu ("collect at the side door"). Kept because the pickup flow reads it; if a tenant is ever found using it for customer names, move it to `anonymise` with `free_text`.',
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',
         'sections.content' => 'JSON page content an admin composed for the public website. Kept so staging renders real pages; the inventory flags it for a spot-check rather than a blanket scrub because it is publication copy.',
+        'class_subjects.guide_subject' => 'Chosen from the organisation’s distinct curriculum subject names, never typed freely.',
+        'class_subjects.tool' => 'One of the three fixed tool keys, never personal text.',
         'school_subjects.name' => 'A subject on the school\'s own list ("Qur\'an", "Mathematics"), typed by the office and offered to teachers. A category of work, not a person. UNIQUE(masjid_id, name_key).',
         'school_subjects.name_key' => 'The same name lower-cased with apostrophes dropped, for the per-school unique index. Derived from school_subjects.name on every save.',
         'lesson_plans.body' => 'Curriculum content for a lesson, UNIQUE(group_id, session_date, subject_key). The two columns on this table that name children — reflection_worked and reflection_improve — ARE anonymised.',

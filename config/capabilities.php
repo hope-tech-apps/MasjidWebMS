@@ -229,6 +229,15 @@ return [
     // mobile /features and tv-config are not touched at all).
     // App\Support\SchoolSettings::classStore() is the reader; `capability:class_store`
     // gates every store route; `bucks:mint` and `bucks:expire` skip a school without it.
+    'class_subjects' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Class subjects',
+        'description' => 'Keep a class’s own subjects and assign teachers to them. Initialize the school before switching on.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     'class_store' => [
         'kind' => 'grant',
         'group' => 'school',

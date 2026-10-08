@@ -16,6 +16,7 @@
 export type TeacherClass = {
     id: number;
     name: string;
+    class_subject_ids?: number[] | null;
 };
 
 /** One teacher row as the admin index returns it. */
@@ -52,6 +53,7 @@ export type TeacherPayload = {
     /** The ids of the classes this teacher leads — at least one is required. */
     class_ids: number[];
     class_subjects?: ClassSubjects;
+    class_subject_ids?: Record<number, number[] | null>;
 };
 
 /**
@@ -77,6 +79,7 @@ export type TeacherDetail = {
     shared?: boolean;
     class_ids: number[];
     class_subjects?: ClassSubjects;
+    class_subject_ids?: Record<number, number[] | null>;
 };
 
 /**
@@ -91,4 +94,5 @@ export type TeacherUpdatePayload = {
     phone: string;
     class_ids: number[];
     class_subjects?: ClassSubjects;
+    class_subject_ids?: Record<number, number[] | null>;
 };

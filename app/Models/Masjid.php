@@ -496,8 +496,20 @@ class Masjid extends Model implements HasMedia
         return (bool) (self::MODULE_DEFAULTS[$key][$this->orgType()] ?? true);
     }
 
+    /** Initialization metadata is private even on the admin model response. */
+    public function attributesToArray(): array
+    {
+        $out = parent::attributesToArray();
+        if (isset($out['capability_overrides']) && is_array($out['capability_overrides'])) {
+            unset($out['capability_overrides'][\App\Support\ClassSubjectInitializer::MARKER]);
+            if (! \App\Support\SchoolSettings::classSubjects($this)) unset($out['capability_overrides']['class_subjects']);
+            if ($out['capability_overrides'] === []) $out['capability_overrides'] = null;
+        }
+        return $out;
+    }
+
     /**
-     * Every catalogue GRANT => whether this organisation has it. Rides the
+     * Every enabled class-subject grant and every other catalogue GRANT rides the
      * ADMIN payload only (ADMIN_APPENDS), where the SPA reads it for
      * `requiresCapability` (strictly `=== true`).
      *
@@ -512,6 +524,10 @@ class Masjid extends Model implements HasMedia
 
         foreach (config('capabilities', []) as $key => $definition) {
             if (is_array($definition) && ($definition['kind'] ?? null) === 'module') {
+                continue;
+            }
+
+            if ($key === 'class_subjects' && ! \App\Support\SchoolSettings::classSubjects($this)) {
                 continue;
             }
 

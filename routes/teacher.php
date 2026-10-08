@@ -161,6 +161,11 @@ Route::prefix('teacher')
                         // (owner, 2026-09-21: "only access specific to the
                         // subject they're teaching"). An assignment with no
                         // subjects recorded teaches everything, as before.
+                        Route::middleware('capability:class_subjects')->group(function () {
+                            Route::get('/subjects', [\App\Http\Controllers\AdminDashboard\ClassSubjectsController::class, 'index']);
+                            Route::get('/subjects/{subject_id}', [\App\Http\Controllers\AdminDashboard\ClassSubjectsController::class, 'show']);
+                        });
+
                         Route::middleware('teacher.teaches:arabic')->group(function () {
                         // Arabic letters (reused; fenced by teacher.leads).
                         Route::get('/letters', [ArabicLettersController::class, 'index']);

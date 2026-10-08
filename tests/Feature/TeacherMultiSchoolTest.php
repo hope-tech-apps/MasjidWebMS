@@ -402,6 +402,10 @@ class TeacherMultiSchoolTest extends TestCase
         // that route and the hand-out are swept and not skipped (W6, T-003.4).
         foreach ([$this->schoolA, $this->schoolB] as $school) {
             $school->forceFill(['capability_overrides' => ['class_store' => true]])->save();
+            foreach (["Qur'an", 'Arabic', 'ELA'] as $name) {
+                \App\Models\SchoolSubject::withoutMasjidScope()->create(['masjid_id' => $school->id, 'name' => $name]);
+            }
+            \App\Support\ClassSubjectInitializer::run($school, false, true);
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 

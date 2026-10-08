@@ -66,6 +66,7 @@ final class TeacherRealmWorld
     public ArabicDailyNote $note;
     public LessonPlan $plan;
     public ClassAssignment $assignment;
+    public \App\Models\ClassSubject $subject;
     public ReportCard $card;
     public ReportCardMark $mark;
     public GroupResource $resource;
@@ -92,6 +93,7 @@ final class TeacherRealmWorld
         $w->tag = $tag;
         $w->led = $led;
         $w->skill = $skill;
+        $w->subject = \App\Models\ClassSubject::where('group_id', $class->id)->firstOrFail();
 
         $masjid = (int) $school->id;
         $group = (int) $class->id;
@@ -229,6 +231,7 @@ final class TeacherRealmWorld
             'award_id' => (string) $this->award->id,
             'plan_id' => (string) $this->plan->id,
             'assignment_id' => (string) $this->assignment->id,
+            'subject_id' => (string) $this->subject->id,
             'resource_id' => (string) $this->resource->id,
             // `entry_id` is a Hifdh entry, except under /prize-entries/ where it is a ledger row.
             'entry_id' => str_contains($uri, '/prize-entries/')

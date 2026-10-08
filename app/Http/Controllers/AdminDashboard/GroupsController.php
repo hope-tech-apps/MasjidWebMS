@@ -112,16 +112,18 @@ class GroupsController extends Controller
             return [];
         }
 
+        $subjectsOn = \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org(app(TenantContext::class)->get()));
+
         return GroupStaff::query()
             ->join('users', 'users.id', '=', 'group_staff.user_id')
             ->whereNull('users.deleted_at')
             ->where('group_staff.role', GroupStaff::ROLE_TEACHER)
             ->whereIn('group_staff.group_id', $groupIds)
-            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'users.name'])
+            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'group_staff.class_subject_ids', 'group_staff.class_subjects_mapped_at', 'users.name'])
             ->sort(fn (GroupStaff $a, GroupStaff $b) => strcmp(mb_strtolower((string) $a->name), mb_strtolower((string) $b->name))
                 ?: (int) $a->user_id <=> (int) $b->user_id)
             ->groupBy(fn (GroupStaff $row) => (int) $row->group_id)
-            ->map(fn ($rows) => $rows->map(function (GroupStaff $row): array {
+            ->map(fn ($rows) => $rows->map(function (GroupStaff $row) use ($subjectsOn): array {
                 $subjects = $row->subjects ?: null;
 
                 return [
@@ -131,7 +133,8 @@ class GroupsController extends Controller
                         fn (string $s): array => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s] ?? $s],
                         [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
                     ),
-                ];
+                ] + ($subjectsOn
+                    ? ['class_subject_ids' => $row->class_subject_ids ?: null] : []);
             })->values()->all())
             ->all();
     }
@@ -144,7 +147,7 @@ class GroupsController extends Controller
     public function store(StoreGroupRequest $request, $masjid_id)
     {
         try {
-            $group = Group::create($request->validated());
+            $group = \Illuminate\Support\Facades\DB::transaction(fn () => Group::create($request->validated()));
 
             return response()->json([
                 'status' => 'success',
@@ -178,6 +181,8 @@ class GroupsController extends Controller
         $group->setAttribute('unread_messages', $readable === null
             ? 0
             : (GroupThreadUnread::byGroup((int) $user->id, [(int) $group->id], $readable)[(int) $group->id] ?? 0));
+
+        foreach (\App\Support\SubjectFence::payload($group, $request->user()) as $key => $value) $group->setAttribute($key, $value);
 
         return response()->json([
             'status' => 'success',
