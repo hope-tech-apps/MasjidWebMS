@@ -43,11 +43,6 @@ class EnsureTeacherTeachesSubject
 
     private function handleWithClassSubjects(Request $request, Closure $next, string $subject): Response
     {
-        $assignment = GroupStaff::query()
-            ->where('group_id', (int) $request->route('group_id'))
-            ->where('user_id', $request->user()?->getAuthIdentifier())
-            ->first();
-
         $group = \App\Models\Group::find((int) $request->route('group_id'));
         if ($group === null) return response()->json(['status' => 'error', 'message' => 'You do not teach the subject holding this tool in this class.'], 403);
         if ($group !== null && \App\Support\SubjectFence::usesClassSubjects($group)) {
@@ -60,18 +55,12 @@ class EnsureTeacherTeachesSubject
             }
             $holder = \App\Models\ClassSubject::where('group_id', $group->id)->where('tool', $tool)->first();
             $ids = \App\Support\SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
-            if ($holder === null || ($ids !== null && ! in_array((int) $holder->id, $ids, true))) {
+            if ($holder === null || ! \App\Support\SubjectFence::allowsWork($ids === null ? null : ['class_subject_ids' => $ids], (int) $holder->id)) {
                 return response()->json(['status' => 'error', 'message' => 'You do not teach the subject holding this tool in this class.'], 403);
             }
             return $next($request);
         }
 
-        // No row is impossible after `teacher.leads`; refuse rather than assume.
-        if ($assignment === null || ! $assignment->teaches($subject)) {
-            abort(Response::HTTP_FORBIDDEN, 'You do not teach '
-                .(GroupStaff::SUBJECT_LABELS[$subject] ?? $subject).' in this class.');
-        }
-
-        return $next($request);
+        return response()->json(['status' => 'error', 'message' => 'This class has no subject holding this tool.'], 403);
     }
 }

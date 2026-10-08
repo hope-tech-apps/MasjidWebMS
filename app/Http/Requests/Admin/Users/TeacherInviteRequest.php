@@ -106,17 +106,8 @@ class TeacherInviteRequest extends BaseFormRequest
             // plain exists rule cannot see the tenant scope).
             'class_ids' => ['required', 'array', 'min:1'],
             'class_ids.*' => ['integer'],
-            // Which subjects the teacher teaches in each class, keyed by class id
-            // (owner, 2026-09-21). OPTIONAL, and a class left out — or given an
-            // empty list — teaches everything, which is what every full-time
-            // teacher is and what every assignment before this was.
-            'class_subjects' => ['sometimes', 'array'],
-            // NULL is "every subject", and it is what GET hands the screen for such a
-            // class and what the screen sends back (and sends when every box is
-            // unticked). Without `nullable` that null was refused as "not an array",
-            // so a teacher with one all-subjects class could not be saved at all.
-            'class_subjects.*' => ['nullable', 'array'],
-            'class_subjects.*.*' => ['string', \Illuminate\Validation\Rule::in(\App\Models\GroupStaff::SUBJECTS)],
+            'class_subjects' => ['missing'],
+            'class_subject_resolutions' => ['missing'],
         ] + $this->classSubjectRules();
     }
 }

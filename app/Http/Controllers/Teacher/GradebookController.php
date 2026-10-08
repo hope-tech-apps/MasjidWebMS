@@ -135,7 +135,7 @@ class GradebookController extends TeacherController
         $assignments = $group->assignments()
             ->withCount('scores')
             // The subject fence: a limited teacher lists only their own subjects.
-            ->when($limits !== null, fn ($q) => $q->whereIn('subject_key', SubjectFence::allowedKeys($limits)))
+            ->when($limits !== null, fn ($q) => SubjectFence::scopeWork($q, $limits))
             ->orderByDesc('assigned_on')
             ->orderByDesc('id')
             ->get();
@@ -321,12 +321,31 @@ class GradebookController extends TeacherController
      */
     public function destroy(Request $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->destroyWithClassSubjects($request, $masjid_id, $group_id, $assignment_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $assignment = $this->work($group, $assignment_id, $this->limits($group));
 
         $assignment->delete();
 
         return response()->json(['status' => 'success', 'data' => ['id' => (int) $assignment->id]], Response::HTTP_OK);
+    }
+
+    private function destroyWithClassSubjects(Request $request, $masjid_id, $group_id, $assignment_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id, $assignment_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+
+        $group = Group::findOrFail($group_id);
+        $assignment = $this->work($group, $assignment_id, $this->limits($group));
+
+        $assignment->delete();
+
+        return response()->json(['status' => 'success', 'data' => ['id' => (int) $assignment->id]], Response::HTTP_OK);
+            });
     }
 
     /**
@@ -336,6 +355,10 @@ class GradebookController extends TeacherController
      */
     public function saveScores(SaveAssignmentScoresRequest $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->saveScoresWithClassSubjects($request, $masjid_id, $group_id, $assignment_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $assignment = $this->work($group, $assignment_id, $this->limits($group));
 
@@ -452,6 +475,129 @@ class GradebookController extends TeacherController
         return $this->show($request, $masjid_id, $group_id, $assignment_id);
     }
 
+    private function saveScoresWithClassSubjects(SaveAssignmentScoresRequest $request, $masjid_id, $group_id, $assignment_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id, $assignment_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+
+        $group = Group::findOrFail($group_id);
+        $assignment = $this->work($group, $assignment_id, $this->limits($group));
+
+        $allowed = $group->memberships()->participants()->current()->pluck('id');
+        $rows = collect($request->validated('scores'));
+
+        $unknown = $rows->pluck('membership_id')->map(fn ($id) => (int) $id)->diff($allowed);
+
+        if ($unknown->isNotEmpty()) {
+            // Same distinction the register makes: a departed child is a stale
+            // page, not a typo.
+            $left = $group->memberships()->participants()->withdrawn()->pluck('id');
+
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['scores' => [
+                    $unknown->intersect($left)->isNotEmpty()
+                        ? 'That gradebook names a child who has left the class — reload it and save the rest.'
+                        : 'That gradebook names someone who is not a student in this class.',
+                ]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // The ceiling. The FormRequest cannot check this — it cannot see the
+        // assignment without a query.
+        $over = $rows->filter(fn ($r) => ($r['points_earned'] ?? null) !== null
+            && (float) $r['points_earned'] > (float) $assignment->points_possible);
+
+        if ($over->isNotEmpty()) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['scores' => [
+                    'A mark is higher than this work is out of (' . $assignment->points_possible . ').',
+                ]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // A LEVEL IS ONE OF FOUR WHOLE NUMBERS, not a point score that happens
+        // to land in range. The ceiling check above already refuses a 5, but it
+        // would happily accept 2.5 or 0 — and "2.5 Approaching-and-a-half" is not
+        // a thing the school's scale can express, while 0 is not a level at all
+        // (a child who did not hand the work in is `missing`, which is a status).
+        // Same reason this lives here rather than in the FormRequest: the rule
+        // depends on the assignment's scale, which the request cannot see.
+        if ($assignment->usesLevels()) {
+            $notALevel = $rows->filter(fn ($r) => ($r['points_earned'] ?? null) !== null
+                && ! PerformanceLevel::isValid($r['points_earned']));
+
+            if ($notALevel->isNotEmpty()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['scores' => [
+                        'This work is marked on performance levels, so each mark must be one of: '
+                        . implode(', ', array_reverse(PerformanceLevel::ALL)) . '.',
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        // The same for Excellent / Good / Needs work: one of three stored codes,
+        // never a 2.5 or a 0. The ceiling check has already refused a 4.
+        if ($assignment->usesSimpleMarks()) {
+            $notAMark = $rows->filter(fn ($r) => ($r['points_earned'] ?? null) !== null
+                && ! SimpleMark::isValid($r['points_earned']));
+
+            if ($notAMark->isNotEmpty()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['scores' => [
+                        'This work is marked Excellent, Good or Needs work, so each mark must be one of those.',
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        // Which children's marks actually MOVED. One Save writes the whole class,
+        // so notifying on every row would mail six families every time a teacher
+        // corrected one typo.
+        $moved = [];
+
+        DB::transaction(function () use ($rows, $assignment, $group, &$moved) {
+            foreach ($rows as $row) {
+                $membershipId = (int) $row['membership_id'];
+                $points = $row['status'] === AssignmentScore::STATUS_SCORED
+                    ? $row['points_earned']
+                    : null;
+
+                $score = AssignmentScore::firstOrNew([
+                    'class_assignment_id' => $assignment->id,
+                    'group_membership_id' => $membershipId,
+                ]);
+
+                $unchanged = $score->exists
+                    && $score->status === $row['status']
+                    && $this->samePoints($score->points_earned, $points);
+
+                $score->fill([
+                    'masjid_id' => $group->masjid_id,
+                    'group_id' => $group->id,
+                    'status' => $row['status'],
+                    'points_earned' => $points,
+                    'note' => $row['note'] ?? null,
+                    'scored_by_user_id' => Auth::id(),
+                ])->save();
+
+                if (! $unchanged) {
+                    $moved[] = $membershipId;
+                }
+            }
+        });
+
+        $this->announceMarks($group, $moved);
+
+        return $this->show($request, $masjid_id, $group_id, $assignment_id);
+            });
+    }
+
     /**
      * One child's marks across the term.
      *
@@ -465,6 +611,10 @@ class GradebookController extends TeacherController
      */
     public function forMember(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->forMemberWithClassSubjects($request, $masjid_id, $group_id, $membership_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
@@ -488,6 +638,67 @@ class GradebookController extends TeacherController
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
             ->when($subjectKeys !== null, fn ($q) => $q->whereIn('class_assignments.subject_key', $subjectKeys))
+            ->orderByDesc('class_assignments.assigned_on')
+            ->orderByDesc('class_assignments.id')
+            ->select('assignment_scores.*')
+            ->with('assignment')
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'student' => $this->student($membership),
+                // Aggregated over the whole term, never over the page below.
+                'summary' => $summary,
+                // TRUE when the summary above counts only the subjects this
+                // teacher teaches in the class. The family and the office read
+                // every subject, so the screen must say the two can differ.
+                'fenced' => $subjectKeys !== null,
+                // THE KEY, served with the data rather than hardcoded on each
+                // screen, so "what does a 3 mean?" is answerable everywhere in
+                // the school's own words. See App\Support\PerformanceLevel.
+                'performance_levels' => PerformanceLevel::key(),
+                'simple_marks' => SimpleMark::key(),
+                'scores' => $scores->map(fn (AssignmentScore $s): array => [
+                    'assignment' => $s->assignment ? $this->assignment($s->assignment) : null,
+                    'status' => $s->status,
+                    'points_earned' => $s->points_earned !== null ? (float) $s->points_earned : null,
+                    'mark_label' => $s->assignment ? $this->markLabel($s->assignment, $s) : null,
+                    'note' => $s->note,
+                ])->values(),
+                'scores_shown' => $scores->count(),
+                'scores_truncated' => $summary['recorded'] > $scores->count(),
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    public function forMemberWithClassSubjects(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
+
+        // THE ARITHMETIC IS App\Support\GradeRecord, the one copy the family's
+        // endpoint calls too: aggregated in SQL over EVERY mark (it used to come
+        // from an unordered `limit(200)`), withdrawn work joined out, the two
+        // scales never added together, a levels mark never a percentage.
+        //
+        // THE SUBJECT FENCE reaches the summary and the list alike: a limited
+        // teacher's picture of a child is arithmetically incapable of containing
+        // a mark in a subject they do not teach.
+        $limits = $this->limits($group);
+        $subjectKeys = $limits === null ? null : $limits['class_subject_ids'];
+        $summary = GradeRecord::summaryForClassSubjects((int) $membership->id, $subjectKeys);
+
+        // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
+        // "the most recent N" rather than whichever rows the database returned.
+        $limit = (int) config('groups.records_page_size', 200);
+
+        $scores = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membership->id)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->when($subjectKeys !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectKeys))
             ->orderByDesc('class_assignments.assigned_on')
             ->orderByDesc('class_assignments.id')
             ->select('assignment_scores.*')
@@ -582,6 +793,10 @@ class GradebookController extends TeacherController
 
     private function assignment(ClassAssignment $a): array
     {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->assignmentWithClassSubjects($a);
+        }
+
         return [
             'id' => (int) $a->id,
             'title' => $a->title,
@@ -591,6 +806,31 @@ class GradebookController extends TeacherController
             // What the work is FOR. Snapshots: null on work set before they
             // existed, which is shown as blank and never guessed.
             'subject' => $a->subject,
+            'type' => $a->type,
+            'type_label' => $a->type !== null ? (ClassAssignment::TYPE_LABELS[$a->type] ?? null) : null,
+            // The piece's OWN override; the class's weight for its type is in
+            // the index payload's `weights`. NULL means "inherit".
+            'weight' => $a->weight !== null ? (int) $a->weight : null,
+            // The school's guide's words, labelled as such on every screen: the
+            // guide carries codes and weekly focus, not the standard's wording.
+            'standard_code' => $a->standard_code,
+            'curriculum_focus' => $a->curriculum_focus,
+            'curriculum_week_no' => $a->curriculum_week_no !== null ? (int) $a->curriculum_week_no : null,
+        ];
+    }
+
+    private function assignmentWithClassSubjects(ClassAssignment $a): array
+    {
+        return [
+            'id' => (int) $a->id,
+            'title' => $a->title,
+            'points_possible' => (int) $a->points_possible,
+            'scale' => $a->scale,
+            'assigned_on' => $a->assigned_on->toDateString(),
+            // What the work is FOR. Snapshots: null on work set before they
+            // existed, which is shown as blank and never guessed.
+            'subject' => $a->subject,
+            'class_subject_id' => $a->class_subject_id,
             'type' => $a->type,
             'type_label' => $a->type !== null ? (ClassAssignment::TYPE_LABELS[$a->type] ?? null) : null,
             // The piece's OWN override; the class's weight for its type is in
@@ -635,6 +875,10 @@ class GradebookController extends TeacherController
      */
     public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->saveWeightsWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
 
         if (! SubjectFence::mayWeighClass(Auth::user(), (int) $group->id)) {
@@ -654,6 +898,34 @@ class GradebookController extends TeacherController
                 Auth::id(),
             ),
         ], Response::HTTP_OK);
+    }
+
+    private function saveWeightsWithClassSubjects(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+
+        $group = Group::findOrFail($group_id);
+
+        if (! SubjectFence::mayWeighClass(Auth::user(), (int) $group->id)) {
+            abort(
+                Response::HTTP_FORBIDDEN,
+                "The class's weights decide how much each type of work counts in every subject's average, "
+                .'so only a teacher of all the subjects in this class, or the office, can change them.'
+            );
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => app(ClassGradeWeightsService::class)->save(
+                $group,
+                $request->boolean('clear'),
+                (array) $request->validated('weights'),
+                Auth::id(),
+            ),
+        ], Response::HTTP_OK);
+            });
     }
 
     // ---------------------------------------------------------------- the fence
@@ -678,9 +950,27 @@ class GradebookController extends TeacherController
      */
     private function work(Group $group, $assignmentId, ?array $limits): ClassAssignment
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+            return $this->workWithClassSubjects($group, $assignmentId, $limits);
+        }
+
         $assignment = $group->assignments()->findOrFail($assignmentId);
 
         if (! SubjectFence::allows($limits, $assignment->subject_key)) {
+            // The exception `findOrFail` above throws for an id that names nothing, not a bare
+            // abort(404): with debug on the body carries the model and the id, and a bare abort
+            // would answer differently to a missing id (review G3).
+            throw (new ModelNotFoundException())->setModel(ClassAssignment::class, [$assignmentId]);
+        }
+
+        return $assignment;
+    }
+
+    private function workWithClassSubjects(Group $group, $assignmentId, ?array $limits): ClassAssignment
+    {
+        $assignment = $group->assignments()->findOrFail($assignmentId);
+
+        if (! SubjectFence::allowsWork($limits, $assignment->class_subject_id)) {
             // The exception `findOrFail` above throws for an id that names nothing, not a bare
             // abort(404): with debug on the body carries the model and the id, and a bare abort
             // would answer differently to a missing id (review G3).
@@ -701,6 +991,10 @@ class GradebookController extends TeacherController
      */
     private function refuseWork(Group $group, ?array $limits, array &$data, ?ClassAssignment $existing): ?JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+            return $this->refuseWorkWithClassSubjects($group, $limits, $data, $existing);
+        }
+
         $subjectSent = array_key_exists('subject', $data);
         // The subject the work will have AFTER this write.
         $subject = $subjectSent ? $data['subject'] : $existing?->subject;
@@ -725,6 +1019,16 @@ class GradebookController extends TeacherController
             return $this->failed('subject', "That subject is not on this school's list. Choose one from the list.");
         }
 
+        // A weight override only means something against a weighted class.
+        if (($data['weight'] ?? null) !== null && ClassGradeWeight::forGroup((int) $group->id) === []) {
+            return $this->failed('weight', "Set this class's weights first, then you can change the weight of one piece of work.");
+        }
+
+        return $this->refuseStandard($data, $existing);
+    }
+
+    private function refuseWorkWithClassSubjects(Group $group, ?array $limits, array &$data, ?ClassAssignment $existing): ?JsonResponse
+    {
         // A weight override only means something against a weighted class.
         if (($data['weight'] ?? null) !== null && ClassGradeWeight::forGroup((int) $group->id) === []) {
             return $this->failed('weight', "Set this class's weights first, then you can change the weight of one piece of work.");

@@ -24,8 +24,8 @@ it('declares the subject primary key, column types and short named unique indexe
     }
 });
 
-it('rolls four empty additive migrations down and up on SQLite', function () {
-    $files = glob(database_path('migrations/2026_10_08_000[1234]00_*'));
+it('rolls six empty additive migrations down and up on SQLite', function () {
+    $files = glob(database_path('migrations/2026_10_08_000[123456]00_*'));
     foreach (array_reverse($files) as $file) (require $file)->down();
     expect(Schema::hasTable('class_subjects'))->toBeFalse();
     expect(Schema::hasColumn('groups', 'subject_seed_grades'))->toBeFalse();
@@ -50,4 +50,6 @@ it('refuses every down with populated feature data', function (string $migration
     ['2026_10_08_000200_add_class_subject_initialization_to_groups', 'groups', ['subject_seed_grades' => '["1st"]']],
     ['2026_10_08_000300_add_class_subject_assignments_to_group_staff', 'group_staff', ['class_subject_ids' => '[1]']],
     ['2026_10_08_000400_add_class_subject_legacy_snapshot_to_group_staff', 'group_staff', ['class_subject_legacy_snapshot' => '["arabic"]']],
+    ['2026_10_08_000500_link_saved_work_to_class_subjects', 'group_staff', ['class_subjects_translated_from' => '[]']],
+    ['2026_10_08_000600_add_class_subject_activation_provenance', 'groups', ['class_subjects_initialized_at' => '2026-10-08 12:00:00']],
 ]);

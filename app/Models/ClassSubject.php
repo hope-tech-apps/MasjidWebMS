@@ -23,7 +23,7 @@ class ClassSubject extends Model
     private bool $attachOrphanedSavedWork = false;
     private array $attachedSavedWork = [];
 
-    /** Explicit office addition or reported setup seed, never an existing subject's rename. */
+    /** Explicit office addition, never an automatic seed or rename attachment. */
     public function saveAttachingOrphanedWork(): bool
     {
         $this->attachOrphanedSavedWork = true;
@@ -39,35 +39,44 @@ class ClassSubject extends Model
         return $this->attachedSavedWork;
     }
 
-    protected static function booted(): void
+    public function save(array $options = [])
     {
-        static::saving(function (self $row): void {
-            $row->name = (string) SubjectKey::clean($row->name);
-            $key = SubjectKey::for($row->name);
-            $previous = $row->previous_name_keys ?? [];
-            if ($key === '' || ! is_array($previous) || ! array_is_list($previous)
-                || array_filter($previous, fn ($name) => ! is_string($name) || SubjectKey::for($name) === '') !== []) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['name' => ['Choose a subject name and non-empty previous names.']]);
+        $group = \App\Models\Group::withTrashed()->findOrFail($this->group_id);
+        $orgId = ! $this->exists ? (app(\App\Support\TenantContext::class)->get() ?? $this->masjid_id ?? $group->masjid_id) : $this->masjid_id;
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $orgId, $group) {
+            \App\Models\Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
+            \App\Models\Group::withTrashed()->whereKey($group->id)->lockForUpdate()->firstOrFail();
+            if ((int) $orgId !== (int) $group->masjid_id) throw \Illuminate\Validation\ValidationException::withMessages(['name' => ['Choose a class in this school.']]);
+            if ($this->exists) {
+                $current = self::whereKey($this->id)->lockForUpdate()->firstOrFail();
+                if ((int) $current->group_id !== (int) $this->group_id || (int) $current->masjid_id !== (int) $orgId) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['name' => ['A class subject cannot be moved to another class or school.']]);
+                }
+                $dirty = $this->getDirty();
+                $this->setRawAttributes($current->getAttributes(), true);
+                $this->setRawAttributes(array_replace($this->getAttributes(), $dirty));
             }
-            $row->previous_name_keys = array_values(array_unique(array_map(fn ($name) => SubjectKey::for($name), $previous)));
-            if ($row->exists && $row->getOriginal('name_key') !== $key && $row->getOriginal('name_key') !== '') {
-                $row->previous_name_keys = array_values(array_unique([
-                    ...($row->previous_name_keys ?? []), (string) $row->getOriginal('name_key'),
-                ]));
+            $this->masjid_id = $orgId;
+            $this->name = (string) SubjectKey::clean($this->name);
+            $this->name_key = SubjectKey::for($this->name);
+            if ($this->name_key === '') throw \Illuminate\Validation\ValidationException::withMessages(['name' => ['Choose a subject name.']]);
+            $others = self::where('masjid_id', $orgId)->where('group_id', $group->id)->when($this->exists, fn ($q) => $q->where('id', '<>', $this->id))->get();
+            if ($others->contains(fn ($s) => array_intersect($s->matchingKeys(), $this->matchingKeys()) !== [])) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['name' => ['This class already has a subject using that name.']]);
             }
-            $row->name_key = $key;
-            $row->attachedSavedWork = \App\Support\ClassSubjectSavedWork::check($row, $row->attachOrphanedSavedWork);
+            if ($this->tool !== null && $others->contains('tool', $this->tool)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['tool' => ['Another subject in this class already holds that tool.']]);
+            }
+            $saved = parent::save($options);
+            if ($saved && $this->attachOrphanedSavedWork) $this->attachedSavedWork = \App\Support\ClassSubjectSavedWork::attach($this);
+            return $saved;
         });
     }
 
-    /** Saved work belongs to current/previous names and fixed aliases, never a guide link. */
+    /** Current name and the two fixed aliases are selection/activation keys only. */
     public function matchingKeys(): array
     {
-        $keys = array_values(array_filter([$this->name_key, ...($this->previous_name_keys ?? [])], fn ($key) => is_string($key) && $key !== ''));
-        foreach ($keys as $key) {
-            $keys = [...$keys, ...\App\Support\ClassSubjectInitializer::aliases($key)];
-        }
-        return array_values(array_unique($keys));
+        return \App\Support\ClassSubjectInitializer::aliases((string) $this->name_key);
     }
 
     public function curriculumKeys(): array

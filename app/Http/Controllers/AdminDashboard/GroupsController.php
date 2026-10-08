@@ -153,7 +153,7 @@ class GroupsController extends Controller
             ->whereNull('users.deleted_at')
             ->where('group_staff.role', GroupStaff::ROLE_TEACHER)
             ->whereIn('group_staff.group_id', $groupIds)
-            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'group_staff.class_subject_ids', 'group_staff.class_subjects_mapped_at', 'group_staff.class_subject_legacy_snapshot', 'users.name'])
+            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'group_staff.class_subject_ids', 'group_staff.class_subjects_mapped_at', 'group_staff.class_subject_ids_edited_at', 'users.name'])
             ->sort(fn (GroupStaff $a, GroupStaff $b) => strcmp(mb_strtolower((string) $a->name), mb_strtolower((string) $b->name))
                 ?: (int) $a->user_id <=> (int) $b->user_id)
             ->groupBy(fn (GroupStaff $row) => (int) $row->group_id)
@@ -168,7 +168,7 @@ class GroupsController extends Controller
                         [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
                     ),
                 ] + ($subjectsOn
-                    ? \App\Support\ClassSubjectAssignmentResolution::officeFields($row) : []);
+                    ? ['class_subject_ids' => $row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null ? [] : $row->class_subject_ids] : []);
             })->values()->all())
             ->all();
     }

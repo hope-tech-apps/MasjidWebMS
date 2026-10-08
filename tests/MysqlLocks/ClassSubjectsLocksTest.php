@@ -58,25 +58,25 @@ it('serializes concurrent initialization class creation and requests to hold a t
     }
 })->with(['initialize', 'holds', 'create']);
 
-it('restores a ready class from current restrictions after an older read view was established', function () {
+it('restores a class without remapping legacy after an older read view was established', function () {
     expect(DB::connection()->transactionLevel())->toBe(0);
     $org = null; $user = null;
     try {
         $org = Masjid::create(['name' => 'Snapshot School', 'email' => uniqid().'@example.invalid', 'phone' => '+1'.random_int(1000000000, 9999999999), 'country_id' => '1', 'city_id' => '1', 'address' => 'Practice', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
         $group = Group::factory()->create(['masjid_id' => $org->id, 'kind' => 'class']);
         foreach (['Arabic', 'Science'] as $name) SchoolSubject::create(['masjid_id' => $org->id, 'name' => $name]);
-        ClassSubjectInitializer::run($org, false, true);
         $user = \App\Models\User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
-        $staff = \App\Models\GroupStaff::create(['masjid_id' => $org->id, 'group_id' => $group->id, 'user_id' => $user->id, 'role' => 'teacher']);
+        $staff = \App\Models\GroupStaff::create(['masjid_id' => $org->id, 'group_id' => $group->id, 'user_id' => $user->id, 'role' => 'teacher', 'subjects' => ['arabic']]);
+        ClassSubjectInitializer::run($org, false, true);
+        $assigned = $staff->fresh()->class_subject_ids;
         $group->delete();
         config(['database.connections.class_subject_peer' => array_replace(DB::connection()->getConfig(), ['name' => 'class_subject_peer'])]);
         DB::beginTransaction();
-        expect(\App\Models\GroupStaff::findOrFail($staff->id)->subjects)->toBeNull();
+        expect(\App\Models\GroupStaff::findOrFail($staff->id)->subjects)->toBe(['arabic']);
         // Commit after this transaction's consistent read, before restoration takes its mutex.
-        DB::connection('class_subject_peer')->table('group_staff')->where('id', $staff->id)->update(['subjects' => '["arabic"]']);
+        DB::connection('class_subject_peer')->table('group_staff')->where('id', $staff->id)->update(['subjects' => null]);
         $group->restore();
-        $arabic = ClassSubject::where('group_id', $group->id)->where('tool', 'arabic_letters')->firstOrFail();
-        expect($staff->fresh()->class_subject_ids)->toBe([(int) $arabic->id]);
+        expect($staff->fresh()->class_subject_ids)->toBe($assigned);
         DB::commit();
         expect(ClassSubjectInitializer::ready($org->fresh()))->toBeTrue();
     } finally {
@@ -104,7 +104,7 @@ it('does not gap lock another schools staff insert when initializing an empty cl
         $peer = DB::connection('class_subject_gap_peer');
         $peer->statement('SET SESSION innodb_lock_wait_timeout = 2');
         DB::beginTransaction();
-        ClassSubjectInitializer::run($orgs[0]);
+        ClassSubjectInitializer::run($orgs[0], false, true);
         // Keep A's locks open. B must INSERT now, before A commits/rolls back.
         $peer->table('group_staff')->insert(['masjid_id' => $orgs[1]->id, 'group_id' => $b->id, 'user_id' => $user->id, 'role' => 'teacher']);
         expect($peer->table('group_staff')->where('group_id', $b->id)->count())->toBe(1);
@@ -115,6 +115,57 @@ it('does not gap lock another schools staff insert when initializing an empty cl
         foreach ($orgs as $org) {
             DB::table('masjid_capability_changes')->where('masjid_id', $org->id)->delete();
             DB::table('groups')->where('masjid_id', $org->id)->delete();
+            DB::table('masjids')->where('id', $org->id)->delete();
+        }
+        if ($user !== null) DB::table('users')->where('id', $user->id)->delete();
+    }
+});
+
+it('serializes a plans subject change with a subject rename using immutable ids', function () {
+    expect(DB::connection()->transactionLevel())->toBe(0);
+    $org = null; $user = null; $workers = [];
+    try {
+        $org = Masjid::create(['name' => 'Plan Race Practice', 'email' => uniqid().'@example.invalid', 'phone' => '+1'.random_int(1000000000, 9999999999), 'country_id' => '1', 'city_id' => '1', 'address' => 'Practice', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
+        $group = Group::factory()->create(['masjid_id' => $org->id, 'kind' => 'class']);
+        foreach (['Arabic', 'History'] as $name) SchoolSubject::create(['masjid_id' => $org->id, 'name' => $name]);
+        $user = \App\Models\User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        \App\Models\GroupStaff::create(['masjid_id' => $org->id, 'group_id' => $group->id, 'user_id' => $user->id, 'role' => 'teacher']);
+        $plan = \App\Models\LessonPlan::create(['masjid_id' => $org->id, 'group_id' => $group->id, 'session_date' => '2026-10-08', 'subject' => 'History', 'body' => 'Practice']);
+        ClassSubjectInitializer::run($org, false, true);
+        $arabic = ClassSubject::where('group_id', $group->id)->where('name', 'Arabic')->firstOrFail();
+        foreach (['plan-subject', 'subject-rename'] as $action) {
+            $process = proc_open([PHP_BINARY, base_path('tests/Support/classSubjectWorker.php')], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            expect(is_resource($process))->toBeTrue();
+            $workers[] = [$process, $pipes];
+            stream_set_timeout($pipes[1], 15);
+            fwrite($pipes[0], json_encode(['connection' => DB::connection()->getConfig(), 'action' => $action, 'masjid' => $org->id, 'group' => $group->id, 'subject' => $arabic->id, 'plan' => $plan->id, 'user' => $user->id])."\n");
+            expect(trim((string) fgets($pipes[1])))->toBe('ready');
+        }
+        foreach ($workers as [$process, $pipes]) fwrite($pipes[0], "go\n");
+        foreach ($workers as [$process, $pipes]) {
+            $result = trim((string) fgets($pipes[1]));
+            if ($result !== 'ok') {
+                stream_set_blocking($pipes[2], false);
+                $result .= ' '.trim(stream_get_contents($pipes[2]));
+            }
+            expect($result)->toBe('ok');
+        }
+        expect($plan->fresh()->class_subject_id)->toBe($arabic->id);
+        expect($plan->fresh()->subject)->toBeIn(['Arabic', 'Reading']);
+        expect($arabic->fresh()->name)->toBe('Reading');
+        $restricted = \App\Support\SubjectFence::limitsForIds([$arabic->id], $group);
+        expect(\App\Support\SubjectFence::allowsWork($restricted, $plan->fresh()->class_subject_id))->toBeTrue();
+        expect(\App\Support\SubjectFence::allowsWork($restricted, ClassSubject::where('group_id', $group->id)->where('name', 'History')->value('id')))->toBeFalse();
+    } finally {
+        foreach ($workers as [$process, $pipes]) {
+            foreach ($pipes as $pipe) fclose($pipe);
+            proc_close($process);
+        }
+        if ($org !== null) {
+            DB::table('lesson_plans')->where('masjid_id', $org->id)->delete();
+            DB::table('masjid_capability_changes')->where('masjid_id', $org->id)->delete();
+            DB::table('groups')->where('masjid_id', $org->id)->delete();
+            DB::table('school_subjects')->where('masjid_id', $org->id)->delete();
             DB::table('masjids')->where('id', $org->id)->delete();
         }
         if ($user !== null) DB::table('users')->where('id', $user->id)->delete();

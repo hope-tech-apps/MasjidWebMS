@@ -79,6 +79,10 @@ class LessonPlanController extends TeacherController
      */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->indexWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
 
         $from = $this->dateOr($request->query('from'), Carbon::today()->startOfWeek());
@@ -108,6 +112,56 @@ class LessonPlanController extends TeacherController
 
         if ($limits !== null) {
             $plans = $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'plans' => $plans->map(fn (LessonPlan $p): array => $this->plan($p))->values(),
+                // The organisation's shorter plan (`short_lesson_plan`): the
+                // template fields this school's form does not show. `[]`
+                // everywhere else. The plans above still carry every field.
+                'hidden_fields' => SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id)),
+                // The weekdays the school meets on (0 = Sunday), from its school
+                // calendar, so the week grid shows a Sunday school's Sunday.
+                // NULL when it has no calendar (Al-Razi): the grid stays Monday
+                // to Friday, as before.
+                'meeting_weekdays' => $this->meetingWeekdays((int) $masjid_id),
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    public function indexWithClassSubjects(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+
+        $from = $this->dateOr($request->query('from'), Carbon::today()->startOfWeek());
+        $to = $this->dateOr($request->query('to'), $from->copy()->addDays(6));
+
+        // whereDate on both ends, not whereBetween on raw strings: the `date`
+        // cast can store '2026-09-11 00:00:00', which sorts OUTSIDE a
+        // BETWEEN '2026-09-11' AND '2026-09-11' as a string comparison — the
+        // plan saves and then does not appear. Comparing the DATE PART is
+        // correct on MySQL and SQLite alike.
+        $plans = LessonPlan::query()
+            ->where('group_id', $group->id)
+            ->whereDate('session_date', '>=', $from->toDateString())
+            ->whereDate('session_date', '<=', $to->toDateString())
+            ->orderBy('session_date')
+            // Within a day: the general plan (key '') first, then subjects
+            // alphabetically — the same order on every screen that lists them.
+            ->orderBy('subject_key')
+            ->orderBy('id')
+            ->with('attachments.groupResource')
+            ->get();
+
+        // Saved IDs authorize named plans; general plans remain shared.
+        $limits = $this->limits($group);
+
+        if ($limits !== null) {
+            $plans = $plans->filter(fn (LessonPlan $p): bool => SubjectFence::allowsWork($limits, $p->class_subject_id, SubjectKey::clean($p->subject) === null))->values();
         }
 
         return response()->json([
@@ -180,6 +234,10 @@ class LessonPlanController extends TeacherController
      */
     public function save(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->saveWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
 
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
@@ -199,6 +257,30 @@ class LessonPlanController extends TeacherController
         return $this->write($request, $masjid_id, $group, $plan);
     }
 
+    private function saveWithClassSubjects(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            $group = Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+            $chosen = null;
+            if (SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null) {
+                $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
+            }
+            $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+            $plan = $this->planOnSubject($group, $date, $chosen?->id)
+                ?? $this->onlyPlanOn($group, $date)
+                ?? new LessonPlan(['group_id' => $group->id]);
+            return $this->write($request, $masjid_id, $group, $plan);
+        });
+    }
+
+    private function planOnSubject(Group $group, Carbon $date, ?int $id): ?LessonPlan
+    {
+        $query = $this->plansOnDay($group, $date->toDateString())->where('class_subject_id', $id);
+        if ($id === null) $query->where(fn ($q) => $q->whereNull('subject')->orWhere('subject', ''));
+        return $query->first();
+    }
+
     /**
      * Remove one plan, by id. The other subjects' plans that day are untouched.
      *
@@ -209,6 +291,10 @@ class LessonPlanController extends TeacherController
      */
     public function destroyPlan(Request $request, $masjid_id, $group_id, $plan_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->destroyPlanWithClassSubjects($request, $masjid_id, $group_id, $plan_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $plan = $this->planFor($group, $plan_id);
 
@@ -219,6 +305,25 @@ class LessonPlanController extends TeacherController
             'status' => 'success',
             'data' => ['id' => (int) $plan_id, 'session_date' => $date],
         ], Response::HTTP_OK);
+    }
+
+    private function destroyPlanWithClassSubjects(Request $request, $masjid_id, $group_id, $plan_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id, $plan_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+
+        $group = Group::findOrFail($group_id);
+        $plan = $this->planFor($group, $plan_id);
+
+        $date = $plan->session_date->toDateString();
+        $plan->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['id' => (int) $plan_id, 'session_date' => $date],
+        ], Response::HTTP_OK);
+            });
     }
 
     /**
@@ -239,6 +344,10 @@ class LessonPlanController extends TeacherController
      */
     public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+            return $this->destroyWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
 
         $date = $request->query('date');
@@ -279,6 +388,53 @@ class LessonPlanController extends TeacherController
         return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
     }
 
+    private function destroyWithClassSubjects(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group_id) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+
+        $group = Group::findOrFail($group_id);
+
+        $date = $request->query('date');
+
+        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['date' => ['Name the day to remove, as YYYY-MM-DD.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // The string as given, not a parsed Carbon: '2026-02-30' would roll over
+        // to March 2nd and remove that day's plan; as a string it matches nothing.
+        $plans = $this->plansTouchableOn($group, $date);
+
+        if ($this->limits($group) !== null) {
+            // Touchable is the general plan and their own subjects'; by day only the
+            // latter are theirs. The general plan is the class's, not "their" plan.
+            $plans = $plans->filter(fn (LessonPlan $p): bool => SubjectKey::clean($p->subject) !== null)->values();
+
+            // Nothing of their own that day: the one plain 404.
+            if ($plans->isEmpty()) {
+                abort(Response::HTTP_NOT_FOUND);
+            }
+        }
+
+        if ($plans->count() > 1) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['date' => ['This day has a plan for more than one subject. Remove them one at a time.']],
+            ], Response::HTTP_CONFLICT);
+        }
+
+        // Only the plan counted above, by id: never the day's other plans, which are
+        // another subject's when this teacher is limited.
+        $plans->each->delete();
+
+        return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
+            });
+    }
+
     /**
      * Fill and save one plan from the request — the one write path all three
      * write verbs share, so the clash rule and the hidden-field rule cannot
@@ -286,6 +442,10 @@ class LessonPlanController extends TeacherController
      */
     private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+            return $this->writeWithClassSubjects($request, $masjid_id, $group, $plan);
+        }
+
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
 
         // The subject fence, on what the plan is becoming FIRST: a subject the teacher
@@ -328,6 +488,104 @@ class LessonPlanController extends TeacherController
         // subject; the unique index below is what holds when two saves race.
         $key = LessonPlan::subjectKeyFor($plan->subject);
         $clash = $this->planOn($group, $date, $key);
+
+        // Named as the EXISTING plan spells it: the teacher typed "math", but
+        // the plan they are being sent to open is the one called "Math".
+        if ($clash && $clash->id !== $plan->id) {
+            return $this->clash($clash->subject);
+        }
+
+        // Resolved BEFORE the plan is written, like every other refusal here: a
+        // 422 that arrives after the save leaves a plan the teacher was told
+        // failed. `null` = the request did not speak about files (see
+        // SaveLessonPlanRequest), so the plan keeps the ones it has.
+        $attachmentIds = $request->has('resource_ids')
+            ? $this->resolveAttachments($group, (array) $request->validated('resource_ids', []))
+            : null;
+
+        try {
+            if ($attachmentIds === null) {
+                $plan->save();
+            } else {
+                // Plan and files together: a plan is never left saved with only
+                // some of the files the teacher listed.
+                DB::transaction(function () use ($plan, $attachmentIds): void {
+                    $plan->save();
+                    $this->syncAttachments($plan, $attachmentIds);
+                });
+            }
+        } catch (UniqueConstraintViolationException) {
+            return $this->clash(LessonPlan::cleanSubject($plan->subject));
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->plan($plan),
+        ], Response::HTTP_OK);
+    }
+
+    private function writeWithClassSubjects(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $masjid_id, $group, $plan) {
+            \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+            return $this->writeLockedWithClassSubjects($request, $masjid_id, $group, $plan);
+        });
+    }
+
+    private function writeLockedWithClassSubjects(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
+    {
+        $chosen = null;
+        $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+
+        // The subject fence, on what the plan is becoming FIRST: a subject the teacher
+        // typed and does not teach is refused in the words they wrote, whether or not
+        // a plan of that subject exists, so the refusal says nothing about the day.
+        // Early refusal precedes the clash response; the model repeats it under write locks.
+        if ((\App\Support\SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null)
+            && ! ($plan->exists && $request->validated('subject') === $plan->subject
+                && (! $request->has('class_subject_id') || $request->validated('class_subject_id') === $plan->class_subject_id))) {
+            $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
+        }
+
+        // And on the plan AS IT IS: no verb reaches another subject's plan for a
+        // limited teacher. The callers resolve a plan through planFor() or the
+        // touchable set, so this is the last line, and it is the same 404.
+        if ($plan->exists) {
+            $this->mustTouch($group, $plan, $plan->getKey());
+        }
+
+        // The whole object, every time. The request declares every template
+        // field `nullable` rather than `sometimes` precisely so that an omitted
+        // field CLEARS — a partial payload must not silently keep stale prose.
+        // The frontend consequence is that there is no per-section autosave.
+        //
+        // EXCEPT the fields this organisation's shorter plan leaves out
+        // (SchoolSettings::HIDDEN_LESSON_PLAN_FIELDS). Hidden means not shown and
+        // not written: those columns are left as they are, whatever a client
+        // sends, so they are never required, never filled from here, and a plan
+        // written before the setting was switched on keeps what it had.
+        $hidden = SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id));
+
+        $fields = collect(LessonPlan::TEMPLATE_FIELDS)
+            ->reject(fn (string $f) => in_array($f, $hidden, true))
+            ->mapWithKeys(fn (string $f) => [$f => $request->validated($f)])
+            ->all();
+
+        if ($request->has('class_subject_id')) $fields['class_subject_id'] = $request->validated('class_subject_id');
+        $plan->fill($fields + [
+            'session_date' => $date,
+            'title' => $request->validated('title'),
+            'body' => $request->validated('body'),
+            'author_user_id' => Auth::id(),
+        ]);
+
+        // Asked before the INSERT so the answer is a sentence naming the
+        // subject; the unique index below is what holds when two saves race.
+        $subjectId = $chosen?->id ?? $plan->class_subject_id;
+        $clash = $this->planOnSubject($group, $date, $subjectId);
+        // Keep the old physical key's collision response for unlinked historical rows.
+        if ($clash === null) $clash = $this->planOn($group, $date, LessonPlan::subjectKeyFor($plan->subject));
 
         // Named as the EXISTING plan spells it: the teacher typed "math", but
         // the plan they are being sent to open is the one called "Math".
@@ -490,12 +748,26 @@ class LessonPlanController extends TeacherController
      */
     private function plansTouchableOn(Group $group, string $day): \Illuminate\Support\Collection
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+            return $this->plansTouchableOnWithClassSubjects($group, $day);
+        }
+
         $plans = $this->plansOnDay($group, $day)->orderBy('id')->get();
         $limits = $this->limits($group);
 
         return $limits === null
             ? $plans
             : $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+    }
+
+    private function plansTouchableOnWithClassSubjects(Group $group, string $day): \Illuminate\Support\Collection
+    {
+        $plans = $this->plansOnDay($group, $day)->orderBy('id')->get();
+        $limits = $this->limits($group);
+
+        return $limits === null
+            ? $plans
+            : $plans->filter(fn (LessonPlan $p): bool => SubjectFence::allowsWork($limits, $p->class_subject_id, SubjectKey::clean($p->subject) === null))->values();
     }
 
     /**
@@ -515,9 +787,23 @@ class LessonPlanController extends TeacherController
     /** The 404 a plan that does not exist gets, for a plan a limited teacher may not touch. */
     private function mustTouch(Group $group, LessonPlan $plan, $planId): void
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+            $this->mustTouchWithClassSubjects($group, $plan, $planId);
+            return;
+        }
+
         $limits = $this->limits($group);
 
         if ($limits !== null && ! $this->mayTouch($limits, $plan->subject)) {
+            throw (new ModelNotFoundException())->setModel(LessonPlan::class, [$planId]);
+        }
+    }
+
+    private function mustTouchWithClassSubjects(Group $group, LessonPlan $plan, $planId): void
+    {
+        $limits = $this->limits($group);
+
+        if ($limits !== null && ! SubjectFence::allowsWork($limits, $plan->class_subject_id, SubjectKey::clean($plan->subject) === null)) {
             throw (new ModelNotFoundException())->setModel(LessonPlan::class, [$planId]);
         }
     }
@@ -575,6 +861,10 @@ class LessonPlanController extends TeacherController
      */
     private function plan(LessonPlan $plan): array
     {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->planWithClassSubjects($plan);
+        }
+
         $template = collect(LessonPlan::TEMPLATE_FIELDS)
             ->mapWithKeys(fn (string $f) => [$f => $plan->{$f}])
             ->all();
@@ -583,6 +873,35 @@ class LessonPlanController extends TeacherController
 
         return $template + [
             'id' => (int) $plan->id,
+            'session_date' => $plan->session_date->toDateString(),
+            'title' => $plan->title,
+            // The template's ACTIVITIES, and the one required section.
+            'body' => $plan->body,
+            'prefill_source' => $plan->prefill_source,
+            // The files listed under Activities, in the teacher's order: staff
+            // information, served to the teacher and the office (the same
+            // payload) and to NO family payload. The file shape carries no url;
+            // the bytes are only reachable through the Files download route.
+            'attachments' => $plan->attachments
+                ->map(fn (LessonPlanResource $link) => $link->groupResource?->toAudienceArray())
+                ->filter()
+                ->values()
+                ->all(),
+            'updated_at' => optional($plan->updated_at)->toIso8601String(),
+        ];
+    }
+
+    private function planWithClassSubjects(LessonPlan $plan): array
+    {
+        $template = collect(LessonPlan::TEMPLATE_FIELDS)
+            ->mapWithKeys(fn (string $f) => [$f => $plan->{$f}])
+            ->all();
+
+        $plan->loadMissing('attachments.groupResource');
+
+        return $template + [
+            'id' => (int) $plan->id,
+            'class_subject_id' => $plan->class_subject_id,
             'session_date' => $plan->session_date->toDateString(),
             'title' => $plan->title,
             // The template's ACTIVITIES, and the one required section.

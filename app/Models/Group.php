@@ -199,7 +199,7 @@ class Group extends Model
             if (! \App\Support\SchoolSettings::classSubjects($org)) return parent::save($options);
             if ($leaving) {
                 $restricted = \App\Support\ClassSubjectInitializer::currentStaff($this)->contains(fn ($row) =>
-                    $row->class_subject_ids !== null || \App\Support\ClassSubjectInitializer::needsMapping($row));
+                    $row->class_subject_ids !== null);
                 $work = $this->assignments()->whereNotNull('subject')->exists()
                     || $this->lessonPlans()->whereNotNull('subject')->exists()
                     || $this->hifzEntries()->exists() || $this->arabicLetterProgress()->exists()

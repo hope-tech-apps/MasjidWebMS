@@ -39,6 +39,7 @@ use Illuminate\Support\Facades\Auth;
 class GroupStaff extends Pivot
 {
     use BelongsToMasjid;
+    use \App\Models\Concerns\IgnoresOffClassSubjectFields;
 
     protected $table = 'group_staff';
 
@@ -105,8 +106,6 @@ class GroupStaff extends Pivot
         'role',
         'subjects',
         'class_subject_ids',
-        'class_subjects_mapped_at',
-        'class_subject_legacy_snapshot',
         'assigned_at',
     ];
 
@@ -117,89 +116,58 @@ class GroupStaff extends Pivot
      * not a users.id), keeps NULL rather than a guess or a foreign id. Set here, not
      * at call sites, because attach() drops it there.
      */
-    protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'];
+    protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot', 'class_subjects_translated_from', 'class_subject_ids_edited_at'];
 
-    private ?array $explicitClassSubjectResolution = null;
+    private static bool $officeSubjectChoice = false;
 
-    /** Deliberately resolve against the current locked legacy source; never an ordinary save. */
-    public function resolveClassSubjectAssignment(array $fields, string $resolution = 'confirm_legacy'): bool
+    /** Only a validated office request explicitly naming NULL may choose all. */
+    public static function withOfficeSubjectChoice(callable $write): mixed
     {
-        // This is feature-data maintenance even when setup runs with the switch OFF;
-        // ordinary OFF saves never enter this method.
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($fields, $resolution) {
-            $orgId = $this->masjid_id ?? app(\App\Support\TenantContext::class)->get()
-                ?? ($this->pivotParent instanceof Group ? $this->pivotParent->masjid_id
-                    : Group::withTrashed()->whereKey($this->group_id)->value('masjid_id'));
-            Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
-            $id = $this->getKey() ?? self::withoutMasjidScope()->where('masjid_id', $orgId)
-                ->where('group_id', $this->group_id)->where('user_id', $this->user_id)->value('id');
-            $current = self::withoutMasjidScope()->where('masjid_id', $orgId)->whereKey($id)->lockForUpdate()->firstOrFail();
-            \App\Support\ClassSubjectAssignmentResolution::validate($current, $fields, $resolution);
-            $this->setRawAttributes($current->getAttributes(), true);
-            $this->explicitClassSubjectResolution = [$fields, $resolution];
-            try {
-                return $this->forceFill($fields)->save();
-            } finally {
-                $this->explicitClassSubjectResolution = null;
-            }
-        });
+        $before = self::$officeSubjectChoice;
+        self::$officeSubjectChoice = true;
+        try { return $write(); } finally { self::$officeSubjectChoice = $before; }
     }
 
     public function save(array $options = [])
     {
         $tenantId = app(\App\Support\TenantContext::class)->get();
-        // Creating hooks stamp the bound tenant before INSERT, overriding a supplied id.
         $orgId = ! $this->exists && $tenantId !== null ? $tenantId : ($this->masjid_id ?? $tenantId);
-        // A relationship-hydrated pivot lacks private columns. Resolve its parent only
-        // for a write of feature metadata; ordinary legacy pivot saves keep their dispatch.
-        if ($orgId === null && array_intersect(['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'], array_keys($this->getAttributes())) !== []) {
-            $orgId = $this->pivotParent instanceof Group ? $this->pivotParent->masjid_id
-                : Group::withTrashed()->whereKey($this->group_id)->value('masjid_id');
-        }
-        if (! \App\Support\ClassSubjectMode::enabled($orgId)) return parent::save($options);
-        if ($this->exists) {
-            return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $orgId) {
-                Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
-                // Compare with the actual row, not a model cached before initialization or a legacy edit.
+        if ($orgId === null) $orgId = $this->pivotParent instanceof Group ? $this->pivotParent->masjid_id
+            : Group::withTrashed()->whereKey($this->group_id)->value('masjid_id');
+        if (! ($this->classSubjectWriteOn = \App\Support\ClassSubjectMode::enabled($orgId))) return parent::save($options);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $orgId) {
+            $org = Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
+            if (! ($this->classSubjectWriteOn = \App\Support\SchoolSettings::classSubjects($org))) return parent::save($options);
+            $dirty = $this->getDirty();
+            if ($this->exists) {
                 $id = $this->getKey() ?? self::withoutMasjidScope()->where('masjid_id', $orgId)
                     ->where('group_id', $this->group_id)->where('user_id', $this->user_id)->value('id');
                 $before = self::withoutMasjidScope()->where('masjid_id', $orgId)->whereKey($id)->lockForUpdate()->firstOrFail();
-                $dirty = $this->getDirty();
-                if ($this->explicitClassSubjectResolution !== null) {
-                    [$fields, $resolution] = $this->explicitClassSubjectResolution;
-                    \App\Support\ClassSubjectAssignmentResolution::validate($before, $fields, $resolution);
-                    $this->setRawAttributes($before->getAttributes(), true);
-                    $this->forceFill($fields);
-                } elseif (\App\Support\ClassSubjectInitializer::needsMapping($before)
-                    && $this->isDirty(['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'])) {
-                    \App\Support\ClassSubjectAssignmentResolution::refuse();
-                } else {
-                    // Keep only deliberate changes, preserving the current baseline on partial pivots.
-                    $this->setRawAttributes($before->getAttributes(), true);
-                    $this->setRawAttributes(array_replace($this->getAttributes(), $dirty));
+                foreach (['masjid_id', 'group_id', 'user_id'] as $key) {
+                    if (isset($dirty[$key]) && (int) $dirty[$key] !== (int) $before->$key) self::refuseSubjectChoice();
                 }
-                return parent::save($options);
-            });
-        }
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $orgId) {
-            $org = Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
-            if (\App\Support\SchoolSettings::classSubjects($org)) {
-                $group = Group::withTrashed()->find($this->group_id);
-                if ($group !== null && \App\Support\SubjectFence::usesClassSubjects($group)) {
-                    if (! array_key_exists('class_subject_ids', $this->getAttributes())) {
-                        $this->class_subject_ids = \App\Support\ClassSubjectInitializer::mapLegacy($group, $this->subjects);
-                    }
-                    if ($this->class_subjects_mapped_at === null) $this->class_subjects_mapped_at = now();
-                    $ids = $this->class_subject_ids;
-                    $valid = ClassSubject::where('masjid_id', $orgId)->where('group_id', $group->id)->pluck('id')->all();
-                    if (! \App\Support\SubjectFence::validStoredIds($ids) || ($ids !== null && array_diff($ids, $valid) !== [])) {
-                        \App\Support\ClassSubjectAssignmentResolution::refuse();
-                    }
-                    $this->class_subject_legacy_snapshot = $this->subjects ?: [];
-                }
+                // A legacy write cannot change ON authority, even on a partial or cached pivot.
+                unset($dirty['subjects'], $dirty['class_subjects_mapped_at'], $dirty['class_subject_legacy_snapshot'],
+                    $dirty['class_subjects_translated_from'], $dirty['class_subject_ids_edited_at']);
+                $this->setRawAttributes($before->getAttributes(), true);
+                $this->setRawAttributes(array_replace($this->getAttributes(), $dirty));
+            } else {
+                if (! array_key_exists('class_subject_ids', $this->getAttributes())) self::refuseSubjectChoice();
+                unset($this->subjects, $this->class_subjects_mapped_at, $this->class_subject_legacy_snapshot,
+                    $this->class_subjects_translated_from, $this->class_subject_ids_edited_at);
             }
+            $ids = $this->class_subject_ids;
+            $valid = ClassSubject::where('masjid_id', $orgId)->where('group_id', $this->group_id)->pluck('id')->all();
+            if (! \App\Support\SubjectFence::validStoredIds($ids) || ($ids !== null && array_diff($ids, $valid) !== [])) self::refuseSubjectChoice();
+            if ((! $this->exists || $this->isDirty('class_subject_ids')) && $ids === null && ! self::$officeSubjectChoice) self::refuseSubjectChoice();
+            if (! $this->exists || $this->isDirty('class_subject_ids') || self::$officeSubjectChoice) $this->class_subject_ids_edited_at = now();
             return parent::save($options);
         });
+    }
+
+    private static function refuseSubjectChoice(): never
+    {
+        throw \Illuminate\Validation\ValidationException::withMessages(['class_subject_ids' => ['Explicitly choose this class\'s subjects. Only an office request choosing all subjects may grant all.']]);
     }
 
     protected static function booted(): void
@@ -218,6 +186,8 @@ class GroupStaff extends Pivot
             'class_subject_ids' => 'array',
             'class_subjects_mapped_at' => 'datetime',
             'class_subject_legacy_snapshot' => 'array',
+            'class_subjects_translated_from' => 'array',
+            'class_subject_ids_edited_at' => 'datetime',
         ];
     }
 }

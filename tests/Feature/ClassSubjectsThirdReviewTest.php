@@ -22,11 +22,6 @@ beforeEach(function () {
     $this->teacherUrl = "/api/admin/masjids/{$this->org->id}/teachers/{$this->teacher->id}";
     $this->subjectUrl = "/api/admin/masjids/{$this->org->id}/groups/{$this->group->id}/subjects";
     $this->body = ['name' => $this->teacher->name, 'class_ids' => [$this->group->id]];
-    $this->stale = function () {
-        ($this->initialize)();
-        DB::table('group_staff')->where('id', $this->staff->id)->update(['subjects' => '["arabic"]']);
-        $this->staff->refresh();
-    };
     $this->work = function (string $kind, string $name = 'Science') {
         $fields = ['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'subject' => $name, 'title' => 'Practice'];
         return $kind === 'grades' ? ClassAssignment::create($fields + ['assigned_on' => '2026-10-01', 'scale' => 'points', 'points_possible' => 10])
@@ -38,215 +33,97 @@ beforeEach(function () {
 
 afterEach(fn () => app(TenantContext::class)->forgetTenant());
 
-it('R3-1 marks stale assignments and withholds their ids on every office response', function () {
-    ($this->stale)();
+
+it('R3-1 round trips ids after legacy drift without any reconfirmation state', function () {
+    $this->staff->update(['subjects' => ['arabic']]); ($this->initialize)(); $ids = $this->staff->fresh()->class_subject_ids;
+    DB::table('group_staff')->where('id', $this->staff->id)->update(['subjects' => null]);
     $data = $this->getJson($this->teacherUrl)->assertOk()->json('data');
-    expect((array) $data['class_subject_ids'])->not->toHaveKey($this->group->id);
-    expect($data['class_subject_attention'][$this->group->id])->toBeTrue();
-    $class = $this->getJson("/api/admin/masjids/{$this->org->id}/teachers")->assertOk()->json('data.0.classes.0');
-    expect($class)->not->toHaveKey('class_subject_ids')->toHaveKey('class_subject_assignment_needs_attention', true);
+    expect($data['class_subject_ids'][$this->group->id])->toBe($ids);
+    expect($data)->not->toHaveKey('class_subject_attention');
+    $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => $ids]])->assertOk();
+    expect(SubjectFence::assignedIds($this->group->id, $this->teacher->id))->toBe($ids);
+    $this->putJson($this->teacherUrl, $this->body + ['class_subjects' => [$this->group->id => null]])->assertUnprocessable();
 });
 
-it('R3-1 refuses an unchanged stale round trip without explicit resolution', function (?array $ids) {
-    ($this->stale)();
-    $this->putJson($this->teacherUrl, $this->body + ['class_subjects' => [$this->group->id => ['arabic']], 'class_subject_ids' => [$this->group->id => $ids]])->assertUnprocessable();
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeTrue();
-    expect(SubjectFence::mayWeighClass($this->teacher, $this->group->id))->toBeFalse();
-})->with([[null], [[]]]);
+it('R3-2 names aliases guides and obsolete history never capture saved work', function (string $kind, string $edit) {
+    $work = ($this->work)($kind, 'Science'); ($this->initialize)(); $arabic = ClassSubject::where('name', 'Arabic')->firstOrFail();
+    $this->staff->fresh()->update(['class_subject_ids' => [$arabic->id]]);
+    match ($edit) {
+        'rename' => $arabic->update(['name' => 'Science']),
+        'history' => $arabic->forceFill(['previous_name_keys' => ['science']])->save(),
+        'add' => ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Science']),
+        'merge' => (function () { SchoolSubject::create(['masjid_id' => $this->org->id, 'name' => 'Science']); $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertOk(); })(),
+    };
+    expect($work->fresh()->class_subject_id)->toBeNull();
+    Sanctum::actingAs($this->teacher);
+    $base = "/api/teacher/masjids/{$this->org->id}/groups/{$this->group->id}";
+    if ($kind === 'grades') $this->getJson($base.'/assignments/'.$work->id)->assertNotFound();
+    else $this->deleteJson($base.'/lesson-plans/'.$work->id)->assertNotFound();
+})->with(['grades', 'plans'])->with(['rename', 'history', 'add', 'merge']);
 
-it('R3-1 requires a deliberate wider choice and compares with stored legacy before payload edits', function (bool $editLegacy) {
-    ($this->stale)();
-    $payload = $this->body + ['class_subject_ids' => [$this->group->id => null], 'class_subject_resolutions' => [$this->group->id => 'confirm_legacy']];
-    if ($editLegacy) $payload['class_subjects'] = [$this->group->id => null];
-    $this->putJson($this->teacherUrl, $payload)->assertUnprocessable();
-    $payload['class_subject_resolutions'][$this->group->id] = 'allow_more';
-    $this->putJson($this->teacherUrl, $payload)->assertOk();
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeFalse();
-})->with([false, true]);
+it('R3-3 preserves explicitly supplied restrictions at every pivot creation writer', function (string $writer, bool $empty) {
+    ($this->initialize)(); $ids = $empty ? [] : [ClassSubject::where('name', 'Arabic')->firstOrFail()->id];
+    $user = User::factory()->create(['type' => 'Teacher', 'phone' => '+15555550104']);
+    $fields = ['masjid_id' => $this->org->id, 'subjects' => null, 'class_subject_ids' => $ids];
+    match ($writer) {
+        'model' => GroupStaff::create($fields + ['group_id' => $this->group->id, 'user_id' => $user->id]),
+        'attach' => $this->group->staff()->attach($user->id, $fields),
+        'sync' => $this->group->staff()->syncWithoutDetaching([$user->id => $fields]),
+        'reverse' => $user->groupsLed()->attach($this->group->id, $fields),
+    };
+    expect(SubjectFence::assignedIds($this->group->id, $user->id))->toBe($ids);
+})->with(['model', 'attach', 'sync', 'reverse'])->with([true, false]);
 
-it('R3-1 permits explicit narrow resolution and command remapping only from current legacy', function (bool $command) {
-    ($this->stale)();
-    $arabic = ClassSubject::first()->id;
-    if ($command) ($this->initialize)();
-    else $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$arabic]], 'class_subject_resolutions' => [$this->group->id => 'confirm_legacy']])->assertOk();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$arabic]);
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeFalse();
-})->with([false, true]);
+it('cached and partial pivots cannot erase a concurrently changed restriction', function (string $writer) {
+    ($this->initialize)(); $cached = $this->staff->fresh();
+    $arabic = ClassSubject::where('name', 'Arabic')->firstOrFail(); $ids = [$arabic->id];
+    $this->staff->fresh()->update(['class_subject_ids' => $ids]);
+    match ($writer) {
+        'cached' => $cached->update(['subjects' => null]),
+        'partial' => $this->group->staff()->findOrFail($this->teacher->id)->pivot->forceFill(['subjects' => null])->save(),
+        'update-pivot' => $this->group->staff()->updateExistingPivot($this->teacher->id, ['subjects' => null]),
+        'reverse-sync' => $this->teacher->groupsLed()->syncWithoutDetaching([$this->group->id => ['subjects' => null]]),
+    };
+    expect($this->staff->fresh()->class_subject_ids)->toBe($ids);
+    expect($this->staff->fresh()->class_subject_ids_edited_at)->not->toBeNull();
+})->with(['cached', 'partial', 'update-pivot', 'reverse-sync']);
 
-it('R3-1 refuses model baseline reconfirmation without intent but allows ordinary legacy changes to remain stale', function () {
-    ($this->stale)();
-    $row = $this->staff->fresh()->forceFill(['class_subject_legacy_snapshot' => ['arabic']]);
-    expect(fn () => $row->save())->toThrow(ValidationException::class);
-});
-
-it('R3-1 refuses invite reuse of an existing stale assignment rather than replacing it', function () {
-    ($this->stale)();
-    $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", ['name' => $this->teacher->name, 'email' => $this->teacher->email, 'class_ids' => [$this->group->id], 'class_subject_ids' => [$this->group->id => null]])->assertUnprocessable();
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeTrue();
-});
-
-it('R3-2 refuses orphan work capture on rename and direct previous names for every work category', function (string $kind, string $writer) {
-    ($this->work)($kind);
+it('office must explicitly supply ids for every new class assignment', function (bool $existingLogin) {
     ($this->initialize)();
-    $arabic = ClassSubject::first();
-    if ($writer === 'http') $this->putJson($this->subjectUrl.'/'.$arabic->id, ['name' => 'Science'])->assertUnprocessable()->assertJsonFragment(['Saved work uses subject key "science". This subject cannot claim it.']);
-    else expect(fn () => $arabic->forceFill($writer === 'rename' ? ['name' => 'Science'] : ['previous_name_keys' => ['science']])->save())->toThrow(ValidationException::class);
-    expect($arabic->fresh()->matchingKeys())->not->toContain('science');
-})->with(['grades', 'plans'])->with(['http', 'rename', 'previous']);
+    $other = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'class']);
+    $email = $existingLogin ? User::factory()->create(['type' => 'Teacher', 'phone' => '+15555550105'])->email : uniqid().'@example.invalid';
+    $before = User::count();
+    $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", ['name' => $this->teacher->name, 'email' => $email, 'class_ids' => [$other->id]])->assertUnprocessable();
+    expect(GroupStaff::where('group_id', $other->id)->exists())->toBeFalse();
+    expect(User::count())->toBe($before);
+    $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", ['name' => $this->teacher->name, 'email' => $email, 'class_ids' => [$other->id], 'class_subject_ids' => [$other->id => null]])->assertCreated();
+    expect(GroupStaff::where('group_id', $other->id)->firstOrFail()->class_subject_ids)->toBeNull();
+})->with([true, false]);
 
-it('R3-2 protects fixed aliases and retained soft-deleted work', function (string $kind) {
-    $work = ($this->work)($kind, 'English Language Arts');
-    if ($kind === 'grades') $work->delete();
-    ($this->initialize)();
-    $this->putJson($this->subjectUrl.'/'.ClassSubject::first()->id, ['name' => 'ELA'])->assertUnprocessable();
+it('refuses moving subject ids across classes even through a cached model', function () {
+    ($this->initialize)(); $subject = ClassSubject::firstOrFail();
+    $other = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'class']);
+    expect(fn () => $subject->update(['group_id' => $other->id]))->toThrow(ValidationException::class);
+    expect($subject->fresh()->group_id)->toBe($this->group->id);
+});
+
+it('uses exact stored keys at activation without a SQL collation expansion', function (string $kind) {
+    $work = ($this->work)($kind, 'Arabíc'); ($this->initialize)();
+    expect($work->fresh()->class_subject_id)->toBeNull();
 })->with(['grades', 'plans']);
 
-it('R3-2 requires explicit orphan attachment on add and reports orphans and seed attachments', function () {
-    ($this->work)('grades');
-    ($this->work)('plans');
-    $report = ClassSubjectInitializer::run($this->org, true);
-    expect($report[0]['orphaned_work'])->toBe(['science' => 2]);
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--dry-run' => true])->expectsOutput('  saved work under a subject that is not in this class\'s list: science, 2 items')->assertSuccessful();
-    ($this->initialize)();
-    $this->postJson($this->subjectUrl, ['name' => 'Science'])->assertUnprocessable();
-    $this->postJson($this->subjectUrl, ['name' => 'Science', 'attach_saved_work' => true])->assertCreated()->assertJsonPath('attached_saved_work.science', 2);
-    expect(ClassSubjectInitializer::run($this->org, true)[0]['orphaned_work'])->toBe([]);
+it('links hidden current subjects but never uses their previous keys at activation', function () {
+    $work = ($this->work)('grades', 'Arabic');
+    $subject = ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Reading', 'hidden_at' => now()]);
+    $subject->forceFill(['previous_name_keys' => ['arabic']])->save();
+    ($this->initialize)(); expect($work->fresh()->class_subject_id)->toBeNull();
 });
 
-it('R3-2 reports seed attachment and preserves existing ownership after ordinary rename', function () {
-    ($this->work)('grades', 'Arabic');
-    $report = ClassSubjectInitializer::run($this->org, true);
-    expect($report[0]['creates'][0]['attaches_saved_work'])->toBe(['arabic' => 1]);
-    ($this->initialize)();
-    $this->putJson($this->subjectUrl.'/'.ClassSubject::first()->id, ['name' => 'Language'])->assertOk();
-    expect(ClassSubject::first()->matchingKeys())->toContain('arabic');
+it('refuses empty subject names through the model', function () {
+    expect(fn () => ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => '  ']))->toThrow(ValidationException::class);
 });
 
-it('R3-3 preserves supplied restrictions without a timestamp through every Eloquent pivot writer', function (string $writer, string $shape) {
-    ($this->initialize)();
-    $user = User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)]);
-    $ids = match ($shape) { 'none' => [], 'one' => [ClassSubject::first()->id], default => null };
-    $fields = ['masjid_id' => $this->org->id, 'role' => 'teacher', 'class_subject_ids' => $ids];
-    if ($writer === 'create') GroupStaff::create($fields + ['group_id' => $this->group->id, 'user_id' => $user->id]);
-    elseif ($writer === 'attach') $this->group->staff()->attach($user->id, $fields);
-    elseif ($writer === 'sync') $this->group->staff()->syncWithoutDetaching([$user->id => $fields]);
-    else $user->groupsLed()->attach($this->group->id, $fields);
-    $row = GroupStaff::where('user_id', $user->id)->firstOrFail();
-    expect($row->class_subject_ids)->toBe($ids);
-    expect(ClassSubjectInitializer::needsMapping($row))->toBeFalse();
-})->with(['create', 'attach', 'sync', 'reverse'])->with(['none', 'one', 'all']);
-
-it('R3-3 maps legacy only when own ids were absent', function () {
-    ($this->initialize)();
-    $row = GroupStaff::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'user_id' => User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)])->id, 'role' => 'teacher', 'subjects' => ['arabic']]);
-    expect($row->class_subject_ids)->toBe([ClassSubject::first()->id]);
-});
-
-it('R3-2 compares work ownership with the persisted row rather than a cached subject model', function () {
-    ($this->initialize)();
-    $subject = ClassSubject::first();
-    $subject->update(['name' => 'Science']);
-    $cached = $subject->fresh();
-    $subject->fresh()->update(['name' => 'Language']);
-    $subject->fresh()->forceFill(['previous_name_keys' => []])->save();
-    ($this->work)('grades');
-    expect(fn () => $cached->forceFill(['previous_name_keys' => ['science']])->save())->toThrow(ValidationException::class);
-    expect($subject->fresh()->matchingKeys())->not->toContain('science');
-});
-
-it('R3-3 maps an absent restriction even when an internal timestamp was supplied', function () {
-    ($this->initialize)();
-    $row = GroupStaff::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'user_id' => User::factory()->create(['phone' => '+1'.random_int(1000000000, 9999999999)])->id, 'role' => 'teacher', 'subjects' => ['arabic'], 'class_subjects_mapped_at' => now()]);
-    expect($row->class_subject_ids)->toBe([ClassSubject::first()->id]);
-});
-
-it('R3-1 protects a model cached before a late legacy change', function () {
-    ($this->initialize)();
-    $cached = $this->staff->fresh();
-    DB::table('group_staff')->where('id', $cached->id)->update(['subjects' => '["arabic"]']);
-    expect(fn () => $cached->forceFill(['class_subjects_mapped_at' => now()->addSecond()])->save())->toThrow(ValidationException::class);
-    expect(fn () => $cached->resolveClassSubjectAssignment(['class_subject_ids' => null, 'class_subject_legacy_snapshot' => ['arabic']], 'confirm_legacy'))->toThrow(ValidationException::class);
-});
-
-it('R3-1 guards existing custom pivot writes, including a pivot hydrated without its private columns', function (string $writer) {
-    ($this->stale)();
-    $fields = ['class_subject_ids' => null, 'class_subjects_mapped_at' => now(), 'class_subject_legacy_snapshot' => ['arabic']];
-    $save = match ($writer) {
-        'sync' => fn () => $this->group->staff()->syncWithoutDetaching([$this->teacher->id => $fields]),
-        'update' => fn () => $this->group->staff()->updateExistingPivot($this->teacher->id, $fields),
-        default => fn () => $this->group->staff()->firstOrFail()->pivot->forceFill($fields)->save(),
-    };
-    expect($save)->toThrow(ValidationException::class);
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeTrue();
-})->with(['sync', 'update', 'hydrated']);
-
-it('R3-1 ignores the new resolution field on existing OFF endpoints', function (string $endpoint, mixed $value) {
-    $body = $this->body + ['class_subject_resolutions' => $value];
-    if ($endpoint === 'update') $this->putJson($this->teacherUrl, $body)->assertOk();
-    else $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", $body + ['email' => uniqid().'@example.invalid'])->assertCreated();
-    expect($this->staff->fresh()->class_subjects_mapped_at)->toBeNull();
-})->with(['update', 'invite'])->with([[null], ['not a map'], [['bad' => 'not a resolution']]]);
-
-it('R3-2 uses the lesson-plan fence key rather than its older storage key', function () {
-    ($this->work)('plans', 'Sci’ence');
-    ($this->initialize)();
-    $this->putJson($this->subjectUrl.'/'.ClassSubject::first()->id, ['name' => 'Science'])->assertUnprocessable();
-    expect(ClassSubjectInitializer::run($this->org, true)[0]['orphaned_work'])->toBe(['science' => 1]);
-});
-
-it('R3-2 cannot transfer work ownership by moving a subject to another class', function () {
-    ($this->initialize)();
-    $subject = ClassSubject::first();
-    $other = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'class']);
-    ClassSubject::where('group_id', $other->id)->delete();
-    ClassAssignment::create(['masjid_id' => $this->org->id, 'group_id' => $other->id, 'subject' => 'Arabic', 'title' => 'Practice', 'assigned_on' => '2026-10-01', 'scale' => 'points', 'points_possible' => 10]);
-    expect(fn () => $subject->update(['group_id' => $other->id]))->toThrow(ValidationException::class);
-});
-
-it('R3-2 keeps a restricted Arabic teacher out of retained Science work after a refused rename or confirmed office addition', function () {
-    $this->staff->update(['subjects' => ['arabic']]);
-    $grade = ($this->work)('grades');
-    ($this->work)('plans');
-    ($this->initialize)();
-    $this->putJson($this->subjectUrl.'/'.ClassSubject::first()->id, ['name' => 'Science'])->assertUnprocessable();
-    $this->postJson($this->subjectUrl, ['name' => 'Science', 'attach_saved_work' => true])->assertCreated();
-    Sanctum::actingAs($this->teacher, ['staff']);
-    $base = "/api/teacher/masjids/{$this->org->id}/groups/{$this->group->id}";
-    $this->getJson($base.'/assignments')->assertOk()->assertJsonCount(0, 'data');
-    $this->getJson($base.'/assignments/'.$grade->id)->assertNotFound();
-    $this->getJson($base.'/lesson-plans?from=2026-10-01&to=2026-10-01')->assertOk()->assertJsonCount(0, 'data.plans');
-});
-
-it('R3-1 applies narrow resolution policy to setup-side and direct explicit resolution while OFF', function () {
-    ($this->stale)();
-    \App\Support\CapabilityWriter::apply($this->org->fresh(), ['class_subjects' => false], $this->office->id);
-    expect(fn () => $this->staff->fresh()->resolveClassSubjectAssignment(['class_subject_ids' => null, 'class_subjects_mapped_at' => now(), 'class_subject_legacy_snapshot' => ['arabic']], 'confirm_legacy'))->toThrow(ValidationException::class);
-    expect(ClassSubjectInitializer::needsMapping($this->staff->fresh()))->toBeTrue();
-});
-
-it('R3-2 refuses empty work keys so a direct previous-name entry cannot claim general gradebook work', function () {
-    ($this->initialize)();
-    ($this->work)('grades', '');
-    $subject = ClassSubject::first();
-    expect(fn () => $subject->forceFill(['previous_name_keys' => ['']])->save())->toThrow(ValidationException::class);
-    expect(fn () => $subject->fresh()->update(['name' => '']))->toThrow(ValidationException::class);
-});
-
-it('R3-2 refuses newly owned detail keys even when SQL collations already match them on a list', function () {
-    if (DB::connection()->getDriverName() !== 'sqlite') $this->markTestSkipped('SQLite collation simulation, not a MySQL execution.');
-    ($this->initialize)();
-    $subject = ClassSubject::first();
-    $subject->update(['name' => 'Science']);
-    // SQLite simulation of an accent-insensitive SQL comparison; this is not a MySQL execution.
-    DB::connection()->getPdo()->sqliteCreateCollation('class_subject_test_ci', fn ($a, $b) => strcmp(str_replace('í', 'i', $a), str_replace('í', 'i', $b)));
-    DB::statement('ALTER TABLE class_assignments RENAME TO class_assignments_before_collation_test');
-    DB::statement('CREATE TABLE class_assignments (id INTEGER PRIMARY KEY, masjid_id INTEGER, group_id INTEGER, subject_key TEXT COLLATE class_subject_test_ci)');
-    foreach (['science', 'scíence'] as $key) DB::table('class_assignments')->insert(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'subject_key' => $key]);
-    expect(DB::table('class_assignments')->where('subject_key', 'science')->count())->toBe(2);
-    $limits = SubjectFence::limitsForIds([$subject->id], $this->group);
-    expect(SubjectFence::allows($limits, 'scíence'))->toBeFalse();
-    expect(fn () => $subject->forceFill(['previous_name_keys' => ['scíence']])->save())->toThrow(ValidationException::class);
-    $subject->fresh()->update(['name' => 'Language']);
-    $new = new ClassSubject(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Scíence']);
-    expect(fn () => $new->saveAttachingOrphanedWork())->toThrow(ValidationException::class);
+it('retains linked deleted gradebook work and child attachments without extra owners', function () {
+    $work = ($this->work)('grades', 'Arabic'); $work->delete(); ($this->initialize)();
+    expect(ClassAssignment::withTrashed()->findOrFail($work->id)->class_subject_id)->toBe(ClassSubject::where('name', 'Arabic')->value('id'));
 });

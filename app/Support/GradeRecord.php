@@ -455,4 +455,115 @@ final class GradeRecord
             ->values()
             ->all();
     }
+
+
+    private static function levelSummaryClassSubjects(int $membershipId, ?array $subjectIds): array
+    {
+        $rows = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membershipId)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
+            ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
+            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
+            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
+            ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('assignment_scores.points_earned as level')
+            ->selectRaw('COUNT(*) as n')
+            ->get();
+
+        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
+        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
+
+        $counted = (int) $scored->sum('n');
+        $sum = (float) $scored->sum(fn ($r) => (float) $r->level * (int) $r->n);
+        $mean = $counted > 0 ? round($sum / $counted, 1) : null;
+
+        return [
+            'recorded' => $counted + $missing,
+            'counted' => $counted,
+            'missing' => $missing,
+            'mean' => $mean,
+            // The WORD for the mean, which the client prints beside the number
+            // and never instead of it — see PerformanceLevel::labelForMean.
+            'mean_label' => PerformanceLevel::labelForMean($mean),
+            // Every level is present even at zero, so the shape of the
+            // distribution does not change as a child's marks come in, and "no
+            // 4s yet" is visible rather than absent.
+            'distribution' => array_map(fn (int $level): array => [
+                'level' => $level,
+                'label' => PerformanceLevel::label($level),
+                'short_label' => PerformanceLevel::shortLabel($level),
+                'count' => (int) $scored->where('level', $level)->sum('n'),
+            ], PerformanceLevel::ALL),
+        ];
+    }
+
+    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null): array
+    {
+        $totals = self::totalsClassSubjects($membershipId, $subjectIds);
+        $recorded = (int) $totals->sum('n');
+        $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
+
+        $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
+
+        $pieces = self::piecesClassSubjects($membershipId, $subjectIds);
+        $weights = self::weightsFor($membershipId);
+
+        return [
+            'recorded' => $recorded,
+            'counted' => (int) $countingRows->sum('n'),
+            'excused' => (int) $totals->where('status', AssignmentScore::STATUS_EXCUSED)->sum('n'),
+            // Points work only.
+            'points_earned' => round((float) $pointRows->sum('earned'), 2),
+            'points_possible' => round((float) $pointRows->sum('possible'), 2),
+            'points_counted' => (int) $pointRows->sum('n'),
+            // Levels work, reported as levels: a distribution and a mean level
+            // to one decimal. Never a percentage.
+            'levels' => self::levelSummaryClassSubjects($membershipId, $subjectIds),
+            // Excellent / Good / Needs work: a count of each word. No mean and
+            // no percentage (App\Support\SimpleMark).
+            'simple' => SimpleMark::summaryForClassSubjects($membershipId, $subjectIds),
+            // T-001.2: the class's weights applied. See the class docblock.
+            'weighting' => self::weighting($pieces, $weights),
+            // T-001.3: the same marks, one block per subject.
+            'by_subject' => self::bySubject($pieces, $weights),
+        ];
+    }
+
+    private static function totalsClassSubjects(int $membershipId, ?array $subjectIds): Collection
+    {
+        return AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membershipId)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
+            ->groupBy('assignment_scores.status', 'class_assignments.scale')
+            ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('class_assignments.scale as scale')
+            ->selectRaw('COUNT(*) as n')
+            ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
+            ->selectRaw('SUM(class_assignments.points_possible) as possible')
+            ->get();
+    }
+
+    private static function piecesClassSubjects(int $membershipId, ?array $subjectIds): Collection
+    {
+        return AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membershipId)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
+            ->select([
+                'assignment_scores.status as status',
+                'assignment_scores.points_earned as earned',
+                'class_assignments.scale as scale',
+                'class_assignments.points_possible as possible',
+                'class_assignments.subject as subject',
+                'class_assignments.subject_key as subject_key',
+                'class_assignments.type as type',
+                'class_assignments.weight as weight',
+            ])
+            ->get();
+    }
 }

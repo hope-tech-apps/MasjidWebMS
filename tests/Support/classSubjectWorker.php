@@ -11,10 +11,17 @@ echo "ready\n";
 fgets(STDIN);
 try {
     if ($input['action'] === 'initialize') {
-        App\Support\ClassSubjectInitializer::run(App\Models\Masjid::findOrFail($input['masjid']));
+        App\Support\ClassSubjectInitializer::run(App\Models\Masjid::findOrFail($input['masjid']), false, true);
     } elseif ($input['action'] === 'create') {
         app(App\Support\TenantContext::class)->set($input['masjid']);
         App\Models\Group::create(['name' => 'Concurrent Practice Class', 'slug' => 'concurrent-practice-'.Illuminate\Support\Str::uuid(), 'kind' => 'class']);
+    } elseif ($input['action'] === 'plan-subject') {
+        app(App\Support\TenantContext::class)->set($input['masjid']);
+        Illuminate\Support\Facades\Auth::login(App\Models\User::findOrFail($input['user']));
+        App\Models\LessonPlan::findOrFail($input['plan'])->update(['class_subject_id' => $input['subject']]);
+    } elseif ($input['action'] === 'subject-rename') {
+        app(App\Support\TenantContext::class)->set($input['masjid']);
+        App\Models\ClassSubject::findOrFail($input['subject'])->update(['name' => 'Reading']);
     } else {
         app(App\Support\TenantContext::class)->set($input['masjid']);
         $request = App\Http\Requests\Admin\Groups\SaveClassSubjectRequest::create('/subjects/'.$input['subject'], 'PUT', ['tool' => 'hifdh']);
@@ -27,6 +34,16 @@ try {
     echo "refused\n";
 } catch (Throwable $e) {
     echo get_class($e)."\n";
-    if ($e instanceof Illuminate\Database\QueryException) fwrite(STDERR, json_encode(Tests\Support\ClassSubjectWorkerFailure::identifiers($e))."\n");
+    if ($e instanceof Illuminate\Database\QueryException) {
+        $identifiers = Tests\Support\ClassSubjectWorkerFailure::identifiers($e);
+        [$table, $column] = match ($input['action']) {
+            'initialize' => ['masjids', 'id'], 'create' => ['groups', 'slug'],
+            'plan-subject' => ['lesson_plans', 'class_subject_id'], 'subject-rename' => ['class_subjects', 'name'],
+            default => ['class_subjects', 'tool'],
+        };
+        $identifiers['table'] ??= $table;
+        $identifiers['column'] ??= $identifiers['table'] === 'masjids' ? 'id' : $column;
+        fwrite(STDERR, json_encode($identifiers)."\n");
+    }
     exit(1);
 }
