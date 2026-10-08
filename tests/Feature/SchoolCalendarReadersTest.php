@@ -137,13 +137,11 @@ class SchoolCalendarReadersTest extends TestCase
             'form-count', 'form-closed' => 2,
             default => null,
         };
-        // Class subjects asks the same question with a narrow read, and the two
-        // switches share that one row: where it ran, the calendar adds nothing.
+        // The one permitted switch read sits exactly there, in either form: the
+        // calendar's own, or the narrow one class subjects makes, whose row the
+        // calendar reuses. Anywhere else, or twice, fails the comparison below.
         $shared = 'select "id", "org_type", "capability_overrides", "deleted_at" from "masjids" where "masjids"."id" = ? limit 1';
-        $this->assertLessThanOrEqual(1, count(array_keys($sql, $shared, true)), $shape.' reads the organisation switches more than once');
-        if (in_array($shared, $sql, true) && getenv('CAPTURE_READER_SQL') !== '1') {
-            $sql = array_values(array_filter($sql, fn (string $statement): bool => $statement !== $shared));
-        } elseif ($at !== null && getenv('CAPTURE_READER_SQL') !== '1') array_splice($expected, $at, 0, ['select * from "masjids" where "masjids"."id" = ? and "masjids"."deleted_at" is null limit 1']);
+        if ($at !== null && getenv('CAPTURE_READER_SQL') !== '1') array_splice($expected, $at, 0, [($sql[$at] ?? null) === $shared ? $shared : 'select * from "masjids" where "masjids"."id" = ? and "masjids"."deleted_at" is null limit 1']);
         $this->assertSame($expected, $sql, $shape.' OFF statements changed');
         $this->assertSame($literal['data'], $data, $shape.' OFF response changed');
     }

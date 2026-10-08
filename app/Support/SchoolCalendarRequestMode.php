@@ -22,7 +22,16 @@ final class SchoolCalendarRequestMode
         // Partial projections cannot establish the capability. Full rows loaded
         // by main's middleware, owner relation or calendar can all establish it.
         $attributes = $org->getAttributes();
-        if (! $org->id || $org->trashed() || ! array_key_exists('org_type', $attributes) || ! array_key_exists('capability_overrides', $attributes)) return;
+        if (! $org->id || ! array_key_exists('org_type', $attributes) || ! array_key_exists('capability_overrides', $attributes)) return;
+        // An archived school is off, and a row that says so settles it without another read.
+        if (array_key_exists('deleted_at', $attributes) && $org->trashed()) {
+            $decisions = request()->attributes->get(self::ATTRIBUTE, []);
+            $decisions[(int) $org->id] ??= false;
+            request()->attributes->set(self::ATTRIBUTE, $decisions);
+            return;
+        }
+        // A projection without deleted_at cannot say whether the school is archived.
+        if (! array_key_exists('deleted_at', $attributes)) return;
         // Capture without resolving on every row of unrelated organisation lists.
         $rows = request()->attributes->get(self::ROWS, []);
         $rows[(int) $org->id] ??= $org;

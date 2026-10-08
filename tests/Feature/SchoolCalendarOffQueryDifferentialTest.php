@@ -79,16 +79,16 @@ class SchoolCalendarOffQueryDifferentialTest extends TestCase
         $lookupAt = match ($shape) {
             'year-create', 'year-update', 'year-delete', 'closure-create' => 0,
             'card-prepare', 'card-save' => 7,
+            // Main's own class-subject dispatch reads the switches before it loads the school here.
+            'capabilities' => 0,
             default => null, // Calendar response reuses main's own school read.
         };
-        // Class subjects asks the same question with a narrow read, and the two
-        // switches share that one row: where it ran, the calendar adds nothing.
+        // The one permitted switch read sits exactly there, in either form: the
+        // calendar's own, or the narrow one class subjects makes, whose row the
+        // calendar reuses. Anywhere else, or twice, fails the comparison below.
         $shared = 'select "id", "org_type", "capability_overrides", "deleted_at" from "masjids" where "masjids"."id" = ? limit 1';
-        $this->assertLessThanOrEqual(1, count(array_keys($sql, $shared, true)), $shape.' reads the organisation switches more than once');
-        if (in_array($shared, $sql, true)) {
-            $sql = array_values(array_filter($sql, fn (string $statement): bool => $statement !== $shared));
-        } elseif ($lookupAt !== null) {
-            array_splice($expected, $lookupAt, 0, ['select * from "masjids" where "masjids"."id" = ? and "masjids"."deleted_at" is null limit 1']);
+        if ($lookupAt !== null) {
+            array_splice($expected, $lookupAt, 0, [($sql[$lookupAt] ?? null) === $shared ? $shared : 'select * from "masjids" where "masjids"."id" = ? and "masjids"."deleted_at" is null limit 1']);
         }
         $this->assertSame($expected, $sql, $shape.' OFF SQL differs from main plus its permitted read');
     }

@@ -46,15 +46,16 @@ final class SchoolCalendarCapabilityWriter
             // A request that carries both switches still answers to the class-subject guards.
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
-            // Hidden OFF -> OFF writes have no stored override, audit row or cache effect.
+            // Only the two switches that stay out of the panel while off skip a
+            // hidden OFF -> OFF write, as main's writer does for class subjects.
+            // Every other key stores its override and its audit row, no-ops included.
             $unchangedHidden = [];
-            foreach ($changes as $key => $value) {
-                if (! $value && ! $locked->hasCapability($key) && config("capabilities.$key.listed_when_off") === false) {
-                    $unchangedHidden[] = $key;
-                    unset($changes[$key]);
+            foreach ([SchoolSettings::SCHOOL_CALENDAR_TERMS, 'class_subjects'] as $hidden) {
+                if (($changes[$hidden] ?? null) === false && ! $locked->hasCapability($hidden)) {
+                    $unchangedHidden[] = $hidden;
+                    unset($changes[$hidden]);
                 }
             }
-            if ($changes === []) return ['changed' => [], 'unchanged' => $unchangedHidden];
             $keys = array_values(array_diff($keys, $unchangedHidden));
             if (array_key_exists(SchoolSettings::SCHOOL_CALENDAR_TERMS, $changes)) SchoolCalendarSwitch::configure($locked, $changes[SchoolSettings::SCHOOL_CALENDAR_TERMS]);
             $overrides = is_array($locked->capability_overrides) ? $locked->capability_overrides : [];
@@ -68,9 +69,11 @@ final class SchoolCalendarCapabilityWriter
                 $overrides[$key] = $changes[$key];
             }
 
-            $locked->capability_overrides = $overrides;
-            $locked->updated_by = $actor;
-            $locked->save();
+            if ($flips !== []) {
+                $locked->capability_overrides = $overrides;
+                $locked->updated_by = $actor;
+                $locked->save();
+            }
 
             $changed = [];
             $unchanged = $unchangedHidden;

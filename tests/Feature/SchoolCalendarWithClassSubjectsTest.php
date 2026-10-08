@@ -90,3 +90,70 @@ it('still holds the class-subject guard when one request carries both switches',
     expect($this->org->fresh()->hasCapability('class_subjects'))->toBeFalse();
     expect($this->org->fresh()->hasCapability('school_calendar_terms'))->toBeFalse();
 });
+
+it('stores and audits every other switch sent alongside the calendar switch', function () {
+    $actor = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15555550109']);
+
+    $result = CapabilityWriter::apply($this->org->fresh(), ['school_calendar_terms' => false, 'class_store' => false], $actor->id);
+
+    $org = $this->org->fresh();
+    expect($org->capability_overrides)->toHaveKey('class_store', false);
+    expect($org->capability_overrides)->not->toHaveKey('school_calendar_terms');
+    expect(\App\Models\MasjidCapabilityChange::where('masjid_id', $org->id)->pluck('capability')->all())->toBe(['class_store']);
+    expect($result['unchanged'])->toContain('school_calendar_terms')->toContain('class_store');
+});
+
+it('reuses a school row the request already loaded, whichever switch asks first', function (string $first) {
+    $ask = fn (string $which) => $which === 'calendar'
+        ? \App\Support\SchoolCalendarRequestMode::enabled($this->org->id)
+        : \App\Support\ClassSubjectMode::enabled($this->org->id);
+    $inRequest = fn (Closure $work) => (new \App\Http\Middleware\SchoolCalendarHttpRequest)->handle(request(), fn () => (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), $work));
+
+    // Nothing loaded yet: one read answers both questions.
+    $sql = $inRequest(function () use ($ask, $first) {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        $ask($first); $ask($first === 'calendar' ? 'subjects' : 'calendar');
+        $log = array_column(DB::getQueryLog(), 'query'); DB::disableQueryLog();
+        return $log;
+    });
+    expect($sql)->toHaveCount(1);
+
+    // The school is already loaded: neither question reads again.
+    $sql = $inRequest(function () use ($ask, $first) {
+        Masjid::findOrFail($this->org->id);
+        DB::flushQueryLog(); DB::enableQueryLog();
+        $ask($first); $ask($first === 'calendar' ? 'subjects' : 'calendar');
+        $log = array_column(DB::getQueryLog(), 'query'); DB::disableQueryLog();
+        return $log;
+    });
+    expect($sql)->toBe([]);
+})->with(['calendar', 'subjects']);
+
+it('sees a switch saved earlier in the same request', function () {
+    (new \App\Http\Middleware\SchoolCalendarHttpRequest)->handle(request(), fn () => (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () {
+        expect(\App\Support\ClassSubjectMode::enabled($this->org->id))->toBeFalse();
+        expect(\App\Support\SchoolCalendarRequestMode::enabled($this->org->id))->toBeFalse();
+
+        $org = $this->org->fresh();
+        $org->forceFill(['capability_overrides' => ['class_subjects' => true, 'school_calendar' => true, 'school_calendar_terms' => true]])->save();
+
+        expect(\App\Support\ClassSubjectMode::enabled($this->org->id))->toBeTrue();
+        expect(\App\Support\SchoolCalendarRequestMode::enabled($this->org->id))->toBeTrue();
+    }));
+});
+
+it('answers off for an archived school from the one narrow read', function () {
+    $org = $this->org->fresh();
+    $org->forceFill(['capability_overrides' => ['school_calendar' => true, 'school_calendar_terms' => true]])->save();
+    $org->delete();
+
+    $sql = (new \App\Http\Middleware\SchoolCalendarHttpRequest)->handle(request(), fn () => (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        \App\Support\ClassSubjectMode::enabled($this->org->id);
+        expect(\App\Support\SchoolCalendarRequestMode::enabled($this->org->id))->toBeFalse();
+        $log = array_column(DB::getQueryLog(), 'query'); DB::disableQueryLog();
+        return $log;
+    }));
+
+    expect($sql)->toHaveCount(1);
+});

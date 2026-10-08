@@ -863,9 +863,11 @@ class Masjid extends Model implements HasMedia
      */
     protected static function booted(): void
     {
+        static::retrieved(fn (Masjid $org) => \App\Support\ClassSubjectMode::rememberLoaded($org));
+        static::saved(fn (Masjid $org) => \App\Support\ClassSubjectMode::forget((int) $org->id));
         static::retrieved(fn (Masjid $org) => \App\Support\SchoolCalendarRequestMode::remember($org));
         static::saved(function (Masjid $org) {
-            if ($org->wasChanged(['org_type', 'capability_overrides'])) {
+            if ($org->wasChanged(['org_type', 'capability_overrides', 'deleted_at'])) {
                 \App\Support\SchoolCalendarRequestMode::forget((int) $org->id);
             }
         });
