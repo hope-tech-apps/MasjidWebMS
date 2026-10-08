@@ -16,6 +16,7 @@ export interface DayPlan {
     id: number;
     session_date: string;
     subject?: string | null;
+    class_subject_id?: number | null;
 }
 
 /**
@@ -60,23 +61,31 @@ export function plansOn<T extends DayPlan>(plans: T[], iso: string): T[] {
 }
 
 /**
+ * ON linked plans match only their ID; unlinked plans match only other unlinked saved text.
+ * OFF retains the legacy text comparison.
+ *
  * The OTHER plan on that day that already has this subject, if any. `exceptId`
  * is the plan being edited: renaming a plan to its own subject is no clash.
  */
 export function subjectClash<T extends DayPlan>(
     plans: T[], iso: string, subject: string | null | undefined, exceptId: number | null,
+    classSubjectsEnabled = false, classSubjectId: number | null = null,
 ): T | null {
     const key = subjectKey(subject);
 
-    return plansOn(plans, iso).find((p) => p.id !== exceptId && subjectKey(p.subject) === key) ?? null;
+    return plansOn(plans, iso).find((p) => p.id !== exceptId && (classSubjectsEnabled
+        ? (classSubjectId != null ? p.class_subject_id === classSubjectId : p.class_subject_id == null && subjectKey(p.subject) === key)
+        : subjectKey(p.subject) === key)) ?? null;
 }
 
 /** The subject keys the day's OTHER plans hold — what a subject picker must not offer again. */
-export function takenSubjectKeys(plans: DayPlan[], iso: string, exceptId: number | null): Set<string> {
+export function takenSubjectKeys(plans: DayPlan[], iso: string, exceptId: number | null, classSubjectsEnabled = false): Set<string> {
     return new Set(
         plansOn(plans, iso)
             .filter((p) => p.id !== exceptId)
-            .map((p) => subjectKey(p.subject))
+            .map((p) => classSubjectsEnabled
+                ? (p.class_subject_id != null ? `id:${p.class_subject_id}` : `text:${subjectKey(p.subject)}`)
+                : subjectKey(p.subject))
     );
 }
 
@@ -227,9 +236,9 @@ export function withoutAttachment<T extends PlanAttachment>(list: readonly T[], 
  * a second Math plan.
  */
 export function copyRequest<T extends CopyablePlan>(
-    base: string, plans: T[], source: T, iso: string,
+    base: string, plans: T[], source: T, iso: string, classSubjectsEnabled = false,
 ): { method: 'post' | 'put'; url: string; payload: T & { resource_ids: number[] } } {
-    const same = subjectClash(plans, iso, source.subject, null);
+    const same = subjectClash(plans, iso, source.subject, null, classSubjectsEnabled, source.class_subject_id ?? null);
     // The files travel with the activities they sit under (T-004.1, "the
     // Activities rule"): a day that keeps its own activities keeps its own files,
     // and a day that takes the source's activities takes the source's files. Never

@@ -22,6 +22,7 @@ const resizeHandlers = new Set<() => void>();
 (Node.prototype as any).getAttribute = function(key: string) { return this.props[key]; };
 (Node.prototype as any).getBoundingClientRect = function() { return { top: 0, bottom: 0 }; };
 (Node.prototype as any).getClientRects = function() { return [{}]; };
+(Node.prototype as any).scrollIntoView = function() {};
 (Node.prototype as any).closest = function(selector: string): any { return selector === '[inert]' && this.props.inert !== undefined ? this : this.parent?.closest(selector); };
 (Node.prototype as any).contains = function(n: Node): boolean { return n === this || this.children.some((c: any) => c.contains(n)); };
 (Node.prototype as any).hasAttribute = function(key: string): boolean { return key in this.props; };
@@ -1350,5 +1351,70 @@ for (const count of [0, 1]) test(`merge reload refusal retains the resolved succ
         assert.ok(screen.text().includes(count === 0 ? 'This class already has the subjects for its current grades.' : 'Subjects for current grades added.'));
         assert.match(screen.text(), /The list could not reload\. The catalog is temporarily unavailable\./);
         assert.doesNotMatch(screen.text(), /response =>|subjects_added|function/);
+    } finally { screen.unmount(); }
+});
+
+
+for (const linked of [true, false]) test(`review8: ON gradebook editor retains ${linked ? 'linked' : 'unlinked'} identity sharing a current name`, async () => {
+    const work = { id: 77, title: 'Saved work', subject: 'Arabic', class_subject_id: linked ? 102 : null, scale: 'points', points_possible: 10, assigned_on: '2026-10-08' };
+    const { screen, calls } = await setup('teacher', {
+        read: (url: string) => url.endsWith('/assignments') ? { data: { status: 'success', data: [work], subjects: [{ name: 'Arabic', key: 'arabic', class_subject_id: 102 }] } } : undefined,
+    });
+    try {
+        await pick(screen, 'Grades');
+        click(exactButton(screen, 'Edit Saved work')); await flush();
+        click(exactButton(screen, 'Save changes')); await flush(10);
+        const save = calls.findLast((c: any) => c.method === 'put' && c.url.endsWith('/assignments/77'));
+        assert.ok(save); assert.equal('subject' in save.body, false, 'unchanged displayed name must not become a new choice');
+        if (linked) assert.equal(save.body.class_subject_id, 102);
+        else assert.equal('class_subject_id' in save.body, false, 'unlinked work remains unlinked');
+    } finally { screen.unmount(); }
+});
+
+for (const flag of [true, false]) test(`review8: mounted Save keeps distinct identities ${flag ? 'ON' : 'OFF'}`, async () => {
+    const today = new Date();
+    const day = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const plans = [
+        { id: 77, session_date: day, subject: 'Arabic', class_subject_id: 102, body: 'Linked activities' },
+        { id: 78, session_date: day, subject: 'Arabic', class_subject_id: null, body: 'Historical activities' },
+    ];
+    const { screen, calls } = await setup('teacher', { flag,
+        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null }) : undefined,
+    });
+    try {
+        if (flag) await pick(screen, 'Lesson Plans');
+        else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Lesson Plans')); await flush(10); }
+        const save = exactButton(screen, 'Save plan');
+        assert.equal(Boolean(save.props.disabled), !flag);
+        assert.equal(screen.text().includes('This day already has a Arabic plan.'), !flag);
+        if (flag) { click(save); await flush(10); assert.ok(calls.some((c: any) => c.method === 'put' && c.url.endsWith('/lesson-plans/77'))); }
+    } finally { screen.unmount(); }
+});
+
+
+for (const flag of [true, false]) test(`review8: mounted week copy separates current labels from saved identity ${flag ? 'ON' : 'OFF'}`, async () => {
+    const today = new Date();
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const sourceDay = iso(today);
+    const target = new Date(today); target.setDate(today.getDate() - today.getDay() + (today.getDay() === 1 ? 2 : 1));
+    const targetDay = iso(target);
+    const plans = [
+        { id: 77, session_date: sourceDay, subject: 'Literacy', class_subject_id: 102, grade_label: '1', body: 'Source activities' },
+        { id: 78, session_date: targetDay, subject: 'Literacy', class_subject_id: null, body: 'Historical activities' },
+    ];
+    const { screen, calls } = await setup('teacher', { flag,
+        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null })
+            : url.includes('/curriculum') ? ok({ grades: ['1'], subjects: ['Literacy'], weeks: [] }) : undefined,
+        write: (_method: string, url: string, body: any) => url.includes('/lesson-plans') ? ok({ id: 99, ...body }) : undefined,
+    });
+    try {
+        if (flag) await pick(screen, 'Lesson Plans');
+        else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Lesson Plans')); await flush(10); }
+        const button = screen.all((n: Node) => n.tag === 'button' && n.textContent.includes('Copy this Literacy plan to the rest of this week'))[0];
+        assert.ok(button, screen.text()); click(button); await flush(10);
+        const copy = calls.find((c: any) => ['put', 'post'].includes(c.method) && c.url.includes('/lesson-plans') && c.body.session_date === targetDay);
+        assert.ok(copy); assert.equal(copy.method, flag ? 'post' : 'put');
+        assert.equal(copy.url.endsWith('/lesson-plans/78'), !flag);
+        assert.equal(copy.body.body, flag ? 'Source activities' : 'Historical activities');
     } finally { screen.unmount(); }
 });

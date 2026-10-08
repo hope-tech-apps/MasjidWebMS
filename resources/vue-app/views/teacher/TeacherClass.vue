@@ -1417,10 +1417,10 @@
                                     <select v-if="classSubjects.enabled.value" data-plan-subject
                                             class="form-select form-select-sm"
                                             v-model="planForm.class_subject_id" @change="onClassPlanSubjectPick">
-                                        <option v-if="planGeneralAllowed" :value="null">No subject / general</option>
+                                        <option v-if="planGeneralAllowed" :value="null" :disabled="takenSubjects.has('text:')">No subject / general</option>
                                         <option v-if="planForm.class_subject_id === '__unlinked__'" value="__unlinked__">{{ planForm.subject }} (saved subject)</option>
                                         <option v-if="planRetainedSubject" :value="planRetainedSubject.id">{{ planRetainedSubject.name }} (saved subject)</option>
-                                        <option v-for="s in planClassSubjects" :key="s.id" :value="s.id">{{ s.name }}</option>
+                                        <option v-for="s in planClassSubjects" :key="s.id" :value="s.id" :disabled="takenSubjects.has(`id:${s.id}`)">{{ s.name }}</option>
                                     </select>
                                     <select v-else-if="curriculum.subjects.length && !subjectOther"
                                             class="form-select form-select-sm"
@@ -1889,7 +1889,14 @@
                                     <label class="form-label small text-muted mb-1" for="work-subject">
                                         Subject<span v-if="gradeSubjects.length" class="text-danger"> *</span>
                                     </label>
-                                    <select v-if="gradeSubjects.length" id="work-subject" v-model="assignmentForm.subject"
+                                    <select v-if="classSubjects.enabled.value" id="work-subject" v-model="assignmentForm.class_subject_id"
+                                            class="form-select form-select-sm" style="min-width:11rem" @change="onClassWorkSubjectPick">
+                                        <option :value="null" disabled>Choose…</option>
+                                        <option v-if="assignmentForm.class_subject_id === '__unlinked__'" value="__unlinked__">{{ assignmentForm.subject }} (saved subject)</option>
+                                        <option v-if="workRetainedSubject" :value="workRetainedSubject.id">{{ workRetainedSubject.name }} (saved subject)</option>
+                                        <option v-for="s in gradeSubjects" :key="s.class_subject_id" :value="s.class_subject_id">{{ s.name }}</option>
+                                    </select>
+                                    <select v-else-if="gradeSubjects.length" id="work-subject" v-model="assignmentForm.subject"
                                             class="form-select form-select-sm" style="min-width:11rem">
                                         <option value="" disabled>Choose…</option>
                                         <option v-for="s in gradeSubjects" :key="s.key" :value="s.name">{{ s.name }}</option>
@@ -2011,7 +2018,7 @@
                                             <div v-if="studentGrades.summary.by_subject.length" class="mb-2">
                                                 <div class="text-uppercase text-muted small">By subject</div>
                                                 <ul class="list-unstyled small mb-0">
-                                                    <li v-for="b in studentGrades.summary.by_subject" :key="b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
+                                                    <li v-for="b in studentGrades.summary.by_subject" :key="b.subject_identity ?? b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
                                                         <span>{{ b.subject ?? 'No subject' }}</span>
                                                         <span class="text-muted text-end">{{ subjectLine(b) || '—' }}</span>
                                                     </li>
@@ -3133,9 +3140,10 @@ const selectedPlan = computed(() =>
  * one twice; and the plan the form's subject would collide with, so the form
  * says so before Save rather than after. The server refuses a clash either way.
  */
-const takenSubjects = computed(() => takenSubjectKeys(plans.value, planDate.value, planId.value));
+const takenSubjects = computed(() => takenSubjectKeys(plans.value, planDate.value, planId.value, classSubjects.enabled.value));
 const planClash = computed(() =>
-    subjectClash(plans.value, planDate.value, planForm.value.subject, planId.value));
+    subjectClash(plans.value, planDate.value, planForm.value.subject, planId.value, classSubjects.enabled.value,
+        typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null));
 
 /** Open one plan of the selected day, or NULL for a new one. */
 const selectPlan = (id: number | null) => {
@@ -3647,6 +3655,7 @@ const copyAcrossWeek = async () => {
     // Read once: the teacher may change day, plan or week while the copy runs,
     // and none of that may change which days it writes or which plans it finds.
     const sourceDay = planDate.value;
+    const subjectMode = classSubjects.enabled.value;
     const list = plans.value;
     const days = weekdaysOnly.value.map((d) => d.iso);
     const written = new Set<number>();
@@ -3660,11 +3669,11 @@ const copyAcrossWeek = async () => {
             // THIS subject's plan on each other day (lessonPlans.copyRequest):
             // Thursday's Math plan is rewritten by its id, its Science plan is
             // not touched, and a day with no Math plan gets one.
-            const req = copyRequest(base.value, list, source, iso);
+            const req = copyRequest(base.value, list, source, iso, subjectMode);
             const res = await (req.method === 'put'
                 ? TeacherApiService.put(req.url, req.payload)
                 : TeacherApiService.post(req.url, req.payload));
-            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null)?.id;
+            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null, subjectMode, source.class_subject_id ?? null)?.id;
             if (id) written.add(id);
         }
     } catch {
@@ -3888,7 +3897,10 @@ const deletePlan = async () => {
 
 // ---------- gradebook ----------
 const assignments = ref<any[]>([]);
-const blankAssignment = () => blankWorkForm({ scale: defaultScale.value, today: todayIso, subject: defaultSubject.value });
+const blankAssignment = () => ({
+    ...blankWorkForm({ scale: defaultScale.value, today: todayIso, subject: defaultSubject.value }),
+    ...(classSubjects.enabled.value ? { class_subject_id: gradeSubjects.value.find(s => s.name === defaultSubject.value)?.class_subject_id ?? null } : {}),
+});
 const assignmentForm = ref<any>(blankWorkForm({ scale: 'levels', today: todayIso }));
 const creatingAssignment = ref(false);
 /** The piece of work being edited, or null while the form is adding new work. */
@@ -3902,7 +3914,16 @@ const workTypes = ref<{ key: string; label: string }[]>([]);
 const classWeights = ref<Record<string, number>>({});
 const weightingEnabled = ref(false);
 const weightMax = ref(100);
-const gradeSubjects = ref<{ name: string; key: string }[]>([]);
+const gradeSubjects = ref<{ name: string; key: string; class_subject_id?: number }[]>([]);
+const workRetainedSubject = computed(() => {
+    const id = assignmentForm.value.class_subject_id;
+    return typeof id === 'number' && !gradeSubjects.value.some(s => s.class_subject_id === id)
+        ? { id, name: assignmentForm.value.subject } : null;
+});
+const onClassWorkSubjectPick = () => {
+    const id = assignmentForm.value.class_subject_id;
+    if (id !== '__unlinked__') assignmentForm.value.subject = gradeSubjects.value.find(s => s.class_subject_id === id)?.name ?? '';
+};
 const defaultSubject = ref<string | null>(null);
 const standardsEnabled = ref(false);
 
@@ -3981,7 +4002,10 @@ const loadAssignments = async () => {
         // A form nobody has started takes the school's defaults; one in progress is left alone.
         if (editingId.value === null && !assignmentForm.value.title) {
             assignmentForm.value.scale = defaultScale.value;
-            if (!assignmentForm.value.subject && defaultSubject.value) assignmentForm.value.subject = defaultSubject.value;
+            if (!assignmentForm.value.subject && defaultSubject.value) {
+                assignmentForm.value.subject = defaultSubject.value;
+                if (classSubjects.enabled.value) assignmentForm.value.class_subject_id = gradeSubjects.value.find(s => s.name === defaultSubject.value)?.class_subject_id ?? null;
+            }
         }
     } catch {
         gradesError.value = 'Could not load the gradebook.';
@@ -3995,6 +4019,11 @@ const saveWork = async () => {
     gradesError.value = '';
     try {
         const body = workRequest(assignmentForm.value, gradeContext.value);
+        if (classSubjects.enabled.value) {
+            const id = assignmentForm.value.class_subject_id;
+            if (typeof id === 'number') { body.class_subject_id = id; delete body.subject; }
+            else if (id === '__unlinked__' && editingId.value !== null) delete body.subject;
+        }
         if (editingId.value !== null) {
             await TeacherApiService.put(`${base.value}/assignments/${editingId.value}`, body);
         } else {
@@ -4013,7 +4042,9 @@ const saveWork = async () => {
 const startEdit = (a: any) => {
     gradesError.value = '';
     editingId.value = a.id;
-    assignmentForm.value = workFormFrom(a);
+    assignmentForm.value = { ...workFormFrom(a),
+        ...(classSubjects.enabled.value ? { class_subject_id: a.class_subject_id ?? (a.subject ? '__unlinked__' : null) } : {}),
+    };
     gradesView.value = 'work';
     openAssignment.value = null;
     nextTick(() => document.getElementById('work-subject')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));

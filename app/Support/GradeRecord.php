@@ -446,6 +446,8 @@ final class GradeRecord
                 $weighted = $enabled ? self::weighted($rows, $weights) : null;
 
                 return [
+                    ...($byId ? ['subject_identity' => json_encode($rows->first()->class_subject_id !== null
+                        ? ['id', (int) $rows->first()->class_subject_id] : ['text', (string) $rows->first()->subject_key])] : []),
                     'subject' => $byId && $rows->first()->class_subject_id !== null
                         ? $rows->first()->current_subject_name
                         : ((string) $rows->first()->subject_key === '' ? null : (string) $rows->first(fn ($p) => $p->subject !== null)?->subject),

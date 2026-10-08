@@ -121,12 +121,18 @@ final class SubjectFence
             $row = GroupStaff::whereKey($row->id)->lockForUpdate()->first();
             if ($row === null) return [];
         }
+        return self::assignedIdsForRow($row);
+    }
+
+    /** Effective ON authority for a current assignment, shared by the fence and disable. */
+    public static function assignedIdsForRow(GroupStaff $row): ?array
+    {
         // A late OFF INSERT has default NULL IDs without ever choosing all. Its
         // provenance is absent; no legacy read or automatic translation follows.
         if ($row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null) return [];
         if ($row->class_subject_ids === null) return null;
         if (! self::validStoredIds($row->class_subject_ids)) return [];
-        return \App\Models\ClassSubject::where('masjid_id', $row->masjid_id)->where('group_id', $groupId)
+        return \App\Models\ClassSubject::where('masjid_id', $row->masjid_id)->where('group_id', $row->group_id)
             ->whereIn('id', $row->class_subject_ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 

@@ -908,7 +908,7 @@
                                 <template v-if="marksFor(child).summary.by_subject?.length">
                                     <h3 class="text-uppercase text-muted small">{{ t('marks_section_subjects') }}</h3>
                                     <ul class="list-unstyled small mb-3">
-                                        <li v-for="b in marksFor(child).summary.by_subject" :key="b.subject ?? '_none'"
+                                        <li v-for="b in marksFor(child).summary.by_subject" :key="b.subject_identity ?? b.subject ?? '_none'"
                                             class="d-flex justify-content-between gap-3">
                                             <span dir="auto">{{ b.subject ?? t('marks_no_subject') }}</span>
                                             <span class="text-muted text-end" dir="auto">{{ subjectFigures(b, familySeesWeighted(marksFor(child).summary.weighting)) }}</span>

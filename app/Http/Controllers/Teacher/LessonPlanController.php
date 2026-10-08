@@ -287,9 +287,11 @@ class LessonPlanController extends TeacherController
             if (SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null) {
                 $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
             }
-            $plan = $this->planOnSubject($group, $date, $chosen?->id)
-                ?? $this->onlyPlanOn($group, $date)
-                ?? new LessonPlan(['group_id' => $group->id]);
+            $plan = $this->planOnSubject($group, $date, $chosen?->id);
+            if ($plan === null && $this->onlyPlanOn($group, $date) !== null) {
+                return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose the existing plan by id to change its subject.']]], Response::HTTP_CONFLICT);
+            }
+            $plan ??= new LessonPlan(['group_id' => $group->id]);
             return $this->write($request, $masjid_id, $group, $plan);
         });
     }

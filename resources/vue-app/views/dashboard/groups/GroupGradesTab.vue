@@ -189,7 +189,7 @@
                         </template>
                     </dl>
                     <ul v-if="student.summary?.by_subject?.length" class="list-unstyled small mb-0">
-                        <li v-for="b in student.summary.by_subject" :key="b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
+                        <li v-for="b in student.summary.by_subject" :key="b.subject_identity ?? b.subject ?? '_none'" class="d-flex justify-content-between gap-3">
                             <span>{{ b.subject ?? 'No subject' }}</span>
                             <span class="text-muted text-end">{{ subjectLine(b) || '—' }}</span>
                         </li>

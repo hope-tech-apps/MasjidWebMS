@@ -209,7 +209,7 @@ const fn = (name: string): string => {
 test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('savePlan'), /planSaveRequest\(base\.value, planId\.value\)/);
     assert.match(fn('deletePlan'), /TeacherApiService\.delete\(planDeleteUrl\(base\.value, planId\.value\)\)/);
-    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso\)/);
+    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso, subjectMode\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
     assert.match(view, /:disabled="!canSavePlan\(planSaving, planForm\.body, planClash\)"/);
 });
@@ -280,7 +280,8 @@ test('a save, copy or removal that answers late does not reload over the plan th
 
     const copy = fn('copyAcrossWeek');
     assert.match(copy, /const sourceDay = planDate\.value;/);
-    assert.match(copy, /copyRequest\(base\.value, list, source, iso\)/, 'the list as it was when the copy began');
+    assert.match(copy, /const subjectMode = classSubjects\.enabled\.value;/);
+    assert.match(copy, /copyRequest\(base\.value, list, source, iso, subjectMode\)/, 'the list as it was when the copy began');
     assert.match(copy, /await loadLessonPlans\(\(\) => planId\.value !== null && written\.has\(planId\.value\) && !planDirty\(\)\);/);
     // The reload runs after a failed write too, and the message is set after it.
     assert.match(copy, /catch \{\s+failed = true;\s+\}\s+try \{[\s\S]*?await loadLessonPlans\([\s\S]*?\} finally \{[\s\S]*?if \(failed\) planError\.value = /);
@@ -426,4 +427,36 @@ test('the removal has no by-day caller: the plan is removed by its id', () => {
     assert.equal((view.match(/TeacherApiService\.delete\(planDeleteUrl\(/g) ?? []).length, 1);
     assert.doesNotMatch(view, /lesson-plans\?date=/);
     assert.doesNotMatch(view, /delete\([^)]*lesson-plans`/);
+});
+
+
+for (const on of [true, false]) test(`review8: copy and Save compare plan authority ${on ? 'ON' : 'OFF'}`, () => {
+    const source = { id: 1, session_date: '2026-10-08', subject: 'Literacy', class_subject_id: 101, body: 'Source' };
+    const unlinked = { id: 2, session_date: '2026-10-09', subject: 'Literacy', class_subject_id: null, body: 'Historical' };
+    const different = { ...unlinked, id: 3, class_subject_id: 102 };
+    const same = { ...unlinked, id: 4, subject: 'English', class_subject_id: 101 };
+    for (const target of [unlinked, different]) {
+        const req = copyRequest(base, [target], source, target.session_date, on);
+        assert.equal(req.method, on ? 'post' : 'put');
+        assert.equal(req.url, `${base}/lesson-plans${on ? '' : `/${target.id}`}`);
+        const clash = subjectClash([target], target.session_date, source.subject, null, on, source.class_subject_id);
+        assert.equal(canSavePlan(false, source.body, clash), on);
+    }
+    assert.equal(copyRequest(base, [same], source, same.session_date, on).method, on ? 'put' : 'post');
+    assert.equal(copyRequest(base, [unlinked], unlinked, unlinked.session_date, on).method, 'put');
+    assert.equal(copyRequest(base, [source], unlinked, source.session_date, on).method, on ? 'post' : 'put');
+    assert.equal(subjectClash([same], same.session_date, source.subject, null, on, 101)?.id ?? null, on ? same.id : null);
+    assert.equal(subjectClash([same], same.session_date, source.subject, same.id, on, 101), null);
+});
+
+
+test('review8: ON taken subjects keep linked ids separate from saved text', () => {
+    const plans = [
+        { id: 1, session_date: '2026-10-08', subject: 'Literacy', class_subject_id: 101 },
+        { id: 2, session_date: '2026-10-08', subject: 'Literacy', class_subject_id: null },
+        { id: 3, session_date: '2026-10-08', subject: 'Literacy', class_subject_id: 102 },
+    ];
+    assert.deepEqual([...takenSubjectKeys(plans, '2026-10-08', null, true)].sort(), ['id:101', 'id:102', 'text:literacy']);
+    assert.deepEqual([...takenSubjectKeys(plans, '2026-10-08', 1, true)].sort(), ['id:102', 'text:literacy']);
+    assert.deepEqual([...takenSubjectKeys(plans, '2026-10-08', null)].sort(), ['literacy']);
 });

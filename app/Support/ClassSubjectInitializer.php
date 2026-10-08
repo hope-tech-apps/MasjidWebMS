@@ -78,7 +78,7 @@ final class ClassSubjectInitializer
                     $subjects = self::currentSubjects($group);
                     foreach (self::currentStaff($group) as $staff) {
                         // Once IDs have authority, neither legacy edits nor holder moves translate them again.
-                        if (! self::needsTranslation($staff)) continue;
+                        if (! self::needsTranslation($staff, $locked->capability_overrides[self::MARKER]['untranslated_staff_ids'] ?? [])) continue;
                         $ids = self::mapLegacy($group, $staff->subjects, $subjects);
                         DB::table('group_staff')->where('masjid_id', $locked->id)->where('id', $staff->id)->update([
                             'class_subject_ids' => $ids === null ? null : json_encode($ids),
@@ -89,7 +89,7 @@ final class ClassSubjectInitializer
                     ClassSubjectSavedWork::linkAtActivation($group, $subjects);
                 }
                 $overrides = $locked->capability_overrides ?? [];
-                $overrides[self::MARKER] = ['at' => now()->toISOString(), 'overrides_were_null' => $overrides[self::MARKER]['overrides_were_null'] ?? ($locked->capability_overrides === null)];
+                $overrides[self::MARKER] = array_replace($overrides[self::MARKER] ?? [], ['at' => now()->toISOString(), 'overrides_were_null' => $overrides[self::MARKER]['overrides_were_null'] ?? ($locked->capability_overrides === null)]);
                 Masjid::withoutTimestamps(fn () => $locked->forceFill(['capability_overrides' => $overrides])->save());
                 self::$activating = true;
                 try { CapabilityWriter::apply($locked, ['class_subjects' => true], null); }
@@ -105,9 +105,10 @@ final class ClassSubjectInitializer
     }
 
     /** A mapped row or a new ON office choice already has permanent ID authority. */
-    private static function needsTranslation(GroupStaff $staff): bool
+    private static function needsTranslation(GroupStaff $staff, array $untranslated = []): bool
     {
-        return $staff->class_subjects_mapped_at === null && $staff->class_subject_ids_edited_at === null;
+        return $staff->class_subjects_mapped_at === null && $staff->class_subject_ids_edited_at === null
+            && ! in_array((int) $staff->id, $untranslated, true);
     }
 
     /** Read each work table once per school, returning counts rather than work rows. */
@@ -129,7 +130,7 @@ final class ClassSubjectInitializer
                     return $row;
                 })->groupBy('group_id');
         }
-        return ['work' => $work,
+        return ['work' => $work, 'untranslated' => $org->capability_overrides[self::MARKER]['untranslated_staff_ids'] ?? [],
             'grades' => GroupMembership::where('masjid_id', $org->id)->participants()->current()->get(['group_id', 'grade_label'])->groupBy('group_id'),
             'guide' => CurriculumWeek::where('masjid_id', $org->id)->select('grade_label', 'subject')->distinct()->orderBy('subject')->get(),
             'school' => SchoolSubject::where('masjid_id', $org->id)->orderBy('position')->orderBy('id')->get(),
@@ -192,8 +193,8 @@ final class ClassSubjectInitializer
         $gradeKeys = array_filter(array_map(fn ($grade) => GradeLevel::key($grade), $grades), fn ($key) => $key !== null);
         $guideSubjects = $data['guide']->filter(fn ($row) => in_array(GradeLevel::key($row->grade_label), $gradeKeys, true))->pluck('subject')->unique();
         foreach ($data['staff']->get($group->id, collect()) as $staff) {
-            $ids = $staff->class_subject_ids;
-            if (! $alreadyOn && self::needsTranslation($staff)) {
+            $ids = $staff->class_subjects_mapped_at === null && $staff->class_subject_ids_edited_at === null ? [] : $staff->class_subject_ids;
+            if (! $alreadyOn && self::needsTranslation($staff, $data['untranslated'])) {
                 $report['assignments_mapped']++;
                 $ids = $staff->subjects === null || $staff->subjects === [] ? null : [];
                 foreach ($staff->subjects ?? [] as $legacyKey) {
@@ -204,8 +205,8 @@ final class ClassSubjectInitializer
             }
             $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
             $report['assignments'][] = ['teacher_id' => $staff->user_id, 'legacy' => $staff->subjects,
-                'names' => $ids === null ? ['all subjects'] : $selected->pluck('name')->all(), 'will_map' => ! $alreadyOn && self::needsTranslation($staff)];
-            if ($alreadyOn || ! self::needsTranslation($staff)) continue;
+                'names' => $ids === null ? ['all subjects'] : $selected->pluck('name')->all(), 'will_map' => ! $alreadyOn && self::needsTranslation($staff, $data['untranslated'])];
+            if ($alreadyOn || ! self::needsTranslation($staff, $data['untranslated'])) continue;
             $legacy = $staff->subjects ?: null;
             foreach (['hifdh' => ['quran', 'Hifdh'], 'arabic_letters' => ['arabic', 'Arabic letters and daily notes'], 'english_letters' => ['arabic', 'English letters']] as $tool => [$old, $label]) {
                 if (($legacy === null || in_array($old, $legacy, true)) && ! $selected->contains('tool', $tool)) $loss("LOSS Teacher #{$staff->user_id}: {$label}");

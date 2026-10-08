@@ -29,7 +29,7 @@ class DisableClassSubjects extends Command
             foreach ($report['assignments'] as $row) {
                 $before = $row['ids'] === null ? 'all subjects' : implode(', ', $row['ids']);
                 $after = $row['legacy'] === null ? 'all subjects' : implode(', ', $row['legacy']);
-                $state = $row['expressible'] ? 'exact legacy choice' : ($row['accepted'] ? 'accepted unrestricted' : 'INEXPRESSIBLE');
+                $state = $row['untranslated'] ? 'untranslated, legacy value kept' : ($row['expressible'] ? 'exact legacy choice' : ($row['accepted'] ? 'accepted unrestricted' : 'INEXPRESSIBLE'));
                 $this->line("Assignment #{$row['id']} | class #{$row['class_id']} | teacher #{$row['teacher_id']}: [{$before}] -> [{$after}] ({$state})");
             }
             foreach ($report['blocked'] as $message) $this->error('BLOCKED '.$message);

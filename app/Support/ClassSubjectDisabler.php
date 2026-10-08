@@ -26,9 +26,19 @@ final class ClassSubjectDisabler
                 $locked = Masjid::whereKey($org->id)->lockForUpdate()->firstOrFail();
                 $report = self::report($locked, $accept, true);
                 if ($report['blocked'] !== [] || ! $report['enabled']) return $report;
+                $untranslated = [];
                 foreach ($report['assignments'] as $row) {
+                    if ($row['untranslated']) { $untranslated[] = $row['id']; continue; }
                     DB::table('group_staff')->where('masjid_id', $locked->id)->where('id', $row['id'])
                         ->update(['subjects' => $row['raw_legacy']]);
+                }
+                if ($untranslated !== []) {
+                    // Keep late writers fail closed on re-enable without inventing a translation or office fact.
+                    $overrides = $locked->capability_overrides ?? [];
+                    $marker = $overrides[ClassSubjectInitializer::MARKER] ?? [];
+                    $marker['untranslated_staff_ids'] = array_values(array_unique([...($marker['untranslated_staff_ids'] ?? []), ...$untranslated]));
+                    $overrides[ClassSubjectInitializer::MARKER] = $marker;
+                    Masjid::withoutTimestamps(fn () => $locked->forceFill(['capability_overrides' => $overrides])->save());
                 }
                 self::$disabling = true;
                 try { CapabilityWriter::apply($locked, ['class_subjects' => false], null); }
@@ -51,14 +61,16 @@ final class ClassSubjectDisabler
         if ($lock) $rows = $rows->map(fn ($row) => GroupStaff::where('masjid_id', $org->id)->whereKey($row->id)->lockForUpdate()->firstOrFail());
         $inexpressible = [];
         foreach ($rows as $row) {
-            [$expressible, $legacy, $rawLegacy] = self::legacyChoice($row);
+            $ids = SubjectFence::assignedIdsForRow($row);
+            $untranslated = $row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null;
+            [$expressible, $legacy, $rawLegacy] = self::legacyChoice($row, $ids, $untranslated);
             $accepted = ! $expressible && in_array((int) $row->id, $accept, true);
             if (! $expressible) {
                 $inexpressible[] = (int) $row->id;
                 if (! $accepted) $report['blocked'][] = "Assignment #{$row->id}: this restriction cannot be expressed in legacy subjects without widening; explicitly accept unrestricted access.";
             }
             $report['assignments'][] = ['id' => (int) $row->id, 'class_id' => (int) $row->group_id, 'teacher_id' => (int) $row->user_id,
-                'ids' => $row->class_subject_ids, 'legacy' => $legacy, 'raw_legacy' => $rawLegacy, 'expressible' => $expressible, 'accepted' => $accepted];
+                'ids' => $ids, 'untranslated' => $untranslated, 'legacy' => $legacy, 'raw_legacy' => $rawLegacy, 'expressible' => $expressible, 'accepted' => $accepted];
         }
         // Reject stale, foreign-school and unnecessary acceptances, as well as omissions.
         foreach (array_diff($accept, $inexpressible) as $id) $report['blocked'][] = "Assignment #{$id}: acceptance does not name an inexpressible restriction in this school.";
@@ -66,8 +78,9 @@ final class ClassSubjectDisabler
     }
 
     /** Unedited translated rows return to their exact source; other restrictions need acceptance. */
-    private static function legacyChoice(GroupStaff $row): array
+    private static function legacyChoice(GroupStaff $row, ?array $ids, bool $untranslated): array
     {
+        if ($untranslated) return [true, $row->subjects, $row->getRawOriginal('subjects')];
         $raw = $row->getRawOriginal('class_subjects_translated_from');
         if ($row->class_subjects_mapped_at !== null && $row->class_subject_ids_edited_at === null && $raw !== null) {
             $legacy = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
@@ -75,6 +88,6 @@ final class ClassSubjectDisabler
         }
         // SQL NULL means no recorded source; JSON null is a recorded legacy NULL.
         // No equivalence guess may widen an edited/created restricted assignment silently.
-        return [$row->class_subject_ids === null, null, null];
+        return [$ids === null, null, null];
     }
 }
