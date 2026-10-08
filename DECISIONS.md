@@ -9426,3 +9426,23 @@ device, browser layout or production cache verification was performed.
   reference states no maximum length for `payment_intent_data.description` (read 2026-10-08), so 500 is this
   codebase's own cap, not a documented limit. Whether Stripe prints a description on the receipt it emails is not
   stated on its receipts page. Payments made, and pages opened, before this ships keep no description.
+
+## 2026-10-08 — An organisation's privacy policy address, typed on General settings and sent to its app
+
+- **Why**: an app published under an organisation's own store account (the Muslim Education Center is the first)
+  needs a privacy policy the store listing names AND the app can open (Apple 5.1.1(i)). Both apps already read an
+  optional `privacy_policy_url` on the organisation payload and draw a "Privacy Policy" row only when it is there;
+  the server did not send it.
+- **Decided**: one nullable column, `masjids.privacy_policy_url`, beside the store links, typed on General settings
+  as "Privacy Policy Link". It rides on `GET /api/mobile/masjids/{id}` with the rest of the row (null when unset), so
+  no app release is needed for it and an organisation that names none shows no row.
+- **The server refuses what the apps would drop.** Both apps open only an absolute https address with no sign-in
+  details in it and drop anything else without a word (iOS `HomeLinks`, Android `ServerLink`), so the request rule is
+  the same and says why on the office's screen. 255 characters is the column: MySQL refuses a longer one.
+- **A save that does not carry the field leaves it alone.** The settings save writes every other field from the
+  request whether or not it was sent. An office tab opened before this shipped saves without the new field, and
+  reading that as null would erase the link the app shows; the field emptied on purpose is sent empty and is cleared.
+- The recorded payload of the live-shaped test organisations was re-recorded: `privacy_policy_url: null` was added to
+  the three `GET /api/mobile/masjids/{id}` recordings and nothing else moved.
+- Not built: a privacy page hosted by the platform (the address is the organisation's own page), the link on the
+  website's footer, and a per-organisation policy inside a child organisation (the apps show HOME's).

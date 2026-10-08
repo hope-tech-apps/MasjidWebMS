@@ -52,6 +52,7 @@ class Masjid extends Model implements HasMedia
         'copyright_text',
         'app_store_link',
         'google_play_link',
+        'privacy_policy_url',
         'google_maps_key',
         'stripe_account_id',
         'stripe_charges_enabled',

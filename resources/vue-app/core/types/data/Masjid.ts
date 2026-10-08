@@ -31,6 +31,7 @@ export type Masjid = {
     copyright_text?: string;
     app_store_link?: string;
     google_play_link?: string;
+    privacy_policy_url?: string;
     google_maps_key?: string;
     created_by: number | null;
     updated_by: number | null;

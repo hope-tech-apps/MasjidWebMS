@@ -129,6 +129,11 @@ class MasjidDetailsController extends Controller
             $masjid->copyright_text = $request->input('copyright_text');
             $masjid->app_store_link = $request->input('app_store_link');
             $masjid->google_play_link = $request->input('google_play_link');
+            // Only when the form sent the field. An office tab opened before this field existed
+            // saves without it, and reading it as null there would erase the link the apps show.
+            if ($request->exists('privacy_policy_url')) {
+                $masjid->privacy_policy_url = $request->input('privacy_policy_url');
+            }
             $masjid->google_maps_key = $request->input('google_maps_key');
             $masjid->update();
 

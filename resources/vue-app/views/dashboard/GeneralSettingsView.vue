@@ -72,6 +72,12 @@
                             class="dashboard-input"
                             placeholder="https://play.google.com/store/apps/..."></Field>
                     </ColumnInputContainer>
+                    <ColumnInputContainer label="Privacy Policy Link" name="privacy_policy_url" :show_error="true" class="w-100">
+                        <Field name="privacy_policy_url" type="url" v-model="settingsModel.privacy_policy_url"
+                            class="dashboard-input"
+                            placeholder="https://www.example.org/privacy"></Field>
+                        <small class="text-muted">Your app shows a "Privacy Policy" link that opens this page. Leave it empty to show no link.</small>
+                    </ColumnInputContainer>
                 </div>
             </div>
 
@@ -124,6 +130,7 @@ const settingsModel = ref({
     copyright_text: '',
     app_store_link: '',
     google_play_link: '',
+    privacy_policy_url: '',
     google_maps_key: '',
     headerLogoSrc: undefined as string | undefined,
     footerLogoSrc: undefined as string | undefined,
@@ -141,6 +148,7 @@ const validationSchema = object().shape({
     copyright_text: string().optional(),
     app_store_link: string().url().optional(),
     google_play_link: string().url().optional(),
+    privacy_policy_url: string().url().matches(/^https:\/\//i, { message: 'The link must start with https://', excludeEmptyString: true }).max(255).optional(),
     google_maps_key: string().optional(),
 });
 
@@ -158,6 +166,7 @@ async function fetchGeneralSettings() {
                     settingsModel.value.copyright_text = data.copyright_text || '';
                     settingsModel.value.app_store_link = data.app_store_link || '';
                     settingsModel.value.google_play_link = data.google_play_link || '';
+                    settingsModel.value.privacy_policy_url = data.privacy_policy_url || '';
                     settingsModel.value.google_maps_key = data.google_maps_key || '';
                     currentAppHeaderImage.value = data.app_header_image?.original_url ?? undefined;
                 }
@@ -203,6 +212,7 @@ async function updateGeneralSettings() {
                 formData.append('copyright_text', settingsModel.value.copyright_text);
                 formData.append('app_store_link', settingsModel.value.app_store_link);
                 formData.append('google_play_link', settingsModel.value.google_play_link);
+                formData.append('privacy_policy_url', settingsModel.value.privacy_policy_url);
                 formData.append('google_maps_key', settingsModel.value.google_maps_key);
 
                 await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/general-settings`, formData)
