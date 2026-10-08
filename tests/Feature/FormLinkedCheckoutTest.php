@@ -146,6 +146,13 @@ class FormLinkedCheckoutTest extends TestCase
         $this->assertSame($routing, $params['payment_intent_data']['metadata']);
         $this->assertSame('Burlington Islamic Sunday School — Registration 2026', $params['payment_intent_data']['description']);
         $this->assertSame('BISS', $params['payment_intent_data']['statement_descriptor_suffix']);
+        // The whole of it: an organisation's own page is described by its first line since
+        // 2026-10-08, and a linked page still names the organisation and the form.
+        $this->assertSame([
+            'metadata' => $routing,
+            'description' => 'Burlington Islamic Sunday School — Registration 2026',
+            'statement_descriptor_suffix' => 'BISS',
+        ], $params['payment_intent_data']);
         $this->assertArrayNotHasKey('client_reference_id', $params);
         $this->assertSame(['enabled' => false], $params['adaptive_pricing'], 'the session reports exactly the row\'s total in the row\'s currency');
         $this->assertSame(['card'], $params['payment_method_types']);

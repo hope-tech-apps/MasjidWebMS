@@ -9394,3 +9394,35 @@ device, browser layout or production cache verification was performed.
   organisations with apps (1, 5, 13) answered `header_image_url: null` before and after, and no `header_logos`,
   `footer_logos` or `app_header_images` row existed for any model (read 2026-10-08).
 - Not built: removing a photo once set (upload another to replace it), and cropping guidance beyond the help text.
+
+## 2026-10-08 — A form payment on the organisation's own account carries a description
+
+- **Decision**: the payment intent of a form's card page opened on the organisation's OWN account now carries
+  `description`: the name of the page's first line (`FormPayment::lineName()`, the form and the tier or level, such
+  as "Fall Festival (Early bird)"), or the form's name when a page has only the card-fee line, cut at 500
+  characters as the linked description is (`FormResponseCheckoutService::ownDescription()`).
+- **Why**: read from production on 2026-10-08, two paid form payments had `description: null`, so the
+  organisation's Stripe payment list showed an amount and a date, and the office opened each payment (or searched
+  the metadata by form id) to learn what it was for.
+- **What it is made of**: text the organisation wrote (the form's name; a date tier's or count tier's label, or
+  the label of the priced choice). Nothing the payer typed, no name, no email, and not the public uuid, which
+  stays in the metadata. It is the text the payer read on the hosted page.
+- **Unchanged**: amounts, line items, metadata, the routing key, the application fee, and the linked branch (the
+  organisation and the form, and the statement suffix). `FormLinkedIsolationTest` asserted "no description" on an
+  unlinked page, as a guard that linking changed nothing for it; that assertion now reads "described by the form
+  alone: no organisation name, no statement suffix, no reference".
+- **Alternatives**: describe each payment by hand in the Stripe Dashboard (per payment, for ever); put the payer's
+  name in it (personal data on a surface this app does not control); lead with the organisation's name as a linked
+  charge does (it is the organisation's own list, so the name says nothing).
+- **Not done here**: the siblings. `MealOrderCheckoutService`, `RegistrationCheckoutService`, `DonationService` and
+  the cart's own-account branch (`CartCheckoutService`) send no description; only the cart's linked branch does.
+  Each is its own decision.
+- **Proven in Stripe's test mode (2026-10-08)**: the parameters this code builds (two lines, the card fee covered,
+  API version 2024-06-20, with the row's idempotency key) were sent to Stripe unchanged and paid with Stripe's test
+  token. Stripe accepted them, and the payment intent and its charge both carry the description, with the metadata
+  as before. That was on the platform's own test account, not a direct charge on a connected account: staging has
+  no Stripe keys and no connected account, so the change cannot run there.
+- **Not verified**: the Dashboard's payment list itself, and a payment on a connected account. Stripe's API
+  reference states no maximum length for `payment_intent_data.description` (read 2026-10-08), so 500 is this
+  codebase's own cap, not a documented limit. Whether Stripe prints a description on the receipt it emails is not
+  stated on its receipts page. Payments made, and pages opened, before this ships keep no description.

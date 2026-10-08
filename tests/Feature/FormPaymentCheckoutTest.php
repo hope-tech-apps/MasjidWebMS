@@ -207,6 +207,11 @@ class FormPaymentCheckoutTest extends TestCase
         $this->assertSame($row->uuid, $params['client_reference_id']);
         $this->assertSame($routing, $params['metadata']);
         $this->assertSame($routing, $params['payment_intent_data']['metadata'], 'the payment intent must route on its own');
+        $this->assertSame(
+            ['metadata' => $routing, 'description' => 'Fall Festival'],
+            $params['payment_intent_data'],
+            'the routing keys and what was paid for, and nothing else at a platform fee of 0%'
+        );
 
         // Three attendees at $15: ONE line of three, the rows the amount was counted from.
         $this->assertSame([[
@@ -246,6 +251,98 @@ class FormPaymentCheckoutTest extends TestCase
             'quantity' => 2,
             'price_data' => ['currency' => 'usd', 'unit_amount' => 1200, 'product_data' => ['name' => 'Fall Festival (Early bird)']],
         ]], self::$created[0]['params']['line_items']);
+    }
+
+    /**
+     * The organisation's own Stripe payment list showed an amount and a date and nothing
+     * else (read from production 2026-10-08): the payment intent had no description. It
+     * now carries the name of the page's first line, which the organisation wrote.
+     */
+    #[Test]
+    public function the_payment_is_described_by_the_first_line_of_the_page_and_by_nothing_about_the_payer(): void
+    {
+        $form = $this->makeForm($this->masjid, [], ['fee' => [
+            'currency' => 'USD',
+            'perEntryOfSection' => 'attendees',
+            'tiers' => [
+                ['label' => 'Early bird', 'amount' => 12, 'until' => now()->addMonth()->toDateString()],
+                ['label' => 'Regular', 'amount' => 15],
+            ],
+        ]]);
+
+        // The card fee is covered, so the page has two lines: the first is described.
+        $this->submit(['cover_fees' => true], $this->answers(2), $form)->assertOk();
+
+        $row = FormResponse::sole();
+        $params = self::$created[0]['params'];
+        $description = $params['payment_intent_data']['description'];
+
+        $this->assertCount(2, $params['line_items']);
+        $this->assertSame('Fall Festival (Early bird)', $description);
+        $this->assertSame($params['line_items'][0]['price_data']['product_data']['name'], $description);
+        $this->assertNowhereIn($description, ['Amal', 'Yusuf', 'amal@example.com', $row->uuid, 'Guest']);
+
+        // The description is one more key: the routing keys beside it are the ones sent before.
+        $this->assertSame([
+            'form_response_uuid' => $row->uuid,
+            'masjid_id' => (string) $this->masjid->id,
+            'form_id' => (string) $form->id,
+        ], $params['payment_intent_data']['metadata']);
+        $this->assertSame(['metadata', 'description'], array_keys($params['payment_intent_data']));
+
+        // "Return to payment" opens the replacement page with the same description.
+        self::$pages['cs_test_1'] = 'expired';
+        $this->reopen($row->uuid)->assertOk();
+
+        $this->assertCount(2, self::$created);
+        $this->assertSame($description, self::$created[1]['params']['payment_intent_data']['description']);
+    }
+
+    #[Test]
+    public function a_page_charged_as_one_line_after_the_price_changed_is_described_by_the_form(): void
+    {
+        $this->submit([], $this->answers(2))->assertOk();
+        $row = FormResponse::sole();
+
+        // The form's price moves after the registration was written: the rebuild no longer
+        // reproduces the snapshot, so the snapshot is charged as one line named after the form.
+        $settings = $this->form->settings;
+        $settings['fee']['amount'] = 20;
+        $this->form->update(['settings' => $settings]);
+
+        self::$pages['cs_test_1'] = 'expired';
+        $this->reopen($row->uuid)->assertOk();
+
+        $params = self::$created[1]['params'];
+        $this->assertSame([[
+            'quantity' => 1,
+            'price_data' => ['currency' => 'usd', 'unit_amount' => 3000, 'product_data' => ['name' => 'Fall Festival']],
+        ]], $params['line_items']);
+        $this->assertSame('Fall Festival', $params['payment_intent_data']['description']);
+    }
+
+    #[Test]
+    public function a_description_longer_than_five_hundred_characters_is_cut_and_the_line_is_left_alone(): void
+    {
+        // No space at the cut: Str::limit() trims one, and the length is asserted exactly.
+        $name = 'Fall Festival ' . str_repeat('x', 256);
+        $label = str_repeat('y', 250);
+        $form = $this->makeForm($this->masjid, ['name' => $name], ['fee' => [
+            'currency' => 'USD',
+            'perEntryOfSection' => 'attendees',
+            'tiers' => [['label' => $label, 'amount' => 15]],
+        ]]);
+
+        $this->submit([], $this->answers(1), $form)->assertOk();
+
+        $params = self::$created[0]['params'];
+        $line = $params['line_items'][0]['price_data']['product_data']['name'];
+        $description = $params['payment_intent_data']['description'];
+
+        $this->assertSame("{$name} ({$label})", $line);
+        $this->assertSame(523, mb_strlen($line));
+        $this->assertSame(500, mb_strlen($description));
+        $this->assertSame(mb_substr($line, 0, 500), $description);
     }
 
     #[Test]

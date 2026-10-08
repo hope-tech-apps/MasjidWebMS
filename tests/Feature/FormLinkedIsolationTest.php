@@ -26,8 +26,9 @@ use Tests\TestCase;
  *
  *  - BISS still takes no donation (and, through the same canAcceptDonations() gate, no
  *    lunch order and no offering);
- *  - an organisation that is not linked, the holder included, opens exactly the session it
- *    always did, pins nothing, and publishes exactly the payment keys it always did;
+ *  - an organisation that is not linked, the holder included, opens the session it always
+ *    did (its payment described by its own first line since 2026-10-08, never by the
+ *    linked description), pins nothing, and publishes exactly the payment keys it always did;
  *  - a receipt of a registration paid on its own organisation's account reads as before.
  */
 class FormLinkedIsolationTest extends TestCase
@@ -96,7 +97,7 @@ class FormLinkedIsolationTest extends TestCase
     }
 
     #[Test]
-    public function the_holders_own_form_opens_exactly_the_session_it_always_did_and_pins_nothing(): void
+    public function the_holders_own_form_opens_an_unlinked_session_described_by_its_own_line_and_pins_nothing(): void
     {
         $form = $this->makeForm($this->holder);
 
@@ -122,7 +123,12 @@ class FormLinkedIsolationTest extends TestCase
         );
         $this->assertSame($row->uuid, $params['client_reference_id']);
         $this->assertSame($routing, $params['metadata']);
-        $this->assertSame(['metadata' => $routing], $params['payment_intent_data'], 'no description, no statement suffix, no reference');
+        // Its own line and nothing of a linked charge: the holder's name is not in it.
+        $this->assertSame(
+            ['metadata' => $routing, 'description' => 'Registration 2026'],
+            $params['payment_intent_data'],
+            'described by the form alone: no organisation name, no statement suffix, no reference'
+        );
 
         $this->assertArrayNotHasKey('adaptive_pricing', $params, 'Adaptive Pricing is left to the account for an unlinked charge');
 

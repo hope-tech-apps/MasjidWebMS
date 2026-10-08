@@ -91,8 +91,10 @@ use Throwable;
  *     is switched off (failClosedOnUnreachable()), as account.application.deauthorized
  *     would, in case that event is never delivered.
  *
- * An organisation that is not linked, and has no pinned row, opens exactly the session
- * it always did.
+ * An organisation that is not linked, and has no pinned row, opens the session it always
+ * did, on its own account with the uuid and the masjid id in the metadata. Since
+ * 2026-10-08 its payment intent also carries a description, the name of the page's first
+ * line (ownDescription()), so the organisation's own payment list says what was paid for.
  *
  * Only the three protected seams touch the live API; tests subclass them, so nothing
  * here reaches Stripe from the suite. Each refuses any account that is not an acct_ id,
@@ -739,7 +741,10 @@ class FormResponseCheckoutService
                 'form_id' => (string) $row->form_id,
             ];
 
-            $paymentIntentData = ['metadata' => $metadata];
+            $paymentIntentData = [
+                'metadata' => $metadata,
+                'description' => self::ownDescription($row, $form, $lines),
+            ];
         }
 
         $fee = self::applicationFee((int) $row->total_minor);
@@ -886,6 +891,29 @@ class FormResponseCheckoutService
         $formName = trim((string) $form->name) !== '' ? trim((string) $form->name) : 'Registration';
 
         return Str::limit(trim((string) $organisation->name) . ' — ' . $formName, 500, '');
+    }
+
+    /**
+     * "Fall Festival (Early bird)": what a payment on the organisation's OWN account was
+     * for. Without it the organisation's Stripe payment list shows an amount and a date,
+     * and the office opens each payment to learn which form it paid (read from production
+     * 2026-10-08).
+     *
+     * It is the name of the page's first line, so the list reads as the payer's page did:
+     * the form and the tier or level, both written by the organisation. Never anything the
+     * payer typed, and never the uuid, which stays in the metadata.
+     *
+     * @param  array<int,array{quantity:int,price_data:array{currency:string,unit_amount:int,product_data:array{name:string}}}>  $lines
+     */
+    private static function ownDescription(FormResponse $row, Form $form, array $lines): string
+    {
+        // lineItems() puts the registration's line first whenever anything is owed for it;
+        // a page with only the card-fee line is described by its form, not by the fee.
+        $name = (int) $row->amount_due_minor > 0 && isset($lines[0])
+            ? $lines[0]['price_data']['product_data']['name']
+            : FormPayment::lineName($form, null);
+
+        return Str::limit($name, 500, '');
     }
 
     /**
