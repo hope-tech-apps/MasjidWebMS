@@ -9388,4 +9388,9 @@ device, browser layout or production cache verification was performed.
   settings as "App header photo". The mobile payload's key and shape are unchanged (`header_image_url`, string or
   null), so no app release is needed for it. There is deliberately NO fallback to `header_logos`: a logo is not a
   cover photo. No organisation had a `header_logos` row on production when this shipped, so no app changed.
+- The recorded payload of the live-shaped test organisation (`tests/fixtures/live-public-payloads/live-orgs.json`)
+  was re-recorded for this one field: its fixture has a website header logo, which the app payload used to repeat
+  as `header_image_url` and now does not (null). Nothing else in the recording moved. On production the three
+  organisations with apps (1, 5, 13) answered `header_image_url: null` before and after, and no `header_logos`,
+  `footer_logos` or `app_header_images` row existed for any model (read 2026-10-08).
 - Not built: removing a photo once set (upload another to replace it), and cropping guidance beyond the help text.
