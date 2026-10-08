@@ -25,24 +25,6 @@ class TeacherInviteRequest extends BaseFormRequest
     use ClassSubjectAssignments;
 
     /**
-     * The subjects for one class, as the assignment should store them: a unique,
-     * ordered list, or NULL for "everything". Empty means everything too, so an
-     * admin who unticks every box cannot lock a teacher out of their own class.
-     *
-     * @return list<string>|null
-     */
-    public function subjectsFor(int $classId): ?array
-    {
-        $given = $this->validated('class_subjects')[$classId] ?? ($this->validated('class_subjects')[(string) $classId] ?? null);
-
-        if (! is_array($given) || $given === []) {
-            return null;
-        }
-
-        return array_values(array_intersect(\App\Models\GroupStaff::SUBJECTS, $given));
-    }
-
-    /**
      * The address, trimmed and lowercased, BEFORE it is validated or looked up.
      *
      * Emails are compared case-insensitively by MySQL and case-sensitively by the
@@ -53,6 +35,7 @@ class TeacherInviteRequest extends BaseFormRequest
      */
     protected function prepareForValidation(): void
     {
+        $this->prepareClassSubjectAssignments();
         if (is_string($this->input('email'))) {
             $this->merge(['email' => mb_strtolower(trim($this->input('email')))]);
         }

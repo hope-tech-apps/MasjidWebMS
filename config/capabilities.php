@@ -230,6 +230,7 @@ return [
     // App\Support\SchoolSettings::classStore() is the reader; `capability:class_store`
     // gates every store route; `bucks:mint` and `bucks:expire` skip a school without it.
     'class_subjects' => [
+        'catalogue_when_off' => false,
         'kind' => 'grant',
         'group' => 'school',
         'label' => 'Class subjects',

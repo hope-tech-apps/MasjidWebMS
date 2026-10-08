@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -10,14 +9,13 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('group_staff', function (Blueprint $table) {
-            $table->json('class_subject_ids')->nullable();
-            $table->timestamp('class_subjects_mapped_at')->nullable();
+            $table->json('class_subject_legacy_snapshot')->nullable();
         });
     }
 
     public function down(): void
     {
         \App\Support\ClassSubjectRollback::assertEmpty();
-        Schema::table('group_staff', fn (Blueprint $table) => $table->dropColumn(['class_subject_ids', 'class_subjects_mapped_at']));
+        Schema::table('group_staff', fn (Blueprint $table) => $table->dropColumn('class_subject_legacy_snapshot'));
     }
 };

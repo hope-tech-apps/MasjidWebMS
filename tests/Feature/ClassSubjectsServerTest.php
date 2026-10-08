@@ -437,7 +437,7 @@ it('rejects foreign class subject ids on assignment writes and preserves an expl
     $url = "/api/admin/masjids/{$this->school->id}/teachers/{$this->teacher->id}";
     $body = ['name' => $this->teacher->name, 'class_ids' => [$this->room->id], 'class_subject_ids' => [$this->room->id => [$foreign]]];
     $this->putJson($url, $body)->assertUnprocessable();
-    $body['class_subject_ids'][$this->room->id] = [];
+    $body['class_subject_ids'][$this->room->id] = null;
     $this->putJson($url, $body)->assertOk()->assertJsonPath('data.classes.0.class_subject_ids', null);
     expect($this->staff->fresh()->class_subject_ids)->toBeNull();
     $body['class_subject_ids'] = [$other->id => null];

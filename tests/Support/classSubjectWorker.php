@@ -5,14 +5,16 @@ $app = require __DIR__.'/../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 $input = json_decode(trim(fgets(STDIN)), true, 512, JSON_THROW_ON_ERROR);
 if (($input['connection']['driver'] ?? null) !== 'mysql' || ! str_ends_with($input['connection']['database'] ?? '', '_test')) exit(2);
-config(['database.default' => 'class_subject_worker', 'database.connections.class_subject_worker' => $input['connection'], 'cache.default' => 'array']);
-Illuminate\Support\Facades\DB::purge('class_subject_worker');
-Illuminate\Support\Facades\DB::connection()->getPdo();
+Tests\Support\ClassSubjectWorkerConnection::configure($input['connection']);
+Illuminate\Support\Facades\DB::statement('SET SESSION innodb_lock_wait_timeout = 5');
 echo "ready\n";
 fgets(STDIN);
 try {
     if ($input['action'] === 'initialize') {
         App\Support\ClassSubjectInitializer::run(App\Models\Masjid::findOrFail($input['masjid']));
+    } elseif ($input['action'] === 'create') {
+        app(App\Support\TenantContext::class)->set($input['masjid']);
+        App\Models\Group::create(['name' => 'Concurrent Practice Class', 'kind' => 'class']);
     } else {
         app(App\Support\TenantContext::class)->set($input['masjid']);
         $request = App\Http\Requests\Admin\Groups\SaveClassSubjectRequest::create('/subjects/'.$input['subject'], 'PUT', ['tool' => 'hifdh']);
@@ -25,5 +27,6 @@ try {
     echo "refused\n";
 } catch (Throwable $e) {
     echo get_class($e)."\n";
+    if ($e instanceof Illuminate\Database\QueryException) fwrite(STDERR, json_encode(['sqlstate' => $e->errorInfo[0] ?? null, 'driver_code' => $e->errorInfo[1] ?? null])."\n");
     exit(1);
 }

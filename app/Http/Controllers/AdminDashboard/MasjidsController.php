@@ -366,6 +366,7 @@ class MasjidsController extends Controller
             if (! is_array($definition)) {
                 continue;
             }
+            if (($definition['catalogue_when_off'] ?? true) === false && ! $masjid->hasCapability($key)) continue;
 
             $column = $definition['column'] ?? null;
             $isModule = ($definition['kind'] ?? null) === 'module';

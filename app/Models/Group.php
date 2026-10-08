@@ -172,17 +172,30 @@ class Group extends Model
             ->orderBy('id');
     }
 
+    /**
+     * Cover office creation/conversion, provisioning, model/relationship writes and restoration.
+     * Take the school mutex BEFORE insert: a foreign-key shared lock followed by an
+     * exclusive upgrade can deadlock two concurrent class creations on InnoDB.
+     */
+    public function save(array $options = [])
+    {
+        $transition = $this->teachesStudents() && (! $this->exists || $this->isDirty('kind')
+            || ($this->isDirty('deleted_at') && $this->deleted_at === null));
+        if (! $transition) return parent::save($options);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($options) {
+            $orgId = app(\App\Support\TenantContext::class)->get() ?? $this->masjid_id;
+            $org = Masjid::whereKey($orgId)->lockForUpdate()->firstOrFail();
+            $saved = parent::save($options);
+            if ($saved && \App\Support\SchoolSettings::classSubjects($org)) {
+                \App\Support\ClassSubjectInitializer::initializeGroup($this);
+                $this->refresh();
+            }
+            return $saved;
+        });
+    }
+
     protected static function booted(): void
     {
-        static::created(function (self $group): void {
-            if ($group->teachesStudents() && \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($group->masjid_id))) {
-                \Illuminate\Support\Facades\DB::transaction(function () use ($group): void {
-                    Masjid::whereKey($group->masjid_id)->lockForUpdate()->firstOrFail();
-                    \App\Support\ClassSubjectInitializer::initializeGroup($group);
-                });
-            }
-        });
-
         static::deleting(function (self $group): void {
             if (! $group->isForceDeleting()) {
                 return;

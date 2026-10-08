@@ -16,6 +16,7 @@ it('uses production sized columns a bigint auto increment primary key and named 
     expect($columns['previous_name_keys']->Type)->toBe('json');
     expect(Schema::getColumnType('groups', 'subject_seed_grades'))->toBe('json');
     expect(Schema::getColumnType('group_staff', 'class_subject_ids'))->toBe('json');
+    expect(Schema::getColumnType('group_staff', 'class_subject_legacy_snapshot'))->toBe('json');
     $indexes = collect(Schema::getIndexes('class_subjects'))->keyBy('name');
     expect($indexes['cs_group_name_uq']['unique'])->toBeTrue();
     expect($indexes['cs_group_tool_uq']['unique'])->toBeTrue();

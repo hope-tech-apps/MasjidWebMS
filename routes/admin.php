@@ -1086,6 +1086,7 @@ Route::prefix('admin')->group(function () {
                     ->middleware('capability:class_subjects')
                     ->controller(\App\Http\Controllers\AdminDashboard\ClassSubjectsController::class)
                     ->group(function () {
+                        Route::post('/add-for-current-grades', 'addForCurrentGrades')->middleware('permission:manage contacts');
                         Route::get('/', 'index')->middleware('permission:view contacts');
                         Route::get('/{subject_id}', 'show')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');

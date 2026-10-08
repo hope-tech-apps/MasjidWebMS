@@ -57,7 +57,7 @@ final class SubjectFence
 
         $group = \App\Models\Group::find($groupId);
         if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
-            return self::limitsForIds(self::assignedIds($groupId, (int) $user->getKey()));
+            return self::limitsForIds(self::assignedIds($groupId, (int) $user->getKey()), $group);
         }
 
         return self::assigned($groupId, (int) $user->getKey());
@@ -84,22 +84,37 @@ final class SubjectFence
         return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
     }
 
-    /** NULL/empty means all only after a successful mapping. An unmapped row fails closed. */
+    /** The stored ID list may express all explicitly; malformed values never do. */
+    public static function validStoredIds(mixed $ids): bool
+    {
+        if ($ids === null) return true;
+        if (! is_array($ids) || ! array_is_list($ids)) return false;
+        foreach ($ids as $id) {
+            if (! is_int($id) && ! (is_string($id) && ctype_digit($id))) return false;
+            if ((int) $id < 1 || (string) (int) $id !== ltrim((string) $id, '0')) return false;
+        }
+        return true;
+    }
+
+    /** Only NULL means all. Empty, unresolved and unmapped restrictions fail closed. */
     public static function assignedIds(int $groupId, int $userId): ?array
     {
         $row = GroupStaff::where('group_id', $groupId)->where('user_id', $userId)->first();
-        if ($row === null || $row->class_subjects_mapped_at === null) return [0];
-        return $row->class_subject_ids === null || $row->class_subject_ids === []
-            ? null : array_map('intval', $row->class_subject_ids);
+        if ($row === null || ClassSubjectInitializer::needsMapping($row)) return [0];
+        if ($row->class_subject_ids === null) return null;
+        if (! self::validStoredIds($row->class_subject_ids)) return [];
+        return \App\Models\ClassSubject::where('masjid_id', $row->masjid_id)->where('group_id', $groupId)
+            ->whereIn('id', $row->class_subject_ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 
     /** Resolve once per fence, never once per assignment, plan or curriculum row. */
-    public static function limitsForIds(?array $ids): ?array
+    public static function limitsForIds(?array $ids, \App\Models\Group $group, bool $curriculum = false): ?array
     {
         if ($ids === null) return null;
-        $keys = \App\Models\ClassSubject::whereIn('id', $ids)->get()
-            ->flatMap(fn ($s) => $s->matchingKeys())->unique()->values()->all();
-        return ['class_subject_ids' => $ids, 'keys' => $keys];
+        if (! self::validStoredIds($ids)) $ids = [];
+        $subjects = \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->whereIn('id', $ids)->get();
+        $keys = $subjects->flatMap(fn ($s) => $curriculum ? $s->curriculumKeys() : $s->matchingKeys())->unique()->values()->all();
+        return ['class_subject_ids' => $subjects->pluck('id')->map(fn ($id) => (int) $id)->all(), 'keys' => $keys];
     }
 
     /** Fields are additive: the legacy `my_subjects` still describes legacy assignments. */

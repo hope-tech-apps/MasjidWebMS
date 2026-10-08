@@ -34,14 +34,18 @@ class ClassSubject extends Model
         });
     }
 
-    /** Snapshot matches survive renames and use the school's own guide spelling. */
+    /** Saved work belongs to current/previous names and fixed aliases, never a guide link. */
     public function matchingKeys(): array
     {
         $keys = [$this->name_key, ...($this->previous_name_keys ?? [])];
-        if ($this->guide_subject !== null) $keys[] = SubjectKey::for($this->guide_subject);
         foreach ($keys as $key) {
             $keys = [...$keys, ...\App\Support\ClassSubjectInitializer::aliases($key)];
         }
         return array_values(array_unique($keys));
+    }
+
+    public function curriculumKeys(): array
+    {
+        return $this->guide_subject === null ? [] : [SubjectKey::for($this->guide_subject)];
     }
 }

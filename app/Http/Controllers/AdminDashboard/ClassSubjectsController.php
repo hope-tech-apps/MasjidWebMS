@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Groups\SaveClassSubjectRequest;
 use App\Models\ClassSubject;
 use App\Models\CurriculumWeek;
 use App\Models\Group;
+use App\Models\Masjid;
 use App\Support\ClassSubjectInitializer;
 use App\Support\SchoolSettings;
 use App\Support\SubjectFence;
@@ -56,7 +57,7 @@ class ClassSubjectsController extends Controller
     {
         $group = $this->group((int) $group_id);
         $subject = DB::transaction(function () use ($group, $request) {
-            Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+            $this->lockGroup($group);
             $fields = $request->validated();
             if (! array_key_exists('tool', $fields)) $fields['tool'] = ClassSubjectInitializer::defaultTool(SubjectKey::for($fields['name']));
             if (! array_key_exists('guide_subject', $fields)) {
@@ -77,13 +78,21 @@ class ClassSubjectsController extends Controller
     {
         $group = $this->group((int) $group_id);
         $subject = DB::transaction(function () use ($group, $request, $subject_id) {
-            Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+            $this->lockGroup($group);
             $subject = ClassSubject::where('group_id', $group->id)->findOrFail($subject_id);
             $this->check($group, $request->validated(), $subject);
             $subject->update($request->validated());
             return $subject->fresh();
         });
         return response()->json(['status' => 'success', 'data' => $subject]);
+    }
+
+    /** Match activation's lock order, before a child insert takes foreign-key shared locks. */
+    private function lockGroup(Group $group): void
+    {
+        $org = Masjid::whereKey($group->masjid_id)->lockForUpdate()->firstOrFail();
+        abort_unless(SchoolSettings::classSubjects($org), 403);
+        Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
     }
 
     /** Caller holds the class PK mutex before checking names and tools. */
@@ -96,6 +105,9 @@ class ClassSubjectsController extends Controller
             if ($others->contains(fn ($s) => in_array($key, $s->matchingKeys(), true))) {
                 throw ValidationException::withMessages(['name' => ['This class already has a subject using that name or a previous name.']]);
             }
+            if ($others->contains(fn ($s) => $s->guide_subject !== null && in_array(SubjectKey::for($s->guide_subject), ClassSubjectInitializer::aliases($key), true))) {
+                throw ValidationException::withMessages(['name' => ['Another subject follows the curriculum under that name. Clear its curriculum link first.']]);
+            }
         }
         if (isset($fields['tool']) && $others->contains('tool', $fields['tool'])) {
             throw ValidationException::withMessages(['tool' => ['Another subject in this class already holds that tool. Clear its Holds choice first.']]);
@@ -103,13 +115,37 @@ class ClassSubjectsController extends Controller
         if (isset($fields['guide_subject']) && ! CurriculumWeek::where('subject', $fields['guide_subject'])->exists()) {
             throw ValidationException::withMessages(['guide_subject' => ['Choose a subject from this school\'s curriculum.']]);
         }
+        if (isset($fields['guide_subject']) && $others->contains(fn ($s) => in_array(SubjectKey::for($fields['guide_subject']), $s->matchingKeys(), true))) {
+            throw ValidationException::withMessages(['guide_subject' => ['That curriculum name belongs to another subject in this class. Choose this subject\'s own guide.']]);
+        }
+    }
+
+    /** Merge the current roster's seed; preserve hidden rows, historical names and assignments. */
+    public function addForCurrentGrades(Request $request, $masjid_id, $group_id)
+    {
+        $group = $this->group((int) $group_id);
+        DB::transaction(function () use ($group): void {
+            $this->lockGroup($group);
+            $existing = ClassSubject::where('group_id', $group->id)->get();
+            $position = $existing->max('position');
+            $position = $position === null ? 0 : $position + 1;
+            foreach (ClassSubjectInitializer::startingList($group, true) as $fields) {
+                $aliases = ClassSubjectInitializer::aliases(SubjectKey::for($fields['name']));
+                if ($existing->contains(fn ($s) => array_intersect($aliases, $s->matchingKeys()) !== [])) continue;
+                if ($fields['tool'] !== null && $existing->contains('tool', $fields['tool'])) $fields['tool'] = null;
+                if ($position > 65535) throw ValidationException::withMessages(['name' => ['Reorder this class\'s subjects before adding another.']]);
+                $this->check($group, $fields);
+                $existing->push(ClassSubject::create(['group_id' => $group->id, 'position' => $position++] + $fields));
+            }
+        });
+        return $this->index($request, $masjid_id, $group_id);
     }
 
     public function reorder(ReorderClassSubjectsRequest $request, $masjid_id, $group_id)
     {
         $group = $this->group((int) $group_id);
         DB::transaction(function () use ($group, $request): void {
-            Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+            $this->lockGroup($group);
             $ids = array_map('intval', $request->validated('subject_ids'));
             $current = ClassSubject::where('group_id', $group->id)->pluck('id')->all();
             if (count($ids) !== count($current) || array_diff($ids, $current) !== []) {
@@ -134,7 +170,7 @@ class ClassSubjectsController extends Controller
     {
         $group = $this->group($groupId);
         $subject = DB::transaction(function () use ($group, $subjectId, $hide) {
-            Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+            $this->lockGroup($group);
             $subject = ClassSubject::where('group_id', $group->id)->findOrFail($subjectId);
             $subject->update(['hidden_at' => $hide ? ($subject->hidden_at ?? now()) : null]);
             return $subject->fresh();
