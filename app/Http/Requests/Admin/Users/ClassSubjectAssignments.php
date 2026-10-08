@@ -20,7 +20,7 @@ trait ClassSubjectAssignments
     /** Normalize before validation and extraction; never cast an arbitrary key to a class id. */
     protected function prepareClassSubjectAssignments(): void
     {
-        foreach (['class_subjects', 'class_subject_ids'] as $field) {
+        foreach (['class_subjects', 'class_subject_ids', 'class_subject_resolutions'] as $field) {
             $given = $this->input($field);
             if (! is_array($given)) continue; // The field's array rule refuses other shapes.
             $out = [];
@@ -58,6 +58,8 @@ trait ClassSubjectAssignments
     private function classSubjectRules(): array
     {
         return $this->classSubjectsOn() ? [
+            'class_subject_resolutions' => ['sometimes', 'array'],
+            'class_subject_resolutions.*' => [\Illuminate\Validation\Rule::in(['confirm_legacy', 'allow_more'])],
             'class_subject_ids' => ['sometimes', 'array'],
             'class_subject_ids.*' => ['nullable', 'array', 'list'],
             'class_subject_ids.*.*' => ['integer', 'min:1', 'distinct'],
@@ -69,6 +71,11 @@ trait ClassSubjectAssignments
         if (! $this->classSubjectsOn()) return;
         $validator->after(function (Validator $validator): void {
             if ($validator->errors()->isNotEmpty()) return;
+            foreach ($this->input('class_subject_resolutions', []) as $groupId => $resolution) {
+                if (! array_key_exists($groupId, $this->input('class_subject_ids', []))) {
+                    $validator->errors()->add('class_subject_resolutions', 'Explicitly supply the subject list being confirmed.');
+                }
+            }
             foreach ($this->input('class_subject_ids', []) as $groupId => $ids) {
                 $group = Group::where('kind', 'class')->find($groupId);
                 if (! \App\Support\SubjectFence::validStoredIds($ids) || $group === null || ! in_array((int) $groupId, array_map('intval', $this->input('class_ids', [])), true)

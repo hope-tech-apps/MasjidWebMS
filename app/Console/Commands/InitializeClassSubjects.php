@@ -33,7 +33,14 @@ class InitializeClassSubjects extends Command
                 $blocked = 0; $creates = 0; $maps = 0; $losses = 0;
                 foreach ($report as $row) {
                     $this->line("Class {$row['class']}: {$row['subjects_added']} subjects added; {$row['assignments_mapped']} assignments mapped.");
-                    foreach ($row['creates'] as $subject) $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
+                    foreach ($row['creates'] as $subject) {
+                        $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
+                        foreach ($subject['attaches_saved_work'] ?? [] as $key => $count) $this->line("    ATTACH saved work: {$key}, {$count} items");
+                    }
+                    foreach ($row['orphaned_work'] ?? [] as $key => $count) {
+                        $this->line("  saved work under a subject that is not in this class's list: {$key}, {$count} items");
+                        $this->line("    Adding this subject with explicit attach_saved_work confirmation will attach these items.");
+                    }
                     foreach ($row['assignments'] as $assignment) {
                         $legacy = $assignment['legacy'] === null || $assignment['legacy'] === [] ? 'all' : implode(', ', $assignment['legacy']);
                         $this->line("  Teacher #{$assignment['teacher_id']}: [{$legacy}] -> [".implode(', ', $assignment['names']).']'.($assignment['will_map'] ? '' : ' (unchanged)'));
