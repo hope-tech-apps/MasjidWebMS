@@ -790,9 +790,10 @@
                 <div class="card-body">
                     <h6 class="mb-1"><i class="bi bi-credit-card me-2"></i>Payment</h6>
                     <p class="text-muted small">
-                        Off by default. With any kind of payment on, the fee above must be charged per entry,
-                        or by number of entries, of a section that needs at least one entry, and every price
-                        must be at least $0.50.
+                        Off by default. With any kind of payment on, the fee above cannot be one price per
+                        submission: it must be charged per entry, or by number of entries, of a section that
+                        needs at least one entry, or times a number people type, or by the choice of a question.
+                        Every price must be at least $0.50.
                     </p>
 
                     <!-- Card -->
@@ -3008,7 +3009,7 @@ const paymentIssues = computed<Record<string, string>>(() => {
         } else if (!canSetPrice(question)) {
             issues['settings.fee.byChoice.field'] = `"${questionWording(question)}" is no longer a dropdown or choose-one question with its own choices, so it cannot set the price. Change its answer type back, or choose another question.`;
         } else if (!question.required) {
-            issues['settings.fee.byChoice.field'] = `"${questionWording(question)}" must be required, or a registration that leaves it blank would have no price. Switch on Required for that question.`;
+            issues['settings.fee.byChoice.field'] = `"${questionWording(question)}" must be required, or a registration that leaves it blank would have no price. Set "Answer required?" to "Must be answered" for that question.`;
         }
 
         const levels = choicePricing.value.levels;
