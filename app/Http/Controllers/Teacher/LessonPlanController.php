@@ -154,7 +154,7 @@ class LessonPlanController extends TeacherController
             // alphabetically — the same order on every screen that lists them.
             ->orderBy('subject_key')
             ->orderBy('id')
-            ->with('attachments.groupResource')
+            ->with(['attachments.groupResource', 'classSubject'])
             ->get();
 
         // Saved IDs authorize named plans; general plans remain shared.
@@ -922,7 +922,7 @@ class LessonPlanController extends TeacherController
     private function planWithClassSubjects(LessonPlan $plan): array
     {
         $template = collect(LessonPlan::TEMPLATE_FIELDS)
-            ->mapWithKeys(fn (string $f) => [$f => $plan->{$f}])
+            ->mapWithKeys(fn (string $f) => [$f => $f === 'subject' ? $plan->currentSubjectName() : $plan->{$f}])
             ->all();
 
         $plan->loadMissing('attachments.groupResource');

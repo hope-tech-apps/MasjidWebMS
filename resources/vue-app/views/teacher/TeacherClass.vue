@@ -1414,7 +1414,15 @@
                                          inconvenienced. "Other" is the escape, and the week
                                          picker below falls back to a plain number when the
                                          chosen subject has no imported weeks. -->
-                                    <select v-if="curriculum.subjects.length && !subjectOther"
+                                    <select v-if="classSubjects.enabled.value" data-plan-subject
+                                            class="form-select form-select-sm"
+                                            v-model="planForm.class_subject_id" @change="onClassPlanSubjectPick">
+                                        <option v-if="planGeneralAllowed" :value="null">No subject / general</option>
+                                        <option v-if="planForm.class_subject_id === '__unlinked__'" value="__unlinked__">{{ planForm.subject }} (saved subject)</option>
+                                        <option v-if="planRetainedSubject" :value="planRetainedSubject.id">{{ planRetainedSubject.name }} (saved subject)</option>
+                                        <option v-for="s in planClassSubjects" :key="s.id" :value="s.id">{{ s.name }}</option>
+                                    </select>
+                                    <select v-else-if="curriculum.subjects.length && !subjectOther"
                                             class="form-select form-select-sm"
                                             v-model="planForm.subject" @change="onSubjectPick">
                                         <option value="">—</option>
@@ -3013,6 +3021,23 @@ const emptyPlan = () => ({
 
 const planForm = ref<any>(emptyPlan());
 
+// The class's permitted subjects, independent of which columns its pacing guide carries.
+const planClassSubjects = computed(() => (group.value?.class_subjects ?? []).filter((s: any) =>
+    !s.hidden_at && (group.value?.my_class_subject_ids == null || group.value.my_class_subject_ids.includes(s.id))));
+const planRetainedSubject = computed(() => {
+    const id = planForm.value.class_subject_id;
+    return id != null && id !== '__unlinked__' && !planClassSubjects.value.some((s: any) => s.id === id)
+        ? { id, name: planForm.value.subject } : null;
+});
+const planGeneralSource = ref(true);
+const planGeneralAllowed = computed(() => !planId.value || group.value?.my_class_subject_ids == null || planGeneralSource.value);
+const onClassPlanSubjectPick = async () => {
+    const id = planForm.value.class_subject_id;
+    if (id === '__unlinked__') return;
+    planForm.value.subject = (group.value?.class_subjects ?? []).find((s: any) => s.id === id)?.name ?? '';
+    await onSubjectChange();
+};
+
 // The school's template, in its own order. The hint on each header is the
 // guiding question from the school's own poster version.
 const planSections = [
@@ -3209,9 +3234,9 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
 
 const onGradeChange = async () => {
     cancelPrefill();
-    planForm.value.subject = '';
+    if (!classSubjects.enabled.value) planForm.value.subject = '';
     planForm.value.curriculum_week_no = null;
-    await loadCurriculum(planForm.value.grade_label);
+    await loadCurriculum(planForm.value.grade_label, classSubjects.enabled.value ? planForm.value.subject || undefined : undefined);
 };
 
 /**
@@ -3715,6 +3740,11 @@ const syncPlanForm = () => {
             [k, Array.isArray(v) ? [...v] : (v ?? blank[k as keyof typeof blank])])) }
         : blank;
 
+    if (classSubjects.enabled.value) {
+        planForm.value.class_subject_id = p?.class_subject_id ?? (p?.subject ? '__unlinked__' : null);
+        planGeneralSource.value = !p?.subject && p?.class_subject_id == null;
+    }
+
     // Arrays must never come back null, or v-model has nothing to bind.
     planForm.value.learning_outcomes = planForm.value.learning_outcomes ?? [];
     planForm.value.teaching_methods = planForm.value.teaching_methods ?? [];
@@ -3785,6 +3815,18 @@ const savePlan = async () => {
             resource_ids: attachmentIds(planForm.value),
             attachments: undefined,
         };
+        if (classSubjects.enabled.value) {
+            if (payload.class_subject_id === '__unlinked__') {
+                delete payload.class_subject_id;
+                delete payload.subject;
+            } else if (payload.class_subject_id != null) {
+                // An unchanged ID keeps the database snapshot even after a rename.
+                delete payload.subject;
+            } else {
+                payload.class_subject_id = null;
+                payload.subject = null;
+            }
+        }
         // An open plan is rewritten by its id; a new one is created, and the
         // server refuses it if the day already has that subject.
         const ticket = planForms.current();
@@ -3805,7 +3847,7 @@ const savePlan = async () => {
         // "Saved" belongs beside the plan that was saved, and nowhere else.
         planSaved.value = resynced && planId.value === savedId;
     } catch (e: any) {
-        planError.value = e?.response?.data?.data?.subject?.[0]
+        planError.value = classSubjects.enabled.value ? apiErrorText(e, 'That plan could not be saved.') : e?.response?.data?.data?.subject?.[0]
             ?? e?.response?.data?.data?.session_date?.[0]
             ?? e?.response?.data?.data?.body?.[0]
             ?? e?.response?.data?.data?.resource_ids?.[0]

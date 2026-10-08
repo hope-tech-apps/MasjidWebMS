@@ -85,7 +85,7 @@ use Illuminate\Support\Facades\DB;
  *
  * OFF `by_subject` groups by saved SubjectKey, as before. ON linked work groups
  * by class_subject_id with the current name as its heading; NULL links retain
- * saved-key grouping. Row labels remain snapshots. Weights are per class.
+ * saved-key grouping. ON row payloads also use current linked names. Weights are per class.
  *
  * ## The subject fence
  *

@@ -139,9 +139,11 @@ class SchoolRecordsExportController extends Controller
             . (Str::slug($masjid->name) ?: $masjid->id)
             . '-' . now()->format('Y-m-d') . '.csv';
 
-        return response()->stream(function () use ($dataset) {
+        $classSubjects = \App\Support\SchoolSettings::classSubjects($masjid);
+        return response()->stream(function () use ($dataset, $classSubjects) {
             $out = Csv::open();
-            $this->{'write' . Str::studly($dataset)}($out);
+            if (in_array($dataset, ['assignments', 'lesson_plans'], true)) $this->{'write' . Str::studly($dataset)}($out, $classSubjects);
+            else $this->{'write' . Str::studly($dataset)}($out);
             fclose($out);
         }, Response::HTTP_OK, [
             'Content-Type' => 'text/csv; charset=UTF-8',
@@ -344,8 +346,9 @@ class SchoolRecordsExportController extends Controller
     }
 
     /** @param resource $out */
-    private function writeAssignments($out): void
+    private function writeAssignments($out, bool $classSubjects = false): void
     {
+        // ON linked labels follow current names; the saved text remains the OFF cell.
         // The last five (W3) are appended, never inserted, so a spreadsheet that
         // already reads the earlier columns by position still does.
         Csv::row($out, ['Assignment id', 'Class id', 'Title', 'Scale', 'Points possible',
@@ -353,12 +356,12 @@ class SchoolRecordsExportController extends Controller
             'Subject', 'Type', 'Weight', 'Standard code', 'Curriculum focus']);
 
         Csv::each(
-            ClassAssignment::withTrashed()->whereIn('group_id', $this->schoolGroupIds()),
+            ClassAssignment::withTrashed()->whereIn('group_id', $this->schoolGroupIds())->when($classSubjects, fn ($q) => $q->with('classSubject')),
             fn (ClassAssignment $a) => Csv::row($out, [
                 Csv::num($a->id), Csv::num($a->group_id), Csv::text($a->title),
                 Csv::text($a->scale), Csv::num($a->points_possible),
                 Csv::num($a->assigned_on?->toDateString()), Csv::num($a->deleted_at),
-                Csv::text($a->subject), Csv::text($a->type), Csv::num($a->weight),
+                Csv::text($classSubjects ? $a->currentSubjectName() : $a->subject), Csv::text($a->type), Csv::num($a->weight),
                 Csv::text($a->standard_code), Csv::text($a->curriculum_focus),
             ])
         );
@@ -573,19 +576,20 @@ class SchoolRecordsExportController extends Controller
     /**
      * A day can hold one plan per subject, so the subject travels with each row:
      * without it, two rows for the same class and date read as a duplicate.
+     * ON linked names are current; OFF and unlinked cells retain saved text.
      *
      * @param resource $out
      */
-    private function writeLessonPlans($out): void
+    private function writeLessonPlans($out, bool $classSubjects = false): void
     {
         Csv::row($out, ['Plan id', 'Class id', 'Session date', 'Subject', 'Title', 'Body']);
 
         Csv::each(
-            LessonPlan::whereIn('group_id', $this->schoolGroupIds()),
+            LessonPlan::whereIn('group_id', $this->schoolGroupIds())->when($classSubjects, fn ($q) => $q->with('classSubject')),
             fn (LessonPlan $p) => Csv::row($out, [
                 Csv::num($p->id), Csv::num($p->group_id),
                 Csv::num($p->session_date?->toDateString()),
-                Csv::text($p->subject),
+                Csv::text($classSubjects ? $p->currentSubjectName() : $p->subject),
                 Csv::text($p->title), Csv::text($p->body),
             ])
         );

@@ -12,6 +12,21 @@ trait HasClassSubjectWork
 {
     use IgnoresOffClassSubjectFields;
 
+    /** ON display follows the linked subject, including hidden subjects; saved text remains untouched. */
+    public function currentSubjectName(): ?string
+    {
+        if ($this->class_subject_id === null) return $this->subject;
+        $this->loadMissing('classSubject');
+        $subject = $this->classSubject;
+        return $subject !== null && (int) $subject->masjid_id === (int) $this->masjid_id && (int) $subject->group_id === (int) $this->group_id ? $subject->name : null;
+    }
+
+    /** The immutable identity used by ON display serializers. */
+    public function classSubject(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(ClassSubject::class);
+    }
+
     public function save(array $options = [])
     {
         $tenant = app(TenantContext::class)->get();

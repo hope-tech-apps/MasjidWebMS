@@ -133,7 +133,7 @@ class GradebookController extends TeacherController
         $roster = $group->memberships()->participants()->current()->count();
 
         $assignments = $group->assignments()
-            ->withCount('scores')
+            ->withCount('scores')->with('classSubject')
             // The subject fence: a limited teacher lists only their own subjects.
             ->when($limits !== null, fn ($q) => SubjectFence::scopeWork($q, $limits))
             ->orderByDesc('assigned_on')
@@ -702,7 +702,7 @@ class GradebookController extends TeacherController
             ->orderByDesc('class_assignments.assigned_on')
             ->orderByDesc('class_assignments.id')
             ->select('assignment_scores.*')
-            ->with('assignment')
+            ->with('assignment.classSubject')
             ->limit($limit)
             ->get();
 
@@ -827,9 +827,8 @@ class GradebookController extends TeacherController
             'points_possible' => (int) $a->points_possible,
             'scale' => $a->scale,
             'assigned_on' => $a->assigned_on->toDateString(),
-            // What the work is FOR. Snapshots: null on work set before they
-            // existed, which is shown as blank and never guessed.
-            'subject' => $a->subject,
+            // Linked work uses its current name; unlinked work keeps its saved text.
+            'subject' => $a->currentSubjectName(),
             'class_subject_id' => $a->class_subject_id,
             'type' => $a->type,
             'type_label' => $a->type !== null ? (ClassAssignment::TYPE_LABELS[$a->type] ?? null) : null,

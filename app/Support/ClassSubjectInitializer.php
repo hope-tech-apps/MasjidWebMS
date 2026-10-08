@@ -2,7 +2,7 @@
 
 namespace App\Support;
 
-use App\Models\{ClassSubject, CurriculumWeek, Group, GroupStaff, Masjid, SchoolSubject};
+use App\Models\{ClassSubject, CurriculumWeek, Group, GroupMembership, GroupStaff, Masjid, SchoolSubject};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -83,7 +83,7 @@ final class ClassSubjectInitializer
                         DB::table('group_staff')->where('masjid_id', $locked->id)->where('id', $staff->id)->update([
                             'class_subject_ids' => $ids === null ? null : json_encode($ids),
                             'class_subjects_mapped_at' => now(),
-                            'class_subjects_translated_from' => json_encode($staff->subjects),
+                            'class_subjects_translated_from' => $staff->getRawOriginal('subjects') ?? 'null',
                         ]);
                     }
                     ClassSubjectSavedWork::linkAtActivation($group, $subjects);
@@ -130,6 +130,7 @@ final class ClassSubjectInitializer
                 })->groupBy('group_id');
         }
         return ['work' => $work,
+            'grades' => GroupMembership::where('masjid_id', $org->id)->participants()->current()->get(['group_id', 'grade_label'])->groupBy('group_id'),
             'guide' => CurriculumWeek::where('masjid_id', $org->id)->select('grade_label', 'subject')->distinct()->orderBy('subject')->get(),
             'school' => SchoolSubject::where('masjid_id', $org->id)->orderBy('position')->orderBy('id')->get(),
             'subjects' => ClassSubject::where('masjid_id', $org->id)->get()->groupBy('group_id'),
@@ -186,6 +187,10 @@ final class ClassSubjectInitializer
         }
         $losses = [];
         $loss = function (string $line) use (&$losses): void { $losses[$line] = true; };
+        $grades = $data['grades']->get($group->id, collect())->pluck('grade_label')->all();
+        if ($grades === []) $grades = $group->subject_seed_grades ?? [];
+        $gradeKeys = array_filter(array_map(fn ($grade) => GradeLevel::key($grade), $grades), fn ($key) => $key !== null);
+        $guideSubjects = $data['guide']->filter(fn ($row) => in_array(GradeLevel::key($row->grade_label), $gradeKeys, true))->pluck('subject')->unique();
         foreach ($data['staff']->get($group->id, collect()) as $staff) {
             $ids = $staff->class_subject_ids;
             if (! $alreadyOn && self::needsTranslation($staff)) {
@@ -200,6 +205,7 @@ final class ClassSubjectInitializer
             $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
             $report['assignments'][] = ['teacher_id' => $staff->user_id, 'legacy' => $staff->subjects,
                 'names' => $ids === null ? ['all subjects'] : $selected->pluck('name')->all(), 'will_map' => ! $alreadyOn && self::needsTranslation($staff)];
+            if ($alreadyOn || ! self::needsTranslation($staff)) continue;
             $legacy = $staff->subjects ?: null;
             foreach (['hifdh' => ['quran', 'Hifdh'], 'arabic_letters' => ['arabic', 'Arabic letters and daily notes'], 'english_letters' => ['arabic', 'English letters']] as $tool => [$old, $label]) {
                 if (($legacy === null || in_array($old, $legacy, true)) && ! $selected->contains('tool', $tool)) $loss("LOSS Teacher #{$staff->user_id}: {$label}");
@@ -213,8 +219,8 @@ final class ClassSubjectInitializer
                     }
                 }
                 $guideKeys = $selected->flatMap(fn ($s) => $s->curriculumKeys())->unique()->all();
-                foreach ($data['guide']->pluck('subject')->unique() as $name) {
-                    if (! in_array(SubjectKey::for($name), $guideKeys, true)) $loss("LOSS Teacher #{$staff->user_id}: pacing guide ({$name})");
+                foreach ($guideSubjects as $name) {
+                    if (SubjectFence::allows($legacy, SubjectKey::for($name)) && ! in_array(SubjectKey::for($name), $guideKeys, true)) $loss("LOSS Teacher #{$staff->user_id}: pacing guide ({$name})");
                 }
             }
         }

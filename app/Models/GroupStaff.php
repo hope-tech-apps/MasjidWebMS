@@ -160,7 +160,7 @@ class GroupStaff extends Pivot
             $valid = ClassSubject::where('masjid_id', $orgId)->where('group_id', $this->group_id)->pluck('id')->all();
             if (! \App\Support\SubjectFence::validStoredIds($ids) || ($ids !== null && array_diff($ids, $valid) !== [])) self::refuseSubjectChoice();
             if ((! $this->exists || $this->isDirty('class_subject_ids')) && $ids === null && ! self::$officeSubjectChoice) self::refuseSubjectChoice();
-            if (! $this->exists || $this->isDirty('class_subject_ids') || self::$officeSubjectChoice) $this->class_subject_ids_edited_at = now();
+            if (! $this->exists || $this->isDirty('class_subject_ids') || (self::$officeSubjectChoice && $this->class_subjects_mapped_at === null && $this->class_subject_ids_edited_at === null)) $this->class_subject_ids_edited_at = now();
             return parent::save($options);
         });
     }

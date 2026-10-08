@@ -198,7 +198,7 @@ it('lets an authorized tool write finish after revocation without reading anothe
     expect(\App\Models\ArabicDailyNote::where('group_membership_id', $member->id)->count())->toBe(1);
 });
 
-it('disables only exactly expressible id sets or individually accepted restrictions', function (string $choice) {
+it('restores unedited provenance or requires individually accepted edited restrictions', function (string $choice) {
     ($this->activate)(); $subjects = ClassSubject::where('group_id', $this->group->id)->get()->keyBy('name');
     ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Islamic Studies']);
     $islamic = ClassSubject::where('name', 'Islamic Studies')->firstOrFail();
@@ -207,9 +207,9 @@ it('disables only exactly expressible id sets or individually accepted restricti
         'islamic' => [$islamic->id], 'two' => [$subjects['Arabic']->id, $subjects["Qur'an"]->id],
         'science' => [$subjects['Science']->id], 'english' => [$subjects['ELA']->id], 'invalid' => [999999],
     };
-    if ($choice === 'invalid') DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($ids)]);
+    if ($choice === 'invalid') DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($ids), 'class_subject_ids_edited_at' => now()]);
     else GroupStaff::withOfficeSubjectChoice(fn () => $this->staff->fresh()->update(['class_subject_ids' => $ids]));
-    $expressible = false; // Main exposes the school catalogue without a class; these subjects have no guide links.
+    $expressible = $ids === null || $choice === 'arabic'; // The Arabic IDs are unchanged since activation.
     $before = $this->staff->fresh()->getAttributes(); $beforeSubjects = ClassSubject::all()->toJson();
     $active = true; $transactions = []; $sql = [];
     \Illuminate\Support\Facades\Event::listen(\Illuminate\Database\Events\TransactionBeginning::class, function () use (&$active, &$transactions) { if ($active) $transactions[] = true; });
@@ -230,7 +230,7 @@ it('disables only exactly expressible id sets or individually accepted restricti
         expect($this->org->fresh()->hasCapability('class_subjects'))->toBeTrue();
     }
     $this->artisan('class-subjects:disable', ['--masjid' => $this->org->id] + ($expressible ? [] : ['--accept-unrestricted' => (string) $this->staff->id]))->assertSuccessful();
-    $expected = null; // Every restricted fixture differs from main's complete grants.
+    $expected = $choice === 'arabic' ? ['arabic'] : null;
     expect($this->staff->fresh()->subjects)->toBe($expected);
     expect($this->staff->fresh()->class_subject_ids)->toBe($ids);
     expect(ClassSubject::all()->toJson())->toBe($beforeSubjects);

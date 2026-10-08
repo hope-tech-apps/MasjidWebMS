@@ -156,7 +156,7 @@ it('previews 100 restricted teachers and 10000 work rows within bounded memory a
     }
 });
 
-it('requires exact legacy capability equivalence for every holder combination', function (bool $english) {
+it('requires acceptance for every edited restricted holder combination', function (bool $english) {
     $this->staff->update(['subjects' => null]);
     SchoolSubject::create(['masjid_id' => $this->org->id, 'name' => 'Islamic Studies']);
     ($this->activate)();
@@ -169,19 +169,18 @@ it('requires exact legacy capability equivalence for every holder combination', 
     foreach (range(0, 31) as $mask) {
         $chosen = []; $names = [];
         foreach ($ids as $bit => $id) if ($mask & (1 << $bit)) { $chosen[] = $id; $names[] = $labels[$bit]; }
-        DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($chosen)]);
+        DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($chosen), 'class_subject_ids_edited_at' => now()]);
         $report = \App\Support\ClassSubjectDisabler::run($this->org->fresh(), true);
-        // The fixture has no subjects for main's combined Quran/Islamic keys; ELA/Science
-        // have no legacy key at all. Arabic legacy grants English even with no holder.
+        // Every explicit restricted office edit needs acceptance regardless of holders or guide links.
         $table[] = ['english_holder' => $english, 'choice' => $names, 'expressible' => $report['assignments'][0]['expressible']];
         expect($report['assignments'][0]['expressible'])->toBeFalse();
         expect($report['blocked'])->not->toBeEmpty();
     }
     DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => null]);
     $all = \App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0];
-    expect($all['expressible'])->toBeFalse(); // No guide links: main additionally exposes the school catalogue.
+    expect($all['expressible'])->toBeTrue(); // Edited NULL is unrestricted in either state.
     foreach ($subjects as $subject) $subject->update(['guide_subject' => $subject->name]);
-    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0]['expressible'])->toBe($english);
+    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0]['expressible'])->toBeTrue();
     file_put_contents(base_path('artifacts/review6-equivalence-'.($english ? 'with' : 'without').'-english.json'), json_encode($table, JSON_PRETTY_PRINT)."\n");
 })->with([false, true]);
 
@@ -200,7 +199,7 @@ it('checks family summary dispatch and ON null linked fallback groups', function
     expect(array_column(\App\Support\GradeRecord::summaryForClassSubjects($member->id)['by_subject'], 'subject'))->toBe(['Arabic', 'Renamed']);
 });
 
-it('compares complete key grants and actual unlinked work before accepting disable', function () {
+it('requires acceptance for edited restrictions even when legacy grants appear equivalent', function () {
     $this->staff->update(['subjects' => null]); ($this->activate)();
     $quran = ClassSubject::where('tool', 'hifdh')->firstOrFail();
     SchoolSubject::where('masjid_id', $this->org->id)->where('name', '!=', "Qur'an")->delete();
@@ -209,8 +208,8 @@ it('compares complete key grants and actual unlinked work before accepting disab
     foreach (["Qur'an & Islamic Studies", "Qur'an and Islamic Studies"] as $name) $ids[] = ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => $name, 'guide_subject' => $name])->id;
     $this->staff->fresh()->update(['class_subject_ids' => $ids]);
     $report = \App\Support\ClassSubjectDisabler::run($this->org->fresh(), true);
-    expect($report['assignments'][0]['expressible'])->toBeTrue();
-    expect($report['assignments'][0]['legacy'])->toBe(['quran']);
+    expect($report['assignments'][0]['expressible'])->toBeFalse();
+    expect($report['assignments'][0]['legacy'])->toBeNull();
     $work = ($this->work)("Qur'an");
     DB::table('class_assignments')->where('id', $work->id)->update(['class_subject_id' => null]);
     expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0]['expressible'])->toBeFalse();
@@ -276,7 +275,7 @@ it('keeps exact stored preview keys when SQL collation ignores trailing spaces',
     expect($preview['orphaned_work'])->toBe(['arabic ' => 1]);
 });
 
-it('includes main no class curriculum catalogue grants in disable equivalence', function () {
+it('restores unchanged provenance even when ON curriculum differs from OFF', function () {
     $this->staff->update(['subjects' => null]); ($this->activate)();
     Sanctum::actingAs($this->teacher, ['staff']);
     $url = "/api/teacher/masjids/{$this->org->id}/curriculum";
@@ -286,5 +285,5 @@ it('includes main no class curriculum catalogue grants in disable equivalence', 
     $off = $this->getJson($url)->assertOk()->json('data.subjects');
     expect($on)->not->toBe($off);
     DB::table('masjids')->where('id', $this->org->id)->update(['capability_overrides' => json_encode($overrides)]);
-    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0]['expressible'])->toBeFalse();
+    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), true)['assignments'][0]['expressible'])->toBeTrue();
 });

@@ -120,7 +120,7 @@ it('dry runs without writes, maps legacy restrictions, and preserves all data on
     $disable = \App\Support\ClassSubjectDisabler::run($this->school->fresh(), true);
     $accept = array_column(array_filter($disable['assignments'], fn ($row) => ! $row['expressible']), 'id');
     expect(\App\Support\ClassSubjectDisabler::run($this->school->fresh(), false, $accept)['blocked'])->toBe([]);
-    expect($this->staff->fresh()->subjects)->toBeNull();
+    expect($this->staff->fresh()->subjects)->toBe(['arabic']);
     $assignments = DB::table('group_staff')->get()->toJson();
     ($this->catalogue)('New Science');
     ($this->enable)();

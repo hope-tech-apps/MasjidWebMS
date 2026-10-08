@@ -61,7 +61,10 @@ class ClassSubjectsController extends Controller
         $subject = DB::transaction(function () use ($group, $request) {
             $this->lockGroup($group);
             $fields = $request->safe()->except('attach_saved_work');
-            if (! array_key_exists('tool', $fields)) $fields['tool'] = ClassSubjectInitializer::defaultTool(SubjectKey::for($fields['name']));
+            if (! array_key_exists('tool', $fields)) {
+                $tool = ClassSubjectInitializer::defaultTool(SubjectKey::for($fields['name']));
+                $fields['tool'] = $tool !== null && ! ClassSubject::where('group_id', $group->id)->where('tool', $tool)->exists() ? $tool : null;
+            }
             if (! array_key_exists('guide_subject', $fields)) {
                 $aliases = ClassSubjectInitializer::aliases(SubjectKey::for($fields['name']));
                 $matches = CurriculumWeek::distinct()->pluck('subject')->filter(fn ($name) => in_array(SubjectKey::for($name), $aliases, true));

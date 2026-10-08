@@ -193,7 +193,7 @@ class GradesController extends FamilyController
             ->orderByDesc('class_assignments.assigned_on')
             ->orderByDesc('class_assignments.id')
             ->select('assignment_scores.*')
-            ->with('assignment')
+            ->with(\App\Support\ClassSubjectMode::responseEnabled(app(\App\Support\TenantContext::class)->get()) ? 'assignment.classSubject' : 'assignment')
             ->limit((int) config('groups.records_page_size', 200))
             ->get();
     }
@@ -223,7 +223,7 @@ class GradesController extends FamilyController
             // piece's own override; the class's weight for its type is in
             // `summary.weighting.weights`. The standard and its focus are the
             // SCHOOL'S guide's words, and the screen says so.
-            'subject' => $a->subject,
+            'subject' => \App\Support\ClassSubjectMode::responseEnabled($a->masjid_id) ? $a->currentSubjectName() : $a->subject,
             'type' => $a->type,
             'weight' => $a->weight !== null ? (int) $a->weight : null,
             'standard_code' => $a->standard_code,

@@ -83,6 +83,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
     };
     const get = async (url: string) => {
         calls.push({ method: 'get', url });
+        if (options.read) { const response = options.read(url); if (response !== undefined) return response; }
         if (url.endsWith('/groups/2')) return ok(data);
         if (url.endsWith('/school-subjects')) return ok([{ name: 'Science' }, { name: 'Mathematics' }]);
         if (url.endsWith('/subjects')) return ok(structuredClone(catalog), { guide_subjects: ['English Language Arts', 'Science'], tools: ['hifdh', 'arabic_letters', 'english_letters'] });
@@ -1238,3 +1239,67 @@ for (const realm of ['teacher', 'office'] as const) test(`review4 OFF: ${realm} 
         assert.equal(screen.text().includes(refreshFailure), false); assert.doesNotMatch(screen.text(), /Loading/); assert.equal(alerts.length, 0);
     } finally { screen.unmount(); }
 });
+
+for (const flag of [true, false]) test(`walk: lesson plan subject editor and server errors ${flag ? 'ON' : 'OFF'}`, async () => {
+    const message = 'You do not teach that subject in this class.';
+    const { screen, calls } = await setup('teacher', { flag, mine: [102],
+        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans: [], hidden_fields: [], meeting_weekdays: null })
+            : url.includes('/curriculum') ? ok({ grades: [], subjects: [], weeks: [] }) : undefined,
+        write: (_method: string, url: string) => url.includes('/lesson-plans') ? Promise.reject(httpError(403, { message })) : undefined,
+    });
+    try {
+        if (flag) await pick(screen, 'Lesson Plans');
+        else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Lesson Plans')); await flush(10); }
+        const pickers = screen.all((n: Node) => n.props['data-plan-subject'] !== undefined);
+        if (flag) {
+            assert.equal(pickers.length, 1, 'ON has a subject picker');
+            assert.deepEqual(pickers[0].children.filter((n: Node) => n.tag === 'option').map((n: Node) => n.textContent), ['No subject / general', 'Arabic']);
+            assert.equal(screen.all((n: Node) => n.tag === 'input' && n.props.placeholder === 'e.g. Arabic').length, 0);
+            chooseOption(pickers[0], 102); await flush();
+        } else {
+            assert.equal(pickers.length, 0);
+            const subject = screen.all((n: Node) => n.tag === 'input' && n.props.placeholder === 'e.g. Arabic')[0];
+            assert.ok(subject); type(subject, 'Arabic'); await flush();
+        }
+        const activities = screen.all((n: Node) => n.tag === 'textarea' && Number(n.props.rows) === 4)[0];
+        assert.ok(activities); type(activities, 'Practice letters'); await flush();
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = calls.findLast((c: any) => c.method === 'post' && c.url.endsWith('/lesson-plans'));
+        assert.ok(save);
+        if (flag) { assert.equal(save.body.class_subject_id, 102); assert.equal('subject' in save.body, false); assert.ok(screen.text().includes(message)); }
+        else { assert.equal(save.body.subject, 'Arabic'); assert.equal('class_subject_id' in save.body, false); assert.ok(screen.text().includes('That plan could not be saved.')); }
+    } finally { screen.unmount(); }
+});
+
+for (const scenario of ['limited named', 'unrestricted named', 'hidden named', 'unlinked named', 'limited general', 'no subjects'] as const) {
+    test(`walk: ON plan choices and unchanged saves for ${scenario}`, async () => {
+        const today = new Date();
+        const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const general = scenario === 'limited general' || scenario === 'no subjects';
+        const linked = !general && scenario !== 'unlinked named';
+        const plan = { id: 77, class_subject_id: linked ? 102 : null, subject: general ? null : 'Arabic', session_date: day, body: 'Saved activities', attachments: [] };
+        const { screen, calls } = await setup('teacher', {
+            mine: scenario === 'unrestricted named' || scenario === 'unlinked named' ? null : scenario === 'no subjects' ? [] : [102],
+            data: scenario === 'hidden named' ? { class_subjects: subjects.filter((s: any) => s.id !== 102) } : {},
+            read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans: [plan], hidden_fields: [], meeting_weekdays: null })
+                : url.includes('/curriculum') ? ok({ grades: [], subjects: [], weeks: [] }) : undefined,
+            write: (_method: string, url: string) => url.includes('/lesson-plans') ? ok(plan) : undefined,
+        });
+        try {
+            await pick(screen, 'Lesson Plans');
+            const picker = screen.all((n: Node) => n.props['data-plan-subject'] !== undefined)[0];
+            assert.ok(picker);
+            const words = picker.children.filter((n: Node) => n.tag === 'option').map((n: Node) => n.textContent);
+            const allowsGeneral = general || scenario === 'unrestricted named' || scenario === 'unlinked named';
+            assert.equal(words.includes('No subject / general'), allowsGeneral);
+            if (scenario === 'hidden named' || scenario === 'unlinked named') assert.ok(words.includes('Arabic (saved subject)'));
+            if (scenario === 'no subjects') assert.deepEqual(words, ['No subject / general']);
+            click(exactButton(screen, 'Save plan')); await flush(10);
+            const save = calls.findLast((c: any) => c.method === 'put' && c.url.endsWith('/lesson-plans/77'));
+            assert.ok(save);
+            if (linked) { assert.equal(save.body.class_subject_id, 102); assert.equal('subject' in save.body, false); }
+            else if (!general) { assert.equal('class_subject_id' in save.body, false); assert.equal('subject' in save.body, false); }
+            else { assert.equal(save.body.class_subject_id, null); assert.equal(save.body.subject, null); }
+        } finally { screen.unmount(); }
+    });
+}
