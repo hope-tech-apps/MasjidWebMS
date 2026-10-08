@@ -83,9 +83,9 @@ use Illuminate\Support\Facades\DB;
  *    `enabled` is false and no weighted figure is produced, whatever a piece's
  *    own override says: an override is only meaningful against a weighted class.
  *
- * `by_subject` groups the same pieces by subject KEY (App\Support\SubjectKey),
- * so two spellings are one block. It uses the CLASS's weights: weights are per
- * class, not per subject.
+ * OFF `by_subject` groups by saved SubjectKey, as before. ON linked work groups
+ * by class_subject_id with the current name as its heading; NULL links retain
+ * saved-key grouping. Row labels remain snapshots. Weights are per class.
  *
  * ## The subject fence
  *
@@ -93,7 +93,8 @@ use Illuminate\Support\Facades\DB;
  * (App\Support\SubjectFence::allowedKeys), applied to EVERY query here so a
  * Qur'an-only teacher's summary of a child is arithmetically incapable of
  * containing an Arabic mark. NULL is no filter, and is what the family and the
- * office pass.
+ * office pass. ON callers supply IDs through summaryForClassSubjects; the
+ * summaryFor dispatcher uses IDs when the capability is ON, including family reads.
  */
 final class GradeRecord
 {
@@ -106,6 +107,12 @@ final class GradeRecord
      */
     public static function summaryFor(int $membershipId, ?array $subjectKeys = null): array
     {
+        $orgId = app(TenantContext::class)->get();
+        if ($orgId === null && ! request()->attributes->get(ClassSubjectMode::HTTP)) {
+            $orgId = \App\Models\GroupMembership::withoutMasjidScope()->whereKey($membershipId)->value('masjid_id');
+        }
+        if ($orgId !== null && ClassSubjectMode::enabled($orgId)) return self::summaryForClassSubjects($membershipId, $subjectKeys);
+
         $totals = self::totals($membershipId, $subjectKeys);
         $recorded = (int) $totals->sum('n');
         $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
@@ -417,17 +424,19 @@ final class GradeRecord
      * @param  array<string,int>  $weights
      * @return list<array<string,mixed>>
      */
-    private static function bySubject(Collection $pieces, array $weights): array
+    private static function bySubject(Collection $pieces, array $weights, bool $byId = false): array
     {
-        if ($pieces->every(fn ($p) => (string) $p->subject_key === '')) {
+        if ($pieces->every(fn ($p) => (string) $p->subject_key === '' && (! $byId || $p->class_subject_id === null))) {
             return [];
         }
 
         $enabled = $weights !== [];
 
         return $pieces
-            ->groupBy(fn ($p) => (string) $p->subject_key)
-            ->map(function (Collection $rows, string $key) use ($weights, $enabled): array {
+            ->groupBy(fn ($p) => $byId
+                ? json_encode($p->class_subject_id !== null ? ['id', (int) $p->class_subject_id] : ['text', (string) $p->subject_key])
+                : (string) $p->subject_key)
+            ->map(function (Collection $rows, string $key) use ($weights, $enabled, $byId): array {
                 $counted = $rows->filter(fn ($p) => self::counts($p));
                 $points = $counted->where('scale', ClassAssignment::SCALE_POINTS);
                 $possible = (float) $points->sum('possible');
@@ -437,7 +446,9 @@ final class GradeRecord
                 $weighted = $enabled ? self::weighted($rows, $weights) : null;
 
                 return [
-                    'subject' => $key === '' ? null : (string) $rows->first(fn ($p) => $p->subject !== null)?->subject,
+                    'subject' => $byId && $rows->first()->class_subject_id !== null
+                        ? $rows->first()->current_subject_name
+                        : ((string) $rows->first()->subject_key === '' ? null : (string) $rows->first(fn ($p) => $p->subject !== null)?->subject),
                     'recorded' => $rows->count(),
                     'counted' => $counted->count(),
                     'excused' => $rows->where('status', AssignmentScore::STATUS_EXCUSED)->count(),
@@ -527,7 +538,7 @@ final class GradeRecord
             // T-001.2: the class's weights applied. See the class docblock.
             'weighting' => self::weighting($pieces, $weights),
             // T-001.3: the same marks, one block per subject.
-            'by_subject' => self::bySubject($pieces, $weights),
+            'by_subject' => self::bySubject($pieces, $weights, true),
         ];
     }
 
@@ -553,6 +564,11 @@ final class GradeRecord
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->leftJoin('class_subjects', function ($join) {
+                $join->on('class_subjects.id', '=', 'class_assignments.class_subject_id')
+                    ->on('class_subjects.masjid_id', '=', 'class_assignments.masjid_id')
+                    ->on('class_subjects.group_id', '=', 'class_assignments.group_id');
+            })
             ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
             ->select([
                 'assignment_scores.status as status',
@@ -560,6 +576,8 @@ final class GradeRecord
                 'class_assignments.scale as scale',
                 'class_assignments.points_possible as possible',
                 'class_assignments.subject as subject',
+                'class_assignments.class_subject_id as class_subject_id',
+                'class_subjects.name as current_subject_name',
                 'class_assignments.subject_key as subject_key',
                 'class_assignments.type as type',
                 'class_assignments.weight as weight',

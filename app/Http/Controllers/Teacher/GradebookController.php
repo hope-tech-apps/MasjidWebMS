@@ -793,7 +793,7 @@ class GradebookController extends TeacherController
 
     private function assignment(ClassAssignment $a): array
     {
-        if ($this->classSubjectsByOrganisation[(int) $a->masjid_id] ?? false) {
+        if (\App\Support\ClassSubjectMode::responseEnabled($a->masjid_id)) {
             return $this->assignmentWithClassSubjects($a);
         }
 

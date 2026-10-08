@@ -22,16 +22,20 @@ class InitializeClassSubjects extends Command
             }
             $query->whereKey($this->option('masjid'));
         } else $query->where('org_type', 'school');
-        $orgs = $query->orderBy('id')->get();
+        $orgs = $query->orderBy('id')->lazyById();
         if ($orgs->isEmpty()) { $this->error('No matching organization.'); return self::FAILURE; }
         $failed = false;
         foreach ($orgs as $org) {
             try {
-                $report = ClassSubjectInitializer::run($org, (bool) $this->option('dry-run'), (bool) $this->option('enable'));
-                $blockedReport = collect($report)->contains(fn ($row) => $row['blocked'] !== []);
+                $report = $this->option('dry-run') ? ClassSubjectInitializer::streamPreview($org)
+                    : ClassSubjectInitializer::run($org, false, (bool) $this->option('enable'));
+                $blockedReport = ! $this->option('dry-run') && collect($report)->contains(fn ($row) => $row['blocked'] !== []);
                 $this->line(($this->option('dry-run') ? 'DRY RUN' : ($blockedReport ? 'BLOCKED' : 'ACTIVATED')).": {$org->name}");
-                $blocked = 0; $creates = 0; $maps = 0; $losses = 0;
+                $positions = \App\Models\SchoolSubject::where('masjid_id', $org->id)->distinct()->pluck('position');
+                if ($positions->count() === 1) $this->warn('The school subject list has no order set; classes will use entry order (ties broken by id).');
+                $classes = 0; $blocked = 0; $creates = 0; $maps = 0; $losses = 0;
                 foreach ($report as $row) {
+                    $classes++;
                     $this->line("Class {$row['class']}: {$row['subjects_added']} subjects added; {$row['assignments_mapped']} assignments mapped.");
                     foreach ($row['creates'] as $subject) {
                         $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
@@ -52,7 +56,7 @@ class InitializeClassSubjects extends Command
                     $blocked += count($row['blocked']); $creates += $row['subjects_added'];
                     $maps += $row['assignments_mapped']; $losses += count($row['losses']);
                 }
-                $this->line("School summary: ".count($report)." classes (including archived); {$creates} subjects; {$maps} mappings; {$losses} losses; {$blocked} blocked mappings.");
+                $this->line("School summary: ".$classes." classes (including archived); {$creates} subjects; {$maps} mappings; {$losses} losses; {$blocked} blocked mappings.");
                 if ($blocked > 0) {
                     $failed = true;
                     $this->error('No changes saved for this organization.');

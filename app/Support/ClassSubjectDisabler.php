@@ -2,7 +2,7 @@
 
 namespace App\Support;
 
-use App\Models\{ClassSubject, GroupStaff, Masjid};
+use App\Models\{ClassSubject, GroupStaff, Masjid, SchoolSubject};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -48,11 +48,19 @@ final class ClassSubjectDisabler
             return $report;
         }
         $subjects = ClassSubject::where('masjid_id', $org->id)->get()->groupBy('group_id');
+        $guide = \App\Models\CurriculumWeek::where('masjid_id', $org->id)->distinct()->pluck('subject')
+            ->merge(SchoolSubject::where('masjid_id', $org->id)->pluck('name'))
+            ->map(fn ($name) => SubjectKey::for($name))->unique()->all();
+        $work = [];
+        foreach (ClassSubjectSavedWork::TABLES as $table) {
+            $work[$table] = DB::table($table)->where('masjid_id', $org->id)
+                ->select('group_id', 'subject', 'subject_key', 'class_subject_id')->distinct()->get()->groupBy('group_id');
+        }
         $rows = GroupStaff::where('masjid_id', $org->id)->orderBy('id')->get();
         if ($lock) $rows = $rows->map(fn ($row) => GroupStaff::where('masjid_id', $org->id)->whereKey($row->id)->lockForUpdate()->firstOrFail());
         $inexpressible = [];
         foreach ($rows as $row) {
-            [$expressible, $legacy] = self::legacyChoice($row, $subjects->get($row->group_id, collect()));
+            [$expressible, $legacy] = self::legacyChoice($row, $subjects->get($row->group_id, collect()), $guide, $work);
             $accepted = ! $expressible && in_array((int) $row->id, $accept, true);
             if (! $expressible) {
                 $inexpressible[] = (int) $row->id;
@@ -66,20 +74,53 @@ final class ClassSubjectDisabler
         return $report;
     }
 
-    private static function legacyChoice(GroupStaff $row, $subjects): array
+    /** Equality of grants, not equality of the holder IDs used during activation. */
+    private static function legacyChoice(GroupStaff $row, $subjects, array $guide, array $work): array
     {
         if ($row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null) return [false, null];
         $ids = $row->class_subject_ids;
-        if ($ids === null) return [true, null];
-        if (! SubjectFence::validStoredIds($ids) || $ids === []) return [false, null];
-        $available = [];
-        foreach (['quran' => 'hifdh', 'arabic' => 'arabic_letters', 'islamic_studies' => null] as $key => $tool) {
-            $matches = $tool === null ? $subjects->filter(fn ($subject) => in_array('islamic studies', $subject->matchingKeys(), true)) : $subjects->where('tool', $tool);
-            if ($matches->count() === 1) $available[$key] = (int) $matches->first()->id;
+        if (! SubjectFence::validStoredIds($ids) || $ids === [] || ($ids !== null && array_diff($ids, $subjects->pluck('id')->all()) !== [])) return [false, null];
+        $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
+        $onKeys = $selected->flatMap(fn ($s) => $s->matchingKeys())->unique()->sort()->values()->all();
+        $onGuide = $selected->flatMap(fn ($s) => $s->curriculumKeys())->unique()->all();
+        $onTools = [];
+        foreach (['hifdh', 'arabic_letters', 'english_letters'] as $tool) $onTools[$tool] = $selected->contains('tool', $tool);
+
+        // These are main's readers: GroupStaff::teaches for the route middleware,
+        // SubjectKey::keysFor / SubjectFence::allows for named work and curriculum.
+        // Both alphabets and Arabic notes share teacher.teaches:arabic in main.
+        $candidates = [null];
+        foreach (range(1, 7) as $mask) {
+            $candidate = [];
+            foreach (GroupStaff::SUBJECTS as $bit => $key) if ($mask & (1 << $bit)) $candidate[] = $key;
+            $candidates[] = $candidate;
         }
-        $wanted = array_values(array_unique(array_map('intval', $ids)));
-        $legacy = array_keys(array_filter($available, fn ($id) => in_array($id, $wanted, true)));
-        $resolved = array_values(array_unique(array_intersect_key($available, array_flip($legacy))));
-        return count($resolved) === count($wanted) && array_diff($wanted, $resolved) === [] ? [true, $legacy] : [false, null];
+        foreach ($candidates as $legacy) {
+            $assignment = (new GroupStaff)->forceFill(['subjects' => $legacy]);
+            $oldTools = ['hifdh' => $assignment->teaches('quran'), 'arabic_letters' => $assignment->teaches('arabic'), 'english_letters' => $assignment->teaches('arabic')];
+            if ($onTools !== $oldTools) continue;
+            // Arabic notes follow the Arabic holder and the same legacy Arabic gate.
+            if (($ids === null) !== ($legacy === null)) continue;
+            if ($legacy !== null) {
+                $oldKeys = SubjectKey::keysFor($legacy); sort($oldKeys);
+                if ($onKeys !== $oldKeys) continue;
+            }
+            $equal = true;
+            foreach ($work as $table => $classes) foreach ($classes->get($row->group_id, collect()) as $piece) {
+                $general = $table === 'lesson_plans' && SubjectKey::clean($piece->subject) === null;
+                $on = SubjectFence::allowsWork($ids === null ? null : ['class_subject_ids' => array_map('intval', $ids)], $piece->class_subject_id === null ? null : (int) $piece->class_subject_id, $general);
+                $off = $general || SubjectFence::allows($legacy, SubjectKey::for($piece->subject));
+                if ($on !== $off) { $equal = false; break 2; }
+            }
+            if (! $equal) continue;
+            // Main without a class grants the whole-school guide and catalogue. Class-scoped
+            // reads additionally use its legacy key fence; both must agree.
+            foreach ($guide as $key) {
+                $on = in_array($key, $onGuide, true);
+                if (! $on || $on !== SubjectFence::allows($legacy, $key)) { $equal = false; break; }
+            }
+            if ($equal) return [true, $legacy];
+        }
+        return [false, null];
     }
 }

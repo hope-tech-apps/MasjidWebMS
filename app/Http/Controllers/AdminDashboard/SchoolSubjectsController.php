@@ -42,6 +42,8 @@ class SchoolSubjectsController extends Controller
 {
     public function index($masjid_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::enabled($masjid_id)) return $this->indexWithClassSubjects($masjid_id);
+
         $subjects = SchoolSubject::query()->orderBy('position')->orderBy('name')->get();
         $keys = $subjects->pluck('name_key')->all();
 
@@ -51,6 +53,35 @@ class SchoolSubjectsController extends Controller
             ->selectRaw('subject_key, COUNT(*) as n')
             ->groupBy('subject_key')
             ->pluck('n', 'subject_key');
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $subjects->map(fn (SchoolSubject $s): array => $this->payload($s) + [
+                'work_count' => (int) ($usage[$s->name_key] ?? 0),
+            ])->values(),
+            'meta' => [
+                'grade_levels' => GradeLevel::LEVELS,
+                'guide_subjects' => CurriculumWeek::query()
+                    ->distinct()->orderBy('subject')->pluck('subject')->values(),
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    private function indexWithClassSubjects($masjid_id): JsonResponse
+    {
+        $subjects = SchoolSubject::query()->orderBy('position')->orderBy('name')->get();
+
+        // Count by linked identity first, then roll up current names to the school list.
+        $headingKey = 'CASE WHEN class_assignments.class_subject_id IS NULL THEN class_assignments.subject_key ELSE class_subjects.name_key END';
+        $usage = ClassAssignment::query()
+            ->leftJoin('class_subjects', function ($join) {
+                $join->on('class_subjects.id', '=', 'class_assignments.class_subject_id')
+                    ->on('class_subjects.masjid_id', '=', 'class_assignments.masjid_id')
+                    ->on('class_subjects.group_id', '=', 'class_assignments.group_id');
+            })
+            ->selectRaw('class_assignments.class_subject_id, '.$headingKey.' as heading_key, COUNT(*) as n')
+            ->groupBy('class_assignments.class_subject_id', \Illuminate\Support\Facades\DB::raw($headingKey))
+            ->get()->groupBy('heading_key')->map(fn ($rows) => $rows->sum('n'));
 
         return response()->json([
             'status' => 'success',

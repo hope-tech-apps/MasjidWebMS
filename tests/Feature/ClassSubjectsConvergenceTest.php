@@ -164,7 +164,9 @@ it('keeps general lesson plans shared even with no subjects assigned', function 
 it('keeps unmatched work unmatched after reactivation and links only fresh off work', function () {
     $old = ($this->work)('History'); ($this->activate)();
     ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'History']);
-    \App\Support\ClassSubjectDisabler::run($this->org->fresh());
+    $disable = \App\Support\ClassSubjectDisabler::run($this->org->fresh(), true);
+    $accept = array_column(array_filter($disable['assignments'], fn ($row) => ! $row['expressible']), 'id');
+    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), false, $accept)['blocked'])->toBe([]);
     $fresh = ($this->work)('History'); ($this->activate)();
     expect($old->fresh()->class_subject_id)->toBeNull();
     expect($fresh->fresh()->class_subject_id)->toBe(ClassSubject::where('name', 'History')->value('id'));
@@ -263,7 +265,9 @@ it('applies the same id assignment matrix to every held tool route', function (s
 
 it('ignores unknown off id input even if activation commits during that dispatched save', function () {
     ($this->activate)(); $ids = $this->staff->fresh()->class_subject_ids;
-    \App\Support\ClassSubjectDisabler::run($this->org->fresh());
+    $disable = \App\Support\ClassSubjectDisabler::run($this->org->fresh(), true);
+    $accept = array_column(array_filter($disable['assignments'], fn ($row) => ! $row['expressible']), 'id');
+    expect(\App\Support\ClassSubjectDisabler::run($this->org->fresh(), false, $accept)['blocked'])->toBe([]);
     $events = GroupStaff::getEventDispatcher();
     GroupStaff::setEventDispatcher(clone $events);
     try {

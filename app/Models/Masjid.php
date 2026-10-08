@@ -819,6 +819,8 @@ class Masjid extends Model implements HasMedia
      */
     protected static function booted(): void
     {
+        static::retrieved(fn (Masjid $org) => \App\Support\ClassSubjectMode::rememberLoaded($org));
+        static::saved(fn (Masjid $org) => \App\Support\ClassSubjectMode::forget((int) $org->id));
         // A force-delete cascades `masjid_domains` in the database, which fires
         // no model event, so a host's Cloudflare records (the CNAME, the Pages
         // custom domain, a zone Studio created) would outlive every row that
