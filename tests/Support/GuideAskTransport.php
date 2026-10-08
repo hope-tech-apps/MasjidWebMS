@@ -12,6 +12,7 @@ final class GuideAskTransport implements ClientInterface
     public array $requests = [];
     public string $answer = 'Open Admin Sprout task.';
     public array $answers = [];
+    public array $usages = [];
     public string $mode = 'ok';
     public ?\Closure $onRequest = null;
 
@@ -25,7 +26,7 @@ final class GuideAskTransport implements ClientInterface
             'id' => 'msg_fixture', 'type' => 'message', 'role' => 'assistant', 'model' => 'fixture-model',
             'stop_reason' => $this->mode === 'truncated' ? 'max_tokens' : 'end_turn', 'stop_sequence' => null,
             'content' => [['type' => 'text', 'text' => $this->mode === 'empty' ? '' : (array_shift($this->answers) ?? $this->answer)]],
-            'usage' => ['input_tokens' => 100, 'output_tokens' => 10, 'cache_creation_input_tokens' => 25, 'cache_read_input_tokens' => 50],
+            'usage' => array_shift($this->usages) ?? ['input_tokens' => 100, 'output_tokens' => 10, 'cache_creation_input_tokens' => 25, 'cache_read_input_tokens' => 50],
         ]));
     }
 }

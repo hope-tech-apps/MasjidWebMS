@@ -40,7 +40,7 @@ class GuidesAskGrade extends Command
                 $valid = match ($reader) { 'office' => in_array($books, [['admin'], ['admin', 'school']], true), 'teacher' => $books === ['teacher'], 'lunch' => $books === ['lunch'], default => false };
                 if (! $valid || ! is_string($q['q'] ?? null) || trim($q['q']) === '' || ! in_array($q['expect'] ?? null, ['unknown', 'answer'], true) || ! $ask->hasText($manifest, $books)) throw new \RuntimeException;
                 if ($q['expect'] === 'answer' && (! is_array($q['tasks'] ?? null) || ! $q['tasks'])) throw new \RuntimeException;
-                foreach ([...($q['tasks'] ?? []), ...($q['must_say'] ?? [])] as $phrase) if (! is_string($phrase)) throw new \RuntimeException;
+                foreach ([...($q['tasks'] ?? []), ...($q['must_say'] ?? []), ...($q['must_not_say'] ?? [])] as $phrase) if (! is_string($phrase)) throw new \RuntimeException;
             }
         } catch (Throwable) {
             $this->error('Invalid test set, options, or unavailable guide text.'); return self::FAILURE;
@@ -50,22 +50,32 @@ class GuidesAskGrade extends Command
         if (! $this->option('yes') && (! $this->input->isInteractive() || ! $this->confirm('Call the paid API for these questions?', false))) {
             $this->error('No calls made. Confirm interactively or pass --yes.'); return self::FAILURE;
         }
-        $passed = 0; $totals = ['input' => 0, 'output' => 0, 'cache_creation' => 0, 'cache_read' => 0]; $hits = 0;
+        $passed = 0; $failed = []; $totals = ['input' => 0, 'output' => 0, 'cache_creation' => 0, 'cache_read' => 0]; $hits = 0; $creations = 0;
         foreach ($questions as $index => $q) {
             // Questions and answers are printed here only; no logger or retention path.
             $this->output->writeln(($index + 1).'. '.$q['q'], OutputInterface::OUTPUT_RAW);
             try {
                 $result = $ask->answer($manifest, $q['guides'], $q['who'], $q['q'], $model);
                 $this->output->writeln($result['answer'], OutputInterface::OUTPUT_RAW);
-                $ok = $q['expect'] === 'unknown' ? $result['unknown'] : ! $result['unknown'] && (bool) array_intersect($q['tasks'], array_column([...$result['tasks'], ...$result['questions']], 'id'));
-                foreach ($q['must_say'] ?? [] as $phrase) if (! str_contains($result['answer'], $phrase)) $ok = false;
+                $reason = null;
+                if ($q['expect'] === 'unknown' && ! $result['unknown']) $reason = 'expected unknown';
+                elseif ($q['expect'] === 'answer' && $result['unknown']) $reason = 'unexpected unknown';
+                elseif ($q['expect'] === 'answer' && ! array_intersect($q['tasks'], array_column([...$result['tasks'], ...$result['questions']], 'id'))) $reason = 'no source matched';
+                foreach ($q['must_say'] ?? [] as $phrase) if ($reason === null && ! str_contains($result['answer'], $phrase)) $reason = 'missing phrase "'.str_replace(["\r", "\n"], ['\\r', '\\n'], $phrase).'"';
+                // Words whose presence makes an otherwise sourced answer wrong (steps borrowed from another screen).
+                foreach ($q['must_not_say'] ?? [] as $phrase) if ($reason === null && str_contains($result['answer'], $phrase)) $reason = 'forbidden phrase "'.str_replace(["\r", "\n"], ['\\r', '\\n'], $phrase).'"';
+                $this->line('Usage: '.json_encode($result['usage']));
                 foreach ($totals as $key => $value) $totals[$key] += $result['usage'][$key];
                 if ($result['usage']['cache_read'] > 0) $hits++;
-            } catch (Throwable) { $ok = false; $this->line('Model request failed.'); }
-            $this->line($ok ? 'PASS' : 'FAIL'); if ($ok) $passed++;
+                if ($result['usage']['cache_creation'] > 0) $creations++;
+            } catch (Throwable) { $reason = 'model request failed'; $this->line('Model request failed. Usage: unavailable.'); }
+            $this->output->writeln($reason === null ? 'PASS' : 'FAIL: '.$reason, OutputInterface::OUTPUT_RAW);
+            if ($reason === null) $passed++; else $failed[] = $index + 1;
         }
         $this->line($passed.'/'.count($questions).' passed');
-        $this->line('Tokens: '.json_encode($totals).'; cache hits: '.$hits);
+        $this->line('Failed questions: '.($failed ? implode(', ', $failed) : 'none'));
+        $this->line('Tokens: '.json_encode($totals).'; cache creations: '.$creations.'; cache hits: '.$hits);
+        $this->line('cache_creation_input_tokens: '.$totals['cache_creation'].'; cache_read_input_tokens: '.$totals['cache_read']);
         $cost = 'not computed';
         if (! in_array(null, $prices, true)) {
             $amount = ($totals['input'] * $prices['input'] + $totals['output'] * $prices['output'] + $totals['cache_read'] * $prices['cache-read'] + $totals['cache_creation'] * $prices['cache-write']) / 1000000;

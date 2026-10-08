@@ -63,17 +63,60 @@ class GuideAskService
         $parts = [];
         foreach ($response->content as $block) if ($block->type === 'text') $parts[] = $block->text;
         $answer = trim(implode("\n", $parts));
+        // Only this allowlist can turn a model-written id into a guide destination.
+        // Sources were collected in sent-book order: the first book wins collisions.
+        $byId = [];
+        foreach ($sources as $source) if (! isset($byId[$source['id']])) $byId[$source['id']] = $source;
+        $cited = $this->citations($answer, $byId);
+        $answer = $this->plainAnswer($answer, $byId);
         if ($answer === '') throw new RuntimeException('Guide answer empty');
         $fallback = $this->fallback($reader);
         $normalized = preg_replace('/^[\s"\'“”‘’«»]+|[\s"\'“”‘’«»]+$/u', '', $answer);
         $unknown = $normalized === rtrim($fallback, '.') || str_starts_with($normalized, $fallback);
         if ($unknown) $answer = $fallback;
-        $links = $unknown ? ['tasks' => [], 'questions' => []] : $this->links($answer, $sources);
+        $links = $unknown ? ['tasks' => [], 'questions' => []] : ($cited['tasks'] || $cited['questions'] ? $cited : $this->links($answer, $sources));
         $usage = $response->usage;
         return ['answer' => $answer, 'unknown' => $unknown, 'tasks' => $links['tasks'], 'questions' => $links['questions'], 'usage' => [
             'input' => $usage->inputTokens, 'output' => $usage->outputTokens,
             'cache_creation' => $usage->cacheCreationInputTokens ?? 0, 'cache_read' => $usage->cacheReadInputTokens ?? 0,
         ]];
+    }
+
+    /** Read only the final line; discard even an empty or untrusted Sources footer. */
+    private function citations(string &$answer, array $byId): array
+    {
+        $links = ['tasks' => [], 'questions' => []];
+        $lines = explode("\n", $answer);
+        if (! preg_match('/^Sources:[ \t]*(.*)$/u', trim(end($lines)), $footer)) return $links;
+        array_pop($lines); $answer = implode("\n", $lines);
+        // Comma-separated bracket tokens only, not URLs, Markdown links or body ids.
+        preg_match_all('/(?:\A|,)[ \t]*\[([^\[\]\r\n]+)\][ \t]*(?=,|\z)/u', $footer[1], $matches);
+        $seen = [];
+        foreach ($matches[1] as $id) {
+            if (! isset($byId[$id]) || isset($seen[$id])) continue;
+            $seen[$id] = true; $source = $byId[$id];
+            $kind = $source['kind']; unset($source['kind']); $links[$kind][] = $source;
+        }
+        return $links;
+    }
+
+    /** A small plain-text cleanup, not a Markdown renderer or a general rewrite. */
+    private function plainAnswer(string $answer, array $byId): string
+    {
+        // ATX headings only at the start of a line (0-3 spaces, 1-6 hashes + space).
+        $answer = preg_replace('/^( {0,3})#{1,6}[ \t]+/m', '$1', $answer);
+        // Paired emphasis on one line, bounded outside words and code backticks.
+        // Never cross another matching delimiter to evade a word-boundary refusal.
+        // Preserve identifiers, exponent syntax, unmatched markers and other Markdown.
+        $answer = preg_replace('/(?<![\p{L}\p{N}_*`])(\*\*|__)(?=\S)((?:(?!\1)[^\r\n])+?)(?<=\S)\1(?![\p{L}\p{N}_*`])/u', '$2', $answer);
+        $lines = [];
+        foreach (explode("\n", $answer) as $line) {
+            $clean = preg_replace_callback('/\[([^\[\]\r\n]+)\]/u', fn ($m) => isset($byId[$m[1]]) ? '' : $m[0], $line);
+            // Only drop a now-empty standalone attribution. Never rewrite inline prose.
+            if ($clean !== $line && preg_match('/^From the (?:task|guide|common question)\s*:\s*$/u', trim($clean))) continue;
+            $lines[] = $clean;
+        }
+        return trim(implode("\n", $lines));
     }
 
     /** Resolve longest overlapping title spans, then preserve manifest/book order. */
