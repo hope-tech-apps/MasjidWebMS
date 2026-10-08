@@ -192,14 +192,14 @@
     "path": "app/Support/CapabilityCatalogue.php",
     "method": "forOrgType",
     "origin": "forOrgType",
-    "gate": false,
+    "gate": true,
     "sha256": "be2225e0d7c2144cd26f2f0c525aa25a44bf8b731b421f06e7c84bdeac094200"
   },
   {
     "path": "app/Support/CapabilityCatalogue.php",
     "method": "resolve",
     "origin": "resolve",
-    "gate": false,
+    "gate": true,
     "sha256": "2694bc8859dc7f3e86037e30ba3a1979040d5102b2bd23387541b22b07fa5bef"
   },
   {

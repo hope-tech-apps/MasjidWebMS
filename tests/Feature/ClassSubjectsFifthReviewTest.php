@@ -274,12 +274,13 @@ it('keeps off list branches at literal origin counts after one request dispatch'
     $class = $kind === 'assignment' ? \App\Http\Controllers\Teacher\GradebookController::class : \App\Http\Controllers\Teacher\LessonPlanController::class;
     $controller = app($class); $request = \Illuminate\Http\Request::create('/', 'GET', ['from' => '2026-10-08', 'to' => '2026-12-08']);
     $queries = [];
-    (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () use ($controller, $request, &$queries) {
+    // Both request memos, as the HTTP kernel runs them: the calendar reuses the one switch read.
+    (new \App\Http\Middleware\SchoolCalendarHttpRequest)->handle(request(), function () use ($controller, $request, &$queries) { return (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () use ($controller, $request, &$queries) {
         DB::flushQueryLog(); DB::enableQueryLog();
         try { $response = $controller->index($request, $this->org->id, $this->group->id); $queries = DB::getQueryLog(); }
         finally { DB::disableQueryLog(); }
         return $response;
-    });
+    }); });
     // Measured by invoking literal origin/main controllers with literal origin SubjectFence/ClassSubjects.
     // The only extra statement is the initial feature dispatch, before the unchanged OFF branch.
     $origin = $kind === 'assignment' ? 8 : 7;

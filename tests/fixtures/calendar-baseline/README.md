@@ -1,1 +1,3 @@
 SHA-256 and byte-length pins of verbatim method bodies, plus complete legacy reader hashes, from cached origin/main 02d8b3a1. Contracts hash the original suffix after an early dispatch (PHP tokens separate strings from braces). Behavioral literals are in SchoolCalendarTermsTest::offRequests and its reader data provider. No network used.
+
+Re-based onto main dd951f6f (class subjects live): `Masjid::getCapabilitiesAttribute` and `MasjidsController::capabilities` are pinned at main's own `legacyCapabilities`, where main now keeps those bodies; `capability-responses.json` gained main's `privacy_policy_url`. The SQL lists are unchanged: with both switches off a request makes at most one switch read, the narrow one class subjects introduced, and the calendar reuses its row.

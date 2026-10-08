@@ -51,7 +51,8 @@ final class ClassSubjectMode
         $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
         $org = $loaded !== null && (int) $loaded->getKey() === $id ? $loaded : ($rows[$id] ?? null);
         // Archived parents still exist for FK purposes; the OFF path must not fail on them.
-        $org ??= Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides'])->find($id);
+        // deleted_at rides along: the calendar's request memo reuses this row and must still refuse an archived one.
+        $org ??= Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
         return self::rememberResponseMode($id, SchoolSettings::classSubjects($org));
     }
 

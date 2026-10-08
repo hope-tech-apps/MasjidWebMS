@@ -81,7 +81,13 @@ class SchoolCalendarOffQueryDifferentialTest extends TestCase
             'card-prepare', 'card-save' => 7,
             default => null, // Calendar response reuses main's own school read.
         };
-        if ($lookupAt !== null) {
+        // Class subjects asks the same question with a narrow read, and the two
+        // switches share that one row: where it ran, the calendar adds nothing.
+        $shared = 'select "id", "org_type", "capability_overrides", "deleted_at" from "masjids" where "masjids"."id" = ? limit 1';
+        $this->assertLessThanOrEqual(1, count(array_keys($sql, $shared, true)), $shape.' reads the organisation switches more than once');
+        if (in_array($shared, $sql, true)) {
+            $sql = array_values(array_filter($sql, fn (string $statement): bool => $statement !== $shared));
+        } elseif ($lookupAt !== null) {
             array_splice($expected, $lookupAt, 0, ['select * from "masjids" where "masjids"."id" = ? and "masjids"."deleted_at" is null limit 1']);
         }
         $this->assertSame($expected, $sql, $shape.' OFF SQL differs from main plus its permitted read');

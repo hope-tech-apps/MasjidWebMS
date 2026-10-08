@@ -48,9 +48,9 @@
         }
     },
     "app/Models/Masjid.php": {
-        "getCapabilitiesAttribute": {
-            "bytes": 308,
-            "sha256": "81d980d93f0268b98ae133f2bda7fa196c26960db37986b47fd1ebff7ebbb7f7"
+        "legacyCapabilities": {
+            "sha256": "81d980d93f0268b98ae133f2bda7fa196c26960db37986b47fd1ebff7ebbb7f7",
+            "bytes": 308
         }
     },
     "app/Support/CapabilityCatalogue.php": {
@@ -64,9 +64,9 @@
         }
     },
     "app/Http/Controllers/AdminDashboard/MasjidsController.php": {
-        "capabilities": {
-            "bytes": 4900,
-            "sha256": "99b2685a339bdc3d8045e8289e20316e7621292d8cbb66e7cbf933b470afd258"
+        "legacyCapabilities": {
+            "sha256": "99b2685a339bdc3d8045e8289e20316e7621292d8cbb66e7cbf933b470afd258",
+            "bytes": 4900
         }
     },
     "app/Services/Schools/ReportCardService.php": {

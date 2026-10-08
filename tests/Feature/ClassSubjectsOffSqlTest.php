@@ -31,7 +31,7 @@ class Review6LegacySqlMode
     public static bool $legacy = false;
     public function handle($request, $next)
     {
-        if (self::$legacy && preg_match('~/masjids/(\d+)~', $request->path(), $match)) \App\Support\ClassSubjectMode::rememberResponseMode((int) $match[1], false);
+        if (self::$legacy && preg_match('~/masjids/(\d+)~', $request->path(), $match)) { \App\Support\ClassSubjectMode::rememberResponseMode((int) $match[1], false); \App\Support\SchoolCalendarRequestMode::set((int) $match[1], false); }
         return $next($request);
     }
 }
@@ -102,7 +102,7 @@ it('preserves literal main statement order with at most one primary key capabili
     $literals = json_decode(file_get_contents($fixture), true);
     expect($main)->toBe($literals[$endpoint]);
     $off = $run(false);
-    $capability = 'select "id", "org_type", "capability_overrides" from "masjids" where "masjids"."id" = ? limit 1';
+    $capability = 'select "id", "org_type", "capability_overrides", "deleted_at" from "masjids" where "masjids"."id" = ? limit 1';
     $extra = array_values(array_filter($off, fn ($sql) => $sql === $capability));
     $withoutExtra = array_values(array_filter($off, fn ($sql) => $sql !== $capability));
     file_put_contents(base_path('artifacts/review6-sql-counts.jsonl'), json_encode(['endpoint' => $endpoint, 'main' => count($main), 'off' => count($off), 'extra' => count($extra), 'index' => array_search($capability, $off, true)])."\n", FILE_APPEND);
