@@ -79,7 +79,7 @@ class LessonPlanController extends TeacherController
      */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->indexWithClassSubjects($request, $masjid_id, $group_id);
         }
 
@@ -234,7 +234,7 @@ class LessonPlanController extends TeacherController
      */
     public function save(SaveLessonPlanRequest $request, $masjid_id, $group_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->saveWithClassSubjects($request, $masjid_id, $group_id);
         }
 
@@ -262,11 +262,31 @@ class LessonPlanController extends TeacherController
         return DB::transaction(function () use ($request, $masjid_id, $group_id) {
             \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
             $group = Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
+            $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+            // An old by-day edit with no subject choice must not publish named work as General.
+            if (! $request->has('subject') && ! $request->has('class_subject_id')) {
+                $plan = $this->planOnSubject($group, $date, null);
+                if ($plan === null) {
+                    $plans = $this->plansTouchableOnWithClassSubjects($group, $date->toDateString());
+                    if ($plans->count() > 1) return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose a plan by id or explicitly choose its subject.']]], Response::HTTP_CONFLICT);
+                    $plan = $plans->first();
+                }
+                return $this->write($request, $masjid_id, $group, $plan ?? new LessonPlan(['group_id' => $group->id]));
+            }
+            // Referencing existing work by its unchanged ID is allowed even after retirement.
+            // Authorize the ID before looking for a plan, so an unassigned subject's existence stays hidden.
+            if (! $request->has('subject') && $request->validated('class_subject_id') !== null) {
+                $id = (int) $request->validated('class_subject_id');
+                $subject = \App\Support\ClassSubjectInitializer::currentSubjects($group)->firstWhere('id', $id);
+                if ($subject !== null && SubjectFence::allowsWork($this->limits($group), $id)) {
+                    $plan = $this->planOnSubject($group, $date, $id);
+                    if ($plan !== null) return $this->write($request, $masjid_id, $group, $plan);
+                }
+            }
             $chosen = null;
             if (SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null) {
                 $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
             }
-            $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
             $plan = $this->planOnSubject($group, $date, $chosen?->id)
                 ?? $this->onlyPlanOn($group, $date)
                 ?? new LessonPlan(['group_id' => $group->id]);
@@ -291,7 +311,7 @@ class LessonPlanController extends TeacherController
      */
     public function destroyPlan(Request $request, $masjid_id, $group_id, $plan_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->destroyPlanWithClassSubjects($request, $masjid_id, $group_id, $plan_id);
         }
 
@@ -344,7 +364,7 @@ class LessonPlanController extends TeacherController
      */
     public function destroy(Request $request, $masjid_id, $group_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->destroyWithClassSubjects($request, $masjid_id, $group_id);
         }
 
@@ -442,7 +462,7 @@ class LessonPlanController extends TeacherController
      */
     private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+        if ($this->classSubjectsForGroup((int) $group->id)) {
             return $this->writeWithClassSubjects($request, $masjid_id, $group, $plan);
         }
 
@@ -543,8 +563,8 @@ class LessonPlanController extends TeacherController
         // a plan of that subject exists, so the refusal says nothing about the day.
         // Early refusal precedes the clash response; the model repeats it under write locks.
         if ((\App\Support\SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null)
-            && ! ($plan->exists && $request->validated('subject') === $plan->subject
-                && (! $request->has('class_subject_id') || $request->validated('class_subject_id') === $plan->class_subject_id))) {
+            && ! ($plan->exists && (! $request->has('subject') || $request->validated('subject') === $plan->subject)
+                && (! $request->has('class_subject_id') || (int) $request->validated('class_subject_id') === (int) $plan->class_subject_id))) {
             $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
         }
 
@@ -555,7 +575,8 @@ class LessonPlanController extends TeacherController
             $this->mustTouch($group, $plan, $plan->getKey());
         }
 
-        // The whole object, every time. The request declares every template
+        // Subject is a choice: an omitted field preserves its ID and snapshot.
+        // Other template prose remains the whole object, every time. The request declares every template
         // field `nullable` rather than `sometimes` precisely so that an omitted
         // field CLEARS — a partial payload must not silently keep stale prose.
         // The frontend consequence is that there is no per-section autosave.
@@ -568,7 +589,7 @@ class LessonPlanController extends TeacherController
         $hidden = SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id));
 
         $fields = collect(LessonPlan::TEMPLATE_FIELDS)
-            ->reject(fn (string $f) => in_array($f, $hidden, true))
+            ->reject(fn (string $f) => in_array($f, $hidden, true) || ($f === 'subject' && ! $request->has('subject')))
             ->mapWithKeys(fn (string $f) => [$f => $request->validated($f)])
             ->all();
 
@@ -748,7 +769,7 @@ class LessonPlanController extends TeacherController
      */
     private function plansTouchableOn(Group $group, string $day): \Illuminate\Support\Collection
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+        if ($this->classSubjectsForGroup((int) $group->id)) {
             return $this->plansTouchableOnWithClassSubjects($group, $day);
         }
 
@@ -787,7 +808,7 @@ class LessonPlanController extends TeacherController
     /** The 404 a plan that does not exist gets, for a plan a limited teacher may not touch. */
     private function mustTouch(Group $group, LessonPlan $plan, $planId): void
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+        if ($this->classSubjectsForGroup((int) $group->id)) {
             $this->mustTouchWithClassSubjects($group, $plan, $planId);
             return;
         }
@@ -861,7 +882,7 @@ class LessonPlanController extends TeacherController
      */
     private function plan(LessonPlan $plan): array
     {
-        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+        if ($this->classSubjectsByOrganisation[(int) $plan->masjid_id] ?? false) {
             return $this->planWithClassSubjects($plan);
         }
 

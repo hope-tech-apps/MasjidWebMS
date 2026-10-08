@@ -51,7 +51,7 @@ final class SubjectFence
      */
     public static function limitsFor(?User $user, int $groupId): ?array
     {
-        if (ClassSubjectMode::forGroup($groupId)) {
+        if (ClassSubjectMode::responseForGroup($groupId)) {
             return self::limitsForWithClassSubjects($user, $groupId);
         }
 
@@ -170,7 +170,7 @@ final class SubjectFence
     /** Fields are additive: the legacy `my_subjects` still describes legacy assignments. */
     public static function payload(\App\Models\Group $group, ?User $user): array
     {
-        if (! ClassSubjectMode::enabled($group->masjid_id) || ! self::usesClassSubjects($group)) return [];
+        if (! ClassSubjectMode::responseEnabled($group->masjid_id) || ! self::usesClassSubjects($group)) return [];
         $ids = $user?->type === 'Teacher' ? self::assignedIds((int) $group->id, (int) $user->id) : null;
         $subjects = \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')
             ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->orderBy('position')->orderBy('id')->get();

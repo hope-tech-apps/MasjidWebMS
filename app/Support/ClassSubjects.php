@@ -34,7 +34,7 @@ final class ClassSubjects
      */
     public static function offered(Group $group): array
     {
-        if (ClassSubjectMode::enabled($group->masjid_id)) {
+        if (ClassSubjectMode::responseEnabled($group->masjid_id)) {
             return self::offeredWithClassSubjects($group);
         }
 

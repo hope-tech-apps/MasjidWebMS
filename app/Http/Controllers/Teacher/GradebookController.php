@@ -68,7 +68,7 @@ class GradebookController extends TeacherController
     /** Work set for this class, newest first, each with how much of it is marked. */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+        if ($this->classSubjectsEnabled(app(\App\Support\TenantContext::class)->get())) {
             return $this->indexWithClassSubjects($request, $masjid_id, $group_id);
         }
 
@@ -321,7 +321,7 @@ class GradebookController extends TeacherController
      */
     public function destroy(Request $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->destroyWithClassSubjects($request, $masjid_id, $group_id, $assignment_id);
         }
 
@@ -355,7 +355,7 @@ class GradebookController extends TeacherController
      */
     public function saveScores(SaveAssignmentScoresRequest $request, $masjid_id, $group_id, $assignment_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->saveScoresWithClassSubjects($request, $masjid_id, $group_id, $assignment_id);
         }
 
@@ -611,7 +611,7 @@ class GradebookController extends TeacherController
      */
     public function forMember(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->forMemberWithClassSubjects($request, $masjid_id, $group_id, $membership_id);
         }
 
@@ -793,7 +793,7 @@ class GradebookController extends TeacherController
 
     private function assignment(ClassAssignment $a): array
     {
-        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+        if ($this->classSubjectsByOrganisation[(int) $a->masjid_id] ?? false) {
             return $this->assignmentWithClassSubjects($a);
         }
 
@@ -875,7 +875,7 @@ class GradebookController extends TeacherController
      */
     public function saveWeights(SaveGradeWeightsRequest $request, $masjid_id, $group_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group_id)) {
+        if ($this->classSubjectsForGroup((int) $group_id)) {
             return $this->saveWeightsWithClassSubjects($request, $masjid_id, $group_id);
         }
 
@@ -950,7 +950,7 @@ class GradebookController extends TeacherController
      */
     private function work(Group $group, $assignmentId, ?array $limits): ClassAssignment
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+        if ($this->classSubjectsForGroup((int) $group->id)) {
             return $this->workWithClassSubjects($group, $assignmentId, $limits);
         }
 
@@ -991,7 +991,7 @@ class GradebookController extends TeacherController
      */
     private function refuseWork(Group $group, ?array $limits, array &$data, ?ClassAssignment $existing): ?JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::forGroup((int) $group->id)) {
+        if ($this->classSubjectsForGroup((int) $group->id)) {
             return $this->refuseWorkWithClassSubjects($group, $limits, $data, $existing);
         }
 

@@ -37,6 +37,7 @@ class InitializeClassSubjects extends Command
                         $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
                         foreach ($subject['attaches_saved_work'] ?? [] as $key => $count) $this->line("    ATTACH saved work: {$key}, {$count} items");
                     }
+                    foreach ($row['combined_columns'] ?? [] as $column) $this->line("  curriculum columns that combine subjects on this class's list: {$column['name']} | grades=".implode(', ', $column['grades']));
                     foreach ($row['saved_work_links'] ?? [] as $name => $count) $this->line("  LINK {$name}: {$count} items");
                     foreach ($row['orphaned_work'] ?? [] as $key => $count) {
                         $this->line("  saved work under a subject that is not in this class's list: {$key}, {$count} items");

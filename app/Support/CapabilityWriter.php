@@ -156,11 +156,18 @@ final class CapabilityWriter
         return DB::transaction(function () use ($org, $changes, $actor, $keys) {
             $locked = Masjid::query()->whereKey($org->getKey())->lockForUpdate()->firstOrFail();
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
+            if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
 
             $overrides = is_array($locked->capability_overrides) ? $locked->capability_overrides : [];
             $flips = [];
 
+            $unchanged = [];
             foreach ($keys as $key) {
+                // Hidden no-op: do not materialize an override or an audit row.
+                if ($key === 'class_subjects' && ! $locked->hasCapability($key) && $changes[$key] === false) {
+                    $unchanged[] = $key;
+                    continue;
+                }
                 $flips[$key] = [
                     'before' => $locked->hasCapability($key),
                     'override_before' => array_key_exists($key, $overrides) ? (bool) $overrides[$key] : null,
@@ -168,12 +175,13 @@ final class CapabilityWriter
                 $overrides[$key] = $changes[$key];
             }
 
-            $locked->capability_overrides = $overrides;
-            $locked->updated_by = $actor;
-            $locked->save();
+            if ($flips !== []) {
+                $locked->capability_overrides = $overrides;
+                $locked->updated_by = $actor;
+                $locked->save();
+            }
 
             $changed = [];
-            $unchanged = [];
 
             foreach ($flips as $key => ['before' => $before, 'override_before' => $overrideBefore]) {
                 $after = $locked->hasCapability($key);

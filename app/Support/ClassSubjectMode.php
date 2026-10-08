@@ -16,6 +16,25 @@ final class ClassSubjectMode
         return SchoolSettings::classSubjects($org);
     }
 
+    /** Controller passes its decision to response helpers; model writers always use enabled(), fresh. */
+    public static function rememberResponseMode(int $masjidId, bool $enabled): bool
+    {
+        app('request')->attributes->set('class_subject_response_mode.'.$masjidId, $enabled);
+        return $enabled;
+    }
+
+    public static function responseEnabled(int|string|null $masjidId): bool
+    {
+        $decision = app('request')->attributes->get('class_subject_response_mode.'.(int) $masjidId);
+        return is_bool($decision) ? $decision : self::enabled($masjidId);
+    }
+
+    public static function responseForGroup(int $groupId): bool
+    {
+        $bound = app(TenantContext::class)->get();
+        return $bound !== null ? self::responseEnabled($bound) : self::forGroup($groupId);
+    }
+
     public static function forGroup(int $groupId): bool
     {
         $bound = app(TenantContext::class)->get();

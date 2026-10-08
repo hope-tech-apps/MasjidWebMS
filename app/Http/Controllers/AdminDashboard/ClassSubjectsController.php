@@ -36,10 +36,12 @@ class ClassSubjectsController extends Controller
             $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
             $query->whereNull('hidden_at')->when($ids !== null, fn ($q) => $q->whereIn('id', $ids));
         }
-        return response()->json(['status' => 'success', 'data' => $query->get(), 'meta' => [
+        $payload = ['status' => 'success', 'data' => $query->get()];
+        if ($request->user()->type !== 'Teacher') $payload['meta'] = [
             'guide_subjects' => CurriculumWeek::distinct()->orderBy('subject')->pluck('subject'),
             'tools' => ClassSubject::TOOLS,
-        ]]);
+        ];
+        return response()->json($payload);
     }
 
     public function show(Request $request, $masjid_id, $group_id, $subject_id)
