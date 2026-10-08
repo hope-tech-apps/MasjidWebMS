@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import * as vue from 'vue';
-import { loadTs } from './mountSfc.ts';
+import { compileSfc, loadTs } from './mountSfc.ts';
 
 // Keep Teleport's actual patching; disabling it renders the dialog in this test root.
 const inlineTeleport = { ...vue.Teleport, process(before: any, after: any, ...args: any[]) {
@@ -24,6 +24,12 @@ export async function modulesFor(file: string, overrides: Record<string, any>, t
         if (spec === 'vue') continue;
         if (match[1]) { modules[spec] = {}; continue; }
         const rel = spec.startsWith('@/') ? spec.slice(2) : path.join(path.dirname(file), spec);
+        // The class shell passes legacy content through its slot while OFF. An empty
+        // stub would erase the existing teacher panels from every mounted regression.
+        if (rel === 'components/classes/ClassNavigation.vue') {
+            modules[spec] = { default: await compileSfc(rel, await modulesFor(rel, overrides, [...trail, file])) };
+            continue;
+        }
         if (rel.endsWith('.vue')) { modules[spec] = { default: empty }; continue; }
         if (trail.includes(`${rel}.ts`)) { modules[spec] = {}; continue; }
         if (existsSync(path.join(root, `${rel}.ts`))) {

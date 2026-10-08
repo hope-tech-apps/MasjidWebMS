@@ -1,0 +1,198 @@
+<template>
+    <section class="class-subject-manager border rounded p-3 mb-4" aria-label="Class subjects">
+        <h3 class="h5">Class subjects</h3>
+        <p class="text-muted small">The office manages this class's subjects. Removing a subject hides it and keeps all its work.</p>
+        <p v-if="loading" role="status">Loading subjects…</p>
+        <div v-if="error" class="alert alert-warning" role="alert">
+            {{ error }} <button v-if="loadFailed" type="button" class="btn btn-sm btn-outline-secondary" @click="load">Retry</button>
+        </div>
+        <p v-if="success" role="status" class="text-muted small">{{ success }}</p>
+        <template v-if="loaded">
+            <ol class="list-group mb-3">
+                <li v-for="(subject, index) in subjects" :key="subject.id" class="list-group-item">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        <span class="fw-semibold" dir="auto">{{ subject.name }}</span>
+                        <span v-if="subject.hidden_at" class="badge bg-secondary">Hidden</span>
+                        <span class="text-muted small">Holds: {{ toolLabel(subject.tool) }}</span>
+                        <span v-if="subject.guide_subject" class="text-muted small">Follows the curriculum for: {{ subject.guide_subject }}</span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving" @click="edit(subject)">Rename {{ subject.name }}</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || index === 0" @click="move(index, -1)">Move {{ subject.name }} up</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || index === subjects.length - 1" @click="move(index, 1)">Move {{ subject.name }} down</button>
+                        <button v-if="subject.hidden_at" type="button" class="btn btn-sm btn-outline-success" :disabled="saving" @click="restore(subject)">Bring back {{ subject.name }}</button>
+                        <button v-else type="button" class="btn btn-sm btn-outline-danger" :disabled="saving" @click="removing = subject">Remove {{ subject.name }}</button>
+                    </div>
+                    <div v-if="removing?.id === subject.id" class="alert alert-warning mt-2 mb-0">
+                        Hide {{ subject.name }}? All its work is kept. Nothing is deleted.
+                        <div class="d-flex gap-2 mt-2">
+                            <button type="button" class="btn btn-sm btn-danger" :disabled="saving" @click="hide(subject)">Hide subject</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving" @click="removing = null">Keep subject</button>
+                        </div>
+                    </div>
+                </li>
+            </ol>
+            <form data-subject-form @submit.prevent="save">
+                <h4 class="h6">{{ editing === null ? 'Add a subject' : 'Edit subject' }}</h4>
+                <div v-if="editing === null" class="row g-2 mb-2">
+                    <div class="col-12 col-md-6">
+                        <label :for="`${id}-school`" class="form-label">From the school's list</label>
+                        <select :id="`${id}-school`" class="form-select" data-subject-field="school" :disabled="saving" value="" @change="fromList($event)">
+                            <option value="">Choose a subject</option>
+                            <option v-for="name in schoolNames" :key="name" :value="name">{{ name }}</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label :for="`${id}-curriculum`" class="form-label">From the curriculum</label>
+                        <select :id="`${id}-curriculum`" class="form-select" data-subject-field="curriculum" :disabled="saving" value="" @change="fromCurriculum($event)">
+                            <option value="">Choose a subject</option>
+                            <option v-for="name in guideSubjects" :key="name" :value="name">{{ name }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row g-2">
+                    <div class="col-12">
+                        <label :for="`${id}-name`" class="form-label">Name</label>
+                        <input :id="`${id}-name`" ref="nameField" v-model="form.name" data-subject-field="name" class="form-control" maxlength="64" required :disabled="saving">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label :for="`${id}-guide`" class="form-label">Follows the curriculum for</label>
+                        <select :id="`${id}-guide`" v-model="form.guide_subject" data-subject-field="guide" class="form-select" :disabled="saving">
+                            <option v-if="editing === null" :value="undefined">Choose automatically</option>
+                            <option :value="null">Nothing</option>
+                            <option v-for="name in guideChoices" :key="name" :value="name">{{ name }}</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label :for="`${id}-tool`" class="form-label">Holds</label>
+                        <select :id="`${id}-tool`" v-model="form.tool" data-subject-field="tool" class="form-select" :disabled="saving">
+                            <option v-if="editing === null" :value="undefined">Choose automatically</option>
+                            <option :value="null">Nothing</option>
+                            <option value="hifdh">Hifdh log</option>
+                            <option value="arabic_letters">Arabic letters</option>
+                            <option value="english_letters">English letters</option>
+                        </select>
+                    </div>
+                </div>
+                <label v-if="editing === null" class="form-check d-flex gap-2 align-items-start mt-3">
+                    <input v-model="attachSavedWork" data-subject-field="attach" class="form-check-input" type="checkbox" :disabled="saving">
+                    <span>Attach saved work under this name</span>
+                </label>
+                <p v-if="editing === null" class="text-muted small">Choose this only to attach work already saved under the new subject's name.</p>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                    <button type="submit" class="btn btn-success" :disabled="saving || !form.name.trim()">{{ editing === null ? 'Add subject' : 'Save subject' }}</button>
+                    <button v-if="editing !== null" type="button" class="btn btn-outline-secondary" :disabled="saving" @click="cancel">Cancel edit</button>
+                </div>
+            </form>
+            <button type="button" class="btn btn-outline-success mt-3" :disabled="saving" @click="addCurrentGrades">Add subjects for current grades</button>
+            <p class="text-muted small mt-2 mb-0">Adds missing subjects for the students' current grades. Existing subjects and work are kept.</p>
+        </template>
+    </section>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue';
+import ApiService from '@/core/services/ApiService';
+import { classSubjectApi } from '@/composables/useClassSubjects';
+import { apiErrorText } from '@/core/services/ApiErrors';
+import type { ClassSubject, ClassSubjectTool } from '@/core/types/data/masjid-related/ClassSubject';
+
+const props = defineProps<{ base: string }>();
+const emit = defineEmits<{ changed: [subjects: ClassSubject[]] }>();
+const id = `class-subject-form-${useId()}`;
+const subjects = ref<ClassSubject[]>([]);
+const guideSubjects = ref<string[]>([]);
+const schoolNames = ref<string[]>([]);
+const loading = ref(true);
+const loaded = ref(false);
+const saving = ref(false);
+const loadFailed = ref(false);
+const error = ref('');
+const success = ref('');
+const editing = ref<number | null>(null);
+const removing = ref<ClassSubject | null>(null);
+const nameField = ref<HTMLElement | null>(null);
+type SubjectForm = { name: string; guide_subject: string | null | undefined; tool: ClassSubjectTool | null | undefined };
+const freshForm = (): SubjectForm => ({ name: '', guide_subject: undefined, tool: undefined });
+const form = ref(freshForm());
+const attachSavedWork = ref(false);
+const guideChoices = computed(() => [...new Set([...guideSubjects.value, ...(form.value.guide_subject ? [form.value.guide_subject] : [])])]);
+let alive = true;
+let generation = 0;
+const api = () => classSubjectApi(ApiService, props.base);
+const toolLabel = (tool: ClassSubjectTool | null) => tool ? { hifdh: 'Hifdh log', arabic_letters: 'Arabic letters', english_letters: 'English letters' }[tool] : 'Nothing';
+
+const reload = async () => {
+    const token = ++generation;
+    const response = await api().list();
+    if (!alive || token !== generation) return;
+    subjects.value = response.data;
+    guideSubjects.value = response.meta.guide_subjects;
+    loaded.value = true;
+    emit('changed', subjects.value);
+};
+const load = async () => {
+    if (!alive || saving.value) return;
+    loading.value = true; loadFailed.value = false; error.value = '';
+    try {
+        await reload();
+        const names = await api().schoolNames();
+        if (alive) schoolNames.value = names;
+    } catch (failure) {
+        if (alive) { error.value = apiErrorText(failure, 'The subjects could not be loaded.'); loadFailed.value = true; }
+    } finally { if (alive) loading.value = false; }
+};
+const cancel = () => { editing.value = null; form.value = freshForm(); attachSavedWork.value = false; };
+const edit = (subject: ClassSubject) => {
+    if (saving.value) return;
+    editing.value = subject.id;
+    form.value = { name: subject.name, guide_subject: subject.guide_subject, tool: subject.tool };
+    error.value = ''; success.value = ''; removing.value = null;
+    nextTick(() => nameField.value?.focus());
+};
+const fromList = (event: Event) => { const name = (event.target as HTMLSelectElement).value; if (name) form.value.name = name; };
+const fromCurriculum = (event: Event) => {
+    const name = (event.target as HTMLSelectElement).value;
+    if (name) { form.value.name = name; form.value.guide_subject = name; }
+};
+const mutate = async (write: () => Promise<unknown>, words: string, after?: () => void) => {
+    if (saving.value || !alive) return;
+    saving.value = true; error.value = ''; success.value = '';
+    let wrote = false;
+    try {
+        await write(); wrote = true;
+        if (!alive) return;
+        after?.();
+        await reload();
+        if (alive) success.value = words;
+    } catch (failure) {
+        if (alive) error.value = wrote
+            ? `${words} The list could not reload. ${apiErrorText(failure, 'Try again.')}`
+            : apiErrorText(failure, 'The subject could not be changed.');
+    } finally { if (alive) saving.value = false; }
+};
+const save = () => {
+    if (!form.value.name.trim() || saving.value) return;
+    const payload: { name: string; guide_subject?: string | null; tool?: ClassSubjectTool | null; attach_saved_work?: boolean } = { name: form.value.name.trim() };
+    if (form.value.guide_subject !== undefined) payload.guide_subject = form.value.guide_subject;
+    if (form.value.tool !== undefined) payload.tool = form.value.tool;
+    if (editing.value === null && attachSavedWork.value) payload.attach_saved_work = true;
+    return mutate(() => api().save(editing.value, payload), editing.value === null ? 'Subject added.' : 'Subject saved.', cancel);
+};
+const move = (index: number, direction: number) => {
+    const target = index + direction;
+    if (saving.value || target < 0 || target >= subjects.value.length) return;
+    const ids = subjects.value.map(s => s.id); [ids[index], ids[target]] = [ids[target], ids[index]];
+    return mutate(() => api().reorder(ids), 'Subject order saved.');
+};
+const hide = (subject: ClassSubject) => mutate(() => api().hide(subject.id), 'Subject hidden. All its work is kept.', () => { removing.value = null; });
+const restore = (subject: ClassSubject) => mutate(() => api().restore(subject.id), 'Subject brought back.');
+const addCurrentGrades = () => mutate(() => api().addCurrentGrades(), 'Subjects for current grades added.');
+onMounted(load);
+onBeforeUnmount(() => { alive = false; ++generation; });
+</script>
+
+<style scoped>
+.class-subject-manager { min-width: 0; overflow-wrap: anywhere; }
+.class-subject-manager .btn { white-space: normal; min-height: 44px; }
+</style>

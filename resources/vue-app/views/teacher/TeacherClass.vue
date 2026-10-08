@@ -35,7 +35,7 @@
                  which reads exactly like a dead button. It is also driven by
                  component state rather than data-bs-toggle, so it cannot depend
                  on Bootstrap's JS having initialised. -->
-            <div class="d-flex align-items-end gap-2 mb-4 border-bottom position-relative">
+            <div v-if="!classSubjects.enabled.value" class="d-flex align-items-end gap-2 mb-4 border-bottom position-relative">
                 <ul class="nav nav-tabs flex-nowrap overflow-auto flex-grow-1 border-0 tc-tabs">
                     <li v-for="t in visibleTabs" :key="t.key" class="nav-item">
                         <button type="button" class="nav-link text-nowrap"
@@ -71,6 +71,10 @@
                 </div>
             </div>
 
+            <ClassNavigation :enabled="classSubjects.enabled.value" :sections="classSubjects.sections.value"
+                :currentKey="classSubjects.currentKey.value" :title="classSubjects.title.value"
+                :notice="classSubjects.notice.value" :busy="classSubjects.busy.value"
+                :href="classSubjects.href" @choose="classSubjects.choose">
             <!-- ============================================ ROSTER (read only) -->
             <section v-if="activeTab === 'roster'">
                 <p class="text-muted small">
@@ -200,7 +204,7 @@
                 <!-- WHICH ALPHABET. Two tracks, never one grid: each has its own
                      drills, its own denominator and its own reading direction,
                      and merging them would draw an alphabet no class teaches. -->
-                <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Alphabet">
+                <div v-if="!classSubjects.enabled.value" class="btn-group btn-group-sm mb-3" role="group" aria-label="Alphabet">
                     <button v-for="a in ALPHABETS" :key="a.id" type="button"
                             class="btn" :class="lettersAlphabet === a.id ? 'btn-success' : 'btn-outline-success'"
                             :disabled="trackerLoading" :aria-pressed="lettersAlphabet === a.id"
@@ -2590,6 +2594,8 @@
             <section v-else-if="activeTab === 'store' && group.class_store === true">
                 <TeacherClassStore :base="base" />
             </section>
+            <p v-else-if="classSubjects.enabled.value && activeTab === 'subject'" class="text-muted">There is nothing here yet.</p>
+            </ClassNavigation>
         </template>
 
         <!-- The student's sheet (Roster tab): name, grade, age, and the avatar
@@ -2646,9 +2652,11 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import ClassNavigation from '@/components/classes/ClassNavigation.vue';
+import { useClassSubjects } from '@/composables/useClassSubjects';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
-    | 'lessons' | 'grades' | 'files' | 'reports' | 'store';
+    | 'lessons' | 'grades' | 'files' | 'reports' | 'store' | 'subject';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -4563,11 +4571,12 @@ const NEXT: Record<string, string> = { not_started: 'learning', learning: 'maste
  * reports its own failure.
  */
 const loadLettersOverview = async (which: string = lettersAlphabet.value) => {
+    const keepRead = classSubjects.keepRead(() => lettersAlphabet.value);
     try {
         const res = await TeacherApiService.get(`${base.value}/letters?alphabet=${which}`);
-        lettersOverview.value = res.data?.data ?? null;
+        if (keepRead()) lettersOverview.value = res.data?.data ?? null;
     } catch {
-        lettersOverview.value = null;
+        if (keepRead()) lettersOverview.value = null;
     }
 };
 
@@ -4586,6 +4595,7 @@ const closeLetters = () => {
 
 const openLetters = async (s: any) => {
     selected.value = s;
+    const keepRead = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`);
     openTile.value = null;
     letterError.value = '';
     tracker.value = null;
@@ -4608,13 +4618,15 @@ const openLetters = async (s: any) => {
         const res = await TeacherApiService.get(
             `${base.value}/members/${s.membership_id}/letters?alphabet=${lettersAlphabet.value}`
         );
+        if (!keepRead()) return;
         tracker.value = res.data?.data ?? null;
         lettersMeta.value = res.data?.meta ?? lettersMeta.value;
     } catch {
-        tracker.value = null;
+        if (keepRead()) tracker.value = null;
     } finally {
-        trackerLoading.value = false;
+        if (keepRead()) trackerLoading.value = false;
     }
+    if (!keepRead()) return;
 
     // The daily note is the qāʿidah's, so it is only fetched on that track.
     if (lettersAlphabet.value === 'arabic') await loadDailyNotes();
@@ -6483,7 +6495,10 @@ watch(activeTab, (tab) => {
     if (tab === 'story' && !posts.value.length && !postsLoading.value) loadPosts();
     if (tab === 'messages' && !threads.value.length && !threadsLoading.value) loadThreads();
     if (tab === 'points' && !skills.value.length) loadSkills();
-    if (tab === 'points') loadPointsTotals();
+    if (tab === 'points') {
+        if (group.value?.class_subjects_enabled === true) loadPointsTotals(weekFromQuery(route.query.week));
+        else loadPointsTotals();
+    }
     if (tab === 'attendance') loadAttendance();
     if (tab === 'hifz') loadSurahs();
     // Every time, not once: the counts move whenever a child is marked, and this
@@ -6505,6 +6520,24 @@ watch(activeTab, (tab) => {
     // Reset any open per-student detail when leaving a grading tab.
     if (tab !== 'letters') { selected.value = null; }
     if (tab !== 'messages') { openedThread.value = null; }
+});
+
+const classSubjects = useClassSubjects({
+    realm: 'teacher', group, base, activeTab, api: TeacherApiService,
+    activate: (tab, alphabet) => {
+        if (alphabet && lettersAlphabet.value !== alphabet) {
+            selected.value = null;
+            tracker.value = null;
+            lettersAlphabet.value = alphabet;
+        }
+        activeTab.value = tab as TabKey;
+    },
+});
+// An ON address can choose another week without changing the Points line.
+watch(() => [route.query.tab, route.query.week], ([tab, week], [previousTab]) => {
+    if (classSubjects.enabled.value && tab === 'points' && previousTab === 'points') {
+        loadPointsTotals(weekFromQuery(week));
+    }
 });
 </script>
 

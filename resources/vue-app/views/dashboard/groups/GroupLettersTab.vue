@@ -5,7 +5,7 @@
              merging them would draw a fifty-four letter alphabet no class is
              teaching. Outside the loading branch so the control a teacher just
              pressed does not vanish while its answer is on the way. -->
-        <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Alphabet">
+        <div v-if="!fixedAlphabet" class="btn-group btn-group-sm mb-3" role="group" aria-label="Alphabet">
             <button v-for="a in ALPHABETS" :key="a.id" type="button"
                     class="btn" :class="alphabet === a.id ? 'btn-success' : 'btn-outline-success'"
                     :disabled="loading" :aria-pressed="alphabet === a.id"
@@ -177,7 +177,7 @@ import ApiService from '@/core/services/ApiService';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
 import { computed, onMounted, ref } from 'vue';
 
-const props = defineProps<{ groupId: number; masjidId: number }>();
+const props = defineProps<{ groupId: number; masjidId: number; fixedAlphabet?: string | null }>();
 
 const loading = ref(true);
 const savingStage = ref(false);
@@ -215,7 +215,7 @@ const ALPHABETS = [
  * which read the qāʿidah when no `?alphabet=` is sent, so the screen and the
  * API agree about what "no choice made" means.
  */
-const alphabet = ref<string>('arabic');
+const alphabet = ref<string>(props.fixedAlphabet ?? 'arabic');
 
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);
 // The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.

@@ -15,7 +15,7 @@ export type ClassSubject = {
 
 /** Added only when the organisation's class subjects switch is on. */
 export type ClassSubjectFields = {
-    class_subjects_enabled?: true;
+    class_subjects_enabled?: boolean;
     class_subjects?: ClassSubject[];
     my_class_subject_ids?: number[] | null;
 };

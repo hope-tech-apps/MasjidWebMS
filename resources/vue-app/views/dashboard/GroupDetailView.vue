@@ -43,7 +43,7 @@
                     </div>
 
                     <!-- Tabs -->
-                    <ul class="nav nav-tabs mb-4">
+                    <ul v-if="!classSubjects.enabled.value" class="nav nav-tabs mb-4">
                         <li v-for="tab in tabs" :key="tab.key" class="nav-item">
                             <button
                                 type="button"
@@ -69,6 +69,12 @@
                         see. Least disclosure applies to what we request, not only
                         to what we render.
                     -->
+                    <ClassNavigation :enabled="classSubjects.enabled.value" :sections="classSubjects.sections.value"
+                        :currentKey="classSubjects.currentKey.value" :title="classSubjects.title.value"
+                        :notice="classSubjects.notice.value" :busy="classSubjects.busy.value"
+                        :href="classSubjects.href" @choose="classSubjects.choose">
+                    <ClassSubjectManager v-if="classSubjects.enabled.value && activeTab === 'roster'"
+                        :base="subjectBase" @changed="subjectsChanged" />
                     <GroupRosterTab
                         v-if="activeTab === 'roster'"
                         :groupId="groupId"
@@ -89,6 +95,8 @@
 
                     <GroupLettersTab
                         v-else-if="activeTab === 'letters'"
+                        :key="classSubjects.subject.value?.id ?? 'legacy-letters'"
+                        :fixedAlphabet="classSubjects.fixedAlphabet.value"
                         :groupId="groupId"
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
@@ -139,6 +147,8 @@
                         :groupId="groupId"
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
+                    <p v-else-if="classSubjects.enabled.value && activeTab === 'subject'" class="text-muted">There is nothing here yet.</p>
+                    </ClassNavigation>
                 </div>
             </div>
         </PageDataContainer>
@@ -162,6 +172,11 @@ import GroupFilesTab from './groups/GroupFilesTab.vue';
 import { Group } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import ClassNavigation from '@/components/classes/ClassNavigation.vue';
+import ClassSubjectManager from '@/components/classes/ClassSubjectManager.vue';
+import ApiService from '@/core/services/ApiService';
+import { useClassSubjects } from '@/composables/useClassSubjects';
+import type { ClassSubject } from '@/core/types/data/masjid-related/ClassSubject';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import { afterOpening, unreadNumber, unreadPill, unreadSpoken } from '@/core/helpers/threadUnread';
 
@@ -182,7 +197,7 @@ import { afterOpening, unreadNumber, unreadPill, unreadSpoken } from '@/core/hel
  */
 
 type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'lessons' | 'hifz'
-    | 'threads' | 'files';
+    | 'threads' | 'files' | 'subject';
 
 // Routing
 const route = useRoute();
@@ -284,6 +299,15 @@ const loadRoster = async () => {
     } finally {
         rosterLoading.value = false;
     }
+};
+
+const subjectBase = computed(() => `/api/admin/masjids/${masjidStore.masjid?.id ?? 0}/groups/${groupId}`);
+const classSubjects = useClassSubjects({
+    realm: 'office', group, base: subjectBase, activeTab, api: ApiService,
+    activate: tab => { activeTab.value = tab as TabKey; },
+});
+const subjectsChanged = (subjects: ClassSubject[]) => {
+    if (group.value) group.value.class_subjects = subjects;
 };
 </script>
 
