@@ -360,7 +360,6 @@ class MasjidsController extends Controller
             $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'class_subjects'));
         }
         unset($group);
-        $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($change) => $change['capability'] !== 'class_subjects'));
         return $response->setData($payload);
     }
 

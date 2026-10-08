@@ -601,6 +601,13 @@ class LessonPlanController extends TeacherController
             'author_user_id' => Auth::id(),
         ]);
 
+        // Resolve the snapshot before either the ID or physical-key collision check.
+        if ($chosen !== null) {
+            $plan->class_subject_id = $chosen->id;
+            $plan->subject = $chosen->name;
+            $plan->subject_key = LessonPlan::subjectKeyFor($chosen->name);
+        }
+
         // Asked before the INSERT so the answer is a sentence naming the
         // subject; the unique index below is what holds when two saves race.
         $subjectId = $chosen?->id ?? $plan->class_subject_id;
@@ -882,7 +889,7 @@ class LessonPlanController extends TeacherController
      */
     private function plan(LessonPlan $plan): array
     {
-        if ($this->classSubjectsByOrganisation[(int) $plan->masjid_id] ?? false) {
+        if (\App\Support\ClassSubjectMode::responseEnabled($plan->masjid_id)) {
             return $this->planWithClassSubjects($plan);
         }
 

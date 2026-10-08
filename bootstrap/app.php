@@ -89,6 +89,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // App\Support\SiteUrl for the half of the fix that holds even when
         // this middleware admits the request.
         $middleware->prepend(TrustedHosts::class);
+        $middleware->prepend(\App\Http\Middleware\ClassSubjectHttpRequest::class);
 
         // Preserve the guide question as typed, including its line breaks and whitespace.
         $middleware->trimStrings(except: [fn (Request $request) => $request->is('api/*/masjids/*/guides/ask')]);

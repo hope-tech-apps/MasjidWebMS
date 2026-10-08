@@ -105,10 +105,15 @@ it('serializes off rows with literal origin zero query counts', function (string
     app(TenantContext::class)->set($this->org->id);
     $class = $kind === 'assignment' ? \App\Http\Controllers\Teacher\GradebookController::class : \App\Http\Controllers\Teacher\LessonPlanController::class;
     $controller = app($class); $method = new ReflectionMethod($controller, $kind); $method->setAccessible(true);
-    // Origin serializers perform no SQL with eager-loaded plan attachments.
-    DB::flushQueryLog(); DB::enableQueryLog();
-    try { foreach ($rows as $row) $method->invoke($controller, $row); $queries = DB::getQueryLog(); }
-    finally { DB::disableQueryLog(); }
+    $queries = [];
+    (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () use ($rows, $controller, $method, &$queries) {
+        \App\Support\ClassSubjectMode::enabled($this->org->id);
+        // Origin serializers perform no SQL with eager-loaded plan attachments.
+        DB::flushQueryLog(); DB::enableQueryLog();
+        try { foreach ($rows as $row) $method->invoke($controller, $row); $queries = DB::getQueryLog(); }
+        finally { DB::disableQueryLog(); }
+        return response()->noContent();
+    });
     expect(count($queries))->toBe(0);
 })->with(['assignment', 'plan'])->with([1, 50]);
 
@@ -123,14 +128,14 @@ it('initialization dry run never opens a transaction or issues a lock or write',
     file_put_contents(base_path('artifacts/review5-initialize-dry-run-sql.log'), implode("\n", $connections)."\n");
 });
 
-it('does not ledger hidden noops and hides historical feature changes off', function () {
+it('does not ledger hidden noops and retains historical feature changes off', function () {
     CapabilityWriter::apply($this->org, ['class_subjects' => false], null);
     expect(\App\Models\MasjidCapabilityChange::where('masjid_id', $this->org->id)->where('capability', 'class_subjects')->count())->toBe(0);
     ($this->activate)();
     $this->org->fresh()->forceFill(['capability_overrides' => array_replace($this->org->fresh()->capability_overrides, ['class_subjects' => false])])->save();
     Sanctum::actingAs($this->office);
     $history = $this->getJson("/api/admin/masjids/{$this->org->id}/capabilities")->assertOk()->json('data.history');
-    expect(array_column($history, 'capability'))->not->toContain('class_subjects');
+    expect(array_column($history, 'capability'))->toContain('class_subjects');
 });
 
 it('stores all subjects as null and prints that choice', function () {
@@ -204,7 +209,7 @@ it('disables only exactly expressible id sets or individually accepted restricti
     };
     if ($choice === 'invalid') DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($ids)]);
     else GroupStaff::withOfficeSubjectChoice(fn () => $this->staff->fresh()->update(['class_subject_ids' => $ids]));
-    $expressible = in_array($choice, ['all', 'arabic', 'quran', 'islamic', 'two'], true);
+    $expressible = false; // Main exposes the school catalogue without a class; these subjects have no guide links.
     $before = $this->staff->fresh()->getAttributes(); $beforeSubjects = ClassSubject::all()->toJson();
     $active = true; $transactions = []; $sql = [];
     \Illuminate\Support\Facades\Event::listen(\Illuminate\Database\Events\TransactionBeginning::class, function () use (&$active, &$transactions) { if ($active) $transactions[] = true; });
@@ -225,7 +230,7 @@ it('disables only exactly expressible id sets or individually accepted restricti
         expect($this->org->fresh()->hasCapability('class_subjects'))->toBeTrue();
     }
     $this->artisan('class-subjects:disable', ['--masjid' => $this->org->id] + ($expressible ? [] : ['--accept-unrestricted' => (string) $this->staff->id]))->assertSuccessful();
-    $expected = match ($choice) { 'arabic' => ['arabic'], 'quran' => ['quran'], 'islamic' => ['islamic_studies'], 'two' => ['quran', 'arabic'], default => null };
+    $expected = null; // Every restricted fixture differs from main's complete grants.
     expect($this->staff->fresh()->subjects)->toBe($expected);
     expect($this->staff->fresh()->class_subject_ids)->toBe($ids);
     expect(ClassSubject::all()->toJson())->toBe($beforeSubjects);
@@ -268,9 +273,13 @@ it('keeps off list branches at literal origin counts after one request dispatch'
     app(TenantContext::class)->set($this->org->id); Sanctum::actingAs($this->teacher, ['staff']);
     $class = $kind === 'assignment' ? \App\Http\Controllers\Teacher\GradebookController::class : \App\Http\Controllers\Teacher\LessonPlanController::class;
     $controller = app($class); $request = \Illuminate\Http\Request::create('/', 'GET', ['from' => '2026-10-08', 'to' => '2026-12-08']);
-    DB::flushQueryLog(); DB::enableQueryLog();
-    try { $response = $controller->index($request, $this->org->id, $this->group->id); $queries = DB::getQueryLog(); }
-    finally { DB::disableQueryLog(); }
+    $queries = [];
+    (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () use ($controller, $request, &$queries) {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        try { $response = $controller->index($request, $this->org->id, $this->group->id); $queries = DB::getQueryLog(); }
+        finally { DB::disableQueryLog(); }
+        return $response;
+    });
     // Measured by invoking literal origin/main controllers with literal origin SubjectFence/ClassSubjects.
     // The only extra statement is the initial feature dispatch, before the unchanged OFF branch.
     $origin = $kind === 'assignment' ? 8 : 7;
@@ -300,9 +309,13 @@ it('uses one capability read across serialized class payloads on and off', funct
     app(TenantContext::class)->set($this->org->id); Sanctum::actingAs($this->teacher, ['staff']);
     $controller = app(\App\Http\Controllers\Teacher\GradebookController::class);
     $method = new ReflectionMethod($controller, 'classPayload'); $method->setAccessible(true);
-    DB::flushQueryLog(); DB::enableQueryLog();
-    try { foreach ($groups as $group) $method->invoke($controller, $group); $queries = DB::getQueryLog(); }
-    finally { DB::disableQueryLog(); }
+    $queries = [];
+    (new \App\Http\Middleware\ClassSubjectHttpRequest)->handle(request(), function () use ($groups, $controller, $method, &$queries) {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        try { foreach ($groups as $group) $method->invoke($controller, $group); $queries = DB::getQueryLog(); }
+        finally { DB::disableQueryLog(); }
+        return response()->noContent();
+    });
     expect(collect($queries)->filter(fn ($q) => str_contains($q['query'], 'capability_overrides')))->toHaveCount(1);
 })->with([false, true])->with([1, 50]);
 

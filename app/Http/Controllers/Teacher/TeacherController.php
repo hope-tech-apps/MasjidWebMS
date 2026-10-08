@@ -28,13 +28,10 @@ use Illuminate\Support\Facades\Auth;
  */
 abstract class TeacherController extends Controller
 {
-    /** One capability decision per organisation in this controller/request. */
-    protected array $classSubjectsByOrganisation = [];
-
     protected function classSubjectsEnabled(int|string|null $masjidId): bool
     {
         if ($masjidId === null) return false;
-        return $this->classSubjectsByOrganisation[(int) $masjidId] ??= \App\Support\ClassSubjectMode::rememberResponseMode((int) $masjidId, \App\Support\ClassSubjectMode::enabled($masjidId));
+        return \App\Support\ClassSubjectMode::enabled($masjidId);
     }
 
     protected function classSubjectsForGroup(int $groupId): bool

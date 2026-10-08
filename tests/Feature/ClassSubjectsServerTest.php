@@ -117,7 +117,11 @@ it('dry runs without writes, maps legacy restrictions, and preserves all data on
     $subject->update(['name' => 'Language Practice', 'hidden_at' => now(), 'position' => 8]);
     $snapshot = DB::table('class_subjects')->get()->toJson();
     $assignments = DB::table('group_staff')->get()->toJson();
-    \App\Support\ClassSubjectDisabler::run($this->school->fresh());
+    $disable = \App\Support\ClassSubjectDisabler::run($this->school->fresh(), true);
+    $accept = array_column(array_filter($disable['assignments'], fn ($row) => ! $row['expressible']), 'id');
+    expect(\App\Support\ClassSubjectDisabler::run($this->school->fresh(), false, $accept)['blocked'])->toBe([]);
+    expect($this->staff->fresh()->subjects)->toBeNull();
+    $assignments = DB::table('group_staff')->get()->toJson();
     ($this->catalogue)('New Science');
     ($this->enable)();
     $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
@@ -390,7 +394,9 @@ it('keeps initialization metadata and a disabled grant out of existing organizat
     expect($after)->toBe($before);
     ($this->enable)();
     expect($this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray()['capabilities']['class_subjects'])->toBeTrue();
-    \App\Support\ClassSubjectDisabler::run($this->school->fresh());
+    $disable = \App\Support\ClassSubjectDisabler::run($this->school->fresh(), true);
+    $accept = array_column(array_filter($disable['assignments'], fn ($row) => ! $row['expressible']), 'id');
+    expect(\App\Support\ClassSubjectDisabler::run($this->school->fresh(), false, $accept)['blocked'])->toBe([]);
     expect($this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray()['capabilities'])->not->toHaveKey('class_subjects');
     expect($this->school->fresh()->toArray()['capability_overrides'])->toBeNull();
 });
